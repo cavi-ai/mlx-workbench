@@ -4,3 +4,13 @@ __pycache__/
 .claude/
 .cursor/
 .quarantine/
+.code-review-graph/
+.vscode/
+.gemini/
+.kiro/
+.qoder/
+QODER.md
+GEMINI.md
+.cursorrules
+.codebuddy/
+opencode.jsonc
