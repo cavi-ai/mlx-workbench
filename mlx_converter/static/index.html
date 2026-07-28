@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="mlx-token" content="__MLX_TOKEN__">
+<title>mlx-converter</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="bar">
+  <h1>mlx-converter</h1>
+  <nav class="tabs" id="tabs">
+    <button class="tab is-active" data-panel="models">Models</button>
+    <button class="tab" data-panel="duplicates">Duplicates</button>
+    <button class="tab" data-panel="jobs">Jobs</button>
+    <button class="tab" data-panel="settings">Settings</button>
+  </nav>
+  <div class="bar-actions">
+    <button id="rescan" class="primary">Rescan</button>
+  </div>
+</header>
+
+<p id="notice" class="notice" hidden></p>
+
+<section id="panel-models" class="panel">
+  <div class="summary" id="summary"></div>
+  <label class="check"><input type="checkbox" id="pending-only"> Pending only</label>
+  <table class="grid">
+    <thead>
+      <tr><th>Status</th><th>Model</th><th>Arch</th><th>Quant</th><th class="num">Size</th><th>Output</th><th></th></tr>
+    </thead>
+    <tbody id="models"></tbody>
+  </table>
+</section>
+
+<section id="panel-duplicates" class="panel" hidden>
+  <div class="summary" id="dupe-summary"></div>
+  <div id="duplicates"></div>
+  <h3>Quarantined</h3>
+  <div id="quarantined"></div>
+</section>
+
+<section id="panel-jobs" class="panel" hidden>
+  <div class="summary">Conversion receipts, cross-checked against live processes.</div>
+  <table class="grid">
+    <thead><tr><th>State</th><th>Source</th><th>Output</th><th>Started</th><th>Log</th></tr></thead>
+    <tbody id="jobs"></tbody>
+  </table>
+</section>
+
+<section id="panel-settings" class="panel" hidden>
+  <form id="settings">
+    <label>GGUF roots <span class="hint">one directory per line</span>
+      <textarea id="gguf_roots" rows="4" spellcheck="false"></textarea>
+    </label>
+    <label>MLX output roots <span class="hint">where converted models already live; blank reuses the GGUF roots</span>
+      <textarea id="mlx_roots" rows="3" spellcheck="false"></textarea>
+    </label>
+    <label>Output directory <span class="hint">new conversions are written here</span>
+      <input id="output_dir" type="text" spellcheck="false">
+    </label>
+    <label>mlx-agent checkout <span class="hint">the repository that provides the conversion skill</span>
+      <input id="mlx_agent_path" type="text" spellcheck="false">
+    </label>
+    <label>Quarantine directory <span class="hint">redundant files are moved here, never deleted</span>
+      <input id="quarantine_dir" type="text" spellcheck="false">
+    </label>
+    <div class="row">
+      <label class="inline">Quantization
+        <select id="q_bits"><option value="4">4-bit</option><option value="8">8-bit</option></select>
+      </label>
+      <label class="check"><input type="checkbox" id="signatures"> Content signatures (slower, exact duplicate detection)</label>
+    </div>
+    <div class="row">
+      <button type="submit" class="primary">Save</button>
+      <span class="hint" id="config-path"></span>
+    </div>
+  </form>
+</section>
+
+<div id="dialog" class="dialog" hidden>
+  <div class="dialog-card">
+    <h2>Review this conversion</h2>
+    <dl id="plan"></dl>
+    <p class="warn">Runs detached. The intermediate checkpoint is full precision — free disk should be roughly twice the source model's fp16 size.</p>
+    <div class="row">
+      <button id="confirm" class="primary">Start conversion</button>
+      <button id="cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
