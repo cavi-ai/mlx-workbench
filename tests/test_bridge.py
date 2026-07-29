@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from mlx_converter import bridge
+from mlx_workbench import bridge
 
 
 def envelope(status="ok", data=None, error=None):

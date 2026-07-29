@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from mlx_converter import quarantine
+from mlx_workbench import quarantine
 
 
 def _clock():

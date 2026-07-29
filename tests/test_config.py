@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from mlx_converter import config
+from mlx_workbench import config
 
 
 class ConfigTests(unittest.TestCase):

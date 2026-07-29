@@ -6,7 +6,7 @@ import urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from mlx_converter import bridge, config, server
+from mlx_workbench import bridge, config, server
 
 
 def envelope(status="ok", data=None, error=None):

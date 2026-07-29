@@ -11,8 +11,8 @@ import os
 from pathlib import Path
 
 
-APP_NAME = "mlx-converter"
-CONFIG_ENV = "MLX_CONVERTER_CONFIG"
+APP_NAME = "mlx-workbench"
+CONFIG_ENV = "MLX_WORKBENCH_CONFIG"
 AGENT_ENV = "MLX_AGENT_HOME"
 SCHEMA_VERSION = "1.0"
 

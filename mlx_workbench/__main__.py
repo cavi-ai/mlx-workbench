@@ -1,4 +1,4 @@
-"""Start the local mlx-converter UI."""
+"""Start the local mlx-workbench UI."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def main(argv=None):
         return 2
 
     url = "http://{0}:{1}/".format(host, httpd.server_address[1])
-    print("mlx-converter on {0}".format(url))
+    print("mlx-workbench on {0}".format(url))
     if not settings["mlx_agent_path"]:
         print("no mlx-agent checkout configured; set it under Settings.")
     if not arguments.no_open:

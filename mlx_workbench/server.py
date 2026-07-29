@@ -1,4 +1,4 @@
-"""Loopback HTTP server for the mlx-converter UI. Standard library only."""
+"""Loopback HTTP server for the mlx-workbench UI. Standard library only."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from . import bridge, config as config_module, quarantine as quarantine_module
 
 STATIC_ROOT = Path(__file__).resolve().with_name("static")
 MAX_BODY_BYTES = 64 * 1024
-TOKEN_HEADER = "X-MLX-Converter-Token"
+TOKEN_HEADER = "X-MLX-Workbench-Token"
 _ALLOWED_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -67,7 +67,7 @@ def _static(name):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "mlx-converter"
+    server_version = "mlx-workbench"
     protocol_version = "HTTP/1.1"
 
     @property

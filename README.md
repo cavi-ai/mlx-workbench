@@ -1,4 +1,4 @@
-# mlx-converter
+# mlx-workbench
 
 A local UI for turning GGUF weights already on your Mac into MLX models, and for
 finding the redundant copies eating your disk.
@@ -14,7 +14,7 @@ Standard library only. No dependencies, no build step, no network access.
 ## Run
 
 ```bash
-python3 scripts/mlx-converter
+python3 scripts/mlx-workbench
 ```
 
 It binds `127.0.0.1`, prints its URL, and opens a browser. `--port`, `--host`,
@@ -70,8 +70,8 @@ root can be moved.
 
 ## Configuration
 
-`~/.config/mlx-converter/config.json`, editable from the Settings tab or by
-hand. `MLX_CONVERTER_CONFIG` overrides the location.
+`~/.config/mlx-workbench/config.json`, editable from the Settings tab or by
+hand. `MLX_WORKBENCH_CONFIG` overrides the location.
 
 ```json
 {
@@ -79,7 +79,7 @@ hand. `MLX_CONVERTER_CONFIG` overrides the location.
   "mlx_roots": [],
   "output_dir": "/Users/you/models/mlx",
   "mlx_agent_path": "/Users/you/src/mlx-agent",
-  "quarantine_dir": "/Users/you/.local/share/mlx-converter/quarantine",
+  "quarantine_dir": "/Users/you/.local/share/mlx-workbench/quarantine",
   "q_bits": 4,
   "signatures": true,
   "host": "127.0.0.1",

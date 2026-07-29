@@ -7,7 +7,7 @@ function $(id) { return document.getElementById(id); }
 
 async function api(path, options) {
   const request = Object.assign({ headers: {} }, options || {});
-  request.headers['X-MLX-Converter-Token'] = TOKEN;
+  request.headers['X-MLX-Workbench-Token'] = TOKEN;
   if (request.body !== undefined) {
     request.headers['Content-Type'] = 'application/json';
     request.body = JSON.stringify(request.body);
