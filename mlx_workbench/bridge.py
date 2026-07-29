@@ -226,6 +226,141 @@ def doctor_models(agent_path, wired_roots=(), hf_cache=None,
     return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
 
 
+def doctor_prune_preview(agent_path, hf_cache=None, timeout=DEFAULT_TIMEOUT, runner=None):
+    """Preview irreversible deletion of incomplete HF cache snapshots."""
+    argv = ["doctor", "models", "--prune"]
+    if hf_cache:
+        argv.extend(["--hf-cache", hf_cache])
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def doctor_prune_confirm(agent_path, preview_hash, hf_cache=None,
+                         timeout=DEFAULT_TIMEOUT, runner=None):
+    """Execute a reviewed incomplete-cache prune."""
+    argv = [
+        "doctor", "models", "--prune", "--confirm", "--preview-hash", preview_hash,
+    ]
+    if hf_cache:
+        argv.extend(["--hf-cache", hf_cache])
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def adopt_start(agent_path, role=None, state=None, fast=False, offline=False,
+                timeout=SCOUT_TIMEOUT, runner=None):
+    """Start a durable adopt workflow for a role."""
+    argv = ["adopt", "start"]
+    if role:
+        argv.extend(["--role", role])
+    if state:
+        argv.extend(["--state", state])
+    if fast:
+        argv.append("--fast")
+    if offline:
+        argv.append("--offline")
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def adopt_status(agent_path, state, timeout=DEFAULT_TIMEOUT, runner=None):
+    """Inspect an adoption handoff file."""
+    return unwrap(run(
+        agent_path, ["adopt", "status", "--state", state],
+        timeout=timeout, runner=runner,
+    ))
+
+
+def wire_preview(agent_path, model, path, target="mlx_lm",
+                 timeout=DEFAULT_TIMEOUT, runner=None):
+    """Preview a wire apply transaction (no mutation)."""
+    argv = ["wire", "apply", model, "--path", path, "--target", target]
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def wire_apply(agent_path, model, path, preview_hash, target="mlx_lm",
+               timeout=DEFAULT_TIMEOUT, runner=None):
+    """Apply a reviewed wire configuration."""
+    argv = [
+        "wire", "apply", model, "--path", path, "--target", target,
+        "--confirm", "--preview-hash", preview_hash,
+    ]
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def lora_preview(agent_path, repo, data, iters=None, out=None,
+                 timeout=DEFAULT_TIMEOUT, runner=None):
+    """Preview LoRA training without starting."""
+    argv = ["lora", "start", "--repo", repo, "--data", data]
+    if iters is not None:
+        argv.extend(["--iters", str(iters)])
+    if out:
+        argv.extend(["--out", out])
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def lora_start(agent_path, repo, data, preview_hash, iters=None, out=None,
+               timeout=DEFAULT_TIMEOUT, runner=None):
+    """Start a reviewed LoRA training job."""
+    argv = [
+        "lora", "start", "--repo", repo, "--data", data,
+        "--confirm", "--preview-hash", preview_hash,
+    ]
+    if iters is not None:
+        argv.extend(["--iters", str(iters)])
+    if out:
+        argv.extend(["--out", out])
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def lora_status(agent_path, timeout=DEFAULT_TIMEOUT, runner=None):
+    return unwrap(run(agent_path, ["lora", "status"], timeout=timeout, runner=runner))
+
+
+def fuse_preview(agent_path, repo, adapter, out=None,
+                 timeout=DEFAULT_TIMEOUT, runner=None):
+    """Preview fuse without starting."""
+    argv = ["fuse", "start", "--repo", repo, "--adapter", adapter]
+    if out:
+        argv.extend(["--out", out])
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def fuse_start(agent_path, repo, adapter, preview_hash, out=None,
+               timeout=DEFAULT_TIMEOUT, runner=None):
+    """Start a reviewed fuse job."""
+    argv = [
+        "fuse", "start", "--repo", repo, "--adapter", adapter,
+        "--confirm", "--preview-hash", preview_hash,
+    ]
+    if out:
+        argv.extend(["--out", out])
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def fuse_status(agent_path, timeout=DEFAULT_TIMEOUT, runner=None):
+    return unwrap(run(agent_path, ["fuse", "status"], timeout=timeout, runner=runner))
+
+
+def all_job_lists(agent_path, runner=None):
+    """Aggregate convert / serve / lora / fuse status payloads."""
+    result = {"jobs": [], "servers": [], "lora": [], "fuse": []}
+    try:
+        result["jobs"] = jobs(agent_path, runner=runner).get("jobs") or []
+    except BridgeError:
+        pass
+    try:
+        result["servers"] = serve_status(agent_path, runner=runner).get("servers") or []
+    except BridgeError:
+        pass
+    try:
+        result["lora"] = lora_status(agent_path, runner=runner).get("jobs") or []
+    except BridgeError:
+        pass
+    try:
+        result["fuse"] = fuse_status(agent_path, runner=runner).get("jobs") or []
+    except BridgeError:
+        pass
+    return result
+
+
 def serve_preview(agent_path, repo, runtime, port=None, timeout=DEFAULT_TIMEOUT, runner=None):
     """Render a serve plan without launching."""
     argv = ["serve", "start", "--repo", repo, "--runtime", runtime]
@@ -260,19 +395,13 @@ def serve_stop(agent_path, port, timeout=DEFAULT_TIMEOUT, runner=None):
 
 
 def allowed_log_paths(agent_path, runner=None):
-    """Paths the UI may tail: log_path values from convert and serve status."""
+    """Paths the UI may tail: log_path values from job receipts."""
     paths = set()
-    try:
-        convert = jobs(agent_path, runner=runner)
-        for entry in convert.get("jobs") or []:
-            log_path = entry.get("log_path")
-            if isinstance(log_path, str) and log_path:
-                paths.add(str(Path(log_path).expanduser().resolve()))
-    except BridgeError:
-        pass
-    try:
-        serve = serve_status(agent_path, runner=runner)
-        for entry in serve.get("servers") or []:
+    lists = all_job_lists(agent_path, runner=runner)
+    for key in ("jobs", "servers", "lora", "fuse"):
+        for entry in lists.get(key) or []:
+            if not isinstance(entry, dict):
+                continue
             log_path = entry.get("log_path")
             if isinstance(log_path, str) and log_path:
                 paths.add(str(Path(log_path).expanduser().resolve()))
@@ -281,8 +410,6 @@ def allowed_log_paths(agent_path, runner=None):
                 nested = receipt.get("log_path")
                 if isinstance(nested, str) and nested:
                     paths.add(str(Path(nested).expanduser().resolve()))
-    except BridgeError:
-        pass
     return paths
 
 

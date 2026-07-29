@@ -123,6 +123,19 @@ class RunTests(unittest.TestCase):
         self.assertIn("--fast", command)
         self.assertIn("3", command)
 
+    def test_prune_and_train_build_argv(self):
+        recorder = Recorder(stdout=envelope(data={"plan": {"preview_hash": "a" * 64}}))
+        bridge.doctor_prune_preview(str(self.root), runner=recorder)
+        self.assertIn("--prune", recorder.commands[-1])
+        bridge.adopt_start(str(self.root), role="coding", runner=recorder)
+        self.assertEqual(recorder.commands[-1][2:4], ["adopt", "start"])
+        bridge.wire_preview(str(self.root), "org/m", "/cfg.json", runner=recorder)
+        self.assertIn("wire", recorder.commands[-1])
+        bridge.lora_preview(str(self.root), "org/m", "/data", iters=5, runner=recorder)
+        self.assertIn("lora", recorder.commands[-1])
+        bridge.fuse_preview(str(self.root), "org/m", "/adapter", runner=recorder)
+        self.assertIn("fuse", recorder.commands[-1])
+
     def test_run_cli_rejects_shell_strings(self):
         with self.assertRaises(bridge.BridgeError) as caught:
             bridge.run_cli(str(self.root), [])

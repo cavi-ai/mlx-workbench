@@ -47,10 +47,13 @@ python3 scripts/mlx-workbench
 | --- | --- |
 | **Models** | Local `.gguf` inventory via `convert scan`: pending, converted, companion, shard |
 | **Duplicates** | Exact vs variant groups; quarantine moves (never deletes) |
-| **Scout** | `discover` — Hub candidates by role (table + Serve shortcut) |
-| **Doctor** | `doctor models` — findings, cache inventory, wired configs |
+| **Scout** | `discover` — Hub candidates by role (table + Serve/Wire shortcuts) |
+| **Adopt** | `adopt start` — durable role handoff |
+| **Wire** | `wire apply` — preview/confirm config transaction |
+| **Doctor** | `doctor models` — findings + incomplete-cache prune |
 | **Serve** | Preview/confirm `serve start`; servers table with Stop |
-| **Jobs** | Convert + serve receipts; click a row to tail its log |
+| **Train** | LoRA train + fuse (preview/confirm) |
+| **Jobs** | Convert / serve / lora / fuse receipts + log tail |
 | **Advanced** | Any mlx-agent argv (tokens only; `--json` added for you) |
 | **Settings** | Scan roots, output dir, agent path, quarantine, quantization |
 
