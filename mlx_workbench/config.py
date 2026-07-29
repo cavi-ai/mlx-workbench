@@ -1,7 +1,8 @@
 """User configuration: where the weights live, and where mlx-agent lives.
 
 Stdlib only. The file is created on first read with conservative defaults and
-is the single place the UI edits.
+is the single place the UI edits. By default mlx-agent is the vendored
+submodule under vendor/mlx-agent.
 """
 
 from __future__ import annotations
@@ -59,14 +60,29 @@ def discover_gguf_roots():
     ])
 
 
+def _looks_like_agent(root):
+    """True when a directory has the mlx-agent CLI bootstrap."""
+    return (Path(root) / "scripts" / "mlx-agent").is_file()
+
+
+def vendor_agent_path(start=None):
+    """Path to the vendored submodule checkout, if present."""
+    here = Path(start) if start is not None else Path(__file__).resolve().parents[1]
+    candidate = here / "vendor" / "mlx-agent"
+    return str(candidate) if _looks_like_agent(candidate) else ""
+
+
 def discover_agent_path(start=None):
-    """Find an mlx-agent checkout: env, then a sibling of this repository."""
+    """Find mlx-agent: env, vendored submodule, then a sibling checkout."""
     override = os.environ.get(AGENT_ENV)
-    if override and (Path(override).expanduser() / "skills").is_dir():
+    if override and _looks_like_agent(Path(override).expanduser()):
         return str(Path(override).expanduser())
+    vendored = vendor_agent_path(start)
+    if vendored:
+        return vendored
     here = Path(start) if start is not None else Path(__file__).resolve().parents[1]
     for candidate in (here.parent / "mlx-agent", here / "mlx-agent"):
-        if (candidate / "skills" / "mlx-converter").is_dir():
+        if _looks_like_agent(candidate):
             return str(candidate)
     return ""
 
@@ -124,6 +140,8 @@ def _coerce(value):
         raise ConfigError("q_bits must be one of {0}".format(list(Q_BITS_CHOICES)))
     if not 1 <= merged["port"] <= 65535:
         raise ConfigError("port must be between 1 and 65535")
+    if not merged["mlx_agent_path"]:
+        merged["mlx_agent_path"] = discover_agent_path()
     merged["schema_version"] = SCHEMA_VERSION
     return merged
 

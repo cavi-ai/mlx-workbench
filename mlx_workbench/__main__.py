@@ -6,7 +6,7 @@ import argparse
 import sys
 import webbrowser
 
-from . import config as config_module, server as server_module
+from . import bridge, config as config_module, server as server_module
 
 
 def main(argv=None):
@@ -37,8 +37,17 @@ def main(argv=None):
 
     url = "http://{0}:{1}/".format(host, httpd.server_address[1])
     print("mlx-workbench on {0}".format(url))
-    if not settings["mlx_agent_path"]:
-        print("no mlx-agent checkout configured; set it under Settings.")
+    health = bridge.agent_health(settings["mlx_agent_path"])
+    if health["ok"]:
+        print("mlx-agent: {0}".format(health["path"]))
+    else:
+        print("mlx-agent: {0}".format(health["message"]), file=sys.stderr)
+        if not settings["mlx_agent_path"]:
+            print(
+                "hint: clone with --recurse-submodules, or run "
+                "`git submodule update --init --recursive`.",
+                file=sys.stderr,
+            )
     if not arguments.no_open:
         webbrowser.open(url)
     try:

@@ -1,84 +1,73 @@
 # mlx-workbench
 
-A local UI for turning GGUF weights already on your Mac into MLX models, and for
-finding the redundant copies eating your disk.
+Local UI for the [mlx-agent](https://github.com/cavi-ai/mlx-agent) model lifecycle on Apple Silicon.
 
-The conversion logic is not here. This app is a browser front end over the
-`mlx-converter` skill bundled with [mlx-agent](https://github.com/cavi-ai/mlx-agent);
-it shells out to that skill and renders what comes back. The two repositories
-stay independently versioned: no imports, no vendored code, one subprocess
-boundary.
+This app is a browser front end. Conversion, discovery, doctor, and serve logic live in mlx-agent; workbench shells out to `scripts/mlx-agent` with `--json` and renders what comes back. The two repositories stay independently versioned: no Python imports from mlx-agent, one subprocess boundary.
 
-Standard library only. No dependencies, no build step, no network access.
+Standard library only. No third-party dependencies, no build step. The HTTP server binds loopback only. Child mlx-agent commands may contact the Hugging Face Hub (Scout / Doctor).
+
+## Requirements
+
+- macOS on Apple Silicon
+- Python 3.9+
+- Git (to clone with the mlx-agent submodule)
+
+Conversion and serve still need the usual mlx-agent runtimes on the machine (`mlx-lm`, and for GGUF: `torch`, `transformers`, `gguf`). Nothing is installed for you.
+
+## Install
+
+```bash
+git clone --recurse-submodules https://github.com/cavi-ai/mlx-workbench.git
+cd mlx-workbench
+```
+
+If you already cloned without submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+The default agent path is `vendor/mlx-agent` (pinned release). Override with Settings, or `$MLX_AGENT_HOME`, for a local mlx-agent checkout.
 
 ## Run
 
 ```bash
+python3 -m mlx_workbench
+# or
 python3 scripts/mlx-workbench
 ```
 
-It binds `127.0.0.1`, prints its URL, and opens a browser. `--port`, `--host`,
-`--config`, and `--no-open` are available.
-
-Point it at an mlx-agent checkout under **Settings** on first run (a sibling
-`../mlx-agent` directory or `$MLX_AGENT_HOME` is detected automatically).
+It binds `127.0.0.1`, prints its URL, reports the resolved mlx-agent path, and opens a browser. `--port`, `--host`, `--config`, and `--no-open` are available.
 
 ## What it shows
 
-**Models** — every `.gguf` under the configured roots, with its architecture,
-quantization, size, and one of:
-
-| Status | Meaning |
+| Tab | Role |
 | --- | --- |
-| `pending` | No MLX output found. This is the convert list. |
-| `converted` | An MLX output exists. Hover the output column for how it was matched. |
-| `companion` | A projector (`mmproj`) sidecar — belongs to a base model, not converted alone. |
-| `shard` | A non-first shard of a split model (hidden; convert the first shard). |
-
-**Duplicates** — two kinds, deliberately different in strength:
-
-- `exact` — same bytes, or the same model at the same quantization. Everything
-  outside the keeper is redundant, and the reclaimable total is shown.
-- `variant` — the same model at different quantization levels. Listed for
-  visibility only; which one you keep is a quality decision, not a cleanup one.
-
-**Jobs** — conversion receipts cross-checked against live processes.
-
-**Settings** — scan roots, MLX output roots, output directory, mlx-agent path,
-quarantine directory, default quantization, and whether to compute content
-signatures (exact duplicate detection, slower on large collections).
+| **Models** | Local `.gguf` inventory via `convert scan`: pending, converted, companion, shard |
+| **Duplicates** | Exact vs variant groups; quarantine moves (never deletes) |
+| **Scout** | `discover` — Hub models suited to this host (optional `--fast`) |
+| **Doctor** | `doctor models` — wired configs, cache drift, endpoint health |
+| **Serve** | Preview/confirm `serve start`, list/stop owned servers |
+| **Jobs** | Convert + serve receipts; click a row to tail its log |
+| **Advanced** | Any mlx-agent argv (tokens only; `--json` added for you) |
+| **Settings** | Scan roots, output dir, agent path, quarantine, quantization |
 
 ## Converting
 
-Every conversion is previewed before it runs: the exact command, output path,
-and preview hash are shown, and only a reviewed plan can be confirmed. The job
-then runs detached under mlx-agent's receipt machinery.
+Every conversion is previewed before it runs: command, output path, and preview hash. Only a reviewed plan can be confirmed. The job runs detached under mlx-agent receipts; open **Jobs** for state and log tail.
 
-Conversion requires `mlx-lm` on `PATH` plus `torch`, `transformers`, and `gguf`
-importable by the same interpreter. Nothing is installed for you; missing pieces
-are reported by name.
-
-Quality is capped by the source: a Q4 GGUF converted to MLX 4-bit has been
-quantized twice. Convert the original fp16 weights when you have them.
-
-## Removing duplicates
-
-Nothing is ever deleted. "Move to quarantine" relocates a file into the
-quarantine directory and records where it came from; deleting it afterwards is a
-deliberate act you take yourself. Only `.gguf` files under a configured scan
-root can be moved.
+Quality is capped by the source: a Q4 GGUF converted to MLX 4-bit has been quantized twice. Prefer original fp16 weights when you have them.
 
 ## Configuration
 
-`~/.config/mlx-workbench/config.json`, editable from the Settings tab or by
-hand. `MLX_WORKBENCH_CONFIG` overrides the location.
+`~/.config/mlx-workbench/config.json`, editable from Settings. `MLX_WORKBENCH_CONFIG` overrides the location. `MLX_AGENT_HOME` overrides agent discovery when it points at a checkout that contains `scripts/mlx-agent`.
 
 ```json
 {
   "gguf_roots": ["/Users/you/.lmstudio/models"],
   "mlx_roots": [],
   "output_dir": "/Users/you/models/mlx",
-  "mlx_agent_path": "/Users/you/src/mlx-agent",
+  "mlx_agent_path": "",
   "quarantine_dir": "/Users/you/.local/share/mlx-workbench/quarantine",
   "q_bits": 4,
   "signatures": true,
@@ -87,12 +76,21 @@ hand. `MLX_WORKBENCH_CONFIG` overrides the location.
 }
 ```
 
+Leave `mlx_agent_path` empty to use the vendored submodule (or env / sibling discovery).
+
 ## Security
 
-Loopback bind only, same-origin checks, and a per-process session token on every
-API call. The server refuses to bind a non-loopback address. Path handling is
-bounded: quarantine moves are restricted to `.gguf` files inside a configured
-root, and every conversion argument is passed as argv — never through a shell.
+Loopback bind only, same-origin checks, and a per-process session token on every API call. The server refuses a non-loopback bind. Quarantine moves are restricted to `.gguf` files inside a configured root. Agent arguments are argv tokens — never a shell string. Job logs are readable only when advertised by convert/serve status.
+
+## Updating the mlx-agent pin
+
+```bash
+cd vendor/mlx-agent
+git fetch --tags
+git checkout v0.5.0   # or a newer release tag
+cd ../..
+git add vendor/mlx-agent
+```
 
 ## Tests
 
@@ -102,4 +100,4 @@ python3 -m unittest discover -s tests -t .
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). mlx-agent is also MIT; see that repository for its terms.

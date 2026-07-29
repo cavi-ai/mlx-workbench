@@ -2,6 +2,7 @@ import json
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -9,11 +10,11 @@ from tempfile import TemporaryDirectory
 from mlx_workbench import bridge, config, server
 
 
-def envelope(status="ok", data=None, error=None):
+def envelope(status="ok", data=None, error=None, operation="convert-scan"):
     payload = {
         "schema_version": "1.0",
         "generated_at": "2026-07-28T00:00:00+00:00",
-        "operation": "convert-scan",
+        "operation": operation,
         "status": status,
         "data": data or {},
         "warnings": [],
@@ -31,7 +32,7 @@ class ServerTests(unittest.TestCase):
         self.models = self.root / "models"
         self.models.mkdir()
         self.agent = self.root / "mlx-agent"
-        script = self.agent / bridge.SKILL_RELATIVE
+        script = self.agent / bridge.CLI_RELATIVE
         script.parent.mkdir(parents=True)
         script.write_text("", encoding="utf-8")
 
@@ -57,6 +58,12 @@ class ServerTests(unittest.TestCase):
 
     def _runner(self, command, timeout):
         self.commands.append(command)
+        if "serve" in command and "status" in command:
+            return {
+                "returncode": 0,
+                "stdout": envelope(data={"servers": []}, operation="serve-status"),
+                "stderr": "",
+            }
         return {"returncode": 0, "stdout": self.responses["stdout"], "stderr": ""}
 
     def _request(self, path, method="GET", body=None, token=None, headers=None):
@@ -104,6 +111,7 @@ class ServerTests(unittest.TestCase):
         status, payload = self._request("/api/config")
         self.assertEqual(status, 200)
         self.assertEqual(payload["data"]["config"]["q_bits"], 4)
+        self.assertTrue(payload["data"]["agent"]["ok"])
         status, payload = self._request("/api/config", "POST", {"q_bits": 8})
         self.assertEqual(status, 200)
         self.assertEqual(payload["data"]["config"]["q_bits"], 8)
@@ -114,11 +122,13 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(payload["error"]["code"], "invalid_config")
 
-    def test_scan_passes_configured_roots_to_the_skill(self):
+    def test_scan_passes_configured_roots_to_the_cli(self):
         status, payload = self._request("/api/scan")
         self.assertEqual(status, 200)
         self.assertEqual(payload["data"]["totals"]["gguf"], 0)
         self.assertIn(str(self.models), self.commands[0])
+        self.assertIn("convert", self.commands[0])
+        self.assertIn("scan", self.commands[0])
 
     def test_skill_failure_becomes_a_502(self):
         self.responses["stdout"] = envelope(
@@ -157,6 +167,26 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("--confirm", self.commands[0])
         self.assertIn("c" * 64, self.commands[0])
+
+    def test_cli_runs_argv(self):
+        self.responses["stdout"] = envelope(data={"ok": True}, operation="discover")
+        status, payload = self._request("/api/cli", "POST", {"argv": ["discover", "--fast"]})
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["data"]["ok"])
+        self.assertIn("discover", self.commands[0])
+        self.assertIn("--fast", self.commands[0])
+
+    def test_cli_rejects_empty_argv(self):
+        status, payload = self._request("/api/cli", "POST", {"argv": []})
+        self.assertEqual(status, 502)
+        self.assertEqual(payload["error"]["code"], "invalid_argv")
+
+    def test_jobs_log_rejects_unknown_path(self):
+        status, payload = self._request(
+            "/api/jobs/log?path=" + urllib.parse.quote(str(self.root / "nope.log"))
+        )
+        self.assertEqual(status, 502)
+        self.assertEqual(payload["error"]["code"], "log_forbidden")
 
     def test_quarantine_moves_a_file_and_lists_it(self):
         source = self.models / "dupe-Q4_K_M.gguf"

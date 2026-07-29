@@ -1,7 +1,17 @@
 'use strict';
 
 const TOKEN = document.querySelector('meta[name="mlx-token"]').content;
-const state = { scan: null, config: null, pending: null };
+const PANELS = [
+  'models', 'duplicates', 'scout', 'doctor', 'serve', 'jobs', 'advanced', 'settings',
+];
+const state = {
+  scan: null,
+  config: null,
+  pending: null,
+  pendingKind: null,
+  selectedLog: null,
+  jobTimer: null,
+};
 
 function $(id) { return document.getElementById(id); }
 
@@ -46,6 +56,15 @@ function element(tag, className, text) {
 
 function pill(status) {
   return element('span', 'pill pill-' + status, status);
+}
+
+function showJson(node, data) {
+  node.hidden = false;
+  node.textContent = JSON.stringify(data, null, 2);
+}
+
+function tokenize(value) {
+  return value.trim().split(/\s+/).filter(Boolean);
 }
 
 function renderModels() {
@@ -94,7 +113,7 @@ function renderModels() {
     const actions = element('td');
     if (item.status === 'pending' || item.status === 'converted') {
       const convert = element('button', null, item.status === 'converted' ? 'Reconvert' : 'Convert');
-      convert.addEventListener('click', function () { openPlan(item.path); });
+      convert.addEventListener('click', function () { openConvertPlan(item.path); });
       actions.appendChild(convert);
     }
     row.appendChild(actions);
@@ -185,49 +204,87 @@ async function quarantine(path, button) {
   }
 }
 
-function renderJobs(jobs) {
+function renderJobs(data) {
   const body = $('jobs');
   body.textContent = '';
-  if (!jobs.length) {
+  const jobs = data.jobs || [];
+  const servers = data.servers || [];
+  if (!jobs.length && !servers.length) {
     const empty = element('tr');
-    empty.appendChild(element('td', 'empty', 'No conversion receipts yet.')).colSpan = 5;
+    empty.appendChild(element('td', 'empty', 'No receipts yet.')).colSpan = 5;
     body.appendChild(empty);
     return;
   }
   jobs.forEach(function (job) {
-    const row = element('tr');
-    row.appendChild(element('td')).appendChild(pill(job.state));
-    const source = element('td');
-    source.appendChild(element('span', 'path', job.repo));
-    row.appendChild(source);
-    row.appendChild(element('td', 'path', job.out));
-    row.appendChild(element('td', 'hint', job.started_at || '—'));
-    row.appendChild(element('td', 'path', job.log_path || '—'));
-    body.appendChild(row);
+    body.appendChild(jobRow('convert', job.state, job.repo, job.out, job.started_at, job.log_path));
+  });
+  servers.forEach(function (job) {
+    const target = job.port != null ? 'port ' + job.port : (job.out || '—');
+    const logPath = job.log_path || (job.receipt && job.receipt.log_path) || '';
+    body.appendChild(jobRow('serve', job.state, job.repo || '—', target, job.started_at, logPath));
   });
 }
 
-async function openPlan(path) {
+function jobRow(kind, status, source, target, started, logPath) {
+  const row = element('tr');
+  if (logPath) {
+    row.className = 'clickable';
+    row.title = 'Show log';
+    row.addEventListener('click', function () {
+      state.selectedLog = logPath;
+      refreshLog();
+    });
+  }
+  row.appendChild(element('td', 'mono', kind));
+  row.appendChild(element('td')).appendChild(pill(status));
+  row.appendChild(element('td', 'path', source));
+  row.appendChild(element('td', 'path', target));
+  row.appendChild(element('td', 'hint', started || '—'));
+  return row;
+}
+
+async function refreshLog() {
+  const node = $('job-log');
+  if (!state.selectedLog) {
+    node.textContent = 'Select a job with a log path.';
+    return;
+  }
+  try {
+    const data = await api('/api/jobs/log?path=' + encodeURIComponent(state.selectedLog));
+    node.textContent = data.text || '(empty)';
+  } catch (error) {
+    node.textContent = error.message;
+  }
+}
+
+async function openConvertPlan(path) {
   notify('');
   try {
     const data = await api('/api/convert/preview', { body: { path: path, q_bits: quantBits() } });
     state.pending = data.plan;
-    const list = $('plan');
-    list.textContent = '';
-    [
+    state.pendingKind = 'convert';
+    fillPlanDialog('Review this conversion', [
       ['Source', data.plan.source.path || data.plan.repo],
       ['Output', data.plan.out],
       ['Quantization', data.plan.q_bits + '-bit'],
-      ['Command', data.plan.argv.join(' ')],
+      ['Command', (data.plan.argv || []).join(' ')],
       ['Preview hash', data.plan.preview_hash],
-    ].forEach(function (pair) {
-      list.appendChild(element('dt', null, pair[0]));
-      list.appendChild(element('dd', null, pair[1]));
-    });
-    $('dialog').hidden = false;
+    ], 'Runs detached. The intermediate checkpoint is full precision — free disk should be roughly twice the source model\'s fp16 size.');
   } catch (error) {
     notify(error.message);
   }
+}
+
+function fillPlanDialog(title, pairs, warn) {
+  $('dialog-title').textContent = title;
+  $('dialog-warn').textContent = warn || '';
+  const list = $('plan');
+  list.textContent = '';
+  pairs.forEach(function (pair) {
+    list.appendChild(element('dt', null, pair[0]));
+    list.appendChild(element('dd', null, pair[1]));
+  });
+  $('dialog').hidden = false;
 }
 
 function quantBits() {
@@ -235,18 +292,29 @@ function quantBits() {
 }
 
 async function confirmPlan() {
-  if (!state.pending) return;
+  if (!state.pending || !state.pendingKind) return;
   const button = $('confirm');
   button.disabled = true;
   try {
-    await api('/api/convert/start', {
-      body: {
-        path: state.pending.source.path,
-        q_bits: state.pending.q_bits,
-        out: state.pending.out,
-        preview_hash: state.pending.preview_hash,
-      },
-    });
+    if (state.pendingKind === 'convert') {
+      await api('/api/convert/start', {
+        body: {
+          path: state.pending.source.path,
+          q_bits: state.pending.q_bits,
+          out: state.pending.out,
+          preview_hash: state.pending.preview_hash,
+        },
+      });
+    } else if (state.pendingKind === 'serve') {
+      await api('/api/serve/start', {
+        body: {
+          repo: state.pending.repo || state.pending.source && state.pending.source.repo,
+          runtime: state.pending.runtime,
+          port: state.pending.port,
+          preview_hash: state.pending.preview_hash,
+        },
+      });
+    }
     closeDialog();
     selectPanel('jobs');
     await refreshJobs();
@@ -260,6 +328,7 @@ async function confirmPlan() {
 function closeDialog() {
   $('dialog').hidden = true;
   state.pending = null;
+  state.pendingKind = null;
 }
 
 async function rescan() {
@@ -281,7 +350,114 @@ async function rescan() {
 
 async function refreshJobs() {
   try {
-    renderJobs((await api('/api/jobs')).jobs || []);
+    const data = await api('/api/jobs');
+    renderJobs(data);
+    renderServers(data.servers || []);
+    if (state.selectedLog) await refreshLog();
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function renderServers(servers) {
+  const container = $('serve-servers');
+  if (!container) return;
+  container.textContent = '';
+  if (!servers.length) {
+    container.appendChild(element('div', 'empty', 'No serve receipts yet.'));
+    return;
+  }
+  servers.forEach(function (server) {
+    const row = element('div', 'file-row');
+    row.appendChild(pill(server.state));
+    row.appendChild(element('span', 'path', (server.repo || '—') + ' · port ' + (server.port || '—')));
+    if (server.state === 'running' && server.port != null) {
+      const stop = element('button', null, 'Stop');
+      stop.addEventListener('click', async function () {
+        try {
+          await api('/api/serve/stop', { body: { port: server.port } });
+          await refreshJobs();
+        } catch (error) {
+          notify(error.message);
+        }
+      });
+      row.appendChild(stop);
+    }
+    container.appendChild(row);
+  });
+}
+
+async function runScout(event) {
+  event.preventDefault();
+  notify('');
+  try {
+    const data = await api('/api/scout', {
+      body: {
+        role: $('scout-role').value || null,
+        limit: Number($('scout-limit').value) || null,
+        fast: $('scout-fast').checked,
+        new: $('scout-new').checked,
+      },
+    });
+    showJson($('scout-out'), data);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function runDoctor(event) {
+  event.preventDefault();
+  notify('');
+  try {
+    const data = await api('/api/doctor', {
+      body: {
+        wired_roots: lines($('doctor-wired').value),
+        hf_cache: $('doctor-hf').value.trim() || null,
+      },
+    });
+    showJson($('doctor-out'), data);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function previewServe(event) {
+  event.preventDefault();
+  notify('');
+  const repo = $('serve-repo').value.trim();
+  const runtime = $('serve-runtime').value;
+  const portValue = $('serve-port').value.trim();
+  const port = portValue ? Number(portValue) : null;
+  try {
+    const data = await api('/api/serve/preview', {
+      body: { repo: repo, runtime: runtime, port: port },
+    });
+    const plan = data.plan || data;
+    state.pending = plan;
+    state.pendingKind = 'serve';
+    fillPlanDialog('Review this serve plan', [
+      ['Repo', plan.repo || repo],
+      ['Runtime', plan.runtime || runtime],
+      ['Port', String(plan.port || port || 'default')],
+      ['Command', (plan.argv || []).join(' ')],
+      ['Preview hash', plan.preview_hash],
+    ], 'Loopback only. The model must already be in the Hugging Face cache; serve never downloads.');
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function runCli(event) {
+  event.preventDefault();
+  notify('');
+  const argv = tokenize($('cli-argv').value);
+  if (!argv.length) {
+    notify('Enter argv tokens, for example: convert status');
+    return;
+  }
+  try {
+    const data = await api('/api/cli', { body: { argv: argv } });
+    showJson($('cli-out'), data);
   } catch (error) {
     notify(error.message);
   }
@@ -298,6 +474,11 @@ function fillSettings(data) {
   $('q_bits').value = String(config.q_bits || 4);
   $('signatures').checked = Boolean(config.signatures);
   $('config-path').textContent = data.config_path;
+  const health = data.agent || {};
+  $('agent-health').textContent = health.ok
+    ? 'Agent ready: ' + health.path
+    : (health.message || 'Agent not configured.') +
+      (data.vendor_agent_path ? ' Vendor path: ' + data.vendor_agent_path : '');
 }
 
 function lines(value) {
@@ -319,7 +500,12 @@ async function saveSettings(event) {
         signatures: $('signatures').checked,
       },
     });
-    fillSettings({ config: data.config, config_path: $('config-path').textContent });
+    fillSettings({
+      config: data.config,
+      config_path: $('config-path').textContent,
+      agent: data.agent,
+      vendor_agent_path: state.config && state.config.mlx_agent_path,
+    });
     notify('');
     await rescan();
   } catch (error) {
@@ -328,14 +514,22 @@ async function saveSettings(event) {
 }
 
 function selectPanel(name) {
-  ['models', 'duplicates', 'jobs', 'settings'].forEach(function (panel) {
+  PANELS.forEach(function (panel) {
     $('panel-' + panel).hidden = panel !== name;
   });
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
     tab.classList.toggle('is-active', tab.dataset.panel === name);
   });
-  if (name === 'jobs') refreshJobs();
+  if (name === 'jobs') {
+    refreshJobs();
+    if (state.jobTimer) clearInterval(state.jobTimer);
+    state.jobTimer = setInterval(refreshJobs, 2500);
+  } else if (state.jobTimer) {
+    clearInterval(state.jobTimer);
+    state.jobTimer = null;
+  }
   if (name === 'duplicates') renderQuarantined();
+  if (name === 'serve') refreshJobs();
 }
 
 function init() {
@@ -345,13 +539,18 @@ function init() {
   $('rescan').addEventListener('click', rescan);
   $('pending-only').addEventListener('change', renderModels);
   $('settings').addEventListener('submit', saveSettings);
+  $('scout-form').addEventListener('submit', runScout);
+  $('doctor-form').addEventListener('submit', runDoctor);
+  $('serve-form').addEventListener('submit', previewServe);
+  $('cli-form').addEventListener('submit', runCli);
   $('confirm').addEventListener('click', confirmPlan);
   $('cancel').addEventListener('click', closeDialog);
 
   api('/api/config').then(function (data) {
     fillSettings(data);
-    if (!data.config.mlx_agent_path) {
-      notify('No mlx-agent checkout configured. Set it under Settings before scanning.');
+    if (!data.agent || !data.agent.ok) {
+      notify((data.agent && data.agent.message) ||
+        'No mlx-agent checkout configured. Init the vendor submodule or set it under Settings.');
       selectPanel('settings');
       return;
     }

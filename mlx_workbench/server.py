@@ -7,7 +7,7 @@ import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from . import bridge, config as config_module, quarantine as quarantine_module
 
@@ -176,12 +176,19 @@ class Handler(BaseHTTPRequestHandler):
                 "config": settings,
                 "discovered_roots": config_module.discover_gguf_roots(),
                 "config_path": str(self.app.config_path or config_module.config_path()),
+                "agent": bridge.agent_health(agent),
+                "vendor_agent_path": config_module.vendor_agent_path(),
             })
         if method == "POST" and route == "/api/config":
             payload = self._body()
             if payload is None:
                 return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            return _ok({"config": self.app.save_config(payload)})
+            return _ok({
+                "config": self.app.save_config(payload),
+                "agent": bridge.agent_health(self.app.config()["mlx_agent_path"]),
+            })
+        if method == "GET" and route == "/api/health":
+            return _ok({"agent": bridge.agent_health(agent)})
         if method == "GET" and route == "/api/scan":
             return _ok(bridge.scan(
                 agent,
@@ -191,7 +198,21 @@ class Handler(BaseHTTPRequestHandler):
                 runner=runner,
             ))
         if method == "GET" and route == "/api/jobs":
-            return _ok(bridge.jobs(agent, runner=runner))
+            convert = bridge.jobs(agent, runner=runner)
+            serve = {"servers": []}
+            try:
+                serve = bridge.serve_status(agent, runner=runner)
+            except bridge.BridgeError:
+                pass
+            return _ok({
+                "jobs": convert.get("jobs") or [],
+                "servers": serve.get("servers") or [],
+            })
+        if method == "GET" and route == "/api/jobs/log":
+            params = parse_qs(urlparse(self.path).query)
+            values = params.get("path") or []
+            log_path = values[0] if values else ""
+            return _ok(bridge.read_log(agent, log_path, runner=runner))
         if method == "GET" and route == "/api/quarantine":
             return _ok({"records": quarantine_module.ledger(settings["quarantine_dir"])})
         if method == "POST" and route in ("/api/convert/preview", "/api/convert/start"):
@@ -212,6 +233,73 @@ class Handler(BaseHTTPRequestHandler):
                     "Preview the plan first, then confirm it.",
                 )
             return _ok(bridge.start(agent, payload["path"], preview_hash, q_bits, out, runner=runner))
+        if method == "POST" and route == "/api/scout":
+            payload = self._body() or {}
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            role = payload.get("role") or None
+            if role is not None and not isinstance(role, str):
+                return _error("invalid_body", "role must be a string.", "Pick a role in the UI.")
+            limit = payload.get("limit")
+            if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
+                return _error("invalid_body", "limit must be a positive integer.", "Retry from the UI.")
+            return _ok(bridge.discover(
+                agent,
+                role=role or None,
+                limit=limit,
+                fast=bool(payload.get("fast")),
+                new=bool(payload.get("new")),
+                runner=runner,
+            ))
+        if method == "POST" and route == "/api/doctor":
+            payload = self._body() or {}
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            wired = payload.get("wired_roots") or []
+            if not isinstance(wired, list) or not all(isinstance(item, str) for item in wired):
+                return _error("invalid_body", "wired_roots must be a list of strings.", "Retry from the UI.")
+            hf_cache = payload.get("hf_cache")
+            if hf_cache is not None and not isinstance(hf_cache, str):
+                return _error("invalid_body", "hf_cache must be a string.", "Retry from the UI.")
+            return _ok(bridge.doctor_models(
+                agent, wired_roots=wired, hf_cache=hf_cache or None, runner=runner,
+            ))
+        if method == "POST" and route in ("/api/serve/preview", "/api/serve/start"):
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            repo = payload.get("repo")
+            runtime = payload.get("runtime")
+            if not isinstance(repo, str) or not repo.strip():
+                return _error("invalid_body", "repo is required.", "Enter a cached model id.")
+            if runtime not in ("mlx_lm", "mlx-vlm"):
+                return _error("invalid_body", "runtime must be mlx_lm or mlx-vlm.", "Pick a runtime.")
+            port = payload.get("port")
+            if port is not None and (not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535):
+                return _error("invalid_body", "port must be 1–65535.", "Retry from the UI.")
+            if route.endswith("preview"):
+                return _ok(bridge.serve_preview(agent, repo, runtime, port, runner=runner))
+            preview_hash = payload.get("preview_hash")
+            if not isinstance(preview_hash, str) or not preview_hash:
+                return _error(
+                    "preview_required",
+                    "Confirming a serve plan needs the hash from its preview.",
+                    "Preview the plan first, then confirm it.",
+                )
+            return _ok(bridge.serve_start(
+                agent, repo, runtime, preview_hash, port, runner=runner,
+            ))
+        if method == "POST" and route == "/api/serve/stop":
+            payload = self._body()
+            if not isinstance(payload, dict) or not isinstance(payload.get("port"), int):
+                return _error("invalid_body", "port is required.", "Retry from the UI.")
+            return _ok(bridge.serve_stop(agent, payload["port"], runner=runner))
+        if method == "POST" and route == "/api/cli":
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            argv = payload.get("argv")
+            return _ok(bridge.run_cli(agent, argv, runner=runner))
         if method == "POST" and route == "/api/quarantine":
             payload = self._body()
             if not isinstance(payload, dict) or not isinstance(payload.get("path"), str):

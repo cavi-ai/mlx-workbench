@@ -8,6 +8,13 @@ from unittest.mock import patch
 from mlx_workbench import config
 
 
+def _fake_agent(root):
+    script = root / "scripts" / "mlx-agent"
+    script.parent.mkdir(parents=True)
+    script.write_text("", encoding="utf-8")
+    return root
+
+
 class ConfigTests(unittest.TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
@@ -66,16 +73,23 @@ class ConfigTests(unittest.TestCase):
             config.scan_roots({"gguf_roots": []}), config.discover_gguf_roots()
         )
 
+    def test_discover_agent_path_finds_vendor_checkout(self):
+        root = Path(self.directory.name)
+        _fake_agent(root / "vendor" / "mlx-agent")
+        with patch.dict(os.environ, {}, clear=True):
+            found = config.discover_agent_path(root)
+        self.assertEqual(found, str(root / "vendor" / "mlx-agent"))
+
     def test_discover_agent_path_finds_a_sibling_checkout(self):
         root = Path(self.directory.name)
-        (root / "mlx-agent" / "skills" / "mlx-converter").mkdir(parents=True)
+        _fake_agent(root / "mlx-agent")
         with patch.dict(os.environ, {}, clear=True):
-            found = config.discover_agent_path(root / "mlx-converter")
+            found = config.discover_agent_path(root / "mlx-workbench")
         self.assertEqual(found, str(root / "mlx-agent"))
 
     def test_discover_agent_path_prefers_the_environment(self):
         root = Path(self.directory.name)
-        (root / "elsewhere" / "skills").mkdir(parents=True)
+        _fake_agent(root / "elsewhere")
         with patch.dict(os.environ, {config.AGENT_ENV: str(root / "elsewhere")}, clear=True):
             self.assertEqual(config.discover_agent_path(root), str(root / "elsewhere"))
 

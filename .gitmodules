@@ -1,0 +1,3 @@
+[submodule "vendor/mlx-agent"]
+	path = vendor/mlx-agent
+	url = https://github.com/cavi-ai/mlx-agent.git

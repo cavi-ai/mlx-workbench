@@ -13,7 +13,11 @@
   <nav class="tabs" id="tabs">
     <button class="tab is-active" data-panel="models">Models</button>
     <button class="tab" data-panel="duplicates">Duplicates</button>
+    <button class="tab" data-panel="scout">Scout</button>
+    <button class="tab" data-panel="doctor">Doctor</button>
+    <button class="tab" data-panel="serve">Serve</button>
     <button class="tab" data-panel="jobs">Jobs</button>
+    <button class="tab" data-panel="advanced">Advanced</button>
     <button class="tab" data-panel="settings">Settings</button>
   </nav>
   <div class="bar-actions">
@@ -41,15 +45,87 @@
   <div id="quarantined"></div>
 </section>
 
+<section id="panel-scout" class="panel" hidden>
+  <div class="summary">Discover MLX models on Hugging Face suited to this Mac (mlx-agent discover).</div>
+  <form id="scout-form" class="toolbar">
+    <label class="inline">Role
+      <select id="scout-role">
+        <option value="">all</option>
+        <option value="general">general</option>
+        <option value="coding">coding</option>
+        <option value="reasoning">reasoning</option>
+        <option value="vision">vision</option>
+        <option value="embedding">embedding</option>
+        <option value="tool-use">tool-use</option>
+      </select>
+    </label>
+    <label class="inline">Limit
+      <input id="scout-limit" type="number" min="1" max="50" value="6">
+    </label>
+    <label class="check"><input type="checkbox" id="scout-fast"> Fast (skip Hub enrichment)</label>
+    <label class="check"><input type="checkbox" id="scout-new"> New only</label>
+    <button type="submit" class="primary">Scout</button>
+  </form>
+  <pre id="scout-out" class="output" hidden></pre>
+</section>
+
+<section id="panel-doctor" class="panel" hidden>
+  <div class="summary">Inventory wired configs, HF cache drift, and endpoint health (read-only).</div>
+  <form id="doctor-form" class="toolbar">
+    <label>Wired roots <span class="hint">one directory per line; blank uses agent defaults</span>
+      <textarea id="doctor-wired" rows="3" spellcheck="false"></textarea>
+    </label>
+    <label>HF cache <span class="hint">optional override</span>
+      <input id="doctor-hf" type="text" spellcheck="false" placeholder="~/.cache/huggingface/hub">
+    </label>
+    <button type="submit" class="primary">Run doctor</button>
+  </form>
+  <pre id="doctor-out" class="output" hidden></pre>
+</section>
+
+<section id="panel-serve" class="panel" hidden>
+  <div class="summary">Preview and launch a loopback MLX server for a model already in cache.</div>
+  <form id="serve-form" class="toolbar">
+    <label>Repo
+      <input id="serve-repo" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
+    </label>
+    <label class="inline">Runtime
+      <select id="serve-runtime">
+        <option value="mlx_lm">mlx_lm</option>
+        <option value="mlx-vlm">mlx-vlm</option>
+      </select>
+    </label>
+    <label class="inline">Port
+      <input id="serve-port" type="number" min="1" max="65535" placeholder="default">
+    </label>
+    <button type="submit" class="primary">Preview</button>
+  </form>
+  <div id="serve-servers"></div>
+</section>
+
 <section id="panel-jobs" class="panel" hidden>
-  <div class="summary">Conversion receipts, cross-checked against live processes.</div>
+  <div class="summary">Conversion and serve receipts, cross-checked against live processes. Select a row to tail its log.</div>
   <table class="grid">
-    <thead><tr><th>State</th><th>Source</th><th>Output</th><th>Started</th><th>Log</th></tr></thead>
+    <thead><tr><th>Kind</th><th>State</th><th>Source</th><th>Output / port</th><th>Started</th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
+  <h3>Log</h3>
+  <pre id="job-log" class="output">Select a job with a log path.</pre>
+</section>
+
+<section id="panel-advanced" class="panel" hidden>
+  <div class="summary">Run any mlx-agent subcommand as argv tokens (never a shell string). Trailing --json is added for you.</div>
+  <form id="cli-form" class="toolbar">
+    <label>Argv <span class="hint">space-separated tokens, e.g. convert status</span>
+      <input id="cli-argv" type="text" spellcheck="false" placeholder="discover --role coding --fast">
+    </label>
+    <button type="submit" class="primary">Run</button>
+  </form>
+  <pre id="cli-out" class="output" hidden></pre>
 </section>
 
 <section id="panel-settings" class="panel" hidden>
+  <p id="agent-health" class="summary"></p>
   <form id="settings">
     <label>GGUF roots <span class="hint">one directory per line</span>
       <textarea id="gguf_roots" rows="4" spellcheck="false"></textarea>
@@ -60,7 +136,7 @@
     <label>Output directory <span class="hint">new conversions are written here</span>
       <input id="output_dir" type="text" spellcheck="false">
     </label>
-    <label>mlx-agent checkout <span class="hint">the repository that provides the conversion skill</span>
+    <label>mlx-agent checkout <span class="hint">defaults to vendor/mlx-agent submodule; override for local hacking</span>
       <input id="mlx_agent_path" type="text" spellcheck="false">
     </label>
     <label>Quarantine directory <span class="hint">redundant files are moved here, never deleted</span>
@@ -81,11 +157,11 @@
 
 <div id="dialog" class="dialog" hidden>
   <div class="dialog-card">
-    <h2>Review this conversion</h2>
+    <h2 id="dialog-title">Review this plan</h2>
     <dl id="plan"></dl>
-    <p class="warn">Runs detached. The intermediate checkpoint is full precision — free disk should be roughly twice the source model's fp16 size.</p>
+    <p id="dialog-warn" class="warn"></p>
     <div class="row">
-      <button id="confirm" class="primary">Start conversion</button>
+      <button id="confirm" class="primary">Confirm</button>
       <button id="cancel">Cancel</button>
     </div>
   </div>

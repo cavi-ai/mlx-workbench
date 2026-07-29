@@ -38,31 +38,35 @@ class Recorder:
         return {"returncode": self.returncode, "stdout": self.stdout, "stderr": self.stderr}
 
 
-class SkillLocationTests(unittest.TestCase):
+class CliLocationTests(unittest.TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
 
     def _checkout(self):
-        script = self.root / bridge.SKILL_RELATIVE
+        script = self.root / bridge.CLI_RELATIVE
         script.parent.mkdir(parents=True)
         script.write_text("", encoding="utf-8")
         return self.root
 
     def test_unconfigured_path(self):
         with self.assertRaises(bridge.BridgeError) as caught:
-            bridge.skill_script("")
+            bridge.cli_script("")
         self.assertEqual(caught.exception.code, "agent_not_configured")
 
     def test_missing_script(self):
         with self.assertRaises(bridge.BridgeError) as caught:
-            bridge.skill_script(str(self.root))
+            bridge.cli_script(str(self.root))
         self.assertEqual(caught.exception.code, "agent_not_found")
 
     def test_found_script(self):
         self._checkout()
-        self.assertTrue(str(bridge.skill_script(str(self.root))).endswith("mlx_converter.py"))
+        self.assertTrue(str(bridge.cli_script(str(self.root))).endswith("mlx-agent"))
+
+    def test_health_reports_missing_cli(self):
+        health = bridge.agent_health(str(self.root))
+        self.assertFalse(health["ok"])
 
 
 class RunTests(unittest.TestCase):
@@ -70,7 +74,7 @@ class RunTests(unittest.TestCase):
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        script = self.root / bridge.SKILL_RELATIVE
+        script = self.root / bridge.CLI_RELATIVE
         script.parent.mkdir(parents=True)
         script.write_text("", encoding="utf-8")
 
@@ -84,6 +88,8 @@ class RunTests(unittest.TestCase):
             runner=recorder,
         )
         command = recorder.commands[0]
+        self.assertEqual(command[1], str(self.root / bridge.CLI_RELATIVE))
+        self.assertIn("convert", command)
         self.assertIn("scan", command)
         self.assertEqual(command.count("--gguf-root"), 2)
         self.assertIn("--mlx-root", command)
@@ -95,6 +101,7 @@ class RunTests(unittest.TestCase):
         recorder = Recorder(stdout=envelope(data={"plan": {"preview_hash": "a" * 64}}))
         bridge.preview(str(self.root), "/models/a.gguf", 8, "/out", runner=recorder)
         command = recorder.commands[0]
+        self.assertEqual(command[2:4], ["convert", "start"])
         self.assertNotIn("--confirm", command)
         self.assertIn("8", command)
         self.assertIn("/out", command)
@@ -105,6 +112,21 @@ class RunTests(unittest.TestCase):
         command = recorder.commands[0]
         self.assertIn("--confirm", command)
         self.assertIn("b" * 64, command)
+
+    def test_discover_builds_argv(self):
+        recorder = Recorder(stdout=envelope(data={"roles": {}}))
+        bridge.discover(str(self.root), role="coding", limit=3, fast=True, runner=recorder)
+        command = recorder.commands[0]
+        self.assertIn("discover", command)
+        self.assertIn("--role", command)
+        self.assertIn("coding", command)
+        self.assertIn("--fast", command)
+        self.assertIn("3", command)
+
+    def test_run_cli_rejects_shell_strings(self):
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.run_cli(str(self.root), [])
+        self.assertEqual(caught.exception.code, "invalid_argv")
 
     def test_error_envelope_becomes_bridge_error(self):
         recorder = Recorder(stdout=envelope(
@@ -139,6 +161,38 @@ class RunTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError) as caught:
             bridge.scan(str(self.root), runner=recorder)
         self.assertEqual(caught.exception.code, "skill_output_too_large")
+
+    def test_read_log_requires_allowlisted_path(self):
+        log = self.root / "job.log"
+        log.write_text("hello\n", encoding="utf-8")
+        recorder = Recorder(stdout=envelope(data={"jobs": []}))
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.read_log(str(self.root), str(log), runner=recorder)
+        self.assertEqual(caught.exception.code, "log_forbidden")
+
+    def test_read_log_tails_allowlisted_file(self):
+        log = self.root / "job.log"
+        log.write_text("phase one\n", encoding="utf-8")
+        recorder = Recorder(stdout=envelope(data={
+            "jobs": [{"log_path": str(log)}],
+        }))
+        # serve_status also called; return empty servers
+        def dual(command, timeout):
+            recorder.commands.append(command)
+            if "serve" in command:
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(data={"servers": []}),
+                    "stderr": "",
+                }
+            return {
+                "returncode": 0,
+                "stdout": envelope(data={"jobs": [{"log_path": str(log)}]}),
+                "stderr": "",
+            }
+
+        result = bridge.read_log(str(self.root), str(log), runner=dual)
+        self.assertIn("phase one", result["text"])
 
 
 if __name__ == "__main__":

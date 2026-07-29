@@ -208,3 +208,31 @@ select { width: auto; }
 
 .warn { color: var(--warn); font-size: 0.85rem; }
 .empty { color: var(--muted); padding: 1rem 0; }
+
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  max-width: 48rem;
+}
+
+.toolbar .inline { display: inline-flex; align-items: center; gap: 0.5rem; }
+
+.output {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-height: 28rem;
+  overflow: auto;
+  padding: 0.85rem 1rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+.bar { flex-wrap: wrap; }
+.tabs { flex-wrap: wrap; }
