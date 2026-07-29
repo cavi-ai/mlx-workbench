@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import bridge, config as config_module, quarantine as quarantine_module
+from . import bridge, config as config_module, deps as deps_module, quarantine as quarantine_module
 
 
 STATIC_ROOT = Path(__file__).resolve().with_name("static")
@@ -138,8 +138,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             status, content_type, body = self._route(method, route)
         except bridge.BridgeError as error:
+            payload = error.to_dict()
+            if error.code == "runtime_not_installed":
+                hint = " Run `{0}` in the mlx-workbench checkout.".format(
+                    deps_module.INSTALL_HINT
+                )
+                remediation = payload.get("remediation") or ""
+                if deps_module.INSTALL_HINT not in remediation:
+                    payload["remediation"] = (remediation + hint).strip()
             status, content_type, body = _json_bytes(
-                {"status": "error", "error": error.to_dict()}, 502
+                {"status": "error", "error": payload}, 502
             )
         except quarantine_module.QuarantineError as error:
             status, content_type, body = _json_bytes(
@@ -178,6 +186,7 @@ class Handler(BaseHTTPRequestHandler):
                 "config_path": str(self.app.config_path or config_module.config_path()),
                 "agent": bridge.agent_health(agent),
                 "vendor_agent_path": config_module.vendor_agent_path(),
+                "runtime": deps_module.runtime_report(),
             })
         if method == "POST" and route == "/api/config":
             payload = self._body()
@@ -186,9 +195,13 @@ class Handler(BaseHTTPRequestHandler):
             return _ok({
                 "config": self.app.save_config(payload),
                 "agent": bridge.agent_health(self.app.config()["mlx_agent_path"]),
+                "runtime": deps_module.runtime_report(),
             })
         if method == "GET" and route == "/api/health":
-            return _ok({"agent": bridge.agent_health(agent)})
+            return _ok({
+                "agent": bridge.agent_health(agent),
+                "runtime": deps_module.runtime_report(),
+            })
         if method == "GET" and route == "/api/scan":
             return _ok(bridge.scan(
                 agent,
