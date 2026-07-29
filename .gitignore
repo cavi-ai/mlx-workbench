@@ -15,4 +15,6 @@ GEMINI.md
 .codebuddy/
 opencode.jsonc
 docs/superpowers/
+.run/
+.venv/
 .mcp.json

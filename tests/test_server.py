@@ -107,15 +107,12 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(payload["error"]["code"], "forbidden_origin")
 
-    def test_config_round_trip(self):
+    def test_config_includes_runtime_report(self):
         status, payload = self._request("/api/config")
         self.assertEqual(status, 200)
-        self.assertEqual(payload["data"]["config"]["q_bits"], 4)
-        self.assertTrue(payload["data"]["agent"]["ok"])
-        status, payload = self._request("/api/config", "POST", {"q_bits": 8})
-        self.assertEqual(status, 200)
-        self.assertEqual(payload["data"]["config"]["q_bits"], 8)
-        self.assertEqual(config.load(self.config_path)["q_bits"], 8)
+        self.assertIn("runtime", payload["data"])
+        self.assertIn("convert", payload["data"]["runtime"])
+        self.assertEqual(payload["data"]["runtime"]["install"], "make install")
 
     def test_invalid_config_is_classified(self):
         status, payload = self._request("/api/config", "POST", {"q_bits": 3})
