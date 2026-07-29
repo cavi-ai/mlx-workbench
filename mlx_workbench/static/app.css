@@ -236,3 +236,13 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--accent) 8%, transpa
 
 .bar { flex-wrap: wrap; }
 .tabs { flex-wrap: wrap; }
+
+.pill-complete { color: var(--accent); }
+.pill-incomplete { color: var(--danger); }
+.pill-hf_cache_incomplete,
+.pill-wired_missing,
+.pill-endpoint_unreachable { color: var(--warn); }
+
+#scout-results h3 { margin-top: 1.25rem; }
+#scout-results .grid { margin-bottom: 0.5rem; }
+

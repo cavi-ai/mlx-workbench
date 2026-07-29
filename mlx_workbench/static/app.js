@@ -7,6 +7,7 @@ const PANELS = [
 const state = {
   scan: null,
   config: null,
+  runtime: null,
   pending: null,
   pendingKind: null,
   selectedLog: null,
@@ -259,6 +260,7 @@ async function refreshLog() {
 
 async function openConvertPlan(path) {
   notify('');
+  if (warnConvertDeps()) return;
   try {
     const data = await api('/api/convert/preview', { body: { path: path, q_bits: quantBits() } });
     state.pending = data.plan;
@@ -360,36 +362,236 @@ async function refreshJobs() {
 }
 
 function renderServers(servers) {
-  const container = $('serve-servers');
-  if (!container) return;
-  container.textContent = '';
+  const body = $('serve-servers');
+  if (!body) return;
+  body.textContent = '';
   if (!servers.length) {
-    container.appendChild(element('div', 'empty', 'No serve receipts yet.'));
+    const empty = element('tr');
+    empty.appendChild(element('td', 'empty', 'No serve receipts yet.')).colSpan = 6;
+    body.appendChild(empty);
     return;
   }
   servers.forEach(function (server) {
-    const row = element('div', 'file-row');
-    row.appendChild(pill(server.state));
-    row.appendChild(element('span', 'path', (server.repo || '—') + ' · port ' + (server.port || '—')));
+    const row = element('tr');
+    row.appendChild(element('td')).appendChild(pill(server.state || 'unknown'));
+    row.appendChild(element('td', 'path', server.repo || '—'));
+    row.appendChild(element('td', 'mono', server.runtime || '—'));
+    row.appendChild(element('td', 'mono', server.port != null ? String(server.port) : '—'));
+    row.appendChild(element('td', 'hint', server.started_at || '—'));
+    const actions = element('td');
     if (server.state === 'running' && server.port != null) {
       const stop = element('button', null, 'Stop');
       stop.addEventListener('click', async function () {
+        stop.disabled = true;
         try {
           await api('/api/serve/stop', { body: { port: server.port } });
+          notify('');
           await refreshJobs();
         } catch (error) {
           notify(error.message);
+          stop.disabled = false;
         }
       });
-      row.appendChild(stop);
+      actions.appendChild(stop);
     }
-    container.appendChild(row);
+    row.appendChild(actions);
+    body.appendChild(row);
   });
+}
+
+function hostLine(host, fast) {
+  if (!host || typeof host !== 'object') return '';
+  const parts = [];
+  if (host.chip) parts.push(host.chip);
+  if (host.ram_gb != null) parts.push(host.ram_gb + 'GB RAM');
+  parts.push('Ollama ' + (host.ollama ? '✓' : '✗'));
+  parts.push('LM Studio ' + (host.lmstudio ? '✓' : '✗'));
+  if (fast) parts.push('fast mode');
+  return parts.join(' · ');
+}
+
+function yesNo(value) {
+  if (value === true) return 'yes';
+  if (value === false) return 'no';
+  return '—';
+}
+
+function renderScout(data) {
+  const hostNode = $('scout-host');
+  const results = $('scout-results');
+  results.textContent = '';
+  const host = data.host || {};
+  hostNode.hidden = false;
+  hostNode.textContent = hostLine(host, data.fast);
+
+  const roles = data.roles || {};
+  const roleNames = Object.keys(roles);
+  if (!roleNames.length) {
+    results.appendChild(element('div', 'empty', 'No candidates returned.'));
+    return;
+  }
+
+  roleNames.forEach(function (role) {
+    const models = roles[role] || [];
+    results.appendChild(element('h3', null, role + ' (' + models.length + ')'));
+    const table = element('table', 'grid');
+    const head = element('thead');
+    const headRow = element('tr');
+    ['Model', 'RAM', 'Fits', 'Reasoning', 'License', '↓', ''].forEach(function (label) {
+      headRow.appendChild(element('th', label === '↓' ? 'num' : null, label));
+    });
+    head.appendChild(headRow);
+    table.appendChild(head);
+    const body = element('tbody');
+    if (!models.length) {
+      const empty = element('tr');
+      empty.appendChild(element('td', 'empty', 'Nothing in this role.')).colSpan = 7;
+      body.appendChild(empty);
+    } else {
+      models.forEach(function (model) {
+        const row = element('tr');
+        const name = element('td');
+        const title = element('div', null, model.repo || '—');
+        if (model.trusted) title.appendChild(document.createTextNode(' ★'));
+        name.appendChild(title);
+        if (model.base) name.appendChild(element('span', 'hint', model.base));
+        row.appendChild(name);
+
+        const ram = model.est_ram_gb != null ? model.est_ram_gb + 'GB' : '—';
+        const ramCell = element('td', 'mono', ram);
+        if (model.ram_src) ramCell.title = model.ram_src;
+        row.appendChild(ramCell);
+        row.appendChild(element('td', 'mono', yesNo(model.fits)));
+
+        let reasoning = yesNo(model.reasoning);
+        if (model.reasoning && model.reason_src) reasoning = '⚠ ' + model.reason_src;
+        row.appendChild(element('td', 'mono', reasoning));
+
+        let license = model.license || '—';
+        if (model.gated) license += ' 🔒';
+        row.appendChild(element('td', 'mono', license));
+        row.appendChild(element('td', 'num', model.downloads != null ? String(model.downloads) : '—'));
+
+        const actions = element('td');
+        const serve = element('button', null, 'Serve');
+        serve.addEventListener('click', function () {
+          useRepoForServe(model.repo, model.role === 'vision' ? 'mlx-vlm' : 'mlx_lm');
+        });
+        actions.appendChild(serve);
+        row.appendChild(actions);
+        body.appendChild(row);
+      });
+    }
+    table.appendChild(body);
+    results.appendChild(table);
+  });
+}
+
+function useRepoForServe(repo, runtime) {
+  if (!repo) return;
+  $('serve-repo').value = repo;
+  if (runtime) $('serve-runtime').value = runtime;
+  selectPanel('serve');
+  notify('Repo loaded into Serve. Preview to confirm launch.');
+}
+
+function setSection(headingId, tableId, visible) {
+  const heading = $(headingId);
+  const table = $(tableId);
+  if (heading) heading.hidden = !visible;
+  if (table) table.hidden = !visible;
+}
+
+function renderDoctor(data) {
+  const summary = data.summary || {};
+  const summaryNode = $('doctor-summary');
+  summaryNode.hidden = false;
+  summaryNode.textContent =
+    (summary.models != null ? summary.models + ' models' : '—') +
+    ' · ' + bytes(summary.hf_cache_bytes || 0) + ' in HF cache' +
+    ' · ' + (summary.wired_configs != null ? summary.wired_configs : 0) + ' wired' +
+    ' · ' + (summary.findings != null ? summary.findings : (data.findings || []).length) + ' findings';
+
+  const findings = data.findings || [];
+  setSection('doctor-findings-heading', 'doctor-findings-table', true);
+  const findingsBody = $('doctor-findings');
+  findingsBody.textContent = '';
+  if (!findings.length) {
+    const empty = element('tr');
+    empty.appendChild(element('td', 'empty', 'No findings.')).colSpan = 3;
+    findingsBody.appendChild(empty);
+  } else {
+    findings.forEach(function (item) {
+      const row = element('tr');
+      row.appendChild(element('td')).appendChild(pill(item.code || 'finding'));
+      const model = element('td', 'path', item.model || '—');
+      if (item.path) model.title = item.path;
+      row.appendChild(model);
+      row.appendChild(element('td', null, item.remediation || '—'));
+      findingsBody.appendChild(row);
+    });
+  }
+
+  const inventory = data.inventory || [];
+  setSection('doctor-inventory-heading', 'doctor-inventory-table', true);
+  const inventoryBody = $('doctor-inventory');
+  inventoryBody.textContent = '';
+  if (!inventory.length) {
+    const empty = element('tr');
+    empty.appendChild(element('td', 'empty', 'Cache is empty or unscanned.')).colSpan = 4;
+    inventoryBody.appendChild(empty);
+  } else {
+    inventory.forEach(function (item) {
+      const row = element('tr');
+      row.appendChild(element('td', 'path', item.id || '—'));
+      row.appendChild(element('td', 'mono', item.source || '—'));
+      row.appendChild(element('td', 'num', bytes(item.bytes || 0)));
+      row.appendChild(element('td')).appendChild(pill(item.complete ? 'complete' : 'incomplete'));
+      inventoryBody.appendChild(row);
+    });
+  }
+
+  const wired = data.wired || [];
+  const wiredHeading = $('doctor-wired-heading');
+  const wiredList = $('doctor-wired-list');
+  wiredList.textContent = '';
+  if (!wired.length) {
+    wiredHeading.hidden = true;
+  } else {
+    wiredHeading.hidden = false;
+    wired.forEach(function (item) {
+      const row = element('div', 'file-row');
+      row.appendChild(element('span', 'path', typeof item === 'string' ? item : (item.path || JSON.stringify(item))));
+      wiredList.appendChild(row);
+    });
+  }
+
+  const endpoints = data.endpoints || [];
+  const endpointsHeading = $('doctor-endpoints-heading');
+  const endpointsNode = $('doctor-endpoints');
+  endpointsNode.textContent = '';
+  if (!endpoints.length) {
+    endpointsHeading.hidden = true;
+  } else {
+    endpointsHeading.hidden = false;
+    endpoints.forEach(function (item) {
+      const row = element('div', 'file-row');
+      const label = typeof item === 'string' ? item :
+        [(item.url || item.endpoint || ''), item.status || item.state || ''].filter(Boolean).join(' · ');
+      row.appendChild(element('span', 'path', label || JSON.stringify(item)));
+      endpointsNode.appendChild(row);
+    });
+  }
 }
 
 async function runScout(event) {
   event.preventDefault();
   notify('');
+  const button = event.target.querySelector('[type="submit"]') || event.submitter;
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Scouting…';
+  }
   try {
     const data = await api('/api/scout', {
       body: {
@@ -399,15 +601,25 @@ async function runScout(event) {
         new: $('scout-new').checked,
       },
     });
-    showJson($('scout-out'), data);
+    renderScout(data);
   } catch (error) {
     notify(error.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Scout';
+    }
   }
 }
 
 async function runDoctor(event) {
   event.preventDefault();
   notify('');
+  const button = event.target.querySelector('[type="submit"]') || event.submitter;
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Running…';
+  }
   try {
     const data = await api('/api/doctor', {
       body: {
@@ -415,9 +627,14 @@ async function runDoctor(event) {
         hf_cache: $('doctor-hf').value.trim() || null,
       },
     });
-    showJson($('doctor-out'), data);
+    renderDoctor(data);
   } catch (error) {
     notify(error.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Run doctor';
+    }
   }
 }
 
@@ -428,6 +645,15 @@ async function previewServe(event) {
   const runtime = $('serve-runtime').value;
   const portValue = $('serve-port').value.trim();
   const port = portValue ? Number(portValue) : null;
+  if (!repo) {
+    notify('Enter a repo id that is already in the Hugging Face cache.');
+    return;
+  }
+  const serve = state.runtime && state.runtime.serve;
+  if (serve && !serve.ok) {
+    notify(serve.message);
+    return;
+  }
   try {
     const data = await api('/api/serve/preview', {
       body: { repo: repo, runtime: runtime, port: port },
@@ -439,6 +665,8 @@ async function previewServe(event) {
       ['Repo', plan.repo || repo],
       ['Runtime', plan.runtime || runtime],
       ['Port', String(plan.port || port || 'default')],
+      ['Bind', plan.bind || '127.0.0.1'],
+      ['Readiness', plan.readiness || '—'],
       ['Command', (plan.argv || []).join(' ')],
       ['Preview hash', plan.preview_hash],
     ], 'Loopback only. The model must already be in the Hugging Face cache; serve never downloads.');
@@ -466,6 +694,7 @@ async function runCli(event) {
 function fillSettings(data) {
   const config = data.config;
   state.config = config;
+  state.runtime = data.runtime || null;
   $('gguf_roots').value = (config.gguf_roots || []).join('\n');
   $('mlx_roots').value = (config.mlx_roots || []).join('\n');
   $('output_dir').value = config.output_dir || '';
@@ -479,6 +708,27 @@ function fillSettings(data) {
     ? 'Agent ready: ' + health.path
     : (health.message || 'Agent not configured.') +
       (data.vendor_agent_path ? ' Vendor path: ' + data.vendor_agent_path : '');
+  const runtime = data.runtime || {};
+  const convert = runtime.convert || {};
+  const serve = runtime.serve || {};
+  const runtimeNode = $('runtime-health');
+  if (convert.ok && serve.ok) {
+    runtimeNode.textContent = 'Convert + Serve runtimes ready in this interpreter.';
+  } else {
+    runtimeNode.textContent =
+      (convert.message || '') +
+      (serve.ok ? '' : ' ' + (serve.message || '')) +
+      ' Optional — scan/Scout/Doctor work without them.';
+  }
+}
+
+function warnConvertDeps() {
+  const convert = state.runtime && state.runtime.convert;
+  if (convert && !convert.ok) {
+    notify(convert.message);
+    return true;
+  }
+  return false;
 }
 
 function lines(value) {
@@ -504,6 +754,7 @@ async function saveSettings(event) {
       config: data.config,
       config_path: $('config-path').textContent,
       agent: data.agent,
+      runtime: data.runtime,
       vendor_agent_path: state.config && state.config.mlx_agent_path,
     });
     notify('');
@@ -542,6 +793,7 @@ function init() {
   $('scout-form').addEventListener('submit', runScout);
   $('doctor-form').addEventListener('submit', runDoctor);
   $('serve-form').addEventListener('submit', previewServe);
+  $('serve-refresh').addEventListener('click', refreshJobs);
   $('cli-form').addEventListener('submit', runCli);
   $('confirm').addEventListener('click', confirmPlan);
   $('cancel').addEventListener('click', closeDialog);
@@ -553,6 +805,10 @@ function init() {
         'No mlx-agent checkout configured. Init the vendor submodule or set it under Settings.');
       selectPanel('settings');
       return;
+    }
+    if (data.runtime && data.runtime.convert && !data.runtime.convert.ok) {
+      // Soft hint once; scan still works.
+      console.info(data.runtime.convert.message);
     }
     return rescan();
   }).catch(function (error) { notify(error.message); });
