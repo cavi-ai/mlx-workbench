@@ -2,7 +2,8 @@
 
 const TOKEN = document.querySelector('meta[name="mlx-token"]').content;
 const PANELS = [
-  'models', 'duplicates', 'scout', 'doctor', 'serve', 'jobs', 'advanced', 'settings',
+  'models', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'train',
+  'jobs', 'advanced', 'settings',
 ];
 const state = {
   scan: null,
@@ -210,7 +211,9 @@ function renderJobs(data) {
   body.textContent = '';
   const jobs = data.jobs || [];
   const servers = data.servers || [];
-  if (!jobs.length && !servers.length) {
+  const lora = data.lora || [];
+  const fuse = data.fuse || [];
+  if (!jobs.length && !servers.length && !lora.length && !fuse.length) {
     const empty = element('tr');
     empty.appendChild(element('td', 'empty', 'No receipts yet.')).colSpan = 5;
     body.appendChild(empty);
@@ -223,6 +226,12 @@ function renderJobs(data) {
     const target = job.port != null ? 'port ' + job.port : (job.out || '—');
     const logPath = job.log_path || (job.receipt && job.receipt.log_path) || '';
     body.appendChild(jobRow('serve', job.state, job.repo || '—', target, job.started_at, logPath));
+  });
+  lora.forEach(function (job) {
+    body.appendChild(jobRow('lora', job.state, job.repo || '—', job.out || '—', job.started_at, job.log_path));
+  });
+  fuse.forEach(function (job) {
+    body.appendChild(jobRow('fuse', job.state, job.repo || '—', job.out || '—', job.started_at, job.log_path));
   });
 }
 
@@ -316,10 +325,53 @@ async function confirmPlan() {
           preview_hash: state.pending.preview_hash,
         },
       });
+    } else if (state.pendingKind === 'prune') {
+      await api('/api/doctor/prune/confirm', {
+        body: {
+          preview_hash: state.pending.preview_hash,
+          hf_cache: $('doctor-hf').value.trim() || null,
+        },
+      });
+    } else if (state.pendingKind === 'wire') {
+      await api('/api/wire/apply', {
+        body: {
+          model: state.pending.model,
+          path: state.pending.path,
+          target: state.pending.target,
+          preview_hash: state.pending.preview_hash,
+        },
+      });
+    } else if (state.pendingKind === 'lora') {
+      await api('/api/lora/start', {
+        body: {
+          repo: state.pending.repo,
+          data: state.pending.data,
+          iters: state.pending.iters,
+          out: state.pending.out,
+          preview_hash: state.pending.preview_hash,
+        },
+      });
+    } else if (state.pendingKind === 'fuse') {
+      await api('/api/fuse/start', {
+        body: {
+          repo: state.pending.repo,
+          adapter: state.pending.adapter,
+          out: state.pending.out,
+          preview_hash: state.pending.preview_hash,
+        },
+      });
     }
+    const kind = state.pendingKind;
     closeDialog();
-    selectPanel('jobs');
-    await refreshJobs();
+    if (kind === 'prune') {
+      selectPanel('doctor');
+      await runDoctor({ preventDefault: function () {}, target: $('doctor-form') });
+    } else if (kind === 'wire' || kind === 'adopt') {
+      notify('Done.');
+    } else {
+      selectPanel('jobs');
+      await refreshJobs();
+    }
   } catch (error) {
     notify(error.message);
   } finally {
@@ -477,7 +529,14 @@ function renderScout(data) {
         serve.addEventListener('click', function () {
           useRepoForServe(model.repo, model.role === 'vision' ? 'mlx-vlm' : 'mlx_lm');
         });
+        const wire = element('button', null, 'Wire');
+        wire.addEventListener('click', function () {
+          $('wire-model').value = model.repo || '';
+          selectPanel('wire');
+          notify('Repo loaded into Wire.');
+        });
         actions.appendChild(serve);
+        actions.appendChild(wire);
         row.appendChild(actions);
         body.appendChild(row);
       });
@@ -638,6 +697,165 @@ async function runDoctor(event) {
   }
 }
 
+async function previewPrune() {
+  notify('');
+  try {
+    const data = await api('/api/doctor/prune/preview', {
+      body: { hf_cache: $('doctor-hf').value.trim() || null },
+    });
+    const plan = data.plan || data;
+    const candidates = plan.candidates || [];
+    if (!candidates.length) {
+      notify('Nothing to prune: no incomplete cache snapshots.');
+      return;
+    }
+    state.pending = plan;
+    state.pendingKind = 'prune';
+    const list = candidates.map(function (item) {
+      return (item.repo || item.path) + ' (' + bytes(item.bytes || 0) + ')';
+    }).join('\n');
+    fillPlanDialog('Review incomplete cache prune', [
+      ['Candidates', String(candidates.length)],
+      ['Paths', list],
+      ['Preview hash', plan.preview_hash],
+    ], 'IRREVERSIBLE. Deletes incomplete HF cache directories only. Quarantine is unrelated.');
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function runAdopt(event) {
+  event.preventDefault();
+  notify('');
+  try {
+    const data = await api('/api/adopt/start', {
+      body: {
+        role: $('adopt-role').value || null,
+        state: $('adopt-state').value.trim() || null,
+        fast: $('adopt-fast').checked,
+        offline: $('adopt-offline').checked,
+      },
+    });
+    showJson($('adopt-out'), data);
+    const pick = data.recommendation && data.recommendation.repo;
+    if (pick) {
+      $('wire-model').value = pick;
+      notify('Adopt finished. Recommendation loaded into Wire: ' + pick);
+    }
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function previewWire(event) {
+  event.preventDefault();
+  notify('');
+  const model = $('wire-model').value.trim();
+  const path = $('wire-path').value.trim();
+  const target = $('wire-target').value;
+  if (!model || !path) {
+    notify('Model and config path are required.');
+    return;
+  }
+  try {
+    const data = await api('/api/wire/preview', {
+      body: { model: model, path: path, target: target },
+    });
+    const plan = data.plan || data.preview || data;
+    state.pending = {
+      model: model,
+      path: path,
+      target: target,
+      preview_hash: plan.preview_hash || (plan.preview && plan.preview.preview_hash),
+      raw: plan,
+    };
+    state.pendingKind = 'wire';
+    fillPlanDialog('Review wire apply', [
+      ['Model', model],
+      ['Target', target],
+      ['Path', path],
+      ['Preview hash', state.pending.preview_hash || '—'],
+    ], 'Applies a confirmation-gated config transaction. Receipt-owned files only.');
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function previewLora(event) {
+  event.preventDefault();
+  notify('');
+  const repo = $('lora-repo').value.trim();
+  const dataDir = $('lora-data').value.trim();
+  const itersValue = $('lora-iters').value.trim();
+  const out = $('lora-out').value.trim();
+  if (!repo || !dataDir) {
+    notify('Base repo and dataset dir are required.');
+    return;
+  }
+  try {
+    const data = await api('/api/lora/preview', {
+      body: {
+        repo: repo,
+        data: dataDir,
+        iters: itersValue ? Number(itersValue) : null,
+        out: out || null,
+      },
+    });
+    const plan = data.plan || data;
+    state.pending = {
+      repo: repo,
+      data: dataDir,
+      iters: itersValue ? Number(itersValue) : null,
+      out: out || null,
+      preview_hash: plan.preview_hash,
+    };
+    state.pendingKind = 'lora';
+    fillPlanDialog('Review LoRA training', [
+      ['Repo', plan.repo || repo],
+      ['Data', dataDir],
+      ['Out', plan.out || out || 'default'],
+      ['Command', (plan.argv || []).join(' ')],
+      ['Preview hash', plan.preview_hash],
+    ], 'Runs detached. Base model must already be in the HF cache; never downloads.');
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function previewFuse(event) {
+  event.preventDefault();
+  notify('');
+  const repo = $('fuse-repo').value.trim();
+  const adapter = $('fuse-adapter').value.trim();
+  const out = $('fuse-out').value.trim();
+  if (!repo || !adapter) {
+    notify('Base repo and adapter dir are required.');
+    return;
+  }
+  try {
+    const data = await api('/api/fuse/preview', {
+      body: { repo: repo, adapter: adapter, out: out || null },
+    });
+    const plan = data.plan || data;
+    state.pending = {
+      repo: repo,
+      adapter: adapter,
+      out: out || null,
+      preview_hash: plan.preview_hash,
+    };
+    state.pendingKind = 'fuse';
+    fillPlanDialog('Review fuse', [
+      ['Repo', plan.repo || repo],
+      ['Adapter', adapter],
+      ['Out', plan.out || out || 'default'],
+      ['Command', (plan.argv || []).join(' ')],
+      ['Preview hash', plan.preview_hash],
+    ], 'Produces a standalone fused model. Never overwrites an existing out path.');
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
 async function previewServe(event) {
   event.preventDefault();
   notify('');
@@ -792,6 +1010,11 @@ function init() {
   $('settings').addEventListener('submit', saveSettings);
   $('scout-form').addEventListener('submit', runScout);
   $('doctor-form').addEventListener('submit', runDoctor);
+  $('doctor-prune').addEventListener('click', previewPrune);
+  $('adopt-form').addEventListener('submit', runAdopt);
+  $('wire-form').addEventListener('submit', previewWire);
+  $('lora-form').addEventListener('submit', previewLora);
+  $('fuse-form').addEventListener('submit', previewFuse);
   $('serve-form').addEventListener('submit', previewServe);
   $('serve-refresh').addEventListener('click', refreshJobs);
   $('cli-form').addEventListener('submit', runCli);

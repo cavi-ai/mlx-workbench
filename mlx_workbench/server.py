@@ -211,16 +211,7 @@ class Handler(BaseHTTPRequestHandler):
                 runner=runner,
             ))
         if method == "GET" and route == "/api/jobs":
-            convert = bridge.jobs(agent, runner=runner)
-            serve = {"servers": []}
-            try:
-                serve = bridge.serve_status(agent, runner=runner)
-            except bridge.BridgeError:
-                pass
-            return _ok({
-                "jobs": convert.get("jobs") or [],
-                "servers": serve.get("servers") or [],
-            })
+            return _ok(bridge.all_job_lists(agent, runner=runner))
         if method == "GET" and route == "/api/jobs/log":
             params = parse_qs(urlparse(self.path).query)
             values = params.get("path") or []
@@ -276,6 +267,132 @@ class Handler(BaseHTTPRequestHandler):
                 return _error("invalid_body", "hf_cache must be a string.", "Retry from the UI.")
             return _ok(bridge.doctor_models(
                 agent, wired_roots=wired, hf_cache=hf_cache or None, runner=runner,
+            ))
+        if method == "POST" and route in ("/api/doctor/prune/preview", "/api/doctor/prune/confirm"):
+            payload = self._body() or {}
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            hf_cache = payload.get("hf_cache")
+            if hf_cache is not None and not isinstance(hf_cache, str):
+                return _error("invalid_body", "hf_cache must be a string.", "Retry from the UI.")
+            if route.endswith("preview"):
+                return _ok(bridge.doctor_prune_preview(
+                    agent, hf_cache=hf_cache or None, runner=runner,
+                ))
+            preview_hash = payload.get("preview_hash")
+            if not isinstance(preview_hash, str) or not preview_hash:
+                return _error(
+                    "preview_required",
+                    "Prune needs the hash from its preview.",
+                    "Preview incomplete snapshots first, then confirm.",
+                )
+            return _ok(bridge.doctor_prune_confirm(
+                agent, preview_hash, hf_cache=hf_cache or None, runner=runner,
+            ))
+        if method == "POST" and route == "/api/adopt/start":
+            payload = self._body() or {}
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            role = payload.get("role")
+            state = payload.get("state")
+            if role is not None and not isinstance(role, str):
+                return _error("invalid_body", "role must be a string.", "Pick a role.")
+            if state is not None and not isinstance(state, str):
+                return _error("invalid_body", "state must be a path string.", "Retry.")
+            return _ok(bridge.adopt_start(
+                agent,
+                role=role or None,
+                state=state or None,
+                fast=bool(payload.get("fast")),
+                offline=bool(payload.get("offline")),
+                runner=runner,
+            ))
+        if method == "POST" and route == "/api/adopt/status":
+            payload = self._body() or {}
+            if not isinstance(payload, dict) or not isinstance(payload.get("state"), str):
+                return _error("invalid_body", "state path is required.", "Retry from the UI.")
+            return _ok(bridge.adopt_status(agent, payload["state"], runner=runner))
+        if method == "POST" and route in ("/api/wire/preview", "/api/wire/apply"):
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            model = payload.get("model")
+            path = payload.get("path")
+            target = payload.get("target") or "mlx_lm"
+            if not isinstance(model, str) or not model.strip():
+                return _error("invalid_body", "model is required.", "Enter a repo id.")
+            if not isinstance(path, str) or not path.strip():
+                return _error("invalid_body", "path is required.", "Enter a config file path.")
+            if target not in ("ollama", "lmstudio", "mlx_lm", "mlx-vlm", "litellm"):
+                return _error("invalid_body", "unsupported wire target.", "Pick a target.")
+            if route.endswith("preview"):
+                return _ok(bridge.wire_preview(agent, model, path, target, runner=runner))
+            preview_hash = payload.get("preview_hash")
+            if not isinstance(preview_hash, str) or not preview_hash:
+                return _error(
+                    "preview_required",
+                    "Wire apply needs the hash from its preview.",
+                    "Preview first, then confirm.",
+                )
+            return _ok(bridge.wire_apply(
+                agent, model, path, preview_hash, target, runner=runner,
+            ))
+        if method == "POST" and route in ("/api/lora/preview", "/api/lora/start"):
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            repo = payload.get("repo")
+            data = payload.get("data")
+            if not isinstance(repo, str) or not repo.strip():
+                return _error("invalid_body", "repo is required.", "Enter a cached base model.")
+            if not isinstance(data, str) or not data.strip():
+                return _error("invalid_body", "data path is required.", "Point at a dataset dir.")
+            iters = payload.get("iters")
+            if iters is not None and (not isinstance(iters, int) or isinstance(iters, bool) or iters < 1):
+                return _error("invalid_body", "iters must be a positive integer.", "Retry.")
+            out = payload.get("out")
+            if out is not None and not isinstance(out, str):
+                return _error("invalid_body", "out must be a string.", "Retry.")
+            if route.endswith("preview"):
+                return _ok(bridge.lora_preview(
+                    agent, repo, data, iters=iters, out=out or None, runner=runner,
+                ))
+            preview_hash = payload.get("preview_hash")
+            if not isinstance(preview_hash, str) or not preview_hash:
+                return _error(
+                    "preview_required",
+                    "LoRA needs the hash from its preview.",
+                    "Preview first, then confirm.",
+                )
+            return _ok(bridge.lora_start(
+                agent, repo, data, preview_hash, iters=iters, out=out or None, runner=runner,
+            ))
+        if method == "POST" and route in ("/api/fuse/preview", "/api/fuse/start"):
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            repo = payload.get("repo")
+            adapter = payload.get("adapter")
+            if not isinstance(repo, str) or not repo.strip():
+                return _error("invalid_body", "repo is required.", "Enter a cached base model.")
+            if not isinstance(adapter, str) or not adapter.strip():
+                return _error("invalid_body", "adapter path is required.", "Point at a LoRA adapter.")
+            out = payload.get("out")
+            if out is not None and not isinstance(out, str):
+                return _error("invalid_body", "out must be a string.", "Retry.")
+            if route.endswith("preview"):
+                return _ok(bridge.fuse_preview(
+                    agent, repo, adapter, out=out or None, runner=runner,
+                ))
+            preview_hash = payload.get("preview_hash")
+            if not isinstance(preview_hash, str) or not preview_hash:
+                return _error(
+                    "preview_required",
+                    "Fuse needs the hash from its preview.",
+                    "Preview first, then confirm.",
+                )
+            return _ok(bridge.fuse_start(
+                agent, repo, adapter, preview_hash, out=out or None, runner=runner,
             ))
         if method == "POST" and route in ("/api/serve/preview", "/api/serve/start"):
             payload = self._body()
