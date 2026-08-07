@@ -57,8 +57,11 @@ class ObservedStore:
 
 
 class FailingSaveStore:
+    def __init__(self, items=None):
+        self.items = [dict(item) for item in (items or [])]
+
     def load(self):
-        return []
+        return [dict(item) for item in self.items]
 
     def save(self, items):
         raise convert_queue.QueuePersistenceError(
@@ -315,6 +318,18 @@ class ServerTests(unittest.TestCase):
             page = response.read().decode("utf-8")
         self.assertIn(self.token, page)
         self.assertNotIn("__MLX_TOKEN__", page)
+
+    def test_static_queue_controls_cover_failed_and_pending_states(self):
+        script = (
+            Path(server.__file__).parent / "static" / "app.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("/api/convert/queue/retry", script)
+        self.assertIn("/api/convert/queue/move", script)
+        self.assertIn("item.failure", script)
+        self.assertIn("pendingCount", script)
+        self.assertIn("failedCount", script)
+        self.assertNotIn("(data.convert_queue || []).length > 0", script)
 
     def test_api_requires_the_token(self):
         status, payload = self._request("/api/config", token="")
@@ -729,6 +744,109 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["data"]["cleared"], 1)
         self.assertEqual(payload["data"]["queue"], [])
+
+    def test_queue_retry_and_move_wake_worker(self):
+        queue = self.httpd.app.convert_queue
+        failed = queue.enqueue(
+            "repo", "f" * 64, 4, repo="org/failed", label="org/failed",
+        )
+        second = queue.enqueue(
+            "repo", "g" * 64, 4, repo="org/second", label="org/second",
+        )
+        third = queue.enqueue(
+            "repo", "h" * 64, 4, repo="org/third", label="org/third",
+        )
+        items = queue.snapshot()
+        items[0] = dict(items[0], state="failed", failure={
+            "code": "skill_failed",
+            "message": "convert rejected",
+            "remediation": "Inspect the model and retry.",
+        })
+        queue.store.save(items)
+        queue = convert_queue.ConvertQueue(store=queue.store)
+        self.httpd.app.convert_queue = queue
+        self.httpd.app.worker.queue = queue
+        wakes = []
+        self.httpd.app.worker.wake = lambda: wakes.append(True)
+
+        status, payload = self._request(
+            "/api/convert/queue/retry", "POST", {"id": failed["id"]},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["retried"]["id"], failed["id"])
+        self.assertEqual(
+            [item["id"] for item in payload["data"]["queue"]],
+            [second["id"], third["id"], failed["id"]],
+        )
+
+        status, payload = self._request(
+            "/api/convert/queue/move",
+            "POST",
+            {"id": third["id"], "direction": "up"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["data"]["moved"])
+        self.assertEqual(
+            [item["id"] for item in payload["data"]["queue"]],
+            [third["id"], second["id"], failed["id"]],
+        )
+        self.assertEqual(wakes, [True, True])
+
+    def test_queue_operations_validate_body_and_state(self):
+        queued = self.httpd.app.convert_queue.enqueue(
+            "repo", "f" * 64, 4, repo="org/model", label="org/model",
+        )
+
+        status, payload = self._request(
+            "/api/convert/queue/retry", "POST", {},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_body")
+
+        status, payload = self._request(
+            "/api/convert/queue/move",
+            "POST",
+            {"id": queued["id"], "direction": "left"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_body")
+
+        status, payload = self._request(
+            "/api/convert/queue/retry", "POST", {"id": queued["id"]},
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(payload["error"]["code"], "invalid_queue_state")
+
+    def test_queue_retry_persistence_failure_is_a_structured_500(self):
+        failed = {
+            "id": "cq-1",
+            "kind": "repo",
+            "preview_hash": "f" * 64,
+            "q_bits": 4,
+            "out": None,
+            "path": None,
+            "repo": "org/model",
+            "hf_cache": None,
+            "label": "org/model",
+            "state": "failed",
+            "failure": {
+                "code": "skill_failed",
+                "message": "convert rejected",
+                "remediation": "Inspect the model and retry.",
+            },
+        }
+        queue = convert_queue.ConvertQueue(store=FailingSaveStore([failed]))
+        self.httpd.app.convert_queue = queue
+        self.httpd.app.worker.queue = queue
+
+        status, payload = self._request(
+            "/api/convert/queue/retry", "POST", {"id": failed["id"]},
+        )
+
+        self.assertEqual(status, 500)
+        self.assertEqual(payload["error"]["code"], "queue_write_failed")
 
     def test_cli_runs_argv(self):
         self.responses["stdout"] = envelope(data={"ok": True}, operation="discover")

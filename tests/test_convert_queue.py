@@ -71,6 +71,29 @@ class RacingRunner:
         raise AssertionError("unexpected command: {0}".format(command))
 
 
+class BlockingStatusRunner:
+    def __init__(self):
+        self.status_entered = threading.Event()
+        self.release_status = threading.Event()
+
+    def __call__(self, command, timeout):
+        if "convert" in command and "status" in command:
+            self.status_entered.set()
+            self.release_status.wait(1.0)
+            return {
+                "returncode": 0,
+                "stdout": envelope(data={"jobs": []}),
+                "stderr": "",
+            }
+        if "--confirm" in command:
+            return {
+                "returncode": 0,
+                "stdout": envelope(data={"status": "started", "receipt": {"pid": 9}}),
+                "stderr": "",
+            }
+        raise AssertionError("unexpected command: {0}".format(command))
+
+
 class FailingStore:
     def __init__(self, items):
         self.items = [dict(item) for item in items]
@@ -137,11 +160,110 @@ class ConvertQueueTests(unittest.TestCase):
             "hf_cache": "/hf",
             "label": "org/model",
             "state": "queued",
+            "failure": None,
         }]
         store.save(items)
         self.assertEqual(store.load(), items)
         payload = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["schema_version"], "1.0")
+        self.assertEqual(payload["schema_version"], "1.1")
+
+    def test_store_migrates_schema_1_0_items_in_memory(self):
+        path = self.root / "legacy" / "convert-queue.json"
+        path.parent.mkdir(parents=True)
+        legacy_item = {
+            "id": "cq-7",
+            "kind": "repo",
+            "preview_hash": "a" * 64,
+            "q_bits": 4,
+            "out": "/out",
+            "path": None,
+            "repo": "org/model",
+            "hf_cache": "/hf",
+            "label": "org/model",
+            "state": "queued",
+        }
+        path.write_text(json.dumps({
+            "schema_version": "1.0",
+            "items": [legacy_item],
+        }), encoding="utf-8")
+
+        loaded = convert_queue.QueueStore(path).load()
+
+        self.assertEqual(loaded, [dict(legacy_item, failure=None)])
+        self.assertEqual(
+            json.loads(path.read_text(encoding="utf-8"))["schema_version"],
+            "1.0",
+        )
+
+    def test_store_round_trips_failed_schema_1_1_item(self):
+        path = self.root / "failed" / "convert-queue.json"
+        item = {
+            "id": "cq-2",
+            "kind": "gguf",
+            "preview_hash": "a" * 64,
+            "q_bits": 4,
+            "out": "/out",
+            "path": "/model.gguf",
+            "repo": None,
+            "hf_cache": None,
+            "label": "model.gguf",
+            "state": "failed",
+            "failure": {
+                "code": "skill_failed",
+                "message": "convert rejected",
+                "remediation": "Inspect the model and retry.",
+            },
+        }
+        store = convert_queue.QueueStore(path)
+
+        store.save([item])
+
+        self.assertEqual(store.load(), [item])
+
+    def test_store_rejects_invalid_state_failure_combinations(self):
+        base = {
+            "id": "cq-1",
+            "kind": "gguf",
+            "preview_hash": "a" * 64,
+            "q_bits": 4,
+            "out": "/out",
+            "path": "/model.gguf",
+            "repo": None,
+            "hf_cache": None,
+            "label": "model.gguf",
+            "state": "queued",
+            "failure": None,
+        }
+        error = {
+            "code": "skill_failed",
+            "message": "convert rejected",
+            "remediation": "Inspect the model and retry.",
+        }
+        cases = {
+            "failed_without_error": dict(base, state="failed"),
+            "queued_with_error": dict(base, failure=error),
+            "starting_with_error": dict(base, state="starting", failure=error),
+            "failed_with_extra_error_field": dict(
+                base,
+                state="failed",
+                failure=dict(error, detail="private"),
+            ),
+            "failed_with_empty_error_value": dict(
+                base,
+                state="failed",
+                failure=dict(error, code=""),
+            ),
+        }
+        for name, item in cases.items():
+            with self.subTest(name=name):
+                path = self.root / name / "convert-queue.json"
+                path.parent.mkdir(parents=True)
+                path.write_text(json.dumps({
+                    "schema_version": "1.1",
+                    "items": [item],
+                }), encoding="utf-8")
+                with self.assertRaises(convert_queue.QueuePersistenceError):
+                    convert_queue.QueueStore(path).load()
 
     def test_store_rejects_unknown_schema_and_invalid_items(self):
         valid_item = {
@@ -200,6 +322,7 @@ class ConvertQueueTests(unittest.TestCase):
             "hf_cache": None,
             "label": "org/model",
             "state": "queued",
+            "failure": None,
         }
 
         with self.assertRaises(convert_queue.QueuePersistenceError) as raised:
@@ -221,6 +344,7 @@ class ConvertQueueTests(unittest.TestCase):
                 "hf_cache": None,
                 "label": "a.gguf",
                 "state": "queued",
+                "failure": None,
             },
             {
                 "id": "cq-9",
@@ -233,6 +357,7 @@ class ConvertQueueTests(unittest.TestCase):
                 "hf_cache": "/hf",
                 "label": "org/model",
                 "state": "queued",
+                "failure": None,
             },
         ]
         convert_queue.QueueStore(path).save(items)
@@ -476,6 +601,7 @@ class ConvertQueueTests(unittest.TestCase):
             "hf_cache": None,
             "label": "a.gguf",
             "state": "starting",
+            "failure": None,
         }
         convert_queue.QueueStore(state_path).save([item])
         receipt_path.write_text(json.dumps({
@@ -497,6 +623,36 @@ class ConvertQueueTests(unittest.TestCase):
         self.assertEqual(queue.snapshot(), [])
         self.assertFalse(any("--confirm" in command for command in runner.commands))
 
+    def test_restored_starting_item_is_reconciled_before_earlier_queued_item(self):
+        state_path = self.root / "recovery-priority" / "convert-queue.json"
+        receipt_path = self.root / "recovery-priority" / "receipt.json"
+        queue = convert_queue.ConvertQueue(path=state_path)
+        queued = queue.enqueue("gguf", "a" * 64, 4, path="/queued.gguf")
+        starting = queue.enqueue(
+            "gguf", "b" * 64, 4, path="/starting.gguf", out="/out",
+        )
+        items = queue.snapshot()
+        items[1] = dict(items[1], state="starting")
+        convert_queue.QueueStore(state_path).save(items)
+        receipt_path.write_text(json.dumps({
+            "preview_hash": "b" * 64,
+            "source": {"kind": "gguf", "path": "/starting.gguf"},
+            "q_bits": 4,
+            "out": "/out",
+        }), encoding="utf-8")
+        queue = convert_queue.ConvertQueue(path=state_path)
+        runner = SequenceRunner([
+            envelope(data={"jobs": [{
+                "state": "running", "receipt": str(receipt_path),
+            }]}),
+        ])
+
+        result = queue.try_start_next(str(self.root), runner=runner)
+
+        self.assertEqual(result["status"], "recovered")
+        self.assertEqual(result["item"]["id"], starting["id"])
+        self.assertEqual([item["id"] for item in queue.snapshot()], [queued["id"]])
+
     def test_restored_starting_item_without_receipt_starts_once(self):
         state_path = self.root / "retry" / "convert-queue.json"
         item = {
@@ -510,6 +666,7 @@ class ConvertQueueTests(unittest.TestCase):
             "hf_cache": "/hf",
             "label": "org/model",
             "state": "starting",
+            "failure": None,
         }
         convert_queue.QueueStore(state_path).save([item])
         runner = SequenceRunner([
@@ -539,6 +696,7 @@ class ConvertQueueTests(unittest.TestCase):
             "hf_cache": None,
             "label": "org/model",
             "state": "starting",
+            "failure": None,
         }
         convert_queue.QueueStore(state_path).save([item])
         receipt_path.write_text("{bad-json", encoding="utf-8")
@@ -570,6 +728,172 @@ class ConvertQueueTests(unittest.TestCase):
         self.assertEqual(result["status"], "started")
         self.assertIn("--hf-cache", runner.commands[1])
         self.assertIn("/custom/hf", runner.commands[1])
+
+    def test_terminal_start_failure_is_persisted_and_does_not_block_next(self):
+        state_path = self.root / "failed-launch" / "convert-queue.json"
+        queue = convert_queue.ConvertQueue(path=state_path)
+        first = queue.enqueue("gguf", "a" * 64, 4, path="/a.gguf")
+        second = queue.enqueue("repo", "b" * 64, 4, repo="org/model")
+        failed_runner = SequenceRunner([
+            envelope(data={"jobs": []}),
+            envelope(status="error", error={
+                "code": "skill_failed",
+                "message": "convert rejected",
+                "remediation": "Inspect the model and retry.",
+            }),
+        ])
+
+        failed = queue.try_start_next(str(self.root), runner=failed_runner)
+
+        self.assertEqual(failed["status"], "failed")
+        snapshot = queue.snapshot()
+        self.assertEqual([item["id"] for item in snapshot], [first["id"], second["id"]])
+        self.assertEqual(snapshot[0]["state"], "failed")
+        self.assertEqual(snapshot[0]["failure"]["code"], "skill_failed")
+        restored = convert_queue.ConvertQueue(path=state_path)
+        self.assertEqual(restored.snapshot()[0]["state"], "failed")
+
+        started = restored.try_start_next(str(self.root), runner=SequenceRunner([
+            envelope(data={"jobs": []}),
+            envelope(data={"status": "started", "receipt": {"pid": 10}}),
+        ]))
+
+        self.assertEqual(started["item"]["id"], second["id"])
+        self.assertEqual([item["id"] for item in restored.snapshot()], [first["id"]])
+
+    def test_retry_moves_failed_item_to_tail_once(self):
+        state_path = self.root / "retry-failed" / "convert-queue.json"
+        queue = convert_queue.ConvertQueue(path=state_path)
+        first = queue.enqueue("gguf", "a" * 64, 4, path="/a.gguf")
+        second = queue.enqueue("gguf", "b" * 64, 4, path="/b.gguf")
+        items = queue.snapshot()
+        items[0] = dict(items[0], state="failed", failure={
+            "code": "skill_failed",
+            "message": "convert rejected",
+            "remediation": "Inspect the model and retry.",
+        })
+        convert_queue.QueueStore(state_path).save(items)
+        queue = convert_queue.ConvertQueue(path=state_path)
+
+        retried = queue.retry(first["id"])
+
+        self.assertEqual(retried["state"], "queued")
+        self.assertIsNone(retried["failure"])
+        self.assertEqual([item["id"] for item in queue.snapshot()], [second["id"], first["id"]])
+        with self.assertRaises(convert_queue.QueueOperationError) as raised:
+            queue.retry(first["id"])
+        self.assertEqual(raised.exception.code, "invalid_queue_state")
+
+    def test_move_swaps_adjacent_queued_items_across_failed_items(self):
+        state_path = self.root / "move" / "convert-queue.json"
+        queue = convert_queue.ConvertQueue(path=state_path)
+        first = queue.enqueue("gguf", "a" * 64, 4, path="/a.gguf")
+        failed = queue.enqueue("gguf", "b" * 64, 4, path="/b.gguf")
+        third = queue.enqueue("gguf", "c" * 64, 4, path="/c.gguf")
+        items = queue.snapshot()
+        items[1] = dict(items[1], state="failed", failure={
+            "code": "skill_failed",
+            "message": "convert rejected",
+            "remediation": "Inspect the model and retry.",
+        })
+        convert_queue.QueueStore(state_path).save(items)
+        queue = convert_queue.ConvertQueue(path=state_path)
+
+        self.assertTrue(queue.move(third["id"], "up"))
+
+        snapshot = queue.snapshot()
+        self.assertEqual(
+            [item["id"] for item in snapshot],
+            [third["id"], failed["id"], first["id"]],
+        )
+        self.assertFalse(queue.move(third["id"], "up"))
+        self.assertFalse(queue.move(first["id"], "down"))
+
+    def test_starting_items_cannot_be_cancelled_cleared_or_moved(self):
+        state_path = self.root / "starting-operations" / "convert-queue.json"
+        queue = convert_queue.ConvertQueue(path=state_path)
+        first = queue.enqueue("gguf", "a" * 64, 4, path="/a.gguf")
+        queue.enqueue("gguf", "b" * 64, 4, path="/b.gguf")
+        items = queue.snapshot()
+        items[0] = dict(items[0], state="starting")
+        convert_queue.QueueStore(state_path).save(items)
+        queue = convert_queue.ConvertQueue(path=state_path)
+
+        with self.assertRaises(convert_queue.QueueOperationError):
+            queue.cancel(first["id"])
+        with self.assertRaises(convert_queue.QueueOperationError):
+            queue.move(first["id"], "down")
+        self.assertEqual(queue.clear(), 1)
+        self.assertEqual([item["id"] for item in queue.snapshot()], [first["id"]])
+        self.assertEqual(queue.snapshot()[0]["state"], "starting")
+
+    def test_retry_and_move_roll_back_when_save_fails(self):
+        failed = {
+            "id": "cq-1",
+            "kind": "gguf",
+            "preview_hash": "a" * 64,
+            "q_bits": 4,
+            "out": None,
+            "path": "/a.gguf",
+            "repo": None,
+            "hf_cache": None,
+            "label": "a.gguf",
+            "state": "failed",
+            "failure": {
+                "code": "skill_failed",
+                "message": "convert rejected",
+                "remediation": "Inspect the model and retry.",
+            },
+        }
+        queued = dict(
+            failed,
+            id="cq-2",
+            preview_hash="b" * 64,
+            path="/b.gguf",
+            label="b.gguf",
+            state="queued",
+            failure=None,
+        )
+        retry_queue = convert_queue.ConvertQueue(store=FailingStore([failed, queued]))
+        before_retry = retry_queue.snapshot()
+        with self.assertRaises(convert_queue.QueuePersistenceError):
+            retry_queue.retry("cq-1")
+        self.assertEqual(retry_queue.snapshot(), before_retry)
+
+        move_queue = convert_queue.ConvertQueue(
+            store=FailingStore([queued, dict(queued, id="cq-3")]),
+        )
+        before_move = move_queue.snapshot()
+        with self.assertRaises(convert_queue.QueuePersistenceError):
+            move_queue.move("cq-3", "up")
+        self.assertEqual(move_queue.snapshot(), before_move)
+
+    def test_move_waits_for_active_drain_selection(self):
+        queue = convert_queue.ConvertQueue()
+        queue.enqueue("gguf", "a" * 64, 4, path="/a.gguf")
+        second = queue.enqueue("gguf", "b" * 64, 4, path="/b.gguf")
+        runner = BlockingStatusRunner()
+        drain = threading.Thread(
+            target=queue.try_start_next,
+            args=(str(self.root),),
+            kwargs={"runner": runner},
+        )
+        move_result = []
+        move = threading.Thread(
+            target=lambda: move_result.append(queue.move(second["id"], "up")),
+        )
+
+        drain.start()
+        self.assertTrue(runner.status_entered.wait(1.0))
+        move.start()
+        self.assertTrue(move.is_alive())
+        runner.release_status.set()
+        drain.join(1.0)
+        move.join(1.0)
+
+        self.assertFalse(drain.is_alive())
+        self.assertFalse(move.is_alive())
+        self.assertEqual(move_result, [False])
 
     def test_try_start_next_is_single_flight(self):
         self.queue.enqueue("gguf", "a" * 64, 4, path="/a.gguf")

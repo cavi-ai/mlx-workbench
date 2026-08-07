@@ -225,6 +225,10 @@ class Handler(BaseHTTPRequestHandler):
             status, content_type, body = _json_bytes(
                 {"status": "error", "error": error.to_dict()}, 500
             )
+        except convert_queue_module.QueueOperationError as error:
+            status, content_type, body = _json_bytes(
+                {"status": "error", "error": error.to_dict()}, 409
+            )
         except quarantine_module.QuarantineError as error:
             status, content_type, body = _json_bytes(
                 {"status": "error", "error": error.to_dict()}, 400
@@ -325,6 +329,41 @@ class Handler(BaseHTTPRequestHandler):
             self.app.worker.wake()
             return _ok({
                 "cleared": cleared,
+                "queue": self.app.convert_queue.snapshot(),
+            })
+        if method == "POST" and route == "/api/convert/queue/retry":
+            payload = self._body() or {}
+            if (
+                not isinstance(payload, dict)
+                or not isinstance(payload.get("id"), str)
+                or not payload["id"]
+            ):
+                return _error("invalid_body", "id is required.", "Retry from the UI.")
+            retried = self.app.convert_queue.retry(payload["id"])
+            self.app.worker.wake()
+            return _ok({
+                "retried": retried,
+                "queue": self.app.convert_queue.snapshot(),
+            })
+        if method == "POST" and route == "/api/convert/queue/move":
+            payload = self._body() or {}
+            if (
+                not isinstance(payload, dict)
+                or not isinstance(payload.get("id"), str)
+                or not payload["id"]
+                or payload.get("direction") not in ("up", "down")
+            ):
+                return _error(
+                    "invalid_body",
+                    "id and direction (up or down) are required.",
+                    "Retry from the UI.",
+                )
+            moved = self.app.convert_queue.move(
+                payload["id"], payload["direction"],
+            )
+            self.app.worker.wake()
+            return _ok({
+                "moved": moved,
                 "queue": self.app.convert_queue.snapshot(),
             })
         if method == "POST" and route in ("/api/convert/preview", "/api/convert/start"):
