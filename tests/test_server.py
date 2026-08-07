@@ -45,6 +45,7 @@ class ServerTests(unittest.TestCase):
         }, self.config_path)
 
         self.commands = []
+        self.convert_jobs = []
         self.responses = {"stdout": envelope(data={"models": [], "totals": {"gguf": 0}})}
         self.token = "test-token"
         self.httpd = server.build(
@@ -62,6 +63,25 @@ class ServerTests(unittest.TestCase):
             return {
                 "returncode": 0,
                 "stdout": envelope(data={"servers": []}, operation="serve-status"),
+                "stderr": "",
+            }
+        if "lora" in command and "status" in command:
+            return {
+                "returncode": 0,
+                "stdout": envelope(data={"jobs": []}, operation="lora-status"),
+                "stderr": "",
+            }
+        if "fuse" in command and "status" in command:
+            return {
+                "returncode": 0,
+                "stdout": envelope(data={"jobs": []}, operation="fuse-status"),
+                "stderr": "",
+            }
+        if "convert" in command and "status" in command:
+            jobs = self.convert_jobs
+            return {
+                "returncode": 0,
+                "stdout": envelope(data={"jobs": jobs}, operation="convert-status"),
                 "stderr": "",
             }
         return {"returncode": 0, "stdout": self.responses["stdout"], "stderr": ""}
@@ -162,8 +182,72 @@ class ServerTests(unittest.TestCase):
             "q_bits": 8,
         })
         self.assertEqual(status, 200)
-        self.assertIn("--confirm", self.commands[0])
-        self.assertIn("c" * 64, self.commands[0])
+        self.assertIn("--confirm", self.commands[-1])
+        self.assertIn("c" * 64, self.commands[-1])
+
+    def test_preview_repo_uses_hf_cache_argv(self):
+        self.responses["stdout"] = envelope(data={"plan": {"preview_hash": "a" * 64}})
+        status, _ = self._request(
+            "/api/convert/preview", "POST", {"repo": "org/Model", "q_bits": 4}
+        )
+        self.assertEqual(status, 200)
+        command = self.commands[0]
+        self.assertIn("--repo", command)
+        self.assertIn("org/Model", command)
+        self.assertIn("--out", command)
+        self.assertNotIn("--confirm", command)
+
+    def test_start_queues_when_convert_is_busy(self):
+        self.convert_jobs = [{"state": "running", "repo": "busy"}]
+        status, payload = self._request("/api/convert/start", "POST", {
+            "path": str(self.models / "m-Q4_K_M.gguf"),
+            "preview_hash": "d" * 64,
+            "q_bits": 4,
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["status"], "queued")
+        self.assertEqual(len(payload["data"]["queue"]), 1)
+        self.assertTrue(any("status" in cmd for cmd in self.commands))
+        self.assertFalse(any("--confirm" in cmd for cmd in self.commands))
+
+    def test_start_queues_repo_hf_cache(self):
+        self.convert_jobs = [{"state": "running", "repo": "busy"}]
+        status, payload = self._request("/api/convert/start", "POST", {
+            "repo": "org/Model",
+            "hf_cache": "/custom/hf",
+            "preview_hash": "d" * 64,
+            "q_bits": 4,
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["status"], "queued")
+        self.assertEqual(payload["data"]["item"]["hf_cache"], "/custom/hf")
+
+    def test_jobs_includes_convert_queue(self):
+        self.convert_jobs = [{"state": "running", "repo": "busy"}]
+        self.httpd.app.convert_queue.enqueue(
+            "gguf", "e" * 64, 4, path="/x.gguf", label="x.gguf",
+        )
+        status, payload = self._request("/api/jobs")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(payload["data"]["convert_queue"]), 1)
+        self.assertEqual(payload["data"]["convert_queue"][0]["label"], "x.gguf")
+
+    def test_queue_cancel_and_clear(self):
+        item = self.httpd.app.convert_queue.enqueue(
+            "repo", "f" * 64, 4, repo="org/m", label="org/m",
+        )
+        status, payload = self._request(
+            "/api/convert/queue/cancel", "POST", {"id": item["id"]}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["data"]["removed"])
+        self.httpd.app.convert_queue.enqueue(
+            "repo", "g" * 64, 4, repo="org/n", label="org/n",
+        )
+        status, payload = self._request("/api/convert/queue/clear", "POST", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["cleared"], 1)
+        self.assertEqual(payload["data"]["queue"], [])
 
     def test_cli_runs_argv(self):
         self.responses["stdout"] = envelope(data={"ok": True}, operation="discover")

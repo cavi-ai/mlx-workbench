@@ -45,7 +45,8 @@ python3 scripts/mlx-workbench
 
 | Tab | Role |
 | --- | --- |
-| **Models** | Local `.gguf` inventory via `convert scan`: pending, converted, companion, shard |
+| **Models** | Local `.gguf` inventory via `convert scan`: pending, converted, companion, shard; multi-select queue |
+| **Convert** | HF-cache convert via `convert start --repo` (local cache only; never downloads) |
 | **Duplicates** | Exact vs variant groups; quarantine moves (never deletes) |
 | **Scout** | `discover` — Hub candidates by role (table + Serve/Wire shortcuts) |
 | **Adopt** | `adopt start` — durable role handoff |
@@ -53,13 +54,17 @@ python3 scripts/mlx-workbench
 | **Doctor** | `doctor models` — findings + incomplete-cache prune |
 | **Serve** | Preview/confirm `serve start`; servers table with Stop |
 | **Train** | LoRA train + fuse (preview/confirm) |
-| **Jobs** | Convert / serve / lora / fuse receipts + log tail |
+| **Jobs** | Convert / serve / lora / fuse receipts + log tail; workbench convert queue |
 | **Advanced** | Any mlx-agent argv (tokens only; `--json` added for you) |
 | **Settings** | Scan roots, output dir, agent path, quarantine, quantization |
 
 ## Converting
 
 Every conversion is previewed before it runs: command, output path, and preview hash. Only a reviewed plan can be confirmed. The job runs detached under mlx-agent receipts; open **Jobs** for state and log tail.
+
+mlx-agent allows one live convert at a time. Extra confirmed plans land in the workbench **queue** and auto-start when the live job finishes (queue is in-memory; lost on server restart).
+
+**GGUF** sources come from **Models** (single Convert or multi-select Queue selected). **HF-cache** sources use the **Convert** tab (`publisher/model` already present under the local Hugging Face cache). Convert never downloads from the Hub.
 
 Quality is capped by the source: a Q4 GGUF converted to MLX 4-bit has been quantized twice. Prefer original fp16 weights when you have them.
 

@@ -16,5 +16,6 @@ GEMINI.md
 opencode.jsonc
 docs/superpowers/
 .run/
+.mlx-agent-receipts/
 .venv/
 .mcp.json

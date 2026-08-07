@@ -195,6 +195,68 @@ def start(agent_path, gguf_path, preview_hash, q_bits=4, out=None,
     return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
 
 
+def preview_repo(agent_path, repo, q_bits=4, out=None, hf_cache=None,
+                 timeout=DEFAULT_TIMEOUT, runner=None):
+    """Render an HF-cache conversion plan without starting anything."""
+    argv = ["convert", "start", "--repo", repo, "--q-bits", str(q_bits)]
+    if out:
+        argv.extend(["--out", out])
+    if hf_cache:
+        argv.extend(["--hf-cache", hf_cache])
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def start_repo(agent_path, repo, preview_hash, q_bits=4, out=None, hf_cache=None,
+               timeout=DEFAULT_TIMEOUT, runner=None):
+    """Start a reviewed HF-cache conversion. The hash must come from a preview."""
+    argv = [
+        "convert", "start", "--repo", repo, "--q-bits", str(q_bits),
+        "--confirm", "--preview-hash", preview_hash,
+    ]
+    if out:
+        argv.extend(["--out", out])
+    if hf_cache:
+        argv.extend(["--hf-cache", hf_cache])
+    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+
+
+def convert_is_busy(agent_path, timeout=DEFAULT_TIMEOUT, runner=None):
+    """True when mlx-agent reports a live convert process."""
+    try:
+        payload = jobs(agent_path, timeout=timeout, runner=runner)
+    except BridgeError:
+        return False
+    for entry in payload.get("jobs") or []:
+        if isinstance(entry, dict) and entry.get("state") == "running":
+            return True
+    return False
+
+
+_PROGRESS_PHASES = (
+    ("loading", "Loading"),
+    ("convert", "Converting"),
+    ("quantiz", "Quantizing"),
+    ("saving", "Saving"),
+    ("writing", "Writing"),
+    ("download", "Downloading"),
+)
+
+
+def convert_progress(log_text):
+    """Cheap phase summary from a convert log tail."""
+    lines = [line.strip() for line in (log_text or "").splitlines() if line.strip()]
+    last_line = lines[-1] if lines else ""
+    summary = "Running" if last_line else "Waiting for output"
+    lower = last_line.lower()
+    for needle, label in _PROGRESS_PHASES:
+        if needle in lower:
+            summary = label
+            break
+    if "%" in last_line:
+        summary = last_line[:120]
+    return {"summary": summary, "last_line": last_line}
+
+
 def jobs(agent_path, timeout=DEFAULT_TIMEOUT, runner=None):
     """Cross-check conversion receipts against live processes."""
     return unwrap(run(agent_path, ["convert", "status"], timeout=timeout, runner=runner))
@@ -442,7 +504,13 @@ def read_log(agent_path, log_path, max_bytes=MAX_LOG_BYTES, runner=None):
     text = data.decode("utf-8", "replace")
     if truncated:
         text = "…\n" + text
-    return {"path": str(target), "text": text, "truncated": truncated}
+    progress = convert_progress(text)
+    return {
+        "path": str(target),
+        "text": text,
+        "truncated": truncated,
+        "progress": progress,
+    }
 
 
 def _default_runner(command, timeout):

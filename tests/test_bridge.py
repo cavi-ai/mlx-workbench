@@ -113,6 +113,41 @@ class RunTests(unittest.TestCase):
         self.assertIn("--confirm", command)
         self.assertIn("b" * 64, command)
 
+    def test_preview_repo_builds_argv(self):
+        recorder = Recorder(stdout=envelope(data={"plan": {"preview_hash": "a" * 64}}))
+        bridge.preview_repo(
+            str(self.root), "org/Model", 8, "/out", hf_cache="/hf", runner=recorder,
+        )
+        command = recorder.commands[0]
+        self.assertEqual(command[2:4], ["convert", "start"])
+        self.assertIn("--repo", command)
+        self.assertIn("org/Model", command)
+        self.assertNotIn("--confirm", command)
+        self.assertIn("--hf-cache", command)
+        self.assertIn("/hf", command)
+        self.assertIn("8", command)
+
+    def test_start_repo_passes_hash(self):
+        recorder = Recorder(stdout=envelope(data={"receipt": {"pid": 2}}))
+        bridge.start_repo(str(self.root), "org/Model", "c" * 64, runner=recorder)
+        command = recorder.commands[0]
+        self.assertIn("--repo", command)
+        self.assertIn("--confirm", command)
+        self.assertIn("c" * 64, command)
+
+    def test_convert_is_busy(self):
+        recorder = Recorder(stdout=envelope(data={"jobs": [{"state": "running"}]}))
+        self.assertTrue(bridge.convert_is_busy(str(self.root), runner=recorder))
+        recorder = Recorder(stdout=envelope(data={"jobs": [{"state": "done"}]}))
+        self.assertFalse(bridge.convert_is_busy(str(self.root), runner=recorder))
+
+    def test_convert_progress_heuristics(self):
+        progress = bridge.convert_progress("hello\nLoading weights…\n")
+        self.assertEqual(progress["summary"], "Loading")
+        self.assertIn("Loading", progress["last_line"])
+        progress = bridge.convert_progress("step 40%")
+        self.assertIn("%", progress["summary"])
+
     def test_discover_builds_argv(self):
         recorder = Recorder(stdout=envelope(data={"roles": {}}))
         bridge.discover(str(self.root), role="coding", limit=3, fast=True, runner=recorder)

@@ -233,6 +233,7 @@ select { width: auto; }
 
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+tr.is-selected td { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 .bar { flex-wrap: wrap; }
 .tabs { flex-wrap: wrap; }
@@ -245,4 +246,32 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--accent) 8%, transpa
 
 #scout-results h3 { margin-top: 1.25rem; }
 #scout-results .grid { margin-bottom: 0.5rem; }
+
+.check-col { width: 2rem; }
+.toolbar-inline { margin-bottom: 0.75rem; }
+
+.queue-strip {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+}
+
+.queue-item {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.progress-line {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  margin: 0 0 0.75rem;
+}
 
