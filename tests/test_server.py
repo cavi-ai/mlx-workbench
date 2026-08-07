@@ -7,7 +7,7 @@ import urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from mlx_workbench import bridge, config, server
+from mlx_workbench import bridge, config, convert_queue, server
 
 
 def envelope(status="ok", data=None, error=None, operation="convert-scan"):
@@ -22,6 +22,158 @@ def envelope(status="ok", data=None, error=None, operation="convert-scan"):
     if error is not None:
         payload["error"] = error
     return json.dumps(payload)
+
+
+class SignalingStore:
+    def __init__(self, path):
+        self.store = convert_queue.QueueStore(path)
+        self.empty = threading.Event()
+
+    def load(self):
+        return self.store.load()
+
+    def save(self, items):
+        self.store.save(items)
+        if not items:
+            self.empty.set()
+
+
+class ObservedStore:
+    def __init__(self, path):
+        self.store = convert_queue.QueueStore(path)
+        self.snapshots = []
+        self.two_items = threading.Event()
+
+    def load(self):
+        return self.store.load()
+
+    def save(self, items):
+        self.store.save(items)
+        snapshot = [dict(item) for item in items]
+        self.snapshots.append(snapshot)
+        if len(snapshot) == 2:
+            self.two_items.set()
+
+
+class FailingSaveStore:
+    def load(self):
+        return []
+
+    def save(self, items):
+        raise convert_queue.QueuePersistenceError(
+            "queue_write_failed",
+            "disk full",
+            "Free disk space and retry.",
+        )
+
+
+class ConversionWorkerTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.agent = self.root / "mlx-agent"
+        script = self.agent / bridge.CLI_RELATIVE
+        script.parent.mkdir(parents=True)
+        script.write_text("", encoding="utf-8")
+
+    def test_worker_drains_persisted_queue_and_stops(self):
+        store = SignalingStore(self.root / "convert-queue.json")
+        queue = convert_queue.ConvertQueue(store=store)
+        queue.enqueue(
+            "gguf", "a" * 64, 4, path="/a.gguf", out="/out", label="a.gguf",
+        )
+        commands = []
+
+        def runner(command, timeout):
+            commands.append(command)
+            if "status" in command:
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(data={"jobs": []}, operation="convert-status"),
+                    "stderr": "",
+                }
+            if "--confirm" in command:
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(
+                        data={"status": "started", "receipt": {"pid": 9}},
+                        operation="convert-start",
+                    ),
+                    "stderr": "",
+                }
+            raise AssertionError("unexpected command: {0}".format(command))
+
+        worker = server.ConversionWorker(
+            queue, lambda: str(self.agent), runner=runner, interval=0.01,
+        )
+        self.addCleanup(worker.stop)
+        worker.start()
+
+        self.assertTrue(store.empty.wait(2.0))
+        self.assertEqual(queue.snapshot(), [])
+        self.assertEqual(worker.last_result["status"], "started")
+        self.assertTrue(any("--confirm" in command for command in commands))
+
+        worker.stop()
+        self.assertFalse(worker._thread.is_alive())
+
+    def test_server_worker_restores_and_launches_without_jobs_request(self):
+        config_path = self.root / "profile" / "config.json"
+        models = self.root / "models"
+        models.mkdir()
+        config.save({
+            "gguf_roots": [str(models)],
+            "mlx_agent_path": str(self.agent),
+            "quarantine_dir": str(self.root / "hold"),
+            "output_dir": str(self.root / "out"),
+        }, config_path)
+        state_path = self.root / "profile" / "convert-queue.json"
+        persisted = convert_queue.ConvertQueue(path=state_path)
+        persisted.enqueue(
+            "repo", "b" * 64, 4, repo="org/model", out="/out", label="org/model",
+        )
+        started = threading.Event()
+        commands = []
+
+        def runner(command, timeout):
+            commands.append(command)
+            if "status" in command:
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(data={"jobs": []}, operation="convert-status"),
+                    "stderr": "",
+                }
+            if "--confirm" in command:
+                started.set()
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(
+                        data={"status": "started", "receipt": {"pid": 10}},
+                        operation="convert-start",
+                    ),
+                    "stderr": "",
+                }
+            raise AssertionError("unexpected command: {0}".format(command))
+
+        httpd = server.build(
+            "127.0.0.1",
+            0,
+            config_path=config_path,
+            runner=runner,
+            queue_path_override=state_path,
+            worker_interval=0.01,
+            start_worker=True,
+        )
+        self.addCleanup(httpd.server_close)
+
+        self.assertTrue(started.wait(2.0))
+        httpd.app.worker.stop()
+
+        self.assertEqual(httpd.app.convert_queue.snapshot(), [])
+        self.assertTrue(any("--confirm" in command for command in commands))
+        httpd.server_close()
+        self.assertFalse(httpd.app.worker._thread.is_alive())
 
 
 class ServerTests(unittest.TestCase):
@@ -49,7 +201,13 @@ class ServerTests(unittest.TestCase):
         self.responses = {"stdout": envelope(data={"models": [], "totals": {"gguf": 0}})}
         self.token = "test-token"
         self.httpd = server.build(
-            "127.0.0.1", 0, config_path=self.config_path, token=self.token, runner=self._runner
+            "127.0.0.1",
+            0,
+            config_path=self.config_path,
+            token=self.token,
+            runner=self._runner,
+            queue_path_override=self.root / "convert-queue.json",
+            start_worker=False,
         )
         self.addCleanup(self.httpd.server_close)
         self.port = self.httpd.server_address[1]
@@ -185,6 +343,131 @@ class ServerTests(unittest.TestCase):
         self.assertIn("--confirm", self.commands[-1])
         self.assertIn("c" * 64, self.commands[-1])
 
+    def test_idle_start_is_persisted_before_confirm(self):
+        state_path = self.root / "convert-queue.json"
+        observed = []
+
+        def runner(command, timeout):
+            self.commands.append(command)
+            if "status" in command:
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(data={"jobs": []}, operation="convert-status"),
+                    "stderr": "",
+                }
+            if "--confirm" in command:
+                observed.extend(convert_queue.QueueStore(state_path).load())
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(
+                        data={"status": "started", "receipt": {"pid": 5}},
+                        operation="convert-start",
+                    ),
+                    "stderr": "",
+                }
+            raise AssertionError("unexpected command: {0}".format(command))
+
+        self.httpd.app.runner = runner
+        status, payload = self._request("/api/convert/start", "POST", {
+            "path": str(self.models / "durable.gguf"),
+            "preview_hash": "a" * 64,
+            "q_bits": 4,
+        })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["status"], "started")
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0]["state"], "starting")
+        self.assertEqual(convert_queue.QueueStore(state_path).load(), [])
+
+    def test_existing_queue_head_starts_before_new_submission(self):
+        older = self.httpd.app.convert_queue.enqueue(
+            "gguf", "a" * 64, 4, path="/older.gguf", out="/older-out",
+            label="older.gguf",
+        )
+        self.responses["stdout"] = envelope(data={"receipt": {"pid": 5}})
+
+        status, payload = self._request("/api/convert/start", "POST", {
+            "path": str(self.models / "new.gguf"),
+            "preview_hash": "b" * 64,
+            "q_bits": 4,
+        })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["status"], "queued")
+        self.assertNotEqual(payload["data"]["item"]["id"], older["id"])
+        starts = [command for command in self.commands if "--confirm" in command]
+        self.assertEqual(len(starts), 1)
+        self.assertIn("/older.gguf", starts[0])
+        self.assertEqual(
+            self.httpd.app.convert_queue.snapshot()[0]["id"],
+            payload["data"]["item"]["id"],
+        )
+
+    def test_concurrent_confirmations_are_persisted_fifo_with_one_start(self):
+        state_path = self.root / "convert-queue.json"
+        store = ObservedStore(state_path)
+        self.httpd.app.convert_queue = convert_queue.ConvertQueue(store=store)
+        running = threading.Event()
+        confirm_entered = threading.Event()
+        commands = []
+        lock = threading.Lock()
+
+        def runner(command, timeout):
+            with lock:
+                commands.append(command)
+            if "status" in command:
+                jobs = [{"state": "running", "repo": "first"}] if running.is_set() else []
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(data={"jobs": jobs}, operation="convert-status"),
+                    "stderr": "",
+                }
+            if "--confirm" in command:
+                confirm_entered.set()
+                if not store.two_items.wait(2.0):
+                    raise AssertionError("second confirmation was not durably enqueued")
+                running.set()
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(
+                        data={"status": "started", "receipt": {"pid": 7}},
+                        operation="convert-start",
+                    ),
+                    "stderr": "",
+                }
+            raise AssertionError("unexpected command: {0}".format(command))
+
+        self.httpd.app.runner = runner
+        responses = {}
+
+        def submit(name, preview_hash):
+            responses[name] = self._request("/api/convert/start", "POST", {
+                "path": str(self.models / (name + ".gguf")),
+                "preview_hash": preview_hash,
+                "q_bits": 4,
+            })
+
+        first = threading.Thread(target=submit, args=("first", "c" * 64))
+        second = threading.Thread(target=submit, args=("second", "d" * 64))
+        first.start()
+        self.assertTrue(confirm_entered.wait(2.0))
+        second.start()
+        first.join(5.0)
+        second.join(5.0)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        starts = [command for command in commands if "--confirm" in command]
+        self.assertEqual(len(starts), 1)
+        two_item_snapshot = next(items for items in store.snapshots if len(items) == 2)
+        self.assertEqual([item["state"] for item in two_item_snapshot], ["starting", "queued"])
+        self.assertEqual(responses["first"][1]["data"]["status"], "started")
+        self.assertEqual(responses["second"][1]["data"]["status"], "queued")
+        remaining = self.httpd.app.convert_queue.snapshot()
+        self.assertEqual(len(remaining), 1)
+        self.assertIn("second.gguf", remaining[0]["path"])
+
     def test_preview_repo_uses_hf_cache_argv(self):
         self.responses["stdout"] = envelope(data={"plan": {"preview_hash": "a" * 64}})
         status, _ = self._request(
@@ -231,6 +514,52 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(payload["data"]["convert_queue"]), 1)
         self.assertEqual(payload["data"]["convert_queue"][0]["label"], "x.gguf")
+
+    def test_jobs_is_read_only_for_the_convert_queue(self):
+        self.httpd.app.convert_queue.enqueue(
+            "gguf", "e" * 64, 4, path="/waiting.gguf", label="waiting.gguf",
+        )
+
+        status, _ = self._request("/api/jobs")
+
+        self.assertEqual(status, 200)
+        convert_statuses = [
+            command for command in self.commands
+            if "convert" in command and "status" in command
+        ]
+        starts = [command for command in self.commands if "--confirm" in command]
+        self.assertEqual(len(convert_statuses), 1)
+        self.assertEqual(starts, [])
+
+    def test_jobs_exposes_queue_and_worker_recovery_errors(self):
+        state_path = self.root / "corrupt-queue.json"
+        state_path.write_text("{bad-json", encoding="utf-8")
+        self.httpd.app.convert_queue = convert_queue.ConvertQueue(path=state_path)
+        self.httpd.app.convert_queue.last_error = {
+            "status": "waiting_recovery",
+            "error": {"code": "queue_write_failed"},
+        }
+        self.httpd.app.worker.last_result = {"status": "waiting_recovery"}
+
+        status, payload = self._request("/api/jobs")
+
+        self.assertEqual(status, 200)
+        data = payload["data"]
+        self.assertEqual(data["convert_queue_load_error"]["code"], "queue_state_invalid")
+        self.assertEqual(data["convert_queue_error"]["error"]["code"], "queue_write_failed")
+        self.assertEqual(data["convert_worker_result"]["status"], "waiting_recovery")
+
+    def test_queue_persistence_failure_is_a_structured_500(self):
+        self.httpd.app.convert_queue = convert_queue.ConvertQueue(store=FailingSaveStore())
+
+        status, payload = self._request("/api/convert/start", "POST", {
+            "repo": "org/model",
+            "preview_hash": "f" * 64,
+            "q_bits": 4,
+        })
+
+        self.assertEqual(status, 500)
+        self.assertEqual(payload["error"]["code"], "queue_write_failed")
 
     def test_queue_cancel_and_clear(self):
         item = self.httpd.app.convert_queue.enqueue(
