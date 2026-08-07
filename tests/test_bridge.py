@@ -141,6 +141,39 @@ class RunTests(unittest.TestCase):
         recorder = Recorder(stdout=envelope(data={"jobs": [{"state": "done"}]}))
         self.assertFalse(bridge.convert_is_busy(str(self.root), runner=recorder))
 
+    def test_read_convert_receipts(self):
+        receipt_path = self.root / "convert.json"
+        receipt = {
+            "preview_hash": "a" * 64,
+            "source": {"kind": "gguf", "path": "/models/a.gguf"},
+            "out": "/models/a-mlx",
+            "q_bits": 4,
+        }
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+        loaded = bridge.read_convert_receipts([{"receipt": str(receipt_path)}])
+
+        self.assertEqual(loaded, [receipt])
+
+    def test_read_convert_receipts_rejects_unreadable_files(self):
+        missing = self.root / "missing.json"
+        invalid = self.root / "invalid.json"
+        invalid.write_text("{bad-json", encoding="utf-8")
+        oversized = self.root / "oversized.json"
+        oversized.write_text("x" * 17, encoding="utf-8")
+        cases = [
+            ("missing", missing, 64, "receipt_missing"),
+            ("invalid", invalid, 64, "receipt_unreadable"),
+            ("oversized", oversized, 16, "receipt_too_large"),
+        ]
+        for name, path, max_bytes, code in cases:
+            with self.subTest(name=name):
+                with self.assertRaises(bridge.BridgeError) as raised:
+                    bridge.read_convert_receipts(
+                        [{"receipt": str(path)}], max_bytes=max_bytes,
+                    )
+                self.assertEqual(raised.exception.code, code)
+
     def test_convert_progress_heuristics(self):
         progress = bridge.convert_progress("hello\nLoading weights…\n")
         self.assertEqual(progress["summary"], "Loading")

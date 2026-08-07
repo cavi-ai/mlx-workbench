@@ -30,15 +30,80 @@ _CONTENT_TYPES = {
 }
 
 
+class ConversionWorker:
+    """Background single-flight drain for the durable conversion queue."""
+
+    def __init__(self, queue, agent_provider, runner=None, interval=2.0):
+        self.queue = queue
+        self.agent_provider = agent_provider
+        self.runner = runner
+        self.interval = interval
+        self.last_result = None
+        self.last_error = None
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="mlx-workbench-convert-worker",
+            daemon=True,
+        )
+
+    def start(self):
+        if not self._thread.is_alive():
+            self._thread.start()
+        self.wake()
+
+    def wake(self):
+        self._wake.set()
+
+    def stop(self):
+        self._stop.set()
+        self.wake()
+        if self._thread.is_alive() and threading.current_thread() is not self._thread:
+            self._thread.join(timeout=max(5.0, self.interval + 1.0))
+
+    def _run(self):
+        while not self._stop.is_set():
+            if not self.queue.snapshot():
+                self._wake.wait()
+                self._wake.clear()
+                continue
+            try:
+                self.last_result = self.queue.try_start_next(
+                    self.agent_provider(), runner=self.runner,
+                )
+                self.last_error = None
+            except (bridge.BridgeError, convert_queue_module.QueuePersistenceError) as error:
+                self.last_result = None
+                self.last_error = error.to_dict()
+            if self._stop.is_set():
+                break
+            timeout = self.interval if self.queue.snapshot() else None
+            self._wake.wait(timeout)
+            self._wake.clear()
+
+
 class Application:
     """Everything the handler needs, with no global state."""
 
-    def __init__(self, config_path=None, token=None, runner=None):
+    def __init__(self, config_path=None, token=None, runner=None,
+                 queue_path_override=None, worker_interval=2.0):
         self.config_path = config_path
         self.token = token or secrets.token_urlsafe(24)
         self.runner = runner
         self.lock = threading.Lock()
-        self.convert_queue = convert_queue_module.ConvertQueue()
+        state_path = (
+            Path(queue_path_override)
+            if queue_path_override is not None
+            else convert_queue_module.queue_path(config_path)
+        )
+        self.convert_queue = convert_queue_module.ConvertQueue(path=state_path)
+        self.worker = ConversionWorker(
+            self.convert_queue,
+            lambda: self.config()["mlx_agent_path"],
+            runner=runner,
+            interval=worker_interval,
+        )
 
     def config(self):
         return config_module.load(self.config_path)
@@ -156,6 +221,10 @@ class Handler(BaseHTTPRequestHandler):
             status, content_type, body = _json_bytes(
                 {"status": "error", "error": payload}, 502
             )
+        except convert_queue_module.QueuePersistenceError as error:
+            status, content_type, body = _json_bytes(
+                {"status": "error", "error": error.to_dict()}, 500
+            )
         except quarantine_module.QuarantineError as error:
             status, content_type, body = _json_bytes(
                 {"status": "error", "error": error.to_dict()}, 400
@@ -218,13 +287,19 @@ class Handler(BaseHTTPRequestHandler):
                 runner=runner,
             ))
         if method == "GET" and route == "/api/jobs":
-            drain = self.app.convert_queue.try_start_next(agent, runner=runner)
             payload = bridge.all_job_lists(agent, runner=runner)
             payload["convert_queue"] = self.app.convert_queue.snapshot()
+            if self.app.convert_queue.load_error is not None:
+                payload["convert_queue_load_error"] = self.app.convert_queue.load_error
             if self.app.convert_queue.last_error is not None:
                 payload["convert_queue_error"] = self.app.convert_queue.last_error
-            if drain is not None:
-                payload["convert_drain"] = drain
+            if self.app.worker.last_result is not None:
+                payload["convert_worker_result"] = self.app.worker.last_result
+            elif self.app.worker.last_error is not None:
+                payload["convert_worker_result"] = {
+                    "status": "failed",
+                    "error": self.app.worker.last_error,
+                }
             return _ok(payload)
         if method == "GET" and route == "/api/jobs/log":
             params = parse_qs(urlparse(self.path).query)
@@ -240,12 +315,14 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
                 return _error("invalid_body", "id is required.", "Retry from the UI.")
             removed = self.app.convert_queue.cancel(payload["id"])
+            self.app.worker.wake()
             return _ok({
                 "removed": removed,
                 "queue": self.app.convert_queue.snapshot(),
             })
         if method == "POST" and route == "/api/convert/queue/clear":
             cleared = self.app.convert_queue.clear()
+            self.app.worker.wake()
             return _ok({
                 "cleared": cleared,
                 "queue": self.app.convert_queue.snapshot(),
@@ -508,32 +585,21 @@ class Handler(BaseHTTPRequestHandler):
             "label": label,
         }
 
-        if bridge.convert_is_busy(agent, runner=runner):
-            item = self.app.convert_queue.enqueue(**enqueue_kwargs)
-            return _ok({
-                "status": "queued",
-                "item": item,
-                "queue": self.app.convert_queue.snapshot(),
-            })
-
-        try:
-            if has_path:
-                result = bridge.start(agent, path, preview_hash, q_bits, out, runner=runner)
-            else:
-                result = bridge.start_repo(
-                    agent, repo.strip(), preview_hash, q_bits, out,
-                    hf_cache=hf_cache, runner=runner,
-                )
-        except bridge.BridgeError as error:
-            if error.code == "job_in_progress":
-                item = self.app.convert_queue.enqueue(**enqueue_kwargs)
-                return _ok({
-                    "status": "queued",
-                    "item": item,
-                    "queue": self.app.convert_queue.snapshot(),
-                })
-            raise
-        return _ok(result)
+        item = self.app.convert_queue.enqueue(**enqueue_kwargs)
+        drain = self.app.convert_queue.try_start_next(agent, runner=runner)
+        self.app.worker.wake()
+        started_submitted = (
+            isinstance(drain, dict)
+            and drain.get("status") == "started"
+            and isinstance(drain.get("item"), dict)
+            and drain["item"].get("id") == item["id"]
+        )
+        return _ok({
+            "status": "started" if started_submitted else "queued",
+            "item": item,
+            "drain": drain,
+            "queue": self.app.convert_queue.snapshot(),
+        })
 
 
 def _output_path(settings, payload):
@@ -560,11 +626,27 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, app):
+    def __init__(self, address, app, start_worker=True):
         self.app = app
         ThreadingHTTPServer.__init__(self, address, Handler)
+        if start_worker:
+            self.app.worker.start()
+
+    def server_close(self):
+        try:
+            self.app.worker.stop()
+        finally:
+            ThreadingHTTPServer.server_close(self)
 
 
-def build(host="127.0.0.1", port=8765, config_path=None, token=None, runner=None):
+def build(host="127.0.0.1", port=8765, config_path=None, token=None, runner=None,
+          start_worker=True, queue_path_override=None, worker_interval=2.0):
     """Create a bound server; the caller decides how to run it."""
-    return Server((host, port), Application(config_path, token, runner))
+    app = Application(
+        config_path,
+        token,
+        runner,
+        queue_path_override=queue_path_override,
+        worker_interval=worker_interval,
+    )
+    return Server((host, port), app, start_worker=start_worker)

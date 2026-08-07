@@ -262,6 +262,65 @@ def jobs(agent_path, timeout=DEFAULT_TIMEOUT, runner=None):
     return unwrap(run(agent_path, ["convert", "status"], timeout=timeout, runner=runner))
 
 
+def read_convert_receipts(entries, max_bytes=MAX_LOG_BYTES):
+    """Read bounded receipt JSON from paths advertised by convert status."""
+    receipts = []
+    for entry in entries or []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("receipt"), str):
+            continue
+        advertised = Path(entry["receipt"]).expanduser()
+        try:
+            location = advertised.resolve(strict=True)
+        except FileNotFoundError as error:
+            raise BridgeError(
+                "receipt_missing",
+                "A conversion receipt no longer exists: {0}".format(advertised),
+                "Run convert status again or inspect the mlx-agent receipt directory.",
+            ) from error
+        except OSError as error:
+            raise BridgeError(
+                "receipt_unreadable",
+                "A conversion receipt could not be resolved: {0}".format(error),
+                "Check the receipt path and file permissions.",
+            ) from error
+        if not location.is_file():
+            raise BridgeError(
+                "receipt_missing",
+                "A conversion receipt is not a regular file: {0}".format(location),
+                "Run convert status again or inspect the mlx-agent receipt directory.",
+            )
+        try:
+            size = location.stat().st_size
+        except OSError as error:
+            raise BridgeError(
+                "receipt_unreadable",
+                "A conversion receipt could not be inspected: {0}".format(error),
+                "Check the receipt file permissions.",
+            ) from error
+        if size > max_bytes:
+            raise BridgeError(
+                "receipt_too_large",
+                "A conversion receipt exceeds the {0}-byte read limit.".format(max_bytes),
+                "Inspect or remove the malformed receipt in the mlx-agent state directory.",
+            )
+        try:
+            receipt = json.loads(location.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError) as error:
+            raise BridgeError(
+                "receipt_unreadable",
+                "A conversion receipt is not readable JSON: {0}".format(error),
+                "Inspect or remove the malformed receipt in the mlx-agent state directory.",
+            ) from error
+        if not isinstance(receipt, dict):
+            raise BridgeError(
+                "receipt_unreadable",
+                "A conversion receipt is not a JSON object.",
+                "Inspect or remove the malformed receipt in the mlx-agent state directory.",
+            )
+        receipts.append(receipt)
+    return receipts
+
+
 def discover(agent_path, role=None, limit=None, fast=False, new=False,
              timeout=SCOUT_TIMEOUT, runner=None):
     """Discover MLX models for this host (Scout)."""

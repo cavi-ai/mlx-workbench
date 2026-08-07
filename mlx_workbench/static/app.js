@@ -232,6 +232,19 @@ function renderJobs(data) {
   const servers = data.servers || [];
   const lora = data.lora || [];
   const fuse = data.fuse || [];
+  const queueErrorNode = $('convert-queue-error');
+  const queueErrors = [
+    data.convert_queue_load_error,
+    data.convert_queue_error,
+    data.convert_worker_result && data.convert_worker_result.error,
+    data.convert_worker_result && data.convert_worker_result.persistence_error,
+  ].filter(Boolean).map(function (value) {
+    const detail = value.error || value;
+    return [detail.message || detail.code || 'Conversion queue recovery needs attention.', detail.remediation]
+      .filter(Boolean).join(' ');
+  });
+  queueErrorNode.textContent = queueErrors.join('\n');
+  queueErrorNode.hidden = queueErrors.length === 0;
   renderConvertQueue(data.convert_queue || []);
   const runningConvert = jobs.find(function (job) { return job.state === 'running'; });
   state.jobBusy = Boolean(runningConvert) || (data.convert_queue || []).length > 0;
@@ -269,12 +282,19 @@ function renderConvertQueue(queue) {
     return;
   }
   node.hidden = false;
-  node.appendChild(element('strong', null, 'Queued (' + queue.length + ')'));
+  node.appendChild(element('strong', null, 'Conversion queue (' + queue.length + ')'));
   queue.forEach(function (item) {
     const row = element('div', 'queue-item');
     row.appendChild(element('span', 'path', item.label || item.path || item.repo || item.id));
-    row.appendChild(element('span', 'hint', item.q_bits + '-bit'));
+    const stateHint = item.state === 'starting'
+      ? 'starting · reconciling accepted launch'
+      : 'queued';
+    row.appendChild(element('span', 'hint', item.q_bits + '-bit · ' + stateHint));
     const cancel = element('button', null, 'Cancel');
+    if (item.state === 'starting') {
+      cancel.disabled = true;
+      cancel.title = 'This launch is being reconciled with its mlx-agent receipt.';
+    }
     cancel.addEventListener('click', async function () {
       cancel.disabled = true;
       try {
