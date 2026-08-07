@@ -19,3 +19,5 @@ docs/superpowers/
 .mlx-agent-receipts/
 .venv/
 .mcp.json
+/docs/mlx-workbench/v*/
+/.release/
