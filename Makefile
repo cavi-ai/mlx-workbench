@@ -108,17 +108,17 @@ check-convert: mac-only
 	@"$(VENV_PY)" -c "from mlx_workbench import deps; r=deps.runtime_report(); print(r['convert']['message']); print(r['serve']['message']); raise SystemExit(0 if r['convert']['ok'] else 1)"
 
 start: check
-	@mkdir -p $(RUN_DIR)
-	@if [ -f $(PID_FILE) ] && kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
-		echo "already running (pid $$(cat $(PID_FILE))) → $(URL)"; \
+	@mkdir -p $(RUN_DIR); \
+	if [ -f $(PID_FILE) ] && kill -0 $$(tr -d '[:space:]' < $(PID_FILE)) 2>/dev/null; then \
+		echo "already running (pid $$(tr -d '[:space:]' < $(PID_FILE))) → $(URL)"; \
 		exit 0; \
-	fi
-	@rm -f $(PID_FILE)
-	@$(PYTHON) $(LAUNCHER) --host $(HOST) --port $(PORT) --no-open --pid-file $(PID_FILE) \
+	fi; \
+	rm -f $(PID_FILE); \
+	$(PYTHON) $(LAUNCHER) --host $(HOST) --port $(PORT) --no-open --pid-file $(PID_FILE) \
 		>> $(LOG_FILE) 2>&1 & \
 	for i in 1 2 3 4 5 6 7 8 9 10; do \
-		if [ -f $(PID_FILE) ] && kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
-			echo "mlx-workbench started (pid $$(cat $(PID_FILE))) → $(URL)"; \
+		if [ -f $(PID_FILE) ] && kill -0 $$(tr -d '[:space:]' < $(PID_FILE)) 2>/dev/null; then \
+			echo "mlx-workbench started (pid $$(tr -d '[:space:]' < $(PID_FILE))) → $(URL)"; \
 			echo "log: $(LOG_FILE)"; \
 			exit 0; \
 		fi; \
@@ -129,30 +129,35 @@ start: check
 	exit 1
 
 stop:
-	@if [ ! -f $(PID_FILE) ]; then \
-		echo "not running (no pid file)"; \
-		exit 0; \
-	fi
-	@pid=$$(tr -d '[:space:]' < $(PID_FILE)); \
-	if [ -z "$$pid" ]; then \
-		echo "stale empty pid file; removing"; \
-		rm -f $(PID_FILE); \
-		exit 0; \
-	fi; \
-	if kill -0 $$pid 2>/dev/null; then \
-		kill $$pid; \
-		for i in 1 2 3 4 5 6 7 8 9 10; do \
-			kill -0 $$pid 2>/dev/null || break; \
-			sleep 0.2; \
-		done; \
-		if kill -0 $$pid 2>/dev/null; then \
-			kill -9 $$pid 2>/dev/null || true; \
+	@stopped=0; \
+	if [ -f $(PID_FILE) ]; then \
+		pid=$$(tr -d '[:space:]' < $(PID_FILE)); \
+		if [ -z "$$pid" ]; then \
+			echo "stale empty pid file; removing"; \
+		elif kill -0 $$pid 2>/dev/null; then \
+			kill $$pid; \
+			for i in 1 2 3 4 5 6 7 8 9 10; do \
+				kill -0 $$pid 2>/dev/null || break; \
+				sleep 0.2; \
+			done; \
+			if kill -0 $$pid 2>/dev/null; then \
+				kill -9 $$pid 2>/dev/null || true; \
+			fi; \
+			echo "stopped pid $$pid"; \
+			stopped=1; \
+		else \
+			echo "stale pid file ($$pid); removing"; \
 		fi; \
-		echo "stopped pid $$pid"; \
-	else \
-		echo "stale pid file ($$pid); removing"; \
+		rm -f $(PID_FILE); \
+	fi; \
+	listeners=$$(lsof -nP -t -iTCP:$(PORT) -sTCP:LISTEN 2>/dev/null || true); \
+	if [ -n "$$listeners" ]; then \
+		echo "refusing to stop unowned listener(s) on :$(PORT): $$listeners" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$stopped" -eq 0 ]; then \
+		echo "not running"; \
 	fi
-	@rm -f $(PID_FILE)
 
 restart: stop start
 

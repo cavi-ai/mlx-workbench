@@ -12,6 +12,7 @@
   <h1>mlx-workbench</h1>
   <nav class="tabs" id="tabs">
     <button class="tab is-active" data-panel="models">Models</button>
+    <button class="tab" data-panel="convert">Convert</button>
     <button class="tab" data-panel="duplicates">Duplicates</button>
     <button class="tab" data-panel="scout">Scout</button>
     <button class="tab" data-panel="adopt">Adopt</button>
@@ -32,13 +33,37 @@
 
 <section id="panel-models" class="panel">
   <div class="summary" id="summary"></div>
-  <label class="check"><input type="checkbox" id="pending-only"> Pending only</label>
+  <div class="row toolbar-inline">
+    <label class="check"><input type="checkbox" id="pending-only"> Pending only</label>
+    <button type="button" id="queue-selected">Queue selected…</button>
+  </div>
   <table class="grid">
     <thead>
-      <tr><th>Status</th><th>Model</th><th>Arch</th><th>Quant</th><th class="num">Size</th><th>Output</th><th></th></tr>
+      <tr>
+        <th class="check-col"><input type="checkbox" id="select-all-models" title="Select all convertible"></th>
+        <th>Status</th><th>Model</th><th>Arch</th><th>Quant</th><th class="num">Size</th><th>Output</th><th></th>
+      </tr>
     </thead>
     <tbody id="models"></tbody>
   </table>
+</section>
+
+<section id="panel-convert" class="panel" hidden>
+  <div class="summary">Convert a model already in the local Hugging Face cache (mlx-agent convert start --repo). Does not download.</div>
+  <form id="hf-convert-form" class="toolbar">
+    <label>Repo <span class="hint">publisher/model as it appears in the HF cache</span>
+      <input id="hf-repo" type="text" spellcheck="false" placeholder="org/ModelName" required>
+    </label>
+    <div class="row">
+      <label class="inline">Quantization
+        <select id="hf-q_bits"><option value="4">4-bit</option><option value="8">8-bit</option></select>
+      </label>
+      <label class="inline">Out <span class="hint">optional</span>
+        <input id="hf-out" type="text" spellcheck="false" placeholder="default from Settings">
+      </label>
+      <button type="submit" class="primary">Preview…</button>
+    </div>
+  </form>
 </section>
 
 <section id="panel-duplicates" class="panel" hidden>
@@ -220,7 +245,9 @@
 </section>
 
 <section id="panel-jobs" class="panel" hidden>
-  <div class="summary">Conversion and serve receipts, cross-checked against live processes. Select a row to tail its log.</div>
+  <div class="summary">Conversion and serve receipts, cross-checked against live processes. Select a row to tail its log. Queued converts start when the live convert finishes.</div>
+  <div id="convert-queue" class="queue-strip" hidden></div>
+  <p id="job-progress" class="progress-line" hidden></p>
   <table class="grid">
     <thead><tr><th>Kind</th><th>State</th><th>Source</th><th>Output / port</th><th>Started</th></tr></thead>
     <tbody id="jobs"></tbody>

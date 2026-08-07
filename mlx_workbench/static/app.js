@@ -2,7 +2,7 @@
 
 const TOKEN = document.querySelector('meta[name="mlx-token"]').content;
 const PANELS = [
-  'models', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'train',
+  'models', 'convert', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'train',
   'jobs', 'advanced', 'settings',
 ];
 const state = {
@@ -11,8 +11,11 @@ const state = {
   runtime: null,
   pending: null,
   pendingKind: null,
+  pendingBatch: null,
   selectedLog: null,
+  logManual: false,
   jobTimer: null,
+  jobBusy: false,
 };
 
 function $(id) { return document.getElementById(id); }
@@ -86,12 +89,21 @@ function renderModels() {
   });
   if (!rows.length) {
     const empty = element('tr');
-    empty.appendChild(element('td', 'empty', 'Nothing to show.')).colSpan = 7;
+    empty.appendChild(element('td', 'empty', 'Nothing to show.')).colSpan = 8;
     body.appendChild(empty);
     return;
   }
   rows.forEach(function (item) {
     const row = element('tr');
+    const checkCell = element('td', 'check-col');
+    if (item.status === 'pending' || item.status === 'converted') {
+      const box = element('input');
+      box.type = 'checkbox';
+      box.className = 'model-select';
+      box.value = item.path;
+      checkCell.appendChild(box);
+    }
+    row.appendChild(checkCell);
     row.appendChild(element('td')).appendChild(pill(item.status));
 
     const name = element('td');
@@ -121,6 +133,13 @@ function renderModels() {
     row.appendChild(actions);
     body.appendChild(row);
   });
+}
+
+function selectedModelPaths() {
+  return Array.prototype.map.call(
+    document.querySelectorAll('#models .model-select:checked'),
+    function (box) { return box.value; }
+  );
 }
 
 function renderDuplicates() {
@@ -213,6 +232,12 @@ function renderJobs(data) {
   const servers = data.servers || [];
   const lora = data.lora || [];
   const fuse = data.fuse || [];
+  renderConvertQueue(data.convert_queue || []);
+  const runningConvert = jobs.find(function (job) { return job.state === 'running'; });
+  state.jobBusy = Boolean(runningConvert) || (data.convert_queue || []).length > 0;
+  if (runningConvert && runningConvert.log_path && !state.logManual) {
+    state.selectedLog = runningConvert.log_path;
+  }
   if (!jobs.length && !servers.length && !lora.length && !fuse.length) {
     const empty = element('tr');
     empty.appendChild(element('td', 'empty', 'No receipts yet.')).colSpan = 5;
@@ -235,14 +260,58 @@ function renderJobs(data) {
   });
 }
 
+function renderConvertQueue(queue) {
+  const node = $('convert-queue');
+  if (!node) return;
+  node.textContent = '';
+  if (!queue.length) {
+    node.hidden = true;
+    return;
+  }
+  node.hidden = false;
+  node.appendChild(element('strong', null, 'Queued (' + queue.length + ')'));
+  queue.forEach(function (item) {
+    const row = element('div', 'queue-item');
+    row.appendChild(element('span', 'path', item.label || item.path || item.repo || item.id));
+    row.appendChild(element('span', 'hint', item.q_bits + '-bit'));
+    const cancel = element('button', null, 'Cancel');
+    cancel.addEventListener('click', async function () {
+      cancel.disabled = true;
+      try {
+        await api('/api/convert/queue/cancel', { body: { id: item.id } });
+        await refreshJobs();
+      } catch (error) {
+        notify(error.message);
+        cancel.disabled = false;
+      }
+    });
+    row.appendChild(cancel);
+    node.appendChild(row);
+  });
+  const clear = element('button', null, 'Clear queue');
+  clear.addEventListener('click', async function () {
+    clear.disabled = true;
+    try {
+      await api('/api/convert/queue/clear', { body: {} });
+      await refreshJobs();
+    } catch (error) {
+      notify(error.message);
+      clear.disabled = false;
+    }
+  });
+  node.appendChild(clear);
+}
+
 function jobRow(kind, status, source, target, started, logPath) {
   const row = element('tr');
   if (logPath) {
     row.className = 'clickable';
+    if (state.selectedLog === logPath) row.className += ' is-selected';
     row.title = 'Show log';
     row.addEventListener('click', function () {
       state.selectedLog = logPath;
-      refreshLog();
+      state.logManual = true;
+      refreshJobs();
     });
   }
   row.appendChild(element('td', 'mono', kind));
@@ -255,13 +324,29 @@ function jobRow(kind, status, source, target, started, logPath) {
 
 async function refreshLog() {
   const node = $('job-log');
+  const progress = $('job-progress');
   if (!state.selectedLog) {
     node.textContent = 'Select a job with a log path.';
+    if (progress) {
+      progress.hidden = true;
+      progress.textContent = '';
+    }
     return;
   }
   try {
     const data = await api('/api/jobs/log?path=' + encodeURIComponent(state.selectedLog));
     node.textContent = data.text || '(empty)';
+    if (progress) {
+      const summary = (data.progress && data.progress.summary) || '';
+      const last = (data.progress && data.progress.last_line) || '';
+      if (summary || last) {
+        progress.hidden = false;
+        progress.textContent = summary + (last && last !== summary ? ' — ' + last : '');
+      } else {
+        progress.hidden = true;
+        progress.textContent = '';
+      }
+    }
   } catch (error) {
     node.textContent = error.message;
   }
@@ -274,8 +359,9 @@ async function openConvertPlan(path) {
     const data = await api('/api/convert/preview', { body: { path: path, q_bits: quantBits() } });
     state.pending = data.plan;
     state.pendingKind = 'convert';
+    state.pendingBatch = null;
     fillPlanDialog('Review this conversion', [
-      ['Source', data.plan.source.path || data.plan.repo],
+      ['Source', (data.plan.source && data.plan.source.path) || data.plan.repo],
       ['Output', data.plan.out],
       ['Quantization', data.plan.q_bits + '-bit'],
       ['Command', (data.plan.argv || []).join(' ')],
@@ -284,6 +370,94 @@ async function openConvertPlan(path) {
   } catch (error) {
     notify(error.message);
   }
+}
+
+async function openHfConvertPlan(event) {
+  event.preventDefault();
+  notify('');
+  if (warnConvertDeps()) return;
+  const repo = $('hf-repo').value.trim();
+  if (!repo) {
+    notify('Enter a publisher/model repo id from the local HF cache.');
+    return;
+  }
+  const qBits = Number($('hf-q_bits').value) || 4;
+  const out = $('hf-out').value.trim() || undefined;
+  try {
+    const body = { repo: repo, q_bits: qBits };
+    if (out) body.out = out;
+    const data = await api('/api/convert/preview', { body: body });
+    state.pending = data.plan;
+    state.pendingKind = 'convert';
+    state.pendingBatch = null;
+    fillPlanDialog('Review HF-cache conversion', [
+      ['Repo', data.plan.repo],
+      ['Source', (data.plan.source && data.plan.source.kind) || 'hf-cache'],
+      ['Output', data.plan.out],
+      ['Quantization', data.plan.q_bits + '-bit'],
+      ['Command', (data.plan.argv || []).join(' ')],
+      ['Preview hash', data.plan.preview_hash],
+    ], 'Model must already be in the local Hugging Face cache. Convert never downloads.');
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function queueSelectedModels() {
+  notify('');
+  if (warnConvertDeps()) return;
+  const paths = selectedModelPaths();
+  if (!paths.length) {
+    notify('Select one or more convertible models first.');
+    return;
+  }
+  const button = $('queue-selected');
+  button.disabled = true;
+  try {
+    const plans = [];
+    for (let i = 0; i < paths.length; i += 1) {
+      const data = await api('/api/convert/preview', {
+        body: { path: paths[i], q_bits: quantBits() },
+      });
+      plans.push(data.plan);
+    }
+    state.pending = plans[0];
+    state.pendingKind = 'convert-batch';
+    state.pendingBatch = plans;
+    const pairs = [
+      ['Count', String(plans.length)],
+      ['Quantization', quantBits() + '-bit'],
+    ];
+    plans.forEach(function (plan, index) {
+      pairs.push([
+        '#' + (index + 1),
+        ((plan.source && plan.source.path) || plan.repo) + ' → ' + plan.out,
+      ]);
+    });
+    fillPlanDialog(
+      'Queue ' + plans.length + ' conversion(s)',
+      pairs,
+      'First job starts now if idle; the rest wait in the workbench queue (mlx-agent runs one convert at a time).'
+    );
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function convertStartBody(plan) {
+  const body = {
+    q_bits: plan.q_bits,
+    out: plan.out,
+    preview_hash: plan.preview_hash,
+  };
+  if (plan.source && plan.source.path) {
+    body.path = plan.source.path;
+  } else if (plan.repo) {
+    body.repo = plan.repo;
+  }
+  return body;
 }
 
 function fillPlanDialog(title, pairs, warn) {
@@ -308,14 +482,12 @@ async function confirmPlan() {
   button.disabled = true;
   try {
     if (state.pendingKind === 'convert') {
-      await api('/api/convert/start', {
-        body: {
-          path: state.pending.source.path,
-          q_bits: state.pending.q_bits,
-          out: state.pending.out,
-          preview_hash: state.pending.preview_hash,
-        },
-      });
+      await api('/api/convert/start', { body: convertStartBody(state.pending) });
+    } else if (state.pendingKind === 'convert-batch') {
+      const plans = state.pendingBatch || [];
+      for (let i = 0; i < plans.length; i += 1) {
+        await api('/api/convert/start', { body: convertStartBody(plans[i]) });
+      }
     } else if (state.pendingKind === 'serve') {
       await api('/api/serve/start', {
         body: {
@@ -369,6 +541,7 @@ async function confirmPlan() {
     } else if (kind === 'wire' || kind === 'adopt') {
       notify('Done.');
     } else {
+      state.logManual = false;
       selectPanel('jobs');
       await refreshJobs();
     }
@@ -383,6 +556,7 @@ function closeDialog() {
   $('dialog').hidden = true;
   state.pending = null;
   state.pendingKind = null;
+  state.pendingBatch = null;
 }
 
 async function rescan() {
@@ -408,9 +582,18 @@ async function refreshJobs() {
     renderJobs(data);
     renderServers(data.servers || []);
     if (state.selectedLog) await refreshLog();
+    scheduleJobPoll();
   } catch (error) {
     notify(error.message);
   }
+}
+
+function scheduleJobPoll() {
+  const jobsPanel = $('panel-jobs');
+  if (!jobsPanel || jobsPanel.hidden) return;
+  if (state.jobTimer) clearInterval(state.jobTimer);
+  const ms = state.jobBusy ? 1500 : 2500;
+  state.jobTimer = setInterval(refreshJobs, ms);
 }
 
 function renderServers(servers) {
@@ -991,8 +1174,6 @@ function selectPanel(name) {
   });
   if (name === 'jobs') {
     refreshJobs();
-    if (state.jobTimer) clearInterval(state.jobTimer);
-    state.jobTimer = setInterval(refreshJobs, 2500);
   } else if (state.jobTimer) {
     clearInterval(state.jobTimer);
     state.jobTimer = null;
@@ -1007,6 +1188,14 @@ function init() {
   });
   $('rescan').addEventListener('click', rescan);
   $('pending-only').addEventListener('change', renderModels);
+  $('queue-selected').addEventListener('click', queueSelectedModels);
+  $('select-all-models').addEventListener('change', function () {
+    const on = $('select-all-models').checked;
+    Array.prototype.forEach.call(document.querySelectorAll('#models .model-select'), function (box) {
+      box.checked = on;
+    });
+  });
+  $('hf-convert-form').addEventListener('submit', openHfConvertPlan);
   $('settings').addEventListener('submit', saveSettings);
   $('scout-form').addEventListener('submit', runScout);
   $('doctor-form').addEventListener('submit', runDoctor);

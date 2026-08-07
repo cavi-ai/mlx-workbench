@@ -9,7 +9,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import bridge, config as config_module, deps as deps_module, quarantine as quarantine_module
+from . import (
+    bridge,
+    config as config_module,
+    convert_queue as convert_queue_module,
+    deps as deps_module,
+    quarantine as quarantine_module,
+)
 
 
 STATIC_ROOT = Path(__file__).resolve().with_name("static")
@@ -32,6 +38,7 @@ class Application:
         self.token = token or secrets.token_urlsafe(24)
         self.runner = runner
         self.lock = threading.Lock()
+        self.convert_queue = convert_queue_module.ConvertQueue()
 
     def config(self):
         return config_module.load(self.config_path)
@@ -211,7 +218,14 @@ class Handler(BaseHTTPRequestHandler):
                 runner=runner,
             ))
         if method == "GET" and route == "/api/jobs":
-            return _ok(bridge.all_job_lists(agent, runner=runner))
+            drain = self.app.convert_queue.try_start_next(agent, runner=runner)
+            payload = bridge.all_job_lists(agent, runner=runner)
+            payload["convert_queue"] = self.app.convert_queue.snapshot()
+            if self.app.convert_queue.last_error is not None:
+                payload["convert_queue_error"] = self.app.convert_queue.last_error
+            if drain is not None:
+                payload["convert_drain"] = drain
+            return _ok(payload)
         if method == "GET" and route == "/api/jobs/log":
             params = parse_qs(urlparse(self.path).query)
             values = params.get("path") or []
@@ -219,24 +233,25 @@ class Handler(BaseHTTPRequestHandler):
             return _ok(bridge.read_log(agent, log_path, runner=runner))
         if method == "GET" and route == "/api/quarantine":
             return _ok({"records": quarantine_module.ledger(settings["quarantine_dir"])})
+        if method == "POST" and route == "/api/convert/queue":
+            return _ok({"queue": self.app.convert_queue.snapshot()})
+        if method == "POST" and route == "/api/convert/queue/cancel":
+            payload = self._body() or {}
+            if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
+                return _error("invalid_body", "id is required.", "Retry from the UI.")
+            removed = self.app.convert_queue.cancel(payload["id"])
+            return _ok({
+                "removed": removed,
+                "queue": self.app.convert_queue.snapshot(),
+            })
+        if method == "POST" and route == "/api/convert/queue/clear":
+            cleared = self.app.convert_queue.clear()
+            return _ok({
+                "cleared": cleared,
+                "queue": self.app.convert_queue.snapshot(),
+            })
         if method == "POST" and route in ("/api/convert/preview", "/api/convert/start"):
-            payload = self._body()
-            if not isinstance(payload, dict) or not isinstance(payload.get("path"), str):
-                return _error("invalid_body", "A gguf path is required.", "Retry from the UI.")
-            q_bits = payload.get("q_bits", settings["q_bits"])
-            if q_bits not in config_module.Q_BITS_CHOICES:
-                return _error("invalid_body", "q_bits must be 4 or 8.", "Pick 4 or 8 in the UI.")
-            out = _output_path(settings, payload)
-            if route.endswith("preview"):
-                return _ok(bridge.preview(agent, payload["path"], q_bits, out, runner=runner))
-            preview_hash = payload.get("preview_hash")
-            if not isinstance(preview_hash, str) or not preview_hash:
-                return _error(
-                    "preview_required",
-                    "Confirming a conversion needs the hash from its preview.",
-                    "Preview the plan first, then confirm it.",
-                )
-            return _ok(bridge.start(agent, payload["path"], preview_hash, q_bits, out, runner=runner))
+            return self._convert_route(route, settings, agent, runner)
         if method == "POST" and route == "/api/scout":
             payload = self._body() or {}
             if not isinstance(payload, dict):
@@ -442,6 +457,84 @@ class Handler(BaseHTTPRequestHandler):
             return _ok({"moved": record})
         return 404, "text/plain; charset=utf-8", b"not found"
 
+    def _convert_route(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        path = payload.get("path")
+        repo = payload.get("repo")
+        has_path = isinstance(path, str) and bool(path.strip())
+        has_repo = isinstance(repo, str) and bool(repo.strip())
+        if has_path == has_repo:
+            return _error(
+                "invalid_body",
+                "Provide exactly one of path (GGUF) or repo (HF cache).",
+                "Retry from the UI.",
+            )
+        q_bits = payload.get("q_bits", settings["q_bits"])
+        if q_bits not in config_module.Q_BITS_CHOICES:
+            return _error("invalid_body", "q_bits must be 4 or 8.", "Pick 4 or 8 in the UI.")
+        out = _output_path(settings, payload)
+        hf_cache = payload.get("hf_cache")
+        if hf_cache is not None and not isinstance(hf_cache, str):
+            return _error("invalid_body", "hf_cache must be a string.", "Retry from the UI.")
+        hf_cache = hf_cache.strip() if isinstance(hf_cache, str) and hf_cache.strip() else None
+
+        if route.endswith("preview"):
+            if has_path:
+                return _ok(bridge.preview(agent, path, q_bits, out, runner=runner))
+            return _ok(bridge.preview_repo(
+                agent, repo.strip(), q_bits, out, hf_cache=hf_cache, runner=runner,
+            ))
+
+        preview_hash = payload.get("preview_hash")
+        if not isinstance(preview_hash, str) or not preview_hash:
+            return _error(
+                "preview_required",
+                "Confirming a conversion needs the hash from its preview.",
+                "Preview the plan first, then confirm it.",
+            )
+
+        kind = "gguf" if has_path else "repo"
+        label = path if has_path else repo.strip()
+        enqueue_kwargs = {
+            "kind": kind,
+            "preview_hash": preview_hash,
+            "q_bits": q_bits,
+            "out": out,
+            "path": path if has_path else None,
+            "repo": repo.strip() if has_repo else None,
+            "hf_cache": hf_cache,
+            "label": label,
+        }
+
+        if bridge.convert_is_busy(agent, runner=runner):
+            item = self.app.convert_queue.enqueue(**enqueue_kwargs)
+            return _ok({
+                "status": "queued",
+                "item": item,
+                "queue": self.app.convert_queue.snapshot(),
+            })
+
+        try:
+            if has_path:
+                result = bridge.start(agent, path, preview_hash, q_bits, out, runner=runner)
+            else:
+                result = bridge.start_repo(
+                    agent, repo.strip(), preview_hash, q_bits, out,
+                    hf_cache=hf_cache, runner=runner,
+                )
+        except bridge.BridgeError as error:
+            if error.code == "job_in_progress":
+                item = self.app.convert_queue.enqueue(**enqueue_kwargs)
+                return _ok({
+                    "status": "queued",
+                    "item": item,
+                    "queue": self.app.convert_queue.snapshot(),
+                })
+            raise
+        return _ok(result)
+
 
 def _output_path(settings, payload):
     """Where a conversion should write, from the request or the config."""
@@ -451,7 +544,14 @@ def _output_path(settings, payload):
     directory = settings.get("output_dir")
     if not directory:
         return None
-    stem = Path(payload["path"]).stem
+    path = payload.get("path")
+    repo = payload.get("repo")
+    if isinstance(path, str) and path.strip():
+        stem = Path(path).stem
+    elif isinstance(repo, str) and repo.strip():
+        stem = repo.strip().replace("/", "--")
+    else:
+        return None
     q_bits = payload.get("q_bits", settings["q_bits"])
     return str(Path(directory).expanduser() / "{0}-MLX-{1}bit".format(stem, q_bits))
 
