@@ -1282,6 +1282,107 @@ async function runCli(event) {
   }
 }
 
+async function visualizeArchitecture(event) {
+  event.preventDefault();
+  notify('');
+  const path = $('arch-path').value.trim();
+  
+  if (!path) {
+    notify('Enter model path or repo.');
+    return;
+  }
+  
+  try {
+    const data = await api('/api/model/arch', { 
+      body: { path: path } 
+    });
+    renderArchitecture(data);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function renderArchitecture(data) {
+  const container = $('arch-structure');
+  
+  if (!data || !data.architecture) {
+    container.innerHTML = '<p class="empty">Could not load model architecture.</p>';
+    return;
+  }
+  
+  const arch = data.architecture;
+  let html = '<div class="arch-tree">';
+  
+  // Show model info
+  html += '<div class="arch-header"><h3>' + (arch.name || arch.model_path || 'Model') + '</h3>';
+  html += '<dl class="arch-info">';
+  if (arch.params) html += '<dt>Parameters</dt><dd>' + arch.params + '</dd>';
+  if (arch.layers) html += '<dt>Layers</dt><dd>' + arch.layers + '</dd>';
+  if (arch.hidden_size) html += '<dt>Hidden size</dt><dd>' + arch.hidden_size + '</dd>';
+  if (arch.vocab_size) html += '<dt>Vocabulary</dt><dd>' + arch.vocab_size + '</dd>';
+  html += '</dl></div>';
+  
+  // Show attention blocks
+  if (arch.attention_blocks) {
+    html += '<h4>Attention Blocks</h4><div class="arch-list">';
+    arch.attention_blocks.forEach(function(block, idx) {
+      html += '<div class="arch-block"><span class="arch-block-name">' + (block.name || 'Block ' + (idx + 1)) + '</span>';
+      html += '<div class="arch-details">';
+      if (block.num_heads) html += '<span>Heads: ' + block.num_heads + '</span>';
+      if (block.head_dim) html += '<span>Head dim: ' + block.head_dim + '</span>';
+      if (block.hidden_size) html += '<span>Hidden: ' + block.hidden_size + '</span>';
+      if (block.ffn_dim) html += '<span>FFN: ' + block.ffn_dim + '</span>';
+      html += '</div></div>';
+    });
+    html += '</div>';
+  }
+  
+  // Show layer types
+  if (arch.layer_types) {
+    html += '<h4>Layer Sequence</h4><div class="arch-sequence">';
+    arch.layer_types.forEach(function(type, idx) {
+      const colors = {
+        'attention': '#6fbf95',
+        'ffn': '#6fafbf',
+        'rms_norm': '#bfbf6f',
+        'lm_head': '#bf6f6f'
+      };
+      const color = colors[type] || '#9a9994';
+      html += '<span class="arch-layer" style="background: color-mix(in srgb, ' + color + ' 20%, transparent); border-left: 3px solid ' + color + ';">' + type.replace('_', ' ') + '</span>';
+    });
+    html += '</div>';
+  }
+  
+  // Show parameter distribution
+  if (arch.parameter_distribution) {
+    html += '<h4>Parameter Distribution</h4><div class="arch-bar-chart">';
+    Object.keys(arch.parameter_distribution).forEach(function(key) {
+      var value = arch.parameter_distribution[key];
+      const pct = Math.min(100, (value / 100) * 100);
+      html += '<div class="arch-bar">';
+      html += '<span>' + key.replace('_', ' ') + '</span>';
+      html += '<div class="arch-bar-fill" style="width: ' + pct + '%"></div>';
+      html += '<span>' + value.toFixed(1) + '%</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+  
+  // Show quantization info
+  if (arch.quantization) {
+    html += '<h4>Quantization Setup</h4><table class="grid"><tbody>';
+    Object.keys(arch.quantization).forEach(function(key) {
+      var value = arch.quantization[key];
+      html += '<tr><td>' + key.replace('_', ' ') + '</td><td>' + String(value) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+
 async function scoreDataset(event) {
   event.preventDefault();
   notify('');
@@ -1577,6 +1678,7 @@ function init() {
   $('quant-form').addEventListener('submit', profileQuantizations);
   $('dataset-score-form').addEventListener('submit', scoreDataset);
   $('finetune-preview-form').addEventListener('submit', previewFinetune);
+  $('arch-form').addEventListener('submit', visualizeArchitecture);
   $('cli-form').addEventListener('submit', runCli);
   $('confirm').addEventListener('click', confirmPlan);
   $('cancel').addEventListener('click', closeDialog);

@@ -511,6 +511,15 @@ class Handler(BaseHTTPRequestHandler):
             return _ok(bridge.serve_start(
                 agent, repo, runtime, preview_hash, port, runner=runner,
             ))
+        if method == "POST" and route == "/api/model/arch":
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            path = payload.get("path")
+            if not isinstance(path, str) or not path.strip():
+                return _error("invalid_body", "path is required.", "Enter model path.")
+            return _ok(bridge.model_architecture(agent, path=path or None, runner=runner))
+
         if method == "POST" and route == "/api/training/dataset/score":
             payload = self._body()
             if not isinstance(payload, dict):

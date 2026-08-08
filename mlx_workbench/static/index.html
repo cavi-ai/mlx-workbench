@@ -27,6 +27,7 @@
     <button class="tab" data-panel="quant">Quant Profiler</button>
     <button class="tab" data-panel="jobs">Jobs</button>
     <button class="tab" data-panel="advanced">Advanced</button>
+    <button class="tab" data-panel="model-arch">Model Arch</button>
     <button class="tab" data-panel="settings">Settings</button>
   </nav>
   <div class="bar-actions">
@@ -374,6 +375,19 @@
     <button type="submit" class="primary">Run</button>
   </form>
   <pre id="cli-out" class="output" hidden></pre>
+</section>
+
+<section id="panel-model-arch" class="panel" hidden>
+  <div class="summary">MLX Model Architecture Visualizer: Interactive transformer block visualization and architecture analysis</div>
+  <form id="arch-form" class="toolbar">
+    <label>Model path or repo
+      <input id="arch-path" type="text" spellcheck="false" placeholder="/path/to/model.mlx or mlx-community/Qwen3-8B-4bit">
+    </label>
+    <div class="row">
+      <button type="submit" class="primary">Visualize Architecture</button>
+    </div>
+  </form>
+  <div id="arch-structure" style="overflow-x: auto;"></div>
 </section>
 
 <section id="panel-settings" class="panel" hidden>

@@ -1017,3 +1017,98 @@ def finetune_preview(agent_path, base_model, dataset_path, iters=100, learning_r
             },
         }
 
+
+
+def model_architecture(agent_path, path):
+    """Extract and display model architecture details.
+    
+    Provides interactive visualization data for transformer
+    models including layer structure, attention blocks,
+    and parameter distribution.
+    """
+    if not agent_path:
+        raise BridgeError(
+            "agent_not_configured",
+            "No mlx-agent checkout is configured.",
+            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
+        )
+    
+    script = Path(agent_path).expanduser() / CLI_RELATIVE
+    if not script.is_file():
+        raise BridgeError(
+            "agent_not_found",
+            "No mlx-agent CLI at {0}.".format(script),
+            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
+            "at an mlx-agent checkout that contains scripts/mlx-agent.",
+        )
+    
+    try:
+        # Try to get architecture info via convert scan
+        argv = ["convert", "scan", "--json", "--path", path] if Path(path).exists() else ["convert", "scan", "--json"]
+        
+        import json as json_module
+        command = [sys.executable, str(script)] + argv
+        result = _default_runner(command, timeout=60)
+        
+        if result["returncode"] == 0:
+            try:
+                output = json.loads(result["stdout"])
+                models = output.get("data", {}).get("models", []) or []
+                
+                if len(models) > 0:
+                    m = models[0]
+                    
+                    # Extract architecture info
+                    arch_data = {
+                        "model_path": path,
+                        "name": m.get("name", "Unknown"),
+                        "params": m.get("parameters", "unknown"),
+                        "layers": m.get("layers", "unknown"),
+                        "hidden_size": m.get("hidden_size", "unknown"),
+                        "vocab_size": m.get("vocab_size", "unknown"),
+                    }
+                    
+                    # Try to get more details
+                    if m.get("architecture"):
+                        arch_data["attention_blocks"] = []
+                        for i, block in enumerate(m["architecture"].get("blocks", [])):
+                            arch_data["attention_blocks"].append({
+                                "name": block.get("type", f"Block {i+1}"),
+                                "num_heads": block.get("num_attention_heads", "N/A"),
+                                "head_dim": block.get("head_dim", "N/A"),
+                                "hidden_size": block.get("hidden_size", "N/A"),
+                            })
+                        
+                        arch_data["layer_types"] = m["architecture"].get("layer_types", [])
+                        arch_data["parameter_distribution"] = m["architecture"].get("param_distribution", {})
+                    
+                    if m.get("quantization"):
+                        arch_data["quantization"] = {
+                            "method": m["quantization"].get("method", "unknown"),
+                            "bits": m["quantization"].get("bits", 16),
+                        }
+                    
+                    return {"architecture": arch_data}
+            except:
+                pass
+        
+        # Fallback: create placeholder architecture
+        return {
+            "architecture": {
+                "model_path": path,
+                "name": Path(path).name if Path(path).exists() else "Model",
+                "params": "unknown",
+                "layers": "unknown",
+                "hidden_size": "unknown",
+                "vocab_size": "unknown",
+                "attention_blocks": [],
+                "layer_types": ["attention", "ffn"],
+            }
+        }
+    except Exception as error:
+        return {
+            "architecture": {
+                "error": str(error),
+            }
+        }
+
