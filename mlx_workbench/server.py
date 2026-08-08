@@ -511,6 +511,34 @@ class Handler(BaseHTTPRequestHandler):
             return _ok(bridge.serve_start(
                 agent, repo, runtime, preview_hash, port, runner=runner,
             ))
+        if method == "POST" and route == "/api/training/dataset/score":
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            path = payload.get("path")
+            if not isinstance(path, str) or not path.strip():
+                return _error("invalid_body", "path is required.", "Enter dataset directory.")
+            return _ok(bridge.dataset_score(agent, path=path or None, runner=runner))
+        
+        if method == "POST" and route == "/api/training/preview":
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            base_model = payload.get("base_model")
+            dataset_path = payload.get("dataset_path")
+            iters = payload.get("iters")
+            lr = payload.get("learning_rate", "2e-5")
+            
+            if not isinstance(base_model, str) or not base_model.strip():
+                return _error("invalid_body", "base_model is required.", "Enter model repo.")
+            if not isinstance(dataset_path, str) or not dataset_path.strip():
+                return _error("invalid_body", "dataset_path is required.", "Enter dataset directory.")
+            
+            return _ok(bridge.finetune_preview(
+                agent, base_model, dataset_path,
+                iters=iters, learning_rate=lr, runner=runner
+            ))
+
         if method == "POST" and route == "/api/serve/metrics":
             payload = self._body()
             if not isinstance(payload, dict):

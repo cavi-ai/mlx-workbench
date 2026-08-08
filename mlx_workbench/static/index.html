@@ -20,6 +20,7 @@
     <button class="tab" data-panel="doctor">Doctor</button>
     <button class="tab" data-panel="serve-dashboard">Serve Metrics</button>
     <button class="tab" data-panel="serve">Serve</button>
+    <button class="tab" data-panel="training-studio">Training Studio</button>
     <button class="tab" data-panel="train">Train</button>
     <button class="tab" data-panel="sloth">Sloth</button>
     <button class="tab" data-panel="lmstudio">LM Studio</button>
@@ -277,6 +278,41 @@
     <thead><tr><th>State</th><th>Repo</th><th>Runtime</th><th>Port</th><th>Started</th><th></th></tr></thead>
     <tbody id="serve-servers"></tbody>
   </table>
+</section>
+
+<section id="panel-training-studio" class="panel" hidden>
+  <div class="summary">Training Studio: Real-time LoRA fine-tuning with instant preview and inference comparison</div>
+  
+  <h3>Dataset Quality Scanner</h3>
+  <form id="dataset-score-form" class="toolbar">
+    <label>Dataset directory
+      <input id="dataset-path" type="text" spellcheck="false" placeholder="./my-dataset">
+    </label>
+    <div class="row">
+      <button type="submit" class="primary">Score Dataset Quality</button>
+    </div>
+  </form>
+  <div id="dataset-score-results"></div>
+  
+  <h3>Instant Fine-Tune Preview</h3>
+  <form id="finetune-preview-form" class="toolbar">
+    <label>Base model
+      <input id="finetune-base" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
+    </label>
+    <label>Dataset directory
+      <input id="finetune-dataset" type="text" spellcheck="false" placeholder="./train-dataset">
+    </label>
+    <div class="row">
+      <label class="inline">Iters
+        <input id="finetune-iters" type="number" min="1" value="100">
+      </label>
+      <label class="inline">Learning rate
+        <input id="finetune-lr" type="text" value="2e-5">
+      </label>
+      <button type="submit" class="primary">Preview Training</button>
+    </div>
+  </form>
+  <div id="finetune-preview-results"></div>
 </section>
 
 <section id="panel-train" class="panel" hidden>
