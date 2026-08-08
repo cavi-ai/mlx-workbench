@@ -522,6 +522,17 @@ class Handler(BaseHTTPRequestHandler):
                 return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
             argv = payload.get("argv")
             return _ok(bridge.run_cli(agent, argv, runner=runner))
+        if method == "POST" and route == "/api/lmstudio/import":
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            source = payload.get("source_dir")
+            if source is not None and not isinstance(source, str):
+                return _error("invalid_body", "source_dir must be a string.", "Retry.")
+            convert = payload.get("convert_immediately", True)
+            if not isinstance(convert, bool):
+                return _error("invalid_body", "convert_immediately must be a boolean.", "Retry.")
+            return _ok(bridge.lmstudio_import(agent, source_dir=source or None, convertImmediately=convert))
         if method == "POST" and route == "/api/quant/profile":
             payload = self._body()
             if not isinstance(payload, dict):

@@ -3,7 +3,7 @@
 const TOKEN = document.querySelector('meta[name="mlx-token"]').content;
 const PANELS = [
   'models', 'convert', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'train',
-  'quant', 'jobs', 'advanced', 'settings',
+  'lmstudio', 'quant', 'jobs', 'advanced', 'settings',
 ];
 const state = {
   scan: null,
@@ -950,6 +950,70 @@ async function runAdopt(event) {
   }
 }
 
+async function importFromLMStudio(event) {
+  event.preventDefault();
+  notify('');
+  const source = $('lmstudio-source').value.trim() || undefined;
+  const convert = $('lmstudio-convert').checked;
+  
+  try {
+    const data = await api('/api/lmstudio/import', { 
+      body: { source_dir: source, convert_immediately: convert } 
+    });
+    renderLMStudioResults(data);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function renderLMStudioResults(data) {
+  const container = $('lmstudio-results');
+  
+  if (!data || !data.models) {
+    container.innerHTML = '<p class="empty">No LM Studio models found.</p>';
+    return;
+  }
+  
+  const models = data.models;
+  let html = '<p>Found ' + models.length + ' model(s)</p>';
+  
+  if (models.length === 0) {
+    container.innerHTML = '<p class="empty">No models found in LM Studio directories.</p>';
+    return;
+  }
+  
+  html += '<table class="grid"><thead><tr><th>Name</th><th>Path</th><th>Size</th><th>Status</th></tr></thead><tbody>';
+  
+  models.forEach(function(model) {
+    html += '<tr class="clickable" data-path="' + model.path + '">';
+    html += '<td>' + model.name + '</td>';
+    html += '<td class="path">' + model.path + '</td>';
+    html += '<td class="num">' + bytes(model.size) + '</td>';
+    html += '<td><span class="pill pill-complete">Scan complete</span></td>';
+    html += '</tr>';
+  });
+  
+  html += '</tbody></table>';
+  
+  if (data.conversions) {
+    html += '<h3>Conversion Results</h3><table class="grid"><thead><tr><th>Input</th><th>Status</th></tr></thead><tbody>';
+    data.conversions.forEach(function(conv) {
+      html += '<tr>';
+      html += '<td>' + (conv.path || '—') + '</td>';
+      if (conv.success) {
+        html += '<td><span class="pill pill-complete">Success</span></td>';
+      } else {
+        html += '<td><span class="pill pill-incomplete">Failed</span></td>';
+      }
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+  }
+  
+  container.innerHTML = html;
+}
+
+
 async function previewWire(event) {
   event.preventDefault();
   notify('');
@@ -1294,6 +1358,7 @@ function init() {
   $('fuse-form').addEventListener('submit', previewFuse);
   $('serve-form').addEventListener('submit', previewServe);
   $('serve-refresh').addEventListener('click', refreshJobs);
+  $('lmstudio-form').addEventListener('submit', importFromLMStudio);
   $('quant-form').addEventListener('submit', profileQuantizations);
   $('cli-form').addEventListener('submit', runCli);
   $('confirm').addEventListener('click', confirmPlan);

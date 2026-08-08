@@ -20,6 +20,7 @@
     <button class="tab" data-panel="doctor">Doctor</button>
     <button class="tab" data-panel="serve">Serve</button>
     <button class="tab" data-panel="train">Train</button>
+    <button class="tab" data-panel="lmstudio">LM Studio</button>
     <button class="tab" data-panel="quant">Quant Profiler</button>
     <button class="tab" data-panel="jobs">Jobs</button>
     <button class="tab" data-panel="advanced">Advanced</button>
@@ -122,6 +123,20 @@
     </div>
   </form>
   <div id="quant-results" class="grid-container"></div>
+</section>
+
+<section id="panel-lmstudio" class="panel" hidden>
+  <div class="summary">Import models from LM Studio to mlx format. Scans default LM Studio directories and provides one-click import.</div>
+  <form id="lmstudio-form" class="toolbar">
+    <label>LM Studio models directory
+      <input id="lmstudio-source" type="text" spellcheck="false" placeholder="/Users/you/.lmstudio/models">
+    </label>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="lmstudio-convert" checked> Convert immediately to mlx format</label>
+      <button type="submit" class="primary">Scan & Import</button>
+    </div>
+  </form>
+  <div id="lmstudio-results"></div>
 </section>
 
 <section id="panel-adopt" class="panel" hidden>
