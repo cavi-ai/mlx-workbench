@@ -148,6 +148,15 @@ function renderModels() {
     }
     row.appendChild(actions);
     body.appendChild(row);
+    
+  });
+  
+  // Add click handler for model rows
+  document.getElementById('models').addEventListener('click', function(e) {
+    const row = e.target.closest('.clickable');
+    if (row && !e.target.matches('button, input')) {
+      showModelDetails(row.dataset.modelPath);
+    }
   });
 }
   // Check if we can show step 3
@@ -673,6 +682,15 @@ function renderServers(servers) {
     }
     row.appendChild(actions);
     body.appendChild(row);
+    
+  });
+  
+  // Add click handler for model rows
+  document.getElementById('models').addEventListener('click', function(e) {
+    const row = e.target.closest('.clickable');
+    if (row && !e.target.matches('button, input')) {
+      showModelDetails(row.dataset.modelPath);
+    }
   });
 }
 
@@ -764,7 +782,16 @@ function renderScout(data) {
         actions.appendChild(wire);
         row.appendChild(actions);
         body.appendChild(row);
-      });
+    
+  });
+  
+  // Add click handler for model rows
+  document.getElementById('models').addEventListener('click', function(e) {
+    const row = e.target.closest('.clickable');
+    if (row && !e.target.matches('button, input')) {
+      showModelDetails(row.dataset.modelPath);
+    }
+  });
     }
     table.appendChild(body);
     results.appendChild(table);
@@ -1768,6 +1795,77 @@ function convertSelectedModels() {
 }
 
 
+
+async function showModelDetails(path) {
+  const modal = document.getElementById('model-details-modal');
+  const title = document.getElementById('model-details-title');
+  const contentDiv = document.getElementById('model-details-content');
+  
+  if (!path) return;
+  
+  modal.hidden = false;
+  
+  try {
+    const response = await fetch('/api/convert/scan');
+    if (response.ok) {
+      const data = await response.json();
+      const model = data.data.models.find(m => m.path === path || m.name === path.split('/').pop());
+      
+      if (model) {
+        title.textContent = model.name || path.split('/').pop();
+        
+        let html = '<dl>';
+        if (model.size) {
+          html += '<dt>File Size</dt><dd>' + bytes(model.size) + '</dd>';
+        }
+        if (model.bytes && model.bytes !== model.size) {
+          html += '<dt>Model Size</dt><dd>' + bytes(model.bytes) + '</dd>';
+        }
+        if (model.architecture) {
+          html += '<dt>Architecture</dt><dd>' + model.architecture + '</dd>';
+        }
+        if (model.quantization) {
+          html += '<dt>Quantization</dt><dd>' + model.quantization + '</dd>';
+        }
+        if (model.params) {
+          html += '<dt>Parameters</dt><dd>' + model.params + '</dd>';
+        }
+        if (model.layers) {
+          html += '<dt>Layers</dt><dd>' + model.layers + '</dd>';
+        }
+        if (model.repo) {
+          html += '<dt>Hugging Face Repo</dt><dd>' + model.repo + '</dd>';
+        }
+        html += '<dt>Local Path</dt><dd style="word-break: break-all;">' + model.path + '</dd>';
+        html += '<dt>Status</dt><dd>' + (model.status || 'unknown') + '</dd>';
+        html += '</dl>';
+        
+        if (model.outputs && model.outputs.length) {
+          html += '<h3>Output Paths</h3><ul>';
+          model.outputs.forEach(function(out) {
+            html += '<li>' + out + '</li>';
+          });
+          html += '</ul>';
+        }
+        
+        contentDiv.innerHTML = html;
+      } else {
+        title.textContent = path.split('/').pop();
+        contentDiv.innerHTML = '<p>Details not available for this model.</p><p>Path: ' + path + '</p>';
+      }
+      
+      // Add close handler
+      const closeBtn = document.getElementById('close-model-details');
+      if (closeBtn) {
+        closeBtn.onclick = function() { modal.hidden = true; };
+      }
+    } else {
+      contentDiv.innerHTML = '<p>Error loading model details.</p>';
+    }
+  } catch (error) {
+    contentDiv.innerHTML = '<p>Error: ' + error.message + '</p>';
+  }
+}
 
 function init() {
   $('tabs').addEventListener('click', function (event) {
