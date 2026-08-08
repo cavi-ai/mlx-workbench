@@ -516,6 +516,15 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict) or not isinstance(payload.get("port"), int):
                 return _error("invalid_body", "port is required.", "Retry from the UI.")
             return _ok(bridge.serve_stop(agent, payload["port"], runner=runner))
+        if method == "POST" and route == "/api/sloth/connect":
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            address = payload.get("address")
+            if not isinstance(address, str):
+                return _error("invalid_body", "address is required.", "Enter a server address.")
+            return _ok(bridge.sloth_connect(agent, address=address or "http://localhost:3000", runner=runner))
+
         if method == "POST" and route == "/api/cli":
             payload = self._body()
             if not isinstance(payload, dict):

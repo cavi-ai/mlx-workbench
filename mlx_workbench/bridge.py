@@ -588,6 +588,69 @@ def _default_runner(command, timeout):
     }
 
 
+
+
+def sloth_connect(agent_path, address="http://localhost:3000"):
+    """Connect to Sloth AI server and sync models.
+    
+    Provides integration with Sloth AI for distributed serving
+    and model sharing capabilities.
+    """
+    if not agent_path:
+        raise BridgeError(
+            "agent_not_configured",
+            "No mlx-agent checkout is configured.",
+            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
+        )
+    
+    script = Path(agent_path).expanduser() / CLI_RELATIVE
+    if not script.is_file():
+        raise BridgeError(
+            "agent_not_found",
+            "No mlx-agent CLI at {0}.".format(script),
+            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
+            "at an mlx-agent checkout that contains scripts/mlx-agent.",
+        )
+    
+    # Check connection to Sloth server
+    try:
+        import urllib.request
+        import json as json_module
+        
+        req = urllib.request.Request(
+            address + "/api/health",
+            method="GET"
+        )
+        
+        with urllib.request.urlopen(req, timeout=5) as response:
+            health = json_module.loads(response.read().decode())
+        
+        # Sync models from mlx-agent
+        argv = ["convert", "scan", "--json"]
+        command = [sys.executable, str(script)] + argv
+        result = _default_runner(command, timeout=300)
+        
+        models = []
+        if result["returncode"] == 0:
+            try:
+                output = json.loads(result["stdout"])
+                models = output.get("data", {}).get("models", []) or []
+            except:
+                pass
+        
+        return {
+            "connected": True,
+            "address": address,
+            "health": health,
+            "models_synced": len(models),
+        }
+    except Exception as error:
+        raise BridgeError(
+            "sloth_connection_failed",
+            "Could not connect to Sloth AI at {0}: {1}".format(address, str(error)),
+            "Check that Sloth AI server is running and accessible.",
+        )
+
 def quant_profile(agent_path, path, targets):
     """Profile quantization options using mlx-agent convert preview."""
     if not agent_path:
