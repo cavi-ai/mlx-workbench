@@ -654,3 +654,79 @@ def quant_profile(agent_path, path, targets):
             })
     
     return {"profiles": profiles}
+
+
+def lmstudio_import(agent_path, source_dir=None, convertImmediately=True):
+    """Import models from LM Studio to mlx format.
+    
+    Scans LM Studio's default model directories and returns models that can be
+    imported. Optionally converts them immediately to mlx format.
+    """
+    if not agent_path:
+        raise BridgeError(
+            "agent_not_configured",
+            "No mlx-agent checkout is configured.",
+            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
+        )
+    script = Path(agent_path).expanduser() / CLI_RELATIVE
+    if not script.is_file():
+        raise BridgeError(
+            "agent_not_found",
+            "No mlx-agent CLI at {0}.".format(script),
+            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
+            "at an mlx-agent checkout that contains scripts/mlx-agent.",
+        )
+
+    import_paths = [
+        Path.home() / ".lmstudio" / "models",
+        Path.home() / ".cache" / "lm-studio" / "models",
+    ]
+    
+    if source_dir:
+        import_paths.insert(0, Path(source_dir))
+    
+    models = []
+    for path in import_paths:
+        if not path.exists():
+            continue
+        for gguf_file in path.glob("*.gguf"):
+            models.append({
+                "path": str(gguf_file),
+                "name": gguf_file.name,
+                "size": gguf_file.stat().st_size,
+            })
+    
+    if convertImmediately and models:
+        conversions = []
+        for model in models:
+            argv = [
+                "convert", "--path", model["path"],
+                "--q-bits", "4",
+                "--out", str(Path.home() / "models" / "mlx" / (model["name"] + ". mlx")),
+            ]
+            argv.append("--json")
+            command = [sys.executable, str(script)] + argv
+            try:
+                result = _default_runner(command, timeout=DEFAULT_TIMEOUT)
+                if result["returncode"] == 0:
+                    output = json.loads(result["stdout"])
+                    conversions.append({
+                        "path": model["path"],
+                        "success": True,
+                        "output": output,
+                    })
+                else:
+                    conversions.append({
+                        "path": model["path"],
+                        "success": False,
+                        "error": result["stderr"],
+                    })
+            except Exception as error:
+                conversions.append({
+                    "path": model["path"],
+                    "success": False,
+                    "error": str(error),
+                })
+        return {"models": models, "conversions": conversions}
+    
+    return {"models": models}
