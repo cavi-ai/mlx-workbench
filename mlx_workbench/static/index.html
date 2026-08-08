@@ -11,24 +11,30 @@
 <header class="bar">
   <h1>mlx-workbench</h1>
   <nav class="tabs" id="tabs">
+    <!-- Primary Tabs -->
     <button class="tab is-active" data-panel="models">Models</button>
     <button class="tab" data-panel="convert">Convert</button>
-    <button class="tab" data-panel="duplicates">Duplicates</button>
-    <button class="tab" data-panel="scout">Scout</button>
-    <button class="tab" data-panel="adopt">Adopt</button>
-    <button class="tab" data-panel="wire">Wire</button>
-    <button class="tab" data-panel="doctor">Doctor</button>
-    <button class="tab" data-panel="serve-dashboard">Serve Metrics</button>
     <button class="tab" data-panel="serve">Serve</button>
-    <button class="tab" data-panel="training-studio">Training Studio</button>
-    <button class="tab" data-panel="train">Train</button>
-    <button class="tab" data-panel="sloth">Sloth</button>
-    <button class="tab" data-panel="lmstudio">LM Studio</button>
-    <button class="tab" data-panel="quant">Quant Profiler</button>
     <button class="tab" data-panel="jobs">Jobs</button>
-    <button class="tab" data-panel="advanced">Advanced</button>
-    <button class="tab" data-panel="model-arch">Model Arch</button>
-    <button class="tab" data-panel="settings">Settings</button>
+    <!-- More dropdown -->
+    <div class="more-menu">
+      <button class="tab" id="more-tabs-btn">More...</button>
+      <div class="more-dropdown" hidden>
+        <button class="tab" data-panel="quant">Quant Profiler</button>
+        <button class="tab" data-panel="scout">Scout</button>
+        <button class="tab" data-panel="lmstudio">LM Studio</button>
+        <button class="tab" data-panel="training-studio">Training</button>
+        <button class="tab" data-panel="model-arch">Model Arch</button>
+        <div class="more-divider"></div>
+        <button class="tab" data-panel="doctor">Doctor</button>
+        <button class="tab" data-panel="adopt">Adopt</button>
+        <button class="tab" data-panel="wire">Wire</button>
+        <button class="tab" data-panel="sloth">Sloth</button>
+        <button class="tab" data-panel="train">Train</button>
+        <div class="more-divider"></div>
+        <button class="tab" data-panel="settings">Settings</button>
+      </div>
+    </div>
   </nav>
   <div class="bar-actions">
     <button id="rescan" class="primary">Rescan</button>
@@ -37,7 +43,36 @@
 
 <p id="notice" class="notice" hidden></p>
 
-<section id="panel-models" class="panel">
+<section id="panel-quickstart" class="panel" hidden>
+  <h2>Let's Get You Powered Up</h2>
+  <div class="step-card">
+    <div class="step-number">1</div>
+    <div class="step-content">
+      <h3>Find mlx-agent</h3>
+      <p>mlx-workbench needs the mlx-agent CLI to do conversions, serve models, and more.</p>
+      <div class="quick-error" id="qmlx-agent-error" hidden>mlx-agent not configured.</div>
+      <button class="primary" id="q-open-settings">Go to Settings</button>
+    </div>
+  </div>
+  <div class="step-card">
+    <div class="step-number">2</div>
+    <div class="step-content">
+      <h3>Scan for GGUF models</h3>
+      <p>Let's find your local models. mlx-workbench will scan common directories.</p>
+      <button class="primary" id="q-rescan">Rescan Models</button>
+    </div>
+  </div>
+  <div class="step-card" id="q-step3" hidden>
+    <div class="step-number">3</div>
+    <div class="step-content">
+      <h3>Convert your first model</h3>
+      <p>Select a GGUF file and choose your quantization. Click Convert!</p>
+      <div id="q-step3-content"></div>
+    </div>
+  </div>
+</section>
+
+<section id="panel-models" class="panel" hidden>
   <div class="summary" id="summary"></div>
   <div class="row toolbar-inline">
     <label class="check"><input type="checkbox" id="pending-only"> Pending only</label>
