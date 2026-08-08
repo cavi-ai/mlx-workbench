@@ -511,6 +511,12 @@ class Handler(BaseHTTPRequestHandler):
             return _ok(bridge.serve_start(
                 agent, repo, runtime, preview_hash, port, runner=runner,
             ))
+        if method == "POST" and route == "/api/duplicates/scan":
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            return _ok(bridge.scan_duplicates(agent, runner=runner))
+
         if method == "POST" and route == "/api/model/arch":
             payload = self._body()
             if not isinstance(payload, dict):

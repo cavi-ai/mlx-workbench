@@ -1718,6 +1718,57 @@ document.addEventListener('click', function(e) {
 });
 
 
+async function scanDuplicates() {
+  notify('');
+  const panel = document.getElementById('panel-duplicates');
+  if (panel.hidden) selectPanel('duplicates');
+  
+  try {
+    const data = await api('/api/duplicates/scan', { body: {} });
+    renderDuplicates(data.duplicates || []);
+    
+    if (data.quarantine) {
+      document.getElementById('quarantined').innerHTML = '<p>Quarantined files: ' + (data.quarantine.length || 0) + '</p>';
+    }
+    
+    notify('Duplicate scan complete');
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function renderDuplicates(dupes) {
+  const container = document.getElementById('exact-duplicates');
+  if (!dupes || dupes.length === 0) {
+    container.innerHTML = '<p class="empty">No duplicates found</p>';
+    return;
+  }
+  
+  let html = '<table class="grid"><thead><tr><th>Group</th><th>Files</th></tr></thead><tbody>';
+  dupes.forEach(function(group) {
+    html += '<tr><td>' + group.group_id + '</td><td>' + group.files.join(', ') + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function convertSelectedModels() {
+  const paths = selectedModelPaths();
+  if (paths.length === 0) {
+    notify('Select models from the Models tab first');
+    return;
+  }
+  
+  if (warnConvertDeps()) return;
+  
+  const panel = document.getElementById('panel-convert');
+  if (panel.hidden) selectPanel('convert');
+  
+  notify(paths.length + ' model(s) selected for conversion. Open the Convert tab to proceed.');
+}
+
+
+
 function init() {
   $('tabs').addEventListener('click', function (event) {
     if (event.target.dataset.panel) selectPanel(event.target.dataset.panel);
@@ -1755,6 +1806,14 @@ function init() {
 
   api('/api/config').then(function (data) {
     fillSettings(data);
+    
+    // Check if we should auto-scan for duplicates on first run
+    const hasRunBefore = sessionStorage.getItem('mlx_workbench_duplicates_scanned');
+    if (!hasRunBefore && data.agent && data.agent.ok) {
+      setTimeout(function() { scanDuplicates(); }, 500);
+      sessionStorage.setItem('mlx_workbench_duplicates_scanned', 'true');
+    }
+    
     if (!data.agent || !data.agent.ok) {
       notify((data.agent && data.agent.message) ||
         'No mlx-agent checkout configured. Init the vendor submodule or set it under Settings.');
@@ -1762,11 +1821,16 @@ function init() {
       return;
     }
     if (data.runtime && data.runtime.convert && !data.runtime.convert.ok) {
-      // Soft hint once; scan still works.
       console.info(data.runtime.convert.message);
     }
-    return rescan();
+    
+    // Auto-rescan to populate models on first run
+    setTimeout(function() { rescan(); }, 100);
   }).catch(function (error) { notify(error.message); });
 }
+
+  $('rescan-models').addEventListener('click', rescan);
+  $('scan-duplicates').addEventListener('click', scanDuplicates);
+  $('convert-selected').addEventListener('click', convertSelectedModels);
 
 init();

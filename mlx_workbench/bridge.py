@@ -1112,3 +1112,79 @@ def model_architecture(agent_path, path):
             }
         }
 
+
+
+def scan_duplicates(agent_path):
+    """Scan for duplicates across all configured GGUF roots."""
+    if not agent_path:
+        raise BridgeError(
+            "agent_not_configured",
+            "No mlx-agent checkout is configured.",
+            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
+        )
+    
+    script = Path(agent_path).expanduser() / CLI_RELATIVE
+    if not script.is_file():
+        raise BridgeError(
+            "agent_not_found",
+            "No mlx-agent CLI at {0}.".format(script),
+            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
+            "at an mlx-agent checkout that contains scripts/mlx-agent.",
+        )
+    
+    try:
+        # Run convert scan to get all models
+        argv = ["convert", "scan", "--json"]
+        command = [sys.executable, str(script)] + argv
+        result = _default_runner(command, timeout=300)
+        
+        if result["returncode"] != 0:
+            raise BridgeError(
+                "scan_failed",
+                "Failed to scan models: {0}".format(result.get("stderr", "unknown error")),
+                "Check mlx-agent logs.",
+            )
+        
+        try:
+            output = json.loads(result["stdout"])
+            models = output.get("data", {}).get("models", []) or []
+        except:
+            models = []
+        
+        # Group by filename (exact duplicates)
+        exact_groups = {}
+        variant_groups = {}
+        
+        for model in models:
+            path = model.get("path", "")
+            name = Path(path).name if path else ""
+            
+            if not name:
+                continue
+            
+            # Group exact filename matches (same file, different location or same path)
+            if name not in exact_groups:
+                exact_groups[name] = []
+            exact_groups[name].append(path)
+        
+        # Filter to only groups with more than one path
+        duplicates = []
+        for name, paths in exact_groups.items():
+            if len(paths) > 1:
+                duplicates.append({
+                    "group_id": name,
+                    "files": paths,
+                    "count": len(paths),
+                })
+        
+        return {
+            "duplicates": duplicates,
+            "total_models": len(models),
+        }
+    except Exception as error:
+        raise BridgeError(
+            "duplicate_scan_failed",
+            str(error),
+            "Check your configured GGUF roots and try again.",
+        )
+
