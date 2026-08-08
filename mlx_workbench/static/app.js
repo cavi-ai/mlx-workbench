@@ -1282,6 +1282,113 @@ async function runCli(event) {
   }
 }
 
+async function scoreDataset(event) {
+  event.preventDefault();
+  notify('');
+  const path = $('dataset-path').value.trim();
+  
+  if (!path) {
+    notify('Enter dataset directory path.');
+    return;
+  }
+  
+  try {
+    const data = await api('/api/training/dataset/score', { 
+      body: { path: path } 
+    });
+    renderDatasetScore(data);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function renderDatasetScore(data) {
+  const container = $('dataset-score-results');
+  
+  if (!data || !data.score) {
+    container.innerHTML = '<p class="empty">Could not score dataset.</p>';
+    return;
+  }
+  
+  const s = data.score;
+  let html = '<div class="metrics-grid">';
+  html += '<div class="metric-card"><h4>Quality Score</h4><div style="font-size: 3rem; font-weight: bold;">';
+  
+  const color = s.score >= 0.8 ? 'var(--accent)' : (s.score >= 0.5 ? 'var(--warn)' : 'var(--danger)');
+  html += '<span style="color: ' + color + '">' + (s.score * 100).toFixed(1) + '%</span></div>';
+  
+  html += '<dl><dt>Examples</dt><dd>' + s.example_count + '</dd>';
+  html += '<dt>Avg length</dt><dd>' + s.avg_length + ' tokens</dd>';
+  html += '</dl></div>';
+  
+  if (s.samples) {
+    html += '<h4>Sample Quality</h4><table class="grid"><thead><tr><th>Prompt</th><th>Response</th></tr></thead><tbody>';
+    s.samples.forEach(function(sample) {
+      html += '<tr><td>' + (sample.prompt || '—').substring(0, 100) + '</td><td>' + (sample.response || '—').substring(0, 100) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  
+  container.innerHTML = html;
+}
+
+async function previewFinetune(event) {
+  event.preventDefault();
+  notify('');
+  const base = $('finetune-base').value.trim();
+  const dataset = $('finetune-dataset').value.trim();
+  const iters = Number($('finetune-iters').value);
+  const lr = $('finetune-lr').value.trim();
+  
+  if (!base || !dataset) {
+    notify('Base model and dataset path are required.');
+    return;
+  }
+  
+  if (!iters || iters < 1) {
+    notify('Enter a valid number of iterations.');
+    return;
+  }
+  
+  try {
+    const data = await api('/api/training/preview', { 
+      body: { base_model: base, dataset_path: dataset, iters: iters, learning_rate: lr } 
+    });
+    renderFinetunePreview(data);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function renderFinetunePreview(data) {
+  const container = $('finetune-preview-results');
+  
+  if (!data || !data.estimated) {
+    container.innerHTML = '<p class="empty">Could not preview training.</p>';
+    return;
+  }
+  
+  const e = data.estimated;
+  let html = '<div class="metrics-grid">';
+  html += '<div class="metric-card"><h4>Training Estimate</h4>';
+  html += '<dl><dt>Time to complete</dt><dd>' + (e.time_estimate || '—') + '</dd>';
+  html += '<dt>Expected quality gain</dt><dd>' + (e.quality_gain || '—') + '</dd></dl></div>';
+  
+  html += '<div class="metric-card"><h4>Hardware</h4>';
+  html += '<dl><dt>VRAM required</dt><dd>' + (e.vram_required || '—') + '</dd>';
+  html += '<dt>Epochs</dt><dd>' + (e.epochs || '—') + '</dd></dl></div>';
+  
+  html += '<div class="metric-card"><h4>Inference Comparison</h4>';
+  html += '<dl><dt>Before (base)</dt><dd>' + (e.before_metrics || '—') + '</dd>';
+  html += '<dt>After (fine-tuned)</dt><dd>' + (e.after_metrics || '—') + '</dd></dl></div>';
+  
+  html += '<button class="primary" id="start-finetune">Start Training</button>';
+  html += '</div>';
+  
+  container.innerHTML = html;
+}
+
+
 async function profileQuantizations(event) {
   event.preventDefault();
   notify('');
@@ -1468,6 +1575,8 @@ function init() {
   $('sloth-form').addEventListener('submit', connectSloth);
   $('lmstudio-form').addEventListener('submit', importFromLMStudio);
   $('quant-form').addEventListener('submit', profileQuantizations);
+  $('dataset-score-form').addEventListener('submit', scoreDataset);
+  $('finetune-preview-form').addEventListener('submit', previewFinetune);
   $('cli-form').addEventListener('submit', runCli);
   $('confirm').addEventListener('click', confirmPlan);
   $('cancel').addEventListener('click', closeDialog);
