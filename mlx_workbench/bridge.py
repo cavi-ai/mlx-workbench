@@ -586,3 +586,71 @@ def _default_runner(command, timeout):
         "stdout": completed.stdout.decode("utf-8", "replace"),
         "stderr": completed.stderr.decode("utf-8", "replace"),
     }
+
+
+def quant_profile(agent_path, path, targets):
+    """Profile quantization options using mlx-agent convert preview."""
+    if not agent_path:
+        raise BridgeError(
+            "agent_not_configured",
+            "No mlx-agent checkout is configured.",
+            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
+        )
+    script = Path(agent_path).expanduser() / CLI_RELATIVE
+    if not script.is_file():
+        raise BridgeError(
+            "agent_not_found",
+            "No mlx-agent CLI at {0}.".format(script),
+            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
+            "at an mlx-agent checkout that contains scripts/mlx-agent.",
+        )
+
+    profiles = []
+    for target in targets:
+        argv = ["convert", "preview", "--path", path]
+        
+        if target == "gguf-q4":
+            argv.extend(["--q-bits", "4", "--out", path + ".Q4_K_M.gguf"])
+        elif target == "gguf-q8":
+            argv.extend(["--q-bits", "8", "--out", path + ".Q8_0.gguf"])
+        elif target == "gguf-q5":
+            argv.extend(["--q-bits", "5", "--out", path + ".Q5_K_M.gguf"])
+        elif target == "mlx-bf16":
+            argv.extend(["--q-bits", "bf16", "--out", path + ".mlx-bf16"])
+        elif target == "mlx-4bit":
+            argv.extend(["--q-bits", "4", "--out", path + ".mlx-4bit"])
+        elif target == "mlx-8bit":
+            argv.extend(["--q-bits", "8", "--out", path + ".mlx-8bit"])
+        
+        argv.append("--json")
+        command = [sys.executable, str(script)] + argv
+        try:
+            result = _default_runner(command, timeout=DEFAULT_TIMEOUT)
+            if result["returncode"] == 0:
+                output = json.loads(result["stdout"])
+                plan = output.get("data", {}).get("plan", {}) or output.get("data", {})
+                
+                profile = {
+                    "target": target,
+                    "size": plan.get("preview_hash", 0),
+                    "tokens_per_sec": None,
+                    "vram": None,
+                    "command": argv,
+                }
+                
+                if target.startswith("mlx-"):
+                    profile["actions"] = [{
+                        "type": "convert",
+                        "label": f"Convert to {target}",
+                        "path": path,
+                    }]
+                
+                profiles.append(profile)
+        except Exception as error:
+            profiles.append({
+                "target": target,
+                "error": str(error),
+                "command": argv,
+            })
+    
+    return {"profiles": profiles}

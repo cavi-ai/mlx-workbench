@@ -20,6 +20,7 @@
     <button class="tab" data-panel="doctor">Doctor</button>
     <button class="tab" data-panel="serve">Serve</button>
     <button class="tab" data-panel="train">Train</button>
+    <button class="tab" data-panel="quant">Quant Profiler</button>
     <button class="tab" data-panel="jobs">Jobs</button>
     <button class="tab" data-panel="advanced">Advanced</button>
     <button class="tab" data-panel="settings">Settings</button>
@@ -98,6 +99,29 @@
   </form>
   <div id="scout-host" class="summary" hidden></div>
   <div id="scout-results"></div>
+</section>
+
+<section id="panel-quant" class="panel" hidden>
+  <div class="summary">Quantization Profiler: Compare performance and quality across quant types for mlx models</div>
+  <form id="quant-form" class="toolbar">
+    <label>Model path
+      <input id="quant-path" type="text" spellcheck="false" placeholder="/path/to/model.gguf or hf-cache repo">
+    </label>
+    <div class="row">
+      <label class="inline">Target formats
+        <select id="quant-targets" multiple>
+          <option value="gguf-q4">GGUF Q4_K_M</option>
+          <option value="gguf-q8" selected>GGUF Q8_0</option>
+          <option value="gguf-q5">GGUF Q5_K_M</option>
+          <option value="mlx-bf16">MLX BF16</option>
+          <option value="mlx-4bit">MLX 4-bit</option>
+          <option value="mlx-8bit">MLX 8-bit</option>
+        </select>
+      </label>
+      <button type="submit" class="primary">Profile Quantizations</button>
+    </div>
+  </form>
+  <div id="quant-results" class="grid-container"></div>
 </section>
 
 <section id="panel-adopt" class="panel" hidden>

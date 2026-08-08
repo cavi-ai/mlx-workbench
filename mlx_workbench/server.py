@@ -522,6 +522,17 @@ class Handler(BaseHTTPRequestHandler):
                 return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
             argv = payload.get("argv")
             return _ok(bridge.run_cli(agent, argv, runner=runner))
+        if method == "POST" and route == "/api/quant/profile":
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            path = payload.get("path")
+            targets = payload.get("targets")
+            if not isinstance(path, str) or not path.strip():
+                return _error("invalid_body", "path is required.", "Enter a model path.")
+            if not isinstance(targets, list) or not all(isinstance(t, str) for t in targets):
+                return _error("invalid_body", "targets must be a list of strings.", "Select formats.")
+            return _ok(bridge.quant_profile(agent, path, targets))
         if method == "POST" and route == "/api/quarantine":
             payload = self._body()
             if not isinstance(payload, dict) or not isinstance(payload.get("path"), str):
