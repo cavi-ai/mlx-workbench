@@ -275,3 +275,58 @@ tr.is-selected td { background: color-mix(in srgb, var(--accent) 14%, transparen
   margin: 0 0 0.75rem;
 }
 
+.quant-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.quant-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+.quant-card h4 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.quant-card dl {
+  display: grid;
+  gap: 0.35rem 1rem;
+  grid-template-columns: max-content 1fr;
+  margin: 0;
+}
+
+.quant-card dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.quant-card dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.quant-actions {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--line);
+}
+
+.quant-actions button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+}
+
+.quant-actions button:hover {
+  opacity: 0.9;
+}
+

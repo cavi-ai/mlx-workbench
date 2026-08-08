@@ -3,7 +3,7 @@
 const TOKEN = document.querySelector('meta[name="mlx-token"]').content;
 const PANELS = [
   'models', 'convert', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'train',
-  'jobs', 'advanced', 'settings',
+  'quant', 'jobs', 'advanced', 'settings',
 ];
 const state = {
   scan: null,
@@ -1112,6 +1112,74 @@ async function runCli(event) {
   }
 }
 
+async function profileQuantizations(event) {
+  event.preventDefault();
+  notify('');
+  const path = $('quant-path').value.trim();
+  if (!path) {
+    notify('Enter a model path or hf-cache repo.');
+    return;
+  }
+  const targets = Array.prototype.map.call(
+    document.querySelectorAll('#quant-targets option'),
+    function (option) { return option.value; }
+  ).filter(function (value) {
+    return document.querySelector('#quant-targets option[value="' + value + '"]').selected;
+  });
+  if (!targets.length) {
+    notify('Select at least one target format.');
+    return;
+  }
+  try {
+    const data = await api('/api/quant/profile', { body: { path: path, targets: targets } });
+    renderQuantResults(data);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function renderQuantResults(data) {
+  const container = $('quant-results');
+  if (!data || !data.profiles || !data.profiles.length) {
+    container.innerHTML = '<p class="empty">No profiling data available.</p>';
+    return;
+  }
+  
+  let html = '<div class="grid quant-grid">';
+  html += '<h3>Quantization Profiles</h3>';
+  
+  data.profiles.forEach(function (profile, index) {
+    html += '<div class="quant-card">';
+    html += '<h4>' + profile.target + '</h4>';
+    html += '<dl>';
+    html += '<dt>Size</dt><dd>' + bytes(profile.size) + '</dd>';
+    html += '<dt>Estimated Tokens/Sec</dt><dd>' + (profile.tokens_per_sec || '—') + '</dd>';
+    html += '<dt>Estimated VRAM</dt><dd>' + (profile.vram || '—') + '</dd>';
+    if (profile.comparison) {
+      html += '<dt>Quality vs Base</dt><dd>' + profile.comparison.quality_percent + '</dd>';
+    }
+    if (profile.command) {
+      html += '<dt>Command</dt><dd><code>' + profile.command.join(' ') + '</code></dd>';
+    }
+    html += '</dl>';
+    
+    if (profile.actions && profile.actions.length) {
+      html += '<div class="quant-actions">';
+      profile.actions.forEach(function (action) {
+        if (action.type === 'convert') {
+          html += '<button class="quant-convert" data-path="' + (action.path || '') + '" ' +
+            'data-target="' + profile.target + '">' + action.label + '</button>';
+        }
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+  });
+  
+  html += '</div>';
+  container.innerHTML = html;
+}
+
 function fillSettings(data) {
   const config = data.config;
   state.config = config;
@@ -1226,6 +1294,7 @@ function init() {
   $('fuse-form').addEventListener('submit', previewFuse);
   $('serve-form').addEventListener('submit', previewServe);
   $('serve-refresh').addEventListener('click', refreshJobs);
+  $('quant-form').addEventListener('submit', profileQuantizations);
   $('cli-form').addEventListener('submit', runCli);
   $('confirm').addEventListener('click', confirmPlan);
   $('cancel').addEventListener('click', closeDialog);
