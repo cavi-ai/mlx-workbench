@@ -13,25 +13,32 @@
   <nav class="tabs" id="tabs">
     <!-- Primary Tabs -->
     <button class="tab is-active" data-panel="models">Models</button>
+    <button class="tab" data-panel="duplicates">Duplicates</button>
     <button class="tab" data-panel="convert">Convert</button>
     <button class="tab" data-panel="serve">Serve</button>
-    <button class="tab" data-panel="jobs">Jobs</button>
-    <!-- More dropdown -->
+    <!-- Secondary Tabs -->
     <div class="more-menu">
-      <button class="tab" id="more-tabs-btn">More...</button>
+      <button class="tab" id="more-tabs-btn">More</button>
       <div class="more-dropdown" hidden>
-        <button class="tab" data-panel="quant">Quant Profiler</button>
+        <h4 class="tab-bar-label">Discovery</h4>
         <button class="tab" data-panel="scout">Scout</button>
-        <button class="tab" data-panel="lmstudio">LM Studio</button>
-        <button class="tab" data-panel="training-studio">Training</button>
-        <button class="tab" data-panel="model-arch">Model Arch</button>
+        <button class="tab" data-panel="lmstudio">LM Studio Import</button>
         <div class="more-divider"></div>
+        <h4 class="tab-bar-label">Training</h4>
+        <button class="tab" data-panel="training-studio">Training Studio</button>
+        <div class="more-divider"></h4>
+        <h4 class="tab-bar-label">Conversion</h4>
+        <button class="tab" data-panel="quant">Compare Conversions</button>
+        <div class="more-divider"></h4>
+        <h4 class="tab-bar-label">Tools</h4>
         <button class="tab" data-panel="doctor">Doctor</button>
         <button class="tab" data-panel="adopt">Adopt</button>
         <button class="tab" data-panel="wire">Wire</button>
+        <button class="tab" data-panel="model-arch">Model Arch</button>
         <button class="tab" data-panel="sloth">Sloth</button>
-        <button class="tab" data-panel="train">Train</button>
-        <div class="more-divider"></div>
+        <div class="more-divider"></h4>
+        <h4 class="tab-bar-label">System</h4>
+        <button class="tab" data-panel="jobs">Jobs</button>
         <button class="tab" data-panel="settings">Settings</button>
       </div>
     </div>
@@ -43,45 +50,40 @@
 
 <p id="notice" class="notice" hidden></p>
 
-<section id="panel-quickstart" class="panel" hidden>
-  <h2>Let's Get You Powered Up</h2>
-  <div class="step-card">
-    <div class="step-number">1</div>
-    <div class="step-content">
-      <h3>Find mlx-agent</h3>
-      <p>mlx-workbench needs the mlx-agent CLI to do conversions, serve models, and more.</p>
-      <div class="quick-error" id="qmlx-agent-error" hidden>mlx-agent not configured.</div>
-      <button class="primary" id="q-open-settings">Go to Settings</button>
+<!-- Duplicates Tab (Main Focus) -->
+<section id="panel-duplicates" class="panel">
+  <div class="summary">Duplicate Management - Keep your model library clean and organized</div>
+  
+  <h3>Scan for Duplicates</h3>
+  <div class="toolbar">
+    <div class="row">
+      <button id="scan-duplicates" class="primary">Run Duplicate Scan</button>
+      <span class="hint">Scans all configured GGUF roots for exact and variant duplicates</span>
     </div>
   </div>
-  <div class="step-card">
-    <div class="step-number">2</div>
-    <div class="step-content">
-      <h3>Scan for GGUF models</h3>
-      <p>Let's find your local models. mlx-workbench will scan common directories.</p>
-      <button class="primary" id="q-rescan">Rescan Models</button>
-    </div>
-  </div>
-  <div class="step-card" id="q-step3" hidden>
-    <div class="step-number">3</div>
-    <div class="step-content">
-      <h3>Convert your first model</h3>
-      <p>Select a GGUF file and choose your quantization. Click Convert!</p>
-      <div id="q-step3-content"></div>
-    </div>
-  </div>
+  
+  <h3>Exact Duplicates (Same Files)</h3>
+  <div id="exact-duplicates" class="duplicates-section"></div>
+  
+  <h3>Variant Duplicates (Similar Files)</h3>
+  <div id="variant-duplicates" class="duplicates-section"></div>
+  
+  <h3>Quarantine Area</h3>
+  <p class="hint">Moved duplicates go here (never deleted). Paths configured in Settings.</p>
+  <div id="quarantined" class="duplicates-section"></div>
 </section>
 
-<section id="panel-models" class="panel" hidden>
-  <div class="summary" id="summary"></div>
+<!-- Models Tab -->
+<section id="panel-models" class="panel">
+  <div class="summary">Local GGUF Models - View, convert, and manage your models</div>
   <div class="row toolbar-inline">
-    <label class="check"><input type="checkbox" id="pending-only"> Pending only</label>
-    <button type="button" id="queue-selected">Queue selected…</button>
+    <button type="button" id="rescan-models" class="primary">Rescan Models</button>
+    <span class="hint" id="scan-in-progress" hidden>Scanning...</span>
   </div>
   <table class="grid">
     <thead>
       <tr>
-        <th class="check-col"><input type="checkbox" id="select-all-models" title="Select all convertible"></th>
+        <th class="check-col"><input type="checkbox" id="select-all-models"></th>
         <th>Status</th><th>Model</th><th>Arch</th><th>Quant</th><th class="num">Size</th><th>Output</th><th></th>
       </tr>
     </thead>
@@ -89,379 +91,185 @@
   </table>
 </section>
 
+<!-- Convert Tab -->
 <section id="panel-convert" class="panel" hidden>
-  <div class="summary">Convert a model already in the local Hugging Face cache (mlx-agent convert start --repo). Does not download.</div>
+  <div class="summary">Convert GGUF to MLX format</div>
+  
+  <h3>From Models List</h3>
+  <p class="hint">Select models from the Models tab and convert them to MLX format.</p>
+  <div class="toolbar">
+    <button id="convert-selected" class="primary">Convert Selected</button>
+  </div>
+  
+  <h3>From HF Cache</h3>
   <form id="hf-convert-form" class="toolbar">
-    <label>Repo <span class="hint">publisher/model as it appears in the HF cache</span>
-      <input id="hf-repo" type="text" spellcheck="false" placeholder="org/ModelName" required>
+    <label>Repo ID
+      <input id="hf-repo" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
     </label>
     <div class="row">
       <label class="inline">Quantization
         <select id="hf-q_bits"><option value="4">4-bit</option><option value="8">8-bit</option></select>
       </label>
-      <label class="inline">Out <span class="hint">optional</span>
-        <input id="hf-out" type="text" spellcheck="false" placeholder="default from Settings">
-      </label>
-      <button type="submit" class="primary">Preview…</button>
+      <button type="submit" class="primary">Preview & Convert</button>
     </div>
   </form>
 </section>
 
-<section id="panel-duplicates" class="panel" hidden>
-  <div class="summary" id="dupe-summary"></div>
-  <div id="duplicates"></div>
-  <h3>Quarantined</h3>
-  <div id="quarantined"></div>
-</section>
-
-<section id="panel-scout" class="panel" hidden>
-  <div class="summary">Discover MLX models on Hugging Face suited to this Mac (mlx-agent discover).</div>
-  <form id="scout-form" class="toolbar">
-    <div class="row">
-      <label class="inline">Role
-        <select id="scout-role">
-          <option value="">all</option>
-          <option value="general">general</option>
-          <option value="coding">coding</option>
-          <option value="reasoning">reasoning</option>
-          <option value="vision">vision</option>
-          <option value="embedding">embedding</option>
-          <option value="tool-use">tool-use</option>
-        </select>
-      </label>
-      <label class="inline">Limit
-        <input id="scout-limit" type="number" min="1" max="50" value="6">
-      </label>
-      <label class="check"><input type="checkbox" id="scout-fast"> Fast (skip Hub enrichment)</label>
-      <label class="check"><input type="checkbox" id="scout-new"> New only</label>
-      <button type="submit" class="primary">Scout</button>
-    </div>
-  </form>
-  <div id="scout-host" class="summary" hidden></div>
-  <div id="scout-results"></div>
-</section>
-
-<section id="panel-quant" class="panel" hidden>
-  <div class="summary">Quantization Profiler: Compare performance and quality across quant types for mlx models</div>
-  <form id="quant-form" class="toolbar">
-    <label>Model path
-      <input id="quant-path" type="text" spellcheck="false" placeholder="/path/to/model.gguf or hf-cache repo">
-    </label>
-    <div class="row">
-      <label class="inline">Target formats
-        <select id="quant-targets" multiple>
-          <option value="gguf-q4">GGUF Q4_K_M</option>
-          <option value="gguf-q8" selected>GGUF Q8_0</option>
-          <option value="gguf-q5">GGUF Q5_K_M</option>
-          <option value="mlx-bf16">MLX BF16</option>
-          <option value="mlx-4bit">MLX 4-bit</option>
-          <option value="mlx-8bit">MLX 8-bit</option>
-        </select>
-      </label>
-      <button type="submit" class="primary">Profile Quantizations</button>
-    </div>
-  </form>
-  <div id="quant-results" class="grid-container"></div>
-</section>
-
-<section id="panel-sloth" class="panel" hidden>
-  <div class="summary">Sloth AI integration: native distributed serving and model sharing for mlx models</div>
-  <form id="sloth-form" class="toolbar">
-    <label>Sloth server address
-      <input id="sloth-address" type="text" spellcheck="false" placeholder="http://localhost:3000">
-    </label>
-    <div class="row">
-      <button type="submit" class="primary">Connect & Sync</button>
-    </div>
-  </form>
-  <div id="sloth-results"></div>
-</section>
-
-<section id="panel-lmstudio" class="panel" hidden>
-  <div class="summary">Import models from LM Studio to mlx format. Scans default LM Studio directories and provides one-click import.</div>
-  <form id="lmstudio-form" class="toolbar">
-    <label>LM Studio models directory
-      <input id="lmstudio-source" type="text" spellcheck="false" placeholder="/Users/you/.lmstudio/models">
-    </label>
-    <div class="row">
-      <label class="check"><input type="checkbox" id="lmstudio-convert" checked> Convert immediately to mlx format</label>
-      <button type="submit" class="primary">Scan & Import</button>
-    </div>
-  </form>
-  <div id="lmstudio-results"></div>
-</section>
-
-<section id="panel-adopt" class="panel" hidden>
-  <div class="summary">Durable discover → verify → recommend handoff for a role (mlx-agent adopt).</div>
-  <form id="adopt-form" class="toolbar">
-    <div class="row">
-      <label class="inline">Role
-        <select id="adopt-role">
-          <option value="coding">coding</option>
-          <option value="general">general</option>
-          <option value="reasoning">reasoning</option>
-          <option value="vision">vision</option>
-          <option value="embedding">embedding</option>
-          <option value="tool-use">tool-use</option>
-        </select>
-      </label>
-      <label class="check"><input type="checkbox" id="adopt-fast"> Fast</label>
-      <label class="check"><input type="checkbox" id="adopt-offline"> Offline</label>
-      <button type="submit" class="primary">Start adopt</button>
-    </div>
-    <label>State path <span class="hint">optional handoff JSON path</span>
-      <input id="adopt-state" type="text" spellcheck="false" placeholder="./adopt-state.json">
-    </label>
-  </form>
-  <pre id="adopt-out" class="output" hidden></pre>
-</section>
-
-<section id="panel-wire" class="panel" hidden>
-  <div class="summary">Preview and apply a confirmation-gated config for a coding-agent / runtime target.</div>
-  <form id="wire-form" class="toolbar">
-    <label>Model
-      <input id="wire-model" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
-    </label>
-    <label>Config path
-      <input id="wire-path" type="text" spellcheck="false" placeholder="./providers.json">
-    </label>
-    <div class="row">
-      <label class="inline">Target
-        <select id="wire-target">
-          <option value="mlx_lm">mlx_lm</option>
-          <option value="mlx-vlm">mlx-vlm</option>
-          <option value="ollama">ollama</option>
-          <option value="lmstudio">lmstudio</option>
-          <option value="litellm">litellm</option>
-        </select>
-      </label>
-      <button type="submit" class="primary">Preview &amp; apply…</button>
-    </div>
-  </form>
-</section>
-
-<section id="panel-doctor" class="panel" hidden>
-  <div class="summary">Inventory wired configs, HF cache drift, and endpoint health. Prune deletes incomplete cache snapshots only.</div>
-  <form id="doctor-form" class="toolbar">
-    <label>Wired roots <span class="hint">one directory per line; blank uses agent defaults</span>
-      <textarea id="doctor-wired" rows="3" spellcheck="false"></textarea>
-    </label>
-    <label>HF cache <span class="hint">optional override</span>
-      <input id="doctor-hf" type="text" spellcheck="false" placeholder="~/.cache/huggingface/hub">
-    </label>
-    <div class="row">
-      <button type="submit" class="primary">Run doctor</button>
-      <button type="button" id="doctor-prune">Preview prune incomplete…</button>
-    </div>
-  </form>
-  <div id="doctor-summary" class="summary" hidden></div>
-  <h3 id="doctor-findings-heading" hidden>Findings</h3>
-  <table class="grid" id="doctor-findings-table" hidden>
-    <thead><tr><th>Code</th><th>Model</th><th>Remediation</th></tr></thead>
-    <tbody id="doctor-findings"></tbody>
-  </table>
-  <h3 id="doctor-inventory-heading" hidden>Cache inventory</h3>
-  <table class="grid" id="doctor-inventory-table" hidden>
-    <thead><tr><th>Model</th><th>Source</th><th class="num">Size</th><th>Complete</th></tr></thead>
-    <tbody id="doctor-inventory"></tbody>
-  </table>
-  <h3 id="doctor-wired-heading" hidden>Wired configs</h3>
-  <div id="doctor-wired-list"></div>
-  <h3 id="doctor-endpoints-heading" hidden>Endpoints</h3>
-  <div id="doctor-endpoints"></div>
-</section>
-
-<section id="panel-serve-dashboard" class="panel" hidden>
-  <div class="summary">Advanced Serving Dashboard: Real-time performance metrics and model serving controls</div>
-  <div id="serve-metrics" class="metrics-grid"></div>
-  <form id="serve-stats-form" class="toolbar">
-    <label>Server port
-      <input id="serve-stats-port" type="number" min="1024" max="65535" placeholder="Server port to monitor">
-    </label>
-    <div class="row">
-      <button type="submit" class="primary">Get Performance Stats</button>
-    </div>
-  </form>
-  <h3>Serving History</h3>
-  <table class="grid">
-    <thead><tr><th>Port</th><th>Repo</th><th>Runtime</th><th>Tokens/sec</th><th>VRAM Used</th><th>Status</th></tr></thead>
-    <tbody id="serve-history"></tbody>
-  </table>
-</section>
-
+<!-- Serve Tab -->
 <section id="panel-serve" class="panel" hidden>
-  <div class="summary">Preview and launch a loopback MLX server for a model already in cache.</div>
+  <div class="summary">Serve MLX models locally</div>
+  
   <form id="serve-form" class="toolbar">
-    <label>Repo
+    <label>Repo ID
       <input id="serve-repo" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
     </label>
     <div class="row">
       <label class="inline">Runtime
-        <select id="serve-runtime">
-          <option value="mlx_lm">mlx_lm</option>
-          <option value="mlx-vlm">mlx-vlm</option>
-        </select>
+        <select id="serve-runtime"><option value="mlx_lm">mlx_lm</option><option value="mlx-vlm">mlx-vlm</option></select>
       </label>
       <label class="inline">Port
-        <input id="serve-port" type="number" min="1" max="65535" placeholder="default">
+        <input id="serve-port" type="number" min="1024" max="65535">
       </label>
-      <button type="submit" class="primary">Preview &amp; start…</button>
-      <button type="button" id="serve-refresh">Refresh</button>
+      <button type="submit" class="primary">Preview & Start</button>
     </div>
   </form>
-  <h3>Servers</h3>
+  
+  <h3>Running Servers</h3>
   <table class="grid">
-    <thead><tr><th>State</th><th>Repo</th><th>Runtime</th><th>Port</th><th>Started</th><th></th></tr></thead>
+    <thead><tr><th>State</th><th>Repo</th><th>Runtime</th><th>Port</th><th></th></tr></thead>
     <tbody id="serve-servers"></tbody>
   </table>
 </section>
 
-<section id="panel-training-studio" class="panel" hidden>
-  <div class="summary">Training Studio: Real-time LoRA fine-tuning with instant preview and inference comparison</div>
+<!-- Jobs Tab -->
+<section id="panel-jobs" class="panel" hidden>
+  <div class="summary">View conversion and serve jobs</div>
+  <table class="grid">
+    <thead><tr><th>Kind</th><th>Status</th><th>Source</th><th>Output / Port</th></tr></thead>
+    <tbody id="jobs"></tbody>
+  </table>
+  <pre id="job-log" class="output">Select a job above to view logs.</pre>
+</section>
+
+<!-- Advanced Settings -->
+<section id="panel-settings" class="panel" hidden>
+  <div class="summary">Configure mlx-workbench</div>
   
-  <h3>Dataset Quality Scanner</h3>
-  <form id="dataset-score-form" class="toolbar">
-    <label>Dataset directory
-      <input id="dataset-path" type="text" spellcheck="false" placeholder="./my-dataset">
+  <form id="settings">
+    <label>GGUF Roots (where to find your GGUF files)
+      <textarea id="gguf_roots" rows="4"></textarea>
+      <span class="hint">Default: ~/.cache/huggingface/hub, ~/.lmstudio/models</span>
     </label>
+    
+    <label>MLX Output Directory
+      <input id="output_dir" type="text">
+      <span class="hint">Where converted models are saved</span>
+    </label>
+    
+    <label>MLX Agent Path
+      <input id="mlx_agent_path" type="text">
+      <span class="hint">Leave empty to use bundled mlx-agent</span>
+    </label>
+    
     <div class="row">
-      <button type="submit" class="primary">Score Dataset Quality</button>
+      <button type="submit" class="primary">Save Configuration</button>
     </div>
   </form>
-  <div id="dataset-score-results"></div>
+</section>
+
+<!-- Doctor -->
+<section id="panel-doctor" class="panel" hidden>
+  <div class="summary">Health checks and diagnostic tools</div>
   
-  <h3>Instant Fine-Tune Preview</h3>
-  <form id="finetune-preview-form" class="toolbar">
-    <label>Base model
-      <input id="finetune-base" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
-    </label>
-    <label>Dataset directory
-      <input id="finetune-dataset" type="text" spellcheck="false" placeholder="./train-dataset">
+  <h3>Scan Models Health</h3>
+  <form id="doctor-form" class="toolbar">
+    <label>HF Cache Path
+      <input id="doctor-hf" type="text">
     </label>
     <div class="row">
-      <label class="inline">Iters
-        <input id="finetune-iters" type="number" min="1" value="100">
+      <button type="submit" class="primary">Run Doctor Scan</button>
+    </div>
+  </form>
+  
+  <h3>Findings</h3>
+  <table class="grid">
+    <thead><tr><th>Code</th><th>Model</th><th>Issue</th></tr></thead>
+    <tbody id="doctor-findings"></tbody>
+  </table>
+</section>
+
+<!-- Scout -->
+<section id="panel-scout" class="panel" hidden>
+  <div class="summary">Discover MLX models on Hugging Face</div>
+  <form id="scout-form" class="toolbar">
+    <div class="row">
+      <label class="inline">Role
+        <select id="scout-role"><option value="">All</option><option value="general">General Purpose</option><option value="coding">Coding</option></select>
       </label>
-      <label class="inline">Learning rate
-        <input id="finetune-lr" type="text" value="2e-5">
-      </label>
+      <button type="submit" class="primary">Scout Models</button>
+    </div>
+  </form>
+  <div id="scout-results"></div>
+</section>
+
+<!-- Training Studio -->
+<section id="panel-training-studio" class="panel" hidden>
+  <div class="summary">Train and fine-tune models</div>
+  
+  <h3>Quick Train</h3>
+  <form id="dataset-score-form" class="toolbar">
+    <label>Dataset Directory
+      <input id="dataset-path" type="text">
+    </label>
+    <div class="row">
+      <button type="submit" class="primary">Analyze Dataset</button>
+    </div>
+  </form>
+  
+  <h3>Fine-tune Preview</h3>
+  <form id="finetune-preview-form" class="toolbar">
+    <label>Base Model
+      <input id="finetune-base" type="text">
+    </label>
+    <div class="row">
       <button type="submit" class="primary">Preview Training</button>
     </div>
   </form>
-  <div id="finetune-preview-results"></div>
 </section>
 
-<section id="panel-train" class="panel" hidden>
-  <div class="summary">LoRA train then fuse into a standalone model. Both are preview/confirm and receipt-backed.</div>
-  <h3>LoRA</h3>
-  <form id="lora-form" class="toolbar">
-    <label>Base repo
-      <input id="lora-repo" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
-    </label>
-    <label>Dataset dir <span class="hint">needs train.jsonl</span>
-      <input id="lora-data" type="text" spellcheck="false" placeholder="./my-dataset">
+<!-- Compare Conversions -->
+<section id="panel-quant" class="panel" hidden>
+  <div class="summary">Compare conversion options for a model</div>
+  <form id="quant-form" class="toolbar">
+    <label>Model Path
+      <input id="quant-path" type="text" spellcheck="false">
     </label>
     <div class="row">
-      <label class="inline">Iters
-        <input id="lora-iters" type="number" min="1" placeholder="1000">
-      </label>
-      <label class="inline">Out
-        <input id="lora-out" type="text" spellcheck="false" placeholder="default">
-      </label>
-      <button type="submit" class="primary">Preview LoRA…</button>
+      <button type="submit" class="primary">Compare Conversions</button>
     </div>
   </form>
-  <h3>Fuse</h3>
-  <form id="fuse-form" class="toolbar">
-    <label>Base repo
-      <input id="fuse-repo" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
-    </label>
-    <label>Adapter dir
-      <input id="fuse-adapter" type="text" spellcheck="false" placeholder="./adapter">
-    </label>
-    <div class="row">
-      <label class="inline">Out
-        <input id="fuse-out" type="text" spellcheck="false" placeholder="default">
-      </label>
-      <button type="submit" class="primary">Preview fuse…</button>
-    </div>
-  </form>
+  <div id="quant-results"></div>
 </section>
 
-<section id="panel-jobs" class="panel" hidden>
-  <div class="summary">Conversion and serve receipts, cross-checked against live processes. Select a row to tail its log. Queued converts start when the live convert finishes.</div>
-  <div id="convert-queue-error" class="notice" hidden></div>
-  <div id="convert-queue" class="queue-strip" hidden></div>
-  <p id="job-progress" class="progress-line" hidden></p>
-  <table class="grid">
-    <thead><tr><th>Kind</th><th>State</th><th>Source</th><th>Output / port</th><th>Started</th></tr></thead>
-    <tbody id="jobs"></tbody>
-  </table>
-  <h3>Log</h3>
-  <pre id="job-log" class="output">Select a job with a log path.</pre>
-</section>
-
-<section id="panel-advanced" class="panel" hidden>
-  <div class="summary">Run any mlx-agent subcommand as argv tokens (never a shell string). Trailing --json is added for you.</div>
-  <form id="cli-form" class="toolbar">
-    <label>Argv <span class="hint">space-separated tokens, e.g. convert status</span>
-      <input id="cli-argv" type="text" spellcheck="false" placeholder="discover --role coding --fast">
-    </label>
-    <button type="submit" class="primary">Run</button>
-  </form>
-  <pre id="cli-out" class="output" hidden></pre>
-</section>
-
+<!-- Model Arch -->
 <section id="panel-model-arch" class="panel" hidden>
-  <div class="summary">MLX Model Architecture Visualizer: Interactive transformer block visualization and architecture analysis</div>
+  <div class="summary">Model Architecture Visualization</div>
   <form id="arch-form" class="toolbar">
-    <label>Model path or repo
-      <input id="arch-path" type="text" spellcheck="false" placeholder="/path/to/model.mlx or mlx-community/Qwen3-8B-4bit">
+    <label>Model Path
+      <input id="arch-path" type="text">
     </label>
     <div class="row">
-      <button type="submit" class="primary">Visualize Architecture</button>
+      <button type="submit" class="primary">Visualize</button>
     </div>
   </form>
-  <div id="arch-structure" style="overflow-x: auto;"></div>
+  <div id="arch-structure"></div>
 </section>
 
-<section id="panel-settings" class="panel" hidden>
-  <p id="agent-health" class="summary"></p>
-  <p id="runtime-health" class="summary"></p>
-  <form id="settings">
-    <label>GGUF roots <span class="hint">one directory per line</span>
-      <textarea id="gguf_roots" rows="4" spellcheck="false"></textarea>
-    </label>
-    <label>MLX output roots <span class="hint">where converted models already live; blank reuses the GGUF roots</span>
-      <textarea id="mlx_roots" rows="3" spellcheck="false"></textarea>
-    </label>
-    <label>Output directory <span class="hint">new conversions are written here</span>
-      <input id="output_dir" type="text" spellcheck="false">
-    </label>
-    <label>mlx-agent checkout <span class="hint">defaults to vendor/mlx-agent submodule; override for local hacking</span>
-      <input id="mlx_agent_path" type="text" spellcheck="false">
-    </label>
-    <label>Quarantine directory <span class="hint">redundant files are moved here, never deleted</span>
-      <input id="quarantine_dir" type="text" spellcheck="false">
-    </label>
-    <div class="row">
-      <label class="inline">Quantization
-        <select id="q_bits"><option value="4">4-bit</option><option value="8">8-bit</option></select>
-      </label>
-      <label class="check"><input type="checkbox" id="signatures"> Content signatures (slower, exact duplicate detection)</label>
-    </div>
-    <div class="row">
-      <button type="submit" class="primary">Save</button>
-      <span class="hint" id="config-path"></span>
-    </div>
-  </form>
-</section>
-
+<!-- Other advanced tabs come here when More is clicked -->
 <div id="dialog" class="dialog" hidden>
   <div class="dialog-card">
-    <h2 id="dialog-title">Review this plan</h2>
+    <h2 id="dialog-title">Review</h2>
     <dl id="plan"></dl>
-    <p id="dialog-warn" class="warn"></p>
     <div class="row">
       <button id="confirm" class="primary">Confirm</button>
       <button id="cancel">Cancel</button>
