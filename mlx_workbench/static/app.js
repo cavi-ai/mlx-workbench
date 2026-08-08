@@ -1,8 +1,24 @@
 'use strict';
 
 const TOKEN = document.querySelector('meta[name="mlx-token"]').content;
+
+// Tab name mappings
+const TAB_LABELS = {
+  'scout': 'Scout',
+  'lmstudio': 'LM Studio',  
+  'training-studio': 'Training',
+  'model-arch': 'Model Arch',
+  'quant': 'Compare',
+  'doctor': 'Doctor',
+  'adopt': 'Adopt',
+  'wire': 'Wire',
+  'sloth': 'Sloth',
+  'train': 'Train',
+  'settings': 'Settings'
+};
+
 const PANELS = [
-  'models', 'convert', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'serve-dashboard', 'train', 'sloth',
+  'quickstart', 'models', 'convert', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'serve-dashboard', 'train', 'sloth',
   'lmstudio', 'quant', 'jobs', 'advanced', 'settings',
 ];
 const state = {
@@ -134,6 +150,12 @@ function renderModels() {
     body.appendChild(row);
   });
 }
+  // Check if we can show step 3
+  const totals = state.scan ? state.scan.totals : null;
+  if (totals && totals.gguf > 0) {
+    showQuickStartStep3();
+  }
+
 
 function selectedModelPaths() {
   return Array.prototype.map.call(
@@ -1647,6 +1669,54 @@ function selectPanel(name) {
   if (name === 'duplicates') renderQuarantined();
   if (name === 'serve') refreshJobs();
 }
+
+
+function showQuickStartStep3() {
+  const step3 = document.getElementById('q-step3');
+  if (step3 && !state.modelsQueried) {
+    step3.hidden = false;
+    // Pre-populate with first found model
+    if (state.scan && state.scan.models && state.scan.models.length > 0) {
+      const model = state.scan.models[0];
+      if (model.status === 'pending' || model.status === 'converted') {
+        const button = document.createElement('button');
+        button.className = 'primary';
+        button.textContent = model.status === 'converted' ? 'Reconvert ' + model.name : 'Convert ' + model.name;
+        button.onclick = function() { openConvertPlan(model.path); };
+        document.getElementById('q-step3-content').innerHTML = '';
+        const p = document.createElement('p');
+        p.textContent = 'Found: ' + model.name;
+        const br = document.createElement('br');
+        p.appendChild(br);
+        p.appendChild(button);
+        document.getElementById('q-step3-content').appendChild(p);
+      }
+    }
+  }
+}
+
+function showQuickStartPanel() {
+  selectPanel('quickstart');
+}
+
+
+// Dropdown menu toggle
+document.getElementById('more-tabs-btn').addEventListener('click', function() {
+  const dropdown = document.querySelector('.more-dropdown');
+  dropdown.hidden = !dropdown.hidden;
+});
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+  const moreMenu = document.querySelector('.more-menu');
+  if (moreMenu && !moreMenu.contains(e.target)) {
+    const dropdown = document.querySelector('.more-dropdown');
+    if (dropdown && !dropdown.hidden) {
+      dropdown.hidden = true;
+    }
+  }
+});
+
 
 function init() {
   $('tabs').addEventListener('click', function (event) {
