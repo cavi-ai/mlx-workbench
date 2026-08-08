@@ -511,6 +511,15 @@ class Handler(BaseHTTPRequestHandler):
             return _ok(bridge.serve_start(
                 agent, repo, runtime, preview_hash, port, runner=runner,
             ))
+        if method == "POST" and route == "/api/serve/metrics":
+            payload = self._body()
+            if not isinstance(payload, dict):
+                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+            port = payload.get("port")
+            if not isinstance(port, int) or isinstance(port, bool):
+                return _error("invalid_body", "port is required.", "Enter a server port.")
+            return _ok(bridge.serve_metrics(agent, port, runner=runner))
+
         if method == "POST" and route == "/api/serve/stop":
             payload = self._body()
             if not isinstance(payload, dict) or not isinstance(payload.get("port"), int):

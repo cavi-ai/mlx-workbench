@@ -18,6 +18,7 @@
     <button class="tab" data-panel="adopt">Adopt</button>
     <button class="tab" data-panel="wire">Wire</button>
     <button class="tab" data-panel="doctor">Doctor</button>
+    <button class="tab" data-panel="serve-dashboard">Serve Metrics</button>
     <button class="tab" data-panel="serve">Serve</button>
     <button class="tab" data-panel="train">Train</button>
     <button class="tab" data-panel="sloth">Sloth</button>
@@ -231,6 +232,24 @@
   <div id="doctor-wired-list"></div>
   <h3 id="doctor-endpoints-heading" hidden>Endpoints</h3>
   <div id="doctor-endpoints"></div>
+</section>
+
+<section id="panel-serve-dashboard" class="panel" hidden>
+  <div class="summary">Advanced Serving Dashboard: Real-time performance metrics and model serving controls</div>
+  <div id="serve-metrics" class="metrics-grid"></div>
+  <form id="serve-stats-form" class="toolbar">
+    <label>Server port
+      <input id="serve-stats-port" type="number" min="1024" max="65535" placeholder="Server port to monitor">
+    </label>
+    <div class="row">
+      <button type="submit" class="primary">Get Performance Stats</button>
+    </div>
+  </form>
+  <h3>Serving History</h3>
+  <table class="grid">
+    <thead><tr><th>Port</th><th>Repo</th><th>Runtime</th><th>Tokens/sec</th><th>VRAM Used</th><th>Status</th></tr></thead>
+    <tbody id="serve-history"></tbody>
+  </table>
 </section>
 
 <section id="panel-serve" class="panel" hidden>

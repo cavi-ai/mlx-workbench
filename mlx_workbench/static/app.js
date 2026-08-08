@@ -2,7 +2,7 @@
 
 const TOKEN = document.querySelector('meta[name="mlx-token"]').content;
 const PANELS = [
-  'models', 'convert', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'train', 'sloth',
+  'models', 'convert', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'serve-dashboard', 'train', 'sloth',
   'lmstudio', 'quant', 'jobs', 'advanced', 'settings',
 ];
 const state = {
@@ -1201,6 +1201,71 @@ async function previewServe(event) {
   }
 }
 
+async function getServeStats(event) {
+  event.preventDefault();
+  notify('');
+  const port = $('serve-stats-port').value;
+  
+  if (!port || port < 1024 || port > 65535) {
+    notify('Enter a valid port number (1024-65535).');
+    return;
+  }
+  
+  try {
+    const data = await api('/api/serve/metrics', { 
+      body: { port: Number(port) } 
+    });
+    renderServeStats(data);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function renderServeStats(data) {
+  const container = $('serve-metrics');
+  
+  if (!data || !data.metrics) {
+    container.innerHTML = '<p class="empty">No metrics available for this server.</p>';
+    return;
+  }
+  
+  const m = data.metrics;
+  let html = '<div class="metrics-grid">';
+  html += '<div class="metric-card"><h4>Performance</h4>';
+  html += '<dl><dt>Tokens/Sec</dt><dd>' + (m.tokens_per_sec || '—') + '</dd>';
+  html += '<dt>Batch Size</dt><dd>' + (m.batch_size || '—') + '</dd></dl></div>';
+  
+  html += '<div class="metric-card"><h4>Memory</h4>';
+  html += '<dl><dt>VRAM Used</dt><dd>' + (m.vram_used || '—') + '</dd>';
+  html += '<dt>VRAM Free</dt><dd>' + (m.vram_free || '—') + '</dd></dl></div>';
+  
+  html += '<div class="metric-card"><h4>Model</h4>';
+  html += '<dl><dt>Repo ID</dt><dd>' + (m.repo_id || '—') + '</dd>';
+  html += '<dt>Parameters</dt><dd>' + (m.params || '—') + '</dd></dl></div>';
+  
+  html += '<div class="metric-card"><h4>System</h4>';
+  html += '<dl><dt>CPU Temp</dt><dd>' + (m.cpu_temp || '—') + '</dd>';
+  html += '<dt>GPU Load</dt><dd>' + (m.gpu_load || '—') + '</dd></dl></div>';
+  
+  html += '</div>';
+  
+  if (data.history && data.history.length > 0) {
+    const table = $('serve-history');
+    table.innerHTML = '';
+    data.history.forEach(function(h) {
+      const row = document.createElement('tr');
+      row.innerHTML = '<td>' + h.port + '</td><td>' + (h.repo || '—') + '</td><td>' + (h.runtime || '—') + '</td>';
+      row.innerHTML += '<td class="num">' + (h.tokens_per_sec || '—') + '</td>';
+      row.innerHTML += '<td class="num">' + (h.vram_used || '—') + '</td>';
+      row.innerHTML += '<td>' + (h.status || 'unknown') + '</td>';
+      table.appendChild(row);
+    });
+  }
+  
+  container.innerHTML = html;
+}
+
+
 async function runCli(event) {
   event.preventDefault();
   notify('');
@@ -1399,6 +1464,7 @@ function init() {
   $('fuse-form').addEventListener('submit', previewFuse);
   $('serve-form').addEventListener('submit', previewServe);
   $('serve-refresh').addEventListener('click', refreshJobs);
+  $('serve-stats-form').addEventListener('submit', getServeStats);
   $('sloth-form').addEventListener('submit', connectSloth);
   $('lmstudio-form').addEventListener('submit', importFromLMStudio);
   $('quant-form').addEventListener('submit', profileQuantizations);

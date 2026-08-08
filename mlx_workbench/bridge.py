@@ -515,6 +515,68 @@ def serve_stop(agent_path, port, timeout=DEFAULT_TIMEOUT, runner=None):
     ))
 
 
+def serve_metrics(agent_path, port):
+    """Get performance metrics for a running mlx server.
+    
+    Returns real-time metrics including tokens/sec, VRAM usage,
+    CPU/GPU stats for the specified server port.
+    """
+    if not agent_path:
+        raise BridgeError(
+            "agent_not_configured",
+            "No mlx-agent checkout is configured.",
+            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
+        )
+    
+    script = Path(agent_path).expanduser() / CLI_RELATIVE
+    if not script.is_file():
+        raise BridgeError(
+            "agent_not_found",
+            "No mlx-agent CLI at {0}.".format(script),
+            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
+            "at an mlx-agent checkout that contains scripts/mlx-agent.",
+        )
+    
+    try:
+        import urllib.request
+        import json as json_module
+        
+        # Try to connect to the mlx server metrics endpoint
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:" + str(port) + "/metrics",
+                method="GET"
+            )
+            
+            with urllib.request.urlopen(req, timeout=5) as response:
+                metrics = json_module.loads(response.read().decode())
+            
+            return {
+                "metrics": metrics,
+                "connected": True,
+            }
+        except Exception as e:
+            # Server not responding, return placeholder
+            return {
+                "metrics": {
+                    "tokens_per_sec": None,
+                    "vram_used": None,
+                    "vram_free": None,
+                    "cpu_temp": None,
+                    "gpu_load": None,
+                },
+                "connected": False,
+                "error": str(e),
+            }
+    except Exception as error:
+        raise BridgeError(
+            "serve_metrics_failed",
+            "Could not get metrics: {0}".format(str(error)),
+            "Ensure the server is running and accessible.",
+        )
+
+
+
 def allowed_log_paths(agent_path, runner=None):
     """Paths the UI may tail: log_path values from job receipts."""
     paths = set()
