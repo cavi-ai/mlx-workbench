@@ -20,6 +20,7 @@
     <button class="tab" data-panel="doctor">Doctor</button>
     <button class="tab" data-panel="serve">Serve</button>
     <button class="tab" data-panel="train">Train</button>
+    <button class="tab" data-panel="sloth">Sloth</button>
     <button class="tab" data-panel="lmstudio">LM Studio</button>
     <button class="tab" data-panel="quant">Quant Profiler</button>
     <button class="tab" data-panel="jobs">Jobs</button>
@@ -123,6 +124,19 @@
     </div>
   </form>
   <div id="quant-results" class="grid-container"></div>
+</section>
+
+<section id="panel-sloth" class="panel" hidden>
+  <div class="summary">Sloth AI integration: native distributed serving and model sharing for mlx models</div>
+  <form id="sloth-form" class="toolbar">
+    <label>Sloth server address
+      <input id="sloth-address" type="text" spellcheck="false" placeholder="http://localhost:3000">
+    </label>
+    <div class="row">
+      <button type="submit" class="primary">Connect & Sync</button>
+    </div>
+  </form>
+  <div id="sloth-results"></div>
 </section>
 
 <section id="panel-lmstudio" class="panel" hidden>

@@ -2,7 +2,7 @@
 
 const TOKEN = document.querySelector('meta[name="mlx-token"]').content;
 const PANELS = [
-  'models', 'convert', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'train',
+  'models', 'convert', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'train', 'sloth',
   'lmstudio', 'quant', 'jobs', 'advanced', 'settings',
 ];
 const state = {
@@ -965,6 +965,47 @@ async function importFromLMStudio(event) {
     notify(error.message);
   }
 }
+async function connectSloth(event) {
+  event.preventDefault();
+  notify('');
+  const address = $('sloth-address').value.trim() || "http://localhost:3000";
+  
+  try {
+    const data = await api('/api/sloth/connect', { 
+      body: { address: address } 
+    });
+    renderSlothResults(data);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function renderSlothResults(data) {
+  const container = $('sloth-results');
+  
+  if (!data || !data.connected) {
+    container.innerHTML = '<p class="empty">Failed to connect to Sloth AI server.</p>';
+    return;
+  }
+  
+  let html = '<h3>Sloth Server Status</h3>';
+  html += '<table class="grid"><tbody>';
+  html += '<tr><td>Address</td><td>' + data.address + '</td></tr>';
+  html += '<tr><td>Status</td><td>' + (data.health && data.health.status || 'unknown') + '</td></tr>';
+  html += '<tr><td>Models Synced</td><td>' + (data.models_synced || 0) + '</td></tr>';
+  html += '</tbody></table>';
+  
+  if (data.health && data.health.version) {
+    html += '<p>Server version: ' + data.health.version + '</p>';
+  }
+  
+  if (data.models_synced > 0) {
+    html += '<p>Models are ready for distributed serving via Sloth AI.</p>';
+  }
+  
+  container.innerHTML = html;
+}
+
 
 function renderLMStudioResults(data) {
   const container = $('lmstudio-results');
@@ -1358,6 +1399,7 @@ function init() {
   $('fuse-form').addEventListener('submit', previewFuse);
   $('serve-form').addEventListener('submit', previewServe);
   $('serve-refresh').addEventListener('click', refreshJobs);
+  $('sloth-form').addEventListener('submit', connectSloth);
   $('lmstudio-form').addEventListener('submit', importFromLMStudio);
   $('quant-form').addEventListener('submit', profileQuantizations);
   $('cli-form').addEventListener('submit', runCli);
