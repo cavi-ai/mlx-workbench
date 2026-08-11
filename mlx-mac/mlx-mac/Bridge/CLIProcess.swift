@@ -21,7 +21,10 @@ struct CLIProcess {
     /// Absolute path to `python` (resolves via PATH). Process.executableURL
     /// requires an absolute path; a bare "python3" would throw at launch.
     private func pythonExecutable() throws -> URL {
-        let candidate = python
+        let candidate = Self.normalizePath(python)
+        if candidate.isEmpty {
+            throw BridgeError.skillUnavailable
+        }
         if candidate.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: candidate) {
             return URL(fileURLWithPath: candidate)
         }
@@ -35,6 +38,15 @@ struct CLIProcess {
         throw BridgeError.skillUnavailable
     }
 
+    private static func normalizePath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "" }
+        if trimmed.hasPrefix("~") {
+            return NSString(string: trimmed).expandingTildeInPath
+        }
+        return trimmed
+    }
+
     private func expandedURL(_ path: String) -> URL {
         if path.hasPrefix("~") {
             let expanded = NSString(string: path).expandingTildeInPath
@@ -44,25 +56,35 @@ struct CLIProcess {
     }
 
     func cliScript(agentPath: String) throws -> URL {
-        guard !agentPath.isEmpty else {
+        let normalizedPath = Self.normalizePath(agentPath)
+        guard !normalizedPath.isEmpty else {
             throw BridgeError.agentNotConfigured
         }
-        let root = expandedURL(agentPath)
+        let root = expandedURL(normalizedPath)
         let script = root.appendingPathComponent("scripts/mlx-agent")
-        guard FileManager.default.fileExists(atPath: script.path) else {
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: script.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue,
+              FileManager.default.isReadableFile(atPath: script.path) else {
             throw BridgeError.agentNotFound
         }
         return script
     }
 
     func agentHealth(agentPath: String) -> (ok: Bool, path: String, cli: String, message: String) {
-        guard !agentPath.isEmpty else {
+        let normalizedPath = Self.normalizePath(agentPath)
+        guard !normalizedPath.isEmpty else {
             return (false, "", "", "No mlx-agent checkout configured.")
         }
-        let root = expandedURL(agentPath)
+        let root = expandedURL(normalizedPath)
         let script = root.appendingPathComponent("scripts/mlx-agent")
-        guard FileManager.default.fileExists(atPath: script.path) else {
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: script.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue else {
             return (false, root.path, script.path, "scripts/mlx-agent is missing (init the vendor submodule?).")
+        }
+        guard FileManager.default.isReadableFile(atPath: script.path) else {
+            return (false, root.path, script.path, "scripts/mlx-agent is not readable.")
         }
         return (true, root.path, script.path, "mlx-agent CLI ready.")
     }

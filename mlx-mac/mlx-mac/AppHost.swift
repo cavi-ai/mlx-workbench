@@ -76,7 +76,7 @@ class AppHost: ObservableObject {
     /// the newly selected checkout.
     func setAgentPath(_ path: String) async -> Config {
         var updated = config
-        updated.mlxAgentPath = path
+        updated.mlxAgentPath = Self.normalizeAgentPath(path)
         do {
             let saved = try configModule.save(updated)
             config = saved
@@ -91,8 +91,9 @@ class AppHost: ObservableObject {
     }
 
     static func checkAgentHealth(path: String, cli: CLIProcess) -> AgentHealth {
-        guard !path.isEmpty else { return .notConfigured }
-        let root = Path.expandedURL(path)
+        let normalizedPath = normalizeAgentPath(path)
+        guard !normalizedPath.isEmpty else { return .notConfigured }
+        let root = Path.expandedURL(normalizedPath)
         let script = root.appendingPathComponent("scripts/mlx-agent")
         var isDirectory = ObjCBool(false)
         if !FileManager.default.fileExists(atPath: script.path, isDirectory: &isDirectory) || isDirectory.boolValue {
@@ -102,6 +103,12 @@ class AppHost: ObservableObject {
             return .notUsable(path: root.path, cli: script.path, reason: "scripts/mlx-agent is not readable.")
         }
         return .ready(path: root.path, cli: script.path)
+    }
+
+    static func normalizeAgentPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "" }
+        return Path.expandedURL(trimmed).path
     }
 
     static func render(_ error: Error) -> String {

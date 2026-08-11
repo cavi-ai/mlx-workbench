@@ -27,7 +27,7 @@ DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
 DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup venv _pkgs install-convert deps \
-	start stop restart status run test open check check-convert doctor clean clean-venv \
+	start stop restart status run test test-swift open check check-convert doctor clean clean-venv
 	docs-test docs-build docs-verify docs-release
 
 help:
@@ -41,6 +41,7 @@ help:
 		'make status   - running?' \
 		'make run      - foreground UI' \
 		'make test     - unittest suite' \
+		'make test-swift - unit tests for Swift app' \
 		'make docs-test - release documentation contract tests' \
 		'make docs-build - build deterministic versioned documentation' \
 		'make docs-verify - verify the versioned documentation' \
@@ -186,6 +187,10 @@ run: check
 test:
 	$(PYTHON) -m unittest discover -s tests -t .
 
+test-swift:
+	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+		-configuration Debug -destination 'platform=macOS' \
+		-derivedDataPath $(MLX_SWIFT_DD) test
 docs-test:
 	$(PYTHON) -m unittest tests.test_release_docs -v
 
