@@ -22,7 +22,7 @@ URL      := http://$(HOST):$(PORT)/
 CONVERT_PKGS := torch transformers gguf mlx-lm
 
 .PHONY: help mac-only install setup venv _pkgs install-convert deps \
-	start stop restart status run test open check check-convert doctor clean clean-venv
+	start stop restart status run test test-swift open check check-convert doctor clean clean-venv
 
 help:
 	@printf '%s\n' \
@@ -35,6 +35,7 @@ help:
 		'make status   - running?' \
 		'make run      - foreground UI' \
 		'make test     - unittest suite' \
+		'make test-swift - unit tests for Swift app' \
 		'make open     - open $(URL)' \
 		'make check    - verify mlx-agent + .venv' \
 		'make clean    - remove .run/' \
@@ -175,6 +176,11 @@ run: check
 
 test:
 	$(PYTHON) -m unittest discover -s tests -t .
+
+test-swift:
+	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -target mlx-workbenchTests \
+		-configuration Debug -arch arm64 -destination 'platform=macOS' \
+		-derivedDataPath $(MLX_SWIFT_DD) test
 
 open:
 	@$(PYTHON) -c "import webbrowser; webbrowser.open('$(URL)')"
