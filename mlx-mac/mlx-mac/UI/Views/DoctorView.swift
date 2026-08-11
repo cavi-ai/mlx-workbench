@@ -65,7 +65,7 @@ struct DoctorView: View {
                     .formSection {}
                 }
 
-                if let prunePreview, let pruneHash {
+                if pruneHash != nil, let prunePreview {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             SectionTitle(text: "Prune plan")

@@ -26,7 +26,7 @@ struct ConvertView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 sourceSection
-                if let preview {
+                if preview != nil {
                     planSection
                 }
                 ErrorBanner(text: errorMessage)

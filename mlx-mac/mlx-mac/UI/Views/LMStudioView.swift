@@ -90,7 +90,8 @@ struct LMStudioView: View {
                 at: dir, includingPropertiesForKeys: [.fileSizeKey],
                 options: [.skipsHiddenFiles]
             ) else { continue }
-            for case let url as URL in enumerator {
+            while let item = enumerator.nextObject() {
+                guard let url = item as? URL else { continue }
                 guard url.pathExtension.lowercased() == "gguf" else { continue }
                 let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
                 found.append((url.path, url.lastPathComponent, Int64(size)))

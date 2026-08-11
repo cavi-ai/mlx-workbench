@@ -29,7 +29,7 @@ struct ServeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 formSection
-                if let preview {
+                if preview != nil {
                     planSection
                 }
                 ErrorBanner(text: errorMessage)

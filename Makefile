@@ -191,7 +191,7 @@ clean-venv:
 
 # Swift build targets (mlx-mac sibling project)
 
-MLX_SWIFT_DD = mlx-mac/build
+MLX_SWIFT_DD ?= /tmp/mlx-mac-build
 MLX_SWIFT_APP = $(MLX_SWIFT_DD)/Build/Products/Release/mlx-workbench.app
 
 build-swift:
