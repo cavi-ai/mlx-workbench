@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 @main
 struct MlxWorkbenchApp: App {
@@ -26,6 +27,19 @@ struct MlxWorkbenchApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command])
             }
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings...") {
+                    openSettings()
+                }
+                .keyboardShortcut(",", modifiers: [.command])
+            }
         }
+        Settings {
+            SettingsView(appHost: appHost)
+        }
+    }
+
+    private func openSettings() {
+        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
     }
 }

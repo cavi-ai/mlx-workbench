@@ -30,7 +30,6 @@ struct ContentView: View {
                 ModelArchView(appHost: appHost).tag("model-arch")
                 SlothView(appHost: appHost).tag("sloth")
                 JobsView(appHost: appHost).tag("jobs")
-                SettingsView(appHost: appHost).tag("settings")
             }
             .tabViewStyle(.automatic)
         }

@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var mlxRootsText = ""
     @State private var outputDir = ""
     @State private var mlxAgentPath = ""
+    @State private var host = "127.0.0.1"
     @State private var quarantineDir = ""
     @State private var qBits = 4
     @State private var signatures = true
@@ -51,11 +52,26 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
                     .lineLimit(2)
             }
+            
+            SectionTitle(text: "MLX roots")
+            TextField("MLX roots (one per line)", text: $mlxRootsText, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(3...6)
 
             SectionTitle(text: "Output")
             HStack {
                 TextField("Output directory", text: $outputDir)
                     .textFieldStyle(.roundedBorder)
+            }
+
+            SectionTitle(text: "Integration host")
+            HStack {
+                TextField("Host", text: $host)
+                    .textFieldStyle(.roundedBorder)
+                Spacer()
+                TextField("Port", text: $portText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 120)
             }
 
             SectionTitle(text: "Quarantine")
@@ -129,6 +145,7 @@ struct SettingsView: View {
         mlxRootsText = config.mlxRoots.joined(separator: "\n")
         outputDir = config.outputDir
         mlxAgentPath = config.mlxAgentPath
+        host = config.host
         quarantineDir = config.quarantineDir
         qBits = config.qBits
         signatures = config.signatures
@@ -155,7 +172,7 @@ struct SettingsView: View {
             quarantineDir: quarantineDir.isEmpty ? Config.defaults().quarantineDir : quarantineDir,
             qBits: qBits,
             signatures: signatures,
-            host: "127.0.0.1",
+            host: host.isEmpty ? "127.0.0.1" : host,
             port: Int(portText) ?? 8765
         )
         Task {

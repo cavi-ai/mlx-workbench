@@ -7,7 +7,7 @@ struct AppSidebar: View {
     @State private var showMore = false
     
     let primaryTabs = ["quickstart", "models", "convert", "duplicates", "serve"]
-    let secondaryTabs = ["scout", "lmstudio", "training-studio", "quant", "doctor", "adopt", "wire", "model-arch", "sloth", "jobs", "settings"]
+    let secondaryTabs = ["scout", "lmstudio", "training-studio", "quant", "doctor", "adopt", "wire", "model-arch", "sloth", "jobs"]
     
     var body: some View {
         List(selection: $selectedTab) {
@@ -61,7 +61,6 @@ struct AppSidebar: View {
         case "model-arch": return "Model Arch"
         case "sloth": return "Sloth"
         case "jobs": return "Jobs"
-        case "settings": return "Settings"
         default: return tab
         }
     }
@@ -83,7 +82,6 @@ struct AppSidebar: View {
         case "model-arch": return "cube"
         case "sloth": return "safari"
         case "jobs": return "clock"
-        case "settings": return "gearshape"
         default: return "circle"
         }
     }
