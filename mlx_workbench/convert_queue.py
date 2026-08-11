@@ -254,10 +254,16 @@ class ConvertQueue:
                 return None
             item = dict(self._items[0])
         status = bridge.jobs(agent_path, runner=runner)
-        entries = [
-            entry for entry in (status.get("jobs") or [])
-            if isinstance(entry, dict)
-        ]
+        raw_jobs = status.get("jobs")
+        if raw_jobs is None:
+            raw_jobs = []
+        elif not isinstance(raw_jobs, list):
+            raise bridge.BridgeError(
+                "job_status_invalid",
+                "convert status did not return a job list.",
+                "Retry conversion and upgrade mlx-agent if the issue persists.",
+            )
+        entries = [entry for entry in raw_jobs if isinstance(entry, dict)]
 
         if item["state"] == "starting":
             try:

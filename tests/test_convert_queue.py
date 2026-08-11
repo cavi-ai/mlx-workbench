@@ -310,6 +310,74 @@ class ConvertQueueTests(unittest.TestCase):
         self.assertIn("--confirm", start_cmd)
         self.assertIn("/a.gguf", start_cmd)
 
+    def test_try_start_next_rejects_non_list_job_status(self):
+        self.queue.enqueue("gguf", "a" * 64, 4, path="/a.gguf", out="/out")
+        commands = []
+
+        def runner(command, timeout):
+            commands.append(command)
+            if "status" in command:
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(data={"jobs": "running"}),
+                    "stderr": "",
+                }
+            raise AssertionError("unexpected command: {0}".format(command))
+
+        with self.assertRaises(bridge.BridgeError) as raised:
+            self.queue.try_start_next(str(self.root), runner=runner)
+
+        self.assertEqual(raised.exception.code, "job_status_invalid")
+        self.assertEqual(self.queue.snapshot(), [{
+            "id": "cq-1",
+            "kind": "gguf",
+            "preview_hash": "a" * 64,
+            "q_bits": 4,
+            "out": "/out",
+            "path": "/a.gguf",
+            "repo": None,
+            "hf_cache": None,
+            "label": "/a.gguf",
+            "state": "queued",
+        }])
+        self.assertEqual(len(commands), 1)
+        self.assertIn("status", commands[0])
+
+    def test_recovered_starting_item_rejects_non_list_job_status(self):
+        state_path = self.root / "bad-status" / "convert-queue.json"
+        item = {
+            "id": "cq-1",
+            "kind": "gguf",
+            "preview_hash": "a" * 64,
+            "q_bits": 4,
+            "out": "/out",
+            "path": "/a.gguf",
+            "repo": None,
+            "hf_cache": None,
+            "label": "a.gguf",
+            "state": "starting",
+        }
+        convert_queue.QueueStore(state_path).save([item])
+        queue = convert_queue.ConvertQueue(path=state_path)
+        commands = []
+
+        def runner(command, timeout):
+            commands.append(command)
+            if "status" in command:
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(data={"jobs": {"state": "running"}}),
+                    "stderr": "",
+                }
+            raise AssertionError("unexpected command: {0}".format(command))
+
+        with self.assertRaises(bridge.BridgeError) as raised:
+            queue.try_start_next(str(self.root), runner=runner)
+
+        self.assertEqual(raised.exception.code, "job_status_invalid")
+        self.assertEqual(queue.snapshot()[0]["state"], "starting")
+        self.assertEqual(len(commands), 1)
+
     def test_start_persists_starting_before_confirm_and_removes_after_acceptance(self):
         state_path = self.root / "handoff" / "convert-queue.json"
         queue = convert_queue.ConvertQueue(path=state_path)
