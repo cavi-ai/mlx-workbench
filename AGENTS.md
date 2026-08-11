@@ -1,38 +1,53 @@
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
+This repository is `mlx-workbench`, a loopback-only web UI wrapper for
+`mlx-agent` model lifecycle tasks on Apple Silicon. It shells out to the
+vendored `mlx-agent` binary and renders results; there are no Python imports
+from `mlx-agent` at runtime.
 
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
+## Current truth docs
 
-### When to use graph tools FIRST
+- `README.md` is the primary operator guide.
+- `docs/mlx-workbench` contains versioned guide pages and documentation tests.
+- `Makefile` defines the supported local command surface.
 
-- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool` instead of Grep
-- **Understanding impact**: `get_impact_radius_tool` instead of manually tracing imports
-- **Code review**: `detect_changes_tool` + `get_review_context_tool` instead of reading entire files
-- **Finding relationships**: `query_graph_tool` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview_tool` + `list_communities_tool`
+## Repository shape to keep in sync
 
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+- `vendor/mlx-agent` is a git submodule used as the execution engine.
+- `scripts/mlx-workbench` is the launcher.
+- `mlx_workbench/` is the application package.
+- `tests/` contains unit and release-doc coverage.
+- `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
+  are not source of truth.
 
-### Key Tools
+## Fast onboarding (for a new agent)
 
-| Tool | Use when |
-| ------ | ---------- |
-| `detect_changes_tool` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context_tool` | Need source snippets for review — token-efficient |
-| `get_impact_radius_tool` | Understanding blast radius of a change |
-| `get_affected_flows_tool` | Finding which execution paths are impacted |
-| `query_graph_tool` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes_tool` | Finding functions/classes by name or keyword |
-| `get_architecture_overview_tool` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
+- `make install` installs the required Python 3.12 environment and converter libs.
+- `make start` runs the UI on `127.0.0.1:8765` and writes PID/logs to `.run/`.
+- `make run` runs foreground.
+- `make status`, `make stop`, `make open` are standard operations.
+- `make test` and `python3 -m unittest discover -s tests -t .` run unit tests.
+- `make docs-test` and `make docs-verify` run documentation contract checks.
 
-### Workflow
+## Ingest/pipeline behavior to respect
 
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes_tool` for code review.
-3. Use `get_affected_flows_tool` to understand impact.
-4. Use `query_graph_tool` pattern="tests_for" to check coverage.
+- Conversion plans are always previewed first.
+- Only one conversion runs at a time.
+- Confirmed jobs are written to a durable queue before launch.
+- Queue entries are FIFO and auto-drain; they resume on restart.
+- Actual running state is recovered from mlx-agent receipts (queue state is never the
+  only authority).
+- Queue state defaults to `$XDG_STATE_HOME/mlx-workbench/convert-queue.json`
+  with fallback to `~/.local/state/mlx-workbench/convert-queue.json`.
+
+## Security and boundaries
+
+- UI binds loopback only; non-loopback hosts are rejected.
+- Job arguments are argv tokens (no shell string execution).
+- Quarantine operations are constrained to configured model roots and `.gguf` files.
+
+## Review/build guidance for an agent
+
+- Prefer project-local inspection first, keep edits scoped.
+- Update this file when execution/integration behavior changes so it continues to
+  match the README and docs.
+- Do not invent cross-repo semantics for conversion/receipt behavior; state
+  comes from observed implementation and tests.
