@@ -4,16 +4,17 @@ import XCTest
 @testable import mlx_workbench
 
 final class AppHostHealthTests: XCTestCase {
-    func testNormalizeAgentPathTrimsWhitespace() {
-        XCTAssertEqual(AppHost.normalizeAgentPath("  /tmp/mlx "), "/tmp/mlx")
+    func testNormalizeAgentPathTrimsWhitespace() async {
+        let result = await MainActor.run { AppHost.normalizeAgentPath("  /tmp/mlx ") }
+        XCTAssertEqual(result, "/tmp/mlx")
     }
 
-    func testCheckAgentHealthReturnsNotConfiguredForBlankPath() {
-        let result = AppHost.checkAgentHealth(path: " \n\t ", cli: CLIProcess())
+    func testCheckAgentHealthReturnsNotConfiguredForBlankPath() async {
+        let result = await MainActor.run { AppHost.checkAgentHealth(path: " \n\t ", cli: CLIProcess()) }
         XCTAssertEqual(result, .notConfigured)
     }
 
-    func testCheckAgentHealthAcceptsLeadingAndTrailingWhitespace() throws {
+    func testCheckAgentHealthAcceptsLeadingAndTrailingWhitespace() async throws {
         let tmp = try makeTempDirectory()
         defer { cleanup(tmp) }
 
@@ -25,18 +26,18 @@ final class AppHostHealthTests: XCTestCase {
             try? FileManager.default.removeItem(atPath: scriptPath.path)
         }
 
-        let result = AppHost.checkAgentHealth(path: "  \(tmp.path)  ", cli: CLIProcess())
+        let result = await MainActor.run { AppHost.checkAgentHealth(path: "  \(tmp.path)  ", cli: CLIProcess()) }
         XCTAssertEqual(result, .ready(path: tmp.path, cli: scriptPath.path))
     }
 
-    func testCheckAgentHealthRejectsDirectoryWhereScriptPathShouldBeFile() throws {
+    func testCheckAgentHealthRejectsDirectoryWhereScriptPathShouldBeFile() async throws {
         let tmp = try makeTempDirectory()
         defer { cleanup(tmp) }
 
         let scriptDir = tmp.appendingPathComponent("scripts/mlx-agent", isDirectory: true)
         try FileManager.default.createDirectory(at: scriptDir, withIntermediateDirectories: true)
 
-        let result = AppHost.checkAgentHealth(path: tmp.path, cli: CLIProcess())
+        let result = await MainActor.run { AppHost.checkAgentHealth(path: tmp.path, cli: CLIProcess()) }
         switch result {
         case .notFound(let path, let cliPath):
             XCTAssertEqual(path, tmp.path)
@@ -46,7 +47,7 @@ final class AppHostHealthTests: XCTestCase {
         }
     }
 
-    func testCLIProcessNormalizesPathBeforeHealthCheck() throws {
+    func testCLIProcessNormalizesPathBeforeHealthCheck() async throws {
         let tmp = try makeTempDirectory()
         defer { cleanup(tmp) }
 
@@ -58,7 +59,7 @@ final class AppHostHealthTests: XCTestCase {
             try? FileManager.default.removeItem(atPath: scriptPath.path)
         }
 
-        let health = CLIProcess().agentHealth(agentPath: "  \(tmp.path)  ")
+        let health = await MainActor.run { CLIProcess().agentHealth(agentPath: "  \(tmp.path)  ") }
         XCTAssertTrue(health.ok)
         XCTAssertEqual(health.path, tmp.path)
         XCTAssertEqual(health.cli, scriptPath.path)

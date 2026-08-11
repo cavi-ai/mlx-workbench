@@ -178,8 +178,8 @@ test:
 	$(PYTHON) -m unittest discover -s tests -t .
 
 test-swift:
-	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -target mlx-workbenchTests \
-		-configuration Debug -arch arm64 -destination 'platform=macOS' \
+	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) test
 
 open:

@@ -117,7 +117,7 @@
 		24FREF000018 /* TrainingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingView.swift; path = UI/Views/TrainingView.swift; sourceTree = "<group>"; };
 
 		24FREF000019 /* WireView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WireView.swift; path = UI/Views/WireView.swift; sourceTree = "<group>"; };
-		24FREF01A /* AppHostHealthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHostHealthTests.swift; path = mlx-macTests/AppHostHealthTests.swift; sourceTree = "<group>"; };
+		24FREF01A /* AppHostHealthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHostHealthTests.swift; path = AppHostHealthTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -413,6 +413,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.cavi.mlxworkbench.tests";
 				PRODUCT_NAME = "mlx-workbenchTests";
 				SDKROOT = macosx;
@@ -421,6 +422,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
 				ONLY_ACTIVE_ARCH = YES;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/mlx-workbench.app/Contents/MacOS/mlx-workbench";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = TEST;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -436,12 +438,14 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.cavi.mlxworkbench.tests";
 				PRODUCT_NAME = "mlx-workbenchTests";
 				SDKROOT = macosx;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/mlx-workbench.app/Contents/MacOS/mlx-workbench";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
