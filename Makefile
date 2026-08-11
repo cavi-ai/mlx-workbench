@@ -20,9 +20,15 @@ LOG_FILE := $(RUN_DIR)/mlx-workbench.log
 LAUNCHER := scripts/mlx-workbench
 URL      := http://$(HOST):$(PORT)/
 CONVERT_PKGS := torch transformers gguf mlx-lm
+DOCS_VERSION := $(shell $(PYTHON) -c 'from mlx_workbench import __version__; print(__version__)')
+DOCS_TAG     := v$(DOCS_VERSION)
+DOCS_COMMIT  ?= $(shell git rev-parse HEAD)
+DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
+DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup venv _pkgs install-convert deps \
-	start stop restart status run test open check check-convert doctor clean clean-venv
+	start stop restart status run test open check check-convert doctor clean clean-venv \
+	docs-test docs-build docs-verify docs-release
 
 help:
 	@printf '%s\n' \
@@ -35,6 +41,10 @@ help:
 		'make status   - running?' \
 		'make run      - foreground UI' \
 		'make test     - unittest suite' \
+		'make docs-test - release documentation contract tests' \
+		'make docs-build - build deterministic versioned documentation' \
+		'make docs-verify - verify the versioned documentation' \
+		'make docs-release - create the release archive and checksum' \
 		'make open     - open $(URL)' \
 		'make check    - verify mlx-agent + .venv' \
 		'make clean    - remove .run/' \
@@ -175,6 +185,18 @@ run: check
 
 test:
 	$(PYTHON) -m unittest discover -s tests -t .
+
+docs-test:
+	$(PYTHON) -m unittest tests.test_release_docs -v
+
+docs-build:
+	node scripts/docs/build.mjs --version "$(DOCS_VERSION)" --tag "$(DOCS_TAG)" --commit "$(DOCS_COMMIT)" --source-date-epoch "$(DOCS_EPOCH)"
+
+docs-verify:
+	node scripts/docs/verify.mjs --version "$(DOCS_VERSION)" --tag "$(DOCS_TAG)" --commit "$(DOCS_COMMIT)" --source-date-epoch "$(DOCS_EPOCH)"
+
+docs-release: docs-build docs-verify
+	node scripts/docs/release-artifact.mjs --docs-root "docs/mlx-workbench/v$(DOCS_VERSION)" --output "$(DOCS_RELEASE_DIR)" --version "$(DOCS_VERSION)" --tag "$(DOCS_TAG)" --repository "cavi-ai/mlx-workbench" --commit "$(DOCS_COMMIT)" --source-date-epoch "$(DOCS_EPOCH)"
 
 open:
 	@$(PYTHON) -c "import webbrowser; webbrowser.open('$(URL)')"
