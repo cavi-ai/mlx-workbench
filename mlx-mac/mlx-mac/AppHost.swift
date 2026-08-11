@@ -74,13 +74,13 @@ class AppHost: ObservableObject {
 
     /// Recreate the API when the agent path changes, so subcommands run from
     /// the newly selected checkout.
-    func setAgentPath(_ path: String) -> Config {
+    func setAgentPath(_ path: String) async -> Config {
         var updated = config
         updated.mlxAgentPath = path
         do {
             let saved = try configModule.save(updated)
             config = saved
-            Task { await api.setAgentPath(saved.mlxAgentPath) }
+            await api.setAgentPath(saved.mlxAgentPath)
             agentHealth = Self.checkAgentHealth(path: saved.mlxAgentPath, cli: cli)
             lastError = nil
             return saved
@@ -94,11 +94,12 @@ class AppHost: ObservableObject {
         guard !path.isEmpty else { return .notConfigured }
         let root = Path.expandedURL(path)
         let script = root.appendingPathComponent("scripts/mlx-agent")
-        if !FileManager.default.fileExists(atPath: script.path) {
+        var isDirectory = ObjCBool(false)
+        if !FileManager.default.fileExists(atPath: script.path, isDirectory: &isDirectory) || isDirectory.boolValue {
             return .notFound(path: root.path, cli: script.path)
         }
-        if !FileManager.default.isExecutableFile(atPath: script.path) {
-            return .notFound(path: root.path, cli: script.path)
+        if !FileManager.default.isReadableFile(atPath: script.path) {
+            return .notUsable(path: root.path, cli: script.path, reason: "scripts/mlx-agent is not readable.")
         }
         return .ready(path: root.path, cli: script.path)
     }
@@ -359,5 +360,6 @@ private enum Path {
 enum AgentHealth: Equatable {
     case notConfigured
     case notFound(path: String, cli: String)
+    case notUsable(path: String, cli: String, reason: String)
     case ready(path: String, cli: String)
 }

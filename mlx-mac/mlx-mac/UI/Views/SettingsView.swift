@@ -101,6 +101,9 @@ struct SettingsView: View {
         case .notConfigured:
             Label("Agent: not configured", systemImage: "exclamationmark.triangle")
                 .foregroundColor(.orange)
+        case .notUsable(_, let cli, let reason):
+            Label("Agent not ready: \(reason): \(cli)", systemImage: "xmark.circle")
+                .foregroundColor(.red)
         case .notFound(_, let cli):
             Label("Agent missing: \(cli)", systemImage: "xmark.circle")
                 .foregroundColor(.red)
@@ -163,7 +166,7 @@ struct SettingsView: View {
                 return
             }
             if appHost.config.mlxAgentPath != newConfig.mlxAgentPath {
-                _ = appHost.setAgentPath(newConfig.mlxAgentPath)
+                _ = await appHost.setAgentPath(newConfig.mlxAgentPath)
             }
             notice = "Settings saved to \(appHost.configPath)"
         }
