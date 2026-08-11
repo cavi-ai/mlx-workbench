@@ -48,6 +48,8 @@ struct QuickStartView: View {
         switch appHost.agentHealth {
         case .notConfigured:
             return "No mlx-agent configured."
+        case .notUsable(_, let cli, let reason):
+            return "\(reason) (\(cli))"
         case .notFound(_, let cli):
             return "Missing \(cli)"
         case .ready(_, let cli):
@@ -58,7 +60,7 @@ struct QuickStartView: View {
     private var healthColor: Color {
         switch appHost.agentHealth {
         case .ready: return .green
-        case .notFound: return .red
+        case .notFound, .notUsable: return .red
         case .notConfigured: return .orange
         }
     }
