@@ -4,6 +4,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -174,6 +175,44 @@ class ConversionWorkerTests(unittest.TestCase):
         self.assertTrue(any("--confirm" in command for command in commands))
         httpd.server_close()
         self.assertFalse(httpd.app.worker._thread.is_alive())
+
+    def test_worker_records_job_status_payload_error_and_keeps_item_queued(self):
+        store = convert_queue.QueueStore(self.root / "convert-queue.json")
+        queue = convert_queue.ConvertQueue(store=store)
+        queue.enqueue("gguf", "a" * 64, 4, path="/a.gguf", out="/out")
+
+        commands = []
+
+        def runner(command, timeout):
+            commands.append(command)
+            if "status" in command:
+                return {
+                    "returncode": 0,
+                    "stdout": envelope(data={"jobs": "running"}),
+                    "stderr": "",
+                }
+            raise AssertionError("unexpected command: {0}".format(command))
+
+        worker = server.ConversionWorker(
+            queue,
+            lambda: str(self.agent),
+            runner=runner,
+            interval=0.01,
+        )
+        self.addCleanup(worker.stop)
+        worker.start()
+
+        for _ in range(200):
+            if worker.last_error is not None:
+                break
+            time.sleep(0.01)
+
+        self.assertIsNotNone(worker.last_error)
+        self.assertEqual(worker.last_error["code"], "job_status_invalid")
+        self.assertEqual(worker.last_error["message"], "convert status did not return a job list.")
+        self.assertEqual(queue.snapshot()[0]["state"], "queued")
+        self.assertTrue(commands)
+        self.assertIn("status", " ".join(commands[0]))
 
 
 class ServerTests(unittest.TestCase):
