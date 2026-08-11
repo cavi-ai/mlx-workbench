@@ -1,0 +1,394 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		24BBLD000000 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000000 /* x */; };
+
+		24BBLD000001 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000001 /* x */; };
+
+		24BBLD000002 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000002 /* x */; };
+
+		24BBLD000003 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000003 /* x */; };
+
+		24BBLD000004 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000004 /* x */; };
+
+		24BBLD000005 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000005 /* x */; };
+
+		24BBLD000006 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000006 /* x */; };
+
+		24BBLD000007 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000007 /* x */; };
+
+		24BBLD000008 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000008 /* x */; };
+
+		24BBLD000009 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000009 /* x */; };
+
+		24BBLD00000A /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF00000A /* x */; };
+
+		24BBLD00000B /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF00000B /* x */; };
+
+		24BBLD00000C /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF00000C /* x */; };
+
+		24BBLD00000D /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF00000D /* x */; };
+
+		24BBLD00000E /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF00000E /* x */; };
+
+		24BBLD00000F /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF00000F /* x */; };
+
+		24BBLD000010 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000010 /* x */; };
+
+		24BBLD000011 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000011 /* x */; };
+
+		24BBLD000012 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000012 /* x */; };
+
+		24BBLD000013 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000013 /* x */; };
+
+		24BBLD000014 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000014 /* x */; };
+
+		24BBLD000015 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000015 /* x */; };
+
+		24BBLD000016 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000016 /* x */; };
+
+		24BBLD000017 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000017 /* x */; };
+
+		24BBLD000018 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000018 /* x */; };
+
+		24BBLD000019 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000019 /* x */; };
+
+		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
+
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		24FREF000000 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = App.swift; path = App.swift; sourceTree = "<group>"; };
+
+		24FREF000001 /* AppHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHost.swift; path = AppHost.swift; sourceTree = "<group>"; };
+
+		24FREF000002 /* BridgeError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BridgeError.swift; path = Bridge/BridgeError.swift; sourceTree = "<group>"; };
+
+		24FREF000003 /* CLIProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CLIProcess.swift; path = Bridge/CLIProcess.swift; sourceTree = "<group>"; };
+
+		24FREF000004 /* ModelItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelItem.swift; path = Models/ModelItem.swift; sourceTree = "<group>"; };
+
+		24FREF000005 /* RuntimeChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RuntimeChecker.swift; path = Services/RuntimeChecker.swift; sourceTree = "<group>"; };
+
+		24FREF000006 /* WorkbenchAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPI.swift; path = Services/WorkbenchAPI.swift; sourceTree = "<group>"; };
+
+		24FREF000007 /* AppSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppSidebar.swift; path = UI/AppSidebar.swift; sourceTree = "<group>"; };
+
+		24FREF000008 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Components.swift; path = UI/Components.swift; sourceTree = "<group>"; };
+
+		24FREF000009 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ContentView.swift; path = UI/ContentView.swift; sourceTree = "<group>"; };
+
+		24FREF00000A /* AdoptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdoptView.swift; path = UI/Views/AdoptView.swift; sourceTree = "<group>"; };
+
+		24FREF00000B /* ConvertView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ConvertView.swift; path = UI/Views/ConvertView.swift; sourceTree = "<group>"; };
+
+		24FREF00000C /* DoctorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DoctorView.swift; path = UI/Views/DoctorView.swift; sourceTree = "<group>"; };
+
+		24FREF00000D /* DuplicatesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DuplicatesView.swift; path = UI/Views/DuplicatesView.swift; sourceTree = "<group>"; };
+
+		24FREF00000E /* JobsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = JobsView.swift; path = UI/Views/JobsView.swift; sourceTree = "<group>"; };
+
+		24FREF00000F /* LMStudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LMStudioView.swift; path = UI/Views/LMStudioView.swift; sourceTree = "<group>"; };
+
+		24FREF000010 /* ModelArchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelArchView.swift; path = UI/Views/ModelArchView.swift; sourceTree = "<group>"; };
+
+		24FREF000011 /* ModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelsView.swift; path = UI/Views/ModelsView.swift; sourceTree = "<group>"; };
+
+		24FREF000012 /* QuantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QuantView.swift; path = UI/Views/QuantView.swift; sourceTree = "<group>"; };
+
+		24FREF000013 /* QuickStartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QuickStartView.swift; path = UI/Views/QuickStartView.swift; sourceTree = "<group>"; };
+
+		24FREF000014 /* ScoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScoutView.swift; path = UI/Views/ScoutView.swift; sourceTree = "<group>"; };
+
+		24FREF000015 /* ServeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServeView.swift; path = UI/Views/ServeView.swift; sourceTree = "<group>"; };
+
+		24FREF000016 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = UI/Views/SettingsView.swift; sourceTree = "<group>"; };
+
+		24FREF000017 /* SlothView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SlothView.swift; path = UI/Views/SlothView.swift; sourceTree = "<group>"; };
+
+		24FREF000018 /* TrainingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingView.swift; path = UI/Views/TrainingView.swift; sourceTree = "<group>"; };
+
+		24FREF000019 /* WireView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WireView.swift; path = UI/Views/WireView.swift; sourceTree = "<group>"; };
+
+		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
+
+		24IREF001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = Info.plist; sourceTree = "<group>"; };
+
+		24PROD01 /* mlx-workbench.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = mlx-workbench.app; sourceTree = BUILT_PRODUCTS_DIR; };
+
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		24PHRM1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		24GMAIN01 = {
+			isa = PBXGroup;
+			children = (
+				24GSRC01 /* mlx-mac */,
+				24GIV01 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		24GSRC01 /* mlx-mac */ = {
+			isa = PBXGroup;
+			children = (
+				24FREF000000 /* App.swift */,
+				24FREF000001 /* AppHost.swift */,
+				24FREF000002 /* BridgeError.swift */,
+				24FREF000003 /* CLIProcess.swift */,
+				24FREF000004 /* ModelItem.swift */,
+				24FREF000005 /* RuntimeChecker.swift */,
+				24FREF000006 /* WorkbenchAPI.swift */,
+				24FREF000007 /* AppSidebar.swift */,
+				24FREF000008 /* Components.swift */,
+				24FREF000009 /* ContentView.swift */,
+				24FREF00000A /* AdoptView.swift */,
+				24FREF00000B /* ConvertView.swift */,
+				24FREF00000C /* DoctorView.swift */,
+				24FREF00000D /* DuplicatesView.swift */,
+				24FREF00000E /* JobsView.swift */,
+				24FREF00000F /* LMStudioView.swift */,
+				24FREF000010 /* ModelArchView.swift */,
+				24FREF000011 /* ModelsView.swift */,
+				24FREF000012 /* QuantView.swift */,
+				24FREF000013 /* QuickStartView.swift */,
+				24FREF000014 /* ScoutView.swift */,
+				24FREF000015 /* ServeView.swift */,
+				24FREF000016 /* SettingsView.swift */,
+				24FREF000017 /* SlothView.swift */,
+				24FREF000018 /* TrainingView.swift */,
+				24FREF000019 /* WireView.swift */,
+				24AREF001 /* Assets.xcassets */,
+				24IREF001 /* Info.plist */,
+
+			);
+			path = mlx-mac;
+			sourceTree = "<group>";
+		};
+		24GIV01 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				24PROD01 /* mlx-workbench.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		24TGT001 /* mlx-workbench */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 24CFGTG1 /* Build configuration list for PBXNativeTarget "mlx-workbench" */;
+			buildPhases = (
+				24PHSRC1 /* Sources */,
+				24PHRM1 /* Frameworks */,
+				24PHRES1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = mlx-workbench;
+			productName = mlx-workbench;
+			productReference = 24PROD01 /* mlx-workbench.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		24PRJ001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					24TGT001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 24CFGPR1 /* Build configuration list for PBXProject "mlx-workbench" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 24GMAIN01;
+			productRefGroup = 24GIV01 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				24TGT001 /* mlx-workbench */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		24PHRES1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				24ABLD001 /* Assets.xcassets in Resources */,
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		24PHSRC1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				24BBLD000000 /* x */,
+				24BBLD000001 /* x */,
+				24BBLD000002 /* x */,
+				24BBLD000003 /* x */,
+				24BBLD000004 /* x */,
+				24BBLD000005 /* x */,
+				24BBLD000006 /* x */,
+				24BBLD000007 /* x */,
+				24BBLD000008 /* x */,
+				24BBLD000009 /* x */,
+				24BBLD00000A /* x */,
+				24BBLD00000B /* x */,
+				24BBLD00000C /* x */,
+				24BBLD00000D /* x */,
+				24BBLD00000E /* x */,
+				24BBLD00000F /* x */,
+				24BBLD000010 /* x */,
+				24BBLD000011 /* x */,
+				24BBLD000012 /* x */,
+				24BBLD000013 /* x */,
+				24BBLD000014 /* x */,
+				24BBLD000015 /* x */,
+				24BBLD000016 /* x */,
+				24BBLD000017 /* x */,
+				24BBLD000018 /* x */,
+				24BBLD000019 /* x */,
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		24BCLD01 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = mlx-mac/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cavi.mlxworkbench;
+				PRODUCT_NAME = "mlx-workbench";
+				SDKROOT = macosx;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+			};
+			name = Debug;
+		};
+		24BCLR01 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = mlx-mac/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cavi.mlxworkbench;
+				PRODUCT_NAME = "mlx-workbench";
+				SDKROOT = macosx;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_COMPILATION_MODE = wholemodule;
+
+			};
+			name = Release;
+		};
+		24PCLD01 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = macosx;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SWIFT_VERSION = 5.0;
+
+			};
+			name = Debug;
+		};
+		24PCLR01 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = macosx;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SWIFT_VERSION = 5.0;
+
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		24CFGPR1 /* Build configuration list for PBXProject "mlx-workbench" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				24PCLD01 /* Debug */,
+				24PCLR01 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		24CFGTG1 /* Build configuration list for PBXNativeTarget "mlx-workbench" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				24BCLD01 /* Debug */,
+				24BCLR01 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = 24PRJ001 /* Project object */;
+}

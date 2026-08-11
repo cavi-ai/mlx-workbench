@@ -19,3 +19,4 @@ docs/superpowers/
 .mlx-agent-receipts/
 .venv/
 .mcp.json
+mlx-mac/build/

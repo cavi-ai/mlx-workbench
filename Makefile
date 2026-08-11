@@ -188,3 +188,23 @@ clean:
 
 clean-venv:
 	rm -rf $(VENV)
+
+# Swift build targets (mlx-mac sibling project)
+
+MLX_SWIFT_DD = mlx-mac/build
+MLX_SWIFT_APP = $(MLX_SWIFT_DD)/Build/Products/Release/mlx-workbench.app
+
+build-swift:
+	@echo "Building mlx-workbench (Swift)..."
+	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+		-configuration Release -arch arm64 \
+		-derivedDataPath $(MLX_SWIFT_DD) build
+
+run-swift: build-swift
+	@open $(MLX_SWIFT_APP)
+
+clean-swift:
+	@rm -rf $(MLX_SWIFT_DD)
+
+# Users can run: make build-swift && make run-swift
+# Existing targets (make start, make run, make test) continue to work
