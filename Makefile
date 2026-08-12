@@ -27,7 +27,7 @@ DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
 DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup venv _pkgs install-convert deps \
-	start stop restart status run test test-swift open check check-convert doctor clean clean-venv
+	start stop restart status run test test-swift open check check-convert doctor clean clean-venv \
 	docs-test docs-build docs-verify docs-release
 
 help:

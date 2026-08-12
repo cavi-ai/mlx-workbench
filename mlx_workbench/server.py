@@ -515,7 +515,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._body()
             if not isinstance(payload, dict):
                 return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            return _ok(bridge.scan_duplicates(agent, runner=runner))
+            return _ok(bridge.scan_duplicates(agent))
 
         if method == "POST" and route == "/api/model/arch":
             payload = self._body()
@@ -524,7 +524,7 @@ class Handler(BaseHTTPRequestHandler):
             path = payload.get("path")
             if not isinstance(path, str) or not path.strip():
                 return _error("invalid_body", "path is required.", "Enter model path.")
-            return _ok(bridge.model_architecture(agent, path=path or None, runner=runner))
+            return _ok(bridge.model_architecture(agent, path=path or None))
 
         if method == "POST" and route == "/api/training/dataset/score":
             payload = self._body()
@@ -533,7 +533,7 @@ class Handler(BaseHTTPRequestHandler):
             path = payload.get("path")
             if not isinstance(path, str) or not path.strip():
                 return _error("invalid_body", "path is required.", "Enter dataset directory.")
-            return _ok(bridge.dataset_score(agent, path=path or None, runner=runner))
+            return _ok(bridge.dataset_score(agent, path=path or None))
         
         if method == "POST" and route == "/api/training/preview":
             payload = self._body()
@@ -551,7 +551,7 @@ class Handler(BaseHTTPRequestHandler):
             
             return _ok(bridge.finetune_preview(
                 agent, base_model, dataset_path,
-                iters=iters, learning_rate=lr, runner=runner
+                iters=iters, learning_rate=lr
             ))
 
         if method == "POST" and route == "/api/serve/metrics":

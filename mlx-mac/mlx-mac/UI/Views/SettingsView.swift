@@ -92,7 +92,7 @@ struct SettingsView: View {
             }
 
             HStack {
-                Button("Reset to Defaults") { loadFromConfig() }
+                Button("Discard Changes") { loadFromConfig() }
                 Spacer()
                 Button("Save") { save() }
                     .disabled(isSaving)
@@ -155,6 +155,12 @@ struct SettingsView: View {
     private func save() {
         isSaving = true
         notice = nil
+        guard let port = Int(portText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              (1...65535).contains(port) else {
+            notice = "Port must be an integer between 1 and 65535."
+            isSaving = false
+            return
+        }
         let roots = ggufRootsText
             .split(separator: "\n")
             .map(String.init)
@@ -173,7 +179,7 @@ struct SettingsView: View {
             qBits: qBits,
             signatures: signatures,
             host: host.isEmpty ? "127.0.0.1" : host,
-            port: Int(portText) ?? 8765
+            port: port
         )
         Task {
             defer { isSaving = false }
