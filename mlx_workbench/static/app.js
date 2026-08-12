@@ -252,12 +252,13 @@ async function quarantine(path, button) {
   button.disabled = true;
   try {
     await api('/api/quarantine', { body: { path: path } });
-    notify('');
     await rescan();
     await renderQuarantined();
+    return true;
   } catch (error) {
     notify(error.message);
     button.disabled = false;
+    return false;
   }
 }
 
@@ -537,7 +538,17 @@ async function confirmPlan() {
   const button = $('confirm');
   button.disabled = true;
   try {
-    if (state.pendingKind === 'convert') {
+    if (state.pendingKind === 'quarantine') {
+      const pending = state.pending;
+      const moved = await quarantine(pending.path, pending.button);
+      closeDialog();
+      if (moved) {
+        notify('Duplicate moved to quarantine.');
+        selectPanel('duplicates');
+        await scanDuplicates();
+      }
+      return;
+    } else if (state.pendingKind === 'convert') {
       await api('/api/convert/start', { body: convertStartBody(state.pending) });
     } else if (state.pendingKind === 'convert-batch') {
       const plans = state.pendingBatch || [];
@@ -1827,8 +1838,13 @@ function renderDuplicates(dupes) {
       remove.textContent = 'Remove';
       remove.title = 'Move this duplicate to quarantine';
       remove.addEventListener('click', function() {
-        if (!window.confirm('Move this duplicate to quarantine?\n\n' + path)) return;
-        quarantine(path, remove);
+        state.pending = { path: path, button: remove };
+        state.pendingKind = 'quarantine';
+        state.pendingBatch = null;
+        fillPlanDialog('Review duplicate removal', [
+          ['File', path],
+          ['Action', 'Move to quarantine'],
+        ], 'Recoverable action. The file will be moved aside and recorded, not permanently deleted.');
       });
       item.appendChild(remove);
       files.appendChild(item);
