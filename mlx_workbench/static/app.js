@@ -18,8 +18,8 @@ const TAB_LABELS = {
 };
 
 const PANELS = [
-  'quickstart', 'models', 'convert', 'duplicates', 'scout', 'adopt', 'wire', 'doctor', 'serve', 'serve-dashboard', 'train', 'sloth',
-  'lmstudio', 'quant', 'jobs', 'advanced', 'settings',
+  'models', 'duplicates', 'convert', 'serve', 'jobs', 'settings', 'doctor', 'scout',
+  'training-studio', 'quant', 'model-arch',
 ];
 const state = {
   scan: null,
@@ -35,6 +35,11 @@ const state = {
 };
 
 function $(id) { return document.getElementById(id); }
+
+function on(id, event, handler) {
+  const node = $(id);
+  if (node) node.addEventListener(event, handler);
+}
 
 async function api(path, options) {
   const request = Object.assign({ headers: {} }, options || {});
@@ -247,12 +252,13 @@ async function quarantine(path, button) {
   button.disabled = true;
   try {
     await api('/api/quarantine', { body: { path: path } });
-    notify('');
     await rescan();
     await renderQuarantined();
+    return true;
   } catch (error) {
     notify(error.message);
     button.disabled = false;
+    return false;
   }
 }
 
@@ -532,7 +538,17 @@ async function confirmPlan() {
   const button = $('confirm');
   button.disabled = true;
   try {
-    if (state.pendingKind === 'convert') {
+    if (state.pendingKind === 'quarantine') {
+      const pending = state.pending;
+      const moved = await quarantine(pending.path, pending.button);
+      closeDialog();
+      if (moved) {
+        notify('Duplicate moved to quarantine.');
+        selectPanel('duplicates');
+        await scanDuplicates();
+      }
+      return;
+    } else if (state.pendingKind === 'convert') {
       await api('/api/convert/start', { body: convertStartBody(state.pending) });
     } else if (state.pendingKind === 'convert-batch') {
       const plans = state.pendingBatch || [];
@@ -772,14 +788,7 @@ function renderScout(data) {
         serve.addEventListener('click', function () {
           useRepoForServe(model.repo, model.role === 'vision' ? 'mlx-vlm' : 'mlx_lm');
         });
-        const wire = element('button', null, 'Wire');
-        wire.addEventListener('click', function () {
-          $('wire-model').value = model.repo || '';
-          selectPanel('wire');
-          notify('Repo loaded into Wire.');
-        });
         actions.appendChild(serve);
-        actions.appendChild(wire);
         row.appendChild(actions);
         body.appendChild(row);
     
@@ -934,7 +943,7 @@ async function runDoctor(event) {
   try {
     const data = await api('/api/doctor', {
       body: {
-        wired_roots: lines($('doctor-wired').value),
+        wired_roots: lines($('doctor-wired')?.value || ''),
         hf_cache: $('doctor-hf').value.trim() || null,
       },
     });
@@ -1454,13 +1463,13 @@ async function scoreDataset(event) {
 
 function renderDatasetScore(data) {
   const container = $('dataset-score-results');
-  
-  if (!data || !data.score) {
+  if (!container) return;
+  if (!data || typeof data.score !== 'number') {
     container.innerHTML = '<p class="empty">Could not score dataset.</p>';
     return;
   }
   
-  const s = data.score;
+  const s = data;
   let html = '<div class="metrics-grid">';
   html += '<div class="metric-card"><h4>Quality Score</h4><div style="font-size: 3rem; font-weight: bold;">';
   
@@ -1614,11 +1623,13 @@ function fillSettings(data) {
   $('gguf_roots').value = (config.gguf_roots || []).join('\n');
   $('mlx_roots').value = (config.mlx_roots || []).join('\n');
   $('output_dir').value = config.output_dir || '';
+  $('host').value = config.host || '127.0.0.1';
+  $('port').value = String(config.port || 8765);
   $('mlx_agent_path').value = config.mlx_agent_path || '';
   $('quarantine_dir').value = config.quarantine_dir || '';
   $('q_bits').value = String(config.q_bits || 4);
   $('signatures').checked = Boolean(config.signatures);
-  $('config-path').textContent = data.config_path;
+  $('config-path').value = data.config_path;
   const health = data.agent || {};
   $('agent-health').textContent = health.ok
     ? 'Agent ready: ' + health.path
@@ -1635,6 +1646,19 @@ function fillSettings(data) {
       (convert.message || '') +
       (serve.ok ? '' : ' ' + (serve.message || '')) +
       ' Optional — scan/Scout/Doctor work without them.';
+  }
+}
+
+async function discardSettings(event) {
+  if (event) {
+    event.preventDefault();
+  }
+  try {
+    const data = await api('/api/config');
+    fillSettings(data);
+    notify('');
+  } catch (error) {
+    notify(error.message);
   }
 }
 
@@ -1655,11 +1679,21 @@ function lines(value) {
 async function saveSettings(event) {
   event.preventDefault();
   try {
+    const host = $('host').value.trim();
+    const port = Number($('port').value);
+    if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
+      throw new Error('Host must be 127.0.0.1, localhost, or ::1.');
+    }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error('Port must be an integer between 1 and 65535.');
+    }
     const data = await api('/api/config', {
       body: {
         gguf_roots: lines($('gguf_roots').value),
         mlx_roots: lines($('mlx_roots').value),
         output_dir: $('output_dir').value.trim(),
+        host: host,
+        port: port,
         mlx_agent_path: $('mlx_agent_path').value.trim(),
         quarantine_dir: $('quarantine_dir').value.trim(),
         q_bits: Number($('q_bits').value),
@@ -1668,10 +1702,10 @@ async function saveSettings(event) {
     });
     fillSettings({
       config: data.config,
-      config_path: $('config-path').textContent,
+      config_path: $('config-path').value,
       agent: data.agent,
       runtime: data.runtime,
-      vendor_agent_path: state.config && state.config.mlx_agent_path,
+      vendor_agent_path: data.vendor_agent_path,
     });
     notify('');
     await rescan();
@@ -1682,7 +1716,8 @@ async function saveSettings(event) {
 
 function selectPanel(name) {
   PANELS.forEach(function (panel) {
-    $('panel-' + panel).hidden = panel !== name;
+    const panelNode = $('panel-' + panel);
+    if (panelNode) panelNode.hidden = panel !== name;
   });
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
     tab.classList.toggle('is-active', tab.dataset.panel === name);
@@ -1766,17 +1801,60 @@ async function scanDuplicates() {
 
 function renderDuplicates(dupes) {
   const container = document.getElementById('exact-duplicates');
+  if (!container) return;
+  container.innerHTML = '';
   if (!dupes || dupes.length === 0) {
     container.innerHTML = '<p class="empty">No duplicates found</p>';
     return;
   }
-  
-  let html = '<table class="grid"><thead><tr><th>Group</th><th>Files</th></tr></thead><tbody>';
+
+  const note = document.createElement('p');
+  note.className = 'muted';
+  note.textContent = 'Remove moves the selected file to quarantine so it can be restored. No file is permanently deleted.';
+  container.appendChild(note);
+
+  const table = document.createElement('table');
+  table.className = 'grid';
+  table.innerHTML = '<thead><tr><th>Group</th><th>Duplicate files</th></tr></thead>';
+  const body = document.createElement('tbody');
   dupes.forEach(function(group) {
-    html += '<tr><td>' + group.group_id + '</td><td>' + group.files.join(', ') + '</td></tr>';
+    const row = document.createElement('tr');
+    const groupCell = document.createElement('td');
+    groupCell.textContent = group.group_id || 'Duplicate group';
+    row.appendChild(groupCell);
+
+    const filesCell = document.createElement('td');
+    const files = document.createElement('ul');
+    files.className = 'duplicate-files';
+    (group.files || []).forEach(function(path) {
+      const item = document.createElement('li');
+      const pathLabel = document.createElement('span');
+      pathLabel.textContent = path;
+      item.appendChild(pathLabel);
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'danger';
+      remove.textContent = 'Remove';
+      remove.title = 'Move this duplicate to quarantine';
+      remove.addEventListener('click', function() {
+        state.pending = { path: path, button: remove };
+        state.pendingKind = 'quarantine';
+        state.pendingBatch = null;
+        fillPlanDialog('Review duplicate removal', [
+          ['File', path],
+          ['Action', 'Move to quarantine'],
+        ], 'Recoverable action. The file will be moved aside and recorded, not permanently deleted.');
+      });
+      item.appendChild(remove);
+      files.appendChild(item);
+    });
+    filesCell.appendChild(files);
+    row.appendChild(filesCell);
+    body.appendChild(row);
   });
-  html += '</tbody></table>';
-  container.innerHTML = html;
+  table.appendChild(body);
+  container.appendChild(table);
 }
 
 function convertSelectedModels() {
@@ -1868,39 +1946,40 @@ async function showModelDetails(path) {
 }
 
 function init() {
-  $('tabs').addEventListener('click', function (event) {
+  on('tabs', 'click', function (event) {
     if (event.target.dataset.panel) selectPanel(event.target.dataset.panel);
   });
-  $('rescan').addEventListener('click', rescan);
-  $('pending-only').addEventListener('change', renderModels);
-  $('queue-selected').addEventListener('click', queueSelectedModels);
-  $('select-all-models').addEventListener('change', function () {
+  on('rescan', 'click', rescan);
+  on('pending-only', 'change', renderModels);
+  on('queue-selected', 'click', queueSelectedModels);
+  on('select-all-models', 'change', function () {
     const on = $('select-all-models').checked;
     Array.prototype.forEach.call(document.querySelectorAll('#models .model-select'), function (box) {
       box.checked = on;
     });
   });
-  $('hf-convert-form').addEventListener('submit', openHfConvertPlan);
-  $('settings').addEventListener('submit', saveSettings);
-  $('scout-form').addEventListener('submit', runScout);
-  $('doctor-form').addEventListener('submit', runDoctor);
-  $('doctor-prune').addEventListener('click', previewPrune);
-  $('adopt-form').addEventListener('submit', runAdopt);
-  $('wire-form').addEventListener('submit', previewWire);
-  $('lora-form').addEventListener('submit', previewLora);
-  $('fuse-form').addEventListener('submit', previewFuse);
-  $('serve-form').addEventListener('submit', previewServe);
-  $('serve-refresh').addEventListener('click', refreshJobs);
-  $('serve-stats-form').addEventListener('submit', getServeStats);
-  $('sloth-form').addEventListener('submit', connectSloth);
-  $('lmstudio-form').addEventListener('submit', importFromLMStudio);
-  $('quant-form').addEventListener('submit', profileQuantizations);
-  $('dataset-score-form').addEventListener('submit', scoreDataset);
-  $('finetune-preview-form').addEventListener('submit', previewFinetune);
-  $('arch-form').addEventListener('submit', visualizeArchitecture);
-  $('cli-form').addEventListener('submit', runCli);
-  $('confirm').addEventListener('click', confirmPlan);
-  $('cancel').addEventListener('click', closeDialog);
+  on('hf-convert-form', 'submit', openHfConvertPlan);
+  on('settings', 'submit', saveSettings);
+  on('settings-reset', 'click', discardSettings);
+  on('scout-form', 'submit', runScout);
+  on('doctor-form', 'submit', runDoctor);
+  on('doctor-prune', 'click', previewPrune);
+  on('adopt-form', 'submit', runAdopt);
+  on('wire-form', 'submit', previewWire);
+  on('lora-form', 'submit', previewLora);
+  on('fuse-form', 'submit', previewFuse);
+  on('serve-form', 'submit', previewServe);
+  on('serve-refresh', 'click', refreshJobs);
+  on('serve-stats-form', 'submit', getServeStats);
+  on('sloth-form', 'submit', connectSloth);
+  on('lmstudio-form', 'submit', importFromLMStudio);
+  on('quant-form', 'submit', profileQuantizations);
+  on('dataset-score-form', 'submit', scoreDataset);
+  on('finetune-preview-form', 'submit', previewFinetune);
+  on('arch-form', 'submit', visualizeArchitecture);
+  on('cli-form', 'submit', runCli);
+  on('confirm', 'click', confirmPlan);
+  on('cancel', 'click', closeDialog);
 
   api('/api/config').then(function (data) {
     fillSettings(data);
@@ -1927,8 +2006,8 @@ function init() {
   }).catch(function (error) { notify(error.message); });
 }
 
-  $('rescan-models').addEventListener('click', rescan);
-  $('scan-duplicates').addEventListener('click', scanDuplicates);
-  $('convert-selected').addEventListener('click', convertSelectedModels);
+  on('rescan-models', 'click', rescan);
+  on('scan-duplicates', 'click', scanDuplicates);
+  on('convert-selected', 'click', convertSelectedModels);
 
 init();

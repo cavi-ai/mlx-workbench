@@ -60,7 +60,8 @@ class AppHost: ObservableObject {
 
     func saveConfig(_ newConfig: Config) -> Config {
         do {
-            let saved = try configModule.save(newConfig)
+            let normalized = try Self.normalizeAndValidateForSave(newConfig)
+            let saved = try configModule.save(normalized)
             config = saved
             agentHealth = Self.checkAgentHealth(path: saved.mlxAgentPath, cli: cli)
             runtimeReport = RuntimeChecker.report()
@@ -111,6 +112,19 @@ class AppHost: ObservableObject {
         return Path.expandedURL(trimmed).path
     }
 
+    private static func normalizeAndValidateForSave(_ config: Config) throws -> Config {
+        let host = config.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Config.LOOPBACK_HOSTS.contains(host.isEmpty ? "127.0.0.1" : host) else {
+            throw ConfigError.invalidHost(host)
+        }
+        guard (1...65535).contains(config.port) else {
+            throw ConfigError.invalidPort(config.port)
+        }
+        var normalized = config
+        normalized.host = host.isEmpty ? "127.0.0.1" : host
+        return normalized
+    }
+
     static func render(_ error: Error) -> String {
         if let bridge = error as? BridgeError {
             return bridge.errorDescription ?? "Unknown bridge error."
@@ -136,6 +150,7 @@ struct Config: Codable, Equatable {
     static let SCHEMA_VERSION = "1.0"
     static let Q_BITS_CHOICES: Set<Int> = [4, 8]
     static let MAX_ROOTS = 32
+    static let LOOPBACK_HOSTS: Set<String> = ["127.0.0.1", "localhost", "::1"]
 
     static func defaults() -> Config {
         return Config(
@@ -201,6 +216,21 @@ struct Config: Codable, Equatable {
         }
 
         return ""
+    }
+}
+
+enum ConfigError: LocalizedError {
+    case invalidHost(String)
+    case invalidPort(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidHost(let host):
+            let displayHost = host.isEmpty ? "127.0.0.1" : host
+            return "Invalid host \"\(displayHost)\"; use 127.0.0.1, localhost, or ::1."
+        case .invalidPort(let port):
+            return "Invalid port \"\(port)\"; valid ports are 1-65535."
+        }
     }
 }
 
@@ -296,6 +326,16 @@ private func coerce(_ dict: [String: Any]) -> Config {
     if let outputDir = dict["output_dir"] as? String {
         merged.outputDir = outputDir.trimmingCharacters(in: .whitespaces).isEmpty
             ? "" : expand(outputDir)
+    }
+
+    if let host = dict["host"] as? String {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalized.isEmpty {
+            merged.host = normalized
+        }
+    }
+    if !Config.LOOPBACK_HOSTS.contains(merged.host) {
+        merged.host = "127.0.0.1"
     }
 
     if let mlxAgentPath = dict["mlx_agent_path"] as? String {

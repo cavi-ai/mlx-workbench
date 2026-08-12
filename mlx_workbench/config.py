@@ -23,6 +23,7 @@ _INT_FIELDS = ("port", "q_bits")
 _BOOL_FIELDS = ("signatures",)
 MAX_ROOTS = 32
 Q_BITS_CHOICES = (4, 8)
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
 class ConfigError(ValueError):
@@ -125,7 +126,10 @@ def _coerce(value):
         item = value[field]
         if not isinstance(item, str):
             raise ConfigError("{0} must be a string".format(field))
-        merged[field] = str(Path(item).expanduser()) if item else ""
+        if field == "host":
+            merged[field] = item.strip() or "127.0.0.1"
+        else:
+            merged[field] = str(Path(item).expanduser()) if item else ""
     for field in _INT_FIELDS:
         if field not in value:
             continue
@@ -138,6 +142,8 @@ def _coerce(value):
             merged[field] = bool(value[field])
     if merged["q_bits"] not in Q_BITS_CHOICES:
         raise ConfigError("q_bits must be one of {0}".format(list(Q_BITS_CHOICES)))
+    if merged["host"] not in LOOPBACK_HOSTS:
+        raise ConfigError("host must be one of: {0}".format(", ".join(LOOPBACK_HOSTS)))
     if not 1 <= merged["port"] <= 65535:
         raise ConfigError("port must be between 1 and 65535")
     if not merged["mlx_agent_path"]:

@@ -22,7 +22,6 @@
       <div class="more-dropdown" hidden>
         <h4 class="tab-bar-label">Discovery</h4>
         <button class="tab" data-panel="scout">Scout</button>
-        <button class="tab" data-panel="lmstudio">LM Studio Import</button>
         <div class="more-divider"></div>
         <h4 class="tab-bar-label">Training</h4>
         <button class="tab" data-panel="training-studio">Training Studio</button>
@@ -32,11 +31,8 @@
         <div class="more-divider"></h4>
         <h4 class="tab-bar-label">Tools</h4>
         <button class="tab" data-panel="doctor">Doctor</button>
-        <button class="tab" data-panel="adopt">Adopt</button>
-        <button class="tab" data-panel="wire">Wire</button>
         <button class="tab" data-panel="model-arch">Model Arch</button>
-        <button class="tab" data-panel="sloth">Sloth</button>
-        <div class="more-divider"></h4>
+        <div class="more-divider"></div>
         <h4 class="tab-bar-label">System</h4>
         <button class="tab" data-panel="jobs">Jobs</button>
         <button class="tab" data-panel="settings">Settings</button>
@@ -49,6 +45,18 @@
 </header>
 
 <p id="notice" class="notice" hidden></p>
+
+<div id="dialog" class="dialog" hidden>
+  <div class="dialog-card">
+    <h2 id="dialog-title">Review plan</h2>
+    <p id="dialog-warn" class="hint"></p>
+    <dl id="plan"></dl>
+    <div class="row">
+      <button id="cancel" type="button" class="secondary">Cancel</button>
+      <button id="confirm" type="button" class="primary">Confirm</button>
+    </div>
+  </div>
+</div>
 
 <!-- Model Details Modal -->
 <div id="model-details-modal" class="dialog" hidden>
@@ -87,8 +95,10 @@
 <!-- Models Tab -->
 <section id="panel-models" class="panel">
   <div class="summary">Local GGUF Models - View, convert, and manage your models</div>
+  <p id="summary" class="summary">Scan has not run yet.</p>
   <div class="row toolbar-inline">
     <button type="button" id="rescan-models" class="primary">Rescan Models</button>
+    <label class="inline check"><input id="pending-only" type="checkbox"> Pending only</label>
     <span class="hint" id="scan-in-progress" hidden>Scanning...</span>
   </div>
   <table class="grid">
@@ -116,6 +126,9 @@
   <form id="hf-convert-form" class="toolbar">
     <label>Repo ID
       <input id="hf-repo" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
+    </label>
+    <label>Output Directory (optional)
+      <input id="hf-out" type="text" spellcheck="false" placeholder="~/models/mlx">
     </label>
     <div class="row">
       <label class="inline">Quantization
@@ -155,6 +168,8 @@
 <!-- Jobs Tab -->
 <section id="panel-jobs" class="panel" hidden>
   <div class="summary">View conversion and serve jobs</div>
+  <p id="convert-queue-error" class="notice" hidden></p>
+  <div id="convert-queue" class="queue" hidden></div>
   <table class="grid">
     <thead><tr><th>Kind</th><th>Status</th><th>Source</th><th>Output / Port</th></tr></thead>
     <tbody id="jobs"></tbody>
@@ -171,18 +186,58 @@
       <textarea id="gguf_roots" rows="4"></textarea>
       <span class="hint">Default: ~/.cache/huggingface/hub, ~/.lmstudio/models</span>
     </label>
+
+    <label>MLX Roots (optional)
+      <textarea id="mlx_roots" rows="4"></textarea>
+      <span class="hint">Optional directories to scan MLX-native weights from</span>
+    </label>
     
     <label>MLX Output Directory
       <input id="output_dir" type="text">
       <span class="hint">Where converted models are saved</span>
     </label>
     
+    <label>Integration Host
+      <div class="row">
+        <input id="host" type="text" placeholder="127.0.0.1">
+        <input id="port" type="text" inputmode="numeric" autocomplete="off" placeholder="8765">
+      </div>
+      <span class="hint">Loopback only: 127.0.0.1, localhost, or ::1</span>
+    </label>
+
     <label>MLX Agent Path
       <input id="mlx_agent_path" type="text">
       <span class="hint">Leave empty to use bundled mlx-agent</span>
     </label>
+
+    <label>Quarantine Directory
+      <input id="quarantine_dir" type="text">
+      <span class="hint">Default: ~/.local/share/mlx-workbench/quarantine</span>
+    </label>
+
+    <label>Conversion
+      <div class="row">
+        <select id="q_bits">
+          <option value="4">4-bit</option>
+          <option value="8">8-bit</option>
+        </select>
+        <label class="inline check">
+          <input id="signatures" type="checkbox">
+          Verify file signatures
+        </label>
+      </div>
+    </label>
+
+    <label>Settings Source
+      <input id="config-path" type="text" readonly>
+      <span class="hint">Saved config path</span>
+    </label>
+
+    <div class="hint">Server status: <span id="agent-health">Loading</span></div>
+    <div class="hint">Runtime status: <span id="runtime-health">Loading</span></div>
     
     <div class="row">
+      <button id="settings-reset" type="button" class="secondary">Discard Changes</button>
       <button type="submit" class="primary">Save Configuration</button>
     </div>
   </form>
@@ -197,16 +252,29 @@
     <label>HF Cache Path
       <input id="doctor-hf" type="text">
     </label>
+    <label>Wired Config Roots (optional)
+      <textarea id="doctor-wired" rows="3"></textarea>
+    </label>
     <div class="row">
       <button type="submit" class="primary">Run Doctor Scan</button>
     </div>
   </form>
   
-  <h3>Findings</h3>
-  <table class="grid">
+  <p id="doctor-summary" class="summary" hidden></p>
+  <h3 id="doctor-findings-heading">Findings</h3>
+  <table id="doctor-findings-table" class="grid">
     <thead><tr><th>Code</th><th>Model</th><th>Issue</th></tr></thead>
     <tbody id="doctor-findings"></tbody>
   </table>
+  <h3 id="doctor-inventory-heading" hidden>Inventory</h3>
+  <table id="doctor-inventory-table" class="grid" hidden>
+    <thead><tr><th>Model</th><th>Source</th><th>Size</th><th>Status</th></tr></thead>
+    <tbody id="doctor-inventory"></tbody>
+  </table>
+  <h3 id="doctor-wired-heading" hidden>Wired Configurations</h3>
+  <div id="doctor-wired-list"></div>
+  <h3 id="doctor-endpoints-heading" hidden>Endpoints</h3>
+  <div id="doctor-endpoints"></div>
 </section>
 
 <!-- Scout -->
@@ -217,9 +285,15 @@
       <label class="inline">Role
         <select id="scout-role"><option value="">All</option><option value="general">General Purpose</option><option value="coding">Coding</option></select>
       </label>
+      <label class="inline">Limit
+        <input id="scout-limit" type="number" min="1" max="100" value="20">
+      </label>
+      <label class="inline check"><input id="scout-fast" type="checkbox" checked> Fast</label>
+      <label class="inline check"><input id="scout-new" type="checkbox"> New only</label>
       <button type="submit" class="primary">Scout Models</button>
     </div>
   </form>
+  <p id="scout-host" class="hint" hidden></p>
   <div id="scout-results"></div>
 </section>
 
@@ -236,16 +310,29 @@
       <button type="submit" class="primary">Analyze Dataset</button>
     </div>
   </form>
+  <div id="dataset-score-results"></div>
   
   <h3>Fine-tune Preview</h3>
   <form id="finetune-preview-form" class="toolbar">
     <label>Base Model
       <input id="finetune-base" type="text">
     </label>
+    <label>Dataset Directory
+      <input id="finetune-dataset" type="text">
+    </label>
+    <div class="row">
+      <label class="inline">Iterations
+        <input id="finetune-iters" type="number" min="1" value="100">
+      </label>
+      <label class="inline">Learning Rate
+        <input id="finetune-lr" type="text" value="2e-5">
+      </label>
+    </div>
     <div class="row">
       <button type="submit" class="primary">Preview Training</button>
     </div>
   </form>
+  <div id="finetune-preview-results"></div>
 </section>
 
 <!-- Compare Conversions -->
@@ -254,6 +341,13 @@
   <form id="quant-form" class="toolbar">
     <label>Model Path
       <input id="quant-path" type="text" spellcheck="false">
+    </label>
+    <label>Target Formats
+      <select id="quant-targets" multiple size="3">
+        <option value="gguf-q4" selected>GGUF Q4</option>
+        <option value="gguf-q8">GGUF Q8</option>
+        <option value="mlx-bf16">MLX BF16</option>
+      </select>
     </label>
     <div class="row">
       <button type="submit" class="primary">Compare Conversions</button>
