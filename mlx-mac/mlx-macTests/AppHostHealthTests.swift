@@ -98,6 +98,120 @@ final class AppHostHealthTests: XCTestCase {
         }
     }
 
+    func testCatalogMissingCacheReflectsProviderConfiguration() async throws {
+        let configuredRoot = try makeTempDirectory()
+        let unconfiguredRoot = try makeTempDirectory()
+        defer {
+            cleanup(configuredRoot)
+            cleanup(unconfiguredRoot)
+        }
+
+        let configuredHost = await MainActor.run {
+            AppHost(
+                catalogStore: CatalogStore(appSupportDirectory: { configuredRoot }),
+                catalogClient: CatalogClient(provider: StaticCatalogProvider()),
+                config: Config.defaults(),
+                now: { Date(timeIntervalSinceReferenceDate: 100) }
+            )
+        }
+        let unconfiguredHost = await MainActor.run {
+            AppHost(
+                catalogStore: CatalogStore(appSupportDirectory: { unconfiguredRoot }),
+                catalogClient: CatalogClient(),
+                config: Config.defaults(),
+                now: { Date(timeIntervalSinceReferenceDate: 100) }
+            )
+        }
+
+        let configuredState = await MainActor.run { configuredHost.catalog }
+        let unconfiguredState = await MainActor.run { unconfiguredHost.catalog }
+
+        XCTAssertEqual(configuredState, .missing)
+        switch unconfiguredState {
+        case .unavailable(let message):
+            XCTAssertFalse(message.isEmpty)
+        default:
+            XCTFail("expected unavailable state without a provider, got \(unconfiguredState)")
+        }
+    }
+
+    func testRefreshWithoutProviderAndCacheRemainsUnavailable() async throws {
+        let root = try makeTempDirectory()
+        defer { cleanup(root) }
+
+        let host = await MainActor.run {
+            AppHost(
+                catalogStore: CatalogStore(appSupportDirectory: { root }),
+                catalogClient: CatalogClient(),
+                config: Config.defaults(),
+                now: { Date(timeIntervalSinceReferenceDate: 100) }
+            )
+        }
+
+        await host.refreshCatalog()
+
+        let state = await MainActor.run { host.catalog }
+        switch state {
+        case .unavailable(let message):
+            XCTAssertFalse(message.isEmpty)
+        default:
+            XCTFail("expected unavailable state after no-provider refresh, got \(state)")
+        }
+    }
+
+    func testRefreshFailurePreservesCurrentAndStaleFreshness() async throws {
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        let currentRoot = try makeTempDirectory()
+        let staleRoot = try makeTempDirectory()
+        defer {
+            cleanup(currentRoot)
+            cleanup(staleRoot)
+        }
+
+        let currentStore = CatalogStore(appSupportDirectory: { currentRoot })
+        try currentStore.save(makeSnapshot(fetchedAt: now.addingTimeInterval(-1)))
+        let staleStore = CatalogStore(appSupportDirectory: { staleRoot })
+        try staleStore.save(makeSnapshot(fetchedAt: now.addingTimeInterval(-CatalogFreshness.metadataTTL - 1)))
+
+        let failingClient = CatalogClient(
+            provider: ThrowingCatalogProvider(error: .unavailable("fixture provider offline"))
+        )
+        let currentHost = await MainActor.run {
+            AppHost(
+                catalogStore: currentStore,
+                catalogClient: failingClient,
+                config: Config.defaults(),
+                now: { now }
+            )
+        }
+        let staleHost = await MainActor.run {
+            AppHost(
+                catalogStore: staleStore,
+                catalogClient: failingClient,
+                config: Config.defaults(),
+                now: { now }
+            )
+        }
+
+        await currentHost.refreshCatalog()
+        await staleHost.refreshCatalog()
+
+        let currentState = await MainActor.run { currentHost.catalog }
+        let staleState = await MainActor.run { staleHost.catalog }
+        switch currentState {
+        case .currentFailure(_, let message):
+            XCTAssertTrue(message.contains("fixture provider offline"))
+        default:
+            XCTFail("expected current freshness after refresh failure, got \(currentState)")
+        }
+        switch staleState {
+        case .staleFailure(_, let message):
+            XCTAssertTrue(message.contains("fixture provider offline"))
+        default:
+            XCTFail("expected stale freshness after refresh failure, got \(staleState)")
+        }
+    }
+
     private func makeTempDirectory() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-tests-\(UUID().uuidString)")
@@ -107,6 +221,30 @@ final class AppHostHealthTests: XCTestCase {
 
     private func cleanup(_ directory: URL) {
         try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func makeSnapshot(fetchedAt: Date) -> CatalogSnapshot {
+        CatalogSnapshot(
+            provider: "fixture-provider",
+            source: "fixtures/catalog.json",
+            revision: "fixture-revision",
+            fetchedAt: fetchedAt,
+            metadataOnly: true,
+            records: []
+        )
+    }
+
+    private struct StaticCatalogProvider: CatalogMetadataProviding {
+        func fetchCatalogMetadata() async throws -> CatalogSnapshot {
+            CatalogSnapshot(
+                provider: "fixture-provider",
+                source: "fixtures/catalog.json",
+                revision: "fixture-revision",
+                fetchedAt: Date(timeIntervalSinceReferenceDate: 100),
+                metadataOnly: true,
+                records: []
+            )
+        }
     }
 
     private struct ThrowingCatalogProvider: CatalogMetadataProviding {

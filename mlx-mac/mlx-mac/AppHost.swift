@@ -257,6 +257,9 @@ class AppHost: ObservableObject {
             if case .corrupt(let existing) = current {
                 return .corrupt(message: "\(existing) \(message)")
             }
+            if case .unavailable(let existing) = current {
+                return .unavailable(message: existing)
+            }
             return .refreshFailed(snapshot: nil, message: message)
         }
 
