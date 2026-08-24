@@ -44,13 +44,17 @@ enum CatalogState: Equatable {
     case corrupt(message: String)
     case current(CatalogSnapshot)
     case stale(CatalogSnapshot)
-    case offline(snapshot: CatalogSnapshot?, message: String)
+    case currentFailure(snapshot: CatalogSnapshot, message: String)
+    case staleFailure(snapshot: CatalogSnapshot, message: String)
+    case refreshFailed(snapshot: CatalogSnapshot?, message: String)
 
     var snapshot: CatalogSnapshot? {
         switch self {
         case .current(let snapshot), .stale(let snapshot):
             return snapshot
-        case .offline(let snapshot, _):
+        case .currentFailure(let snapshot, _), .staleFailure(let snapshot, _):
+            return snapshot
+        case .refreshFailed(let snapshot, _):
             return snapshot
         case .unavailable, .missing, .corrupt:
             return nil
@@ -69,14 +73,20 @@ enum CatalogState: Equatable {
             return "Current"
         case .stale:
             return "Stale"
-        case .offline:
-            return "Offline"
+        case .currentFailure:
+            return "Current"
+        case .staleFailure:
+            return "Stale"
+        case .refreshFailed:
+            return "Refresh failed"
         }
     }
 
     var detailMessage: String? {
         switch self {
-        case .unavailable(let message), .corrupt(let message), .offline(_, let message):
+        case .unavailable(let message), .corrupt(let message):
+            return message
+        case .currentFailure(_, let message), .staleFailure(_, let message), .refreshFailed(_, let message):
             return message
         case .missing, .current, .stale:
             return nil

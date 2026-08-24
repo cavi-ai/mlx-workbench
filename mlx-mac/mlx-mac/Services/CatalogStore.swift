@@ -31,17 +31,27 @@ final class CatalogStore {
     private let appSupportDirectory: () -> URL
     private let maxBytes: Int
     private let cacheFileName: String
+    private let replaceItem: (URL, URL) throws -> Void
 
     init(
         fileManager: FileManager = .default,
         maxBytes: Int = defaultMaxBytes,
         cacheFileName: String = "catalog-v1.json",
-        appSupportDirectory: @escaping () -> URL = CatalogStore.defaultApplicationSupportDirectory
+        appSupportDirectory: @escaping () -> URL = CatalogStore.defaultApplicationSupportDirectory,
+        replaceItem: ((URL, URL) throws -> Void)? = nil
     ) {
         self.fileManager = fileManager
         self.maxBytes = maxBytes
         self.cacheFileName = cacheFileName
         self.appSupportDirectory = appSupportDirectory
+        self.replaceItem = replaceItem ?? { existingURL, temporaryURL in
+            _ = try fileManager.replaceItemAt(
+                existingURL,
+                withItemAt: temporaryURL,
+                backupItemName: nil,
+                options: .usingNewMetadataOnly
+            )
+        }
     }
 
     func cacheURL() -> URL {
@@ -99,12 +109,7 @@ final class CatalogStore {
         do {
             try data.write(to: temp, options: .atomic)
             if fileManager.fileExists(atPath: location.path) {
-                _ = try fileManager.replaceItemAt(
-                    location,
-                    withItemAt: temp,
-                    backupItemName: nil,
-                    options: .usingNewMetadataOnly
-                )
+                try replaceItem(location, temp)
             } else {
                 try fileManager.moveItem(at: temp, to: location)
             }

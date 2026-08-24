@@ -127,13 +127,25 @@ class AppHost: ObservableObject {
 
         do {
             let snapshot = try await catalogClient.refresh()
-            try catalogStore.save(snapshot)
-            catalog = Self.catalogState(for: snapshot, now: now(), ttl: catalogTTL)
+            do {
+                try catalogStore.save(snapshot)
+                catalog = Self.catalogState(for: snapshot, now: now(), ttl: catalogTTL)
+            } catch {
+                catalog = Self.catalogFailureState(
+                    current: catalog,
+                    snapshot: snapshot,
+                    message: "Metadata was fetched, but the catalog cache could not be saved: \(Self.render(error))",
+                    now: now(),
+                    ttl: catalogTTL
+                )
+            }
         } catch {
             catalog = Self.catalogFailureState(
                 current: catalog,
                 client: catalogClient,
-                error: error
+                error: error,
+                now: now(),
+                ttl: catalogTTL
             )
         }
     }
@@ -192,7 +204,13 @@ class AppHost: ObservableObject {
             if client.isConfigured {
                 return catalogState(for: snapshot, now: now, ttl: ttl)
             }
-            return .offline(snapshot: snapshot, message: client.unavailableMessage)
+            return catalogFailureState(
+                current: catalogState(for: snapshot, now: now, ttl: ttl),
+                snapshot: snapshot,
+                message: "Metadata provider unavailable: \(client.unavailableMessage)",
+                now: now,
+                ttl: ttl
+            )
         }
     }
 
@@ -212,20 +230,41 @@ class AppHost: ObservableObject {
     private static func catalogFailureState(
         current: CatalogState,
         client: any CatalogRefreshing,
-        error: Error
+        error: Error,
+        now: Date,
+        ttl: TimeInterval
     ) -> CatalogState {
-        let message = render(error)
-        switch current {
-        case .corrupt(let existing):
-            return .corrupt(message: "\(existing) Refresh failed: \(message)")
-        case .current(let snapshot), .stale(let snapshot), .offline(let snapshot?, _):
-            return .offline(snapshot: snapshot, message: message)
-        case .offline(nil, _):
-            return .offline(snapshot: nil, message: message)
-        case .missing:
-            return .offline(snapshot: nil, message: message)
-        case .unavailable:
-            return .unavailable(message: client.unavailableMessage)
+        let message: String
+        switch error {
+        case CatalogClientError.unavailable(let detail):
+            message = "Metadata provider unavailable: \(detail)"
+        case CatalogClientError.invalidPayload(let detail):
+            message = "Metadata validation failed: \(detail)"
+        default:
+            message = "Metadata refresh failed: \(render(error))"
+        }
+        return catalogFailureState(current: current, snapshot: current.snapshot, message: message, now: now, ttl: ttl)
+    }
+
+    private static func catalogFailureState(
+        current: CatalogState,
+        snapshot: CatalogSnapshot?,
+        message: String,
+        now: Date,
+        ttl: TimeInterval
+    ) -> CatalogState {
+        guard let snapshot else {
+            if case .corrupt(let existing) = current {
+                return .corrupt(message: "\(existing) (message)")
+            }
+            return .refreshFailed(snapshot: nil, message: message)
+        }
+
+        switch CatalogFreshness.classify(fetchedAt: snapshot.fetchedAt, now: now, ttl: ttl) {
+        case .current:
+            return .currentFailure(snapshot: snapshot, message: message)
+        case .stale:
+            return .staleFailure(snapshot: snapshot, message: message)
         }
     }
 

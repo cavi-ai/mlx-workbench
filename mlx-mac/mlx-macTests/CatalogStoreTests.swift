@@ -36,7 +36,7 @@ final class CatalogStoreTests: XCTestCase {
         }
     }
 
-    func testSaveFailurePreservesPreviousValidCache() throws {
+    func testPayloadFailurePreservesPreviousValidCache() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
 
@@ -55,6 +55,33 @@ final class CatalogStoreTests: XCTestCase {
         )
 
         XCTAssertThrowsError(try store.save(oversized))
+        XCTAssertEqual(store.load(), .snapshot(valid))
+    }
+
+    func testAtomicReplacementFailurePreservesPreviousValidCache() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+
+        let store = fixture.store()
+        let valid = makeSnapshot(
+            revision: "r1",
+            fetchedAt: Date(timeIntervalSinceReferenceDate: 20),
+            recordCount: 1
+        )
+        try store.save(valid)
+
+        var replacementAttempted = false
+        var temporaryFileWasWritten = false
+        let failingStore = fixture.store(replaceItem: { existingURL, temporaryURL in
+            replacementAttempted = true
+            temporaryFileWasWritten = FileManager.default.fileExists(atPath: temporaryURL.path)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: existingURL.path))
+            throw TestError.atomicReplacementFailed
+        })
+
+        XCTAssertThrowsError(try failingStore.save(makeSnapshot(revision: "r2", fetchedAt: Date(timeIntervalSinceReferenceDate: 40))))
+        XCTAssertTrue(replacementAttempted)
+        XCTAssertTrue(temporaryFileWasWritten)
         XCTAssertEqual(store.load(), .snapshot(valid))
     }
 
@@ -115,16 +142,24 @@ final class CatalogStoreTests: XCTestCase {
     private struct Fixture {
         let root: URL
 
-        func store(maxBytes: Int = CatalogStore.defaultMaxBytes) -> CatalogStore {
+        func store(
+            maxBytes: Int = CatalogStore.defaultMaxBytes,
+            replaceItem: ((URL, URL) throws -> Void)? = nil
+        ) -> CatalogStore {
             CatalogStore(
                 fileManager: .default,
                 maxBytes: maxBytes,
-                appSupportDirectory: { root }
+                appSupportDirectory: { root },
+                replaceItem: replaceItem
             )
         }
 
         func cleanup() {
             try? FileManager.default.removeItem(at: root)
         }
+    }
+
+    private enum TestError: Error {
+        case atomicReplacementFailed
     }
 }
