@@ -16,9 +16,6 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 headerSection
-                if let staleMessage {
-                    ErrorBanner(text: staleMessage)
-                }
                 stateBanner
                 overviewSection
                 inventorySection
@@ -32,7 +29,10 @@ struct HomeView: View {
     }
 
     private var snapshot: LibrarySnapshot? {
-        appHost.librarySnapshot
+        guard !appHost.isScanning, appHost.scanResult != nil else {
+            return nil
+        }
+        return appHost.librarySnapshot
     }
 
     private var readyModels: [LibraryModel] {
@@ -44,7 +44,7 @@ struct HomeView: View {
     }
 
     private var modelCount: Int? {
-        snapshot?.groups.count
+        snapshot?.models.count
     }
 
     private var ggufRoots: [String] {
@@ -61,27 +61,23 @@ struct HomeView: View {
         return appHost.config.mlxRoots
     }
 
-    private var staleMessage: String? {
-        guard let snapshot, let error = appHost.lastError?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty else {
-            return nil
-        }
-        return "Last refresh failed: \(error) Showing the last successful library snapshot from \(timestamp(snapshot.generatedAt))."
-    }
-
     private var homeState: HomeState {
-        if snapshot == nil, appHost.isScanning || (snapshot == nil && appHost.lastError == nil) {
+        if appHost.isScanning {
             return .loading
         }
-        if snapshot == nil, let error = appHost.lastError?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+        if let error = appHost.lastError?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
             return .scanError(error)
         }
-        if ggufRoots.isEmpty && mlxRoots.isEmpty && (snapshot?.models.isEmpty ?? true) {
+        guard let snapshot else {
+            return .loading
+        }
+        if ggufRoots.isEmpty && mlxRoots.isEmpty && snapshot.models.isEmpty {
             return .configurationNeeded
         }
-        if let snapshot, snapshot.models.isEmpty {
+        if snapshot.models.isEmpty {
             return .noModels
         }
-        if snapshot != nil, readyNowCount == 0 {
+        if readyNowCount == 0 {
             return .noRecommendations
         }
         return .ready
