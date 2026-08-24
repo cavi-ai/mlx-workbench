@@ -4,6 +4,7 @@ import SwiftUI
 
 struct HomeView: View {
     @ObservedObject var appHost: AppHost
+    private let onRouteSelection: (String) -> Void
 
     private let summaryColumns = [
         GridItem(.adaptive(minimum: 160, maximum: 220), spacing: 12, alignment: .top)
@@ -11,6 +12,11 @@ struct HomeView: View {
     private let taskColumns = [
         GridItem(.adaptive(minimum: 260, maximum: 360), spacing: 16, alignment: .top)
     ]
+
+    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+        self.appHost = appHost
+        self.onRouteSelection = onRouteSelection
+    }
 
     var body: some View {
         ScrollView {
@@ -41,6 +47,12 @@ struct HomeView: View {
 
     private var readyNowCount: Int {
         readyModels.count
+    }
+
+    private var recommendationCount: Int {
+        UseCase.allCases.reduce(into: 0) { partialResult, useCase in
+            partialResult += appHost.recommendations(for: useCase).count
+        }
     }
 
     private var modelCount: Int? {
@@ -77,7 +89,7 @@ struct HomeView: View {
         if snapshot.models.isEmpty {
             return .noModels
         }
-        if readyNowCount == 0 {
+        if recommendationCount == 0 {
             return .noRecommendations
         }
         return .ready
@@ -220,9 +232,9 @@ struct HomeView: View {
                 statusBadge(title: state.badgeTitle, tint: state.tint)
             }
 
-            if let metrics = state.metrics {
-                HStack(spacing: 8) {
-                    ForEach(metrics, id: \.title) { metric in
+        if let metrics = state.metrics {
+            HStack(spacing: 8) {
+                ForEach(metrics, id: \.title) { metric in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(metric.value)
                                 .font(.headline)
@@ -235,7 +247,35 @@ struct HomeView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color(nsColor: .windowBackgroundColor))
                         .cornerRadius(8)
+                }
+            }
+        }
+
+            if let recommendation = state.recommendation, let model = state.model {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(model.displayName)
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                    detailLine("Readiness", recommendation.readiness.title)
+                    detailLine("Freshness", recommendation.freshness.title)
+                    detailLine("Evidence", recommendation.evidenceTimestamp.map(timestamp) ?? "Not available")
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(recommendation.reasons.prefix(3)), id: \.name) { reason in
+                            Label(reason.message, systemImage: reason.isHint ? "info.circle" : "checkmark.circle")
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                        }
                     }
+                }
+            } else if let model = state.model {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(model.displayName)
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                    detailLine("Readiness", model.readiness.title)
+                    detailLine("Freshness", RecommendationFreshness.localOnly.title)
+                    detailLine("Evidence", snapshot.map { timestamp($0.generatedAt) } ?? "Not available")
                 }
             }
 
@@ -243,6 +283,10 @@ struct HomeView: View {
                 .font(.callout)
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let model = state.model {
+                actionRow(for: model)
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -338,6 +382,30 @@ struct HomeView: View {
         .font(.callout)
     }
 
+    private func actionRow(for model: LibraryModel) -> some View {
+        HStack(spacing: 8) {
+            Button("Details") {
+                select(model, route: "models")
+            }
+
+            Button("Prepare") {
+                select(model, route: "convert")
+            }
+            .disabled(!canPrepare(model))
+
+            Button("Compare") {
+                select(model, route: "quant")
+            }
+            .disabled(!canCompare(model))
+
+            Button("Try") {
+                select(model, route: "serve")
+            }
+            .disabled(model.readiness != .ready)
+        }
+        .buttonStyle(.bordered)
+    }
+
     private func statusBadge(title: String, tint: Color) -> some View {
         Text(title)
             .font(.caption)
@@ -428,39 +496,52 @@ struct HomeView: View {
                 badgeTitle: "Loading",
                 tint: .accentColor,
                 message: "Home is waiting on the current scan before it can map local coverage for this task.",
-                metrics: nil
+                metrics: nil,
+                recommendation: nil,
+                model: nil
             )
         case .scanError:
             return TaskState(
                 badgeTitle: "Scan error",
                 tint: .red,
                 message: "Fix the scan error first. Home is intentionally not guessing about this task without authoritative local inventory.",
-                metrics: nil
+                metrics: nil,
+                recommendation: nil,
+                model: nil
             )
         case .configurationNeeded:
             return TaskState(
                 badgeTitle: "Needs roots",
                 tint: .orange,
                 message: "Configure at least one GGUF or MLX root in Settings, then rescan to populate this task with local evidence.",
-                metrics: nil
+                metrics: nil,
+                recommendation: nil,
+                model: nil
             )
         case .noModels:
             return TaskState(
                 badgeTitle: "No models",
                 tint: .orange,
                 message: "The current roots did not produce any local models for this task yet.",
-                metrics: nil
+                metrics: nil,
+                recommendation: nil,
+                model: nil
             )
         case .noRecommendations, .ready:
-            let matching = snapshot?.models.filter { $0.capabilities.contains(useCase) } ?? []
+            let recommendation = appHost.recommendations(for: useCase).first
+            let recommendedModel = recommendation.flatMap(appHost.model(for:))
+            let matching = snapshot?.models.filter { homeMatches($0, useCase: useCase) } ?? []
+            let fallbackModel = recommendedModel ?? preferredFallbackModel(in: matching)
             let ready = matching.filter { $0.readiness == .ready }.count
             let prepare = matching.filter { $0.readiness == .needsConversion }.count
             let runtime = matching.filter { $0.readiness == .needsRuntime }.count
             let attention = matching.count - ready - prepare - runtime
 
-            if ready == 0 {
+            guard let recommendation, let model = recommendedModel else {
                 let message: String
-                if matching.isEmpty {
+                if fallbackModel != nil {
+                    message = "No ready recommendation passed the conservative gates. Review local readiness and evidence before promoting this model for \(useCase.title)."
+                } else if matching.isEmpty {
                     message = "No current local matches for this intent. Home is waiting for future scans rather than inventing a recommendation."
                 } else {
                     message = "Local matches exist, but none are ready now. Use Prepare or Run after addressing conversion, runtime, or health issues."
@@ -473,21 +554,80 @@ struct HomeView: View {
                         Metric(title: "Matches", value: String(matching.count)),
                         Metric(title: "Prepare", value: String(prepare)),
                         Metric(title: "Attention", value: String(max(attention, 0)))
-                    ]
+                    ],
+                    recommendation: nil,
+                    model: fallbackModel
                 )
             }
 
             return TaskState(
-                badgeTitle: "Ready now",
+                badgeTitle: recommendation.confidence.title,
                 tint: .green,
-                message: "Home is surfacing current coverage only in this task. Recommendation ranking, catalog refresh, and playground behavior stay out of scope here.",
+                message: "Recommendation ranking stayed local, deterministic, and conservative for this task. Details and route actions reuse the existing native model selection flow.",
                 metrics: [
                     Metric(title: "Ready", value: String(ready)),
                     Metric(title: "Prepare", value: String(prepare)),
                     Metric(title: "Runtime", value: String(runtime))
-                ]
+                ],
+                recommendation: recommendation,
+                model: model
             )
         }
+    }
+
+    private func homeMatches(_ model: LibraryModel, useCase: UseCase) -> Bool {
+        if useCase == .generalChat {
+            return true
+        }
+        return model.capabilities.contains(useCase)
+    }
+
+    private func preferredFallbackModel(in models: [LibraryModel]) -> LibraryModel? {
+        models.sorted { lhs, rhs in
+            let lhsRank = fallbackReadinessRank(lhs.readiness)
+            let rhsRank = fallbackReadinessRank(rhs.readiness)
+            if lhsRank != rhsRank {
+                return lhsRank < rhsRank
+            }
+            let lhsName = lhs.displayName.localizedLowercase
+            let rhsName = rhs.displayName.localizedLowercase
+            if lhsName != rhsName {
+                return lhsName < rhsName
+            }
+            return lhs.item.path < rhs.item.path
+        }.first
+    }
+
+    private func fallbackReadinessRank(_ readiness: ModelReadiness) -> Int {
+        switch readiness {
+        case .ready:
+            return 0
+        case .needsConversion:
+            return 1
+        case .needsRuntime:
+            return 2
+        case .incompleteCache:
+            return 3
+        case .unsupported:
+            return 4
+        case .duplicate:
+            return 5
+        case .quarantined:
+            return 6
+        }
+    }
+
+    private func canPrepare(_ model: LibraryModel) -> Bool {
+        model.readiness != .unsupported && model.readiness != .quarantined
+    }
+
+    private func canCompare(_ model: LibraryModel) -> Bool {
+        model.readiness != .quarantined && model.item.readable != false
+    }
+
+    private func select(_ model: LibraryModel, route: String) {
+        appHost.selectedModelPath = model.item.path
+        onRouteSelection(route)
     }
 
     private func byteCount(_ bytes: Int64) -> String {
@@ -522,6 +662,8 @@ private extension HomeView {
         let tint: Color
         let message: String
         let metrics: [Metric]?
+        let recommendation: Recommendation?
+        let model: LibraryModel?
     }
 }
 

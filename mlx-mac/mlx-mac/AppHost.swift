@@ -16,6 +16,8 @@ class AppHost: ObservableObject {
     @Published var catalog: CatalogState
     @Published var isRefreshingCatalog = false
     @Published var selectedModelPath: String?
+    @Published var benchmarkResults: [RecommendationBenchmarkResult] = []
+    @Published var recommendationPreferences: RecommendationPreferences = .defaults
     @Published var hardwareProfile: HardwareProfile
     @Published var lastError: String?
 
@@ -289,6 +291,32 @@ class AppHost: ObservableObject {
             return bridge.errorDescription ?? "Unknown bridge error."
         }
         return error.localizedDescription
+    }
+
+    var recommendations: [UseCase: [Recommendation]] {
+        guard let snapshot = librarySnapshot else { return [:] }
+        return Dictionary(
+            uniqueKeysWithValues: UseCase.allCases.map { useCase in
+                (
+                    useCase,
+                    RecommendationEngine.recommend(
+                        useCase: useCase,
+                        snapshot: snapshot,
+                        catalog: catalog,
+                        benchmarkResults: benchmarkResults,
+                        preferences: recommendationPreferences
+                    )
+                )
+            }
+        )
+    }
+
+    func recommendations(for useCase: UseCase) -> [Recommendation] {
+        recommendations[useCase] ?? []
+    }
+
+    func model(for recommendation: Recommendation) -> LibraryModel? {
+        librarySnapshot?.models.first(where: { $0.item.path == recommendation.modelID })
     }
 }
 

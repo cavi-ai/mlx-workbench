@@ -15,7 +15,10 @@ struct ContentView: View {
             AppSidebar(selectedTab: $selectedTab)
         } detail: {
             TabView(selection: $selectedTab) {
-                HomeView(appHost: appHost).tag("quickstart")
+                HomeView(appHost: appHost) { route in
+                    selectedTab = route
+                }
+                .tag("quickstart")
                 LibraryView(appHost: appHost) { route in
                     selectedTab = route
                 }
