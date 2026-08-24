@@ -255,7 +255,7 @@ class AppHost: ObservableObject {
     ) -> CatalogState {
         guard let snapshot else {
             if case .corrupt(let existing) = current {
-                return .corrupt(message: "\(existing) (message)")
+                return .corrupt(message: "\(existing) \(message)")
             }
             return .refreshFailed(snapshot: nil, message: message)
         }

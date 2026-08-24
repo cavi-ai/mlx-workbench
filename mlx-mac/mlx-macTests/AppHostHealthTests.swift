@@ -65,6 +65,39 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertEqual(health.cli, scriptPath.path)
     }
 
+    func testCatalogRefreshFailurePreservesCorruptStateAndActualDetail() async throws {
+        let root = try makeTempDirectory()
+        defer { cleanup(root) }
+
+        let store = CatalogStore(appSupportDirectory: { root })
+        let cacheDirectory = store.cacheURL().deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        try Data("not-json".utf8).write(to: store.cacheURL())
+
+        let client = CatalogClient(
+            provider: ThrowingCatalogProvider(error: .invalidPayload("fixture payload rejected"))
+        )
+        let host = await MainActor.run {
+            AppHost(
+                catalogStore: store,
+                catalogClient: client,
+                config: Config.defaults(),
+                now: { Date(timeIntervalSinceReferenceDate: 100) }
+            )
+        }
+
+        await host.refreshCatalog()
+
+        let state = await MainActor.run { host.catalog }
+        switch state {
+        case .corrupt(let message):
+            XCTAssertTrue(message.contains("Metadata validation failed: fixture payload rejected"))
+            XCTAssertFalse(message.contains("(message)"))
+        default:
+            XCTFail("expected corrupt state with refresh detail, got \(state)")
+        }
+    }
+
     private func makeTempDirectory() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-tests-\(UUID().uuidString)")
@@ -74,5 +107,13 @@ final class AppHostHealthTests: XCTestCase {
 
     private func cleanup(_ directory: URL) {
         try? FileManager.default.removeItem(at: directory)
+    }
+
+    private struct ThrowingCatalogProvider: CatalogMetadataProviding {
+        let error: CatalogClientError
+
+        func fetchCatalogMetadata() async throws -> CatalogSnapshot {
+            throw error
+        }
     }
 }
