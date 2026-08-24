@@ -159,6 +159,41 @@ final class RecommendationEngineTests: XCTestCase {
         XCTAssertTrue(result.isEmpty)
     }
 
+    func testEqualCatalogFamilyDuplicatesHaveStableFieldTieBreakers() {
+        let local = readyModel(path: "/mlx/coder", name: "Code Local", modelKey: "org/coder", bytes: 2_000)
+        let snapshot = makeSnapshot(models: [local], memoryBytes: 16_000)
+        let codingRecord = catalogRecord(
+            repoIdentity: "org/coder",
+            roles: [.coding],
+            estimatedMemoryBytes: 4_000,
+            updatedAt: fixtureNow
+        )
+        let chatRecord = catalogRecord(
+            repoIdentity: "org/coder",
+            roles: [.generalChat],
+            estimatedMemoryBytes: 8_000,
+            updatedAt: fixtureNow
+        )
+        let first = RecommendationEngine.recommend(
+            useCase: .coding,
+            snapshot: snapshot,
+            catalog: .current(makeCatalogSnapshot(records: [codingRecord, chatRecord])),
+            benchmarkResults: [],
+            preferences: .defaults
+        )
+        let reversed = RecommendationEngine.recommend(
+            useCase: .coding,
+            snapshot: snapshot,
+            catalog: .current(makeCatalogSnapshot(records: [chatRecord, codingRecord])),
+            benchmarkResults: [],
+            preferences: .defaults
+        )
+
+        XCTAssertEqual(first, reversed)
+        XCTAssertEqual(first.first?.modelID, local.item.path)
+        XCTAssertTrue(first.first?.reasons.contains(where: { $0.name == "catalog_role" }) == true)
+    }
+
     func testLocalBenchmarkEvidenceBreaksTieConservatively() {
         let faster = readyModel(path: "/mlx/faster", name: "Coder Fast", modelKey: "org/coder-fast", bytes: 2_000)
         let slower = readyModel(path: "/mlx/slower", name: "Coder Slow", modelKey: "org/coder-slow", bytes: 2_000)
@@ -200,6 +235,52 @@ final class RecommendationEngineTests: XCTestCase {
 
         XCTAssertEqual(result.map(\.modelID), [faster.item.path, slower.item.path])
         XCTAssertEqual(result.first?.confidence, .high)
+    }
+
+    func testEqualBenchmarkDuplicatesHaveStableMetricTieBreakers() {
+        let local = readyModel(path: "/mlx/coder", name: "Code Local", modelKey: "org/coder", bytes: 2_000)
+        let snapshot = makeSnapshot(models: [local], memoryBytes: 16_000)
+        let catalog = CatalogState.current(
+            makeCatalogSnapshot(
+                records: [
+                    catalogRecord(repoIdentity: "org/coder", roles: [.coding], estimatedMemoryBytes: 4_000, updatedAt: fixtureNow)
+                ]
+            )
+        )
+        let slower = RecommendationBenchmarkResult(
+            modelID: local.item.path,
+            useCase: .coding,
+            tokensPerSecond: 10,
+            timeToFirstTokenSeconds: 2.0,
+            measuredAt: fixtureNow,
+            sampleCount: 1
+        )
+        let faster = RecommendationBenchmarkResult(
+            modelID: local.item.path,
+            useCase: .coding,
+            tokensPerSecond: 30,
+            timeToFirstTokenSeconds: 0.5,
+            measuredAt: fixtureNow,
+            sampleCount: 1
+        )
+
+        let first = RecommendationEngine.recommend(
+            useCase: .coding,
+            snapshot: snapshot,
+            catalog: catalog,
+            benchmarkResults: [slower, faster],
+            preferences: .defaults
+        )
+        let reversed = RecommendationEngine.recommend(
+            useCase: .coding,
+            snapshot: snapshot,
+            catalog: catalog,
+            benchmarkResults: [faster, slower],
+            preferences: .defaults
+        )
+
+        XCTAssertEqual(first, reversed)
+        XCTAssertTrue(first.first?.evidence.contains(where: { $0.name == "local_benchmark" && $0.value.contains("30") }) == true)
     }
 
     func testStaleCatalogLabelDoesNotMasqueradeAsCurrent() {

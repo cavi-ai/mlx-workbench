@@ -336,14 +336,18 @@ private extension RecommendationEngine {
         }
 
         private static func index(records: [CatalogRecord]) -> [String: CatalogRecord] {
-            let ordered = records.sorted { lhs, rhs in
+            let canonicalRecords = records.map(canonicalRecord)
+            let ordered = canonicalRecords.sorted { lhs, rhs in
                 if lhs.updatedAt != rhs.updatedAt {
                     return lhs.updatedAt > rhs.updatedAt
                 }
                 if lhs.revision != rhs.revision {
                     return lhs.revision > rhs.revision
                 }
-                return lhs.repoIdentity < rhs.repoIdentity
+                return lexicographicallyPrecedes(
+                    catalogTieBreakFields(lhs),
+                    catalogTieBreakFields(rhs)
+                )
             }
 
             var indexed: [String: CatalogRecord] = [:]
@@ -353,6 +357,36 @@ private extension RecommendationEngine {
                 indexed[key] = record
             }
             return indexed
+        }
+
+        private static func canonicalRecord(_ record: CatalogRecord) -> CatalogRecord {
+            CatalogRecord(
+                repoIdentity: record.repoIdentity,
+                revision: record.revision,
+                updatedAt: record.updatedAt,
+                roles: record.roles?.sorted { $0.rawValue < $1.rawValue },
+                estimatedMemoryBytes: record.estimatedMemoryBytes,
+                formats: record.formats.sorted(),
+                sourceURL: record.sourceURL
+            )
+        }
+
+        private static func catalogTieBreakFields(_ record: CatalogRecord) -> [String] {
+            [
+                normalizedCatalogKey(record.repoIdentity),
+                record.repoIdentity,
+                record.roles.map { $0.map(\.rawValue).joined(separator: ",") } ?? "<nil>",
+                record.estimatedMemoryBytes.map(String.init) ?? "<nil>",
+                record.formats.joined(separator: "\u{1F}"),
+                record.sourceURL.absoluteString
+            ]
+        }
+
+        private static func lexicographicallyPrecedes(_ lhs: [String], _ rhs: [String]) -> Bool {
+            for (left, right) in zip(lhs, rhs) where left != right {
+                return left < right
+            }
+            return lhs.count < rhs.count
         }
     }
 
@@ -366,7 +400,19 @@ private extension RecommendationEngine {
             if lhs.sampleCount != rhs.sampleCount {
                 return lhs.sampleCount > rhs.sampleCount
             }
-            return lhs.modelID < rhs.modelID
+            if lhs.modelID != rhs.modelID {
+                return lhs.modelID < rhs.modelID
+            }
+            if lhs.useCase.rawValue != rhs.useCase.rawValue {
+                return lhs.useCase.rawValue < rhs.useCase.rawValue
+            }
+            if let order = compareOptionalMetric(lhs.tokensPerSecond, rhs.tokensPerSecond, higherIsBetter: true) {
+                return order
+            }
+            if let order = compareOptionalMetric(lhs.timeToFirstTokenSeconds, rhs.timeToFirstTokenSeconds, higherIsBetter: false) {
+                return order
+            }
+            return false
         }
 
         var indexed: [String: RecommendationBenchmarkResult] = [:]
@@ -377,6 +423,38 @@ private extension RecommendationEngine {
             }
         }
         return indexed
+    }
+
+    private static func compareOptionalMetric(
+        _ lhs: Double?,
+        _ rhs: Double?,
+        higherIsBetter: Bool
+    ) -> Bool? {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return nil
+        case (nil, _):
+            return false
+        case (_, nil):
+            return true
+        case let (left?, right?):
+            if left.isNaN != right.isNaN {
+                return !left.isNaN
+            }
+            if left.isNaN {
+                if left.bitPattern != right.bitPattern {
+                    return left.bitPattern < right.bitPattern
+                }
+                return nil
+            }
+            if left != right {
+                return higherIsBetter ? left > right : left < right
+            }
+            if left.bitPattern != right.bitPattern {
+                return left.bitPattern < right.bitPattern
+            }
+            return nil
+        }
     }
 
     static func benchmarkKey(modelID: String, useCase: UseCase) -> String {
