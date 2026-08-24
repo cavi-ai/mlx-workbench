@@ -45,11 +45,19 @@ struct ModelDetailsView: View {
                 }
 
                 DisclosureGroup("Raw model evidence") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(model.evidence, id: \.self) { evidence in
-                            Text(evidence)
+                    let evidence = LibraryPresentation.userFacingEvidence(model.evidence)
+                    Group {
+                        if evidence.isEmpty {
+                            Text("Unknown")
                                 .font(.system(.caption, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(evidence, id: \.self) { entry in
+                                    Text(entry)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
                         }
                     }
                     .textSelection(.enabled)

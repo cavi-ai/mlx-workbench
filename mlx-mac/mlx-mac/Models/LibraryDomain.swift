@@ -199,7 +199,6 @@ struct LibraryModel: Codable, Equatable, Hashable {
             normalizedFamilyKey: derivedFamilyKey,
             displayName: derivedDisplayName,
             readiness: derivedReadiness,
-            capabilities: derivedCapabilities,
             sourcePaths: derivedSourcePaths,
             outputPaths: derivedOutputPaths
         )
@@ -283,7 +282,6 @@ struct LibraryModel: Codable, Equatable, Hashable {
         normalizedFamilyKey: String,
         displayName: String,
         readiness: ModelReadiness,
-        capabilities: [UseCase],
         sourcePaths: [String],
         outputPaths: [String]
     ) -> [String] {
@@ -293,7 +291,6 @@ struct LibraryModel: Codable, Equatable, Hashable {
             "family_key=\(normalizedFamilyKey)",
             "display_name=\(displayName)",
             "readiness=\(readiness.rawValue)",
-            "capabilities=\(capabilities.map(\.rawValue).joined(separator: ","))",
             "source_count=\(sourcePaths.count)",
             "output_count=\(outputPaths.count)",
         ]

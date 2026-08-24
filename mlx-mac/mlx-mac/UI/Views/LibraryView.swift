@@ -105,6 +105,18 @@ enum LibraryPresentation {
         return groups.first?.variants.first?.item.path
     }
 
+    static func userFacingEvidence(_ evidence: [String]) -> [String] {
+        evidence.filter { entry in
+            let key = entry
+                .split(separator: "=", maxSplits: 1)
+                .first
+                .map(String.init)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            return key != "capabilities"
+        }
+    }
+
     static func matchesSearch(_ model: LibraryModel, query: String) -> Bool {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).localizedLowercase
         guard !normalizedQuery.isEmpty else { return true }
@@ -122,7 +134,7 @@ enum LibraryPresentation {
         ]
         + model.sourcePaths
         + model.outputPaths
-        + model.evidence
+        + userFacingEvidence(model.evidence)
 
         return searchFields
             .compactMap { $0 }
