@@ -66,7 +66,7 @@ struct ScoutView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else if case .missing = appHost.catalog {
-                Text("No catalog cache is stored yet. Refresh metadata once a provider is configured.")
+                Text("Catalog metadata has not been fetched yet. Refresh Metadata to fetch it.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
