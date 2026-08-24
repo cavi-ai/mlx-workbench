@@ -66,6 +66,9 @@
 		24BBLD025 /* LibraryDomainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF01F /* LibraryDomainTests.swift */; };
 		24BBLD026 /* ModelLibraryBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF020 /* ModelLibraryBuilder.swift */; };
 		24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF021 /* ModelLibraryBuilderTests.swift */; };
+		24BBLD028 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF022 /* LibraryView.swift */; };
+		24BBLD029 /* ModelDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF023 /* ModelDetailsView.swift */; };
+		24BBLD030 /* LibraryViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF024 /* LibraryViewTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
@@ -130,6 +133,9 @@
 		24FREF01F /* LibraryDomainTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryDomainTests.swift; path = LibraryDomainTests.swift; sourceTree = "<group>"; };
 		24FREF020 /* ModelLibraryBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelLibraryBuilder.swift; path = Services/ModelLibraryBuilder.swift; sourceTree = "<group>"; };
 		24FREF021 /* ModelLibraryBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelLibraryBuilderTests.swift; path = ModelLibraryBuilderTests.swift; sourceTree = "<group>"; };
+		24FREF022 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryView.swift; path = UI/Views/LibraryView.swift; sourceTree = "<group>"; };
+		24FREF023 /* ModelDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelDetailsView.swift; path = UI/Views/ModelDetailsView.swift; sourceTree = "<group>"; };
+		24FREF024 /* LibraryViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryViewTests.swift; path = LibraryViewTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -193,7 +199,9 @@
 				24FREF00000E /* JobsView.swift */,
 				24FREF00000F /* LMStudioView.swift */,
 				24FREF000010 /* ModelArchView.swift */,
+				24FREF023 /* ModelDetailsView.swift */,
 				24FREF000011 /* ModelsView.swift */,
+				24FREF022 /* LibraryView.swift */,
 				24FREF000012 /* QuantView.swift */,
 				24FREF000013 /* HomeView.swift */,
 				24FREF000014 /* ScoutView.swift */,
@@ -224,6 +232,7 @@
 			children = (
 				24FREF01A /* AppHostHealthTests.swift */,
 				24FREF01F /* LibraryDomainTests.swift */,
+				24FREF024 /* LibraryViewTests.swift */,
 				24FREF021 /* ModelLibraryBuilderTests.swift */,
 			);
 			path = mlx-macTests;
@@ -368,6 +377,8 @@
 				24BBLD023 /* CatalogModels.swift in Sources */,
 				24BBLD024 /* WorkspaceModels.swift in Sources */,
 				24BBLD026 /* ModelLibraryBuilder.swift in Sources */,
+				24BBLD028 /* LibraryView.swift in Sources */,
+				24BBLD029 /* ModelDetailsView.swift in Sources */,
 
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -378,6 +389,7 @@
 			files = (
 				24BBLD020 /* AppHostHealthTests.swift in Sources */,
 				24BBLD025 /* LibraryDomainTests.swift in Sources */,
+				24BBLD030 /* LibraryViewTests.swift in Sources */,
 				24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

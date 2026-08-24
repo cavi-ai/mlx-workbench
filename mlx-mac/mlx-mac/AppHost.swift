@@ -13,6 +13,7 @@ class AppHost: ObservableObject {
     @Published var isScanning = false
     @Published var scanResult: ScanResult?
     @Published var librarySnapshot: LibrarySnapshot?
+    @Published var selectedModelPath: String?
     @Published var hardwareProfile: HardwareProfile
     @Published var lastError: String?
 

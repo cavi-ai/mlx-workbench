@@ -16,7 +16,10 @@ struct ContentView: View {
         } detail: {
             TabView(selection: $selectedTab) {
                 HomeView(appHost: appHost).tag("quickstart")
-                ModelsView(appHost: appHost).tag("models")
+                LibraryView(appHost: appHost) { route in
+                    selectedTab = route
+                }
+                .tag("models")
                 ConvertView(appHost: appHost).tag("convert")
                 DuplicatesView(appHost: appHost).tag("duplicates")
                 ServeView(appHost: appHost).tag("serve")
