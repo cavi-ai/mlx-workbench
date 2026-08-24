@@ -68,7 +68,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
         XCTAssertEqual(readiness(in: snapshot, path: "/mlx/Llama-3.2-3B-Instruct-4bit"), .ready)
 
         XCTAssertEqual(snapshot.totalBytes, 5_000)
-        XCTAssertEqual(snapshot.reclaimableBytes, 1_000)
+        XCTAssertEqual(snapshot.reclaimableBytes, 1_500)
     }
 
     func testBuildUsesStableOrderingByDisplayNameThenPath() {
@@ -297,12 +297,16 @@ final class ModelLibraryBuilderTests: XCTestCase {
                     modelKey: "mlx-community/Llama-3.2-3B-Instruct",
                     quantization: "Q4_K_M",
                     quantizations: ["Q4_K_M"],
-                    reclaimableBytes: 1_000,
+                    reclaimableBytes: 1_500,
                     keep: "/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-                    redundant: ["/archive/Llama-3.2-3B-Instruct-Q4_K_M-copy.gguf"],
+                    redundant: [
+                        "/archive/Llama-3.2-3B-Instruct-Q4_K_M-copy.gguf",
+                        "/backup/Llama-3.2-3B-Instruct-Q4_K_M-copy-2.gguf",
+                    ],
                     members: [
                         "/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
                         "/archive/Llama-3.2-3B-Instruct-Q4_K_M-copy.gguf",
+                        "/backup/Llama-3.2-3B-Instruct-Q4_K_M-copy-2.gguf",
                     ],
                     count: 2,
                     groupId: "dup-llama-exact"
@@ -314,7 +318,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
                 converted: 1,
                 unreadable: 1,
                 bytes: 5_000,
-                reclaimableBytes: 1_000
+                reclaimableBytes: 1_500
             )
         )
     }

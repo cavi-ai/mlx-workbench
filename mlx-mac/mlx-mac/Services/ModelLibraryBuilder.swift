@@ -154,17 +154,25 @@ enum ModelLibraryBuilder {
 
         for group in duplicates {
             let redundantPaths = candidateRedundantPaths(in: group)
-            var usedKnownPathBytes = false
+            var visibleRedundantBytes: Int64 = 0
+            var newlyCountedVisibleBytes: Int64 = 0
 
-            for path in redundantPaths where countedPaths.insert(path).inserted {
-                if let bytes = pathBytes[path] {
-                    total += bytes
-                    usedKnownPathBytes = true
+            for path in redundantPaths {
+                guard let bytes = pathBytes[path] else {
+                    continue
+                }
+
+                visibleRedundantBytes += bytes
+
+                if countedPaths.insert(path).inserted {
+                    newlyCountedVisibleBytes += bytes
                 }
             }
 
-            if !usedKnownPathBytes, let fallback = group.reclaimableBytes {
-                total += max(0, fallback)
+            total += newlyCountedVisibleBytes
+
+            if let authoritativeBytes = group.reclaimableBytes {
+                total += max(0, authoritativeBytes - visibleRedundantBytes)
             }
         }
 
