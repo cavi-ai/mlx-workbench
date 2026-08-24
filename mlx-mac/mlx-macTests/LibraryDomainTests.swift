@@ -32,6 +32,26 @@ final class LibraryDomainTests: XCTestCase {
         XCTAssertEqual(record.estimatedMemoryBytes, nil)
     }
 
+    func testCatalogRecordDecodesWithoutRolesAndKeepsUnknownMetadataIgnored() throws {
+        let json = """
+        {
+          "repo_identity": "mlx-community/Qwen2.5-7B-Instruct",
+          "revision": "def456",
+          "updated_at": 0,
+          "formats": ["mlx"],
+          "source_url": "https://example.com/catalog.json",
+          "unknown_field": "preserved by decoder tolerance"
+        }
+        """
+
+        let decoder = JSONDecoder()
+        let record = try decoder.decode(CatalogRecord.self, from: Data(json.utf8))
+
+        XCTAssertEqual(record.repoIdentity, "mlx-community/Qwen2.5-7B-Instruct")
+        XCTAssertNil(record.roles)
+        XCTAssertEqual(record.formats, ["mlx"])
+    }
+
     func testHardwareProfileFallsBackForUnknownValues() {
         let profile = HardwareProfile(chip: nil, model: nil, memoryBytes: nil, macOSVersion: nil)
 

@@ -65,7 +65,7 @@ struct CatalogRecord: Codable, Equatable, Hashable {
     let repoIdentity: String
     let revision: String
     let updatedAt: Date
-    let roles: [UseCase]
+    let roles: [UseCase]?
     let estimatedMemoryBytes: Int64?
     let formats: [String]
     let sourceURL: URL
@@ -74,7 +74,7 @@ struct CatalogRecord: Codable, Equatable, Hashable {
         repoIdentity: String,
         revision: String,
         updatedAt: Date,
-        roles: [UseCase],
+        roles: [UseCase]? = nil,
         estimatedMemoryBytes: Int64? = nil,
         formats: [String],
         sourceURL: URL

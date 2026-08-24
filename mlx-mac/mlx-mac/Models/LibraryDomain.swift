@@ -16,7 +16,7 @@ enum UseCase: String, CaseIterable, Codable, Identifiable {
         case .generalChat:
             return "General Chat"
         case .reasoning:
-            return "Reasoning / Research"
+            return "Reasoning/Research"
         case .vision:
             return "Vision"
         }
