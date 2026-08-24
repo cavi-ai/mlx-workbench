@@ -25,7 +25,6 @@ struct ModelDetailsView: View {
                     detailRow("Why", readinessExplanation)
                     detailRow("Source paths", lines(model.sourcePaths))
                     detailRow("Signature", known(model.item.signature))
-                    detailRow("Capabilities", model.capabilities.map(\.title).joined(separator: ", "))
                     detailRow("Size", ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))
                 }
                 .textSelection(.enabled)
@@ -76,7 +75,7 @@ struct ModelDetailsView: View {
                 }
             }
 
-            Text(known(model.item.modelKey))
+            Text("Model identity: \(known(model.item.modelKey))")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
@@ -112,13 +111,7 @@ struct ModelDetailsView: View {
     }
 
     private var sourceIdentity: String {
-        if let modelKey = model.item.modelKey?.trimmingCharacters(in: .whitespacesAndNewlines), !modelKey.isEmpty {
-            return modelKey
-        }
-        if model.item.companion == true {
-            return "Companion"
-        }
-        return "Unknown"
+        lines(model.sourcePaths)
     }
 
     private var readinessExplanation: String {
