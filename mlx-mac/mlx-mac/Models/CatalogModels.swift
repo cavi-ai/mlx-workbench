@@ -1,63 +1,86 @@
 import Foundation
 
-enum CatalogFreshness: Codable, Equatable, Hashable {
-    case current(fetchedAt: Date, sourceLabel: String)
-    case stale(fetchedAt: Date, sourceLabel: String)
-    case offline(fetchedAt: Date, sourceLabel: String)
+enum CatalogFreshness: String, Codable, Equatable, Hashable {
+    case current
+    case stale
 
-    var fetchedAt: Date {
-        switch self {
-        case .current(let fetchedAt, _), .stale(let fetchedAt, _), .offline(let fetchedAt, _):
-            return fetchedAt
-        }
+    static let metadataTTL: TimeInterval = 24 * 60 * 60
+
+    static func classify(
+        fetchedAt: Date,
+        now: Date,
+        ttl: TimeInterval = metadataTTL
+    ) -> CatalogFreshness {
+        guard ttl > 0 else { return .stale }
+        return now.timeIntervalSince(fetchedAt) <= ttl ? .current : .stale
     }
+}
+
+struct CatalogSnapshot: Codable, Equatable, Hashable {
+    let provider: String
+    let source: String
+    let revision: String
+    let fetchedAt: Date
+    let metadataOnly: Bool
+    let records: [CatalogRecord]
 
     var sourceLabel: String {
-        switch self {
-        case .current(_, let sourceLabel), .stale(_, let sourceLabel), .offline(_, let sourceLabel):
-            return sourceLabel
-        }
-    }
-
-    var kind: String {
-        switch self {
-        case .current:
-            return "current"
-        case .stale:
-            return "stale"
-        case .offline:
-            return "offline"
-        }
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let fetchedAt = try container.decode(Date.self, forKey: .fetchedAt)
-        let sourceLabel = try container.decode(String.self, forKey: .sourceLabel)
-        let kind = try container.decode(String.self, forKey: .kind)
-        switch kind {
-        case "current":
-            self = .current(fetchedAt: fetchedAt, sourceLabel: sourceLabel)
-        case "stale":
-            self = .stale(fetchedAt: fetchedAt, sourceLabel: sourceLabel)
-        case "offline":
-            self = .offline(fetchedAt: fetchedAt, sourceLabel: sourceLabel)
-        default:
-            throw DecodingError.dataCorruptedError(forKey: .kind, in: container, debugDescription: "Unknown catalog freshness: \(kind)")
-        }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(kind, forKey: .kind)
-        try container.encode(fetchedAt, forKey: .fetchedAt)
-        try container.encode(sourceLabel, forKey: .sourceLabel)
+        "\(provider) · \(source)"
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind
+        case provider
+        case source
+        case revision
         case fetchedAt = "fetched_at"
-        case sourceLabel = "source_label"
+        case metadataOnly = "metadata_only"
+        case records
+    }
+}
+
+enum CatalogState: Equatable {
+    case unavailable(message: String)
+    case missing
+    case corrupt(message: String)
+    case current(CatalogSnapshot)
+    case stale(CatalogSnapshot)
+    case offline(snapshot: CatalogSnapshot?, message: String)
+
+    var snapshot: CatalogSnapshot? {
+        switch self {
+        case .current(let snapshot), .stale(let snapshot):
+            return snapshot
+        case .offline(let snapshot, _):
+            return snapshot
+        case .unavailable, .missing, .corrupt:
+            return nil
+        }
+    }
+
+    var statusLabel: String {
+        switch self {
+        case .unavailable:
+            return "Unavailable"
+        case .missing:
+            return "Missing"
+        case .corrupt:
+            return "Corrupt"
+        case .current:
+            return "Current"
+        case .stale:
+            return "Stale"
+        case .offline:
+            return "Offline"
+        }
+    }
+
+    var detailMessage: String? {
+        switch self {
+        case .unavailable(let message), .corrupt(let message), .offline(_, let message):
+            return message
+        case .missing, .current, .stale:
+            return nil
+        }
     }
 }
 

@@ -69,6 +69,9 @@
 		24BBLD028 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF022 /* LibraryView.swift */; };
 		24BBLD029 /* ModelDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF023 /* ModelDetailsView.swift */; };
 		24BBLD030 /* LibraryViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF024 /* LibraryViewTests.swift */; };
+		24BBLD031 /* CatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF025 /* CatalogClient.swift */; };
+		24BBLD032 /* CatalogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF026 /* CatalogStore.swift */; };
+		24BBLD033 /* CatalogStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF027 /* CatalogStoreTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
@@ -136,6 +139,9 @@
 		24FREF022 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryView.swift; path = UI/Views/LibraryView.swift; sourceTree = "<group>"; };
 		24FREF023 /* ModelDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelDetailsView.swift; path = UI/Views/ModelDetailsView.swift; sourceTree = "<group>"; };
 		24FREF024 /* LibraryViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryViewTests.swift; path = LibraryViewTests.swift; sourceTree = "<group>"; };
+		24FREF025 /* CatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogClient.swift; path = Services/CatalogClient.swift; sourceTree = "<group>"; };
+		24FREF026 /* CatalogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogStore.swift; path = Services/CatalogStore.swift; sourceTree = "<group>"; };
+		24FREF027 /* CatalogStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogStoreTests.swift; path = CatalogStoreTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -189,6 +195,8 @@
 				24FREF000005 /* RuntimeChecker.swift */,
 				24FREF020 /* ModelLibraryBuilder.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
+				24FREF025 /* CatalogClient.swift */,
+				24FREF026 /* CatalogStore.swift */,
 				24FREF000007 /* AppSidebar.swift */,
 				24FREF000008 /* Components.swift */,
 				24FREF000009 /* ContentView.swift */,
@@ -231,6 +239,7 @@
 			isa = PBXGroup;
 			children = (
 				24FREF01A /* AppHostHealthTests.swift */,
+				24FREF027 /* CatalogStoreTests.swift */,
 				24FREF01F /* LibraryDomainTests.swift */,
 				24FREF024 /* LibraryViewTests.swift */,
 				24FREF021 /* ModelLibraryBuilderTests.swift */,
@@ -377,6 +386,8 @@
 				24BBLD023 /* CatalogModels.swift in Sources */,
 				24BBLD024 /* WorkspaceModels.swift in Sources */,
 				24BBLD026 /* ModelLibraryBuilder.swift in Sources */,
+				24BBLD031 /* CatalogClient.swift in Sources */,
+				24BBLD032 /* CatalogStore.swift in Sources */,
 				24BBLD028 /* LibraryView.swift in Sources */,
 				24BBLD029 /* ModelDetailsView.swift in Sources */,
 
@@ -388,6 +399,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				24BBLD020 /* AppHostHealthTests.swift in Sources */,
+				24BBLD033 /* CatalogStoreTests.swift in Sources */,
 				24BBLD025 /* LibraryDomainTests.swift in Sources */,
 				24BBLD030 /* LibraryViewTests.swift in Sources */,
 				24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */,

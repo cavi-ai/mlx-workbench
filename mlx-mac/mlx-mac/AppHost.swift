@@ -13,6 +13,8 @@ class AppHost: ObservableObject {
     @Published var isScanning = false
     @Published var scanResult: ScanResult?
     @Published var librarySnapshot: LibrarySnapshot?
+    @Published var catalog: CatalogState
+    @Published var isRefreshingCatalog = false
     @Published var selectedModelPath: String?
     @Published var hardwareProfile: HardwareProfile
     @Published var lastError: String?
@@ -21,12 +23,18 @@ class AppHost: ObservableObject {
 
     private let configModule: ConfigModule
     private let cli: CLIProcess
+    private let catalogStore: CatalogStore
+    private let catalogClient: any CatalogRefreshing
+    private let catalogTTL: TimeInterval
     private let now: @Sendable () -> Date
     private let scanOperation: @Sendable ([String], [String], Bool, Int?) async throws -> ScanResult
 
     init(
         configModule: ConfigModule = ConfigModule(),
         cli: CLIProcess = CLIProcess(),
+        catalogStore: CatalogStore = CatalogStore(),
+        catalogClient: any CatalogRefreshing = CatalogClient(),
+        catalogTTL: TimeInterval = CatalogFreshness.metadataTTL,
         config: Config? = nil,
         discoveredRoots: [String]? = nil,
         vendorAgentPath: String? = nil,
@@ -39,6 +47,9 @@ class AppHost: ObservableObject {
     ) {
         self.configModule = configModule
         self.cli = cli
+        self.catalogStore = catalogStore
+        self.catalogClient = catalogClient
+        self.catalogTTL = catalogTTL
         let loadedConfig = config ?? configModule.load()
         self.config = loadedConfig
         let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
@@ -49,7 +60,14 @@ class AppHost: ObservableObject {
         self.agentHealth = agentHealth ?? Self.checkAgentHealth(path: loadedConfig.mlxAgentPath, cli: cli)
         self.runtimeReport = runtimeReport ?? RuntimeChecker.report()
         self.hardwareProfile = hardwareProfile
+        let initialNow = now()
         self.now = now
+        self.catalog = Self.catalogState(
+            from: catalogStore.load(),
+            client: catalogClient,
+            now: initialNow,
+            ttl: catalogTTL
+        )
         self.scanOperation = scanOperation ?? { ggufRoots, mlxRoots, signatures, limit in
             try await api.scan(
                 ggufRoots: ggufRoots,
@@ -102,6 +120,24 @@ class AppHost: ObservableObject {
         }
     }
 
+    func refreshCatalog() async {
+        guard !isRefreshingCatalog else { return }
+        isRefreshingCatalog = true
+        defer { isRefreshingCatalog = false }
+
+        do {
+            let snapshot = try await catalogClient.refresh()
+            try catalogStore.save(snapshot)
+            catalog = Self.catalogState(for: snapshot, now: now(), ttl: catalogTTL)
+        } catch {
+            catalog = Self.catalogFailureState(
+                current: catalog,
+                client: catalogClient,
+                error: error
+            )
+        }
+    }
+
     /// Recreate the API when the agent path changes, so subcommands run from
     /// the newly selected checkout.
     func setAgentPath(_ path: String) async -> Config {
@@ -139,6 +175,58 @@ class AppHost: ObservableObject {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return "" }
         return Path.expandedURL(trimmed).path
+    }
+
+    private static func catalogState(
+        from loadResult: CatalogStore.LoadResult,
+        client: any CatalogRefreshing,
+        now: Date,
+        ttl: TimeInterval
+    ) -> CatalogState {
+        switch loadResult {
+        case .missing:
+            return client.isConfigured ? .missing : .unavailable(message: client.unavailableMessage)
+        case .corrupt(let message):
+            return .corrupt(message: message)
+        case .snapshot(let snapshot):
+            if client.isConfigured {
+                return catalogState(for: snapshot, now: now, ttl: ttl)
+            }
+            return .offline(snapshot: snapshot, message: client.unavailableMessage)
+        }
+    }
+
+    private static func catalogState(
+        for snapshot: CatalogSnapshot,
+        now: Date,
+        ttl: TimeInterval
+    ) -> CatalogState {
+        switch CatalogFreshness.classify(fetchedAt: snapshot.fetchedAt, now: now, ttl: ttl) {
+        case .current:
+            return .current(snapshot)
+        case .stale:
+            return .stale(snapshot)
+        }
+    }
+
+    private static func catalogFailureState(
+        current: CatalogState,
+        client: any CatalogRefreshing,
+        error: Error
+    ) -> CatalogState {
+        let message = render(error)
+        switch current {
+        case .corrupt(let existing):
+            return .corrupt(message: "\(existing) Refresh failed: \(message)")
+        case .current(let snapshot), .stale(let snapshot), .offline(let snapshot?, _):
+            return .offline(snapshot: snapshot, message: message)
+        case .offline(nil, _):
+            return .offline(snapshot: nil, message: message)
+        case .missing:
+            return .offline(snapshot: nil, message: message)
+        case .unavailable:
+            return .unavailable(message: client.unavailableMessage)
+        }
     }
 
     private static func normalizeAndValidateForSave(_ config: Config) throws -> Config {
