@@ -113,7 +113,7 @@
 
 		24FREF000012 /* QuantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QuantView.swift; path = UI/Views/QuantView.swift; sourceTree = "<group>"; };
 
-		24FREF000013 /* QuickStartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QuickStartView.swift; path = UI/Views/QuickStartView.swift; sourceTree = "<group>"; };
+		24FREF000013 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HomeView.swift; path = UI/Views/HomeView.swift; sourceTree = "<group>"; };
 
 		24FREF000014 /* ScoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScoutView.swift; path = UI/Views/ScoutView.swift; sourceTree = "<group>"; };
 
@@ -195,7 +195,7 @@
 				24FREF000010 /* ModelArchView.swift */,
 				24FREF000011 /* ModelsView.swift */,
 				24FREF000012 /* QuantView.swift */,
-				24FREF000013 /* QuickStartView.swift */,
+				24FREF000013 /* HomeView.swift */,
 				24FREF000014 /* ScoutView.swift */,
 				24FREF000015 /* ServeView.swift */,
 				24FREF000016 /* SettingsView.swift */,
