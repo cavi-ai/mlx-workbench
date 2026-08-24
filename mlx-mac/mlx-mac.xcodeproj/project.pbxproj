@@ -64,6 +64,8 @@
 		24BBLD020 /* AppHostHealthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF01A /* AppHostHealthTests.swift */; };
 		24BBLD021 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
 		24BBLD025 /* LibraryDomainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF01F /* LibraryDomainTests.swift */; };
+		24BBLD026 /* ModelLibraryBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF020 /* ModelLibraryBuilder.swift */; };
+		24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF021 /* ModelLibraryBuilderTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
@@ -126,6 +128,8 @@
 		24FREF000019 /* WireView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WireView.swift; path = UI/Views/WireView.swift; sourceTree = "<group>"; };
 		24FREF01A /* AppHostHealthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHostHealthTests.swift; path = AppHostHealthTests.swift; sourceTree = "<group>"; };
 		24FREF01F /* LibraryDomainTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryDomainTests.swift; path = LibraryDomainTests.swift; sourceTree = "<group>"; };
+		24FREF020 /* ModelLibraryBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelLibraryBuilder.swift; path = Services/ModelLibraryBuilder.swift; sourceTree = "<group>"; };
+		24FREF021 /* ModelLibraryBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelLibraryBuilderTests.swift; path = ModelLibraryBuilderTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -177,6 +181,7 @@
 				24FREF01D /* CatalogModels.swift */,
 				24FREF01E /* WorkspaceModels.swift */,
 				24FREF000005 /* RuntimeChecker.swift */,
+				24FREF020 /* ModelLibraryBuilder.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				24FREF000007 /* AppSidebar.swift */,
 				24FREF000008 /* Components.swift */,
@@ -219,6 +224,7 @@
 			children = (
 				24FREF01A /* AppHostHealthTests.swift */,
 				24FREF01F /* LibraryDomainTests.swift */,
+				24FREF021 /* ModelLibraryBuilderTests.swift */,
 			);
 			path = mlx-macTests;
 			sourceTree = "<group>";
@@ -361,6 +367,7 @@
 				24BBLD022 /* LibraryDomain.swift in Sources */,
 				24BBLD023 /* CatalogModels.swift in Sources */,
 				24BBLD024 /* WorkspaceModels.swift in Sources */,
+				24BBLD026 /* ModelLibraryBuilder.swift in Sources */,
 
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -371,6 +378,7 @@
 			files = (
 				24BBLD020 /* AppHostHealthTests.swift in Sources */,
 				24BBLD025 /* LibraryDomainTests.swift in Sources */,
+				24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

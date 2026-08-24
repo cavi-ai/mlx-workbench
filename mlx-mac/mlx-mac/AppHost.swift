@@ -12,26 +12,51 @@ class AppHost: ObservableObject {
     @Published var configPath: String = ""
     @Published var isScanning = false
     @Published var scanResult: ScanResult?
+    @Published var librarySnapshot: LibrarySnapshot?
+    @Published var hardwareProfile: HardwareProfile
     @Published var lastError: String?
 
     let api: WorkbenchAPI
 
     private let configModule: ConfigModule
     private let cli: CLIProcess
+    private let now: @Sendable () -> Date
+    private let scanOperation: @Sendable ([String], [String], Bool, Int?) async throws -> ScanResult
 
-    init() {
-        let module = ConfigModule()
-        self.configModule = module
-        let cli = CLIProcess()
+    init(
+        configModule: ConfigModule = ConfigModule(),
+        cli: CLIProcess = CLIProcess(),
+        config: Config? = nil,
+        discoveredRoots: [String]? = nil,
+        vendorAgentPath: String? = nil,
+        configPath: String? = nil,
+        agentHealth: AgentHealth? = nil,
+        runtimeReport: RuntimeReport? = nil,
+        hardwareProfile: HardwareProfile = HardwareProfile.current(),
+        now: @escaping @Sendable () -> Date = { Date() },
+        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil
+    ) {
+        self.configModule = configModule
         self.cli = cli
-        let config = module.load()
-        self.config = config
-        self.api = WorkbenchAPI(cli: cli, agentPath: config.mlxAgentPath)
-        self.discoveredRoots = Config.discoverGgufRoots()
-        self.configPath = module.configPath()
-        self.vendorAgentPath = module.vendorAgentPath()
-        self.agentHealth = Self.checkAgentHealth(path: config.mlxAgentPath, cli: cli)
-        self.runtimeReport = RuntimeChecker.report()
+        let loadedConfig = config ?? configModule.load()
+        self.config = loadedConfig
+        let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
+        self.api = api
+        self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
+        self.configPath = configPath ?? configModule.configPath()
+        self.vendorAgentPath = vendorAgentPath ?? configModule.vendorAgentPath()
+        self.agentHealth = agentHealth ?? Self.checkAgentHealth(path: loadedConfig.mlxAgentPath, cli: cli)
+        self.runtimeReport = runtimeReport ?? RuntimeChecker.report()
+        self.hardwareProfile = hardwareProfile
+        self.now = now
+        self.scanOperation = scanOperation ?? { ggufRoots, mlxRoots, signatures, limit in
+            try await api.scan(
+                ggufRoots: ggufRoots,
+                mlxRoots: mlxRoots,
+                signatures: signatures,
+                limit: limit
+            )
+        }
     }
 
     func requestRescan() {
@@ -45,12 +70,15 @@ class AppHost: ObservableObject {
 
         do {
             let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
-            scanResult = try await api.scan(
-                ggufRoots: roots,
-                mlxRoots: config.mlxRoots,
-                signatures: config.signatures,
-                limit: limit
+            let scan = try await scanOperation(
+                roots,
+                config.mlxRoots,
+                config.signatures,
+                limit
             )
+            let snapshot = ModelLibraryBuilder.build(scan: scan, hardware: hardwareProfile, now: now())
+            scanResult = scan
+            librarySnapshot = snapshot
             lastError = nil
         } catch {
             scanResult = nil
