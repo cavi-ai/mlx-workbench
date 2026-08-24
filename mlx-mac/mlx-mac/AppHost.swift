@@ -294,6 +294,7 @@ class AppHost: ObservableObject {
     }
 
     var recommendations: [UseCase: [Recommendation]] {
+        guard case .ready = agentHealth, runtimeReport.ok else { return [:] }
         guard let snapshot = librarySnapshot else { return [:] }
         return Dictionary(
             uniqueKeysWithValues: UseCase.allCases.map { useCase in

@@ -531,7 +531,6 @@ struct HomeView: View {
             let recommendation = appHost.recommendations(for: useCase).first
             let recommendedModel = recommendation.flatMap(appHost.model(for:))
             let matching = snapshot?.models.filter { homeMatches($0, useCase: useCase) } ?? []
-            let fallbackModel = recommendedModel ?? preferredFallbackModel(in: matching)
             let ready = matching.filter { $0.readiness == .ready }.count
             let prepare = matching.filter { $0.readiness == .needsConversion }.count
             let runtime = matching.filter { $0.readiness == .needsRuntime }.count
@@ -539,9 +538,7 @@ struct HomeView: View {
 
             guard let recommendation, let model = recommendedModel else {
                 let message: String
-                if fallbackModel != nil {
-                    message = "No ready recommendation passed the conservative gates. Review local readiness and evidence before promoting this model for \(useCase.title)."
-                } else if matching.isEmpty {
+                if matching.isEmpty {
                     message = "No current local matches for this intent. Home is waiting for future scans rather than inventing a recommendation."
                 } else {
                     message = "Local matches exist, but none are ready now. Use Prepare or Run after addressing conversion, runtime, or health issues."
@@ -556,7 +553,7 @@ struct HomeView: View {
                         Metric(title: "Attention", value: String(max(attention, 0)))
                     ],
                     recommendation: nil,
-                    model: fallbackModel
+                    model: nil
                 )
             }
 
@@ -580,41 +577,6 @@ struct HomeView: View {
             return true
         }
         return model.capabilities.contains(useCase)
-    }
-
-    private func preferredFallbackModel(in models: [LibraryModel]) -> LibraryModel? {
-        models.sorted { lhs, rhs in
-            let lhsRank = fallbackReadinessRank(lhs.readiness)
-            let rhsRank = fallbackReadinessRank(rhs.readiness)
-            if lhsRank != rhsRank {
-                return lhsRank < rhsRank
-            }
-            let lhsName = lhs.displayName.localizedLowercase
-            let rhsName = rhs.displayName.localizedLowercase
-            if lhsName != rhsName {
-                return lhsName < rhsName
-            }
-            return lhs.item.path < rhs.item.path
-        }.first
-    }
-
-    private func fallbackReadinessRank(_ readiness: ModelReadiness) -> Int {
-        switch readiness {
-        case .ready:
-            return 0
-        case .needsConversion:
-            return 1
-        case .needsRuntime:
-            return 2
-        case .incompleteCache:
-            return 3
-        case .unsupported:
-            return 4
-        case .duplicate:
-            return 5
-        case .quarantined:
-            return 6
-        }
     }
 
     private func canPrepare(_ model: LibraryModel) -> Bool {

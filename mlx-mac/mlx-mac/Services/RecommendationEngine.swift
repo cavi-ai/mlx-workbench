@@ -134,7 +134,6 @@ enum RecommendationEngine {
             }
 
             guard let memory = memoryAssessment(
-                model: model,
                 record: record,
                 snapshot: snapshot,
                 authority: authority
@@ -498,58 +497,40 @@ private extension RecommendationEngine {
     }
 
     static func memoryAssessment(
-        model: LibraryModel,
         record: CatalogRecord?,
         snapshot: LibrarySnapshot,
         authority: CatalogAuthority
     ) -> Assessment? {
-        if let record,
-           let estimatedBytes = record.estimatedMemoryBytes,
-           let hardwareBytes = snapshot.hardware.memoryBytes {
-            guard estimatedBytes <= hardwareBytes else { return nil }
-            let label = authority.currentMetadata ? "catalog_memory_fit" : "stale_catalog_memory_fit"
-            let messagePrefix = authority.currentMetadata ? "Current" : "Stale"
-            return Assessment(
-                score: authority.currentMetadata ? Score.currentStructuredMemoryFit : Score.staleStructuredMemoryFit,
-                reasons: [
-                    RecommendationReason(
-                        name: label,
-                        message: "\(messagePrefix) catalog memory metadata still fits within this Mac's memory.",
-                        isHint: false
-                    )
-                ],
-                evidence: [
-                    RecommendationEvidence(
-                        name: label,
-                        value: "estimated_memory_bytes=\(estimatedBytes)",
-                        observedAt: record.updatedAt,
-                        isHint: false
-                    )
-                ],
-                usesStructuredMetadata: true,
-                usesHint: false
-            )
+        // A ready output proves local availability, not that the model fits in
+        // the host memory available for a recommendation. Both measurements
+        // are required; missing evidence is an explicit exclusion.
+        guard let record,
+              let estimatedBytes = record.estimatedMemoryBytes,
+              let hardwareBytes = snapshot.hardware.memoryBytes,
+              estimatedBytes <= hardwareBytes else {
+            return nil
         }
 
-        guard !model.outputPaths.isEmpty else { return nil }
+        let label = authority.currentMetadata ? "catalog_memory_fit" : "stale_catalog_memory_fit"
+        let messagePrefix = authority.currentMetadata ? "Current" : "Stale"
         return Assessment(
-            score: Score.localReadyOutput,
+            score: authority.currentMetadata ? Score.currentStructuredMemoryFit : Score.staleStructuredMemoryFit,
             reasons: [
                 RecommendationReason(
-                    name: "local_output_detected",
-                    message: "A ready local MLX output is already present for this model on this Mac.",
+                    name: label,
+                    message: "\(messagePrefix) catalog memory metadata still fits within this Mac's memory.",
                     isHint: false
                 )
             ],
             evidence: [
                 RecommendationEvidence(
-                    name: "local_output_paths",
-                    value: model.outputPaths.joined(separator: ", "),
-                    observedAt: snapshot.generatedAt,
+                    name: label,
+                    value: "estimated_memory_bytes=\(estimatedBytes)",
+                    observedAt: record.updatedAt,
                     isHint: false
                 )
             ],
-            usesStructuredMetadata: false,
+            usesStructuredMetadata: true,
             usesHint: false
         )
     }

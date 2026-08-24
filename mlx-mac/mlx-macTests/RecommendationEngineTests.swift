@@ -41,6 +41,50 @@ final class RecommendationEngineTests: XCTestCase {
         XCTAssertEqual(result.map(\.modelID), [supported.item.path])
     }
 
+    func testMissingModelMemoryEvidenceDoesNotFallBackToReadyOutput() {
+        let ready = readyModel(path: "/mlx/no-memory", name: "Code Local", modelKey: "org/code-local", bytes: 2_000)
+        let snapshot = makeSnapshot(models: [ready], memoryBytes: 16_000)
+        let catalog = CatalogState.current(
+            makeCatalogSnapshot(
+                records: [
+                    catalogRecord(repoIdentity: "org/code-local", roles: [.coding], estimatedMemoryBytes: nil, updatedAt: fixtureNow)
+                ]
+            )
+        )
+
+        let result = RecommendationEngine.recommend(
+            useCase: .coding,
+            snapshot: snapshot,
+            catalog: catalog,
+            benchmarkResults: [],
+            preferences: .defaults
+        )
+
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testMissingHostMemoryEvidenceDoesNotFallBackToReadyOutput() {
+        let ready = readyModel(path: "/mlx/no-host-memory", name: "Code Local", modelKey: "org/code-local", bytes: 2_000)
+        let snapshot = makeSnapshot(models: [ready], memoryBytes: nil)
+        let catalog = CatalogState.current(
+            makeCatalogSnapshot(
+                records: [
+                    catalogRecord(repoIdentity: "org/code-local", roles: [.coding], estimatedMemoryBytes: 4_000, updatedAt: fixtureNow)
+                ]
+            )
+        )
+
+        let result = RecommendationEngine.recommend(
+            useCase: .coding,
+            snapshot: snapshot,
+            catalog: catalog,
+            benchmarkResults: [],
+            preferences: .defaults
+        )
+
+        XCTAssertTrue(result.isEmpty)
+    }
+
     func testReadinessExclusionDropsNonReadyLocalModels() {
         let ready = readyModel(path: "/mlx/ready", name: "Vision Ready", modelKey: "org/vision-ready", bytes: 2_000)
         let pending = model(path: "/downloads/pending.gguf", name: "Vision Pending", modelKey: "org/vision-pending", bytes: 1_500, readiness: .needsConversion)
@@ -311,6 +355,20 @@ final class RecommendationEngineTests: XCTestCase {
         )
 
         XCTAssertEqual(host.recommendations(for: .coding).map(\.modelID), [first.item.path, second.item.path])
+
+        host.agentHealth = .notUsable(
+            path: "/tmp/vendor/mlx-agent",
+            cli: "/tmp/vendor/mlx-agent/scripts/mlx-agent",
+            reason: "Agent unavailable."
+        )
+        XCTAssertTrue(host.recommendations(for: .coding).isEmpty)
+
+        host.agentHealth = .ready(path: "/tmp/vendor/mlx-agent", cli: "/tmp/vendor/mlx-agent/scripts/mlx-agent")
+        host.runtimeReport = makeRuntimeReport(ok: false)
+        XCTAssertTrue(host.recommendations(for: .coding).isEmpty)
+
+        host.runtimeReport = makeRuntimeReport()
+        XCTAssertEqual(host.recommendations(for: .coding).map(\.modelID), [first.item.path, second.item.path])
     }
 }
 
@@ -319,7 +377,7 @@ private extension RecommendationEngineTests {
         Date(timeIntervalSince1970: 1_725_000_000)
     }
 
-    func makeSnapshot(models: [LibraryModel], memoryBytes: Int64) -> LibrarySnapshot {
+    func makeSnapshot(models: [LibraryModel], memoryBytes: Int64?) -> LibrarySnapshot {
         LibrarySnapshot(
             models: models,
             groups: models.map { ModelGroup(variants: [$0]) },
@@ -347,7 +405,7 @@ private extension RecommendationEngineTests {
     func catalogRecord(
         repoIdentity: String,
         roles: [UseCase],
-        estimatedMemoryBytes: Int64,
+        estimatedMemoryBytes: Int64?,
         updatedAt: Date
     ) -> CatalogRecord {
         CatalogRecord(
@@ -423,10 +481,10 @@ private extension RecommendationEngineTests {
         return .generalChat
     }
 
-    func makeRuntimeReport() -> RuntimeReport {
+    func makeRuntimeReport(ok: Bool = true) -> RuntimeReport {
         RuntimeReport(
             convert: ConvertStatus(
-                ok: true,
+                ok: ok,
                 modules: [:],
                 executables: [:],
                 missingModules: [],
@@ -435,14 +493,14 @@ private extension RecommendationEngineTests {
                 message: "Convert dependencies ready."
             ),
             serve: ServeStatus(
-                ok: true,
+                ok: ok,
                 executables: [:],
                 missingExecutables: [],
                 install: "make install",
                 message: "Serve runtime ready."
             ),
             install: "make install",
-            ok: true
+            ok: ok
         )
     }
 }
