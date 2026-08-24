@@ -12,26 +12,72 @@ class AppHost: ObservableObject {
     @Published var configPath: String = ""
     @Published var isScanning = false
     @Published var scanResult: ScanResult?
+    @Published var librarySnapshot: LibrarySnapshot?
+    @Published var catalog: CatalogState
+    @Published var isRefreshingCatalog = false
+    @Published var selectedModelPath: String?
+    @Published var benchmarkResults: [RecommendationBenchmarkResult] = []
+    @Published var recommendationPreferences: RecommendationPreferences = .defaults
+    @Published var hardwareProfile: HardwareProfile
     @Published var lastError: String?
 
     let api: WorkbenchAPI
 
     private let configModule: ConfigModule
     private let cli: CLIProcess
+    private let catalogStore: CatalogStore
+    private let catalogClient: any CatalogRefreshing
+    private let catalogTTL: TimeInterval
+    private let now: @Sendable () -> Date
+    private let scanOperation: @Sendable ([String], [String], Bool, Int?) async throws -> ScanResult
 
-    init() {
-        let module = ConfigModule()
-        self.configModule = module
-        let cli = CLIProcess()
+    init(
+        configModule: ConfigModule = ConfigModule(),
+        cli: CLIProcess = CLIProcess(),
+        catalogStore: CatalogStore = CatalogStore(),
+        catalogClient: any CatalogRefreshing = CatalogClient(),
+        catalogTTL: TimeInterval = CatalogFreshness.metadataTTL,
+        config: Config? = nil,
+        discoveredRoots: [String]? = nil,
+        vendorAgentPath: String? = nil,
+        configPath: String? = nil,
+        agentHealth: AgentHealth? = nil,
+        runtimeReport: RuntimeReport? = nil,
+        hardwareProfile: HardwareProfile = HardwareProfile.current(),
+        now: @escaping @Sendable () -> Date = { Date() },
+        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil
+    ) {
+        self.configModule = configModule
         self.cli = cli
-        let config = module.load()
-        self.config = config
-        self.api = WorkbenchAPI(cli: cli, agentPath: config.mlxAgentPath)
-        self.discoveredRoots = Config.discoverGgufRoots()
-        self.configPath = module.configPath()
-        self.vendorAgentPath = module.vendorAgentPath()
-        self.agentHealth = Self.checkAgentHealth(path: config.mlxAgentPath, cli: cli)
-        self.runtimeReport = RuntimeChecker.report()
+        self.catalogStore = catalogStore
+        self.catalogClient = catalogClient
+        self.catalogTTL = catalogTTL
+        let loadedConfig = config ?? configModule.load()
+        self.config = loadedConfig
+        let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
+        self.api = api
+        self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
+        self.configPath = configPath ?? configModule.configPath()
+        self.vendorAgentPath = vendorAgentPath ?? configModule.vendorAgentPath()
+        self.agentHealth = agentHealth ?? Self.checkAgentHealth(path: loadedConfig.mlxAgentPath, cli: cli)
+        self.runtimeReport = runtimeReport ?? RuntimeChecker.report()
+        self.hardwareProfile = hardwareProfile
+        let initialNow = now()
+        self.now = now
+        self.catalog = Self.catalogState(
+            from: catalogStore.load(),
+            client: catalogClient,
+            now: initialNow,
+            ttl: catalogTTL
+        )
+        self.scanOperation = scanOperation ?? { ggufRoots, mlxRoots, signatures, limit in
+            try await api.scan(
+                ggufRoots: ggufRoots,
+                mlxRoots: mlxRoots,
+                signatures: signatures,
+                limit: limit
+            )
+        }
     }
 
     func requestRescan() {
@@ -45,12 +91,15 @@ class AppHost: ObservableObject {
 
         do {
             let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
-            scanResult = try await api.scan(
-                ggufRoots: roots,
-                mlxRoots: config.mlxRoots,
-                signatures: config.signatures,
-                limit: limit
+            let scan = try await scanOperation(
+                roots,
+                config.mlxRoots,
+                config.signatures,
+                limit
             )
+            let snapshot = ModelLibraryBuilder.build(scan: scan, hardware: hardwareProfile, now: now())
+            scanResult = scan
+            librarySnapshot = snapshot
             lastError = nil
         } catch {
             scanResult = nil
@@ -70,6 +119,36 @@ class AppHost: ObservableObject {
         } catch {
             lastError = Self.render(error)
             return config
+        }
+    }
+
+    func refreshCatalog() async {
+        guard !isRefreshingCatalog else { return }
+        isRefreshingCatalog = true
+        defer { isRefreshingCatalog = false }
+
+        do {
+            let snapshot = try await catalogClient.refresh()
+            do {
+                try catalogStore.save(snapshot)
+                catalog = Self.catalogState(for: snapshot, now: now(), ttl: catalogTTL)
+            } catch {
+                catalog = Self.catalogFailureState(
+                    current: catalog,
+                    snapshot: snapshot,
+                    message: "Metadata was fetched, but the catalog cache could not be saved: \(Self.render(error))",
+                    now: now(),
+                    ttl: catalogTTL
+                )
+            }
+        } catch {
+            catalog = Self.catalogFailureState(
+                current: catalog,
+                client: catalogClient,
+                error: error,
+                now: now(),
+                ttl: catalogTTL
+            )
         }
     }
 
@@ -112,6 +191,88 @@ class AppHost: ObservableObject {
         return Path.expandedURL(trimmed).path
     }
 
+    private static func catalogState(
+        from loadResult: CatalogStore.LoadResult,
+        client: any CatalogRefreshing,
+        now: Date,
+        ttl: TimeInterval
+    ) -> CatalogState {
+        switch loadResult {
+        case .missing:
+            return client.isConfigured ? .missing : .unavailable(message: client.unavailableMessage)
+        case .corrupt(let message):
+            return .corrupt(message: message)
+        case .snapshot(let snapshot):
+            if client.isConfigured {
+                return catalogState(for: snapshot, now: now, ttl: ttl)
+            }
+            return catalogFailureState(
+                current: catalogState(for: snapshot, now: now, ttl: ttl),
+                snapshot: snapshot,
+                message: "Metadata provider unavailable: \(client.unavailableMessage)",
+                now: now,
+                ttl: ttl
+            )
+        }
+    }
+
+    private static func catalogState(
+        for snapshot: CatalogSnapshot,
+        now: Date,
+        ttl: TimeInterval
+    ) -> CatalogState {
+        switch CatalogFreshness.classify(fetchedAt: snapshot.fetchedAt, now: now, ttl: ttl) {
+        case .current:
+            return .current(snapshot)
+        case .stale:
+            return .stale(snapshot)
+        }
+    }
+
+    private static func catalogFailureState(
+        current: CatalogState,
+        client: any CatalogRefreshing,
+        error: Error,
+        now: Date,
+        ttl: TimeInterval
+    ) -> CatalogState {
+        let message: String
+        switch error {
+        case CatalogClientError.unavailable(let detail):
+            message = "Metadata provider unavailable: \(detail)"
+        case CatalogClientError.invalidPayload(let detail):
+            message = "Metadata validation failed: \(detail)"
+        default:
+            message = "Metadata refresh failed: \(render(error))"
+        }
+        return catalogFailureState(current: current, snapshot: current.snapshot, message: message, now: now, ttl: ttl)
+    }
+
+    private static func catalogFailureState(
+        current: CatalogState,
+        snapshot: CatalogSnapshot?,
+        message: String,
+        now: Date,
+        ttl: TimeInterval
+    ) -> CatalogState {
+        guard let snapshot else {
+            if case .corrupt(let existing) = current {
+                return .corrupt(message: "\(existing) \(message)")
+            }
+            if case .unavailable(let existing) = current {
+                return .unavailable(message: existing)
+            }
+            return .refreshFailed(snapshot: nil, message: message)
+        }
+
+        switch CatalogFreshness.classify(fetchedAt: snapshot.fetchedAt, now: now, ttl: ttl) {
+        case .current:
+            return .currentFailure(snapshot: snapshot, message: message)
+        case .stale:
+            return .staleFailure(snapshot: snapshot, message: message)
+        }
+    }
+
     private static func normalizeAndValidateForSave(_ config: Config) throws -> Config {
         let host = config.host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Config.LOOPBACK_HOSTS.contains(host.isEmpty ? "127.0.0.1" : host) else {
@@ -130,6 +291,33 @@ class AppHost: ObservableObject {
             return bridge.errorDescription ?? "Unknown bridge error."
         }
         return error.localizedDescription
+    }
+
+    var recommendations: [UseCase: [Recommendation]] {
+        guard case .ready = agentHealth, runtimeReport.ok else { return [:] }
+        guard let snapshot = librarySnapshot else { return [:] }
+        return Dictionary(
+            uniqueKeysWithValues: UseCase.allCases.map { useCase in
+                (
+                    useCase,
+                    RecommendationEngine.recommend(
+                        useCase: useCase,
+                        snapshot: snapshot,
+                        catalog: catalog,
+                        benchmarkResults: benchmarkResults,
+                        preferences: recommendationPreferences
+                    )
+                )
+            }
+        )
+    }
+
+    func recommendations(for useCase: UseCase) -> [Recommendation] {
+        recommendations[useCase] ?? []
+    }
+
+    func model(for recommendation: Recommendation) -> LibraryModel? {
+        librarySnapshot?.models.first(where: { $0.item.path == recommendation.modelID })
     }
 }
 

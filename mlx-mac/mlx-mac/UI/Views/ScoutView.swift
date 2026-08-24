@@ -17,6 +17,7 @@ struct ScoutView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                catalogSection
                 formSection
                 if isScouting {
                     ProgressView("Discovering models…")
@@ -34,6 +35,46 @@ struct ScoutView: View {
             }
             .padding()
         }
+    }
+
+    private var catalogSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                SectionTitle(text: "Catalog Metadata")
+                Spacer()
+                Button(appHost.isRefreshingCatalog ? "Refreshing…" : "Refresh Metadata") {
+                    Task { await appHost.refreshCatalog() }
+                }
+                .disabled(appHost.isRefreshingCatalog)
+            }
+            Text("Metadata only. Local installation truth comes from the Library scan, not this catalog cache.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            HStack(alignment: .top, spacing: 24) {
+                VStack(alignment: .leading, spacing: 6) {
+                    statusRow(label: "Status", value: appHost.catalog.statusLabel)
+                    if let snapshot = appHost.catalog.snapshot {
+                        statusRow(label: "Source", value: snapshot.sourceLabel)
+                        statusRow(label: "Revision", value: snapshot.revision)
+                        statusRow(label: "Last Refresh", value: Self.timestampFormatter.string(from: snapshot.fetchedAt))
+                    }
+                }
+                Spacer()
+            }
+            if let message = appHost.catalog.detailMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else if case .missing = appHost.catalog {
+                Text("Catalog metadata has not been fetched yet. Refresh Metadata to fetch it.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            if let snapshot = appHost.catalog.snapshot, !snapshot.records.isEmpty {
+                catalogResults(snapshot)
+            }
+        }
+        .formSection {}
     }
 
     private var formSection: some View {
@@ -58,6 +99,45 @@ struct ScoutView: View {
             }
         }
         .formSection {}
+    }
+
+    private func catalogResults(_ snapshot: CatalogSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                SectionTitle(text: "Catalog Entries (\(snapshot.records.count))")
+                Spacer()
+                Text("Remote metadata only")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            List(snapshot.records, id: \.self) { record in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(record.repoIdentity)
+                        .font(.body)
+                    HStack(spacing: 8) {
+                        if let roles = record.roles, !roles.isEmpty {
+                            Text(roles.map(\.title).joined(separator: ", "))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        if !record.formats.isEmpty {
+                            Text(record.formats.joined(separator: ", "))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Text(Self.timestampFormatter.string(from: record.updatedAt))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Text(record.sourceURL.absoluteString)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                }
+                .padding(.vertical, 2)
+            }
+            .frame(height: 240)
+        }
     }
 
     private var resultsSection: some View {
@@ -115,4 +195,21 @@ struct ScoutView: View {
             }
         }
     }
+
+    private func statusRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("\(label):")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.caption)
+        }
+    }
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }

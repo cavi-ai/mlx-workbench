@@ -15,8 +15,14 @@ struct ContentView: View {
             AppSidebar(selectedTab: $selectedTab)
         } detail: {
             TabView(selection: $selectedTab) {
-                QuickStartView(appHost: appHost).tag("quickstart")
-                ModelsView(appHost: appHost).tag("models")
+                HomeView(appHost: appHost) { route in
+                    selectedTab = route
+                }
+                .tag("quickstart")
+                LibraryView(appHost: appHost) { route in
+                    selectedTab = route
+                }
+                .tag("models")
                 ConvertView(appHost: appHost).tag("convert")
                 DuplicatesView(appHost: appHost).tag("duplicates")
                 ServeView(appHost: appHost).tag("serve")
@@ -30,6 +36,7 @@ struct ContentView: View {
                 ModelArchView(appHost: appHost).tag("model-arch")
                 SlothView(appHost: appHost).tag("sloth")
                 JobsView(appHost: appHost).tag("jobs")
+                SettingsView(appHost: appHost).tag("settings")
             }
             .tabViewStyle(.automatic)
         }

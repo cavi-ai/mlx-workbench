@@ -6,8 +6,8 @@ struct AppSidebar: View {
     @Binding var selectedTab: String
     @State private var showMore = false
     
-    let primaryTabs = ["quickstart", "models", "convert", "duplicates", "serve"]
-    let secondaryTabs = ["scout", "lmstudio", "training-studio", "quant", "doctor", "adopt", "wire", "model-arch", "sloth", "jobs"]
+    let primaryTabs = ["quickstart", "models", "scout", "convert", "serve", "jobs", "settings"]
+    let secondaryTabs = ["duplicates", "lmstudio", "training-studio", "quant", "doctor", "adopt", "wire", "model-arch", "sloth"]
     
     var body: some View {
         List(selection: $selectedTab) {
@@ -46,12 +46,14 @@ struct AppSidebar: View {
     
     private func tabTitle(for tab: String) -> String {
         switch tab {
-        case "quickstart": return "Quick Start"
-        case "models": return "Models"
-        case "convert": return "Convert"
+        case "quickstart": return "Home"
+        case "models": return "Library"
+        case "scout": return "Discover"
+        case "convert": return "Prepare"
+        case "serve": return "Run"
+        case "jobs": return "Activity"
+        case "settings": return "Settings"
         case "duplicates": return "Duplicates"
-        case "serve": return "Serve"
-        case "scout": return "Scout"
         case "lmstudio": return "LM Studio"
         case "training-studio": return "Training"
         case "quant": return "Compare"
@@ -60,19 +62,20 @@ struct AppSidebar: View {
         case "wire": return "Wire"
         case "model-arch": return "Model Arch"
         case "sloth": return "Sloth"
-        case "jobs": return "Jobs"
         default: return tab
         }
     }
     
     private func tabIcon(for tab: String) -> String {
         switch tab {
-        case "quickstart": return "star.circle"
-        case "models": return "cube.box"
-        case "convert": return "arrow.trianglehead.counterclockwise"
-        case "duplicates": return "square.3.layers.3d"
-        case "serve": return "server.rack"
+        case "quickstart": return "house"
+        case "models": return "books.vertical"
         case "scout": return "magnifyingglass"
+        case "convert": return "shippingbox"
+        case "serve": return "play.circle"
+        case "jobs": return "clock.arrow.circlepath"
+        case "settings": return "gearshape"
+        case "duplicates": return "square.3.layers.3d"
         case "lmstudio": return "square.and.arrow.down"
         case "training-studio": return "sparkles"
         case "quant": return "chart.bar"
@@ -81,7 +84,6 @@ struct AppSidebar: View {
         case "wire": return "wireframe"
         case "model-arch": return "cube"
         case "sloth": return "safari"
-        case "jobs": return "clock"
         default: return "circle"
         }
     }
