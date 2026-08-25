@@ -52,6 +52,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
     }
 
     func testTerminalStatusCompletesOnlyFromPostStatusRescan() async {
+        let events = WorkflowEventLog()
         let scans = ScanSequence([
             scanResult(outputs: []),
             scanResult(outputs: [
@@ -67,7 +68,11 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let terminalJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "completed")
         let host = await makeHost(
             jobs: [terminalJob],
-            scanOperation: { _, _, _, _ in try await scans.next() }
+            onStatus: { await events.record("status") },
+            scanOperation: { _, _, _, _ in
+                await events.record("scan")
+                return try await scans.next()
+            }
         )
         await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
 
@@ -75,9 +80,11 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
 
         let state = await MainActor.run { (host.modelWorkflow.workflow.state, host.modelWorkflow.workflow.completedModelPath) }
         let scanCount = await scans.count
+        let eventValues = await events.values
         XCTAssertEqual(state.0, .completed)
         XCTAssertEqual(state.1, "/Models/source")
         XCTAssertEqual(scanCount, 2)
+        XCTAssertEqual(eventValues, ["scan", "status", "scan"])
     }
 
     func testMissingStoreLoadsEmptyRecords() throws {
@@ -249,12 +256,14 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         confirmReceipt: String = "receipt-1",
         jobs: [Job] = [],
         statusError: Error? = nil,
+        onStatus: (@Sendable () async -> Void)? = nil,
         scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil
     ) async -> AppHost {
         let api = ModelWorkflowAPI(
             convertPreview: { _, _, _ in preview },
             convertStart: { _, _, _, _ in ["receipt": confirmReceipt] },
             convertStatus: {
+                if let onStatus { await onStatus() }
                 if let statusError { throw statusError }
                 return jobs
             },
@@ -324,4 +333,12 @@ private actor ScanSequence {
 
 private enum TestSequenceError: Error {
     case exhausted
+}
+
+private actor WorkflowEventLog {
+    private(set) var values: [String] = []
+
+    func record(_ value: String) {
+        values.append(value)
+    }
 }

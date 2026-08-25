@@ -112,7 +112,7 @@ class AppHost: ObservableObject {
             librarySnapshot = snapshot
             lastError = nil
             if reconcileWorkflow {
-                await modelWorkflow.reconcile(snapshot: snapshot, jobs: [])
+                await modelWorkflow.refreshOperationalStatus()
                 let requiresCompletionScan = modelWorkflow.consumeCompletionRescanRequest()
                 isScanning = false
                 if requiresCompletionScan {
