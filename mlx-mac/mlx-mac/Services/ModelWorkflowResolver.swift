@@ -59,6 +59,11 @@ enum ModelWorkflowResolver {
 
         let sourceIdentity = normalizedPathIdentity(URL(fileURLWithPath: sourcePath).deletingPathExtension().lastPathComponent)
         guard !sourceIdentity.isEmpty else { return false }
+        let sourceEvidence = candidate.sourcePaths.map(canonicalPath)
+        let outputEvidence = candidate.outputPaths.map(canonicalPath)
+        let hasSourceRelationship = sourceEvidence.contains(canonicalPath(sourcePath))
+        let hasOutputRelationship = outputEvidence.contains(canonicalPath(destinationPath))
+        guard hasSourceRelationship || hasOutputRelationship else { return false }
         return candidatePaths.contains {
             normalizedPathIdentity(URL(fileURLWithPath: canonicalPath($0)).lastPathComponent) == sourceIdentity
         }

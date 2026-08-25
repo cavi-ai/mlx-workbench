@@ -33,12 +33,12 @@ struct PrepareWorkflowPresentation: Equatable {
         case .idle, .inspectingSource, .previewingConversion, .queued, .running, .completed:
             return sourcePath.isEmpty ? .none : .preview
         case .failed:
-            return canConfirm ? .confirm : (sourcePath.isEmpty ? .none : .preview)
+            return isBlockedDestination || sourcePath.isEmpty ? .none : (canConfirm ? .confirm : .preview)
         }
     }
 
     var canPreview: Bool {
-        !sourcePath.isEmpty && ![.existingModelFound, .previewingConversion, .queued, .running, .completed].contains(state)
+        !sourcePath.isEmpty && !isBlockedDestination && ![.existingModelFound, .previewingConversion, .queued, .running, .completed].contains(state)
     }
 
     var canConfirm: Bool {
@@ -47,6 +47,11 @@ struct PrepareWorkflowPresentation: Equatable {
 
     var isQuantizationLocked: Bool {
         hasPreviewHash
+    }
+
+    var isBlockedDestination: Bool {
+        errorMessage?.localizedCaseInsensitiveContains("destination") == true
+            && errorMessage?.localizedCaseInsensitiveContains("already exists") == true
     }
 
     var stateTitle: String {
@@ -156,18 +161,19 @@ struct ConvertView: View {
                         await modelWorkflow.preview(qBits: qBits, out: nil)
                     }
                 }
-                .disabled(!presentation.canPreview)
+                .disabled(!presentation.canPreview || modelWorkflow.isConversionSubmissionInFlight)
 
                 Button("Confirm conversion") {
                     Task {
                         await modelWorkflow.confirm(qBits: qBits)
                     }
                 }
-                .disabled(!presentation.canConfirm)
+                .disabled(!presentation.canConfirm || modelWorkflow.isConversionSubmissionInFlight)
 
                 if let existingModel {
                     Button("Run existing") {
                         modelWorkflow.useExisting(existingModel)
+                        modelWorkflow.prepareServe(model: existingModel)
                         onRouteSelection("serve")
                     }
                 }

@@ -33,8 +33,7 @@ struct HomeNextAction: Equatable {
         }
         if let path = workflow.completedModelPath, !path.isEmpty {
             guard workflow.state == .completed,
-                  workflow.outputPath == path,
-                  snapshot?.models.first(where: { $0.item.path == path })?.readiness == .ready else {
+                  snapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })?.readiness == .ready else {
                 return HomeNextAction(kind: .activity, title: "Reconcile completed output", reason: "The completed workflow no longer matches a ready model in the current Library snapshot.", route: "jobs")
             }
             guard agentReady && serveRuntimeReady else {
@@ -76,10 +75,12 @@ struct HomeNextAction: Equatable {
 
 struct HomeView: View {
     @ObservedObject var appHost: AppHost
+    @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     private let onRouteSelection: (String) -> Void
 
     init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
         self.appHost = appHost
+        _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -97,7 +98,7 @@ struct HomeView: View {
     }
     private var nextAction: HomeNextAction {
         HomeNextAction.derive(
-            workflow: appHost.modelWorkflow.workflow,
+            workflow: modelWorkflow.workflow,
             snapshot: appHost.librarySnapshot,
             rootsConfigured: !ggufRoots.isEmpty || !mlxRoots.isEmpty,
             isScanning: appHost.isScanning,
@@ -137,7 +138,7 @@ struct HomeView: View {
 
     private var statusSection: some View {
         HStack(alignment: .top, spacing: 16) {
-            statusCard(title: "Workflow", value: appHost.modelWorkflow.workflow.state.rawValue, detail: appHost.modelWorkflow.workflow.message ?? "No active conversion message.")
+            statusCard(title: "Workflow", value: modelWorkflow.workflow.state.rawValue, detail: modelWorkflow.workflow.message ?? "No active conversion message.")
             statusCard(title: "Library", value: appHost.librarySnapshot.map { "\($0.models.count) models" } ?? "No snapshot", detail: appHost.lastError ?? "The latest successful scan remains authoritative.")
             statusCard(title: "Runtime", value: appHost.runtimeReport.ok ? "Ready" : "Needs attention", detail: appHost.runtimeReport.ok ? "Prepare and Run checks passed." : appHost.runtimeReport.install)
         }
@@ -183,8 +184,14 @@ struct HomeView: View {
         switch action.kind {
         case .run(let path):
             appHost.selectedModelPath = path
+            if let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) {
+                modelWorkflow.prepareServe(model: model, exactPath: path)
+            }
         case .prepare(let path):
             appHost.selectedModelPath = path
+            if let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path }) {
+                modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
+            }
         case .configure, .scan, .activity, .library:
             break
         }

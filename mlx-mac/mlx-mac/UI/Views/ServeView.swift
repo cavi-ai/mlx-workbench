@@ -10,13 +10,12 @@ struct RunPresentation: Equatable {
     var selectedCompletedModel: LibraryModel? {
         guard workflow.state == .completed,
               let completedPath = workflow.completedModelPath,
-              workflow.outputPath == completedPath,
               let model,
-              model.item.path == completedPath,
+              model.item.path == completedPath || model.outputPaths.contains(completedPath),
               model.readiness == .ready else { return nil }
         return model
     }
-    var modelPath: String? { selectedCompletedModel?.item.path }
+    var modelPath: String? { workflow.completedModelPath }
     var activeServer: ServerInfo? {
         guard let modelPath else { return nil }
         return servers.first(where: {
@@ -39,26 +38,28 @@ struct RunPresentation: Equatable {
 
 struct ServeView: View {
     @ObservedObject var appHost: AppHost
+    @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     private let onRouteSelection: (String) -> Void
     @State private var runtime = "mlx_lm"
     @State private var portText = ""
 
     init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
         self.appHost = appHost
+        _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         self.onRouteSelection = onRouteSelection
     }
 
     private var selectedModel: LibraryModel? {
-        let path = appHost.selectedModelPath ?? appHost.modelWorkflow.workflow.completedModelPath
+        let path = modelWorkflow.workflow.completedModelPath ?? appHost.selectedModelPath
         guard let path else { return nil }
-        return appHost.librarySnapshot?.models.first(where: { $0.item.path == path })
+        return appHost.librarySnapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })
     }
 
     private var presentation: RunPresentation {
         RunPresentation(
-            workflow: appHost.modelWorkflow.workflow,
+            workflow: modelWorkflow.workflow,
             model: selectedModel,
-            servers: appHost.modelWorkflow.servers,
+            servers: modelWorkflow.servers,
             runtimeAvailable: appHost.runtimeReport.serve.ok,
             runtimeMessage: appHost.runtimeReport.serve.message
         )
@@ -81,7 +82,7 @@ struct ServeView: View {
             .padding(24)
         }
         .task {
-            await appHost.modelWorkflow.refreshOperationalStatus()
+            await appHost.refreshWorkflowStatus()
         }
     }
 
@@ -122,23 +123,23 @@ struct ServeView: View {
                 TextField("Port (optional)", text: $portText).textFieldStyle(.roundedBorder).frame(width: 140)
                 Spacer()
             }
-            detailLine("Serve state", appHost.modelWorkflow.workflow.serveState.rawValue)
-            if let message = appHost.modelWorkflow.workflow.message {
+            detailLine("Serve state", modelWorkflow.workflow.serveState.rawValue)
+            if let message = modelWorkflow.workflow.message {
                 Text(message).font(.callout).foregroundColor(.secondary)
             }
-            ErrorBanner(text: appHost.modelWorkflow.workflow.errorMessage)
+            ErrorBanner(text: modelWorkflow.workflow.errorMessage)
             HStack {
                 Button("Preview serve") {
-                    Task { await appHost.modelWorkflow.previewServe(runtime: runtime, port: port) }
+                    Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
                 }
-                .disabled(!presentation.canPreview)
+                .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
                 Button("Confirm and run") {
                     Task {
-                        await appHost.modelWorkflow.confirmServe(runtime: runtime, port: port)
-                        if appHost.modelWorkflow.workflow.serveState == .running { onRouteSelection("jobs") }
+                        await modelWorkflow.confirmServe(runtime: runtime, port: port)
+                        if modelWorkflow.workflow.serveState == .running { onRouteSelection("jobs") }
                     }
                 }
-                .disabled(!presentation.canConfirm)
+                .disabled(!presentation.canConfirm || modelWorkflow.isServeSubmissionInFlight)
             }
             .buttonStyle(.bordered)
         }
@@ -150,7 +151,7 @@ struct ServeView: View {
             HStack {
                 SectionTitle(text: "Authoritative server state")
                 Spacer()
-                Button("Refresh") { Task { await appHost.modelWorkflow.refreshOperationalStatus() } }
+                Button("Refresh") { Task { await appHost.refreshWorkflowStatus() } }
             }
             if let server = presentation.activeServer {
                 HStack {
@@ -160,13 +161,16 @@ struct ServeView: View {
                     Button("Stop server") {
                         Task {
                             guard let modelPath = presentation.modelPath else { return }
-                            await appHost.modelWorkflow.stopServer(modelPath: modelPath)
-                            if appHost.modelWorkflow.workflow.serveState == .stopped { onRouteSelection("jobs") }
+                            await modelWorkflow.stopServer(modelPath: modelPath)
+                            if modelWorkflow.workflow.serveState == .stopped { onRouteSelection("jobs") }
                         }
                     }
+                    .disabled(modelWorkflow.isServeSubmissionInFlight)
                 }
                 detailLine("Port", server.port.map(String.init) ?? "Not reported")
                 detailLine("PID", server.pid.map(String.init) ?? "Not reported")
+                Text(server.receipt ?? "Not reported")
+                    .accessibilityIdentifier("active-server-receipt")
                 detailLine("Receipt", server.receipt ?? "Not reported")
                 detailLine("Log path", server.logPath ?? "Not reported")
                 detailLine("Started", server.startedAt ?? "Not reported")

@@ -40,11 +40,11 @@ final class CatalogStoreTests: XCTestCase {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
 
-        let store = fixture.store(maxBytes: 512)
+        let store = fixture.store(maxBytes: 2_048)
         let valid = makeSnapshot(
             revision: "r1",
             fetchedAt: Date(timeIntervalSinceReferenceDate: 20),
-            recordCount: 0
+            recordCount: 2
         )
         try store.save(valid)
 

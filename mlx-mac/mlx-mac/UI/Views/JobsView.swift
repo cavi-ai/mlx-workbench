@@ -40,8 +40,7 @@ struct ActivityWorkflowCardPresentation: Identifiable, Equatable {
         var available: [ActivityWorkflowAction] = []
         if let path = workflow.completedModelPath,
            workflow.state == .completed,
-           workflow.outputPath == path,
-           let model = snapshot?.models.first(where: { $0.item.path == path }) {
+           let model = snapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) {
             available.append(.openInLibrary(path))
             if model.readiness == .ready { available.append(.runModel(workflow)) }
         }
@@ -94,6 +93,7 @@ enum ActivityPresentation {
 
 struct JobsView: View {
     @ObservedObject var appHost: AppHost
+    @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     private let onRouteSelection: (String) -> Void
 
     @State private var lastKnownJobs: [Job] = []
@@ -108,13 +108,14 @@ struct JobsView: View {
 
     init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
         self.appHost = appHost
+        _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         self.onRouteSelection = onRouteSelection
     }
 
     private var cards: [ActivityWorkflowCardPresentation] {
         ActivityPresentation.cards(
-            workflow: appHost.modelWorkflow.workflow,
-            history: appHost.modelWorkflow.history,
+            workflow: modelWorkflow.workflow,
+            history: modelWorkflow.history,
             jobs: lastKnownJobs,
             snapshot: appHost.librarySnapshot,
             scanModels: appHost.scanResult?.models ?? [],
@@ -141,6 +142,7 @@ struct JobsView: View {
                     Button("Refresh") { Task { await refresh() } }.disabled(isRefreshing)
                 }
                 ErrorBanner(text: statusError)
+                ErrorBanner(text: modelWorkflow.persistenceError)
                 serversSection
                 SectionTitle(text: "Conversions")
                 if cards.isEmpty {
@@ -164,11 +166,11 @@ struct JobsView: View {
     private var serversSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionTitle(text: "Servers")
-            if appHost.modelWorkflow.servers.isEmpty {
+            if modelWorkflow.servers.isEmpty {
                 Text("No authoritative server records are available.")
                     .font(.callout).foregroundColor(.secondary)
             } else {
-                ForEach(appHost.modelWorkflow.servers) { server in
+                ForEach(modelWorkflow.servers) { server in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             StatusPill(state: server.state ?? "unknown")
@@ -231,12 +233,11 @@ struct JobsView: View {
             let jobs = try await appHost.api.convertStatus()
             lastKnownJobs = jobs
             statusError = nil
-            await appHost.modelWorkflow.reconcile(snapshot: appHost.librarySnapshot, jobs: jobs)
+            await appHost.refreshWorkflowStatus(jobs: jobs)
         } catch {
             statusError = "Live conversion status unavailable: \(AppHost.render(error)). Showing last known activity."
-            await appHost.modelWorkflow.reconcile(snapshot: appHost.librarySnapshot, jobs: [])
+            await appHost.refreshWorkflowStatus()
         }
-        await appHost.modelWorkflow.refreshOperationalStatus()
     }
 
     private func actionTitle(_ action: ActivityWorkflowAction) -> String {
@@ -254,9 +255,10 @@ struct JobsView: View {
             onRouteSelection("models")
         case .runModel(let record):
             guard let path = record.completedModelPath else { return }
-            guard let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path }) else { return }
-            guard record.state == .completed, record.outputPath == path, model.readiness == .ready else { return }
+            guard let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) else { return }
+            guard record.state == .completed, model.readiness == .ready else { return }
             appHost.modelWorkflow.restore(record)
+            appHost.modelWorkflow.prepareServe(model: model, exactPath: path)
             appHost.selectedModelPath = path
             onRouteSelection("serve")
         case .retryPreview(let record):

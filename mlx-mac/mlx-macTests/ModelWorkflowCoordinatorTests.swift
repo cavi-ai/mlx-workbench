@@ -87,6 +87,31 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         XCTAssertEqual(eventValues, ["scan", "status", "scan"])
     }
 
+    func testActivityRefreshAfterTerminalStatusTriggersFreshScan() async {
+        let terminalJob = Job(receipt: "receipt-activity", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "completed")
+        let scans = ScanSequence([
+            scanResult(outputs: [
+                MLXOutput(path: "/Models/source", name: "source", modelKey: "source-model", quantization: nil, provenance: "signature-1")
+            ])
+        ])
+        let host = await makeHost(
+            scanOperation: { _, _, _, _ in try await scans.next() }
+        )
+        await MainActor.run {
+            host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-activity"))
+        }
+
+        await host.refreshWorkflowStatus(jobs: [terminalJob])
+
+        let state = await MainActor.run {
+            (host.modelWorkflow.workflow.state, host.modelWorkflow.workflow.completedModelPath)
+        }
+        let scanCount = await scans.count
+        XCTAssertEqual(state.0, .completed)
+        XCTAssertEqual(state.1, "/Models/source")
+        XCTAssertEqual(scanCount, 1)
+    }
+
     func testMissingStoreLoadsEmptyRecords() throws {
         let store = makeStore()
 

@@ -36,24 +36,36 @@ final class ModelWorkflowCoordinator: ObservableObject {
     @Published private(set) var workflow: ConversionWorkflow
     @Published private(set) var history: [ConversionWorkflow]
     @Published private(set) var servers: [ServerInfo]
+    @Published private(set) var persistenceError: String?
+    @Published private(set) var isConversionSubmissionInFlight = false
+    @Published private(set) var isServeSubmissionInFlight = false
 
     private let api: ModelWorkflowAPI
     private let persistence: ModelWorkflowPersistence
     private let now: () -> Date
+    private let fileManager: FileManager
+    private var selectedSource: ModelItem?
+    private var selectedSnapshot: LibrarySnapshot?
+    private var conversionPreviewQBits: Int?
+    private var conversionPreviewOutput: String?
     private var completionRescanRequested = false
+    private var pendingCompletionRecordIDs = Set<UUID>()
     private var servePreviewHash: String?
 
     init(
         api: ModelWorkflowAPI,
         persistence: ModelWorkflowPersistence,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        fileManager: FileManager = .default
     ) {
         self.api = api
         self.persistence = persistence
         self.now = now
+        self.fileManager = fileManager
         self.workflow = Self.emptyWorkflow(at: now())
         self.history = []
         self.servers = []
+        self.persistenceError = nil
 
         do {
             let records = try persistence.load().sorted { $0.updatedAt > $1.updatedAt }
@@ -62,20 +74,29 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 workflow = active
             }
         } catch {
+            persistenceError = "Saved workflow history is unavailable: \(AppHost.render(error))"
             workflow = Self.emptyWorkflow(at: now(), message: "Saved workflow history is unavailable: \(AppHost.render(error))")
         }
     }
 
     func inspect(source: ModelItem, snapshot: LibrarySnapshot?) {
-        let timestamp = now()
+        selectedSource = source
+        selectedSnapshot = snapshot
+        conversionPreviewQBits = nil
+        conversionPreviewOutput = nil
+        servePreviewHash = nil
         switch ModelWorkflowResolver.destination(for: source, library: snapshot) {
         case .reuseExisting(let model):
+            let exactPath = preferredModelPath(
+                model,
+                preferred: ModelWorkflowResolver.sameDirectoryOutputURL(for: source).path
+            )
             replace(
                 makeWorkflow(
                     source: source,
-                    outputPath: model.item.path,
+                    outputPath: exactPath,
                     state: .existingModelFound,
-                    completedModelPath: model.item.path,
+                    completedModelPath: exactPath,
                     message: "An equivalent MLX model is already available."
                 ),
                 persist: false
@@ -102,71 +123,160 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 persist: false
             )
         }
-        _ = timestamp
     }
 
     func preview(qBits: Int, out: String?) async {
+        guard !isConversionSubmissionInFlight else { return }
         guard !workflow.sourcePath.isEmpty else {
             fail("Select a GGUF source before previewing conversion.")
             return
         }
+        guard let source = selectedSource ?? restoredSource() else {
+            fail("The selected GGUF source is unavailable for validation.")
+            return
+        }
         let output = safeOutputOverride(out) ?? workflow.outputPath
-        update(state: .previewingConversion, outputPath: output, message: "Preparing conversion preview.", errorMessage: nil)
+        switch ModelWorkflowResolver.destination(
+            for: source,
+            library: selectedSnapshot,
+            fileManager: fileManager,
+            now: now()
+        ) {
+        case .reuseExisting(let model):
+            useExisting(model)
+            return
+        case .blocked(let destination, let reason):
+            failDestination(destination: destination.path, reason: reason)
+            return
+        case .available:
+            guard !fileManager.fileExists(atPath: canonicalPath(output)) else {
+                failDestination(
+                    destination: output,
+                    reason: "The destination already exists and is not an equivalent model."
+                )
+                return
+            }
+        }
+
+        conversionPreviewQBits = qBits
+        conversionPreviewOutput = output
+        isConversionSubmissionInFlight = true
+        defer { isConversionSubmissionInFlight = false }
+        update(state: .previewingConversion, outputPath: output, message: "Preparing conversion preview.", errorMessage: .some(nil))
         do {
             let response = try await api.convertPreview(workflow.sourcePath, qBits, output)
             guard let hash = response.string("preview_hash"), !hash.isEmpty else {
                 fail("Conversion preview did not include a preview hash.")
                 return
             }
-            update(state: .readyToConfirm, outputPath: output, previewHash: hash, message: "Preview ready for confirmation.", errorMessage: nil)
+            update(state: .readyToConfirm, outputPath: output, previewHash: hash, message: "Preview ready for confirmation.", errorMessage: .some(nil))
         } catch {
             fail("Conversion preview failed: \(AppHost.render(error))")
         }
     }
 
     func confirm(qBits: Int) async {
+        guard !isConversionSubmissionInFlight else { return }
         guard let hash = workflow.previewHash, !hash.isEmpty else {
             fail("Preview conversion before confirming it.")
             return
         }
+        guard conversionPreviewQBits == qBits,
+              conversionPreviewOutput == workflow.outputPath else {
+            fail("The conversion intent changed after preview. Preview it again before confirming.")
+            return
+        }
+        guard let source = selectedSource ?? restoredSource() else {
+            fail("The selected GGUF source is unavailable for validation.")
+            return
+        }
+        switch ModelWorkflowResolver.destination(
+            for: source,
+            library: selectedSnapshot,
+            fileManager: fileManager,
+            now: now()
+        ) {
+        case .reuseExisting(let model):
+            useExisting(model)
+            return
+        case .blocked(let destination, let reason):
+            failDestination(destination: destination.path, reason: reason)
+            return
+        case .available:
+            guard !fileManager.fileExists(atPath: canonicalPath(workflow.outputPath)) else {
+                failDestination(
+                    destination: workflow.outputPath,
+                    reason: "The destination became occupied after preview and is not an equivalent model."
+                )
+                return
+            }
+        }
+
+        isConversionSubmissionInFlight = true
+        defer { isConversionSubmissionInFlight = false }
         do {
             let response = try await api.convertStart(workflow.sourcePath, qBits, workflow.outputPath, hash)
             guard let receipt = response.string("receipt"), !receipt.isEmpty else {
                 fail("Conversion start did not include a job receipt.")
                 return
             }
-            update(state: .queued, jobReceipt: receipt, message: "Conversion queued.", errorMessage: nil, lastKnownAgentState: "queued", persist: true)
+            conversionPreviewQBits = nil
+            conversionPreviewOutput = nil
+            update(state: .queued, jobReceipt: receipt, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: "queued", persist: true)
         } catch {
             fail("Conversion could not be queued: \(AppHost.render(error))")
         }
     }
 
     func useExisting(_ model: LibraryModel) {
+        let exactPath = preferredModelPath(model, preferred: workflow.completedModelPath ?? workflow.outputPath)
         update(
             state: .completed,
-            completedModelPath: model.item.path,
+            outputPath: exactPath,
+            completedModelPath: exactPath,
             message: "Using existing MLX model.",
-            errorMessage: nil,
+            errorMessage: .some(nil),
             persist: true
         )
     }
 
-    func prepareServe(model: LibraryModel) {
+    func prepareServe(model: LibraryModel, exactPath: String? = nil) {
+        let selectedPath = preferredModelPath(
+            model,
+            preferred: exactPath ?? workflow.completedModelPath ?? workflow.outputPath
+        )
         update(
-            state: workflow.state == .idle ? .completed : workflow.state,
-            completedModelPath: model.item.path,
+            state: .completed,
+            outputPath: selectedPath,
+            completedModelPath: selectedPath,
             message: "Ready to preview serving \(model.displayName).",
-            errorMessage: nil,
+            errorMessage: .some(nil),
             persist: true
         )
+        servePreviewHash = nil
     }
 
     func previewServe(runtime: String, port: Int?) async {
+        guard !isServeSubmissionInFlight else { return }
+        isServeSubmissionInFlight = true
+        defer { isServeSubmissionInFlight = false }
         guard let model = workflow.completedModelPath, !model.isEmpty else {
             update(serveState: .failed, message: "Complete or select an MLX model before previewing serve.", errorMessage: "No completed MLX model selected.")
             return
         }
-        update(serveState: .previewing, message: "Preparing serve preview.", errorMessage: nil)
+        servePreviewHash = nil
+        do {
+            servers = try await api.serveStatus()
+        } catch {
+            update(serveState: .failed, message: "Serve status is unavailable; serving remains blocked.", errorMessage: AppHost.render(error))
+            return
+        }
+        guard !servers.contains(where: { $0.state?.lowercased() == "running" && $0.repo == model }) else {
+            update(serveState: .failed, message: "A server is already running for the selected model.", errorMessage: "Stop the authoritative running server before starting another.")
+            return
+        }
+
+        update(serveState: .previewing, message: "Preparing serve preview.", errorMessage: .some(nil))
         do {
             let response = try await api.servePreview(model, runtime, port)
             guard let hash = response.string("preview_hash"), !hash.isEmpty else {
@@ -174,37 +284,62 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 return
             }
             servePreviewHash = hash
-            update(serveState: .readyToConfirm, message: "Serve preview ready for confirmation.", errorMessage: nil)
+            update(serveState: .readyToConfirm, message: "Serve preview ready for confirmation.", errorMessage: .some(nil))
         } catch {
             update(serveState: .failed, message: "Serve preview failed: \(AppHost.render(error))", errorMessage: AppHost.render(error))
         }
     }
 
     func confirmServe(runtime: String, port: Int?) async {
+        guard !isServeSubmissionInFlight else { return }
+        isServeSubmissionInFlight = true
+        defer { isServeSubmissionInFlight = false }
         guard let model = workflow.completedModelPath, !model.isEmpty, let hash = servePreviewHash, !hash.isEmpty else {
             update(serveState: .failed, message: "Preview serving before confirming it.", errorMessage: "Missing serve preview hash.")
             return
         }
+        guard !servers.contains(where: { $0.state?.lowercased() == "running" && $0.repo == model }) else {
+            update(serveState: .failed, message: "A server is already running for the selected model.", errorMessage: "Stop the authoritative running server before starting another.")
+            return
+        }
+        servePreviewHash = nil
         do {
             _ = try await api.serveStart(model, runtime, port, hash)
-            update(serveState: .running, message: "Server start requested.", errorMessage: nil, persist: true)
-            await refreshOperationalStatus()
+            let statusAvailable = await refreshOperationalStatus()
+            guard statusAvailable,
+                  servers.contains(where: { $0.state?.lowercased() == "running" && $0.repo == model }) else {
+                update(serveState: .failed, message: "Server start was requested, but authoritative status did not report it running.", errorMessage: "Refresh server status before trying again.", persist: true)
+                return
+            }
+            update(serveState: .running, message: "Server is running.", errorMessage: .some(nil), persist: true)
         } catch {
             update(serveState: .failed, message: "Server could not be started: \(AppHost.render(error))", errorMessage: AppHost.render(error), persist: true)
         }
     }
 
     func stopServer(modelPath: String) async {
+        guard !isServeSubmissionInFlight else { return }
+        isServeSubmissionInFlight = true
+        defer { isServeSubmissionInFlight = false }
         guard let server = servers.first(where: {
             $0.state?.lowercased() == "running" && $0.repo == modelPath
         }), let port = server.port else {
             update(serveState: .failed, message: "No authoritative running server is available for the selected model.", errorMessage: "Selected model server status is unavailable.")
             return
         }
+        servePreviewHash = nil
         do {
             _ = try await api.serveStop(port)
-            update(serveState: .stopped, message: "Server stop requested.", errorMessage: nil, persist: true)
-            await refreshOperationalStatus()
+            let statusAvailable = await refreshOperationalStatus()
+            guard statusAvailable else {
+                update(serveState: .failed, message: "Server stop was requested, but authoritative status is unavailable.", errorMessage: "Refresh server status before assuming the server stopped.", persist: true)
+                return
+            }
+            if servers.contains(where: { $0.state?.lowercased() == "running" && $0.repo == modelPath }) {
+                update(serveState: .running, message: "The authoritative server is still running.", errorMessage: "Stop was requested but has not been confirmed.", persist: true)
+            } else {
+                update(serveState: .stopped, message: "Server stopped.", errorMessage: .some(nil), persist: true)
+            }
         } catch {
             update(serveState: .failed, message: "Server could not be stopped: \(AppHost.render(error))", errorMessage: AppHost.render(error), persist: true)
         }
@@ -212,6 +347,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     func restore(_ record: ConversionWorkflow) {
         workflow = record
+        selectedSource = nil
+        selectedSnapshot = nil
+        conversionPreviewQBits = nil
+        conversionPreviewOutput = nil
+        servePreviewHash = nil
         if let index = history.firstIndex(where: { $0.persistenceIdentifier == record.persistenceIdentifier }) {
             history[index] = record
         } else {
@@ -234,7 +374,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
         await reconcileAuthoritative(snapshot: snapshot, jobs: authoritativeJobs)
     }
 
-    func refreshOperationalStatus() async {
+    @discardableResult
+    func refreshOperationalStatus() async -> Bool {
         do {
             let jobs = try await api.convertStatus()
             await reconcileAuthoritative(snapshot: nil, jobs: jobs)
@@ -244,13 +385,15 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
         do {
             servers = try await api.serveStatus()
+            return true
         } catch {
             preserveLastKnownState(message: "Server status unavailable: \(AppHost.render(error))")
+            return false
         }
     }
 
     func clearTransientError() {
-        update(message: nil, errorMessage: nil)
+        update(message: .some(nil), errorMessage: .some(nil))
     }
 
     func consumeCompletionRescanRequest() -> Bool {
@@ -260,54 +403,83 @@ final class ModelWorkflowCoordinator: ObservableObject {
     }
 
     func resolveCompletionAfterFreshScan(snapshot: LibrarySnapshot?) {
-        guard let model = completedModel(in: snapshot) else {
-            update(
-                state: .running,
-                message: "Conversion completed, but the fresh library scan did not find its expected MLX output.",
-                errorMessage: nil,
-                persist: true
-            )
-            return
+        let ids = pendingCompletionRecordIDs.isEmpty ? [workflow.id] : Array(pendingCompletionRecordIDs)
+        for id in ids {
+            guard let record = history.first(where: { $0.id == id }) else { continue }
+            if let completed = completedModel(in: snapshot, for: record) {
+                replace(
+                    updatedRecord(
+                        from: record,
+                        state: .completed,
+                        outputPath: completed.path,
+                        completedModelPath: completed.path,
+                        message: "Conversion completed and the MLX output was confirmed by a fresh scan.",
+                        errorMessage: .some(nil)
+                    ),
+                    persist: true,
+                    makeCurrent: record.id == workflow.id
+                )
+            } else {
+                replace(
+                    updatedRecord(
+                        from: record,
+                        state: .running,
+                        message: "Conversion completed, but the fresh library scan did not find its expected MLX output.",
+                        errorMessage: .some(nil)
+                    ),
+                    persist: true,
+                    makeCurrent: record.id == workflow.id
+                )
+            }
         }
-        update(
-            state: .completed,
-            completedModelPath: model.item.path,
-            message: "Conversion completed and the MLX output was confirmed by a fresh scan.",
-            errorMessage: nil,
-            persist: true
-        )
+        pendingCompletionRecordIDs.removeAll()
     }
 
     private func reconcileAuthoritative(snapshot: LibrarySnapshot?, jobs: [Job]) async {
-        guard let receipt = workflow.jobReceipt, !receipt.isEmpty else { return }
-        guard let job = jobs.first(where: { $0.receipt == receipt }) else {
-            preserveLastKnownState(message: "Conversion receipt \(receipt) was not present in authoritative status.")
-            return
+        var records = history
+        if !records.contains(where: { $0.id == workflow.id }), workflow.jobReceipt != nil {
+            records.append(workflow)
         }
+        for record in records {
+            guard let receipt = record.jobReceipt, !receipt.isEmpty else { continue }
+            guard let job = jobs.first(where: { $0.receipt == receipt }) else {
+                if record.id == workflow.id {
+                    preserveLastKnownState(message: "Conversion receipt \(receipt) was not present in authoritative status.")
+                }
+                continue
+            }
 
-        let agentState = job.state.lowercased()
-        switch agentState {
-        case "queued", "pending", "starting":
-            update(state: .queued, message: "Conversion queued.", errorMessage: nil, lastKnownAgentState: job.state, persist: true)
-        case "running", "active":
-            update(state: .running, message: "Conversion running.", errorMessage: nil, lastKnownAgentState: job.state, persist: true)
-        case "completed", "complete", "succeeded", "success":
-            completionRescanRequested = true
-            update(state: .running, message: "Conversion completed; waiting for a fresh library scan to confirm its MLX output.", errorMessage: nil, lastKnownAgentState: job.state, persist: true)
-        case "failed", "error", "cancelled", "canceled":
-            update(state: .failed, message: "Conversion \(job.state).", errorMessage: "Conversion \(job.state).", lastKnownAgentState: job.state, persist: true)
-        default:
-            preserveLastKnownState(message: "Conversion status \(job.state) is not recognized; preserving the last known state.")
+            let agentState = job.state.lowercased()
+            switch agentState {
+            case "queued", "pending", "starting":
+                replace(updatedRecord(from: record, state: .queued, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
+            case "running", "active":
+                replace(updatedRecord(from: record, state: .running, message: "Conversion running.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
+            case "completed", "complete", "succeeded", "success":
+                guard record.state != .completed else { continue }
+                completionRescanRequested = true
+                pendingCompletionRecordIDs.insert(record.id)
+                replace(updatedRecord(from: record, state: .running, message: "Conversion completed; waiting for a fresh library scan to confirm its MLX output.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
+            case "failed", "error", "cancelled", "canceled":
+                replace(updatedRecord(from: record, state: .failed, message: "Conversion \(job.state).", errorMessage: .some("Conversion \(job.state)."), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
+            default:
+                if record.id == workflow.id {
+                    preserveLastKnownState(message: "Conversion status \(job.state) is not recognized; preserving the last known state.")
+                }
+            }
         }
         _ = snapshot
     }
 
-    private func completedModel(in snapshot: LibrarySnapshot?) -> LibraryModel? {
-        snapshot?.models.first { model in
-            model.item.path == workflow.outputPath ||
-            model.outputPaths.contains(workflow.outputPath) ||
-            model.sourcePaths.contains(workflow.outputPath)
+    private func completedModel(in snapshot: LibrarySnapshot?, for record: ConversionWorkflow) -> (model: LibraryModel, path: String)? {
+        let target = canonicalPath(record.outputPath)
+        for model in snapshot?.models ?? [] {
+            let candidates = [model.item.path] + model.outputPaths + model.sourcePaths
+            if let exactPath = candidates.first(where: { canonicalPath($0) == target }) {
+                return (model, exactPath)
+            }
         }
+        return nil
     }
 
     private func safeOutputOverride(_ output: String?) -> String? {
@@ -316,6 +488,56 @@ final class ModelWorkflowCoordinator: ObservableObject {
         let sourceDirectory = URL(fileURLWithPath: workflow.sourcePath).standardizedFileURL.deletingLastPathComponent()
         guard candidate.deletingLastPathComponent() == sourceDirectory else { return nil }
         return candidate.path
+    }
+
+    private func restoredSource() -> ModelItem? {
+        guard !workflow.sourcePath.isEmpty else { return nil }
+        return ModelItem(
+            path: workflow.sourcePath,
+            name: URL(fileURLWithPath: workflow.sourcePath).lastPathComponent,
+            bytes: 0,
+            modifiedAt: nil,
+            shard: nil,
+            modelKey: workflow.sourceModelKey,
+            architecture: nil,
+            quantization: nil,
+            parameters: nil,
+            structure: nil,
+            signature: workflow.sourceSignature,
+            companion: nil,
+            readable: true,
+            status: "pending",
+            outputs: [],
+            tensorCount: nil,
+            error: nil
+        )
+    }
+
+    private func preferredModelPath(_ model: LibraryModel, preferred: String?) -> String {
+        let candidates = [model.item.path] + model.outputPaths + model.sourcePaths
+        if let preferred,
+           let exact = candidates.first(where: { canonicalPath($0) == canonicalPath(preferred) }) {
+            return exact
+        }
+        return model.item.path
+    }
+
+    private func failDestination(destination: String, reason: String) {
+        update(
+            state: .failed,
+            previewHash: nil,
+            message: .some(reason),
+            errorMessage: .some(reason),
+            clearPreviewHash: true
+        )
+        _ = destination
+    }
+
+    private func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
     }
 
     private func makeWorkflow(
@@ -356,30 +578,63 @@ final class ModelWorkflowCoordinator: ObservableObject {
         message: String?? = nil,
         errorMessage: String?? = nil,
         lastKnownAgentState: String? = nil,
+        clearPreviewHash: Bool = false,
         persist: Bool = false
     ) {
-        let next = ConversionWorkflow(
-            id: workflow.id,
-            sourcePath: workflow.sourcePath,
-            sourceModelKey: workflow.sourceModelKey,
-            sourceSignature: workflow.sourceSignature,
-            outputPath: outputPath ?? workflow.outputPath,
-            previewHash: previewHash ?? workflow.previewHash,
-            jobReceipt: jobReceipt ?? workflow.jobReceipt,
-            completedModelPath: completedModelPath ?? workflow.completedModelPath,
-            state: state ?? workflow.state,
-            serveState: serveState ?? workflow.serveState,
-            message: message ?? workflow.message,
-            errorMessage: errorMessage ?? workflow.errorMessage,
-            createdAt: workflow.createdAt,
-            updatedAt: now(),
-            lastKnownAgentState: lastKnownAgentState ?? workflow.lastKnownAgentState
+        let next = updatedRecord(
+            from: workflow,
+            state: state,
+            serveState: serveState,
+            outputPath: outputPath,
+            previewHash: previewHash,
+            jobReceipt: jobReceipt,
+            completedModelPath: completedModelPath,
+            message: message,
+            errorMessage: errorMessage,
+            lastKnownAgentState: lastKnownAgentState,
+            clearPreviewHash: clearPreviewHash
         )
         replace(next, persist: persist)
     }
 
-    private func replace(_ record: ConversionWorkflow, persist: Bool) {
-        workflow = record
+    private func updatedRecord(
+        from base: ConversionWorkflow,
+        state: ConversionWorkflowState? = nil,
+        serveState: ServeWorkflowState? = nil,
+        outputPath: String? = nil,
+        previewHash: String? = nil,
+        jobReceipt: String? = nil,
+        completedModelPath: String? = nil,
+        message: String?? = nil,
+        errorMessage: String?? = nil,
+        lastKnownAgentState: String? = nil,
+        clearPreviewHash: Bool = false
+    ) -> ConversionWorkflow {
+        let nextMessage = message.map { $0 } ?? base.message
+        let nextErrorMessage = errorMessage.map { $0 } ?? base.errorMessage
+        return ConversionWorkflow(
+            id: base.id,
+            sourcePath: base.sourcePath,
+            sourceModelKey: base.sourceModelKey,
+            sourceSignature: base.sourceSignature,
+            outputPath: outputPath ?? base.outputPath,
+            previewHash: clearPreviewHash ? nil : (previewHash ?? base.previewHash),
+            jobReceipt: jobReceipt ?? base.jobReceipt,
+            completedModelPath: completedModelPath ?? base.completedModelPath,
+            state: state ?? base.state,
+            serveState: serveState ?? base.serveState,
+            message: nextMessage,
+            errorMessage: nextErrorMessage,
+            createdAt: base.createdAt,
+            updatedAt: now(),
+            lastKnownAgentState: lastKnownAgentState ?? base.lastKnownAgentState
+        )
+    }
+
+    private func replace(_ record: ConversionWorkflow, persist: Bool, makeCurrent: Bool = true) {
+        if makeCurrent {
+            workflow = record
+        }
         if let index = history.firstIndex(where: { $0.persistenceIdentifier == record.persistenceIdentifier }) {
             history[index] = record
         } else if record.state != .idle {
@@ -394,11 +649,13 @@ final class ModelWorkflowCoordinator: ObservableObject {
     }
 
     private func preserveLastKnownState(message: String) {
-        update(message: message, errorMessage: nil)
+        update(message: message, errorMessage: .some(nil))
     }
 
     private func fail(_ message: String) {
-        update(state: .failed, message: message, errorMessage: message, persist: true)
+        conversionPreviewQBits = nil
+        conversionPreviewOutput = nil
+        update(state: .failed, previewHash: nil, message: message, errorMessage: message, clearPreviewHash: true, persist: true)
     }
 
     private static func emptyWorkflow(at date: Date, message: String? = nil) -> ConversionWorkflow {

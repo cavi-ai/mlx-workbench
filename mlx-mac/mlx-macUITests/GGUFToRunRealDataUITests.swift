@@ -11,6 +11,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
     private var observations: [String] = []
     private var runtimeValues: [String: String] = [:]
     private var runtimeManifest: [String: String] = [:]
+    private var ownedServerReceipt: String?
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -97,23 +98,11 @@ final class GGUFToRunRealDataUITests: XCTestCase {
             let preview = app.buttons["Preview conversion"]
             XCTAssertTrue(preview.waitForExistence(timeout: 20))
             XCTAssertTrue(preview.isEnabled, "Conversion preview was unavailable for the selected real GGUF.")
+            guard conversionSourceIsSafeToPreview(sourcePath) else { return }
             preview.click()
             XCTAssertTrue(app.staticTexts["Preview ready"].waitForExistence(timeout: 300), "Conversion preview did not reach Preview ready.")
             XCTAssertTrue(app.buttons["Confirm conversion"].isEnabled, "Preview hash did not enable confirmation.")
             capture("03-conversion-preview-ready", note: "Conversion preview completed and hash-gated confirmation became enabled.")
-
-            let sourceAttributes = try? FileManager.default.attributesOfItem(atPath: sourcePath)
-            if let sourceBytes = (sourceAttributes?[.size] as? NSNumber)?.int64Value,
-               sourceBytes >= 29_000_000_000 {
-                capture(
-                    "04-large-conversion-safety-gate",
-                    note: "The visible preview was safe, but the selected 29 GB source exceeded the unattended conversion gate."
-                )
-                XCTFail(
-                    "Conversion confirmation withheld by Task 6 operational safety gate: selected source is \(sourceBytes) bytes (29 GB), so this unattended evidence run will not start conversion or serving."
-                )
-                return
-            }
 
             app.buttons["Confirm conversion"].click()
             XCTAssertNotNil(
@@ -165,6 +154,10 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 180), "Confirmed serve did not route to Activity.")
         app.buttons["Run"].click()
         XCTAssertTrue(app.buttons["Stop server"].waitForExistence(timeout: 180), "Authoritative running server state was not visible in Run.")
+        ownedServerReceipt = app.staticTexts["active-server-receipt"].exists
+            ? nonPlaceholderReceipt(app.staticTexts["active-server-receipt"].label)
+            : nil
+        XCTAssertNotNil(ownedServerReceipt, "The running server did not expose a receipt that the test could own.")
         capture("09-server-running", note: "Run displayed the authoritative running server and stop control.")
 
         app.buttons["Stop server"].click()
@@ -386,6 +379,23 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         return false
     }
 
+    private func conversionSourceIsSafeToPreview(_ sourcePath: String) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: sourcePath),
+              let type = attributes[.type] as? FileAttributeType,
+              type == .typeRegular,
+              let sourceBytes = (attributes[.size] as? NSNumber)?.int64Value else {
+            capture("03-conversion-safety-gate", note: "Source attributes were unavailable; preview was not attempted.")
+            XCTFail("Conversion preview withheld because the source file type or size could not be established.")
+            return false
+        }
+        guard sourceBytes < 29_000_000_000 else {
+            capture("03-conversion-safety-gate", note: "The selected source exceeded the unattended conversion size gate; preview was not attempted.")
+            XCTFail("Conversion preview withheld because the selected source is \(sourceBytes) bytes and exceeds the 29 GB unattended safety gate.")
+            return false
+        }
+        return true
+    }
+
     private func displayedDestination(in labels: [String], sourcePath: String, sourceDirectory: String) -> String? {
         let directoryPrefix = compacted(sourceDirectory) + "/"
         let reusePrefix = "ExistingequivalentMLXmodel:"
@@ -409,6 +419,15 @@ final class GGUFToRunRealDataUITests: XCTestCase {
             .filter { !CharacterSet.whitespacesAndNewlines.contains($0) }
             .map(String.init)
             .joined()
+    }
+
+    private func nonPlaceholderReceipt(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.caseInsensitiveCompare("Not reported") != .orderedSame else {
+            return nil
+        }
+        return trimmed
     }
 
     private func visibleLabels() -> [String] {
@@ -447,13 +466,21 @@ final class GGUFToRunRealDataUITests: XCTestCase {
 
     private func stopServerIfNeeded() {
         guard app != nil, app.state == .runningForeground || app.state == .runningBackground else { return }
+        guard let ownedServerReceipt, !ownedServerReceipt.isEmpty else {
+            record("teardown: no server receipt owned by this test; no stop attempted")
+            return
+        }
         if !app.buttons["Stop server"].exists, app.buttons["Run"].exists {
             app.buttons["Run"].click()
             _ = app.buttons["Stop server"].waitForExistence(timeout: 10)
         }
-        if app.buttons["Stop server"].exists {
-            app.buttons["Stop server"].click()
-            record("teardown: stopped server after incomplete test path")
+        guard app.buttons["Stop server"].exists,
+              app.staticTexts["active-server-receipt"].exists,
+              compacted(app.staticTexts["active-server-receipt"].label) == compacted(ownedServerReceipt) else {
+            record("teardown: visible server receipt did not match the test-owned receipt; no stop attempted")
+            return
         }
+        app.buttons["Stop server"].click()
+        record("teardown: stopped the test-owned server receipt")
     }
 }

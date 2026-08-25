@@ -8,7 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF001 /* GGUFToRunRealDataUITests.swift */; };
-		26UIBLD002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24BREF001 /* XCTest.framework */; };
+		26UIBLD002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
 		24BBLD000000 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000000 /* x */; };
 
 		24BBLD000001 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000001 /* x */; };

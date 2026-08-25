@@ -95,6 +95,15 @@ class AppHost: ObservableObject {
         _ = await rescan(limit: limit, reconcileWorkflow: true)
     }
 
+    func refreshWorkflowStatus(jobs: [Job]? = nil) async {
+        if let jobs {
+            await modelWorkflow.reconcile(snapshot: librarySnapshot, jobs: jobs)
+        } else {
+            await modelWorkflow.refreshOperationalStatus()
+        }
+        await finishCompletionReconciliationIfNeeded()
+    }
+
     private func rescan(limit: Int?, reconcileWorkflow: Bool) async -> LibrarySnapshot? {
         guard !isScanning else { return nil }
         isScanning = true
@@ -113,12 +122,8 @@ class AppHost: ObservableObject {
             lastError = nil
             if reconcileWorkflow {
                 await modelWorkflow.refreshOperationalStatus()
-                let requiresCompletionScan = modelWorkflow.consumeCompletionRescanRequest()
                 isScanning = false
-                if requiresCompletionScan {
-                    let freshSnapshot = await rescan(limit: nil, reconcileWorkflow: false)
-                    modelWorkflow.resolveCompletionAfterFreshScan(snapshot: freshSnapshot)
-                }
+                await finishCompletionReconciliationIfNeeded()
                 return snapshot
             }
             isScanning = false
@@ -128,6 +133,12 @@ class AppHost: ObservableObject {
             isScanning = false
             return nil
         }
+    }
+
+    private func finishCompletionReconciliationIfNeeded() async {
+        guard modelWorkflow.consumeCompletionRescanRequest() else { return }
+        let freshSnapshot = await rescan(limit: nil, reconcileWorkflow: false)
+        modelWorkflow.resolveCompletionAfterFreshScan(snapshot: freshSnapshot)
     }
 
     func saveConfig(_ newConfig: Config) -> Config {

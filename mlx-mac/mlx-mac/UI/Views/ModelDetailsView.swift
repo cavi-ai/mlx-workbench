@@ -204,6 +204,9 @@ struct ModelDetailsView: View {
 
     private func selectAndRoute(to route: String) {
         appHost.selectedModelPath = model.item.path
+        if route == "serve", model.readiness == .ready {
+            appHost.modelWorkflow.prepareServe(model: model)
+        }
         onRouteSelection(route)
     }
 }
