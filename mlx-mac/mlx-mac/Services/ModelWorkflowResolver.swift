@@ -32,12 +32,16 @@ enum ModelWorkflowResolver {
     static func matchesEquivalent(source: ModelItem, candidate: LibraryModel) -> Bool {
         if let sourceKey = normalizedEvidence(source.modelKey),
            let candidateKey = normalizedEvidence(candidate.item.modelKey ?? candidate.normalizedFamilyKey) {
-            return sourceKey == candidateKey
+            if sourceKey == candidateKey {
+                return true
+            }
         }
 
         if let sourceSignature = normalizedEvidence(source.signature),
            let candidateSignature = normalizedEvidence(candidate.item.signature) {
-            return sourceSignature == candidateSignature
+            if sourceSignature == candidateSignature {
+                return true
+            }
         }
 
         let destinationPath = canonicalPath(sameDirectoryOutputURL(for: source).path)
@@ -59,7 +63,7 @@ enum ModelWorkflowResolver {
 
     private static func canonicalPath(_ path: String) -> String {
         let expanded = NSString(string: path).expandingTildeInPath
-        return URL(fileURLWithPath: expanded).standardizedFileURL.path
+        return URL(fileURLWithPath: expanded).standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     private static func normalizedEvidence(_ value: String?) -> String? {

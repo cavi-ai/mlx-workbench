@@ -45,17 +45,44 @@ final class ModelWorkflowResolverTests: XCTestCase {
         XCTAssertTrue(reason.contains("already exists"))
     }
 
-    private func makeGGUF(path: String, modelKey: String?) -> ModelItem {
+    func testMatchingSignatureReusesDespiteDifferentModelKeys() {
+        let source = makeGGUF(path: "/Models/llama-3-q4.gguf", modelKey: "llama-3", signature: "signature-1")
+        let existing = makeLibraryModel(path: "/Models/llama-3-q4", modelKey: "different-key", signature: "signature-1")
+
+        XCTAssertEqual(
+            ModelWorkflowResolver.destination(for: source, library: makeSnapshot(models: [existing]),
+                                              fileManager: fileManager, now: now),
+            .reuseExisting(existing)
+        )
+    }
+
+    func testPathFallbackResolvesSymlinkAliases() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let realDirectory = root.appendingPathComponent("real")
+        let aliasDirectory = root.appendingPathComponent("alias")
+        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: aliasDirectory, withDestinationURL: realDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = makeGGUF(path: aliasDirectory.appendingPathComponent("llama-3-q4.gguf").path,
+                              modelKey: nil)
+        let existing = makeLibraryModel(path: realDirectory.appendingPathComponent("llama-3-q4").path,
+                                        modelKey: nil, signature: nil)
+
+        XCTAssertTrue(ModelWorkflowResolver.matchesEquivalent(source: source, candidate: existing))
+    }
+
+    private func makeGGUF(path: String, modelKey: String?, signature: String? = nil) -> ModelItem {
         ModelItem(path: path, name: "llama-3-q4.gguf", bytes: 1_024, modifiedAt: nil, shard: nil,
                   modelKey: modelKey, architecture: "llama", quantization: "Q4", parameters: "3B",
-                  structure: nil, signature: nil, companion: nil, readable: true, status: "ready",
+                  structure: nil, signature: signature, companion: nil, readable: true, status: "ready",
                   outputs: [], tensorCount: nil, error: nil)
     }
 
-    private func makeLibraryModel(path: String, modelKey: String?) -> LibraryModel {
+    private func makeLibraryModel(path: String, modelKey: String?, signature: String? = nil) -> LibraryModel {
         LibraryModel(item: ModelItem(path: path, name: "llama-3-q4", bytes: 2_048, modifiedAt: nil,
                                      shard: nil, modelKey: modelKey, architecture: "llama",
-                                     quantization: nil, parameters: "3B", structure: nil, signature: nil,
+                                     quantization: nil, parameters: "3B", structure: nil, signature: signature,
                                      companion: nil, readable: true, status: "ready", outputs: [path],
                                      tensorCount: nil, error: nil), normalizedFamilyKey: modelKey)
     }
