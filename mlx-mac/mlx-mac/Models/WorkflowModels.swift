@@ -37,4 +37,8 @@ struct ConversionWorkflow: Codable, Equatable, Identifiable {
     let createdAt: Date
     let updatedAt: Date
     let lastKnownAgentState: String?
+
+    var persistenceIdentifier: String {
+        id.uuidString
+    }
 }
