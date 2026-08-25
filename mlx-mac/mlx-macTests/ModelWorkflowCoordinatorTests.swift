@@ -66,6 +66,33 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         XCTAssertEqual(try originalStore.load(), [original])
     }
 
+    func testConcurrentUpsertsFromTwoStoresPreserveBothRecords() throws {
+        let url = temporaryURL("workflows.json")
+        let stores = [ModelWorkflowStore(fileURL: url), ModelWorkflowStore(fileURL: url)]
+        let records = [
+            makeWorkflow(id: "concurrent-one", state: .queued, receipt: "receipt-one"),
+            makeWorkflow(id: "concurrent-two", state: .running, receipt: "receipt-two"),
+        ]
+        let errorsLock = NSLock()
+        var errors: [Error] = []
+
+        DispatchQueue.concurrentPerform(iterations: records.count) { index in
+            do {
+                try stores[index].upsert(records[index])
+            } catch {
+                errorsLock.lock()
+                errors.append(error)
+                errorsLock.unlock()
+            }
+        }
+
+        XCTAssertTrue(errors.isEmpty, "unexpected upsert errors: \(errors)")
+        XCTAssertEqual(
+            Set(try stores[0].load().map(\.persistenceIdentifier)),
+            Set(records.map(\.persistenceIdentifier))
+        )
+    }
+
     private func makeStore() -> ModelWorkflowStore {
         ModelWorkflowStore(fileURL: temporaryURL("workflows.json"))
     }
@@ -104,6 +131,8 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         switch value {
         case "original": return UUID(uuidString: "00000000-0000-4000-8000-000000000006")!
         case "replacement": return UUID(uuidString: "00000000-0000-4000-8000-000000000007")!
+        case "concurrent-one": return UUID(uuidString: "00000000-0000-4000-8000-000000000008")!
+        case "concurrent-two": return UUID(uuidString: "00000000-0000-4000-8000-000000000009")!
         case "old": return UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
         case "keep": return UUID(uuidString: "00000000-0000-4000-8000-000000000002")!
         case "remove": return UUID(uuidString: "00000000-0000-4000-8000-000000000003")!

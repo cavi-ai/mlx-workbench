@@ -2,11 +2,11 @@ import Foundation
 
 final class ModelWorkflowStore {
     private static let fileName = "model-workflows.json"
+    private static let mutationLock = NSLock()
 
     private let fileURL: URL
     private let fileManager: FileManager
     private let replaceItem: (URL, URL) throws -> Void
-    private let lock = NSLock()
 
     init(fileURL: URL, fileManager: FileManager = .default) {
         self.fileURL = fileURL
@@ -95,8 +95,8 @@ final class ModelWorkflowStore {
     }
 
     private func withLock<T>(_ operation: () throws -> T) rethrows -> T {
-        lock.lock()
-        defer { lock.unlock() }
+        Self.mutationLock.lock()
+        defer { Self.mutationLock.unlock() }
         return try operation()
     }
 
