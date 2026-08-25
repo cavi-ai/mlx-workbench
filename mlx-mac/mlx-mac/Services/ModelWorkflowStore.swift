@@ -5,13 +5,39 @@ final class ModelWorkflowStore {
 
     private let fileURL: URL
     private let fileManager: FileManager
+    private let replaceItem: (URL, URL) throws -> Void
+    private let lock = NSLock()
 
     init(fileURL: URL, fileManager: FileManager = .default) {
         self.fileURL = fileURL
         self.fileManager = fileManager
+        self.replaceItem = { existingURL, temporaryURL in
+            _ = try fileManager.replaceItemAt(
+                existingURL,
+                withItemAt: temporaryURL,
+                backupItemName: nil,
+                options: .usingNewMetadataOnly
+            )
+        }
+    }
+
+    init(
+        fileURL: URL,
+        fileManager: FileManager = .default,
+        replaceItem: @escaping (URL, URL) throws -> Void
+    ) {
+        self.fileURL = fileURL
+        self.fileManager = fileManager
+        self.replaceItem = replaceItem
     }
 
     func load() throws -> [ConversionWorkflow] {
+        try withLock {
+            try loadUnlocked()
+        }
+    }
+
+    private func loadUnlocked() throws -> [ConversionWorkflow] {
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return []
         }
@@ -20,21 +46,27 @@ final class ModelWorkflowStore {
     }
 
     func replace(_ records: [ConversionWorkflow]) throws {
-        try write(records)
+        try withLock {
+            try write(records)
+        }
     }
 
     func upsert(_ record: ConversionWorkflow) throws {
-        var records = try load()
-        if let index = records.firstIndex(where: { $0.persistenceIdentifier == record.persistenceIdentifier }) {
-            records[index] = record
-        } else {
-            records.append(record)
+        try withLock {
+            var records = try loadUnlocked()
+            if let index = records.firstIndex(where: { $0.persistenceIdentifier == record.persistenceIdentifier }) {
+                records[index] = record
+            } else {
+                records.append(record)
+            }
+            try write(records)
         }
-        try write(records)
     }
 
     func remove(id: String) throws {
-        try write(try load().filter { $0.persistenceIdentifier != id })
+        try withLock {
+            try write(try loadUnlocked().filter { $0.persistenceIdentifier != id })
+        }
     }
 
     private func write(_ records: [ConversionWorkflow]) throws {
@@ -42,7 +74,7 @@ final class ModelWorkflowStore {
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         let data = try encoder.encode(records)
         let directory = fileURL.deletingLastPathComponent()
-        let temporaryURL = fileURL.appendingPathExtension("tmp")
+        let temporaryURL = fileURL.appendingPathExtension("tmp-\(UUID().uuidString)")
 
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         if fileManager.fileExists(atPath: temporaryURL.path) {
@@ -52,12 +84,7 @@ final class ModelWorkflowStore {
         do {
             try data.write(to: temporaryURL, options: .atomic)
             if fileManager.fileExists(atPath: fileURL.path) {
-                _ = try fileManager.replaceItemAt(
-                    fileURL,
-                    withItemAt: temporaryURL,
-                    backupItemName: nil,
-                    options: .usingNewMetadataOnly
-                )
+                try replaceItem(fileURL, temporaryURL)
             } else {
                 try fileManager.moveItem(at: temporaryURL, to: fileURL)
             }
@@ -65,6 +92,12 @@ final class ModelWorkflowStore {
             try? fileManager.removeItem(at: temporaryURL)
             throw error
         }
+    }
+
+    private func withLock<T>(_ operation: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try operation()
     }
 
     static func defaultFileURL(fileManager: FileManager = .default) -> URL {

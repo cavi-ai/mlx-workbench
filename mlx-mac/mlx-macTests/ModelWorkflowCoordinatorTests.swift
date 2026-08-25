@@ -50,6 +50,22 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         XCTAssertEqual(try store.load(), [remaining])
     }
 
+    func testFailedReplacementPreservesPreviousPersistedRecord() throws {
+        let url = temporaryURL("workflows.json")
+        let originalStore = ModelWorkflowStore(fileURL: url)
+        let original = makeWorkflow(id: "original", state: .queued, receipt: "receipt-original")
+        try originalStore.replace([original])
+
+        let failingStore = ModelWorkflowStore(fileURL: url, replaceItem: { _, temporaryURL in
+            XCTAssertTrue(FileManager.default.fileExists(atPath: temporaryURL.path))
+            throw TestError.replacementFailed
+        })
+        let replacement = makeWorkflow(id: "replacement", state: .completed, receipt: "receipt-replacement")
+
+        XCTAssertThrowsError(try failingStore.replace([replacement]))
+        XCTAssertEqual(try originalStore.load(), [original])
+    }
+
     private func makeStore() -> ModelWorkflowStore {
         ModelWorkflowStore(fileURL: temporaryURL("workflows.json"))
     }
@@ -86,11 +102,17 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
 
     private func workflowID(_ value: String) -> UUID {
         switch value {
+        case "original": return UUID(uuidString: "00000000-0000-4000-8000-000000000006")!
+        case "replacement": return UUID(uuidString: "00000000-0000-4000-8000-000000000007")!
         case "old": return UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
         case "keep": return UUID(uuidString: "00000000-0000-4000-8000-000000000002")!
         case "remove": return UUID(uuidString: "00000000-0000-4000-8000-000000000003")!
         case "remain": return UUID(uuidString: "00000000-0000-4000-8000-000000000004")!
         default: return UUID(uuidString: "00000000-0000-4000-8000-000000000005")!
         }
+    }
+
+    private enum TestError: Error {
+        case replacementFailed
     }
 }
