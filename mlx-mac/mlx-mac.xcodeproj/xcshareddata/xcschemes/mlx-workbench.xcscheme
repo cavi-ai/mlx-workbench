@@ -30,21 +30,6 @@
             buildForInstalling = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "26UITGT001"
-               BuildableName = "mlx-workbenchUITests.xctest"
-               BlueprintName = "mlx-workbenchUITests"
-               ReferencedContainer = "container:mlx-mac.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
-         <BuildActionEntry
-            buildForAnalyzing = "YES"
-            buildForArchiving = "NO"
-            buildForProfiling = "NO"
-            buildForRunning = "NO"
-            buildForTesting = "YES"
-            buildForInstalling = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
                BlueprintIdentifier = "24TGT002"
                BuildableName = "mlx-workbenchTests.xctest"
                BlueprintName = "mlx-workbenchTests"
@@ -66,15 +51,6 @@
                BlueprintIdentifier = "24TGT002"
                BuildableName = "mlx-workbenchTests.xctest"
                BlueprintName = "mlx-workbenchTests"
-               ReferencedContainer = "container:mlx-mac.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference skipped = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "26UITGT001"
-               BuildableName = "mlx-workbenchUITests.xctest"
-               BlueprintName = "mlx-workbenchUITests"
                ReferencedContainer = "container:mlx-mac.xcodeproj">
             </BuildableReference>
          </TestableReference>

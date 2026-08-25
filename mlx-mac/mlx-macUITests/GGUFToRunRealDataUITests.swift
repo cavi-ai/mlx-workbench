@@ -1,6 +1,11 @@
 import XCTest
 
 final class GGUFToRunRealDataUITests: XCTestCase {
+    private struct ActivityRecordEvidence {
+        let state: String
+        let receipt: String
+    }
+
     private var app: XCUIApplication!
     private var evidenceDirectory: URL!
     private var observations: [String] = []
@@ -28,10 +33,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         evidenceDirectory = URL(fileURLWithPath: runtimeValues["TASK6_EVIDENCE_DIR"]!, isDirectory: true)
         try FileManager.default.createDirectory(at: evidenceDirectory, withIntermediateDirectories: true)
 
-        app = XCUIApplication()
-        app.launchEnvironment["MLX_AGENT_HOME"] = runtimeValues["TASK6_AGENT_HOME"]
-        app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = runtimeValues["TASK6_CONFIG_PATH"]
-        app.launch()
+        launchConfiguredApp()
 
         addTeardownBlock { [weak self] in
             self?.stopServerIfNeeded()
@@ -122,12 +124,31 @@ final class GGUFToRunRealDataUITests: XCTestCase {
 
             app.buttons["Activity"].click()
             XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 20))
-            XCTAssertTrue(app.staticTexts[sourcePath].waitForExistence(timeout: 30), "Activity did not display the selected conversion source.")
+            let initialRecord = try XCTUnwrap(
+                waitForActivityRecord(
+                    sourcePath: sourcePath,
+                    destinationPath: destinationPath,
+                    acceptedStates: ["queued", "running", "completed"],
+                    timeout: 120
+                ),
+                "Activity did not display one receipt-backed record containing the selected source and destination."
+            )
+            XCTAssertNotEqual(initialRecord.receipt, "Not reported", "The selected Activity record had no persisted job receipt.")
             capture("05-activity-receipt", note: "Activity displayed the confirmed real-data conversion record and receipt state.")
 
-            waitForConversionCompletion(timeout: 2_400)
+            restartAndReconcile(
+                sourcePath: sourcePath,
+                destinationPath: destinationPath,
+                receipt: initialRecord.receipt
+            )
+            waitForConversionCompletion(
+                sourcePath: sourcePath,
+                destinationPath: destinationPath,
+                receipt: initialRecord.receipt,
+                timeout: 2_400
+            )
             capture("06-authoritative-conversion-completed", note: "Activity exposed completion after authoritative status and fresh Library discovery.")
-            app.buttons["Run model"].click()
+            rescanLibraryAndRouteExactOutput(destinationPath)
         }
 
         XCTAssertTrue(app.staticTexts["Run"].waitForExistence(timeout: 30), "Completed/reused model did not route into Run.")
@@ -151,24 +172,154 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         capture("10-server-stopped", note: "Stop completed and returned to Activity without deleting model data.")
     }
 
-    private func waitForConversionCompletion(timeout: TimeInterval) {
+    private func launchConfiguredApp() {
+        app = XCUIApplication()
+        app.launchEnvironment["MLX_AGENT_HOME"] = runtimeValues["TASK6_AGENT_HOME"]
+        app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = runtimeValues["TASK6_CONFIG_PATH"]
+        app.launch()
+    }
+
+    private func restartAndReconcile(sourcePath: String, destinationPath: String, receipt: String) {
+        app.terminate()
+        launchConfiguredApp()
+
+        XCTAssertTrue(app.buttons["Activity"].waitForExistence(timeout: 30), "Relaunched app did not expose Activity.")
+        app.buttons["Activity"].click()
+        XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 20))
+        XCTAssertNotNil(
+            waitForActivityRecord(
+                sourcePath: sourcePath,
+                destinationPath: destinationPath,
+                receipt: receipt,
+                acceptedStates: ["queued", "running", "completed"],
+                timeout: 120
+            ),
+            "The receipt-backed selected conversion record did not survive app relaunch."
+        )
+        capture("05-relaunch-reconciled-receipt", note: "Relaunch restored the exact source, destination, and receipt-backed conversion record.")
+
+        app.buttons["Library"].click()
+        XCTAssertTrue(app.staticTexts["Library"].waitForExistence(timeout: 20))
+        requestFreshLibraryScan()
+        searchLibrary(for: URL(fileURLWithPath: sourcePath).lastPathComponent)
+        XCTAssertTrue(app.staticTexts[sourcePath].waitForExistence(timeout: 30), "Fresh post-relaunch Library scan did not preserve the exact selected source path.")
+        capture("05-relaunch-fresh-library-scan", note: "Relaunch reconciliation included an explicit fresh Library scan with the selected source.")
+
+        app.buttons["Activity"].click()
+        XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 20))
+    }
+
+    private func rescanLibraryAndRouteExactOutput(_ destinationPath: String) {
+        app.buttons["Library"].click()
+        XCTAssertTrue(app.staticTexts["Library"].waitForExistence(timeout: 20))
+        requestFreshLibraryScan()
+        searchLibrary(for: URL(fileURLWithPath: destinationPath).lastPathComponent)
+
+        let outputName = URL(fileURLWithPath: destinationPath).lastPathComponent
+        let outputRow = app.staticTexts[outputName].firstMatch
+        XCTAssertTrue(outputRow.waitForExistence(timeout: 30), "Fresh Library scan did not display the completed output row: \(outputName)")
+        outputRow.click()
+        XCTAssertTrue(app.staticTexts[destinationPath].waitForExistence(timeout: 30), "Fresh Library evidence did not contain the exact completed output path.")
+        capture("06-fresh-library-exact-output", note: "Fresh Library scan exposed the exact completed output before Run routing.")
+
+        let selectForTry = app.buttons["Select for Try"]
+        XCTAssertTrue(selectForTry.waitForExistence(timeout: 20), "Exact completed output did not expose the Run routing action.")
+        selectForTry.click()
+    }
+
+    private func requestFreshLibraryScan() {
+        let search = app.textFields["Search family, variant, path, key, or evidence"]
+        XCTAssertTrue(search.waitForExistence(timeout: 180), "Library did not expose a completed scan.")
+        XCTAssertTrue(waitForButtonEnabled("Refresh", timeout: 180), "Library refresh did not become available.")
+        app.buttons["Refresh"].click()
+        XCTAssertTrue(waitForButtonDisabled("Refresh", timeout: 10), "Explicit Library rescan did not enter its scanning state.")
+        XCTAssertTrue(waitForButtonEnabled("Refresh", timeout: 180), "Explicit Library rescan did not complete.")
+        XCTAssertTrue(app.staticTexts["Scanned"].exists, "Fresh Library scan timestamp evidence was absent.")
+    }
+
+    private func searchLibrary(for query: String) {
+        let search = app.textFields["Search family, variant, path, key, or evidence"]
+        XCTAssertTrue(search.waitForExistence(timeout: 30))
+        search.click()
+        search.typeKey("a", modifierFlags: .command)
+        search.typeKey(.delete, modifierFlags: [])
+        search.typeText(query)
+    }
+
+    private func waitForActivityRecord(
+        sourcePath: String,
+        destinationPath: String,
+        receipt: String? = nil,
+        acceptedStates: Set<String>,
+        timeout: TimeInterval
+    ) -> ActivityRecordEvidence? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if app.buttons["Run model"].exists && app.staticTexts["Completed"].exists {
-                return
+            if let record = activityRecord(sourcePath: sourcePath, destinationPath: destinationPath, receipt: receipt),
+               acceptedStates.contains(record.state) {
+                return record
             }
-            if app.staticTexts["Failed"].exists {
-                capture("conversion-failed", note: "Activity reported a failed real-data conversion.")
-                XCTFail("Activity reported that the real-data conversion failed.")
-                return
+            Thread.sleep(forTimeInterval: 1)
+        }
+        return nil
+    }
+
+    private func activityRecord(
+        sourcePath: String,
+        destinationPath: String,
+        receipt expectedReceipt: String? = nil
+    ) -> ActivityRecordEvidence? {
+        let labels = visibleLabels()
+        let source = compacted(sourcePath)
+        let destination = compacted(destinationPath)
+        let states = Set(["queued", "running", "completed", "failed"])
+
+        for sourceIndex in labels.indices where compacted(labels[sourceIndex]) == source {
+            let start = max(labels.startIndex, sourceIndex - 6)
+            let end = min(labels.endIndex, sourceIndex + 16)
+            let card = Array(labels[start..<end])
+            let relativeSourceIndex = sourceIndex - start
+            guard let destinationIndex = card.firstIndex(where: { compacted($0) == destination }),
+                  destinationIndex > relativeSourceIndex,
+                  let receiptTitleIndex = card[(destinationIndex + 1)...].firstIndex(where: { compacted($0) == "Receipt" }),
+                  receiptTitleIndex + 1 < card.count else {
+                continue
+            }
+            let receipt = card[receiptTitleIndex + 1]
+            if let expectedReceipt, compacted(receipt) != compacted(expectedReceipt) { continue }
+            guard let state = card.prefix(relativeSourceIndex).lazy
+                .map({ self.compacted($0).lowercased() })
+                .first(where: states.contains) else {
+                continue
+            }
+            return ActivityRecordEvidence(state: state, receipt: receipt)
+        }
+        return nil
+    }
+
+    private func waitForConversionCompletion(
+        sourcePath: String,
+        destinationPath: String,
+        receipt: String,
+        timeout: TimeInterval
+    ) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let record = activityRecord(sourcePath: sourcePath, destinationPath: destinationPath, receipt: receipt) {
+                if record.state == "completed" { return }
+                if record.state == "failed" {
+                    capture("conversion-failed", note: "The selected receipt-backed Activity record reported a failed conversion.")
+                    XCTFail("The selected receipt-backed real-data conversion failed.")
+                    return
+                }
             }
             if app.buttons["Refresh"].exists && app.buttons["Refresh"].isEnabled {
                 app.buttons["Refresh"].click()
             }
             Thread.sleep(forTimeInterval: 5)
         }
-        capture("conversion-timeout", note: "Conversion did not reach authoritative completion before timeout.")
-        XCTFail("Conversion did not reach receipt-backed completion and fresh Library discovery within \(Int(timeout)) seconds.")
+        capture("conversion-timeout", note: "The selected receipt-backed conversion did not reach authoritative completion before timeout.")
+        XCTFail("The selected conversion did not reach receipt-backed completion within \(Int(timeout)) seconds.")
     }
 
     private func configuredValue(_ key: String) -> String? {
@@ -211,6 +362,16 @@ final class GGUFToRunRealDataUITests: XCTestCase {
             let button = app.buttons[label]
             if button.exists && button.isEnabled { return true }
             Thread.sleep(forTimeInterval: 1)
+        }
+        return false
+    }
+
+    private func waitForButtonDisabled(_ label: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let button = app.buttons[label]
+            if button.exists && !button.isEnabled { return true }
+            Thread.sleep(forTimeInterval: 0.1)
         }
         return false
     }
