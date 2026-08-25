@@ -20,6 +20,7 @@ class AppHost: ObservableObject {
     @Published var recommendationPreferences: RecommendationPreferences = .defaults
     @Published var hardwareProfile: HardwareProfile
     @Published var lastError: String?
+    @Published var modelWorkflow: ModelWorkflowCoordinator
 
     let api: WorkbenchAPI
 
@@ -45,7 +46,9 @@ class AppHost: ObservableObject {
         runtimeReport: RuntimeReport? = nil,
         hardwareProfile: HardwareProfile = HardwareProfile.current(),
         now: @escaping @Sendable () -> Date = { Date() },
-        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil
+        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil,
+        modelWorkflowAPI: ModelWorkflowAPI? = nil,
+        modelWorkflowPersistence: ModelWorkflowPersistence? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -56,6 +59,10 @@ class AppHost: ObservableObject {
         self.config = loadedConfig
         let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
         self.api = api
+        self.modelWorkflow = ModelWorkflowCoordinator(
+            api: modelWorkflowAPI ?? .live(api: api),
+            persistence: modelWorkflowPersistence ?? .live(store: ModelWorkflowStore(fileURL: ModelWorkflowStore.defaultFileURL()))
+        )
         self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
         self.configPath = configPath ?? configModule.configPath()
         self.vendorAgentPath = vendorAgentPath ?? configModule.vendorAgentPath()
@@ -78,6 +85,11 @@ class AppHost: ObservableObject {
                 limit: limit
             )
         }
+        modelWorkflow.setCompletionRescan { [weak self] in
+            guard let self else { return nil }
+            await self.rescan(limit: nil, reconcileWorkflow: false)
+            return self.librarySnapshot
+        }
     }
 
     func requestRescan() {
@@ -85,6 +97,10 @@ class AppHost: ObservableObject {
     }
 
     func rescan(limit: Int? = nil) async {
+        await rescan(limit: limit, reconcileWorkflow: true)
+    }
+
+    private func rescan(limit: Int?, reconcileWorkflow: Bool) async {
         guard !isScanning else { return }
         isScanning = true
         defer { isScanning = false }
@@ -101,8 +117,11 @@ class AppHost: ObservableObject {
             scanResult = scan
             librarySnapshot = snapshot
             lastError = nil
+            if reconcileWorkflow {
+                await modelWorkflow.reconcile(snapshot: snapshot, jobs: [])
+                await modelWorkflow.refreshOperationalStatus()
+            }
         } catch {
-            scanResult = nil
             lastError = Self.render(error)
         }
     }

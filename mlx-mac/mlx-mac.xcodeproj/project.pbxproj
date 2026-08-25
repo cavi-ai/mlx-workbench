@@ -22,6 +22,7 @@
 		24BBLD036 /* WorkflowModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF030 /* WorkflowModels.swift */; };
 		24BBLD038 /* ModelWorkflowResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF032 /* ModelWorkflowResolver.swift */; };
 		24BBLD039 /* ModelWorkflowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF033 /* ModelWorkflowStore.swift */; };
+		24BBLD041 /* ModelWorkflowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF035 /* ModelWorkflowCoordinator.swift */; };
 
 		24BBLD000005 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000005 /* x */; };
 
@@ -156,6 +157,7 @@
 		24FREF032 /* ModelWorkflowResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowResolver.swift; path = Services/ModelWorkflowResolver.swift; sourceTree = "<group>"; };
 		24FREF033 /* ModelWorkflowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowStore.swift; path = Services/ModelWorkflowStore.swift; sourceTree = "<group>"; };
 		24FREF034 /* ModelWorkflowCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowCoordinatorTests.swift; path = ModelWorkflowCoordinatorTests.swift; sourceTree = "<group>"; };
+		24FREF035 /* ModelWorkflowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowCoordinator.swift; path = Services/ModelWorkflowCoordinator.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -211,6 +213,7 @@
 				24FREF020 /* ModelLibraryBuilder.swift */,
 				24FREF032 /* ModelWorkflowResolver.swift */,
 				24FREF033 /* ModelWorkflowStore.swift */,
+				24FREF035 /* ModelWorkflowCoordinator.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
@@ -410,6 +413,7 @@
 				24BBLD026 /* ModelLibraryBuilder.swift in Sources */,
 				24BBLD038 /* ModelWorkflowResolver.swift in Sources */,
 				24BBLD039 /* ModelWorkflowStore.swift in Sources */,
+				24BBLD041 /* ModelWorkflowCoordinator.swift in Sources */,
 				24BBLD031 /* CatalogClient.swift in Sources */,
 				24BBLD032 /* CatalogStore.swift in Sources */,
 				24BBLD034 /* RecommendationEngine.swift in Sources */,

@@ -4,6 +4,53 @@ import XCTest
 @testable import mlx_workbench
 
 final class ModelWorkflowCoordinatorTests: XCTestCase {
+    func testInspectingEquivalentModelProducesRunExistingState() async {
+        let host = await makeHost(snapshot: snapshotWithEquivalentMLX())
+
+        await MainActor.run {
+            host.modelWorkflow.inspect(source: ggufSource, snapshot: host.librarySnapshot)
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .existingModelFound)
+            XCTAssertEqual(host.modelWorkflow.workflow.completedModelPath, existingMLXPath)
+        }
+    }
+
+    func testConfirmStoresReceiptAndEntersQueuedState() async {
+        let host = await makeHost(preview: ["preview_hash": "hash-1"], confirmReceipt: "receipt-1")
+        await MainActor.run { host.modelWorkflow.inspect(source: ggufSource, snapshot: nil) }
+        await host.modelWorkflow.preview(qBits: 4, out: nil)
+        await host.modelWorkflow.confirm(qBits: 4)
+
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .queued)
+            XCTAssertEqual(host.modelWorkflow.workflow.jobReceipt, "receipt-1")
+        }
+    }
+
+    func testFailedStatusPreservesLastKnownRunningState() async {
+        let host = await makeHost(statusError: TestError.offline)
+        await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
+
+        await host.modelWorkflow.reconcile(snapshot: nil, jobs: [])
+
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .running)
+            XCTAssertTrue(host.modelWorkflow.workflow.message?.contains("unavailable") == true)
+        }
+    }
+
+    func testCompletedJobRequiresFreshRescanBeforeCompletion() async {
+        let completedJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "completed")
+        let host = await makeHost(jobs: [completedJob])
+        await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
+
+        await host.modelWorkflow.reconcile(snapshot: nil, jobs: [])
+
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .running)
+            XCTAssertTrue(host.modelWorkflow.workflow.message?.contains("fresh library scan") == true)
+        }
+    }
+
     func testMissingStoreLoadsEmptyRecords() throws {
         let store = makeStore()
 
@@ -141,7 +188,72 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
-    private enum TestError: Error {
+    private let existingMLXPath = "/Models/existing-mlx"
+
+    private var ggufSource: ModelItem {
+        ModelItem(
+            path: "/Models/source.gguf", name: "source", bytes: 1, modifiedAt: nil, shard: nil,
+            modelKey: "source-model", architecture: nil, quantization: nil, parameters: nil,
+            structure: nil, signature: "signature-1", companion: nil, readable: true,
+            status: "pending", outputs: [], tensorCount: nil, error: nil
+        )
+    }
+
+    private func snapshotWithEquivalentMLX() -> LibrarySnapshot {
+        let item = ModelItem(
+            path: existingMLXPath, name: "existing", bytes: 1, modifiedAt: nil, shard: nil,
+            modelKey: "source-model", architecture: nil, quantization: nil, parameters: nil,
+            structure: nil, signature: "signature-1", companion: nil, readable: true,
+            status: "ready", outputs: [], tensorCount: nil, error: nil
+        )
+        return LibrarySnapshot(
+            models: [LibraryModel(item: item)],
+            groups: [],
+            hardware: HardwareProfile.current(),
+            generatedAt: Date(timeIntervalSinceReferenceDate: 100)
+        )
+    }
+
+    private func makeHost(
+        snapshot: LibrarySnapshot? = nil,
+        preview: [String: Any] = ["preview_hash": "preview-1"],
+        confirmReceipt: String = "receipt-1",
+        jobs: [Job] = [],
+        statusError: Error? = nil
+    ) async -> AppHost {
+        let api = ModelWorkflowAPI(
+            convertPreview: { _, _, _ in preview },
+            convertStart: { _, _, _, _ in ["receipt": confirmReceipt] },
+            convertStatus: {
+                if let statusError { throw statusError }
+                return jobs
+            },
+            servePreview: { _, _, _ in ["preview_hash": "serve-hash"] },
+            serveStart: { _, _, _, _ in ["receipt": "serve-receipt"] },
+            serveStatus: { [] },
+            serveStop: { _ in [:] }
+        )
+        let store = makeStore()
+        return await MainActor.run {
+            let host = AppHost(
+                config: Config.defaults(),
+                modelWorkflowAPI: api,
+                modelWorkflowPersistence: .live(store: store)
+            )
+            host.librarySnapshot = snapshot
+            return host
+        }
+    }
+
+    private enum TestError: LocalizedError {
         case replacementFailed
+        case offline
+
+        var errorDescription: String? {
+            switch self {
+            case .replacementFailed: return "replacement failed"
+            case .offline: return "offline"
+            }
+        }
     }
 }
