@@ -32,6 +32,30 @@ final class ModelWorkflowResolverTests: XCTestCase {
         )
     }
 
+    func testGGUFSourceIsNotReusedAsItselfWhenAllEvidenceMatches() {
+        let source = makeGGUF(
+            path: "/Models/llama-3-q4.gguf",
+            modelKey: "llama-3",
+            signature: "signature-1"
+        )
+        let sourceRecord = LibraryModel(
+            item: source,
+            normalizedFamilyKey: "llama-3",
+            sourcePaths: [source.path],
+            outputPaths: [source.path]
+        )
+
+        XCTAssertEqual(
+            ModelWorkflowResolver.destination(
+                for: source,
+                library: makeSnapshot(models: [sourceRecord]),
+                fileManager: fileManager,
+                now: now
+            ),
+            .available(URL(fileURLWithPath: "/Models/llama-3-q4"))
+        )
+    }
+
     func testNonEquivalentExistingDestinationBlocksInsteadOfSuffixing() throws {
         let source = makeGGUF(path: "/Models/llama-3-q4.gguf", modelKey: "llama-3")
         try fileManager.createDirectory(atPath: "/Models/llama-3-q4", withIntermediateDirectories: true)

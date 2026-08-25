@@ -95,9 +95,10 @@ struct SectionTitle: View {
 }
 
 extension View {
-    func formSection<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    func formSection<SupplementalContent: View>(@ViewBuilder content: () -> SupplementalContent) -> some View {
         Group {
             VStack(alignment: .leading, spacing: 8) {
+                self
                 content()
             }
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF001 /* GGUFToRunRealDataUITests.swift */; };
+		26UIBLD002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24BREF001 /* XCTest.framework */; };
 		24BBLD000000 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000000 /* x */; };
 
 		24BBLD000001 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000001 /* x */; };
@@ -86,6 +88,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		26UIREF001 /* GGUFToRunRealDataUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GGUFToRunRealDataUITests.swift; sourceTree = "<group>"; };
+		26UIREF002 /* mlx-workbenchUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "mlx-workbenchUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		24FREF000000 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = App.swift; path = App.swift; sourceTree = "<group>"; };
 
 		24FREF000001 /* AppHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHost.swift; path = AppHost.swift; sourceTree = "<group>"; };
@@ -170,6 +174,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		26UIPHRM1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				26UIBLD002 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		24PHRM1 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -193,6 +205,7 @@
 			children = (
 				24GSRC01 /* mlx-mac */,
 				24GTEST01 /* mlx-macTests */,
+				26UIGRP001 /* mlx-macUITests */,
 				24GIV01 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -251,6 +264,7 @@
 			children = (
 				24PROD01 /* mlx-workbench.app */,
 				24PROD02 /* mlx-workbenchTests.xctest */,
+				26UIREF002 /* mlx-workbenchUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -269,6 +283,14 @@
 				24FREF034 /* ModelWorkflowCoordinatorTests.swift */,
 			);
 			path = mlx-macTests;
+			sourceTree = "<group>";
+		};
+		26UIGRP001 /* mlx-macUITests */ = {
+			isa = PBXGroup;
+			children = (
+				26UIREF001 /* GGUFToRunRealDataUITests.swift */,
+			);
+			path = "mlx-macUITests";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -308,6 +330,23 @@
 			productReference = 24PROD02 /* mlx-workbenchTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		26UITGT001 /* mlx-workbenchUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 26UICFGTG1 /* Build configuration list for PBXNativeTarget "mlx-workbenchUITests" */;
+			buildPhases = (
+				26UIPHSRC1 /* Sources */,
+				26UIPHRM1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				26UITDEP01 /* PBXTargetDependency */,
+			);
+			name = "mlx-workbenchUITests";
+			productName = "mlx-workbenchUITests";
+			productReference = 26UIREF002 /* mlx-workbenchUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -323,6 +362,10 @@
 					};
 					24TGT002 = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					26UITGT001 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = 24TGT001;
 					};
 				};
 			};
@@ -341,11 +384,17 @@
 			targets = (
 				24TGT001 /* mlx-workbench */,
 				24TGT002 /* mlx-workbenchTests */,
+				26UITGT001 /* mlx-workbenchUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXTargetDependency section */
+		26UITDEP01 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 24TGT001 /* mlx-workbench */;
+			targetProxy = 26UITPXY01 /* PBXContainerItemProxy */;
+		};
 		24TDEP001 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 24TGT001 /* mlx-workbench */;
@@ -354,6 +403,13 @@
 /* End PBXTargetDependency section */
 
 /* Begin PBXContainerItemProxy section */
+		26UITPXY01 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 24PRJ001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 24TGT001;
+			remoteInfo = "mlx-workbench";
+		};
 		24TPXY001 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 24PRJ001 /* Project object */;
@@ -376,6 +432,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		26UIPHSRC1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		24PHSRC1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -441,6 +505,39 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		26UITCLD1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.cavi.mlxworkbench.uitests";
+				PRODUCT_NAME = "mlx-workbenchUITests";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = TEST;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "mlx-workbench";
+			};
+			name = Debug;
+		};
+		26UITCLR1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.cavi.mlxworkbench.uitests";
+				PRODUCT_NAME = "mlx-workbenchUITests";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "mlx-workbench";
+			};
+			name = Release;
+		};
 		24BCLD01 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -568,6 +665,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		26UICFGTG1 /* Build configuration list for PBXNativeTarget "mlx-workbenchUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				26UITCLD1 /* Debug */,
+				26UITCLR1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		24CFGPR1 /* Build configuration list for PBXProject "mlx-workbench" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -94,11 +94,13 @@ final class LibraryViewTests: XCTestCase {
     func testPreparePresentationShowsSourceAndSameDirectoryDestination() {
         let presentation = PrepareWorkflowPresentation(workflow: makeWorkflow(
             sourcePath: "/models/atlas.gguf",
-            outputPath: "/models/atlas-mlx"
+            outputPath: "/models/atlas-mlx",
+            state: .inspectingSource
         ))
 
         XCTAssertEqual(presentation.sourcePath, "/models/atlas.gguf")
         XCTAssertEqual(presentation.destinationPath, "/models/atlas-mlx")
+        XCTAssertEqual(presentation.primaryAction, .preview)
         XCTAssertTrue(presentation.canPreview)
     }
 

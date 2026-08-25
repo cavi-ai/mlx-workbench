@@ -30,6 +30,13 @@ enum ModelWorkflowResolver {
     }
 
     static func matchesEquivalent(source: ModelItem, candidate: LibraryModel) -> Bool {
+        let sourcePath = canonicalPath(source.path)
+        let candidatePath = canonicalPath(candidate.item.path)
+        guard candidatePath != sourcePath,
+              URL(fileURLWithPath: candidatePath).pathExtension.lowercased() != "gguf" else {
+            return false
+        }
+
         if let sourceKey = normalizedEvidence(source.modelKey),
            let candidateKey = normalizedEvidence(candidate.item.modelKey ?? candidate.normalizedFamilyKey) {
             if sourceKey == candidateKey {
@@ -50,7 +57,7 @@ enum ModelWorkflowResolver {
             return true
         }
 
-        let sourceIdentity = normalizedPathIdentity(URL(fileURLWithPath: canonicalPath(source.path)).deletingPathExtension().lastPathComponent)
+        let sourceIdentity = normalizedPathIdentity(URL(fileURLWithPath: sourcePath).deletingPathExtension().lastPathComponent)
         guard !sourceIdentity.isEmpty else { return false }
         return candidatePaths.contains {
             normalizedPathIdentity(URL(fileURLWithPath: canonicalPath($0)).lastPathComponent) == sourceIdentity
