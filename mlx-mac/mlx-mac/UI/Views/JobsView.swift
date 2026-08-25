@@ -2,7 +2,7 @@ import SwiftUI
 
 enum ActivityWorkflowAction: Equatable {
     case openInLibrary(String)
-    case runModel(String)
+    case runModel(ConversionWorkflow)
     case retryPreview(ConversionWorkflow)
 }
 
@@ -27,16 +27,32 @@ struct ActivityWorkflowCardPresentation: Identifiable, Equatable {
     }
     var isActive: Bool { workflow.state == .queued || workflow.state == .running }
 
-    init(workflow: ConversionWorkflow, job: Job?, snapshot: LibrarySnapshot?) {
+    init(
+        workflow: ConversionWorkflow,
+        job: Job?,
+        snapshot: LibrarySnapshot?,
+        sourceEvidence: ModelItem? = nil,
+        agentReady: Bool = false,
+        convertRuntimeReady: Bool = false
+    ) {
         self.workflow = workflow
         self.logPath = job?.logPath
         var available: [ActivityWorkflowAction] = []
         if let path = workflow.completedModelPath,
+           workflow.state == .completed,
+           workflow.outputPath == path,
            let model = snapshot?.models.first(where: { $0.item.path == path }) {
             available.append(.openInLibrary(path))
-            if model.readiness == .ready { available.append(.runModel(path)) }
+            if model.readiness == .ready { available.append(.runModel(workflow)) }
         }
-        if workflow.state == .failed, !workflow.sourcePath.isEmpty {
+        let hasUsableSourceEvidence = sourceEvidence?.path == workflow.sourcePath
+            && sourceEvidence?.readable != false
+            && sourceEvidence?.status.lowercased() != "quarantined"
+        if workflow.state == .failed,
+           !workflow.sourcePath.isEmpty,
+           hasUsableSourceEvidence,
+           agentReady,
+           convertRuntimeReady {
             available.append(.retryPreview(workflow))
         }
         self.actions = available
@@ -48,7 +64,10 @@ enum ActivityPresentation {
         workflow: ConversionWorkflow,
         history: [ConversionWorkflow],
         jobs: [Job],
-        snapshot: LibrarySnapshot?
+        snapshot: LibrarySnapshot?,
+        scanModels: [ModelItem],
+        agentReady: Bool,
+        convertRuntimeReady: Bool
     ) -> [ActivityWorkflowCardPresentation] {
         var records = history
         if workflow.state != .idle {
@@ -60,7 +79,15 @@ enum ActivityPresentation {
         }
         return records.sorted { $0.updatedAt > $1.updatedAt }.map { record in
             let job = jobs.first { $0.receipt == record.jobReceipt && record.jobReceipt != nil }
-            return ActivityWorkflowCardPresentation(workflow: record, job: job, snapshot: snapshot)
+            let source = scanModels.first(where: { $0.path == record.sourcePath })
+            return ActivityWorkflowCardPresentation(
+                workflow: record,
+                job: job,
+                snapshot: snapshot,
+                sourceEvidence: source,
+                agentReady: agentReady,
+                convertRuntimeReady: convertRuntimeReady
+            )
         }
     }
 }
@@ -89,8 +116,16 @@ struct JobsView: View {
             workflow: appHost.modelWorkflow.workflow,
             history: appHost.modelWorkflow.history,
             jobs: lastKnownJobs,
-            snapshot: appHost.librarySnapshot
+            snapshot: appHost.librarySnapshot,
+            scanModels: appHost.scanResult?.models ?? [],
+            agentReady: agentReady,
+            convertRuntimeReady: appHost.runtimeReport.convert.ok
         )
+    }
+
+    private var agentReady: Bool {
+        if case .ready = appHost.agentHealth { return true }
+        return false
     }
 
     var body: some View {
@@ -217,10 +252,12 @@ struct JobsView: View {
         case .openInLibrary(let path):
             appHost.selectedModelPath = path
             onRouteSelection("models")
-        case .runModel(let path):
+        case .runModel(let record):
+            guard let path = record.completedModelPath else { return }
             guard let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path }) else { return }
+            guard record.state == .completed, record.outputPath == path, model.readiness == .ready else { return }
+            appHost.modelWorkflow.restore(record)
             appHost.selectedModelPath = path
-            appHost.modelWorkflow.prepareServe(model: model)
             onRouteSelection("serve")
         case .retryPreview(let record):
             appHost.modelWorkflow.restore(record)

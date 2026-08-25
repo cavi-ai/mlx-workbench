@@ -194,9 +194,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
     }
 
-    func stopServer() async {
-        guard let server = servers.first(where: { $0.state?.lowercased() == "running" }), let port = server.port else {
-            update(serveState: .failed, message: "No authoritative running server port is available to stop.", errorMessage: "Server status is unavailable.")
+    func stopServer(modelPath: String) async {
+        guard let server = servers.first(where: {
+            $0.state?.lowercased() == "running" && $0.repo == modelPath
+        }), let port = server.port else {
+            update(serveState: .failed, message: "No authoritative running server is available for the selected model.", errorMessage: "Selected model server status is unavailable.")
             return
         }
         do {

@@ -44,7 +44,7 @@ final class CatalogStoreTests: XCTestCase {
         let valid = makeSnapshot(
             revision: "r1",
             fetchedAt: Date(timeIntervalSinceReferenceDate: 20),
-            recordCount: 1
+            recordCount: 0
         )
         try store.save(valid)
 

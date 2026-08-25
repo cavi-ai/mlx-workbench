@@ -223,12 +223,30 @@ final class AppHostHealthTests: XCTestCase {
         let model = makeOperationalModel(path: "/models/atlas-mlx", status: "ready")
         let workflow = makeOperationalWorkflow(state: .completed, completedModelPath: model.item.path)
         let card = ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: makeOperationalSnapshot(models: [model]))
-        XCTAssertEqual(card.actions, [.openInLibrary(model.item.path), .runModel(model.item.path)])
+        XCTAssertEqual(card.actions, [.openInLibrary(model.item.path), .runModel(workflow)])
     }
 
     func testActivityFailureOffersRetryPreview() {
         let workflow = makeOperationalWorkflow(state: .failed, errorMessage: "failed exactly")
-        XCTAssertEqual(ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: nil).actions, [.retryPreview(workflow)])
+        let source = makeOperationalModel(path: workflow.sourcePath, status: "pending").item
+        let card = ActivityWorkflowCardPresentation(
+            workflow: workflow,
+            job: nil,
+            snapshot: nil,
+            sourceEvidence: source,
+            agentReady: true,
+            convertRuntimeReady: true
+        )
+        XCTAssertEqual(card.actions, [.retryPreview(workflow)])
+    }
+
+    func testActivityRetryRequiresCurrentUsableSourceAndPrerequisites() {
+        let workflow = makeOperationalWorkflow(state: .failed, errorMessage: "historic failure")
+        let source = makeOperationalModel(path: workflow.sourcePath, status: "pending").item
+
+        XCTAssertFalse(ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: nil).actions.contains(.retryPreview(workflow)))
+        XCTAssertFalse(ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: nil, sourceEvidence: source, agentReady: false, convertRuntimeReady: true).actions.contains(.retryPreview(workflow)))
+        XCTAssertFalse(ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: nil, sourceEvidence: source, agentReady: true, convertRuntimeReady: false).actions.contains(.retryPreview(workflow)))
     }
 
     func testRunPresentationShowsAuthoritativeActiveServer() {
@@ -247,6 +265,70 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertEqual(presentation.remediation, "mlx_lm.server is missing")
         XCTAssertFalse(presentation.canPreview)
         XCTAssertFalse(presentation.canConfirm)
+    }
+
+    func testRunPresentationRejectsArbitraryReadyLibrarySelection() {
+        let selected = makeOperationalModel(path: "/models/arbitrary-mlx", status: "ready")
+        let workflow = makeOperationalWorkflow(
+            state: .completed,
+            serveState: .readyToConfirm,
+            completedModelPath: "/models/atlas-mlx"
+        )
+        let presentation = RunPresentation(
+            workflow: workflow,
+            model: selected,
+            servers: [],
+            runtimeAvailable: true,
+            runtimeMessage: "ready"
+        )
+
+        XCTAssertNil(presentation.modelPath)
+        XCTAssertFalse(presentation.canPreview)
+        XCTAssertFalse(presentation.canConfirm)
+        XCTAssertNotNil(presentation.selectionError)
+    }
+
+    func testRunPresentationMatchesOnlySelectedModelsServer() {
+        let model = makeOperationalModel(path: "/models/atlas-mlx", status: "ready")
+        let unrelated = ServerInfo(repo: "/models/other-mlx", runtime: "mlx_lm", port: 9001, pid: 1, state: "running", logPath: "/logs/other.log", startedAt: nil, receipt: "other")
+        let selected = ServerInfo(repo: model.item.path, runtime: "mlx_lm", port: 9002, pid: 2, state: "running", logPath: "/logs/selected.log", startedAt: nil, receipt: "selected")
+        let workflow = makeOperationalWorkflow(state: .completed, completedModelPath: model.item.path)
+
+        let multiple = RunPresentation(workflow: workflow, model: model, servers: [unrelated, selected], runtimeAvailable: true, runtimeMessage: "ready")
+        XCTAssertEqual(multiple.activeServer, selected)
+        XCTAssertFalse(multiple.canPreview)
+
+        let unrelatedOnly = RunPresentation(workflow: workflow, model: model, servers: [unrelated], runtimeAvailable: true, runtimeMessage: "ready")
+        XCTAssertNil(unrelatedOnly.activeServer)
+        XCTAssertTrue(unrelatedOnly.canPreview)
+    }
+
+    @MainActor
+    func testCoordinatorStopsOnlySelectedModelsServer() async {
+        let unrelated = ServerInfo(repo: "/models/other-mlx", runtime: "mlx_lm", port: 9001, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "other")
+        let selected = ServerInfo(repo: "/models/atlas-mlx", runtime: "mlx_lm", port: 9002, pid: 2, state: "running", logPath: nil, startedAt: nil, receipt: "selected")
+        var stoppedPorts: [Int] = []
+        let api = ModelWorkflowAPI(
+            convertPreview: { _, _, _ in [:] },
+            convertStart: { _, _, _, _ in [:] },
+            convertStatus: { [] },
+            servePreview: { _, _, _ in [:] },
+            serveStart: { _, _, _, _ in [:] },
+            serveStatus: { [unrelated, selected] },
+            serveStop: { port in
+                stoppedPorts.append(port)
+                return [:]
+            }
+        )
+        let coordinator = ModelWorkflowCoordinator(
+            api: api,
+            persistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in })
+        )
+
+        await coordinator.refreshOperationalStatus()
+        await coordinator.stopServer(modelPath: "/models/atlas-mlx")
+
+        XCTAssertEqual(stoppedPorts, [9002])
     }
 
     func testHomeNextActionForNoRootsIsConfiguration() {
@@ -268,9 +350,20 @@ final class AppHostHealthTests: XCTestCase {
     }
 
     func testHomeNextActionForCompletedOutputIsRun() {
-        let action = makeHomeAction(workflow: makeOperationalWorkflow(state: .completed, completedModelPath: "/models/atlas-mlx"))
+        let model = makeOperationalModel(path: "/models/atlas-mlx", status: "ready")
+        let action = makeHomeAction(
+            workflow: makeOperationalWorkflow(state: .completed, completedModelPath: model.item.path),
+            snapshot: makeOperationalSnapshot(models: [model])
+        )
         XCTAssertEqual(action.kind, .run("/models/atlas-mlx"))
         XCTAssertEqual(action.route, "serve")
+    }
+
+    func testHomeDoesNotRunArbitraryReadyLibraryModel() {
+        let model = makeOperationalModel(path: "/models/arbitrary-mlx", status: "ready")
+        let action = makeHomeAction(snapshot: makeOperationalSnapshot(models: [model]))
+        XCTAssertEqual(action.kind, .library)
+        XCTAssertEqual(action.route, "models")
     }
 
     func testHomeNextActionForFailureIsActivityWithExactReason() {

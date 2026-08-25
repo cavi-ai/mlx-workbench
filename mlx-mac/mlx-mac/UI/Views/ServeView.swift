@@ -7,11 +7,34 @@ struct RunPresentation: Equatable {
     let runtimeAvailable: Bool
     let runtimeMessage: String
 
-    var modelPath: String? { model?.item.path ?? workflow.completedModelPath }
-    var activeServer: ServerInfo? { servers.first(where: { $0.state?.lowercased() == "running" }) }
-    var canPreview: Bool { model != nil && runtimeAvailable && workflow.serveState != .previewing && activeServer == nil }
-    var canConfirm: Bool { model != nil && runtimeAvailable && workflow.serveState == .readyToConfirm }
+    var selectedCompletedModel: LibraryModel? {
+        guard workflow.state == .completed,
+              let completedPath = workflow.completedModelPath,
+              workflow.outputPath == completedPath,
+              let model,
+              model.item.path == completedPath,
+              model.readiness == .ready else { return nil }
+        return model
+    }
+    var modelPath: String? { selectedCompletedModel?.item.path }
+    var activeServer: ServerInfo? {
+        guard let modelPath else { return nil }
+        return servers.first(where: {
+            $0.state?.lowercased() == "running" && $0.repo == modelPath
+        })
+    }
+    var canPreview: Bool {
+        selectedCompletedModel != nil && runtimeAvailable && workflow.serveState != .previewing && activeServer == nil
+    }
+    var canConfirm: Bool {
+        selectedCompletedModel != nil && runtimeAvailable && workflow.serveState == .readyToConfirm
+    }
     var remediation: String? { runtimeAvailable ? nil : runtimeMessage }
+    var selectionError: String? {
+        selectedCompletedModel == nil
+            ? "Run requires a ready Library model that exactly matches the completed workflow output."
+            : nil
+    }
 }
 
 struct ServeView: View {
@@ -58,7 +81,6 @@ struct ServeView: View {
             .padding(24)
         }
         .task {
-            prepareSelectedModel()
             await appHost.modelWorkflow.refreshOperationalStatus()
         }
     }
@@ -74,6 +96,7 @@ struct ServeView: View {
                 detailLine("Quantization", model.item.quantization ?? "Not reported")
                 detailLine("Observed size", ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))
                 detailLine("Library status", model.item.status)
+                ErrorBanner(text: presentation.selectionError)
             } else {
                 Text("Select a completed, ready MLX model from Library or Activity before running it.")
                     .font(.callout).foregroundColor(.secondary)
@@ -136,7 +159,8 @@ struct ServeView: View {
                     Spacer()
                     Button("Stop server") {
                         Task {
-                            await appHost.modelWorkflow.stopServer()
+                            guard let modelPath = presentation.modelPath else { return }
+                            await appHost.modelWorkflow.stopServer(modelPath: modelPath)
                             if appHost.modelWorkflow.workflow.serveState == .stopped { onRouteSelection("jobs") }
                         }
                     }
@@ -151,12 +175,6 @@ struct ServeView: View {
             }
         }
         .padding(16).background(Color(nsColor: .controlBackgroundColor)).cornerRadius(12)
-    }
-
-    private func prepareSelectedModel() {
-        guard let model = selectedModel,
-              appHost.modelWorkflow.workflow.completedModelPath != model.item.path else { return }
-        appHost.modelWorkflow.prepareServe(model: model)
     }
 
     private func detailLine(_ title: String, _ value: String) -> some View {

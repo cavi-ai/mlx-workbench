@@ -32,6 +32,11 @@ struct HomeNextAction: Equatable {
             return HomeNextAction(kind: .activity, title: "Resolve conversion failure", reason: workflow.errorMessage ?? workflow.message ?? "The current conversion needs attention in Activity.", route: "jobs")
         }
         if let path = workflow.completedModelPath, !path.isEmpty {
+            guard workflow.state == .completed,
+                  workflow.outputPath == path,
+                  snapshot?.models.first(where: { $0.item.path == path })?.readiness == .ready else {
+                return HomeNextAction(kind: .activity, title: "Reconcile completed output", reason: "The completed workflow no longer matches a ready model in the current Library snapshot.", route: "jobs")
+            }
             guard agentReady && serveRuntimeReady else {
                 return HomeNextAction(kind: .configure, title: "Repair the Run runtime", reason: "The model is complete, but the agent or serving runtime is unavailable.", route: "settings")
             }
@@ -53,12 +58,6 @@ struct HomeNextAction: Equatable {
                 reason: isScanning ? "The first authoritative library scan is in progress." : "No successful library snapshot exists yet.",
                 route: "models"
             )
-        }
-        if let ready = snapshot.models.first(where: { $0.readiness == .ready }) {
-            guard serveRuntimeReady else {
-                return HomeNextAction(kind: .configure, title: "Repair the Run runtime", reason: "A ready model exists, but the serving runtime is unavailable.", route: "settings")
-            }
-            return HomeNextAction(kind: .run(ready.item.path), title: "Run a ready model", reason: "The latest Library snapshot contains a model ready for serve preview.", route: "serve")
         }
         if let source = snapshot.models.first(where: { $0.readiness == .needsConversion }) {
             guard convertRuntimeReady else {
@@ -184,9 +183,6 @@ struct HomeView: View {
         switch action.kind {
         case .run(let path):
             appHost.selectedModelPath = path
-            if let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path }) {
-                appHost.modelWorkflow.prepareServe(model: model)
-            }
         case .prepare(let path):
             appHost.selectedModelPath = path
         case .configure, .scan, .activity, .library:
