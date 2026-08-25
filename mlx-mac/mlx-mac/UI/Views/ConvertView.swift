@@ -42,7 +42,11 @@ struct PrepareWorkflowPresentation: Equatable {
     }
 
     var canConfirm: Bool {
-        hasPreviewHash && [.readyToConfirm, .failed].contains(state)
+        state == .readyToConfirm && hasPreviewHash
+    }
+
+    var isQuantizationLocked: Bool {
+        hasPreviewHash
     }
 
     var stateTitle: String {
@@ -144,6 +148,7 @@ struct ConvertView: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 200)
+            .disabled(presentation.isQuantizationLocked)
 
             HStack(spacing: 10) {
                 Button("Preview conversion") {
@@ -153,7 +158,7 @@ struct ConvertView: View {
                 }
                 .disabled(!presentation.canPreview)
 
-                Button(presentation.state == .failed ? "Retry confirmation" : "Confirm conversion") {
+                Button("Confirm conversion") {
                     Task {
                         await modelWorkflow.confirm(qBits: qBits)
                     }

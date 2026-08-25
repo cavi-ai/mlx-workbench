@@ -131,6 +131,28 @@ final class LibraryViewTests: XCTestCase {
         XCTAssertEqual(presentation.stateTitle, "Preparation needs attention")
     }
 
+    func testPreparePresentationDisablesConfirmationForBlockedDestinationWithOldPreviewHash() {
+        let presentation = PrepareWorkflowPresentation(workflow: makeWorkflow(
+            previewHash: "old-preview",
+            state: .failed,
+            errorMessage: "Destination already exists and is not an equivalent MLX model."
+        ))
+
+        XCTAssertFalse(presentation.canConfirm)
+        XCTAssertEqual(presentation.primaryAction, .preview)
+    }
+
+    func testPreparePresentationLocksQuantizationAfterPreview() {
+        let noPreview = PrepareWorkflowPresentation(workflow: makeWorkflow())
+        let previewed = PrepareWorkflowPresentation(workflow: makeWorkflow(
+            previewHash: "preview-hash",
+            state: .readyToConfirm
+        ))
+
+        XCTAssertFalse(noPreview.isQuantizationLocked)
+        XCTAssertTrue(previewed.isQuantizationLocked)
+    }
+
     private func makeSnapshot() -> LibrarySnapshot {
         let assistantReady = makeLibraryModel(
             path: "/models/assistant-ready.gguf",
