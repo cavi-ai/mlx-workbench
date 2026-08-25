@@ -20,6 +20,7 @@ class AppHost: ObservableObject {
     @Published var recommendationPreferences: RecommendationPreferences = .defaults
     @Published var hardwareProfile: HardwareProfile
     @Published var lastError: String?
+    @Published var modelWorkflow: ModelWorkflowCoordinator
 
     let api: WorkbenchAPI
 
@@ -45,7 +46,9 @@ class AppHost: ObservableObject {
         runtimeReport: RuntimeReport? = nil,
         hardwareProfile: HardwareProfile = HardwareProfile.current(),
         now: @escaping @Sendable () -> Date = { Date() },
-        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil
+        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil,
+        modelWorkflowAPI: ModelWorkflowAPI? = nil,
+        modelWorkflowPersistence: ModelWorkflowPersistence? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -56,6 +59,10 @@ class AppHost: ObservableObject {
         self.config = loadedConfig
         let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
         self.api = api
+        self.modelWorkflow = ModelWorkflowCoordinator(
+            api: modelWorkflowAPI ?? .live(api: api),
+            persistence: modelWorkflowPersistence ?? .live(store: ModelWorkflowStore(fileURL: ModelWorkflowStore.defaultFileURL()))
+        )
         self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
         self.configPath = configPath ?? configModule.configPath()
         self.vendorAgentPath = vendorAgentPath ?? configModule.vendorAgentPath()
@@ -85,9 +92,21 @@ class AppHost: ObservableObject {
     }
 
     func rescan(limit: Int? = nil) async {
-        guard !isScanning else { return }
+        _ = await rescan(limit: limit, reconcileWorkflow: true)
+    }
+
+    func refreshWorkflowStatus(jobs: [Job]? = nil) async {
+        if let jobs {
+            await modelWorkflow.reconcile(snapshot: librarySnapshot, jobs: jobs)
+        } else {
+            await modelWorkflow.refreshOperationalStatus()
+        }
+        await finishCompletionReconciliationIfNeeded()
+    }
+
+    private func rescan(limit: Int?, reconcileWorkflow: Bool) async -> LibrarySnapshot? {
+        guard !isScanning else { return nil }
         isScanning = true
-        defer { isScanning = false }
 
         do {
             let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
@@ -101,10 +120,25 @@ class AppHost: ObservableObject {
             scanResult = scan
             librarySnapshot = snapshot
             lastError = nil
+            if reconcileWorkflow {
+                await modelWorkflow.refreshOperationalStatus()
+                isScanning = false
+                await finishCompletionReconciliationIfNeeded()
+                return snapshot
+            }
+            isScanning = false
+            return snapshot
         } catch {
-            scanResult = nil
             lastError = Self.render(error)
+            isScanning = false
+            return nil
         }
+    }
+
+    private func finishCompletionReconciliationIfNeeded() async {
+        guard modelWorkflow.consumeCompletionRescanRequest() else { return }
+        let freshSnapshot = await rescan(limit: nil, reconcileWorkflow: false)
+        modelWorkflow.resolveCompletionAfterFreshScan(snapshot: freshSnapshot)
     }
 
     func saveConfig(_ newConfig: Config) -> Config {

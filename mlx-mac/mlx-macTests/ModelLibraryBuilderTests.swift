@@ -131,7 +131,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
 
         await host.rescan()
         XCTAssertEqual(host.librarySnapshot, firstSnapshot)
-        XCTAssertNil(host.scanResult)
+        XCTAssertEqual(host.scanResult, scan)
         XCTAssertEqual(host.hardwareProfile, hardware)
         XCTAssertEqual(host.lastError, TestScanError.boom.localizedDescription)
     }

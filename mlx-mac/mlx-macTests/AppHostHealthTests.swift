@@ -212,6 +212,167 @@ final class AppHostHealthTests: XCTestCase {
         }
     }
 
+    func testActivityPresentationRendersQueuedRunningCompletedAndFailedCards() {
+        XCTAssertEqual(ActivityWorkflowCardPresentation(workflow: makeOperationalWorkflow(state: .queued), job: nil, snapshot: nil).stateTitle, "Queued")
+        XCTAssertEqual(ActivityWorkflowCardPresentation(workflow: makeOperationalWorkflow(state: .running), job: nil, snapshot: nil).stateTitle, "Running")
+        XCTAssertEqual(ActivityWorkflowCardPresentation(workflow: makeOperationalWorkflow(state: .completed), job: nil, snapshot: nil).stateTitle, "Completed")
+        XCTAssertEqual(ActivityWorkflowCardPresentation(workflow: makeOperationalWorkflow(state: .failed, errorMessage: "converter exited 9"), job: nil, snapshot: nil).workflow.errorMessage, "converter exited 9")
+    }
+
+    func testActivityCompletedOutputRoutesToLibraryAndRun() {
+        let model = makeOperationalModel(path: "/models/atlas-mlx", status: "ready")
+        let workflow = makeOperationalWorkflow(state: .completed, completedModelPath: model.item.path)
+        let card = ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: makeOperationalSnapshot(models: [model]))
+        XCTAssertEqual(card.actions, [.openInLibrary(model.item.path), .runModel(workflow)])
+    }
+
+    func testActivityFailureOffersRetryPreview() {
+        let workflow = makeOperationalWorkflow(state: .failed, errorMessage: "failed exactly")
+        let source = makeOperationalModel(path: workflow.sourcePath, status: "pending").item
+        let card = ActivityWorkflowCardPresentation(
+            workflow: workflow,
+            job: nil,
+            snapshot: nil,
+            sourceEvidence: source,
+            agentReady: true,
+            convertRuntimeReady: true
+        )
+        XCTAssertEqual(card.actions, [.retryPreview(workflow)])
+    }
+
+    func testActivityRetryRequiresCurrentUsableSourceAndPrerequisites() {
+        let workflow = makeOperationalWorkflow(state: .failed, errorMessage: "historic failure")
+        let source = makeOperationalModel(path: workflow.sourcePath, status: "pending").item
+
+        XCTAssertFalse(ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: nil).actions.contains(.retryPreview(workflow)))
+        XCTAssertFalse(ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: nil, sourceEvidence: source, agentReady: false, convertRuntimeReady: true).actions.contains(.retryPreview(workflow)))
+        XCTAssertFalse(ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: nil, sourceEvidence: source, agentReady: true, convertRuntimeReady: false).actions.contains(.retryPreview(workflow)))
+    }
+
+    func testRunPresentationShowsAuthoritativeActiveServer() {
+        let model = makeOperationalModel(path: "/models/atlas-mlx", status: "ready")
+        let server = ServerInfo(repo: model.item.path, runtime: "mlx_lm", port: 8766, pid: 412, state: "running", logPath: "/logs/serve.log", startedAt: "2026-08-25T12:00:00Z", receipt: "serve-receipt")
+        let presentation = RunPresentation(workflow: makeOperationalWorkflow(state: .completed, serveState: .running, completedModelPath: model.item.path), model: model, servers: [server], runtimeAvailable: true, runtimeMessage: "ready")
+        XCTAssertEqual(presentation.modelPath, model.item.path)
+        XCTAssertEqual(presentation.activeServer?.port, 8766)
+        XCTAssertEqual(presentation.activeServer?.pid, 412)
+        XCTAssertEqual(presentation.activeServer?.receipt, "serve-receipt")
+        XCTAssertEqual(presentation.activeServer?.logPath, "/logs/serve.log")
+    }
+
+    func testRunPresentationExplainsMissingRuntime() {
+        let presentation = RunPresentation(workflow: makeOperationalWorkflow(state: .completed, completedModelPath: "/models/atlas-mlx"), model: makeOperationalModel(path: "/models/atlas-mlx", status: "ready"), servers: [], runtimeAvailable: false, runtimeMessage: "mlx_lm.server is missing")
+        XCTAssertEqual(presentation.remediation, "mlx_lm.server is missing")
+        XCTAssertFalse(presentation.canPreview)
+        XCTAssertFalse(presentation.canConfirm)
+    }
+
+    func testRunPresentationRejectsArbitraryReadyLibrarySelection() {
+        let selected = makeOperationalModel(path: "/models/arbitrary-mlx", status: "ready")
+        let workflow = makeOperationalWorkflow(
+            state: .completed,
+            serveState: .readyToConfirm,
+            completedModelPath: "/models/atlas-mlx"
+        )
+        let presentation = RunPresentation(
+            workflow: workflow,
+            model: selected,
+            servers: [],
+            runtimeAvailable: true,
+            runtimeMessage: "ready"
+        )
+
+        XCTAssertNil(presentation.modelPath)
+        XCTAssertFalse(presentation.canPreview)
+        XCTAssertFalse(presentation.canConfirm)
+        XCTAssertNotNil(presentation.selectionError)
+    }
+
+    func testRunPresentationMatchesOnlySelectedModelsServer() {
+        let model = makeOperationalModel(path: "/models/atlas-mlx", status: "ready")
+        let unrelated = ServerInfo(repo: "/models/other-mlx", runtime: "mlx_lm", port: 9001, pid: 1, state: "running", logPath: "/logs/other.log", startedAt: nil, receipt: "other")
+        let selected = ServerInfo(repo: model.item.path, runtime: "mlx_lm", port: 9002, pid: 2, state: "running", logPath: "/logs/selected.log", startedAt: nil, receipt: "selected")
+        let workflow = makeOperationalWorkflow(state: .completed, completedModelPath: model.item.path)
+
+        let multiple = RunPresentation(workflow: workflow, model: model, servers: [unrelated, selected], runtimeAvailable: true, runtimeMessage: "ready")
+        XCTAssertEqual(multiple.activeServer, selected)
+        XCTAssertFalse(multiple.canPreview)
+
+        let unrelatedOnly = RunPresentation(workflow: workflow, model: model, servers: [unrelated], runtimeAvailable: true, runtimeMessage: "ready")
+        XCTAssertNil(unrelatedOnly.activeServer)
+        XCTAssertTrue(unrelatedOnly.canPreview)
+    }
+
+    @MainActor
+    func testCoordinatorStopsOnlySelectedModelsServer() async {
+        let unrelated = ServerInfo(repo: "/models/other-mlx", runtime: "mlx_lm", port: 9001, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "other")
+        let selected = ServerInfo(repo: "/models/atlas-mlx", runtime: "mlx_lm", port: 9002, pid: 2, state: "running", logPath: nil, startedAt: nil, receipt: "selected")
+        var stoppedPorts: [Int] = []
+        let api = ModelWorkflowAPI(
+            convertPreview: { _, _, _ in [:] },
+            convertStart: { _, _, _, _ in [:] },
+            convertStatus: { [] },
+            servePreview: { _, _, _ in [:] },
+            serveStart: { _, _, _, _ in [:] },
+            serveStatus: { [unrelated, selected] },
+            serveStop: { port in
+                stoppedPorts.append(port)
+                return [:]
+            }
+        )
+        let coordinator = ModelWorkflowCoordinator(
+            api: api,
+            persistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in })
+        )
+
+        await coordinator.refreshOperationalStatus()
+        await coordinator.stopServer(modelPath: "/models/atlas-mlx")
+
+        XCTAssertEqual(stoppedPorts, [9002])
+    }
+
+    func testHomeNextActionForNoRootsIsConfiguration() {
+        let action = makeHomeAction(rootsConfigured: false)
+        XCTAssertEqual(action.kind, .configure)
+        XCTAssertEqual(action.route, "settings")
+    }
+
+    func testHomeNextActionForNoScanIsLibraryScan() {
+        let action = makeHomeAction(snapshot: nil)
+        XCTAssertEqual(action.kind, .scan)
+        XCTAssertEqual(action.route, "models")
+    }
+
+    func testHomeNextActionForActiveJobIsActivity() {
+        let action = makeHomeAction(workflow: makeOperationalWorkflow(state: .running, receipt: "receipt"))
+        XCTAssertEqual(action.kind, .activity)
+        XCTAssertEqual(action.route, "jobs")
+    }
+
+    func testHomeNextActionForCompletedOutputIsRun() {
+        let model = makeOperationalModel(path: "/models/atlas-mlx", status: "ready")
+        let action = makeHomeAction(
+            workflow: makeOperationalWorkflow(state: .completed, completedModelPath: model.item.path),
+            snapshot: makeOperationalSnapshot(models: [model])
+        )
+        XCTAssertEqual(action.kind, .run("/models/atlas-mlx"))
+        XCTAssertEqual(action.route, "serve")
+    }
+
+    func testHomeDoesNotRunArbitraryReadyLibraryModel() {
+        let model = makeOperationalModel(path: "/models/arbitrary-mlx", status: "ready")
+        let action = makeHomeAction(snapshot: makeOperationalSnapshot(models: [model]))
+        XCTAssertEqual(action.kind, .library)
+        XCTAssertEqual(action.route, "models")
+    }
+
+    func testHomeNextActionForFailureIsActivityWithExactReason() {
+        let action = makeHomeAction(workflow: makeOperationalWorkflow(state: .failed, errorMessage: "receipt reported conversion failure"))
+        XCTAssertEqual(action.kind, .activity)
+        XCTAssertEqual(action.reason, "receipt reported conversion failure")
+        XCTAssertEqual(action.route, "jobs")
+    }
+
     private func makeTempDirectory() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-tests-\(UUID().uuidString)")
@@ -221,6 +382,60 @@ final class AppHostHealthTests: XCTestCase {
 
     private func cleanup(_ directory: URL) {
         try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func makeOperationalWorkflow(
+        state: ConversionWorkflowState = .idle,
+        serveState: ServeWorkflowState = .idle,
+        receipt: String? = nil,
+        completedModelPath: String? = nil,
+        errorMessage: String? = nil
+    ) -> ConversionWorkflow {
+        let timestamp = Date(timeIntervalSince1970: 1_756_120_000)
+        return ConversionWorkflow(
+            id: UUID(), sourcePath: "/models/atlas.gguf", sourceModelKey: "atlas", sourceSignature: "signature",
+            outputPath: "/models/atlas-mlx", previewHash: nil, jobReceipt: receipt, completedModelPath: completedModelPath,
+            state: state, serveState: serveState, message: nil, errorMessage: errorMessage,
+            createdAt: timestamp, updatedAt: timestamp, lastKnownAgentState: state.rawValue
+        )
+    }
+
+    private func makeOperationalModel(path: String, status: String) -> LibraryModel {
+        LibraryModel(
+            item: ModelItem(
+                path: path, name: "Atlas", bytes: 4_096, modifiedAt: 1_756_120_000, shard: nil,
+                modelKey: "atlas", architecture: "llama", quantization: "4-bit", parameters: "7B",
+                structure: nil, signature: "signature", companion: nil, readable: true, status: status,
+                outputs: [], tensorCount: 32, error: nil
+            ),
+            normalizedFamilyKey: "atlas",
+            displayName: "Atlas"
+        )
+    }
+
+    private func makeOperationalSnapshot(models: [LibraryModel] = []) -> LibrarySnapshot {
+        LibrarySnapshot(
+            models: models,
+            groups: [],
+            hardware: HardwareProfile(chip: "M4", model: "Mac16,1", memoryBytes: 32_000_000_000, macOSVersion: "15.0"),
+            generatedAt: Date(timeIntervalSince1970: 1_756_120_000)
+        )
+    }
+
+    private func makeHomeAction(
+        workflow: ConversionWorkflow? = nil,
+        snapshot: LibrarySnapshot? = LibrarySnapshot(
+            models: [], groups: [],
+            hardware: HardwareProfile(chip: "M4", model: "Mac16,1", memoryBytes: 32_000_000_000, macOSVersion: "15.0"),
+            generatedAt: Date(timeIntervalSince1970: 1_756_120_000)
+        ),
+        rootsConfigured: Bool = true
+    ) -> HomeNextAction {
+        HomeNextAction.derive(
+            workflow: workflow ?? makeOperationalWorkflow(), snapshot: snapshot,
+            rootsConfigured: rootsConfigured, isScanning: false, lastError: nil,
+            agentReady: true, convertRuntimeReady: true, serveRuntimeReady: true
+        )
     }
 
     private func makeSnapshot(fetchedAt: Date) -> CatalogSnapshot {

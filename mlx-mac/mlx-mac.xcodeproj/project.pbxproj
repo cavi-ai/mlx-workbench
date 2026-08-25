@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF001 /* GGUFToRunRealDataUITests.swift */; };
+		26UIBLD002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
 		24BBLD000000 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000000 /* x */; };
 
 		24BBLD000001 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000001 /* x */; };
@@ -19,6 +21,10 @@
 		24BBLD022 /* LibraryDomain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF01C /* LibraryDomain.swift */; };
 		24BBLD023 /* CatalogModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF01D /* CatalogModels.swift */; };
 		24BBLD024 /* WorkspaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF01E /* WorkspaceModels.swift */; };
+		24BBLD036 /* WorkflowModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF030 /* WorkflowModels.swift */; };
+		24BBLD038 /* ModelWorkflowResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF032 /* ModelWorkflowResolver.swift */; };
+		24BBLD039 /* ModelWorkflowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF033 /* ModelWorkflowStore.swift */; };
+		24BBLD041 /* ModelWorkflowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF035 /* ModelWorkflowCoordinator.swift */; };
 
 		24BBLD000005 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000005 /* x */; };
 
@@ -74,12 +80,16 @@
 		24BBLD033 /* CatalogStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF027 /* CatalogStoreTests.swift */; };
 		24BBLD034 /* RecommendationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF028 /* RecommendationEngine.swift */; };
 		24BBLD035 /* RecommendationEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF029 /* RecommendationEngineTests.swift */; };
+		24BBLD037 /* ModelWorkflowResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF031 /* ModelWorkflowResolverTests.swift */; };
+		24BBLD040 /* ModelWorkflowCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF034 /* ModelWorkflowCoordinatorTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		26UIREF001 /* GGUFToRunRealDataUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GGUFToRunRealDataUITests.swift; sourceTree = "<group>"; };
+		26UIREF002 /* mlx-workbenchUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "mlx-workbenchUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		24FREF000000 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = App.swift; path = App.swift; sourceTree = "<group>"; };
 
 		24FREF000001 /* AppHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppHost.swift; path = AppHost.swift; sourceTree = "<group>"; };
@@ -92,6 +102,7 @@
 		24FREF01C /* LibraryDomain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryDomain.swift; path = Models/LibraryDomain.swift; sourceTree = "<group>"; };
 		24FREF01D /* CatalogModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogModels.swift; path = Models/CatalogModels.swift; sourceTree = "<group>"; };
 		24FREF01E /* WorkspaceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkspaceModels.swift; path = Models/WorkspaceModels.swift; sourceTree = "<group>"; };
+		24FREF030 /* WorkflowModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkflowModels.swift; path = Models/WorkflowModels.swift; sourceTree = "<group>"; };
 
 		24FREF000005 /* RuntimeChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RuntimeChecker.swift; path = Services/RuntimeChecker.swift; sourceTree = "<group>"; };
 
@@ -146,6 +157,11 @@
 		24FREF027 /* CatalogStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogStoreTests.swift; path = CatalogStoreTests.swift; sourceTree = "<group>"; };
 		24FREF028 /* RecommendationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RecommendationEngine.swift; path = Services/RecommendationEngine.swift; sourceTree = "<group>"; };
 		24FREF029 /* RecommendationEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RecommendationEngineTests.swift; path = RecommendationEngineTests.swift; sourceTree = "<group>"; };
+		24FREF031 /* ModelWorkflowResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowResolverTests.swift; path = ModelWorkflowResolverTests.swift; sourceTree = "<group>"; };
+		24FREF032 /* ModelWorkflowResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowResolver.swift; path = Services/ModelWorkflowResolver.swift; sourceTree = "<group>"; };
+		24FREF033 /* ModelWorkflowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowStore.swift; path = Services/ModelWorkflowStore.swift; sourceTree = "<group>"; };
+		24FREF034 /* ModelWorkflowCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowCoordinatorTests.swift; path = ModelWorkflowCoordinatorTests.swift; sourceTree = "<group>"; };
+		24FREF035 /* ModelWorkflowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowCoordinator.swift; path = Services/ModelWorkflowCoordinator.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -158,6 +174,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		26UIPHRM1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				26UIBLD002 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		24PHRM1 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -181,6 +205,7 @@
 			children = (
 				24GSRC01 /* mlx-mac */,
 				24GTEST01 /* mlx-macTests */,
+				26UIGRP001 /* mlx-macUITests */,
 				24GIV01 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -196,8 +221,12 @@
 				24FREF01C /* LibraryDomain.swift */,
 				24FREF01D /* CatalogModels.swift */,
 				24FREF01E /* WorkspaceModels.swift */,
+				24FREF030 /* WorkflowModels.swift */,
 				24FREF000005 /* RuntimeChecker.swift */,
 				24FREF020 /* ModelLibraryBuilder.swift */,
+				24FREF032 /* ModelWorkflowResolver.swift */,
+				24FREF033 /* ModelWorkflowStore.swift */,
+				24FREF035 /* ModelWorkflowCoordinator.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
@@ -235,6 +264,7 @@
 			children = (
 				24PROD01 /* mlx-workbench.app */,
 				24PROD02 /* mlx-workbenchTests.xctest */,
+				26UIREF002 /* mlx-workbenchUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -249,8 +279,18 @@
 				24FREF024 /* LibraryViewTests.swift */,
 				24FREF021 /* ModelLibraryBuilderTests.swift */,
 				24FREF029 /* RecommendationEngineTests.swift */,
+				24FREF031 /* ModelWorkflowResolverTests.swift */,
+				24FREF034 /* ModelWorkflowCoordinatorTests.swift */,
 			);
 			path = mlx-macTests;
+			sourceTree = "<group>";
+		};
+		26UIGRP001 /* mlx-macUITests */ = {
+			isa = PBXGroup;
+			children = (
+				26UIREF001 /* GGUFToRunRealDataUITests.swift */,
+			);
+			path = "mlx-macUITests";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -290,6 +330,23 @@
 			productReference = 24PROD02 /* mlx-workbenchTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		26UITGT001 /* mlx-workbenchUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 26UICFGTG1 /* Build configuration list for PBXNativeTarget "mlx-workbenchUITests" */;
+			buildPhases = (
+				26UIPHSRC1 /* Sources */,
+				26UIPHRM1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				26UITDEP01 /* PBXTargetDependency */,
+			);
+			name = "mlx-workbenchUITests";
+			productName = "mlx-workbenchUITests";
+			productReference = 26UIREF002 /* mlx-workbenchUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -305,6 +362,10 @@
 					};
 					24TGT002 = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					26UITGT001 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = 24TGT001;
 					};
 				};
 			};
@@ -323,11 +384,17 @@
 			targets = (
 				24TGT001 /* mlx-workbench */,
 				24TGT002 /* mlx-workbenchTests */,
+				26UITGT001 /* mlx-workbenchUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXTargetDependency section */
+		26UITDEP01 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 24TGT001 /* mlx-workbench */;
+			targetProxy = 26UITPXY01 /* PBXContainerItemProxy */;
+		};
 		24TDEP001 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 24TGT001 /* mlx-workbench */;
@@ -336,6 +403,13 @@
 /* End PBXTargetDependency section */
 
 /* Begin PBXContainerItemProxy section */
+		26UITPXY01 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 24PRJ001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 24TGT001;
+			remoteInfo = "mlx-workbench";
+		};
 		24TPXY001 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 24PRJ001 /* Project object */;
@@ -358,6 +432,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		26UIPHSRC1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		24PHSRC1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -391,7 +473,11 @@
 				24BBLD022 /* LibraryDomain.swift in Sources */,
 				24BBLD023 /* CatalogModels.swift in Sources */,
 				24BBLD024 /* WorkspaceModels.swift in Sources */,
+				24BBLD036 /* WorkflowModels.swift in Sources */,
 				24BBLD026 /* ModelLibraryBuilder.swift in Sources */,
+				24BBLD038 /* ModelWorkflowResolver.swift in Sources */,
+				24BBLD039 /* ModelWorkflowStore.swift in Sources */,
+				24BBLD041 /* ModelWorkflowCoordinator.swift in Sources */,
 				24BBLD031 /* CatalogClient.swift in Sources */,
 				24BBLD032 /* CatalogStore.swift in Sources */,
 				24BBLD034 /* RecommendationEngine.swift in Sources */,
@@ -411,12 +497,47 @@
 				24BBLD030 /* LibraryViewTests.swift in Sources */,
 				24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */,
 				24BBLD035 /* RecommendationEngineTests.swift in Sources */,
+				24BBLD037 /* ModelWorkflowResolverTests.swift in Sources */,
+				24BBLD040 /* ModelWorkflowCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		26UITCLD1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.cavi.mlxworkbench.uitests";
+				PRODUCT_NAME = "mlx-workbenchUITests";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = TEST;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "mlx-workbench";
+			};
+			name = Debug;
+		};
+		26UITCLR1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.cavi.mlxworkbench.uitests";
+				PRODUCT_NAME = "mlx-workbenchUITests";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "mlx-workbench";
+			};
+			name = Release;
+		};
 		24BCLD01 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -544,6 +665,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		26UICFGTG1 /* Build configuration list for PBXNativeTarget "mlx-workbenchUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				26UITCLD1 /* Debug */,
+				26UITCLR1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		24CFGPR1 /* Build configuration list for PBXProject "mlx-workbench" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

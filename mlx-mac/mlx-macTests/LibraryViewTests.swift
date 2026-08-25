@@ -91,6 +91,70 @@ final class LibraryViewTests: XCTestCase {
         )
     }
 
+    func testPreparePresentationShowsSourceAndSameDirectoryDestination() {
+        let presentation = PrepareWorkflowPresentation(workflow: makeWorkflow(
+            sourcePath: "/models/atlas.gguf",
+            outputPath: "/models/atlas-mlx",
+            state: .inspectingSource
+        ))
+
+        XCTAssertEqual(presentation.sourcePath, "/models/atlas.gguf")
+        XCTAssertEqual(presentation.destinationPath, "/models/atlas-mlx")
+        XCTAssertEqual(presentation.primaryAction, .preview)
+        XCTAssertTrue(presentation.canPreview)
+    }
+
+    func testPreparePresentationChoosesRunExistingForEquivalentModel() {
+        let presentation = PrepareWorkflowPresentation(workflow: makeWorkflow(
+            outputPath: "/models/atlas-mlx",
+            state: .existingModelFound
+        ))
+
+        XCTAssertEqual(presentation.primaryAction, .runExisting)
+        XCTAssertFalse(presentation.canPreview)
+    }
+
+    func testPreparePresentationDisablesConfirmationWithoutPreviewHash() {
+        let presentation = PrepareWorkflowPresentation(workflow: makeWorkflow(state: .readyToConfirm))
+
+        XCTAssertEqual(presentation.primaryAction, .confirm)
+        XCTAssertFalse(presentation.canConfirm)
+    }
+
+    func testPreparePresentationShowsExactBlockedDestinationError() {
+        let blockedReason = "Destination already exists and is not an equivalent MLX model."
+        let presentation = PrepareWorkflowPresentation(workflow: makeWorkflow(
+            outputPath: "/models/atlas-mlx",
+            state: .failed,
+            errorMessage: blockedReason
+        ))
+
+        XCTAssertEqual(presentation.errorMessage, blockedReason)
+        XCTAssertEqual(presentation.stateTitle, "Preparation needs attention")
+    }
+
+    func testPreparePresentationDisablesConfirmationForBlockedDestinationWithOldPreviewHash() {
+        let presentation = PrepareWorkflowPresentation(workflow: makeWorkflow(
+            previewHash: "old-preview",
+            state: .failed,
+            errorMessage: "Destination already exists and is not an equivalent MLX model."
+        ))
+
+        XCTAssertFalse(presentation.canConfirm)
+        XCTAssertEqual(presentation.primaryAction, .preview)
+    }
+
+    func testPreparePresentationLocksQuantizationAfterPreview() {
+        let noPreview = PrepareWorkflowPresentation(workflow: makeWorkflow())
+        let previewed = PrepareWorkflowPresentation(workflow: makeWorkflow(
+            previewHash: "preview-hash",
+            state: .readyToConfirm
+        ))
+
+        XCTAssertFalse(noPreview.isQuantizationLocked)
+        XCTAssertTrue(previewed.isQuantizationLocked)
+    }
+
     private func makeSnapshot() -> LibrarySnapshot {
         let assistantReady = makeLibraryModel(
             path: "/models/assistant-ready.gguf",
@@ -155,6 +219,33 @@ final class LibraryViewTests: XCTestCase {
             ),
             normalizedFamilyKey: modelKey,
             displayName: name
+        )
+    }
+
+    private func makeWorkflow(
+        sourcePath: String = "/models/atlas.gguf",
+        outputPath: String = "/models/atlas-mlx",
+        previewHash: String? = nil,
+        state: ConversionWorkflowState = .idle,
+        errorMessage: String? = nil
+    ) -> ConversionWorkflow {
+        let timestamp = Date(timeIntervalSince1970: 1_726_500_000)
+        return ConversionWorkflow(
+            id: UUID(),
+            sourcePath: sourcePath,
+            sourceModelKey: "atlas",
+            sourceSignature: "signature",
+            outputPath: outputPath,
+            previewHash: previewHash,
+            jobReceipt: nil,
+            completedModelPath: nil,
+            state: state,
+            serveState: .idle,
+            message: nil,
+            errorMessage: errorMessage,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            lastKnownAgentState: nil
         )
     }
 }
