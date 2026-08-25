@@ -223,11 +223,24 @@ struct LibraryView: View {
                 ProgressView("Scanning local library…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
-                ContentUnavailableView(
-                    "No local library snapshot yet",
-                    systemImage: "books.vertical",
-                    description: Text("Run a local scan to populate the native Library inventory.")
-                )
+                VStack(spacing: 16) {
+                    ContentUnavailableView(
+                        "No local library snapshot yet",
+                        systemImage: "books.vertical",
+                        description: Text("Run a local scan to populate the native Library inventory.")
+                    )
+
+                    HStack(spacing: 10) {
+                        Button("Scan library") {
+                            appHost.requestRescan()
+                        }
+                        .disabled(appHost.isScanning)
+
+                        Button("Open Settings") {
+                            onRouteSelection("settings")
+                        }
+                    }
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }

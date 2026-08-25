@@ -1,141 +1,189 @@
 import SwiftUI
 
-// MARK: - ConvertView
-// GGUF → MLX conversion: pick a source, preview the plan, confirm with hash.
+enum PreparePrimaryAction: Equatable {
+    case preview
+    case confirm
+    case runExisting
+    case none
+}
+
+struct PrepareWorkflowPresentation: Equatable {
+    let sourcePath: String
+    let destinationPath: String
+    let state: ConversionWorkflowState
+    let message: String?
+    let errorMessage: String?
+    let hasPreviewHash: Bool
+
+    init(workflow: ConversionWorkflow) {
+        sourcePath = workflow.sourcePath
+        destinationPath = workflow.outputPath
+        state = workflow.state
+        message = workflow.message
+        errorMessage = workflow.errorMessage
+        hasPreviewHash = !(workflow.previewHash?.isEmpty ?? true)
+    }
+
+    var primaryAction: PreparePrimaryAction {
+        switch state {
+        case .existingModelFound:
+            return .runExisting
+        case .readyToConfirm:
+            return .confirm
+        case .idle, .inspectingSource, .previewingConversion, .queued, .running, .completed:
+            return sourcePath.isEmpty ? .none : .preview
+        case .failed:
+            return canConfirm ? .confirm : (sourcePath.isEmpty ? .none : .preview)
+        }
+    }
+
+    var canPreview: Bool {
+        !sourcePath.isEmpty && ![.existingModelFound, .previewingConversion, .queued, .running, .completed].contains(state)
+    }
+
+    var canConfirm: Bool {
+        hasPreviewHash && [.readyToConfirm, .failed].contains(state)
+    }
+
+    var stateTitle: String {
+        switch state {
+        case .idle: return "Choose a model in Library"
+        case .inspectingSource: return "Inspecting source"
+        case .existingModelFound: return "Equivalent MLX model found"
+        case .previewingConversion: return "Preparing conversion preview"
+        case .readyToConfirm: return "Preview ready"
+        case .queued: return "Conversion queued"
+        case .running: return "Conversion running"
+        case .completed: return "Conversion completed"
+        case .failed: return "Preparation needs attention"
+        }
+    }
+}
 
 struct ConvertView: View {
     @ObservedObject var appHost: AppHost
+    @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
+    private let onRouteSelection: (String) -> Void
 
-    @State private var selectedModel: ModelItem?
-    @State private var qBits: Int = 4
-    @State private var out: String = ""
-    @State private var isPreviewing = false
-    @State private var preview: [String: Any]?
-    @State private var confirmResult: String?
-    @State private var errorMessage: String?
-    @State private var showingPicker = false
+    @State private var qBits: Int
 
-    private var previewHash: String? {
-        guard let dict = preview else { return nil }
-        if let h = dict["preview_hash"] as? String { return h }
-        if let plan = dict["plan"] as? [String: Any], let h = plan["preview_hash"] as? String { return h }
-        return nil
+    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+        self.appHost = appHost
+        _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
+        self.onRouteSelection = onRouteSelection
+        _qBits = State(initialValue: appHost.config.qBits)
+    }
+
+    private var presentation: PrepareWorkflowPresentation {
+        PrepareWorkflowPresentation(workflow: modelWorkflow.workflow)
+    }
+
+    private var existingModel: LibraryModel? {
+        guard presentation.state == .existingModelFound else { return nil }
+        return appHost.librarySnapshot?.models.first { $0.item.path == presentation.destinationPath }
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                sourceSection
-                if preview != nil {
-                    planSection
+                Text("Prepare")
+                    .font(.title2)
+                Text("Prepare a Library GGUF for local MLX use. Conversion plans are previewed before they are confirmed.")
+                    .foregroundColor(.secondary)
+
+                workflowCard
+                sourceAndDestinationCard
+                conversionActions
+
+                if let error = presentation.errorMessage {
+                    ErrorBanner(text: error)
                 }
-                ErrorBanner(text: errorMessage)
-                if let confirmResult {
-                    Text(confirmResult)
+
+                if let message = presentation.message, !message.isEmpty {
+                    Text(message)
                         .font(.caption)
-                        .foregroundColor(.green)
+                        .foregroundColor(.secondary)
                 }
-                Spacer()
             }
             .padding()
         }
-        .sheet(isPresented: $showingPicker) {
-            ModelPickerSheet(appHost: appHost, selected: $selectedModel)
-        }
     }
 
-    private var sourceSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionTitle(text: "Source")
-            HStack {
-                Button("Choose GGUF…") { showingPicker = true }
-                Text(selectedModel?.name ?? "No model selected")
-                    .foregroundColor(selectedModel == nil ? .secondary : .primary)
-                Spacer()
-            }
-            HStack {
-                Picker("Quantization", selection: $qBits) {
-                    Text("4-bit").tag(4)
-                    Text("8-bit").tag(8)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 200)
-                Spacer()
-            }
-            HStack {
-                TextField("Output dir (optional)", text: $out)
-                    .textFieldStyle(.roundedBorder)
-                Button("Preview") {
-                    previewPlan()
-                }
-                .disabled(selectedModel == nil || isPreviewing)
-            }
-        }
-        .formSection {}
-    }
-
-    private var planSection: some View {
+    private var workflowCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                SectionTitle(text: "Plan")
-                Spacer()
-                Button("Confirm & Convert") {
-                    confirm()
-                }
-                .disabled(previewHash == nil)
+            SectionTitle(text: "Workflow status")
+            HStack(spacing: 8) {
+                StatusPill(state: modelWorkflow.workflow.state.rawValue)
+                Text(presentation.stateTitle)
+                    .font(.subheadline)
             }
-            PreviewDictView(value: preview ?? [:])
         }
         .formSection {}
     }
 
-    private func previewPlan() {
-        guard let model = selectedModel else { return }
-        errorMessage = nil
-        confirmResult = nil
-        isPreviewing = true
-        let targetQ = qBits
-        let targetOut = out.isEmpty ? nil : out
-        Task {
-            defer { isPreviewing = false }
-            do {
-                preview = try await appHost.api.convertPreview(
-                    ggufPath: model.path, qBits: targetQ, out: targetOut
-                )
-            } catch let error as BridgeError {
-                preview = nil
-                errorMessage = error.errorDescription
-            } catch {
-                preview = nil
-                errorMessage = error.localizedDescription
+    private var sourceAndDestinationCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle(text: "Source and destination")
+            detailRow("Source GGUF", presentation.sourcePath.isEmpty ? "Choose Prepare to run from a Library model." : presentation.sourcePath)
+            detailRow("Destination", presentation.destinationPath.isEmpty ? "Destination will be calculated from the selected source." : presentation.destinationPath)
+            if !presentation.destinationPath.isEmpty {
+                Text("The destination is the coordinator-approved same-directory path. It cannot be overridden in Prepare.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
+        .formSection {}
     }
 
-    private func confirm() {
-        guard let model = selectedModel, let hash = previewHash else { return }
-        errorMessage = nil
-        confirmResult = nil
-        let targetQ = qBits
-        let targetOut = out.isEmpty ? nil : out
-        Task {
-            do {
-                let result = try await appHost.api.convertStart(
-                    ggufPath: model.path, qBits: targetQ, out: targetOut, previewHash: hash
-                )
-                confirmResult = "Conversion submitted. See Jobs."
-                preview = nil
-                _ = result
-            } catch let error as BridgeError {
-                errorMessage = error.errorDescription
-            } catch {
-                errorMessage = error.localizedDescription
+    private var conversionActions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle(text: "Conversion")
+            Picker("Quantization", selection: $qBits) {
+                Text("4-bit").tag(4)
+                Text("8-bit").tag(8)
             }
+            .pickerStyle(.segmented)
+            .frame(width: 200)
+
+            HStack(spacing: 10) {
+                Button("Preview conversion") {
+                    Task {
+                        await modelWorkflow.preview(qBits: qBits, out: nil)
+                    }
+                }
+                .disabled(!presentation.canPreview)
+
+                Button(presentation.state == .failed ? "Retry confirmation" : "Confirm conversion") {
+                    Task {
+                        await modelWorkflow.confirm(qBits: qBits)
+                    }
+                }
+                .disabled(!presentation.canConfirm)
+
+                if let existingModel {
+                    Button("Run existing") {
+                        modelWorkflow.useExisting(existingModel)
+                        onRouteSelection("serve")
+                    }
+                }
+            }
+        }
+        .formSection {}
+    }
+
+    private func detailRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 96, alignment: .trailing)
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
-
-// MARK: - ModelPickerSheet
 
 struct ModelPickerSheet: View {
     @ObservedObject var appHost: AppHost
@@ -174,8 +222,10 @@ struct ModelPickerSheet: View {
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
-                        if let q = item.quantization {
-                            Text(q).font(.caption).foregroundColor(.secondary)
+                        if let quantization = item.quantization {
+                            Text(quantization)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                     }
                 }

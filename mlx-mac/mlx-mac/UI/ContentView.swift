@@ -23,7 +23,10 @@ struct ContentView: View {
                     selectedTab = route
                 }
                 .tag("models")
-                ConvertView(appHost: appHost).tag("convert")
+                ConvertView(appHost: appHost) { route in
+                    selectedTab = route
+                }
+                .tag("convert")
                 DuplicatesView(appHost: appHost).tag("duplicates")
                 ServeView(appHost: appHost).tag("serve")
                 ScoutView(appHost: appHost).tag("scout")

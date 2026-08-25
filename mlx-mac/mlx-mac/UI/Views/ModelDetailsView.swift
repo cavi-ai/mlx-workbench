@@ -22,6 +22,8 @@ struct ModelDetailsView: View {
                     detailRow("Quantization", known(model.item.quantization))
                     detailRow("Outputs", lines(model.outputPaths))
                     detailRow("Readiness", model.readiness.title)
+                    detailRow("Duplicate status", duplicateStatus)
+                    detailRow("Prepare destination", prepareDestination)
                     detailRow("Why", readinessExplanation)
                     detailRow("Source paths", lines(model.sourcePaths))
                     detailRow("Signature", known(model.item.signature))
@@ -103,8 +105,10 @@ struct ModelDetailsView: View {
 
             Spacer()
 
-            Button("Select for Prepare") {
-                selectAndRoute(to: "convert")
+            Button("Prepare to run") {
+                appHost.selectedModelPath = model.item.path
+                appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
+                onRouteSelection("convert")
             }
 
             Button("Select for Compare") {
@@ -144,6 +148,24 @@ struct ModelDetailsView: View {
             return "This local variant is redundant with another copy in the same family group."
         case .quarantined:
             return "This model is quarantined and should not be used for Prepare or Try."
+        }
+    }
+
+    private var duplicateStatus: String {
+        guard model.readiness == .duplicate else {
+            return "No duplicate status reported by the latest library scan."
+        }
+        return "Duplicate variant reported by the latest library scan. Review the raw model evidence before preparing it."
+    }
+
+    private var prepareDestination: String {
+        switch ModelWorkflowResolver.destination(for: model.item, library: appHost.librarySnapshot) {
+        case .reuseExisting(let existing):
+            return "Existing equivalent MLX model: \(existing.item.path)"
+        case .available(let destination):
+            return destination.path
+        case .blocked(let destination, let reason):
+            return "\(destination.path)\nBlocked: \(reason)"
         }
     }
 
