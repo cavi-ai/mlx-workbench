@@ -1,190 +1,170 @@
 import SwiftUI
 
-// MARK: - ServeView
-// Preview / confirm a serve plan, list running servers, stop.
+struct RunPresentation: Equatable {
+    let workflow: ConversionWorkflow
+    let model: LibraryModel?
+    let servers: [ServerInfo]
+    let runtimeAvailable: Bool
+    let runtimeMessage: String
+
+    var modelPath: String? { model?.item.path ?? workflow.completedModelPath }
+    var activeServer: ServerInfo? { servers.first(where: { $0.state?.lowercased() == "running" }) }
+    var canPreview: Bool { model != nil && runtimeAvailable && workflow.serveState != .previewing && activeServer == nil }
+    var canConfirm: Bool { model != nil && runtimeAvailable && workflow.serveState == .readyToConfirm }
+    var remediation: String? { runtimeAvailable ? nil : runtimeMessage }
+}
 
 struct ServeView: View {
     @ObservedObject var appHost: AppHost
-
-    @State private var repo = ""
+    private let onRouteSelection: (String) -> Void
     @State private var runtime = "mlx_lm"
     @State private var portText = ""
-    @State private var isPreviewing = false
-    @State private var preview: [String: Any]?
-    @State private var servers: [ServerInfo] = []
-    @State private var errorMessage: String?
-    @State private var notice: String?
 
-    private var previewHash: String? {
-        if let h = preview?["preview_hash"] as? String { return h }
-        if let plan = preview?["plan"] as? [String: Any], let h = plan["preview_hash"] as? String { return h }
-        return nil
+    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+        self.appHost = appHost
+        self.onRouteSelection = onRouteSelection
     }
 
-    private var port: Int? {
-        Int(portText.trimmingCharacters(in: .whitespaces))
+    private var selectedModel: LibraryModel? {
+        let path = appHost.selectedModelPath ?? appHost.modelWorkflow.workflow.completedModelPath
+        guard let path else { return nil }
+        return appHost.librarySnapshot?.models.first(where: { $0.item.path == path })
     }
+
+    private var presentation: RunPresentation {
+        RunPresentation(
+            workflow: appHost.modelWorkflow.workflow,
+            model: selectedModel,
+            servers: appHost.modelWorkflow.servers,
+            runtimeAvailable: appHost.runtimeReport.serve.ok,
+            runtimeMessage: appHost.runtimeReport.serve.message
+        )
+    }
+
+    private var port: Int? { Int(portText.trimmingCharacters(in: .whitespacesAndNewlines)) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                formSection
-                if preview != nil {
-                    planSection
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Run").font(.title2)
+                    Text("Preview and confirm serving the selected completed MLX model.")
+                        .font(.callout).foregroundColor(.secondary)
                 }
-                ErrorBanner(text: errorMessage)
-                if let notice {
-                    Text(notice).font(.caption).foregroundColor(.green)
-                }
-                serversSection
-                Spacer()
+                selectedModelSection
+                launchSection
+                serverSection
             }
-            .padding()
+            .padding(24)
         }
-        .onAppear { refreshServers() }
+        .task {
+            prepareSelectedModel()
+            await appHost.modelWorkflow.refreshOperationalStatus()
+        }
     }
 
-    private var formSection: some View {
+    private var selectedModelSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionTitle(text: "Launch")
-            HStack {
-                TextField("Repo id or local path", text: $repo)
-                    .textFieldStyle(.roundedBorder)
+            SectionTitle(text: "Selected completed model")
+            if let model = selectedModel {
+                Text(model.displayName).font(.title3).fontWeight(.semibold)
+                detailLine("Model path", model.item.path)
+                detailLine("Architecture", model.item.architecture ?? "Not reported")
+                detailLine("Parameters", model.item.parameters ?? "Not reported")
+                detailLine("Quantization", model.item.quantization ?? "Not reported")
+                detailLine("Observed size", ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))
+                detailLine("Library status", model.item.status)
+            } else {
+                Text("Select a completed, ready MLX model from Library or Activity before running it.")
+                    .font(.callout).foregroundColor(.secondary)
+                Button("Open Library") { onRouteSelection("models") }
+            }
+        }
+        .padding(16).background(Color(nsColor: .controlBackgroundColor)).cornerRadius(12)
+    }
+
+    private var launchSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle(text: "Serve intent")
+            if let remediation = presentation.remediation {
+                ErrorBanner(text: "Run runtime unavailable: \(remediation). Open Settings after installing the required runtime.")
+                Button("Open Settings") { onRouteSelection("settings") }
             }
             HStack {
                 Picker("Runtime", selection: $runtime) {
                     Text("mlx_lm").tag("mlx_lm")
                     Text("mlx-vlm").tag("mlx-vlm")
                 }
-                .frame(width: 160)
-                TextField("Port (optional)", text: $portText)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 120)
+                .frame(width: 180)
+                TextField("Port (optional)", text: $portText).textFieldStyle(.roundedBorder).frame(width: 140)
                 Spacer()
             }
+            detailLine("Serve state", appHost.modelWorkflow.workflow.serveState.rawValue)
+            if let message = appHost.modelWorkflow.workflow.message {
+                Text(message).font(.callout).foregroundColor(.secondary)
+            }
+            ErrorBanner(text: appHost.modelWorkflow.workflow.errorMessage)
             HStack {
-                Button("Preview Plan") {
-                    previewPlan()
+                Button("Preview serve") {
+                    Task { await appHost.modelWorkflow.previewServe(runtime: runtime, port: port) }
                 }
-                .disabled(repo.isEmpty || isPreviewing)
-                Spacer()
+                .disabled(!presentation.canPreview)
+                Button("Confirm and run") {
+                    Task {
+                        await appHost.modelWorkflow.confirmServe(runtime: runtime, port: port)
+                        if appHost.modelWorkflow.workflow.serveState == .running { onRouteSelection("jobs") }
+                    }
+                }
+                .disabled(!presentation.canConfirm)
             }
+            .buttonStyle(.bordered)
         }
-        .formSection {}
+        .padding(16).background(Color(nsColor: .controlBackgroundColor)).cornerRadius(12)
     }
 
-    private var planSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var serverSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                SectionTitle(text: "Plan")
+                SectionTitle(text: "Authoritative server state")
                 Spacer()
-                Button("Confirm & Serve") {
-                    confirmServe()
-                }
-                .disabled(previewHash == nil)
+                Button("Refresh") { Task { await appHost.modelWorkflow.refreshOperationalStatus() } }
             }
-            PreviewDictView(value: preview ?? [:])
-        }
-        .formSection {}
-    }
-
-    private var serversSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                SectionTitle(text: "Running servers")
-                Spacer()
-                Button("Refresh") { refreshServers() }
-            }
-            if servers.isEmpty {
-                Text("No active servers.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(servers) { server in
-                    HStack {
-                        StatusPill(state: server.state ?? "unknown")
-                        VStack(alignment: .leading) {
-                            Text(server.repo ?? "server")
-                            if let runtime = server.runtime {
-                                Text(runtime).font(.caption).foregroundColor(.secondary)
-                            }
-                        }
-                        Spacer()
-                        if let port = server.port {
-                            Text(":\(port)").font(.caption)
-                        }
-                        Button("Stop") {
-                            stop(server)
+            if let server = presentation.activeServer {
+                HStack {
+                    StatusPill(state: server.state ?? "unknown")
+                    Text(server.repo ?? "Unknown model").font(.headline)
+                    Spacer()
+                    Button("Stop server") {
+                        Task {
+                            await appHost.modelWorkflow.stopServer()
+                            if appHost.modelWorkflow.workflow.serveState == .stopped { onRouteSelection("jobs") }
                         }
                     }
-                    .padding(.vertical, 4)
                 }
+                detailLine("Port", server.port.map(String.init) ?? "Not reported")
+                detailLine("PID", server.pid.map(String.init) ?? "Not reported")
+                detailLine("Receipt", server.receipt ?? "Not reported")
+                detailLine("Log path", server.logPath ?? "Not reported")
+                detailLine("Started", server.startedAt ?? "Not reported")
+            } else {
+                Text("No running server is reported.").font(.callout).foregroundColor(.secondary)
             }
         }
-        .formSection {}
+        .padding(16).background(Color(nsColor: .controlBackgroundColor)).cornerRadius(12)
     }
 
-    private func previewPlan() {
-        errorMessage = nil
-        notice = nil
-        isPreviewing = true
-        let r = repo, rt = runtime, p = port
-        Task {
-            defer { isPreviewing = false }
-            do {
-                preview = try await appHost.api.servePreview(repo: r, runtime: rt, port: p)
-            } catch let error as BridgeError {
-                preview = nil
-                errorMessage = error.errorDescription
-            } catch {
-                preview = nil
-                errorMessage = error.localizedDescription
-            }
-        }
+    private func prepareSelectedModel() {
+        guard let model = selectedModel,
+              appHost.modelWorkflow.workflow.completedModelPath != model.item.path else { return }
+        appHost.modelWorkflow.prepareServe(model: model)
     }
 
-    private func confirmServe() {
-        guard let hash = previewHash else { return }
-        errorMessage = nil
-        let r = repo, rt = runtime, p = port
-        Task {
-            do {
-                let result = try await appHost.api.serveStart(repo: r, runtime: rt, port: p, previewHash: hash)
-                notice = result["message"] as? String ?? "Serve started."
-                preview = nil
-                refreshServers()
-            } catch let error as BridgeError {
-                errorMessage = error.errorDescription
-            } catch {
-                errorMessage = error.localizedDescription
-            }
+    private func detailLine(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).foregroundColor(.secondary).frame(width: 120, alignment: .leading)
+            Text(value).textSelection(.enabled)
+            Spacer()
         }
-    }
-
-    private func stop(_ server: ServerInfo) {
-        guard let port = server.port else { return }
-        errorMessage = nil
-        Task {
-            do {
-                _ = try await appHost.api.serveStop(port: port)
-                refreshServers()
-            } catch let error as BridgeError {
-                errorMessage = error.errorDescription
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    private func refreshServers() {
-        Task {
-            do {
-                servers = try await appHost.api.serveStatus()
-            } catch let error as BridgeError {
-                errorMessage = error.errorDescription
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
+        .font(.callout)
     }
 }

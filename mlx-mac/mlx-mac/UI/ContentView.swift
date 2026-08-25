@@ -28,7 +28,10 @@ struct ContentView: View {
                 }
                 .tag("convert")
                 DuplicatesView(appHost: appHost).tag("duplicates")
-                ServeView(appHost: appHost).tag("serve")
+                ServeView(appHost: appHost) { route in
+                    selectedTab = route
+                }
+                .tag("serve")
                 ScoutView(appHost: appHost).tag("scout")
                 LMStudioView(appHost: appHost).tag("lmstudio")
                 TrainingView(appHost: appHost).tag("training-studio")
@@ -38,7 +41,10 @@ struct ContentView: View {
                 WireView(appHost: appHost).tag("wire")
                 ModelArchView(appHost: appHost).tag("model-arch")
                 SlothView(appHost: appHost).tag("sloth")
-                JobsView(appHost: appHost).tag("jobs")
+                JobsView(appHost: appHost) { route in
+                    selectedTab = route
+                }
+                .tag("jobs")
                 SettingsView(appHost: appHost).tag("settings")
             }
             .tabViewStyle(.automatic)
