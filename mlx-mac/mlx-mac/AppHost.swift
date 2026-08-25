@@ -85,11 +85,6 @@ class AppHost: ObservableObject {
                 limit: limit
             )
         }
-        modelWorkflow.setCompletionRescan { [weak self] in
-            guard let self else { return nil }
-            await self.rescan(limit: nil, reconcileWorkflow: false)
-            return self.librarySnapshot
-        }
     }
 
     func requestRescan() {
@@ -97,13 +92,12 @@ class AppHost: ObservableObject {
     }
 
     func rescan(limit: Int? = nil) async {
-        await rescan(limit: limit, reconcileWorkflow: true)
+        _ = await rescan(limit: limit, reconcileWorkflow: true)
     }
 
-    private func rescan(limit: Int?, reconcileWorkflow: Bool) async {
-        guard !isScanning else { return }
+    private func rescan(limit: Int?, reconcileWorkflow: Bool) async -> LibrarySnapshot? {
+        guard !isScanning else { return nil }
         isScanning = true
-        defer { isScanning = false }
 
         do {
             let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
@@ -119,10 +113,20 @@ class AppHost: ObservableObject {
             lastError = nil
             if reconcileWorkflow {
                 await modelWorkflow.reconcile(snapshot: snapshot, jobs: [])
-                await modelWorkflow.refreshOperationalStatus()
+                let requiresCompletionScan = modelWorkflow.consumeCompletionRescanRequest()
+                isScanning = false
+                if requiresCompletionScan {
+                    let freshSnapshot = await rescan(limit: nil, reconcileWorkflow: false)
+                    modelWorkflow.resolveCompletionAfterFreshScan(snapshot: freshSnapshot)
+                }
+                return snapshot
             }
+            isScanning = false
+            return snapshot
         } catch {
             lastError = Self.render(error)
+            isScanning = false
+            return nil
         }
     }
 

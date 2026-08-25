@@ -40,7 +40,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     private let api: ModelWorkflowAPI
     private let persistence: ModelWorkflowPersistence
     private let now: () -> Date
-    private var completionRescan: (() async -> LibrarySnapshot?)?
+    private var completionRescanRequested = false
     private var servePreviewHash: String?
 
     init(
@@ -64,10 +64,6 @@ final class ModelWorkflowCoordinator: ObservableObject {
         } catch {
             workflow = Self.emptyWorkflow(at: now(), message: "Saved workflow history is unavailable: \(AppHost.render(error))")
         }
-    }
-
-    func setCompletionRescan(_ operation: @escaping () async -> LibrarySnapshot?) {
-        completionRescan = operation
     }
 
     func inspect(source: ModelItem, snapshot: LibrarySnapshot?) {
@@ -255,6 +251,31 @@ final class ModelWorkflowCoordinator: ObservableObject {
         update(message: nil, errorMessage: nil)
     }
 
+    func consumeCompletionRescanRequest() -> Bool {
+        let requested = completionRescanRequested
+        completionRescanRequested = false
+        return requested
+    }
+
+    func resolveCompletionAfterFreshScan(snapshot: LibrarySnapshot?) {
+        guard let model = completedModel(in: snapshot) else {
+            update(
+                state: .running,
+                message: "Conversion completed, but the fresh library scan did not find its expected MLX output.",
+                errorMessage: nil,
+                persist: true
+            )
+            return
+        }
+        update(
+            state: .completed,
+            completedModelPath: model.item.path,
+            message: "Conversion completed and the MLX output was confirmed by a fresh scan.",
+            errorMessage: nil,
+            persist: true
+        )
+    }
+
     private func reconcileAuthoritative(snapshot: LibrarySnapshot?, jobs: [Job]) async {
         guard let receipt = workflow.jobReceipt, !receipt.isEmpty else { return }
         guard let job = jobs.first(where: { $0.receipt == receipt }) else {
@@ -269,17 +290,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
         case "running", "active":
             update(state: .running, message: "Conversion running.", errorMessage: nil, lastKnownAgentState: job.state, persist: true)
         case "completed", "complete", "succeeded", "success":
-            let freshSnapshot: LibrarySnapshot?
-            if let completionRescan {
-                freshSnapshot = await completionRescan()
-            } else {
-                freshSnapshot = nil
-            }
-            guard let model = completedModel(in: freshSnapshot) else {
-                update(state: .running, message: "Conversion completed; waiting for a fresh library scan to confirm its MLX output.", errorMessage: nil, lastKnownAgentState: job.state, persist: true)
-                return
-            }
-            update(state: .completed, completedModelPath: model.item.path, message: "Conversion completed and the MLX output was confirmed by a fresh scan.", errorMessage: nil, lastKnownAgentState: job.state, persist: true)
+            completionRescanRequested = true
+            update(state: .running, message: "Conversion completed; waiting for a fresh library scan to confirm its MLX output.", errorMessage: nil, lastKnownAgentState: job.state, persist: true)
         case "failed", "error", "cancelled", "canceled":
             update(state: .failed, message: "Conversion \(job.state).", errorMessage: "Conversion \(job.state).", lastKnownAgentState: job.state, persist: true)
         default:

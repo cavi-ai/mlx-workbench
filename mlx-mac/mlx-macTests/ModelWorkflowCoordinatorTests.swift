@@ -51,6 +51,35 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
+    func testTerminalStatusCompletesOnlyFromPostStatusRescan() async {
+        let scans = ScanSequence([
+            scanResult(outputs: []),
+            scanResult(outputs: [
+                MLXOutput(
+                    path: "/Models/source",
+                    name: "source",
+                    modelKey: "source-model",
+                    quantization: nil,
+                    provenance: "signature-1"
+                ),
+            ]),
+        ])
+        let terminalJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "completed")
+        let host = await makeHost(
+            jobs: [terminalJob],
+            scanOperation: { _, _, _, _ in try await scans.next() }
+        )
+        await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
+
+        await host.rescan()
+
+        let state = await MainActor.run { (host.modelWorkflow.workflow.state, host.modelWorkflow.workflow.completedModelPath) }
+        let scanCount = await scans.count
+        XCTAssertEqual(state.0, .completed)
+        XCTAssertEqual(state.1, "/Models/source")
+        XCTAssertEqual(scanCount, 2)
+    }
+
     func testMissingStoreLoadsEmptyRecords() throws {
         let store = makeStore()
 
@@ -219,7 +248,8 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         preview: [String: Any] = ["preview_hash": "preview-1"],
         confirmReceipt: String = "receipt-1",
         jobs: [Job] = [],
-        statusError: Error? = nil
+        statusError: Error? = nil,
+        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil
     ) async -> AppHost {
         let api = ModelWorkflowAPI(
             convertPreview: { _, _, _ in preview },
@@ -237,12 +267,31 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         return await MainActor.run {
             let host = AppHost(
                 config: Config.defaults(),
+                scanOperation: scanOperation,
                 modelWorkflowAPI: api,
                 modelWorkflowPersistence: .live(store: store)
             )
             host.librarySnapshot = snapshot
             return host
         }
+    }
+
+    private func scanResult(outputs: [MLXOutput]) -> ScanResult {
+        ScanResult(
+            roots: nil,
+            models: [ggufSource],
+            outputs: outputs,
+            pending: [ggufSource.path],
+            duplicates: [],
+            totals: ScanTotals(
+                gguf: 1,
+                pending: 1,
+                converted: outputs.count,
+                unreadable: 0,
+                bytes: 1,
+                reclaimableBytes: 0
+            )
+        )
     }
 
     private enum TestError: LocalizedError {
@@ -256,4 +305,23 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             }
         }
     }
+}
+
+private actor ScanSequence {
+    private var values: [ScanResult]
+    private(set) var count = 0
+
+    init(_ values: [ScanResult]) {
+        self.values = values
+    }
+
+    func next() throws -> ScanResult {
+        guard !values.isEmpty else { throw TestSequenceError.exhausted }
+        count += 1
+        return values.removeFirst()
+    }
+}
+
+private enum TestSequenceError: Error {
+    case exhausted
 }
