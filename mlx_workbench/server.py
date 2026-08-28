@@ -515,7 +515,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._body()
             if not isinstance(payload, dict):
                 return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            return _ok(bridge.scan_duplicates(agent))
+            return _ok(bridge.scan_duplicates(
+                agent,
+                gguf_roots=config_module.scan_roots(settings),
+                mlx_roots=settings["mlx_roots"],
+                runner=runner,
+            ))
 
         if method == "POST" and route == "/api/model/arch":
             payload = self._body()

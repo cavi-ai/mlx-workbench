@@ -15,7 +15,10 @@ struct RunPresentation: Equatable {
               model.readiness == .ready else { return nil }
         return model
     }
-    var modelPath: String? { workflow.completedModelPath }
+    var modelPath: String? {
+        guard selectedCompletedModel != nil else { return nil }
+        return workflow.completedModelPath
+    }
     var activeServer: ServerInfo? {
         guard let modelPath else { return nil }
         return servers.first(where: {

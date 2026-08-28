@@ -79,7 +79,7 @@ class RunTests(unittest.TestCase):
         script.write_text("", encoding="utf-8")
 
     def test_scan_builds_the_expected_argv(self):
-        recorder = Recorder(stdout=envelope(data={"totals": {"gguf": 0}}))
+        recorder = Recorder(stdout=envelope(data={"models": [], "totals": {"gguf": 0, "bytes": 0}}))
         result = bridge.scan(
             str(self.root),
             gguf_roots=["/a", "/b"],
@@ -96,6 +96,88 @@ class RunTests(unittest.TestCase):
         self.assertIn("--no-signature", command)
         self.assertEqual(command[-1], "--json")
         self.assertEqual(result["totals"]["gguf"], 0)
+
+    def test_scan_rejects_a_model_without_a_byte_count(self):
+        recorder = Recorder(stdout=envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        }))
+
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.scan(str(self.root), runner=recorder)
+
+        self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_scan_rejects_a_model_without_required_identity_fields(self):
+        for model in (
+            {"name": "a.gguf", "bytes": 1},
+            {"path": "/models/a.gguf", "bytes": 1},
+            {"path": "", "name": "a.gguf", "bytes": 1},
+        ):
+            with self.subTest(model=model):
+                recorder = Recorder(stdout=envelope(data={
+                    "models": [model],
+                    "totals": {"bytes": 1},
+                }))
+
+                with self.assertRaises(bridge.BridgeError) as caught:
+                    bridge.scan(str(self.root), runner=recorder)
+
+                self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_duplicate_scan_reuses_strict_scan_contract_and_roots(self):
+        recorder = Recorder(stdout=envelope(data={
+            "models": [
+                {"path": "/a/duplicate.gguf", "name": "duplicate.gguf", "bytes": 1},
+                {"path": "/b/duplicate.gguf", "name": "duplicate.gguf", "bytes": 2},
+            ],
+            "totals": {"bytes": 3},
+        }))
+
+        result = bridge.scan_duplicates(
+            str(self.root),
+            gguf_roots=["/a", "/b"],
+            mlx_roots=["/out"],
+            runner=recorder,
+        )
+
+        self.assertEqual(result["duplicates"][0]["files"], ["/a/duplicate.gguf", "/b/duplicate.gguf"])
+        self.assertEqual(recorder.commands[0].count("--gguf-root"), 2)
+        self.assertIn("--mlx-root", recorder.commands[0])
+
+    def test_duplicate_scan_rejects_malformed_inventory(self):
+        recorder = Recorder(stdout=envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        }))
+
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.scan_duplicates(str(self.root), runner=recorder)
+
+        self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_scan_rejects_missing_model_inventory_and_totals_bytes(self):
+        for payload in (
+            {"totals": {"bytes": 0}},
+            {"models": []},
+        ):
+            with self.subTest(payload=payload):
+                recorder = Recorder(stdout=envelope(data=payload))
+
+                with self.assertRaises(bridge.BridgeError) as caught:
+                    bridge.scan(str(self.root), runner=recorder)
+
+                self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_scan_preserves_a_large_model_byte_count(self):
+        recorder = Recorder(stdout=envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf", "bytes": 29_047_084_448}],
+            "totals": {"bytes": 29_047_084_448},
+        }))
+
+        result = bridge.scan(str(self.root), runner=recorder)
+
+        self.assertEqual(result["models"][0]["bytes"], 29_047_084_448)
 
     def test_preview_does_not_confirm(self):
         recorder = Recorder(stdout=envelope(data={"plan": {"preview_hash": "a" * 64}}))

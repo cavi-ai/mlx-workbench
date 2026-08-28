@@ -133,7 +133,7 @@ final class LibraryViewTests: XCTestCase {
         XCTAssertEqual(presentation.stateTitle, "Preparation needs attention")
     }
 
-    func testPreparePresentationDisablesConfirmationForBlockedDestinationWithOldPreviewHash() {
+    func testPreparePresentationHidesPrimaryActionForBlockedDestinationWithOldPreviewHash() {
         let presentation = PrepareWorkflowPresentation(workflow: makeWorkflow(
             previewHash: "old-preview",
             state: .failed,
@@ -141,7 +141,7 @@ final class LibraryViewTests: XCTestCase {
         ))
 
         XCTAssertFalse(presentation.canConfirm)
-        XCTAssertEqual(presentation.primaryAction, .preview)
+        XCTAssertEqual(presentation.primaryAction, .none)
     }
 
     func testPreparePresentationLocksQuantizationAfterPreview() {

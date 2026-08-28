@@ -172,7 +172,53 @@ def scan(agent_path, gguf_roots=(), mlx_roots=(), signatures=True, limit=None,
         argv.append("--no-signature")
     if limit:
         argv.extend(["--limit", str(limit)])
-    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+    return validate_scan(unwrap(run(agent_path, argv, timeout=timeout, runner=runner)))
+
+
+def validate_scan(payload):
+    """Reject malformed discovery data before a UI can render it as zero bytes."""
+    models = payload.get("models")
+    if not isinstance(models, list):
+        raise BridgeError(
+            "scan_contract_invalid",
+            "The agent returned an invalid model inventory.",
+            "Update mlx-agent and rescan.",
+        )
+    for index, model in enumerate(models):
+        if not isinstance(model, dict):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned an invalid model entry for models[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+        if not _nonempty_string(model.get("path")) or not _nonempty_string(model.get("name")):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned an invalid model identity for models[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+        if not _nonnegative_int(model.get("bytes")):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned an invalid byte count for models[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+    totals = payload.get("totals")
+    if not isinstance(totals, dict) or not _nonnegative_int(totals.get("bytes")):
+        raise BridgeError(
+            "scan_contract_invalid",
+            "The agent returned invalid inventory totals.",
+            "Update mlx-agent and rescan.",
+        )
+    return payload
+
+
+def _nonnegative_int(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _nonempty_string(value):
+    return isinstance(value, str) and bool(value.strip())
 
 
 def preview(agent_path, gguf_path, q_bits=4, out=None, timeout=DEFAULT_TIMEOUT, runner=None):
@@ -1114,54 +1160,22 @@ def model_architecture(agent_path, path):
 
 
 
-def scan_duplicates(agent_path):
+def scan_duplicates(agent_path, gguf_roots=(), mlx_roots=(), runner=None):
     """Scan for duplicates across all configured GGUF roots."""
-    if not agent_path:
-        raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
-        )
-    
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
-        raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
-        )
-    
     try:
-        # Run convert scan to get all models
-        argv = ["convert", "scan", "--json"]
-        command = [sys.executable, str(script)] + argv
-        result = _default_runner(command, timeout=300)
-        
-        if result["returncode"] != 0:
-            raise BridgeError(
-                "scan_failed",
-                "Failed to scan models: {0}".format(result.get("stderr", "unknown error")),
-                "Check mlx-agent logs.",
-            )
-        
-        try:
-            output = json.loads(result["stdout"])
-            models = output.get("data", {}).get("models", []) or []
-        except:
-            models = []
-        
+        models = scan(
+            agent_path,
+            gguf_roots=gguf_roots,
+            mlx_roots=mlx_roots,
+            runner=runner,
+        )["models"]
+
         # Group by filename (exact duplicates)
         exact_groups = {}
-        variant_groups = {}
-        
+
         for model in models:
-            path = model.get("path", "")
-            name = Path(path).name if path else ""
-            
-            if not name:
-                continue
-            
+            path = model["path"]
+            name = Path(path).name
             # Group exact filename matches (same file, different location or same path)
             if name not in exact_groups:
                 exact_groups[name] = []
@@ -1181,10 +1195,11 @@ def scan_duplicates(agent_path):
             "duplicates": duplicates,
             "total_models": len(models),
         }
+    except BridgeError:
+        raise
     except Exception as error:
         raise BridgeError(
             "duplicate_scan_failed",
             str(error),
             "Check your configured GGUF roots and try again.",
         )
-

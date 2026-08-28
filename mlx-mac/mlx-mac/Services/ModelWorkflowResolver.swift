@@ -75,7 +75,21 @@ enum ModelWorkflowResolver {
 
     private static func canonicalPath(_ path: String) -> String {
         let expanded = NSString(string: path).expandingTildeInPath
-        return URL(fileURLWithPath: expanded).standardizedFileURL.resolvingSymlinksInPath().path
+        var unresolved = URL(fileURLWithPath: expanded).standardizedFileURL
+        var trailingComponents: [String] = []
+
+        while !FileManager.default.fileExists(atPath: unresolved.path) {
+            let parent = unresolved.deletingLastPathComponent()
+            guard parent.path != unresolved.path else { break }
+            trailingComponents.insert(unresolved.lastPathComponent, at: 0)
+            unresolved = parent
+        }
+
+        var resolved = unresolved.resolvingSymlinksInPath()
+        for component in trailingComponents {
+            resolved.appendPathComponent(component)
+        }
+        return resolved.standardizedFileURL.path
     }
 
     private static func normalizedEvidence(_ value: String?) -> String? {

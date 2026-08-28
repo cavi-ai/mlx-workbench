@@ -73,6 +73,12 @@ class ConfigTests(unittest.TestCase):
             config.scan_roots({"gguf_roots": []}), config.discover_gguf_roots()
         )
 
+    def test_discover_gguf_roots_includes_dot_models_when_present(self):
+        home = Path(self.directory.name) / "home"
+        (home / ".models").mkdir(parents=True)
+        with patch.object(config.Path, "home", return_value=home):
+            self.assertIn(str(home / ".models"), config.discover_gguf_roots())
+
     def test_discover_agent_path_finds_vendor_checkout(self):
         root = Path(self.directory.name)
         _fake_agent(root / "vendor" / "mlx-agent")

@@ -1,5 +1,16 @@
 import Foundation
 
+enum ScanContractError: LocalizedError, Equatable {
+    case invalidRequiredField(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidRequiredField(let path):
+            return "The model inventory returned invalid required data at \(path)."
+        }
+    }
+}
+
 // MARK: - ModelItem
 // One entry from `convert scan` (the .gguf inventory), also reused for MLX outputs.
 
@@ -331,12 +342,11 @@ extension Dictionary where Key == String, Value == Any {
     }
 
     func int(_ key: String) -> Int? {
-        guard let v = value(key) else { return nil }
-        if let i = v as? Int { return i }
-        if let i64 = v as? Int64 { return Int(i64) }
-        if let d = v as? Double { return Int(d) }
-        if let s = v as? String { return Int(s) }
-        return nil
+        guard let value = value(key), let integer = Self.int64(value),
+              integer >= Int64(Int.min), integer <= Int64(Int.max) else {
+            return nil
+        }
+        return Int(integer)
     }
 
     func double(_ key: String) -> Double? {
@@ -345,6 +355,52 @@ extension Dictionary where Key == String, Value == Any {
         if let f = v as? Float { return Double(f) }
         if let i = v as? Int { return Double(i) }
         if let s = v as? String { return Double(s) }
+        return nil
+    }
+
+    func requiredString(_ key: String, at path: String) throws -> String {
+        guard let string = string(key), !string.isEmpty else {
+            throw ScanContractError.invalidRequiredField(path)
+        }
+        return string
+    }
+
+    func requiredInt64(_ key: String, at path: String) throws -> Int64 {
+        guard let value = value(key), let integer = Self.int64(value), integer >= 0 else {
+            throw ScanContractError.invalidRequiredField(path)
+        }
+        return integer
+    }
+
+    func optionalInt64(_ key: String, at path: String) throws -> Int64? {
+        guard let value = value(key) else { return nil }
+        guard let integer = Self.int64(value), integer >= 0 else {
+            throw ScanContractError.invalidRequiredField(path)
+        }
+        return integer
+    }
+
+    private static func int64(_ value: Any) -> Int64? {
+        if let value = value as? NSNumber {
+            if CFGetTypeID(value) == CFBooleanGetTypeID() { return nil }
+            let double = value.doubleValue
+            guard double.isFinite, double.rounded(.towardZero) == double,
+                  double >= Double(Int64.min), double <= Double(Int64.max) else {
+                return nil
+            }
+            return value.int64Value
+        }
+        if value is Bool { return nil }
+        if let value = value as? Int64 { return value }
+        if let value = value as? Int { return Int64(value) }
+        if let value = value as? Double {
+            guard value.isFinite, value.rounded(.towardZero) == value,
+                  value >= Double(Int64.min), value <= Double(Int64.max) else {
+                return nil
+            }
+            return Int64(value)
+        }
+        if let value = value as? String { return Int64(value) }
         return nil
     }
 }

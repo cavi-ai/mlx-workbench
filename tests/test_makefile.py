@@ -1,6 +1,8 @@
 import subprocess
 import sys
 import unittest
+import os
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -46,6 +48,64 @@ class MakefileStopTests(unittest.TestCase):
             if listener.poll() is None:
                 listener.terminate()
             listener.wait(timeout=5)
+
+    def test_check_accepts_a_healthy_agent_from_the_configured_external_checkout(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "external-mlx-agent"
+            script = agent / "scripts" / "mlx-agent"
+            script.parent.mkdir(parents=True)
+            script.write_text("", encoding="utf-8")
+            config_path = root / "config.json"
+            config_path.write_text(
+                json.dumps({"mlx_agent_path": str(agent)}), encoding="utf-8"
+            )
+            environment = dict(os.environ)
+            environment["MLX_WORKBENCH_CONFIG"] = str(config_path)
+
+            result = subprocess.run(
+                ["make", "check"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                env=environment,
+                timeout=10,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("mlx-agent OK: {0}".format(agent), result.stdout)
+
+    def test_agent_bootstrap_does_not_clone_when_configured_agent_is_healthy(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "external-mlx-agent"
+            script = agent / "scripts" / "mlx-agent"
+            script.parent.mkdir(parents=True)
+            script.write_text("", encoding="utf-8")
+            config_path = root / "config.json"
+            config_path.write_text(
+                json.dumps({"mlx_agent_path": str(agent)}), encoding="utf-8"
+            )
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            fake_git = bin_dir / "git"
+            fake_git.write_text("#!/bin/sh\nexit 93\n", encoding="utf-8")
+            fake_git.chmod(0o755)
+            environment = dict(os.environ)
+            environment["MLX_WORKBENCH_CONFIG"] = str(config_path)
+            environment["PATH"] = "{0}:{1}".format(bin_dir, environment["PATH"])
+
+            result = subprocess.run(
+                ["make", "agent-bootstrap"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                env=environment,
+                timeout=10,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("mlx-agent already configured: {0}".format(agent), result.stdout)
 
 
 if __name__ == "__main__":
