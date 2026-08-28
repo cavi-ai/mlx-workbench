@@ -373,6 +373,15 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertEqual(action.route, "jobs")
     }
 
+    func testDiscoverGgufRootsIncludesHiddenModelsDirectory() throws {
+        let home = try makeTempDirectory()
+        defer { cleanup(home) }
+        let hiddenModels = home.appendingPathComponent(".models", isDirectory: true)
+        try FileManager.default.createDirectory(at: hiddenModels, withIntermediateDirectories: true)
+
+        XCTAssertEqual(Config.discoverGgufRoots(home: home), [hiddenModels.path])
+    }
+
     private func makeTempDirectory() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-tests-\(UUID().uuidString)")

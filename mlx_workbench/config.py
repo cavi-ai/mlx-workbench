@@ -56,6 +56,7 @@ def discover_gguf_roots():
         home / ".cache" / "huggingface" / "hub",
         home / ".cache" / "lm-studio" / "models",
         home / ".lmstudio" / "models",
+        home / ".models",
         home / "models",
         home / "Models",
     ])

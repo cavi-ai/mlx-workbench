@@ -23,7 +23,7 @@ make start
 
 That is the whole setup. `make install` creates a project `.venv` (not Homebrew system Python) and installs convert/serve packages there. Re-run `make install` anytime to refresh.
 
-The default agent path is `vendor/mlx-agent` (pinned release). Override with Settings, or `$MLX_AGENT_HOME`, for a local mlx-agent checkout.
+The default agent path is `vendor/mlx-agent` (pinned release). Override with Settings, or `$MLX_AGENT_HOME`, for a local mlx-agent checkout. `make install` and `make check` use that resolved configured path first, and initialize the vendored submodule only when no usable agent is configured.
 
 ## Run
 
@@ -110,6 +110,10 @@ git add vendor/mlx-agent
 make test
 # or
 python3 -m unittest discover -s tests -t .
+
+# Read-only E2E: verify each scanned model's reported byte count against disk.
+make test-live-scan
+make test-swift-live-scan
 ```
 
 ## Make targets
@@ -124,6 +128,8 @@ python3 -m unittest discover -s tests -t .
 | `make run` | Foreground UI |
 | `make open` | Open the loopback URL |
 | `make test` | Unittest suite |
+| `make test-live-scan` | Opt-in, read-only local E2E scan; verifies reported model bytes against the filesystem |
+| `make test-swift-live-scan` | Opt-in, read-only native-app E2E scan; verifies reported model bytes against the filesystem |
 | `make check` / `make doctor` | Verify mlx-agent + convert deps |
 
 ## License

@@ -26,8 +26,8 @@ DOCS_COMMIT  ?= $(shell git rev-parse HEAD)
 DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
 DOCS_RELEASE_DIR ?= .release
 
-.PHONY: help mac-only install setup venv _pkgs install-convert deps \
-	start stop restart status run test test-swift open check check-convert doctor clean clean-venv \
+.PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert deps \
+	start stop restart status run test test-live-scan test-swift test-swift-live-scan open check check-convert doctor clean clean-venv \
 	docs-test docs-build docs-verify docs-release
 
 help:
@@ -41,7 +41,9 @@ help:
 		'make status   - running?' \
 		'make run      - foreground UI' \
 		'make test     - unittest suite' \
+		'make test-live-scan - validate live model bytes against configured filesystem paths' \
 		'make test-swift - unit tests for Swift app' \
+		'make test-swift-live-scan - validate native app scan bytes against configured filesystem paths' \
 		'make docs-test - release documentation contract tests' \
 		'make docs-build - build deterministic versioned documentation' \
 		'make docs-verify - verify the versioned documentation' \
@@ -58,14 +60,24 @@ mac-only:
 		exit 1; \
 	fi
 
-install setup: mac-only
-	git submodule update --init --recursive
+install setup: mac-only agent-bootstrap
 	@$(MAKE) --no-print-directory venv
 	@$(MAKE) --no-print-directory _pkgs
 	@$(MAKE) --no-print-directory check
 	@$(MAKE) --no-print-directory check-convert
 	@echo ""
 	@echo "Install complete. Next:  make start"
+
+agent-bootstrap:
+	@agent_path="$$($(PYTHON) -c 'from mlx_workbench import config; print(config.load()["mlx_agent_path"])')"; \
+	if [ -n "$$agent_path" ] && [ -f "$$agent_path/scripts/mlx-agent" ]; then \
+		echo "mlx-agent already configured: $$agent_path"; \
+	elif [ -n "$$agent_path" ]; then \
+		echo "configured mlx_agent_path has no scripts/mlx-agent: $$agent_path" >&2; \
+		exit 1; \
+	else \
+		git submodule update --init --recursive; \
+	fi
 
 venv: mac-only
 	@if [ -x "$(VENV_PY)" ]; then \
@@ -100,11 +112,12 @@ install-convert deps: mac-only venv
 	@$(MAKE) --no-print-directory check-convert
 
 check: mac-only
-	@if [ ! -f vendor/mlx-agent/scripts/mlx-agent ]; then \
-		echo "mlx-agent CLI missing. Run: make install" >&2; \
+	@agent_path="$$($(PYTHON) -c 'from mlx_workbench import config; print(config.load()["mlx_agent_path"])')"; \
+	if [ -z "$$agent_path" ] || [ ! -f "$$agent_path/scripts/mlx-agent" ]; then \
+		echo "mlx-agent CLI missing at configured mlx_agent_path. Run: make install, or set mlx_agent_path / MLX_AGENT_HOME." >&2; \
 		exit 1; \
-	fi
-	@echo "mlx-agent OK: vendor/mlx-agent ($$(cd vendor/mlx-agent && git describe --tags --always 2>/dev/null || echo unknown))"
+	fi; \
+	echo "mlx-agent OK: $$agent_path ($$(cd "$$agent_path" && git describe --tags --always 2>/dev/null || echo external))"
 	@if [ ! -x "$(VENV_PY)" ]; then \
 		echo "No .venv yet. Run: make install" >&2; \
 	else \
@@ -187,10 +200,20 @@ run: check
 test:
 	$(PYTHON) -m unittest discover -s tests -t .
 
+test-live-scan:
+	MLX_WORKBENCH_LIVE_SCAN=1 $(PYTHON) -m unittest tests.test_live_scan_e2e -v
+
 test-swift:
 	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) test
+
+test-swift-live-scan:
+	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+		-configuration Debug -destination 'platform=macOS' \
+		-derivedDataPath $(MLX_SWIFT_DD) \
+		OTHER_SWIFT_FLAGS='$(OTHER_SWIFT_FLAGS) -DMLX_WORKBENCH_LIVE_SCAN' test
+
 docs-test:
 	$(PYTHON) -m unittest tests.test_release_docs -v
 

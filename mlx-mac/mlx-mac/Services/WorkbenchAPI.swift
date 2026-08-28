@@ -48,16 +48,7 @@ actor WorkbenchAPI {
             argv.append(contentsOf: ["--limit", String(limit)])
         }
         let data = try raw(argv)
-        guard let json = try? JSONSerialization.data(withJSONObject: data) else {
-            throw BridgeError.skillOutputUnreadable
-        }
-        let decoder = JSONDecoder()
-        do {
-            return try decoder.decode(ScanResult.self, from: json)
-        } catch {
-            // Manual fallback for shape drift.
-            return Self.scanFallback(data)
-        }
+        return try Self.decodeScan(data)
     }
 
     // MARK: - Convert
@@ -398,13 +389,15 @@ actor WorkbenchAPI {
         )
     }
 
-    static func scanFallback(_ data: [String: Any]) -> ScanResult {
-        let modelsRaw = (data["models"] as? [[String: Any]]) ?? []
-        let models = modelsRaw.map { raw -> ModelItem in
-            return ModelItem(
-                path: raw.string("path") ?? "",
-                name: raw.string("name") ?? "",
-                bytes: Int64(raw.int("bytes") ?? 0),
+    static func decodeScan(_ data: [String: Any]) throws -> ScanResult {
+        guard let modelsRaw = data["models"] as? [[String: Any]] else {
+            throw ScanContractError.invalidRequiredField("models")
+        }
+        let models = try modelsRaw.enumerated().map { index, raw in
+            ModelItem(
+                path: try raw.requiredString("path", at: "models[\(index)].path"),
+                name: try raw.requiredString("name", at: "models[\(index)].name"),
+                bytes: try raw.requiredInt64("bytes", at: "models[\(index)].bytes"),
                 modifiedAt: raw.int("modified_at"),
                 shard: raw.string("shard"),
                 modelKey: raw.string("model_key"),
@@ -413,38 +406,46 @@ actor WorkbenchAPI {
                 parameters: raw.string("parameters"),
                 structure: raw.string("structure"),
                 signature: raw.string("signature"),
-                companion: raw["companion"] as? Bool,
-                readable: raw["readable"] as? Bool,
+                companion: raw.bool("companion"),
+                readable: raw.bool("readable"),
                 status: raw.string("status") ?? "pending",
-                outputs: (raw["outputs"] as? [String]) ?? [],
+                outputs: raw["outputs"] as? [String] ?? [],
                 tensorCount: raw.int("tensor_count"),
                 error: raw.string("error")
             )
         }
         let outputsRaw = (data["outputs"] as? [[String: Any]]) ?? []
-        let outputs = outputsRaw.compactMap { r -> MLXOutput? in
-            guard let path = r.string("path") else { return nil }
-            let q = r["quantization"] as? [String: Any]
+        let outputs = outputsRaw.compactMap { raw -> MLXOutput? in
+            guard let path = raw.string("path") else { return nil }
+            let quantization = raw["quantization"] as? [String: Any]
+            let info = quantization.flatMap { value -> QuantInfo? in
+                guard let bits = value.int("bits") else { return nil }
+                return QuantInfo(
+                    bits: bits,
+                    groupSize: value.int("group_size"),
+                    modelType: value.string("model_type")
+                )
+            }
             return MLXOutput(
                 path: path,
-                name: r.string("name") ?? "",
-                modelKey: r.string("model_key"),
-                quantization: QuantInfo(
-                    bits: q?["bits"] as? Int ?? 0,
-                    groupSize: q?["group_size"] as? Int,
-                    modelType: q?["model_type"] as? String
-                ),
-                provenance: r.string("provenance")
+                name: raw.string("name") ?? path,
+                modelKey: raw.string("model_key"),
+                quantization: info,
+                provenance: raw.string("provenance")
             )
         }
-        let totalsDict = (data["totals"] as? [String: Any]) ?? [:]
+        guard let totalsDict = data["totals"] as? [String: Any] else {
+            throw ScanContractError.invalidRequiredField("totals")
+        }
         let totals = ScanTotals(
             gguf: totalsDict.int("gguf") ?? models.count,
             pending: totalsDict.int("pending") ?? 0,
             converted: totalsDict.int("converted") ?? 0,
             unreadable: totalsDict.int("unreadable") ?? 0,
-            bytes: Int64(totalsDict.int("bytes") ?? 0),
-            reclaimableBytes: Int64(totalsDict.int("reclaimable_bytes") ?? 0)
+            bytes: try totalsDict.requiredInt64("bytes", at: "totals.bytes"),
+            reclaimableBytes: try totalsDict.optionalInt64(
+                "reclaimable_bytes", at: "totals.reclaimable_bytes"
+            ) ?? 0
         )
         let dupRaw = (data["duplicates"] as? [[String: Any]]) ?? []
         let dups = dupRaw.map { d -> DuplicateGroup in
@@ -458,8 +459,14 @@ actor WorkbenchAPI {
                            count: d.int("count"),
                            groupId: d.string("group_id"))
         }
+        let roots = (data["roots"] as? [String: Any]).map { raw in
+            ScanRoots(
+                gguf: raw["gguf"] as? [String] ?? [],
+                mlx: raw["mlx"] as? [String] ?? []
+            )
+        }
         return ScanResult(
-            roots: nil,
+            roots: roots,
             models: models,
             outputs: outputs,
             pending: (data["pending"] as? [String]) ?? [],

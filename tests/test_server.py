@@ -237,7 +237,7 @@ class ServerTests(unittest.TestCase):
 
         self.commands = []
         self.convert_jobs = []
-        self.responses = {"stdout": envelope(data={"models": [], "totals": {"gguf": 0}})}
+        self.responses = {"stdout": envelope(data={"models": [], "totals": {"gguf": 0, "bytes": 0}})}
         self.token = "test-token"
         self.httpd = server.build(
             "127.0.0.1",
@@ -343,6 +343,35 @@ class ServerTests(unittest.TestCase):
         self.assertIn(str(self.models), self.commands[0])
         self.assertIn("convert", self.commands[0])
         self.assertIn("scan", self.commands[0])
+
+    def test_scan_contract_failure_becomes_a_502(self):
+        self.responses["stdout"] = envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        })
+
+        status, payload = self._request("/api/scan")
+
+        self.assertEqual(status, 502)
+        self.assertEqual(payload["error"]["code"], "scan_contract_invalid")
+
+    def test_duplicate_scan_contract_failure_becomes_a_502(self):
+        self.responses["stdout"] = envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        })
+
+        status, payload = self._request("/api/duplicates/scan", "POST", {})
+
+        self.assertEqual(status, 502)
+        self.assertEqual(payload["error"]["code"], "scan_contract_invalid")
+
+    def test_duplicate_scan_passes_configured_roots_to_the_cli(self):
+        status, payload = self._request("/api/duplicates/scan", "POST", {})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["total_models"], 0)
+        self.assertIn(str(self.models), self.commands[0])
 
     def test_skill_failure_becomes_a_502(self):
         self.responses["stdout"] = envelope(
