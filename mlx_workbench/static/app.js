@@ -1530,57 +1530,61 @@ function renderDuplicateScan(dupes) {
     return;
   }
 
-  const note = document.createElement('p');
-  note.className = 'muted';
-  note.textContent = 'Remove moves the selected file to quarantine so it can be restored. No file is permanently deleted.';
-  container.appendChild(note);
-
-  const table = element('table', 'grid');
-  const head = element('thead');
-  const headRow = element('tr');
-  headRow.appendChild(element('th', null, 'Group'));
-  headRow.appendChild(element('th', null, 'Duplicate files'));
-  head.appendChild(headRow);
-  table.appendChild(head);
-  const body = element('tbody');
-  dupes.forEach(function(group) {
-    const row = document.createElement('tr');
-    const groupCell = document.createElement('td');
-    groupCell.textContent = group.group_id || 'Duplicate group';
-    row.appendChild(groupCell);
-
-    const filesCell = document.createElement('td');
-    const files = document.createElement('ul');
-    files.className = 'duplicate-files';
-    (group.files || []).forEach(function(path) {
-      const item = document.createElement('li');
-      const pathLabel = document.createElement('span');
-      pathLabel.textContent = path;
-      item.appendChild(pathLabel);
-
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'danger';
-      remove.textContent = 'Remove';
-      remove.title = 'Move this duplicate to quarantine';
-      remove.addEventListener('click', function() {
-        state.pending = { path: path, button: remove };
-        state.pendingKind = 'quarantine';
-        state.pendingBatch = null;
-        fillPlanDialog('Review duplicate removal', [
-          ['File', path],
-          ['Action', 'Move to quarantine'],
-        ], 'Recoverable action. The file will be moved aside and recorded, not permanently deleted.');
+  const exactGroups = dupes.filter(function (group) { return group.kind === 'exact'; });
+  const variantGroups = dupes.filter(function (group) { return group.kind === 'variant'; });
+  if (exactGroups.length) {
+    container.appendChild(element(
+      'p',
+      'muted',
+      'Only exact groups receive a quarantine action. Moving a file is recoverable and requires confirmation.',
+    ));
+    exactGroups.forEach(function (group) {
+      const card = element('div', 'group');
+      card.appendChild(element(
+        'strong',
+        null,
+        group.model_key + ' · ' + group.quantization + ' · ' + bytes(group.reclaimable_bytes) + ' reclaimable',
+      ));
+      const keep = element('div', 'file-row');
+      keep.appendChild(element('span', 'pill pill-converted', 'keep'));
+      keep.appendChild(element('span', 'path', group.keep));
+      card.appendChild(keep);
+      group.redundant.forEach(function (path) {
+        const row = element('div', 'file-row');
+        row.appendChild(element('span', 'pill pill-pending', 'redundant'));
+        row.appendChild(element('span', 'path', path));
+        const move = element('button', 'danger', 'Move to quarantine');
+        move.addEventListener('click', function () {
+          state.pending = { path: path, button: move };
+          state.pendingKind = 'quarantine';
+          state.pendingBatch = null;
+          fillPlanDialog('Review duplicate quarantine', [
+            ['File', path],
+            ['Action', 'Move to quarantine'],
+          ], 'Recoverable action. The file will be moved aside and recorded, not permanently deleted.');
+        });
+        row.appendChild(move);
+        card.appendChild(row);
       });
-      item.appendChild(remove);
-      files.appendChild(item);
+      container.appendChild(card);
     });
-    filesCell.appendChild(files);
-    row.appendChild(filesCell);
-    body.appendChild(row);
-  });
-  table.appendChild(body);
-  container.appendChild(table);
+  }
+  if (variantGroups.length) {
+    container.appendChild(element('h4', null, 'Variants (informational)'));
+    variantGroups.forEach(function (group) {
+      const card = element('div', 'group');
+      card.appendChild(element(
+        'strong',
+        null,
+        group.model_key + ' · ' + group.quantizations.join(', '),
+      ));
+      card.appendChild(element('p', 'hint', 'Different quantizations are not removal recommendations.'));
+      group.members.forEach(function (path) {
+        card.appendChild(element('div', 'path', path));
+      });
+      container.appendChild(card);
+    });
+  }
 }
 
 function convertSelectedModels() {

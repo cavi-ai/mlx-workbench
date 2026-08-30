@@ -11,7 +11,7 @@ const views = require(path.join(root, "mlx_workbench/static/library_views.js"));
 
 test("duplicate and model detail screens use the current scan contract", () => {
   assert.equal(views.duplicateScanMessage(null), "Run a duplicate scan to check the configured GGUF roots.");
-  assert.equal(views.duplicateScanMessage([]), "No duplicate filenames found.");
+  assert.equal(views.duplicateScanMessage([]), "No evidence-backed duplicate groups found.");
   assert.equal(views.duplicateScanMessage([{ group_id: "same.gguf" }]), null);
   assert.deepEqual(
     views.modelDetailsFacts({
@@ -29,7 +29,7 @@ test("duplicate and model detail screens use the current scan contract", () => {
       ["Size", "42B"],
     ],
   );
-  assert.match(page, /matching filenames/);
+  assert.match(page, /signatures and GGUF structure/);
   assert.doesNotMatch(page, /Variant Duplicates/);
   assert.match(page, /id="dialog" class="dialog" role="dialog" aria-modal="true"/);
   assert.match(page, /id="model-details-modal" class="dialog" role="dialog" aria-modal="true"/);

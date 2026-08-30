@@ -129,9 +129,26 @@ class RunTests(unittest.TestCase):
     def test_duplicate_scan_reuses_strict_scan_contract_and_roots(self):
         recorder = Recorder(stdout=envelope(data={
             "models": [
-                {"path": "/a/duplicate.gguf", "name": "duplicate.gguf", "bytes": 1},
-                {"path": "/b/duplicate.gguf", "name": "duplicate.gguf", "bytes": 2},
+                {"path": "/a/one.gguf", "name": "one.gguf", "bytes": 1},
+                {"path": "/b/two.gguf", "name": "two.gguf", "bytes": 2},
             ],
+            "duplicates": [{
+                "kind": "exact",
+                "identity": "signature-1",
+                "model_key": "example",
+                "quantization": "Q4_K_M",
+                "keep": "/a/one.gguf",
+                "redundant": ["/b/two.gguf"],
+                "reclaimable_bytes": 2,
+            }, {
+                "kind": "variant",
+                "identity": "structure-1",
+                "model_key": "example",
+                "quantizations": ["Q4_K_M", "Q8_0"],
+                "members": ["/a/one.gguf", "/b/two.gguf"],
+                "redundant": [],
+                "reclaimable_bytes": 0,
+            }],
             "totals": {"bytes": 3},
         }))
 
@@ -142,13 +159,34 @@ class RunTests(unittest.TestCase):
             runner=recorder,
         )
 
-        self.assertEqual(result["duplicates"][0]["files"], ["/a/duplicate.gguf", "/b/duplicate.gguf"])
+        self.assertEqual(result["duplicates"][0]["keep"], "/a/one.gguf")
+        self.assertEqual(result["duplicates"][0]["redundant"], ["/b/two.gguf"])
+        self.assertEqual(result["duplicates"][1]["kind"], "variant")
         self.assertEqual(recorder.commands[0].count("--gguf-root"), 2)
         self.assertIn("--mlx-root", recorder.commands[0])
 
     def test_duplicate_scan_rejects_malformed_inventory(self):
         recorder = Recorder(stdout=envelope(data={
             "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        }))
+
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.scan_duplicates(str(self.root), runner=recorder)
+
+        self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_duplicate_scan_rejects_an_exact_group_without_redundant_files(self):
+        recorder = Recorder(stdout=envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf", "bytes": 1}],
+            "duplicates": [{
+                "kind": "exact",
+                "model_key": "example",
+                "quantization": "Q4_K_M",
+                "keep": "/models/a.gguf",
+                "redundant": [],
+                "reclaimable_bytes": 0,
+            }],
             "totals": {"bytes": 1},
         }))
 

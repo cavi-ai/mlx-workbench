@@ -5,7 +5,7 @@
 }(typeof globalThis === 'undefined' ? this : globalThis, function () {
   function duplicateScanMessage(duplicates) {
     if (duplicates === null) return 'Run a duplicate scan to check the configured GGUF roots.';
-    if (Array.isArray(duplicates) && duplicates.length === 0) return 'No duplicate filenames found.';
+    if (Array.isArray(duplicates) && duplicates.length === 0) return 'No evidence-backed duplicate groups found.';
     return null;
   }
 

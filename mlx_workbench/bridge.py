@@ -897,45 +897,60 @@ def model_architecture(agent_path, path, runner=None):
 
 
 def scan_duplicates(agent_path, gguf_roots=(), mlx_roots=(), runner=None):
-    """Scan for duplicates across all configured GGUF roots."""
-    try:
-        models = scan(
-            agent_path,
-            gguf_roots=gguf_roots,
-            mlx_roots=mlx_roots,
-            runner=runner,
-        )["models"]
+    """Return mlx-agent's evidence-backed duplicate groups.
 
-        # Group by filename (exact duplicates)
-        exact_groups = {}
+    Exact groups are eligible for quarantine because the agent derives them
+    from a content signature or matching model structure and quantization.
+    Variant groups are informational only.
+    """
+    report = scan(
+        agent_path,
+        gguf_roots=gguf_roots,
+        mlx_roots=mlx_roots,
+        runner=runner,
+    )
+    duplicates = _validate_duplicate_groups(report)
+    return {"duplicates": duplicates, "total_models": len(report["models"])}
 
-        for model in models:
-            path = model["path"]
-            name = Path(path).name
-            # Group exact filename matches (same file, different location or same path)
-            if name not in exact_groups:
-                exact_groups[name] = []
-            exact_groups[name].append(path)
-        
-        # Filter to only groups with more than one path
-        duplicates = []
-        for name, paths in exact_groups.items():
-            if len(paths) > 1:
-                duplicates.append({
-                    "group_id": name,
-                    "files": paths,
-                    "count": len(paths),
-                })
-        
-        return {
-            "duplicates": duplicates,
-            "total_models": len(models),
-        }
-    except BridgeError:
-        raise
-    except Exception as error:
+
+def _validate_duplicate_groups(report):
+    duplicates = report.get("duplicates")
+    if not isinstance(duplicates, list):
         raise BridgeError(
-            "duplicate_scan_failed",
-            str(error),
-            "Check your configured GGUF roots and try again.",
+            "scan_contract_invalid",
+            "The agent returned invalid duplicate groups.",
+            "Update mlx-agent and rescan.",
         )
+    for index, group in enumerate(duplicates):
+        if not isinstance(group, dict) or group.get("kind") not in ("exact", "variant"):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned an invalid duplicate group for duplicates[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+        if not _nonempty_string(group.get("model_key")) or not _nonnegative_int(group.get("reclaimable_bytes")):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned invalid duplicate metadata for duplicates[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+        if group["kind"] == "exact":
+            if (not _nonempty_string(group.get("keep")) or
+                    not _nonempty_string(group.get("quantization")) or
+                    not _string_list(group.get("redundant"))):
+                raise BridgeError(
+                    "scan_contract_invalid",
+                    "The agent returned an invalid exact duplicate group for duplicates[{0}].".format(index),
+                    "Update mlx-agent and rescan.",
+                )
+        elif not _string_list(group.get("quantizations")) or not _string_list(group.get("members")):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned an invalid variant duplicate group for duplicates[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+    return duplicates
+
+
+def _string_list(value):
+    return isinstance(value, list) and bool(value) and all(_nonempty_string(item) for item in value)
