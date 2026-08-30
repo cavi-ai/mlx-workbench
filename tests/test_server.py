@@ -373,6 +373,48 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["data"]["total_models"], 0)
         self.assertIn(str(self.models), self.commands[0])
 
+    def test_serve_metrics_route_does_not_pass_a_subprocess_runner(self):
+        calls = []
+        original = bridge.serve_metrics
+        self.addCleanup(setattr, bridge, "serve_metrics", original)
+
+        def metrics(agent_path, port, **kwargs):
+            calls.append((agent_path, port, kwargs))
+            return {"connected": False, "metrics": {}}
+
+        bridge.serve_metrics = metrics
+        status, payload = self._request("/api/serve/metrics", "POST", {"port": 8766})
+
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["data"]["connected"])
+        self.assertEqual(calls, [(str(self.agent), 8766, {})])
+
+    def test_sloth_route_forwards_configured_roots_and_runner(self):
+        calls = []
+        original = bridge.sloth_connect
+        self.addCleanup(setattr, bridge, "sloth_connect", original)
+
+        def connect(agent_path, address, **kwargs):
+            calls.append((agent_path, address, kwargs))
+            return {"connected": True, "models_synced": 0}
+
+        bridge.sloth_connect = connect
+        status, payload = self._request(
+            "/api/sloth/connect", "POST", {"address": "http://sloth.test"}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual(calls, [(
+            str(self.agent),
+            "http://sloth.test",
+            {
+                "gguf_roots": [str(self.models)],
+                "mlx_roots": [],
+                "runner": self._runner,
+            },
+        )])
+
     def test_skill_failure_becomes_a_502(self):
         self.responses["stdout"] = envelope(
             status="error",

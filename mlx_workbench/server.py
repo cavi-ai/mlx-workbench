@@ -566,7 +566,7 @@ class Handler(BaseHTTPRequestHandler):
             port = payload.get("port")
             if not isinstance(port, int) or isinstance(port, bool):
                 return _error("invalid_body", "port is required.", "Enter a server port.")
-            return _ok(bridge.serve_metrics(agent, port, runner=runner))
+            return _ok(bridge.serve_metrics(agent, port))
 
         if method == "POST" and route == "/api/serve/stop":
             payload = self._body()
@@ -580,7 +580,13 @@ class Handler(BaseHTTPRequestHandler):
             address = payload.get("address")
             if not isinstance(address, str):
                 return _error("invalid_body", "address is required.", "Enter a server address.")
-            return _ok(bridge.sloth_connect(agent, address=address or "http://localhost:3000", runner=runner))
+            return _ok(bridge.sloth_connect(
+                agent,
+                address=address or "http://localhost:3000",
+                gguf_roots=config_module.scan_roots(settings),
+                mlx_roots=settings["mlx_roots"],
+                runner=runner,
+            ))
 
         if method == "POST" and route == "/api/cli":
             payload = self._body()

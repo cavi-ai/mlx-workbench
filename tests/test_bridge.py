@@ -1,6 +1,7 @@
 import json
 import subprocess
 import unittest
+from unittest import mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -153,6 +154,24 @@ class RunTests(unittest.TestCase):
 
         with self.assertRaises(bridge.BridgeError) as caught:
             bridge.scan_duplicates(str(self.root), runner=recorder)
+
+        self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_sloth_connect_rejects_malformed_inventory(self):
+        response = mock.MagicMock()
+        response.read.return_value = b'{"status":"ok"}'
+        malformed_scan = envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        })
+        with mock.patch("urllib.request.urlopen") as urlopen, mock.patch.object(
+            bridge,
+            "_default_runner",
+            return_value={"returncode": 0, "stdout": malformed_scan, "stderr": ""},
+        ):
+            urlopen.return_value.__enter__.return_value = response
+            with self.assertRaises(bridge.BridgeError) as caught:
+                bridge.sloth_connect(str(self.root), address="http://sloth.test")
 
         self.assertEqual(caught.exception.code, "scan_contract_invalid")
 

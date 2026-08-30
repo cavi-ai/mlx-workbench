@@ -698,28 +698,13 @@ def _default_runner(command, timeout):
 
 
 
-def sloth_connect(agent_path, address="http://localhost:3000"):
+def sloth_connect(agent_path, address="http://localhost:3000", gguf_roots=(),
+                  mlx_roots=(), runner=None):
     """Connect to Sloth AI server and sync models.
     
     Provides integration with Sloth AI for distributed serving
     and model sharing capabilities.
     """
-    if not agent_path:
-        raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
-        )
-    
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
-        raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
-        )
-    
     # Check connection to Sloth server
     try:
         import urllib.request
@@ -732,26 +717,22 @@ def sloth_connect(agent_path, address="http://localhost:3000"):
         
         with urllib.request.urlopen(req, timeout=5) as response:
             health = json_module.loads(response.read().decode())
-        
-        # Sync models from mlx-agent
-        argv = ["convert", "scan", "--json"]
-        command = [sys.executable, str(script)] + argv
-        result = _default_runner(command, timeout=300)
-        
-        models = []
-        if result["returncode"] == 0:
-            try:
-                output = json.loads(result["stdout"])
-                models = output.get("data", {}).get("models", []) or []
-            except:
-                pass
-        
+
+        models = scan(
+            agent_path,
+            gguf_roots=gguf_roots,
+            mlx_roots=mlx_roots,
+            runner=runner,
+        )["models"]
+
         return {
             "connected": True,
             "address": address,
             "health": health,
             "models_synced": len(models),
         }
+    except BridgeError:
+        raise
     except Exception as error:
         raise BridgeError(
             "sloth_connection_failed",
