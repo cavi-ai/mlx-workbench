@@ -237,7 +237,11 @@ class ServerTests(unittest.TestCase):
 
         self.commands = []
         self.convert_jobs = []
-        self.responses = {"stdout": envelope(data={"models": [], "totals": {"gguf": 0, "bytes": 0}})}
+        self.responses = {"stdout": envelope(data={
+            "models": [],
+            "duplicates": [],
+            "totals": {"gguf": 0, "bytes": 0},
+        })}
         self.token = "test-token"
         self.httpd = server.build(
             "127.0.0.1",
