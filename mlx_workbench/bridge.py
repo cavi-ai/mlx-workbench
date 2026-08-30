@@ -740,71 +740,35 @@ def sloth_connect(agent_path, address="http://localhost:3000", gguf_roots=(),
             "Check that Sloth AI server is running and accessible.",
         )
 
-def quant_profile(agent_path, path, targets):
-    """Profile quantization options using mlx-agent convert preview."""
-    if not agent_path:
-        raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
-        )
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
-        raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
-        )
-
+def quant_profile(agent_path, path, targets, runner=None):
+    """Preview supported MLX conversion plans for a local GGUF model."""
+    target_bits = {"mlx-4bit": 4, "mlx-8bit": 8}
     profiles = []
     for target in targets:
-        argv = ["convert", "preview", "--path", path]
-        
-        if target == "gguf-q4":
-            argv.extend(["--q-bits", "4", "--out", path + ".Q4_K_M.gguf"])
-        elif target == "gguf-q8":
-            argv.extend(["--q-bits", "8", "--out", path + ".Q8_0.gguf"])
-        elif target == "gguf-q5":
-            argv.extend(["--q-bits", "5", "--out", path + ".Q5_K_M.gguf"])
-        elif target == "mlx-bf16":
-            argv.extend(["--q-bits", "bf16", "--out", path + ".mlx-bf16"])
-        elif target == "mlx-4bit":
-            argv.extend(["--q-bits", "4", "--out", path + ".mlx-4bit"])
-        elif target == "mlx-8bit":
-            argv.extend(["--q-bits", "8", "--out", path + ".mlx-8bit"])
-        
-        argv.append("--json")
-        command = [sys.executable, str(script)] + argv
-        try:
-            result = _default_runner(command, timeout=DEFAULT_TIMEOUT)
-            if result["returncode"] == 0:
-                output = json.loads(result["stdout"])
-                plan = output.get("data", {}).get("plan", {}) or output.get("data", {})
-                
-                profile = {
-                    "target": target,
-                    "size": plan.get("preview_hash", 0),
-                    "tokens_per_sec": None,
-                    "vram": None,
-                    "command": argv,
-                }
-                
-                if target.startswith("mlx-"):
-                    profile["actions"] = [{
-                        "type": "convert",
-                        "label": f"Convert to {target}",
-                        "path": path,
-                    }]
-                
-                profiles.append(profile)
-        except Exception as error:
-            profiles.append({
-                "target": target,
-                "error": str(error),
-                "command": argv,
-            })
-    
+        q_bits = target_bits.get(target)
+        if q_bits is None:
+            raise BridgeError(
+                "quant_target_invalid",
+                "Unsupported conversion target: {0}.".format(target),
+                "Choose MLX 4-bit or MLX 8-bit.",
+            )
+        data = preview(agent_path, path, q_bits=q_bits, runner=runner)
+        plan = data.get("plan") if isinstance(data, dict) else None
+        if not isinstance(plan, dict):
+            raise BridgeError(
+                "quant_preview_invalid",
+                "mlx-agent did not return a conversion plan.",
+                "Retry the preview after rescanning the GGUF file.",
+            )
+        source = plan.get("source") if isinstance(plan.get("source"), dict) else {}
+        profiles.append({
+            "target": "MLX {0}-bit".format(q_bits),
+            "q_bits": q_bits,
+            "source_bytes": source.get("bytes"),
+            "output": plan.get("out"),
+            "preview_hash": plan.get("preview_hash"),
+            "command": plan.get("argv"),
+        })
     return {"profiles": profiles}
 
 
@@ -1046,98 +1010,51 @@ def finetune_preview(agent_path, base_model, dataset_path, iters=100, learning_r
 
 
 
-def model_architecture(agent_path, path):
-    """Extract and display model architecture details.
-    
-    Provides interactive visualization data for transformer
-    models including layer structure, attention blocks,
-    and parameter distribution.
+def model_architecture(agent_path, path, runner=None):
+    """Return scan metadata for one local GGUF model.
+
+    mlx-agent's scan contract does not expose transformer topology. Keep the
+    UI truthful by returning only the metadata that scan actually reports.
     """
-    if not agent_path:
+    location = Path(path).expanduser()
+    if not location.is_file() or location.suffix.lower() != ".gguf":
         raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
+            "model_not_found",
+            "Model architecture requires an existing GGUF file.",
+            "Select a GGUF file from the Models page and try again.",
         )
-    
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
+
+    resolved = location.resolve()
+    payload = scan(
+        agent_path,
+        gguf_roots=[str(resolved.parent)],
+        signatures=False,
+        runner=runner,
+    )
+    model = next(
+        (
+            item for item in payload["models"]
+            if Path(item["path"]).expanduser().resolve() == resolved
+        ),
+        None,
+    )
+    if model is None:
         raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
+            "model_not_scanned",
+            "mlx-agent did not return the selected GGUF file.",
+            "Rescan the model directory and verify the file is readable.",
         )
-    
-    try:
-        # Try to get architecture info via convert scan
-        argv = ["convert", "scan", "--json", "--path", path] if Path(path).exists() else ["convert", "scan", "--json"]
-        
-        import json as json_module
-        command = [sys.executable, str(script)] + argv
-        result = _default_runner(command, timeout=60)
-        
-        if result["returncode"] == 0:
-            try:
-                output = json.loads(result["stdout"])
-                models = output.get("data", {}).get("models", []) or []
-                
-                if len(models) > 0:
-                    m = models[0]
-                    
-                    # Extract architecture info
-                    arch_data = {
-                        "model_path": path,
-                        "name": m.get("name", "Unknown"),
-                        "params": m.get("parameters", "unknown"),
-                        "layers": m.get("layers", "unknown"),
-                        "hidden_size": m.get("hidden_size", "unknown"),
-                        "vocab_size": m.get("vocab_size", "unknown"),
-                    }
-                    
-                    # Try to get more details
-                    if m.get("architecture"):
-                        arch_data["attention_blocks"] = []
-                        for i, block in enumerate(m["architecture"].get("blocks", [])):
-                            arch_data["attention_blocks"].append({
-                                "name": block.get("type", f"Block {i+1}"),
-                                "num_heads": block.get("num_attention_heads", "N/A"),
-                                "head_dim": block.get("head_dim", "N/A"),
-                                "hidden_size": block.get("hidden_size", "N/A"),
-                            })
-                        
-                        arch_data["layer_types"] = m["architecture"].get("layer_types", [])
-                        arch_data["parameter_distribution"] = m["architecture"].get("param_distribution", {})
-                    
-                    if m.get("quantization"):
-                        arch_data["quantization"] = {
-                            "method": m["quantization"].get("method", "unknown"),
-                            "bits": m["quantization"].get("bits", 16),
-                        }
-                    
-                    return {"architecture": arch_data}
-            except:
-                pass
-        
-        # Fallback: create placeholder architecture
-        return {
-            "architecture": {
-                "model_path": path,
-                "name": Path(path).name if Path(path).exists() else "Model",
-                "params": "unknown",
-                "layers": "unknown",
-                "hidden_size": "unknown",
-                "vocab_size": "unknown",
-                "attention_blocks": [],
-                "layer_types": ["attention", "ffn"],
-            }
-        }
-    except Exception as error:
-        return {
-            "architecture": {
-                "error": str(error),
-            }
-        }
+
+    return {
+        "architecture": {
+            "model_path": str(resolved),
+            "name": model["name"],
+            "bytes": model["bytes"],
+            "architecture": model.get("architecture"),
+            "quantization": model.get("quantization"),
+            "tensor_count": model.get("tensor_count"),
+        },
+    }
 
 
 

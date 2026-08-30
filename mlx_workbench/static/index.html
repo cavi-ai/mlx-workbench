@@ -28,7 +28,7 @@
         <div class="more-divider"></div>
         <h4 class="tab-bar-label">Conversion</h4>
         <button class="tab" data-panel="quant">Compare Conversions</button>
-        <div class="more-divider"></h4>
+        <div class="more-divider"></div>
         <h4 class="tab-bar-label">Tools</h4>
         <button class="tab" data-panel="doctor">Doctor</button>
         <button class="tab" data-panel="model-arch">Model Arch</button>
@@ -46,7 +46,7 @@
 
 <p id="notice" class="notice" hidden></p>
 
-<div id="dialog" class="dialog" hidden>
+<div id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" hidden>
   <div class="dialog-card">
     <h2 id="dialog-title">Review plan</h2>
     <p id="dialog-warn" class="hint"></p>
@@ -59,7 +59,7 @@
 </div>
 
 <!-- Model Details Modal -->
-<div id="model-details-modal" class="dialog" hidden>
+<div id="model-details-modal" class="dialog" role="dialog" aria-modal="true" aria-labelledby="model-details-title" hidden>
   <div class="dialog-card">
     <h2 id="model-details-title">Model Details</h2>
     <div id="model-details-content"></div>
@@ -69,7 +69,7 @@
   </div>
 </div>
 
-<!-- Duplicates Tab (Main Focus) -->
+<!-- Duplicates Tab -->
 <section id="panel-duplicates" class="panel">
   <div class="summary">Duplicate Management - Keep your model library clean and organized</div>
   
@@ -77,15 +77,12 @@
   <div class="toolbar">
     <div class="row">
       <button id="scan-duplicates" class="primary">Run Duplicate Scan</button>
-      <span class="hint">Scans all configured GGUF roots for exact and variant duplicates</span>
+      <span class="hint">Scans all configured GGUF roots for matching filenames</span>
     </div>
   </div>
   
-  <h3>Exact Duplicates (Same Files)</h3>
+  <h3>Duplicate Filenames</h3>
   <div id="exact-duplicates" class="duplicates-section"></div>
-  
-  <h3>Variant Duplicates (Similar Files)</h3>
-  <div id="variant-duplicates" class="duplicates-section"></div>
   
   <h3>Quarantine Area</h3>
   <p class="hint">Moved duplicates go here (never deleted). Paths configured in Settings.</p>
@@ -342,11 +339,10 @@
     <label>Model Path
       <input id="quant-path" type="text" spellcheck="false">
     </label>
-    <label>Target Formats
-      <select id="quant-targets" multiple size="3">
-        <option value="gguf-q4" selected>GGUF Q4</option>
-        <option value="gguf-q8">GGUF Q8</option>
-        <option value="mlx-bf16">MLX BF16</option>
+    <label>MLX Quantization
+      <select id="quant-targets" multiple size="2">
+        <option value="mlx-4bit" selected>MLX 4-bit</option>
+        <option value="mlx-8bit">MLX 8-bit</option>
       </select>
     </label>
     <div class="row">
@@ -370,6 +366,10 @@
   <div id="arch-structure"></div>
 </section>
 
+<script src="/static/formatters.js"></script>
+<script src="/static/navigation.js"></script>
+<script src="/static/architecture.js"></script>
+<script src="/static/library_views.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

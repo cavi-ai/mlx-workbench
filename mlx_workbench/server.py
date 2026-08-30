@@ -529,7 +529,7 @@ class Handler(BaseHTTPRequestHandler):
             path = payload.get("path")
             if not isinstance(path, str) or not path.strip():
                 return _error("invalid_body", "path is required.", "Enter model path.")
-            return _ok(bridge.model_architecture(agent, path=path or None))
+            return _ok(bridge.model_architecture(agent, path=path, runner=runner))
 
         if method == "POST" and route == "/api/training/dataset/score":
             payload = self._body()
@@ -615,7 +615,7 @@ class Handler(BaseHTTPRequestHandler):
                 return _error("invalid_body", "path is required.", "Enter a model path.")
             if not isinstance(targets, list) or not all(isinstance(t, str) for t in targets):
                 return _error("invalid_body", "targets must be a list of strings.", "Select formats.")
-            return _ok(bridge.quant_profile(agent, path, targets))
+            return _ok(bridge.quant_profile(agent, path, targets, runner=runner))
         if method == "POST" and route == "/api/quarantine":
             payload = self._body()
             if not isinstance(payload, dict) or not isinstance(payload.get("path"), str):

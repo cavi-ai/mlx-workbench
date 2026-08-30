@@ -198,6 +198,68 @@ class RunTests(unittest.TestCase):
 
         self.assertEqual(result["models"][0]["bytes"], 29_047_084_448)
 
+    def test_model_architecture_scans_the_selected_models_parent(self):
+        models = self.root / "models"
+        models.mkdir()
+        model = models / "qwen.gguf"
+        model.write_bytes(b"weights")
+        recorder = Recorder(stdout=envelope(data={
+            "models": [{
+                "path": str(model),
+                "name": "qwen.gguf",
+                "bytes": 2048,
+                "architecture": "qwen35",
+                "quantization": "Q8_0",
+                "tensor_count": 866,
+            }],
+            "totals": {"bytes": 2048},
+        }))
+
+        result = bridge.model_architecture(str(self.root), str(model), runner=recorder)
+
+        self.assertEqual(result["architecture"], {
+            "model_path": str(model.resolve()),
+            "name": "qwen.gguf",
+            "bytes": 2048,
+            "architecture": "qwen35",
+            "quantization": "Q8_0",
+            "tensor_count": 866,
+        })
+        command = recorder.commands[0]
+        self.assertIn("--gguf-root", command)
+        self.assertIn(str(models.resolve()), command)
+        self.assertNotIn("--path", command)
+
+    def test_quant_profile_uses_convert_start_preview_contract(self):
+        source = self.root / "qwen.gguf"
+        source.write_bytes(b"weights")
+        recorder = Recorder(stdout=envelope(data={"plan": {
+            "q_bits": 4,
+            "out": "qwen-MLX-4bit",
+            "preview_hash": "a" * 64,
+            "source": {"bytes": 2048},
+            "argv": ["converter", "--q-bits", "4"],
+        }}))
+
+        result = bridge.quant_profile(
+            str(self.root), str(source), ["mlx-4bit"], runner=recorder,
+        )
+
+        self.assertEqual(result["profiles"], [{
+            "target": "MLX 4-bit",
+            "q_bits": 4,
+            "source_bytes": 2048,
+            "output": "qwen-MLX-4bit",
+            "preview_hash": "a" * 64,
+            "command": ["converter", "--q-bits", "4"],
+        }])
+        command = recorder.commands[0]
+        self.assertEqual(command[2:4], ["convert", "start"])
+        self.assertIn("--gguf", command)
+        self.assertIn(str(source), command)
+        self.assertIn("--q-bits", command)
+        self.assertNotIn("preview", command)
+
     def test_preview_does_not_confirm(self):
         recorder = Recorder(stdout=envelope(data={"plan": {"preview_hash": "a" * 64}}))
         bridge.preview(str(self.root), "/models/a.gguf", 8, "/out", runner=recorder)
