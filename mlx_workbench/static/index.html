@@ -296,40 +296,26 @@
 
 <!-- Training Studio -->
 <section id="panel-training-studio" class="panel" hidden>
-  <div class="summary">Train and fine-tune models</div>
-  
-  <h3>Quick Train</h3>
-  <form id="dataset-score-form" class="toolbar">
-    <label>Dataset Directory
-      <input id="dataset-path" type="text">
-    </label>
-    <div class="row">
-      <button type="submit" class="primary">Analyze Dataset</button>
-    </div>
-  </form>
-  <div id="dataset-score-results"></div>
-  
-  <h3>Fine-tune Preview</h3>
-  <form id="finetune-preview-form" class="toolbar">
-    <label>Base Model
-      <input id="finetune-base" type="text">
+  <div class="summary">Preview a confirmation-gated LoRA training run</div>
+  <form id="lora-form" class="toolbar">
+    <label>Cached Base Repository
+      <input id="lora-repo" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
     </label>
     <label>Dataset Directory
-      <input id="finetune-dataset" type="text">
+      <input id="lora-data" type="text" spellcheck="false" placeholder="/path/to/dataset">
+      <span class="hint">Must contain train.jsonl.</span>
     </label>
     <div class="row">
-      <label class="inline">Iterations
-        <input id="finetune-iters" type="number" min="1" value="100">
+      <label class="inline">Iterations (optional)
+        <input id="lora-iters" type="number" min="1" placeholder="100">
       </label>
-      <label class="inline">Learning Rate
-        <input id="finetune-lr" type="text" value="2e-5">
+      <label>Adapter Output Directory (optional)
+        <input id="lora-out" type="text" spellcheck="false" placeholder="default: &lt;model&gt;-lora">
       </label>
-    </div>
-    <div class="row">
-      <button type="submit" class="primary">Preview Training</button>
+      <button type="submit" class="primary">Preview LoRA Training</button>
     </div>
   </form>
-  <div id="finetune-preview-results"></div>
+  <p class="hint">The preview validates the cached model and dataset, then shows the exact command. Training starts only after confirmation.</p>
 </section>
 
 <!-- Compare Conversions -->
