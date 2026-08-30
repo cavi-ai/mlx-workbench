@@ -415,6 +415,44 @@ class ServerTests(unittest.TestCase):
             },
         )])
 
+    def test_model_architecture_route_forwards_the_subprocess_runner(self):
+        calls = []
+        original = bridge.model_architecture
+        self.addCleanup(setattr, bridge, "model_architecture", original)
+
+        def inspect(agent_path, path, **kwargs):
+            calls.append((agent_path, path, kwargs))
+            return {"architecture": {"name": "qwen.gguf"}}
+
+        bridge.model_architecture = inspect
+        path = str(self.models / "qwen.gguf")
+        status, payload = self._request("/api/model/arch", "POST", {"path": path})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["architecture"]["name"], "qwen.gguf")
+        self.assertEqual(calls, [(str(self.agent), path, {"runner": self._runner})])
+
+    def test_quant_profile_route_forwards_the_subprocess_runner(self):
+        calls = []
+        original = bridge.quant_profile
+        self.addCleanup(setattr, bridge, "quant_profile", original)
+
+        def profile(agent_path, path, targets, **kwargs):
+            calls.append((agent_path, path, targets, kwargs))
+            return {"profiles": []}
+
+        bridge.quant_profile = profile
+        path = str(self.models / "qwen.gguf")
+        status, payload = self._request(
+            "/api/quant/profile", "POST", {"path": path, "targets": ["mlx-4bit"]}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"], {"profiles": []})
+        self.assertEqual(calls, [(
+            str(self.agent), path, ["mlx-4bit"], {"runner": self._runner},
+        )])
+
     def test_skill_failure_becomes_a_502(self):
         self.responses["stdout"] = envelope(
             status="error",

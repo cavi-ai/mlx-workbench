@@ -28,6 +28,7 @@ const state = {
   pending: null,
   pendingKind: null,
   pendingBatch: null,
+  duplicateScan: null,
   selectedLog: null,
   logManual: false,
   jobTimer: null,
@@ -66,11 +67,7 @@ function notify(message) {
 }
 
 function bytes(count) {
-  let value = Number(count) || 0;
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let index = 0;
-  while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; }
-  return value.toFixed(value >= 10 || index === 0 ? 0 : 1) + units[index];
+  return MLXWorkbenchFormatters.bytes(count);
 }
 
 function element(tag, className, text) {
@@ -115,7 +112,8 @@ function renderModels() {
     return;
   }
   rows.forEach(function (item) {
-    const row = element('tr');
+    const row = element('tr', 'clickable');
+    row.dataset.modelPath = item.path;
     const checkCell = element('td', 'check-col');
     if (item.status === 'pending' || item.status === 'converted') {
       const box = element('input');
@@ -153,22 +151,8 @@ function renderModels() {
     }
     row.appendChild(actions);
     body.appendChild(row);
-    
-  });
-  
-  // Add click handler for model rows
-  document.getElementById('models').addEventListener('click', function(e) {
-    const row = e.target.closest('.clickable');
-    if (row && !e.target.matches('button, input')) {
-      showModelDetails(row.dataset.modelPath);
-    }
   });
 }
-  // Check if we can show step 3
-  const totals = state.scan ? state.scan.totals : null;
-  if (totals && totals.gguf > 0) {
-    showQuickStartStep3();
-  }
 
 
 function selectedModelPaths() {
@@ -176,53 +160,6 @@ function selectedModelPaths() {
     document.querySelectorAll('#models .model-select:checked'),
     function (box) { return box.value; }
   );
-}
-
-function renderDuplicates() {
-  const container = $('duplicates');
-  container.textContent = '';
-  if (!state.scan) return;
-  const groups = state.scan.duplicates || [];
-  $('dupe-summary').textContent = groups.length
-    ? groups.length + ' group(s) · ' + bytes(state.scan.totals.reclaimable_bytes) + ' reclaimable'
-    : 'No duplicate models found.';
-
-  groups.forEach(function (group) {
-    const card = element('div', 'group');
-    const head = element('div', 'group-head');
-    head.appendChild(element('strong', null, group.model_key));
-    if (group.kind === 'exact') {
-      head.appendChild(element('span', 'hint',
-        'same model at ' + group.quantization + ' · ' + bytes(group.reclaimable_bytes) + ' reclaimable'));
-    } else {
-      head.appendChild(element('span', 'hint',
-        'same model at ' + group.quantizations.join(', ') + ' — different quality, keep what you use'));
-    }
-    card.appendChild(head);
-
-    if (group.kind === 'exact') {
-      const keep = element('div', 'file-row');
-      keep.appendChild(element('span', 'pill pill-converted', 'keep'));
-      keep.appendChild(element('span', 'path', group.keep));
-      card.appendChild(keep);
-      group.redundant.forEach(function (path) {
-        const row = element('div', 'file-row');
-        row.appendChild(element('span', 'pill pill-pending', 'redundant'));
-        row.appendChild(element('span', 'path', path));
-        const move = element('button', null, 'Move to quarantine');
-        move.addEventListener('click', function () { quarantine(path, move); });
-        row.appendChild(move);
-        card.appendChild(row);
-      });
-    } else {
-      group.members.forEach(function (path) {
-        const row = element('div', 'file-row');
-        row.appendChild(element('span', 'path', path));
-        card.appendChild(row);
-      });
-    }
-    container.appendChild(card);
-  });
 }
 
 async function renderQuarantined() {
@@ -468,7 +405,7 @@ async function queueSelectedModels() {
     notify('Select one or more convertible models first.');
     return;
   }
-  const button = $('queue-selected');
+  const button = $('queue-selected') || $('convert-selected');
   button.disabled = true;
   try {
     const plans = [];
@@ -634,7 +571,7 @@ async function rescan() {
     state.scan = await api('/api/scan');
     notify('');
     renderModels();
-    renderDuplicates();
+    renderDuplicateScan(state.duplicateScan);
   } catch (error) {
     notify(error.message);
   } finally {
@@ -701,13 +638,6 @@ function renderServers(servers) {
     
   });
   
-  // Add click handler for model rows
-  document.getElementById('models').addEventListener('click', function(e) {
-    const row = e.target.closest('.clickable');
-    if (row && !e.target.matches('button, input')) {
-      showModelDetails(row.dataset.modelPath);
-    }
-  });
 }
 
 function hostLine(host, fast) {
@@ -794,13 +724,6 @@ function renderScout(data) {
     
   });
   
-  // Add click handler for model rows
-  document.getElementById('models').addEventListener('click', function(e) {
-    const row = e.target.closest('.clickable');
-    if (row && !e.target.matches('button, input')) {
-      showModelDetails(row.dataset.modelPath);
-    }
-  });
     }
     table.appendChild(body);
     results.appendChild(table);
@@ -828,7 +751,7 @@ function renderDoctor(data) {
   summaryNode.hidden = false;
   summaryNode.textContent =
     (summary.models != null ? summary.models + ' models' : '—') +
-    ' · ' + bytes(summary.hf_cache_bytes || 0) + ' in HF cache' +
+    ' · ' + bytes(summary.hf_cache_bytes) + ' in HF cache' +
     ' · ' + (summary.wired_configs != null ? summary.wired_configs : 0) + ' wired' +
     ' · ' + (summary.findings != null ? summary.findings : (data.findings || []).length) + ' findings';
 
@@ -865,7 +788,7 @@ function renderDoctor(data) {
       const row = element('tr');
       row.appendChild(element('td', 'path', item.id || '—'));
       row.appendChild(element('td', 'mono', item.source || '—'));
-      row.appendChild(element('td', 'num', bytes(item.bytes || 0)));
+      row.appendChild(element('td', 'num', bytes(item.bytes)));
       row.appendChild(element('td')).appendChild(pill(item.complete ? 'complete' : 'incomplete'));
       inventoryBody.appendChild(row);
     });
@@ -973,7 +896,7 @@ async function previewPrune() {
     state.pending = plan;
     state.pendingKind = 'prune';
     const list = candidates.map(function (item) {
-      return (item.repo || item.path) + ' (' + bytes(item.bytes || 0) + ')';
+      return (item.repo || item.path) + ' (' + bytes(item.bytes) + ')';
     }).join('\n');
     fillPlanDialog('Review incomplete cache prune', [
       ['Candidates', String(candidates.length)],
@@ -1362,82 +1285,30 @@ async function visualizeArchitecture(event) {
 
 function renderArchitecture(data) {
   const container = $('arch-structure');
-  
+  container.textContent = '';
   if (!data || !data.architecture) {
-    container.innerHTML = '<p class="empty">Could not load model architecture.</p>';
+    container.appendChild(element('p', 'empty', 'Could not load model metadata.'));
     return;
   }
-  
+
   const arch = data.architecture;
-  let html = '<div class="arch-tree">';
-  
-  // Show model info
-  html += '<div class="arch-header"><h3>' + (arch.name || arch.model_path || 'Model') + '</h3>';
-  html += '<dl class="arch-info">';
-  if (arch.params) html += '<dt>Parameters</dt><dd>' + arch.params + '</dd>';
-  if (arch.layers) html += '<dt>Layers</dt><dd>' + arch.layers + '</dd>';
-  if (arch.hidden_size) html += '<dt>Hidden size</dt><dd>' + arch.hidden_size + '</dd>';
-  if (arch.vocab_size) html += '<dt>Vocabulary</dt><dd>' + arch.vocab_size + '</dd>';
-  html += '</dl></div>';
-  
-  // Show attention blocks
-  if (arch.attention_blocks) {
-    html += '<h4>Attention Blocks</h4><div class="arch-list">';
-    arch.attention_blocks.forEach(function(block, idx) {
-      html += '<div class="arch-block"><span class="arch-block-name">' + (block.name || 'Block ' + (idx + 1)) + '</span>';
-      html += '<div class="arch-details">';
-      if (block.num_heads) html += '<span>Heads: ' + block.num_heads + '</span>';
-      if (block.head_dim) html += '<span>Head dim: ' + block.head_dim + '</span>';
-      if (block.hidden_size) html += '<span>Hidden: ' + block.hidden_size + '</span>';
-      if (block.ffn_dim) html += '<span>FFN: ' + block.ffn_dim + '</span>';
-      html += '</div></div>';
+  const tree = element('div', 'arch-tree');
+  tree.appendChild(element('h3', null, arch.name || arch.model_path || 'Model'));
+  const facts = MLXWorkbenchArchitecture.architectureFacts(arch, bytes);
+  if (facts.length) {
+    const details = element('dl', 'arch-info');
+    facts.forEach(function (fact) {
+      details.appendChild(element('dt', null, fact[0]));
+      details.appendChild(element('dd', null, fact[1]));
     });
-    html += '</div>';
+    tree.appendChild(details);
   }
-  
-  // Show layer types
-  if (arch.layer_types) {
-    html += '<h4>Layer Sequence</h4><div class="arch-sequence">';
-    arch.layer_types.forEach(function(type, idx) {
-      const colors = {
-        'attention': '#6fbf95',
-        'ffn': '#6fafbf',
-        'rms_norm': '#bfbf6f',
-        'lm_head': '#bf6f6f'
-      };
-      const color = colors[type] || '#9a9994';
-      html += '<span class="arch-layer" style="background: color-mix(in srgb, ' + color + ' 20%, transparent); border-left: 3px solid ' + color + ';">' + type.replace('_', ' ') + '</span>';
-    });
-    html += '</div>';
-  }
-  
-  // Show parameter distribution
-  if (arch.parameter_distribution) {
-    html += '<h4>Parameter Distribution</h4><div class="arch-bar-chart">';
-    Object.keys(arch.parameter_distribution).forEach(function(key) {
-      var value = arch.parameter_distribution[key];
-      const pct = Math.min(100, (value / 100) * 100);
-      html += '<div class="arch-bar">';
-      html += '<span>' + key.replace('_', ' ') + '</span>';
-      html += '<div class="arch-bar-fill" style="width: ' + pct + '%"></div>';
-      html += '<span>' + value.toFixed(1) + '%</span>';
-      html += '</div>';
-    });
-    html += '</div>';
-  }
-  
-  // Show quantization info
-  if (arch.quantization) {
-    html += '<h4>Quantization Setup</h4><table class="grid"><tbody>';
-    Object.keys(arch.quantization).forEach(function(key) {
-      var value = arch.quantization[key];
-      html += '<tr><td>' + key.replace('_', ' ') + '</td><td>' + String(value) + '</td></tr>';
-    });
-    html += '</tbody></table>';
-  }
-  
-  html += '</div>';
-  container.innerHTML = html;
+  tree.appendChild(element(
+    'p',
+    'hint',
+    'Detailed transformer topology is not reported by the installed mlx-agent version.',
+  ));
+  container.appendChild(tree);
 }
 
 
@@ -1588,12 +1459,9 @@ function renderQuantResults(data) {
     html += '<div class="quant-card">';
     html += '<h4>' + profile.target + '</h4>';
     html += '<dl>';
-    html += '<dt>Size</dt><dd>' + bytes(profile.size) + '</dd>';
-    html += '<dt>Estimated Tokens/Sec</dt><dd>' + (profile.tokens_per_sec || '—') + '</dd>';
-    html += '<dt>Estimated VRAM</dt><dd>' + (profile.vram || '—') + '</dd>';
-    if (profile.comparison) {
-      html += '<dt>Quality vs Base</dt><dd>' + profile.comparison.quality_percent + '</dd>';
-    }
+    html += '<dt>Source size</dt><dd>' + bytes(profile.source_bytes) + '</dd>';
+    html += '<dt>Destination</dt><dd>' + (profile.output || '—') + '</dd>';
+    html += '<dt>Preview</dt><dd>' + (profile.preview_hash ? 'Ready; confirmation required.' : '—') + '</dd>';
     if (profile.command) {
       html += '<dt>Command</dt><dd><code>' + profile.command.join(' ') + '</code></dd>';
     }
@@ -1715,13 +1583,7 @@ async function saveSettings(event) {
 }
 
 function selectPanel(name) {
-  PANELS.forEach(function (panel) {
-    const panelNode = $('panel-' + panel);
-    if (panelNode) panelNode.hidden = panel !== name;
-  });
-  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
-    tab.classList.toggle('is-active', tab.dataset.panel === name);
-  });
+  MLXWorkbenchNavigation.selectPanel(document, name, PANELS);
   if (name === 'jobs') {
     refreshJobs();
   } else if (state.jobTimer) {
@@ -1731,36 +1593,6 @@ function selectPanel(name) {
   if (name === 'duplicates') renderQuarantined();
   if (name === 'serve') refreshJobs();
 }
-
-
-function showQuickStartStep3() {
-  const step3 = document.getElementById('q-step3');
-  if (step3 && !state.modelsQueried) {
-    step3.hidden = false;
-    // Pre-populate with first found model
-    if (state.scan && state.scan.models && state.scan.models.length > 0) {
-      const model = state.scan.models[0];
-      if (model.status === 'pending' || model.status === 'converted') {
-        const button = document.createElement('button');
-        button.className = 'primary';
-        button.textContent = model.status === 'converted' ? 'Reconvert ' + model.name : 'Convert ' + model.name;
-        button.onclick = function() { openConvertPlan(model.path); };
-        document.getElementById('q-step3-content').innerHTML = '';
-        const p = document.createElement('p');
-        p.textContent = 'Found: ' + model.name;
-        const br = document.createElement('br');
-        p.appendChild(br);
-        p.appendChild(button);
-        document.getElementById('q-step3-content').appendChild(p);
-      }
-    }
-  }
-}
-
-function showQuickStartPanel() {
-  selectPanel('quickstart');
-}
-
 
 // Dropdown menu toggle
 document.getElementById('more-tabs-btn').addEventListener('click', function() {
@@ -1787,11 +1619,8 @@ async function scanDuplicates() {
   
   try {
     const data = await api('/api/duplicates/scan', { body: {} });
-    renderDuplicates(data.duplicates || []);
-    
-    if (data.quarantine) {
-      document.getElementById('quarantined').innerHTML = '<p>Quarantined files: ' + (data.quarantine.length || 0) + '</p>';
-    }
+    state.duplicateScan = data.duplicates || [];
+    renderDuplicateScan(state.duplicateScan);
     
     notify('Duplicate scan complete');
   } catch (error) {
@@ -1799,12 +1628,13 @@ async function scanDuplicates() {
   }
 }
 
-function renderDuplicates(dupes) {
+function renderDuplicateScan(dupes) {
   const container = document.getElementById('exact-duplicates');
   if (!container) return;
-  container.innerHTML = '';
-  if (!dupes || dupes.length === 0) {
-    container.innerHTML = '<p class="empty">No duplicates found</p>';
+  container.textContent = '';
+  const emptyMessage = MLXWorkbenchLibraryViews.duplicateScanMessage(dupes);
+  if (emptyMessage) {
+    container.appendChild(element('p', 'empty', emptyMessage));
     return;
   }
 
@@ -1813,10 +1643,14 @@ function renderDuplicates(dupes) {
   note.textContent = 'Remove moves the selected file to quarantine so it can be restored. No file is permanently deleted.';
   container.appendChild(note);
 
-  const table = document.createElement('table');
-  table.className = 'grid';
-  table.innerHTML = '<thead><tr><th>Group</th><th>Duplicate files</th></tr></thead>';
-  const body = document.createElement('tbody');
+  const table = element('table', 'grid');
+  const head = element('thead');
+  const headRow = element('tr');
+  headRow.appendChild(element('th', null, 'Group'));
+  headRow.appendChild(element('th', null, 'Duplicate files'));
+  head.appendChild(headRow);
+  table.appendChild(head);
+  const body = element('tbody');
   dupes.forEach(function(group) {
     const row = document.createElement('tr');
     const groupCell = document.createElement('td');
@@ -1858,96 +1692,56 @@ function renderDuplicates(dupes) {
 }
 
 function convertSelectedModels() {
-  const paths = selectedModelPaths();
-  if (paths.length === 0) {
-    notify('Select models from the Models tab first');
-    return;
-  }
-  
-  if (warnConvertDeps()) return;
-  
-  const panel = document.getElementById('panel-convert');
-  if (panel.hidden) selectPanel('convert');
-  
-  notify(paths.length + ' model(s) selected for conversion. Open the Convert tab to proceed.');
+  return queueSelectedModels();
 }
 
 
 
-async function showModelDetails(path) {
+function showModelDetails(path) {
   const modal = document.getElementById('model-details-modal');
   const title = document.getElementById('model-details-title');
   const contentDiv = document.getElementById('model-details-content');
-  
-  if (!path) return;
-  
-  modal.hidden = false;
-  
-  try {
-    const response = await fetch('/api/convert/scan');
-    if (response.ok) {
-      const data = await response.json();
-      const model = data.data.models.find(m => m.path === path || m.name === path.split('/').pop());
-      
-      if (model) {
-        title.textContent = model.name || path.split('/').pop();
-        
-        let html = '<dl>';
-        if (model.size) {
-          html += '<dt>File Size</dt><dd>' + bytes(model.size) + '</dd>';
-        }
-        if (model.bytes && model.bytes !== model.size) {
-          html += '<dt>Model Size</dt><dd>' + bytes(model.bytes) + '</dd>';
-        }
-        if (model.architecture) {
-          html += '<dt>Architecture</dt><dd>' + model.architecture + '</dd>';
-        }
-        if (model.quantization) {
-          html += '<dt>Quantization</dt><dd>' + model.quantization + '</dd>';
-        }
-        if (model.params) {
-          html += '<dt>Parameters</dt><dd>' + model.params + '</dd>';
-        }
-        if (model.layers) {
-          html += '<dt>Layers</dt><dd>' + model.layers + '</dd>';
-        }
-        if (model.repo) {
-          html += '<dt>Hugging Face Repo</dt><dd>' + model.repo + '</dd>';
-        }
-        html += '<dt>Local Path</dt><dd style="word-break: break-all;">' + model.path + '</dd>';
-        html += '<dt>Status</dt><dd>' + (model.status || 'unknown') + '</dd>';
-        html += '</dl>';
-        
-        if (model.outputs && model.outputs.length) {
-          html += '<h3>Output Paths</h3><ul>';
-          model.outputs.forEach(function(out) {
-            html += '<li>' + out + '</li>';
-          });
-          html += '</ul>';
-        }
-        
-        contentDiv.innerHTML = html;
-      } else {
-        title.textContent = path.split('/').pop();
-        contentDiv.innerHTML = '<p>Details not available for this model.</p><p>Path: ' + path + '</p>';
-      }
-      
-      // Add close handler
-      const closeBtn = document.getElementById('close-model-details');
-      if (closeBtn) {
-        closeBtn.onclick = function() { modal.hidden = true; };
-      }
-    } else {
-      contentDiv.innerHTML = '<p>Error loading model details.</p>';
-    }
-  } catch (error) {
-    contentDiv.innerHTML = '<p>Error: ' + error.message + '</p>';
+  if (!path || !modal || !title || !contentDiv) return;
+  const model = state.scan && (state.scan.models || []).find(function (item) {
+    return item.path === path;
+  });
+
+  title.textContent = (model && model.name) || path.split('/').pop();
+  contentDiv.textContent = '';
+  if (!model) {
+    contentDiv.appendChild(element('p', null, 'Details are unavailable until this path appears in the current scan.'));
+    modal.hidden = false;
+    return;
   }
+
+  const facts = MLXWorkbenchLibraryViews.modelDetailsFacts(model, bytes);
+  const list = element('dl');
+  facts.forEach(function (fact) {
+    list.appendChild(element('dt', null, fact[0]));
+    list.appendChild(element('dd', fact[0] === 'Local path' ? 'path' : null, fact[1]));
+  });
+  contentDiv.appendChild(list);
+  if (model.outputs && model.outputs.length) {
+    contentDiv.appendChild(element('h3', null, 'Output paths'));
+    const outputs = element('ul');
+    model.outputs.forEach(function (output) {
+      outputs.appendChild(element('li', 'path', output));
+    });
+    contentDiv.appendChild(outputs);
+  }
+  modal.hidden = false;
 }
 
 function init() {
   on('tabs', 'click', function (event) {
     if (event.target.dataset.panel) selectPanel(event.target.dataset.panel);
+  });
+  on('models', 'click', function (event) {
+    const row = event.target.closest('.clickable');
+    if (row && !event.target.closest('button, input')) showModelDetails(row.dataset.modelPath);
+  });
+  on('close-model-details', 'click', function () {
+    $('model-details-modal').hidden = true;
   });
   on('rescan', 'click', rescan);
   on('pending-only', 'change', renderModels);
