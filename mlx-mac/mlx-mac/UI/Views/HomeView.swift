@@ -28,11 +28,17 @@ struct HomeNextAction: Equatable {
         if workflow.state == .queued || workflow.state == .running {
             return HomeNextAction(kind: .activity, title: "Monitor conversion", reason: "A conversion is \(workflow.state.rawValue); Activity has the authoritative receipt and live status.", route: "jobs")
         }
+        if workflow.state == .verifying {
+            return HomeNextAction(kind: .activity, title: "Verify conversion output", reason: "The conversion finished; the canary suite is checking the MLX output before it is marked verified.", route: "jobs")
+        }
+        if workflow.state == .verificationFailed {
+            return HomeNextAction(kind: .activity, title: "Resolve verification failure", reason: workflow.errorMessage ?? "The converted output failed the canary suite; Activity has the failing evidence.", route: "jobs")
+        }
         if workflow.state == .failed {
             return HomeNextAction(kind: .activity, title: "Resolve conversion failure", reason: workflow.errorMessage ?? workflow.message ?? "The current conversion needs attention in Activity.", route: "jobs")
         }
         if let path = workflow.completedModelPath, !path.isEmpty {
-            guard workflow.state == .completed,
+            guard workflow.state == .completed || workflow.state == .verified,
                   snapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })?.readiness == .ready else {
                 return HomeNextAction(kind: .activity, title: "Reconcile completed output", reason: "The completed workflow no longer matches a ready model in the current Library snapshot.", route: "jobs")
             }

@@ -3,10 +3,19 @@ import SwiftUI
 
 struct ModelDetailsView: View {
     @ObservedObject var appHost: AppHost
+    @ObservedObject private var verification: VerificationCoordinator
 
     let model: LibraryModel
     let snapshotGeneratedAt: Date
     let onRouteSelection: (String) -> Void
+
+    init(appHost: AppHost, model: LibraryModel, snapshotGeneratedAt: Date, onRouteSelection: @escaping (String) -> Void) {
+        self.appHost = appHost
+        _verification = ObservedObject(wrappedValue: appHost.verification)
+        self.model = model
+        self.snapshotGeneratedAt = snapshotGeneratedAt
+        self.onRouteSelection = onRouteSelection
+    }
 
     var body: some View {
         ScrollView {
@@ -37,6 +46,8 @@ struct ModelDetailsView: View {
                     detailRow("Library scan", format(snapshotGeneratedAt))
                 }
                 .textSelection(.enabled)
+
+                verificationSection
 
                 if let error = model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
@@ -124,6 +135,49 @@ struct ModelDetailsView: View {
 
     private var sourceIdentity: String {
         lines(model.sourcePaths)
+    }
+
+    private var verificationSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle(text: "Verification")
+            switch appHost.verification.status(for: model.item.path, signature: model.item.signature) {
+            case .verified(let report):
+                detailRow("Status", "Verified (canary suite v\(report.suiteVersion))")
+                verificationMetrics(report)
+            case .failed(let report):
+                detailRow("Status", "Failed — \(report.outcome.summary)")
+                verificationMetrics(report)
+            case .keptAnyway(let report):
+                detailRow("Status", "Kept despite a failed verification")
+                verificationMetrics(report)
+            case .stale(let report):
+                detailRow("Status", "Stale — the file changed since verification on \(format(report.finishedAt))")
+            case .inProgress:
+                detailRow("Status", appHost.verification.progressMessage ?? "Verification in progress…")
+            case .unverified:
+                detailRow("Status", "Not verified by the canary suite.")
+            }
+            if model.readiness == .ready {
+                Button("Verify now") {
+                    appHost.verification.verifyNow(modelPath: model.item.path, signature: model.item.signature)
+                }
+                .disabled(appHost.verification.activeModelPath != nil)
+            }
+        }
+    }
+
+    private func verificationMetrics(_ report: VerificationReport) -> some View {
+        Group {
+            if let tps = report.tokensPerSecond {
+                detailRow("Decode speed", String(format: "%.1f tok/s%@", tps, report.metricsEstimated ? " (estimated)" : ""))
+            }
+            if let ttft = report.timeToFirstTokenSeconds {
+                detailRow("First token", String(format: "%.2fs", ttft))
+            }
+            ForEach(report.canaries, id: \.id) { canary in
+                detailRow(canary.title, canary.passed ? "Passed" : "Failed: \(canary.failureReason ?? "unknown")")
+            }
+        }
     }
 
     private var readinessExplanation: String {

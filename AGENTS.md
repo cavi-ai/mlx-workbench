@@ -15,6 +15,16 @@ from `mlx-agent` at runtime.
 - `scripts/mlx-workbench` is the launcher.
 - `mlx_workbench/` is the application package.
 - `tests/` contains unit and release-doc coverage.
+- `mlx-mac/` is the native SwiftUI app (Xcode project, explicit file list in
+  `project.pbxproj` — register new sources there). `make test-swift` runs its
+  XCTest suite. Design specs for premium features live in
+  `mlx-mac/docs/premium/`.
+- The Swift app gates conversions with a **Conversion Quality Gate**: after a
+  fresh scan confirms a conversion output, `VerificationCoordinator` serves it
+  on an ephemeral loopback port (via the existing serve preview/confirm
+  boundary), runs the canary suite in `Models/VerificationModels.swift`, and
+  only then marks the workflow `verified`. The gate attaches in `App.swift`;
+  without an attached verifier the workflow behavior is unchanged.
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 

@@ -1,5 +1,10 @@
 import Foundation
 
+private struct ServeIntent: Equatable {
+    let runtime: String
+    let port: Int?
+}
+
 struct ModelWorkflowAPI {
     let convertPreview: (String, Int, String?) async throws -> [String: Any]
     let convertStart: (String, Int, String?, String) async throws -> [String: Any]
@@ -44,6 +49,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
     private let persistence: ModelWorkflowPersistence
     private let now: () -> Date
     private let fileManager: FileManager
+    /// When set (via `VerificationCoordinator.attach`), a fresh-scan-confirmed
+    /// conversion transitions to `.verifying` and the gate decides the final
+    /// state. When nil, behavior is unchanged: completion goes straight to
+    /// `.completed`.
+    weak var completionVerifier: (any ConversionCompletionVerifying)?
     private var selectedSource: ModelItem?
     private var selectedSnapshot: LibrarySnapshot?
     private var conversionPreviewQBits: Int?
@@ -51,6 +61,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     private var completionRescanRequested = false
     private var pendingCompletionRecordIDs = Set<UUID>()
     private var servePreviewHash: String?
+    private var servePreviewIntent: ServeIntent?
 
     init(
         api: ModelWorkflowAPI,
@@ -85,6 +96,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         conversionPreviewQBits = nil
         conversionPreviewOutput = nil
         servePreviewHash = nil
+        servePreviewIntent = nil
         switch ModelWorkflowResolver.destination(for: source, library: snapshot) {
         case .reuseExisting(let model):
             let exactPath = preferredModelPath(
@@ -254,6 +266,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             persist: true
         )
         servePreviewHash = nil
+        servePreviewIntent = nil
     }
 
     func previewServe(runtime: String, port: Int?) async {
@@ -265,6 +278,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             return
         }
         servePreviewHash = nil
+        servePreviewIntent = nil
         do {
             servers = try await api.serveStatus()
         } catch {
@@ -284,6 +298,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 return
             }
             servePreviewHash = hash
+            servePreviewIntent = ServeIntent(runtime: runtime, port: port)
             update(serveState: .readyToConfirm, message: "Serve preview ready for confirmation.", errorMessage: .some(nil))
         } catch {
             update(serveState: .failed, message: "Serve preview failed: \(AppHost.render(error))", errorMessage: AppHost.render(error))
@@ -294,8 +309,22 @@ final class ModelWorkflowCoordinator: ObservableObject {
         guard !isServeSubmissionInFlight else { return }
         isServeSubmissionInFlight = true
         defer { isServeSubmissionInFlight = false }
-        guard let model = workflow.completedModelPath, !model.isEmpty, let hash = servePreviewHash, !hash.isEmpty else {
+        guard let model = workflow.completedModelPath,
+              !model.isEmpty,
+              let hash = servePreviewHash,
+              !hash.isEmpty,
+              let intent = servePreviewIntent else {
             update(serveState: .failed, message: "Preview serving before confirming it.", errorMessage: "Missing serve preview hash.")
+            return
+        }
+        guard intent.runtime == runtime, intent.port == port else {
+            servePreviewHash = nil
+            servePreviewIntent = nil
+            update(
+                serveState: .failed,
+                message: "Serve intent changed after preview. Preview it again before confirming.",
+                errorMessage: "Serve intent changed after the preview (runtime or port)."
+            )
             return
         }
         guard !servers.contains(where: { $0.state?.lowercased() == "running" && $0.repo == model }) else {
@@ -303,6 +332,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             return
         }
         servePreviewHash = nil
+        servePreviewIntent = nil
         do {
             _ = try await api.serveStart(model, runtime, port, hash)
             let statusAvailable = await refreshOperationalStatus()
@@ -328,6 +358,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             return
         }
         servePreviewHash = nil
+        servePreviewIntent = nil
         do {
             _ = try await api.serveStop(port)
             let statusAvailable = await refreshOperationalStatus()
@@ -352,6 +383,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         conversionPreviewQBits = nil
         conversionPreviewOutput = nil
         servePreviewHash = nil
+        servePreviewIntent = nil
         if let index = history.firstIndex(where: { $0.persistenceIdentifier == record.persistenceIdentifier }) {
             history[index] = record
         } else {
@@ -407,18 +439,38 @@ final class ModelWorkflowCoordinator: ObservableObject {
         for id in ids {
             guard let record = history.first(where: { $0.id == id }) else { continue }
             if let completed = completedModel(in: snapshot, for: record) {
-                replace(
-                    updatedRecord(
-                        from: record,
-                        state: .completed,
-                        outputPath: completed.path,
-                        completedModelPath: completed.path,
-                        message: "Conversion completed and the MLX output was confirmed by a fresh scan.",
-                        errorMessage: .some(nil)
-                    ),
-                    persist: true,
-                    makeCurrent: record.id == workflow.id
-                )
+                if let verifier = completionVerifier {
+                    replace(
+                        updatedRecord(
+                            from: record,
+                            state: .verifying,
+                            outputPath: completed.path,
+                            completedModelPath: completed.path,
+                            message: "Conversion completed; verifying the MLX output before it is marked verified.",
+                            errorMessage: .some(nil)
+                        ),
+                        persist: true,
+                        makeCurrent: record.id == workflow.id
+                    )
+                    verifier.beginVerification(
+                        recordID: record.id,
+                        modelPath: completed.path,
+                        signature: completed.model.item.signature
+                    )
+                } else {
+                    replace(
+                        updatedRecord(
+                            from: record,
+                            state: .completed,
+                            outputPath: completed.path,
+                            completedModelPath: completed.path,
+                            message: "Conversion completed and the MLX output was confirmed by a fresh scan.",
+                            errorMessage: .some(nil)
+                        ),
+                        persist: true,
+                        makeCurrent: record.id == workflow.id
+                    )
+                }
             } else {
                 replace(
                     updatedRecord(
@@ -433,6 +485,65 @@ final class ModelWorkflowCoordinator: ObservableObject {
             }
         }
         pendingCompletionRecordIDs.removeAll()
+    }
+
+    /// Called by the Conversion Quality Gate when a verification run ends.
+    /// Only records currently in `.verifying` are resolved; `.keptAnyway` is
+    /// additionally accepted from `.verificationFailed` (the explicit user
+    /// override). Anything else is a stale callback and ignored.
+    func resolveVerification(recordID: UUID, resolution: VerificationResolution) {
+        guard let record = history.first(where: { $0.id == recordID }) else { return }
+        if case .keptAnyway = resolution {
+            guard record.state == .verifying || record.state == .verificationFailed else { return }
+        } else {
+            guard record.state == .verifying else { return }
+        }
+        switch resolution {
+        case .passed(let summary):
+            replace(
+                updatedRecord(
+                    from: record,
+                    state: .verified,
+                    message: "Verification passed. \(summary)",
+                    errorMessage: .some(nil)
+                ),
+                persist: true,
+                makeCurrent: record.id == workflow.id
+            )
+        case .failed(let summary):
+            replace(
+                updatedRecord(
+                    from: record,
+                    state: .verificationFailed,
+                    message: "Verification failed. \(summary)",
+                    errorMessage: .some("Verification failed. \(summary)")
+                ),
+                persist: true,
+                makeCurrent: record.id == workflow.id
+            )
+        case .unavailable(let reason):
+            replace(
+                updatedRecord(
+                    from: record,
+                    state: .completed,
+                    message: "Verification could not run (\(reason)); the output is complete but unverified.",
+                    errorMessage: .some(nil)
+                ),
+                persist: true,
+                makeCurrent: record.id == workflow.id
+            )
+        case .keptAnyway:
+            replace(
+                updatedRecord(
+                    from: record,
+                    state: .completed,
+                    message: "Kept despite a failed verification (explicit override).",
+                    errorMessage: .some(nil)
+                ),
+                persist: true,
+                makeCurrent: record.id == workflow.id
+            )
+        }
     }
 
     private func reconcileAuthoritative(snapshot: LibrarySnapshot?, jobs: [Job]) async {

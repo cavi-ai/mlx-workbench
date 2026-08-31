@@ -8,6 +8,11 @@ struct MlxWorkbenchApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(appHost: appHost)
+                .onAppear {
+                    // Conversion Quality Gate: route completed conversions
+                    // through canary verification. Idempotent.
+                    appHost.verification.attach(to: appHost.modelWorkflow)
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.expanded)

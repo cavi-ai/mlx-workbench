@@ -30,7 +30,7 @@ struct PrepareWorkflowPresentation: Equatable {
             return .runExisting
         case .readyToConfirm:
             return .confirm
-        case .idle, .inspectingSource, .previewingConversion, .queued, .running, .completed:
+        case .idle, .inspectingSource, .previewingConversion, .queued, .running, .completed, .verifying, .verified, .verificationFailed:
             return sourcePath.isEmpty ? .none : .preview
         case .failed:
             return isBlockedDestination || sourcePath.isEmpty ? .none : (canConfirm ? .confirm : .preview)
@@ -38,7 +38,7 @@ struct PrepareWorkflowPresentation: Equatable {
     }
 
     var canPreview: Bool {
-        !sourcePath.isEmpty && !isBlockedDestination && ![.existingModelFound, .previewingConversion, .queued, .running, .completed].contains(state)
+        !sourcePath.isEmpty && !isBlockedDestination && ![.existingModelFound, .previewingConversion, .queued, .running, .completed, .verifying, .verified].contains(state)
     }
 
     var canConfirm: Bool {
@@ -64,6 +64,9 @@ struct PrepareWorkflowPresentation: Equatable {
         case .queued: return "Conversion queued"
         case .running: return "Conversion running"
         case .completed: return "Conversion completed"
+        case .verifying: return "Verifying conversion output"
+        case .verified: return "Conversion verified"
+        case .verificationFailed: return "Verification failed"
         case .failed: return "Preparation needs attention"
         }
     }
