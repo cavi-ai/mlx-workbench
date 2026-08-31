@@ -1,6 +1,6 @@
 # 03 — Measured Comparisons (prompt-set replay)
 
-**Status:** spec · **Tier:** Premium · **Depends on:** shared `ServeProbe` harness (spec 01)
+**Status:** implemented (phase 1 + promote-winner; history import and output diffs remain phase 2) · **Tier:** Premium · **Depends on:** shared `ServeProbe` harness (spec 01)
 
 ## Problem
 

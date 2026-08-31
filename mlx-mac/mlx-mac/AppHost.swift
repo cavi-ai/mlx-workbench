@@ -24,6 +24,8 @@ class AppHost: ObservableObject {
     /// Conversion Quality Gate. Attached to the workflow by the app entry
     /// point via `verification.attach(to: modelWorkflow)`.
     let verification: VerificationCoordinator
+    /// Measured Comparisons (prompt-set replay across variants).
+    let comparison: ComparisonCoordinator
 
     let api: WorkbenchAPI
 
@@ -52,7 +54,8 @@ class AppHost: ObservableObject {
         scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil,
         modelWorkflowAPI: ModelWorkflowAPI? = nil,
         modelWorkflowPersistence: ModelWorkflowPersistence? = nil,
-        verification: VerificationCoordinator? = nil
+        verification: VerificationCoordinator? = nil,
+        comparison: ComparisonCoordinator? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -73,6 +76,14 @@ class AppHost: ObservableObject {
                 prober: OpenAIEndpointProber()
             ),
             store: VerificationStore(fileURL: VerificationStore.defaultFileURL())
+        )
+        self.comparison = comparison ?? ComparisonCoordinator(
+            probe: ServeProbe(
+                lifecycle: .live(api: api),
+                prober: OpenAIEndpointProber()
+            ),
+            runStore: JSONStore<ComparisonRun>(fileURL: JSONStore<ComparisonRun>.defaultFileURL("comparison-runs.json")),
+            promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json"))
         )
         self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
         self.configPath = configPath ?? configModule.configPath()
@@ -95,6 +106,12 @@ class AppHost: ObservableObject {
                 signatures: signatures,
                 limit: limit
             )
+        }
+        // Measured comparisons feed the RecommendationEngine: rehydrate
+        // aggregates from completed runs, then append as new runs finish.
+        benchmarkResults.append(contentsOf: self.comparison.aggregateBenchmarks())
+        self.comparison.onBenchmarks = { [weak self] newBenchmarks in
+            self?.benchmarkResults.append(contentsOf: newBenchmarks)
         }
     }
 

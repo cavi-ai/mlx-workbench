@@ -21,8 +21,16 @@ struct ProbeSample: Equatable, Sendable {
 
 struct ProbeRunResult: Equatable, Sendable {
     let port: Int
-    /// Canary id → sample. Guaranteed to contain every `CanarySuite.cases` id.
+    /// Prompt id → sample. Guaranteed to contain every requested prompt id.
     let samples: [String: ProbeSample]
+}
+
+/// One prompt to send through a probed endpoint. The canary suite and
+/// comparison prompt sets both reduce to this.
+struct ProbePrompt: Equatable, Sendable {
+    let id: String
+    let prompt: String
+    let maxTokens: Int
 }
 
 protocol EndpointProbing: Sendable {
@@ -79,9 +87,17 @@ struct ServeProbe: Sendable {
     var readyPollIntervalNanoseconds: UInt64 = 1_000_000_000
     var pickPort: @Sendable () -> Int? = EphemeralPort.pick
 
-    /// Serves `modelPath` on an ephemeral loopback port, runs every canary
-    /// prompt sequentially, and stops the server even when a probe throws.
+    /// Serves `modelPath` on an ephemeral loopback port, runs the canary
+    /// suite sequentially, and stops the server even when a probe throws.
     func run(modelPath: String) async throws -> ProbeRunResult {
+        try await run(modelPath: modelPath, prompts: CanarySuite.cases.map {
+            ProbePrompt(id: $0.id, prompt: $0.prompt, maxTokens: $0.maxTokens)
+        })
+    }
+
+    /// Serves `modelPath` on an ephemeral loopback port, runs `prompts`
+    /// sequentially, and stops the server even when a probe throws.
+    func run(modelPath: String, prompts: [ProbePrompt]) async throws -> ProbeRunResult {
         guard let port = pickPort() else { throw ServeProbeError.noEphemeralPort }
         let hash = try await lifecycle.preview(modelPath, port)
         guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
@@ -93,12 +109,12 @@ struct ServeProbe: Sendable {
                 throw ServeProbeError.serverNeverReady(timeout: readyTimeout)
             }
             var samples: [String: ProbeSample] = [:]
-            for kase in CanarySuite.cases {
+            for prompt in prompts {
                 try Task.checkCancellation()
-                samples[kase.id] = try await prober.chat(
+                samples[prompt.id] = try await prober.chat(
                     baseURL: baseURL,
-                    prompt: kase.prompt,
-                    maxTokens: kase.maxTokens
+                    prompt: prompt.prompt,
+                    maxTokens: prompt.maxTokens
                 )
             }
             try? await lifecycle.stop(port)
