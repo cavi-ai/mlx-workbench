@@ -33,6 +33,20 @@ Quarantine moves files; it never deletes them. Read
 recorded `from` and `to` paths, stop active jobs using the file, and move it
 back deliberately. Rescan Models afterward.
 
+## Reported model size is zero or incorrect
+
+Run the read-only local inventory regression to compare every scanned model's
+reported byte count with its file on disk:
+
+```sh
+make test-live-scan
+make test-swift-live-scan
+```
+
+If it fails, the output identifies the model path. Update the configured
+`mlx-agent` checkout and retry; do not start a conversion until the scan is
+accurate.
+
 ## Hub-backed commands fail
 
 Check network access and Hugging Face Hub credentials. Loopback UI operation

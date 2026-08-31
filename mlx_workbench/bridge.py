@@ -172,7 +172,53 @@ def scan(agent_path, gguf_roots=(), mlx_roots=(), signatures=True, limit=None,
         argv.append("--no-signature")
     if limit:
         argv.extend(["--limit", str(limit)])
-    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
+    return validate_scan(unwrap(run(agent_path, argv, timeout=timeout, runner=runner)))
+
+
+def validate_scan(payload):
+    """Reject malformed discovery data before a UI can render it as zero bytes."""
+    models = payload.get("models")
+    if not isinstance(models, list):
+        raise BridgeError(
+            "scan_contract_invalid",
+            "The agent returned an invalid model inventory.",
+            "Update mlx-agent and rescan.",
+        )
+    for index, model in enumerate(models):
+        if not isinstance(model, dict):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned an invalid model entry for models[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+        if not _nonempty_string(model.get("path")) or not _nonempty_string(model.get("name")):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned an invalid model identity for models[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+        if not _nonnegative_int(model.get("bytes")):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned an invalid byte count for models[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+    totals = payload.get("totals")
+    if not isinstance(totals, dict) or not _nonnegative_int(totals.get("bytes")):
+        raise BridgeError(
+            "scan_contract_invalid",
+            "The agent returned invalid inventory totals.",
+            "Update mlx-agent and rescan.",
+        )
+    return payload
+
+
+def _nonnegative_int(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _nonempty_string(value):
+    return isinstance(value, str) and bool(value.strip())
 
 
 def preview(agent_path, gguf_path, q_bits=4, out=None, timeout=DEFAULT_TIMEOUT, runner=None):
@@ -652,28 +698,13 @@ def _default_runner(command, timeout):
 
 
 
-def sloth_connect(agent_path, address="http://localhost:3000"):
+def sloth_connect(agent_path, address="http://localhost:3000", gguf_roots=(),
+                  mlx_roots=(), runner=None):
     """Connect to Sloth AI server and sync models.
     
     Provides integration with Sloth AI for distributed serving
     and model sharing capabilities.
     """
-    if not agent_path:
-        raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
-        )
-    
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
-        raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
-        )
-    
     # Check connection to Sloth server
     try:
         import urllib.request
@@ -686,26 +717,22 @@ def sloth_connect(agent_path, address="http://localhost:3000"):
         
         with urllib.request.urlopen(req, timeout=5) as response:
             health = json_module.loads(response.read().decode())
-        
-        # Sync models from mlx-agent
-        argv = ["convert", "scan", "--json"]
-        command = [sys.executable, str(script)] + argv
-        result = _default_runner(command, timeout=300)
-        
-        models = []
-        if result["returncode"] == 0:
-            try:
-                output = json.loads(result["stdout"])
-                models = output.get("data", {}).get("models", []) or []
-            except:
-                pass
-        
+
+        models = scan(
+            agent_path,
+            gguf_roots=gguf_roots,
+            mlx_roots=mlx_roots,
+            runner=runner,
+        )["models"]
+
         return {
             "connected": True,
             "address": address,
             "health": health,
             "models_synced": len(models),
         }
+    except BridgeError:
+        raise
     except Exception as error:
         raise BridgeError(
             "sloth_connection_failed",
@@ -713,71 +740,35 @@ def sloth_connect(agent_path, address="http://localhost:3000"):
             "Check that Sloth AI server is running and accessible.",
         )
 
-def quant_profile(agent_path, path, targets):
-    """Profile quantization options using mlx-agent convert preview."""
-    if not agent_path:
-        raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
-        )
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
-        raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
-        )
-
+def quant_profile(agent_path, path, targets, runner=None):
+    """Preview supported MLX conversion plans for a local GGUF model."""
+    target_bits = {"mlx-4bit": 4, "mlx-8bit": 8}
     profiles = []
     for target in targets:
-        argv = ["convert", "preview", "--path", path]
-        
-        if target == "gguf-q4":
-            argv.extend(["--q-bits", "4", "--out", path + ".Q4_K_M.gguf"])
-        elif target == "gguf-q8":
-            argv.extend(["--q-bits", "8", "--out", path + ".Q8_0.gguf"])
-        elif target == "gguf-q5":
-            argv.extend(["--q-bits", "5", "--out", path + ".Q5_K_M.gguf"])
-        elif target == "mlx-bf16":
-            argv.extend(["--q-bits", "bf16", "--out", path + ".mlx-bf16"])
-        elif target == "mlx-4bit":
-            argv.extend(["--q-bits", "4", "--out", path + ".mlx-4bit"])
-        elif target == "mlx-8bit":
-            argv.extend(["--q-bits", "8", "--out", path + ".mlx-8bit"])
-        
-        argv.append("--json")
-        command = [sys.executable, str(script)] + argv
-        try:
-            result = _default_runner(command, timeout=DEFAULT_TIMEOUT)
-            if result["returncode"] == 0:
-                output = json.loads(result["stdout"])
-                plan = output.get("data", {}).get("plan", {}) or output.get("data", {})
-                
-                profile = {
-                    "target": target,
-                    "size": plan.get("preview_hash", 0),
-                    "tokens_per_sec": None,
-                    "vram": None,
-                    "command": argv,
-                }
-                
-                if target.startswith("mlx-"):
-                    profile["actions"] = [{
-                        "type": "convert",
-                        "label": f"Convert to {target}",
-                        "path": path,
-                    }]
-                
-                profiles.append(profile)
-        except Exception as error:
-            profiles.append({
-                "target": target,
-                "error": str(error),
-                "command": argv,
-            })
-    
+        q_bits = target_bits.get(target)
+        if q_bits is None:
+            raise BridgeError(
+                "quant_target_invalid",
+                "Unsupported conversion target: {0}.".format(target),
+                "Choose MLX 4-bit or MLX 8-bit.",
+            )
+        data = preview(agent_path, path, q_bits=q_bits, runner=runner)
+        plan = data.get("plan") if isinstance(data, dict) else None
+        if not isinstance(plan, dict):
+            raise BridgeError(
+                "quant_preview_invalid",
+                "mlx-agent did not return a conversion plan.",
+                "Retry the preview after rescanning the GGUF file.",
+            )
+        source = plan.get("source") if isinstance(plan.get("source"), dict) else {}
+        profiles.append({
+            "target": "MLX {0}-bit".format(q_bits),
+            "q_bits": q_bits,
+            "source_bytes": source.get("bytes"),
+            "output": plan.get("out"),
+            "preview_hash": plan.get("preview_hash"),
+            "command": plan.get("argv"),
+        })
     return {"profiles": profiles}
 
 
@@ -857,334 +848,109 @@ def lmstudio_import(agent_path, source_dir=None, convertImmediately=True):
     return {"models": models}
 
 
-def dataset_score(agent_path, path):
-    """Score dataset quality for fine-tuning.
-    
-    Analyzes dataset structure and examples to provide
-    a quality score and recommendations.
+def model_architecture(agent_path, path, runner=None):
+    """Return scan metadata for one local GGUF model.
+
+    mlx-agent's scan contract does not expose transformer topology. Keep the
+    UI truthful by returning only the metadata that scan actually reports.
     """
-    if not agent_path:
+    location = Path(path).expanduser()
+    if not location.is_file() or location.suffix.lower() != ".gguf":
         raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
+            "model_not_found",
+            "Model architecture requires an existing GGUF file.",
+            "Select a GGUF file from the Models page and try again.",
         )
-    
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
+
+    resolved = location.resolve()
+    payload = scan(
+        agent_path,
+        gguf_roots=[str(resolved.parent)],
+        signatures=False,
+        runner=runner,
+    )
+    model = next(
+        (
+            item for item in payload["models"]
+            if Path(item["path"]).expanduser().resolve() == resolved
+        ),
+        None,
+    )
+    if model is None:
         raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
+            "model_not_scanned",
+            "mlx-agent did not return the selected GGUF file.",
+            "Rescan the model directory and verify the file is readable.",
         )
-    
-    try:
-        # Analyze dataset structure
-        import json as json_module
-        
-        samples = []
-        try:
-            dataset_file = Path(path) / "train.jsonl"
-            if dataset_file.exists():
-                lines = dataset_file.read_text(encoding="utf-8").strip().split('\n')[:10]
-                for line in lines:
-                    try:
-                        obj = json_module.loads(line)
-                        samples.append({
-                            "prompt": str(obj.get("prompt", "")),
-                            "response": str(obj.get("response", obj.get("output", ""))),
-                        })
-                    except:
-                        pass
-        except Exception as e:
-            samples = []
-        
-        # Calculate basic metrics
-        example_count = len(samples)
-        total_tokens = sum(
-            len((s["prompt"] + " " + s["response"]).split())
-            for s in samples
-        )
-        avg_length = total_tokens // example_count if example_count > 0 else 0
-        
-        # Simple scoring
-        score = 0.5
-        if example_count >= 100:
-            score += 0.2
-        elif example_count >= 50:
-            score += 0.1
-        
-        if avg_length >= 50 and avg_length <= 200:
-            score += 0.15
-        elif avg_length > 0 and avg_length < 50:
-            score += 0.05
-        
-        if len(samples) > 0:
-            # Check for proper format
-            has_prompt = all("prompt" in s for s in samples if s.get("prompt"))
-            score += 0.15 if has_prompt else 0
-        
-        score = min(1.0, max(0.0, score))
-        
-        return {
-            "score": score,
-            "example_count": example_count,
-            "avg_length": avg_length,
-            "samples": samples[:5],
-        }
-    except Exception as error:
-        return {
-            "score": 0.0,
-            "error": str(error),
-        }
+
+    return {
+        "architecture": {
+            "model_path": str(resolved),
+            "name": model["name"],
+            "bytes": model["bytes"],
+            "architecture": model.get("architecture"),
+            "quantization": model.get("quantization"),
+            "tensor_count": model.get("tensor_count"),
+        },
+    }
 
 
-def finetune_preview(agent_path, base_model, dataset_path, iters=100, learning_rate="2e-5"):
-    """Preview fine-tuning training with estimated outcomes.
-    
-    Shows training time, VRAM requirements, and expected quality improvement.
+
+def scan_duplicates(agent_path, gguf_roots=(), mlx_roots=(), runner=None):
+    """Return mlx-agent's evidence-backed duplicate groups.
+
+    Exact groups are eligible for quarantine because the agent derives them
+    from a content signature or matching model structure and quantization.
+    Variant groups are informational only.
     """
-    if not agent_path:
-        raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
-        )
-    
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
-        raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
-        )
-    
-    argv = [
-        "lora", "preview",
-        "--repo", base_model,
-        "--data", dataset_path,
-        "--iters", str(iters),
-        "--learning-rate", learning_rate,
-    ]
-    
-    try:
-        import json as json_module
-        argv.append("--json")
-        command = [sys.executable, str(script)] + argv
-        result = _default_runner(command, timeout=60)
-        
-        if result["returncode"] == 0:
-            try:
-                output = json.loads(result["stdout"])
-                plan = output.get("data", {}).get("plan", {}) or output.get("data", {})
-                
-                return {
-                    "preview": plan,
-                    "estimated": {
-                        "time_estimate": str(iters) + " iterations",
-                        "quality_gain": "~5-15% accuracy increase (estimated)",
-                        "vram_required": "4GB - 8GB",
-                        "epochs": str(max(1, iters // 100)),
-                        "before_metrics": "Base model performance",
-                        "after_metrics": "Fine-tuned model (estimated)",
-                    },
-                }
-            except:
-                pass
-        
-        return {
-            "preview": None,
-            "estimated": {
-                "time_estimate": str(iters) + " iterations",
-                "quality_gain": "~5-15% accuracy increase (estimated)",
-                "vram_required": "4GB - 8GB",
-                "epochs": str(max(1, iters // 100)),
-                "before_metrics": "Base model",
-                "after_metrics": "Fine-tuned (estimated)",
-            },
-        }
-    except Exception as error:
-        return {
-            "preview": None,
-            "estimated": {
-                "time_estimate": str(iters) + " iterations",
-                "quality_gain": "~5-15% accuracy increase (estimated)",
-                "vram_required": "4GB - 8GB",
-                "epochs": str(max(1, iters // 100)),
-                "error": str(error),
-            },
-        }
+    report = scan(
+        agent_path,
+        gguf_roots=gguf_roots,
+        mlx_roots=mlx_roots,
+        runner=runner,
+    )
+    duplicates = _validate_duplicate_groups(report)
+    return {"duplicates": duplicates, "total_models": len(report["models"])}
 
 
-
-def model_architecture(agent_path, path):
-    """Extract and display model architecture details.
-    
-    Provides interactive visualization data for transformer
-    models including layer structure, attention blocks,
-    and parameter distribution.
-    """
-    if not agent_path:
+def _validate_duplicate_groups(report):
+    duplicates = report.get("duplicates")
+    if not isinstance(duplicates, list):
         raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
+            "scan_contract_invalid",
+            "The agent returned invalid duplicate groups.",
+            "Update mlx-agent and rescan.",
         )
-    
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
-        raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
-        )
-    
-    try:
-        # Try to get architecture info via convert scan
-        argv = ["convert", "scan", "--json", "--path", path] if Path(path).exists() else ["convert", "scan", "--json"]
-        
-        import json as json_module
-        command = [sys.executable, str(script)] + argv
-        result = _default_runner(command, timeout=60)
-        
-        if result["returncode"] == 0:
-            try:
-                output = json.loads(result["stdout"])
-                models = output.get("data", {}).get("models", []) or []
-                
-                if len(models) > 0:
-                    m = models[0]
-                    
-                    # Extract architecture info
-                    arch_data = {
-                        "model_path": path,
-                        "name": m.get("name", "Unknown"),
-                        "params": m.get("parameters", "unknown"),
-                        "layers": m.get("layers", "unknown"),
-                        "hidden_size": m.get("hidden_size", "unknown"),
-                        "vocab_size": m.get("vocab_size", "unknown"),
-                    }
-                    
-                    # Try to get more details
-                    if m.get("architecture"):
-                        arch_data["attention_blocks"] = []
-                        for i, block in enumerate(m["architecture"].get("blocks", [])):
-                            arch_data["attention_blocks"].append({
-                                "name": block.get("type", f"Block {i+1}"),
-                                "num_heads": block.get("num_attention_heads", "N/A"),
-                                "head_dim": block.get("head_dim", "N/A"),
-                                "hidden_size": block.get("hidden_size", "N/A"),
-                            })
-                        
-                        arch_data["layer_types"] = m["architecture"].get("layer_types", [])
-                        arch_data["parameter_distribution"] = m["architecture"].get("param_distribution", {})
-                    
-                    if m.get("quantization"):
-                        arch_data["quantization"] = {
-                            "method": m["quantization"].get("method", "unknown"),
-                            "bits": m["quantization"].get("bits", 16),
-                        }
-                    
-                    return {"architecture": arch_data}
-            except:
-                pass
-        
-        # Fallback: create placeholder architecture
-        return {
-            "architecture": {
-                "model_path": path,
-                "name": Path(path).name if Path(path).exists() else "Model",
-                "params": "unknown",
-                "layers": "unknown",
-                "hidden_size": "unknown",
-                "vocab_size": "unknown",
-                "attention_blocks": [],
-                "layer_types": ["attention", "ffn"],
-            }
-        }
-    except Exception as error:
-        return {
-            "architecture": {
-                "error": str(error),
-            }
-        }
-
-
-
-def scan_duplicates(agent_path):
-    """Scan for duplicates across all configured GGUF roots."""
-    if not agent_path:
-        raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
-        )
-    
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
-        raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
-        )
-    
-    try:
-        # Run convert scan to get all models
-        argv = ["convert", "scan", "--json"]
-        command = [sys.executable, str(script)] + argv
-        result = _default_runner(command, timeout=300)
-        
-        if result["returncode"] != 0:
+    for index, group in enumerate(duplicates):
+        if not isinstance(group, dict) or group.get("kind") not in ("exact", "variant"):
             raise BridgeError(
-                "scan_failed",
-                "Failed to scan models: {0}".format(result.get("stderr", "unknown error")),
-                "Check mlx-agent logs.",
+                "scan_contract_invalid",
+                "The agent returned an invalid duplicate group for duplicates[{0}].".format(index),
+                "Update mlx-agent and rescan.",
             )
-        
-        try:
-            output = json.loads(result["stdout"])
-            models = output.get("data", {}).get("models", []) or []
-        except:
-            models = []
-        
-        # Group by filename (exact duplicates)
-        exact_groups = {}
-        variant_groups = {}
-        
-        for model in models:
-            path = model.get("path", "")
-            name = Path(path).name if path else ""
-            
-            if not name:
-                continue
-            
-            # Group exact filename matches (same file, different location or same path)
-            if name not in exact_groups:
-                exact_groups[name] = []
-            exact_groups[name].append(path)
-        
-        # Filter to only groups with more than one path
-        duplicates = []
-        for name, paths in exact_groups.items():
-            if len(paths) > 1:
-                duplicates.append({
-                    "group_id": name,
-                    "files": paths,
-                    "count": len(paths),
-                })
-        
-        return {
-            "duplicates": duplicates,
-            "total_models": len(models),
-        }
-    except Exception as error:
-        raise BridgeError(
-            "duplicate_scan_failed",
-            str(error),
-            "Check your configured GGUF roots and try again.",
-        )
+        if not _nonempty_string(group.get("model_key")) or not _nonnegative_int(group.get("reclaimable_bytes")):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned invalid duplicate metadata for duplicates[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+        if group["kind"] == "exact":
+            if (not _nonempty_string(group.get("keep")) or
+                    not _nonempty_string(group.get("quantization")) or
+                    not _string_list(group.get("redundant"))):
+                raise BridgeError(
+                    "scan_contract_invalid",
+                    "The agent returned an invalid exact duplicate group for duplicates[{0}].".format(index),
+                    "Update mlx-agent and rescan.",
+                )
+        elif not _string_list(group.get("quantizations")) or not _string_list(group.get("members")):
+            raise BridgeError(
+                "scan_contract_invalid",
+                "The agent returned an invalid variant duplicate group for duplicates[{0}].".format(index),
+                "Update mlx-agent and rescan.",
+            )
+    return duplicates
 
+
+def _string_list(value):
+    return isinstance(value, list) and bool(value) and all(_nonempty_string(item) for item in value)

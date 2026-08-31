@@ -237,7 +237,11 @@ class ServerTests(unittest.TestCase):
 
         self.commands = []
         self.convert_jobs = []
-        self.responses = {"stdout": envelope(data={"models": [], "totals": {"gguf": 0}})}
+        self.responses = {"stdout": envelope(data={
+            "models": [],
+            "duplicates": [],
+            "totals": {"gguf": 0, "bytes": 0},
+        })}
         self.token = "test-token"
         self.httpd = server.build(
             "127.0.0.1",
@@ -343,6 +347,115 @@ class ServerTests(unittest.TestCase):
         self.assertIn(str(self.models), self.commands[0])
         self.assertIn("convert", self.commands[0])
         self.assertIn("scan", self.commands[0])
+
+    def test_scan_contract_failure_becomes_a_502(self):
+        self.responses["stdout"] = envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        })
+
+        status, payload = self._request("/api/scan")
+
+        self.assertEqual(status, 502)
+        self.assertEqual(payload["error"]["code"], "scan_contract_invalid")
+
+    def test_duplicate_scan_contract_failure_becomes_a_502(self):
+        self.responses["stdout"] = envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        })
+
+        status, payload = self._request("/api/duplicates/scan", "POST", {})
+
+        self.assertEqual(status, 502)
+        self.assertEqual(payload["error"]["code"], "scan_contract_invalid")
+
+    def test_duplicate_scan_passes_configured_roots_to_the_cli(self):
+        status, payload = self._request("/api/duplicates/scan", "POST", {})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["total_models"], 0)
+        self.assertIn(str(self.models), self.commands[0])
+
+    def test_serve_metrics_route_does_not_pass_a_subprocess_runner(self):
+        calls = []
+        original = bridge.serve_metrics
+        self.addCleanup(setattr, bridge, "serve_metrics", original)
+
+        def metrics(agent_path, port, **kwargs):
+            calls.append((agent_path, port, kwargs))
+            return {"connected": False, "metrics": {}}
+
+        bridge.serve_metrics = metrics
+        status, payload = self._request("/api/serve/metrics", "POST", {"port": 8766})
+
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["data"]["connected"])
+        self.assertEqual(calls, [(str(self.agent), 8766, {})])
+
+    def test_sloth_route_forwards_configured_roots_and_runner(self):
+        calls = []
+        original = bridge.sloth_connect
+        self.addCleanup(setattr, bridge, "sloth_connect", original)
+
+        def connect(agent_path, address, **kwargs):
+            calls.append((agent_path, address, kwargs))
+            return {"connected": True, "models_synced": 0}
+
+        bridge.sloth_connect = connect
+        status, payload = self._request(
+            "/api/sloth/connect", "POST", {"address": "http://sloth.test"}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual(calls, [(
+            str(self.agent),
+            "http://sloth.test",
+            {
+                "gguf_roots": [str(self.models)],
+                "mlx_roots": [],
+                "runner": self._runner,
+            },
+        )])
+
+    def test_model_architecture_route_forwards_the_subprocess_runner(self):
+        calls = []
+        original = bridge.model_architecture
+        self.addCleanup(setattr, bridge, "model_architecture", original)
+
+        def inspect(agent_path, path, **kwargs):
+            calls.append((agent_path, path, kwargs))
+            return {"architecture": {"name": "qwen.gguf"}}
+
+        bridge.model_architecture = inspect
+        path = str(self.models / "qwen.gguf")
+        status, payload = self._request("/api/model/arch", "POST", {"path": path})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["architecture"]["name"], "qwen.gguf")
+        self.assertEqual(calls, [(str(self.agent), path, {"runner": self._runner})])
+
+    def test_quant_profile_route_forwards_the_subprocess_runner(self):
+        calls = []
+        original = bridge.quant_profile
+        self.addCleanup(setattr, bridge, "quant_profile", original)
+
+        def profile(agent_path, path, targets, **kwargs):
+            calls.append((agent_path, path, targets, kwargs))
+            return {"profiles": []}
+
+        bridge.quant_profile = profile
+        path = str(self.models / "qwen.gguf")
+        status, payload = self._request(
+            "/api/quant/profile", "POST", {"path": path, "targets": ["mlx-4bit"]}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"], {"profiles": []})
+        self.assertEqual(calls, [(
+            str(self.agent), path, ["mlx-4bit"], {"runner": self._runner},
+        )])
 
     def test_skill_failure_becomes_a_502(self):
         self.responses["stdout"] = envelope(

@@ -400,12 +400,12 @@ struct Config: Codable, Equatable {
         )
     }
 
-    static func discoverGgufRoots() -> [String] {
-        let home = Path.home()
+    static func discoverGgufRoots(home: URL = Path.home()) -> [String] {
         let candidates = [
             home.appendingPathComponent(".cache/huggingface/hub"),
             home.appendingPathComponent(".cache/lm-studio/models"),
             home.appendingPathComponent(".lmstudio/models"),
+            home.appendingPathComponent(".models"),
             home.appendingPathComponent("models"),
             home.appendingPathComponent("Models"),
         ]

@@ -1,6 +1,7 @@
 import json
 import subprocess
 import unittest
+from unittest import mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -79,7 +80,7 @@ class RunTests(unittest.TestCase):
         script.write_text("", encoding="utf-8")
 
     def test_scan_builds_the_expected_argv(self):
-        recorder = Recorder(stdout=envelope(data={"totals": {"gguf": 0}}))
+        recorder = Recorder(stdout=envelope(data={"models": [], "totals": {"gguf": 0, "bytes": 0}}))
         result = bridge.scan(
             str(self.root),
             gguf_roots=["/a", "/b"],
@@ -96,6 +97,206 @@ class RunTests(unittest.TestCase):
         self.assertIn("--no-signature", command)
         self.assertEqual(command[-1], "--json")
         self.assertEqual(result["totals"]["gguf"], 0)
+
+    def test_scan_rejects_a_model_without_a_byte_count(self):
+        recorder = Recorder(stdout=envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        }))
+
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.scan(str(self.root), runner=recorder)
+
+        self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_scan_rejects_a_model_without_required_identity_fields(self):
+        for model in (
+            {"name": "a.gguf", "bytes": 1},
+            {"path": "/models/a.gguf", "bytes": 1},
+            {"path": "", "name": "a.gguf", "bytes": 1},
+        ):
+            with self.subTest(model=model):
+                recorder = Recorder(stdout=envelope(data={
+                    "models": [model],
+                    "totals": {"bytes": 1},
+                }))
+
+                with self.assertRaises(bridge.BridgeError) as caught:
+                    bridge.scan(str(self.root), runner=recorder)
+
+                self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_duplicate_scan_reuses_strict_scan_contract_and_roots(self):
+        recorder = Recorder(stdout=envelope(data={
+            "models": [
+                {"path": "/a/one.gguf", "name": "one.gguf", "bytes": 1},
+                {"path": "/b/two.gguf", "name": "two.gguf", "bytes": 2},
+            ],
+            "duplicates": [{
+                "kind": "exact",
+                "identity": "signature-1",
+                "model_key": "example",
+                "quantization": "Q4_K_M",
+                "keep": "/a/one.gguf",
+                "redundant": ["/b/two.gguf"],
+                "reclaimable_bytes": 2,
+            }, {
+                "kind": "variant",
+                "identity": "structure-1",
+                "model_key": "example",
+                "quantizations": ["Q4_K_M", "Q8_0"],
+                "members": ["/a/one.gguf", "/b/two.gguf"],
+                "redundant": [],
+                "reclaimable_bytes": 0,
+            }],
+            "totals": {"bytes": 3},
+        }))
+
+        result = bridge.scan_duplicates(
+            str(self.root),
+            gguf_roots=["/a", "/b"],
+            mlx_roots=["/out"],
+            runner=recorder,
+        )
+
+        self.assertEqual(result["duplicates"][0]["keep"], "/a/one.gguf")
+        self.assertEqual(result["duplicates"][0]["redundant"], ["/b/two.gguf"])
+        self.assertEqual(result["duplicates"][1]["kind"], "variant")
+        self.assertEqual(recorder.commands[0].count("--gguf-root"), 2)
+        self.assertIn("--mlx-root", recorder.commands[0])
+
+    def test_duplicate_scan_rejects_malformed_inventory(self):
+        recorder = Recorder(stdout=envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        }))
+
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.scan_duplicates(str(self.root), runner=recorder)
+
+        self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_duplicate_scan_rejects_an_exact_group_without_redundant_files(self):
+        recorder = Recorder(stdout=envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf", "bytes": 1}],
+            "duplicates": [{
+                "kind": "exact",
+                "model_key": "example",
+                "quantization": "Q4_K_M",
+                "keep": "/models/a.gguf",
+                "redundant": [],
+                "reclaimable_bytes": 0,
+            }],
+            "totals": {"bytes": 1},
+        }))
+
+        with self.assertRaises(bridge.BridgeError) as caught:
+            bridge.scan_duplicates(str(self.root), runner=recorder)
+
+        self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_sloth_connect_rejects_malformed_inventory(self):
+        response = mock.MagicMock()
+        response.read.return_value = b'{"status":"ok"}'
+        malformed_scan = envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
+            "totals": {"bytes": 1},
+        })
+        with mock.patch("urllib.request.urlopen") as urlopen, mock.patch.object(
+            bridge,
+            "_default_runner",
+            return_value={"returncode": 0, "stdout": malformed_scan, "stderr": ""},
+        ):
+            urlopen.return_value.__enter__.return_value = response
+            with self.assertRaises(bridge.BridgeError) as caught:
+                bridge.sloth_connect(str(self.root), address="http://sloth.test")
+
+        self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_scan_rejects_missing_model_inventory_and_totals_bytes(self):
+        for payload in (
+            {"totals": {"bytes": 0}},
+            {"models": []},
+        ):
+            with self.subTest(payload=payload):
+                recorder = Recorder(stdout=envelope(data=payload))
+
+                with self.assertRaises(bridge.BridgeError) as caught:
+                    bridge.scan(str(self.root), runner=recorder)
+
+                self.assertEqual(caught.exception.code, "scan_contract_invalid")
+
+    def test_scan_preserves_a_large_model_byte_count(self):
+        recorder = Recorder(stdout=envelope(data={
+            "models": [{"path": "/models/a.gguf", "name": "a.gguf", "bytes": 29_047_084_448}],
+            "totals": {"bytes": 29_047_084_448},
+        }))
+
+        result = bridge.scan(str(self.root), runner=recorder)
+
+        self.assertEqual(result["models"][0]["bytes"], 29_047_084_448)
+
+    def test_model_architecture_scans_the_selected_models_parent(self):
+        models = self.root / "models"
+        models.mkdir()
+        model = models / "qwen.gguf"
+        model.write_bytes(b"weights")
+        recorder = Recorder(stdout=envelope(data={
+            "models": [{
+                "path": str(model),
+                "name": "qwen.gguf",
+                "bytes": 2048,
+                "architecture": "qwen35",
+                "quantization": "Q8_0",
+                "tensor_count": 866,
+            }],
+            "totals": {"bytes": 2048},
+        }))
+
+        result = bridge.model_architecture(str(self.root), str(model), runner=recorder)
+
+        self.assertEqual(result["architecture"], {
+            "model_path": str(model.resolve()),
+            "name": "qwen.gguf",
+            "bytes": 2048,
+            "architecture": "qwen35",
+            "quantization": "Q8_0",
+            "tensor_count": 866,
+        })
+        command = recorder.commands[0]
+        self.assertIn("--gguf-root", command)
+        self.assertIn(str(models.resolve()), command)
+        self.assertNotIn("--path", command)
+
+    def test_quant_profile_uses_convert_start_preview_contract(self):
+        source = self.root / "qwen.gguf"
+        source.write_bytes(b"weights")
+        recorder = Recorder(stdout=envelope(data={"plan": {
+            "q_bits": 4,
+            "out": "qwen-MLX-4bit",
+            "preview_hash": "a" * 64,
+            "source": {"bytes": 2048},
+            "argv": ["converter", "--q-bits", "4"],
+        }}))
+
+        result = bridge.quant_profile(
+            str(self.root), str(source), ["mlx-4bit"], runner=recorder,
+        )
+
+        self.assertEqual(result["profiles"], [{
+            "target": "MLX 4-bit",
+            "q_bits": 4,
+            "source_bytes": 2048,
+            "output": "qwen-MLX-4bit",
+            "preview_hash": "a" * 64,
+            "command": ["converter", "--q-bits", "4"],
+        }])
+        command = recorder.commands[0]
+        self.assertEqual(command[2:4], ["convert", "start"])
+        self.assertIn("--gguf", command)
+        self.assertIn(str(source), command)
+        self.assertIn("--q-bits", command)
+        self.assertNotIn("preview", command)
 
     def test_preview_does_not_confirm(self):
         recorder = Recorder(stdout=envelope(data={"plan": {"preview_hash": "a" * 64}}))

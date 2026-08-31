@@ -515,7 +515,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._body()
             if not isinstance(payload, dict):
                 return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            return _ok(bridge.scan_duplicates(agent))
+            return _ok(bridge.scan_duplicates(
+                agent,
+                gguf_roots=config_module.scan_roots(settings),
+                mlx_roots=settings["mlx_roots"],
+                runner=runner,
+            ))
 
         if method == "POST" and route == "/api/model/arch":
             payload = self._body()
@@ -524,35 +529,7 @@ class Handler(BaseHTTPRequestHandler):
             path = payload.get("path")
             if not isinstance(path, str) or not path.strip():
                 return _error("invalid_body", "path is required.", "Enter model path.")
-            return _ok(bridge.model_architecture(agent, path=path or None))
-
-        if method == "POST" and route == "/api/training/dataset/score":
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            path = payload.get("path")
-            if not isinstance(path, str) or not path.strip():
-                return _error("invalid_body", "path is required.", "Enter dataset directory.")
-            return _ok(bridge.dataset_score(agent, path=path or None))
-        
-        if method == "POST" and route == "/api/training/preview":
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            base_model = payload.get("base_model")
-            dataset_path = payload.get("dataset_path")
-            iters = payload.get("iters")
-            lr = payload.get("learning_rate", "2e-5")
-            
-            if not isinstance(base_model, str) or not base_model.strip():
-                return _error("invalid_body", "base_model is required.", "Enter model repo.")
-            if not isinstance(dataset_path, str) or not dataset_path.strip():
-                return _error("invalid_body", "dataset_path is required.", "Enter dataset directory.")
-            
-            return _ok(bridge.finetune_preview(
-                agent, base_model, dataset_path,
-                iters=iters, learning_rate=lr
-            ))
+            return _ok(bridge.model_architecture(agent, path=path, runner=runner))
 
         if method == "POST" and route == "/api/serve/metrics":
             payload = self._body()
@@ -561,7 +538,7 @@ class Handler(BaseHTTPRequestHandler):
             port = payload.get("port")
             if not isinstance(port, int) or isinstance(port, bool):
                 return _error("invalid_body", "port is required.", "Enter a server port.")
-            return _ok(bridge.serve_metrics(agent, port, runner=runner))
+            return _ok(bridge.serve_metrics(agent, port))
 
         if method == "POST" and route == "/api/serve/stop":
             payload = self._body()
@@ -575,7 +552,13 @@ class Handler(BaseHTTPRequestHandler):
             address = payload.get("address")
             if not isinstance(address, str):
                 return _error("invalid_body", "address is required.", "Enter a server address.")
-            return _ok(bridge.sloth_connect(agent, address=address or "http://localhost:3000", runner=runner))
+            return _ok(bridge.sloth_connect(
+                agent,
+                address=address or "http://localhost:3000",
+                gguf_roots=config_module.scan_roots(settings),
+                mlx_roots=settings["mlx_roots"],
+                runner=runner,
+            ))
 
         if method == "POST" and route == "/api/cli":
             payload = self._body()
@@ -604,7 +587,7 @@ class Handler(BaseHTTPRequestHandler):
                 return _error("invalid_body", "path is required.", "Enter a model path.")
             if not isinstance(targets, list) or not all(isinstance(t, str) for t in targets):
                 return _error("invalid_body", "targets must be a list of strings.", "Select formats.")
-            return _ok(bridge.quant_profile(agent, path, targets))
+            return _ok(bridge.quant_profile(agent, path, targets, runner=runner))
         if method == "POST" and route == "/api/quarantine":
             payload = self._body()
             if not isinstance(payload, dict) or not isinstance(payload.get("path"), str):

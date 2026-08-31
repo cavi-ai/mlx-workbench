@@ -1,0 +1,65 @@
+{
+  "roots": {
+    "gguf": ["/fixtures/gguf"],
+    "mlx": ["/fixtures/mlx"]
+  },
+  "models": [
+    {
+      "path": "/fixtures/gguf/compact.gguf",
+      "name": "compact.gguf",
+      "bytes": 903453952,
+      "modified_at": 1787159561,
+      "shard": null,
+      "model_key": "compact",
+      "architecture": "qwen35",
+      "quantization": "Q3_K_M",
+      "parameters": null,
+      "structure": "fixture-structure-a",
+      "signature": "fixture-signature-a",
+      "companion": false,
+      "readable": true,
+      "error": null,
+      "tensor_count": 19,
+      "status": "pending",
+      "outputs": []
+    },
+    {
+      "path": "/fixtures/gguf/large.gguf",
+      "name": "large.gguf",
+      "bytes": 29047084448,
+      "modified_at": 1786769799,
+      "shard": null,
+      "model_key": "large",
+      "architecture": "qwen35",
+      "quantization": "Q8_0",
+      "parameters": null,
+      "structure": "fixture-structure-b",
+      "signature": "fixture-signature-b",
+      "companion": false,
+      "readable": true,
+      "error": null,
+      "tensor_count": 866,
+      "status": "pending",
+      "outputs": []
+    }
+  ],
+  "outputs": [
+    {
+      "path": "/fixtures/mlx/converted",
+      "name": "converted",
+      "model_key": "converted",
+      "quantization": {"bits": 4, "group_size": 64, "model_type": "qwen35"},
+      "provenance": null
+    }
+  ],
+  "pending": ["/fixtures/gguf/compact.gguf", "/fixtures/gguf/large.gguf"],
+  "duplicates": [],
+  "totals": {
+    "gguf": 2,
+    "pending": 2,
+    "converted": 0,
+    "unreadable": 0,
+    "bytes": 29950538400,
+    "reclaimable_bytes": 0
+  }
+}

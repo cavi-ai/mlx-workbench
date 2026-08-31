@@ -1,0 +1,21 @@
+{
+  "models": [
+    {
+      "path": "/fixtures/gguf/missing.gguf",
+      "name": "missing.gguf",
+      "status": "pending",
+      "outputs": []
+    }
+  ],
+  "outputs": [],
+  "pending": ["/fixtures/gguf/missing.gguf"],
+  "duplicates": [],
+  "totals": {
+    "gguf": 1,
+    "pending": 1,
+    "converted": 0,
+    "unreadable": 0,
+    "bytes": 1,
+    "reclaimable_bytes": 0
+  }
+}
