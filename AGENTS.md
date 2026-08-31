@@ -25,6 +25,10 @@ from `mlx-agent` at runtime.
   boundary), runs the canary suite in `Models/VerificationModels.swift`, and
   only then marks the workflow `verified`. The gate attaches in `App.swift`;
   without an attached verifier the workflow behavior is unchanged.
+- The Compare tab runs **Measured Comparisons**: `ComparisonCoordinator`
+  replays a prompt set against selected ready variants (one at a time, via
+  the shared `ServeProbe` harness), persists runs, and feeds measured
+  tok/s/TTFT into the RecommendationEngine as local benchmark evidence.
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 

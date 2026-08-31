@@ -91,6 +91,10 @@
 		24BBLD046 /* VerificationModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF044 /* VerificationModelTests.swift */; };
 		24BBLD047 /* ServeProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF045 /* ServeProbeTests.swift */; };
 		24BBLD048 /* VerificationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF046 /* VerificationCoordinatorTests.swift */; };
+		24BBLD049 /* ComparisonModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF047 /* ComparisonModels.swift */; };
+		24BBLD04A /* JSONStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF048 /* JSONStore.swift */; };
+		24BBLD04B /* ComparisonCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF049 /* ComparisonCoordinator.swift */; };
+		24BBLD04C /* ComparisonCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF04A /* ComparisonCoordinatorTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
@@ -178,6 +182,10 @@
 		24FREF044 /* VerificationModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationModelTests.swift; sourceTree = "<group>"; };
 		24FREF045 /* ServeProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeProbeTests.swift; sourceTree = "<group>"; };
 		24FREF046 /* VerificationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationCoordinatorTests.swift; sourceTree = "<group>"; };
+		24FREF047 /* ComparisonModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonModels.swift; path = Models/ComparisonModels.swift; sourceTree = "<group>"; };
+		24FREF048 /* JSONStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = JSONStore.swift; path = Services/JSONStore.swift; sourceTree = "<group>"; };
+		24FREF049 /* ComparisonCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonCoordinator.swift; path = Services/ComparisonCoordinator.swift; sourceTree = "<group>"; };
+		24FREF04A /* ComparisonCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonCoordinatorTests.swift; sourceTree = "<group>"; };
 		26SCREF001 /* ScanContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScanContractTests.swift; path = ScanContractTests.swift; sourceTree = "<group>"; };
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
@@ -249,6 +257,9 @@
 				24FREF041 /* ServeProbe.swift */,
 				24FREF042 /* VerificationStore.swift */,
 				24FREF043 /* VerificationCoordinator.swift */,
+				24FREF047 /* ComparisonModels.swift */,
+				24FREF048 /* JSONStore.swift */,
+				24FREF049 /* ComparisonCoordinator.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
@@ -306,6 +317,7 @@
 				24FREF044 /* VerificationModelTests.swift */,
 				24FREF045 /* ServeProbeTests.swift */,
 				24FREF046 /* VerificationCoordinatorTests.swift */,
+				24FREF04A /* ComparisonCoordinatorTests.swift */,
 				26SCREF001 /* ScanContractTests.swift */,
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
 			);
@@ -514,6 +526,9 @@
 				24BBLD043 /* ServeProbe.swift in Sources */,
 				24BBLD044 /* VerificationStore.swift in Sources */,
 				24BBLD045 /* VerificationCoordinator.swift in Sources */,
+				24BBLD049 /* ComparisonModels.swift in Sources */,
+				24BBLD04A /* JSONStore.swift in Sources */,
+				24BBLD04B /* ComparisonCoordinator.swift in Sources */,
 
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -533,6 +548,7 @@
 				24BBLD046 /* VerificationModelTests.swift in Sources */,
 				24BBLD047 /* ServeProbeTests.swift in Sources */,
 				24BBLD048 /* VerificationCoordinatorTests.swift in Sources */,
+				24BBLD04C /* ComparisonCoordinatorTests.swift in Sources */,
 				26SCBL001 /* ScanContractTests.swift in Sources */,
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
 			);
