@@ -21,6 +21,9 @@ class AppHost: ObservableObject {
     @Published var hardwareProfile: HardwareProfile
     @Published var lastError: String?
     @Published var modelWorkflow: ModelWorkflowCoordinator
+    /// Conversion Quality Gate. Attached to the workflow by the app entry
+    /// point via `verification.attach(to: modelWorkflow)`.
+    let verification: VerificationCoordinator
 
     let api: WorkbenchAPI
 
@@ -48,7 +51,8 @@ class AppHost: ObservableObject {
         now: @escaping @Sendable () -> Date = { Date() },
         scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil,
         modelWorkflowAPI: ModelWorkflowAPI? = nil,
-        modelWorkflowPersistence: ModelWorkflowPersistence? = nil
+        modelWorkflowPersistence: ModelWorkflowPersistence? = nil,
+        verification: VerificationCoordinator? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -62,6 +66,13 @@ class AppHost: ObservableObject {
         self.modelWorkflow = ModelWorkflowCoordinator(
             api: modelWorkflowAPI ?? .live(api: api),
             persistence: modelWorkflowPersistence ?? .live(store: ModelWorkflowStore(fileURL: ModelWorkflowStore.defaultFileURL()))
+        )
+        self.verification = verification ?? VerificationCoordinator(
+            probe: ServeProbe(
+                lifecycle: .live(api: api),
+                prober: OpenAIEndpointProber()
+            ),
+            store: VerificationStore(fileURL: VerificationStore.defaultFileURL())
         )
         self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
         self.configPath = configPath ?? configModule.configPath()

@@ -82,6 +82,13 @@
 		24BBLD035 /* RecommendationEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF029 /* RecommendationEngineTests.swift */; };
 		24BBLD037 /* ModelWorkflowResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF031 /* ModelWorkflowResolverTests.swift */; };
 		24BBLD040 /* ModelWorkflowCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF034 /* ModelWorkflowCoordinatorTests.swift */; };
+		24BBLD042 /* VerificationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF040 /* VerificationModels.swift */; };
+		24BBLD043 /* ServeProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF041 /* ServeProbe.swift */; };
+		24BBLD044 /* VerificationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF042 /* VerificationStore.swift */; };
+		24BBLD045 /* VerificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF043 /* VerificationCoordinator.swift */; };
+		24BBLD046 /* VerificationModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF044 /* VerificationModelTests.swift */; };
+		24BBLD047 /* ServeProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF045 /* ServeProbeTests.swift */; };
+		24BBLD048 /* VerificationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF046 /* VerificationCoordinatorTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
@@ -162,6 +169,13 @@
 		24FREF033 /* ModelWorkflowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowStore.swift; path = Services/ModelWorkflowStore.swift; sourceTree = "<group>"; };
 		24FREF034 /* ModelWorkflowCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowCoordinatorTests.swift; path = ModelWorkflowCoordinatorTests.swift; sourceTree = "<group>"; };
 		24FREF035 /* ModelWorkflowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelWorkflowCoordinator.swift; path = Services/ModelWorkflowCoordinator.swift; sourceTree = "<group>"; };
+		24FREF040 /* VerificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VerificationModels.swift; path = Models/VerificationModels.swift; sourceTree = "<group>"; };
+		24FREF041 /* ServeProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServeProbe.swift; path = Services/ServeProbe.swift; sourceTree = "<group>"; };
+		24FREF042 /* VerificationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VerificationStore.swift; path = Services/VerificationStore.swift; sourceTree = "<group>"; };
+		24FREF043 /* VerificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VerificationCoordinator.swift; path = Services/VerificationCoordinator.swift; sourceTree = "<group>"; };
+		24FREF044 /* VerificationModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationModelTests.swift; sourceTree = "<group>"; };
+		24FREF045 /* ServeProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeProbeTests.swift; sourceTree = "<group>"; };
+		24FREF046 /* VerificationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationCoordinatorTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -227,6 +241,10 @@
 				24FREF032 /* ModelWorkflowResolver.swift */,
 				24FREF033 /* ModelWorkflowStore.swift */,
 				24FREF035 /* ModelWorkflowCoordinator.swift */,
+				24FREF040 /* VerificationModels.swift */,
+				24FREF041 /* ServeProbe.swift */,
+				24FREF042 /* VerificationStore.swift */,
+				24FREF043 /* VerificationCoordinator.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
@@ -281,6 +299,9 @@
 				24FREF029 /* RecommendationEngineTests.swift */,
 				24FREF031 /* ModelWorkflowResolverTests.swift */,
 				24FREF034 /* ModelWorkflowCoordinatorTests.swift */,
+				24FREF044 /* VerificationModelTests.swift */,
+				24FREF045 /* ServeProbeTests.swift */,
+				24FREF046 /* VerificationCoordinatorTests.swift */,
 			);
 			path = mlx-macTests;
 			sourceTree = "<group>";
@@ -483,6 +504,10 @@
 				24BBLD034 /* RecommendationEngine.swift in Sources */,
 				24BBLD028 /* LibraryView.swift in Sources */,
 				24BBLD029 /* ModelDetailsView.swift in Sources */,
+				24BBLD042 /* VerificationModels.swift in Sources */,
+				24BBLD043 /* ServeProbe.swift in Sources */,
+				24BBLD044 /* VerificationStore.swift in Sources */,
+				24BBLD045 /* VerificationCoordinator.swift in Sources */,
 
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -499,6 +524,9 @@
 				24BBLD035 /* RecommendationEngineTests.swift in Sources */,
 				24BBLD037 /* ModelWorkflowResolverTests.swift in Sources */,
 				24BBLD040 /* ModelWorkflowCoordinatorTests.swift in Sources */,
+				24BBLD046 /* VerificationModelTests.swift in Sources */,
+				24BBLD047 /* ServeProbeTests.swift in Sources */,
+				24BBLD048 /* VerificationCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

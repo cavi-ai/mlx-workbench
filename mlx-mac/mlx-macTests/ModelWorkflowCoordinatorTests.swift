@@ -201,6 +201,61 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         )
     }
 
+    func testCompletedConversionRoutesToVerificationWhenGateAttached() async {
+        let completedJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "completed")
+        let scans = ScanSequence([
+            scanResult(outputs: []),
+            scanResult(outputs: [
+                MLXOutput(
+                    path: "/Models/source",
+                    name: "source",
+                    modelKey: "source-model",
+                    quantization: nil,
+                    provenance: "signature-1"
+                ),
+            ]),
+        ])
+        let host = await makeHost(
+            jobs: [completedJob],
+            scanOperation: { _, _, _, _ in try await scans.next() }
+        )
+        let (recordID, verifier) = await MainActor.run { () -> (UUID, StubCompletionVerifier) in
+            let verifier = StubCompletionVerifier()
+            let record = makeWorkflow(state: .running, receipt: "receipt-1")
+            host.modelWorkflow.restore(record)
+            host.modelWorkflow.completionVerifier = verifier
+            return (record.id, verifier)
+        }
+
+        await host.rescan()
+
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .verifying)
+            XCTAssertEqual(verifier.calls.count, 1)
+            XCTAssertEqual(verifier.calls.first?.0, recordID)
+            XCTAssertEqual(verifier.calls.first?.1, "/Models/source")
+        }
+    }
+
+    func testCompletedConversionSkipsVerificationWithoutGate() async {
+        let completedJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "completed")
+        let withOutput = scanResult(outputs: [
+            MLXOutput(path: "/Models/source", name: "source", modelKey: "source-model", quantization: nil, provenance: "signature-1")
+        ])
+        let scans = ScanSequence([withOutput, withOutput])
+        let host = await makeHost(
+            jobs: [completedJob],
+            scanOperation: { _, _, _, _ in try await scans.next() }
+        )
+        await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
+
+        await host.rescan()
+
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .completed)
+        }
+    }
+
     private func makeStore() -> ModelWorkflowStore {
         ModelWorkflowStore(fileURL: temporaryURL("workflows.json"))
     }
@@ -338,6 +393,15 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             case .offline: return "offline"
             }
         }
+    }
+}
+
+@MainActor
+private final class StubCompletionVerifier: ConversionCompletionVerifying {
+    private(set) var calls: [(UUID, String, String?)] = []
+
+    func beginVerification(recordID: UUID, modelPath: String, signature: String?) {
+        calls.append((recordID, modelPath, signature))
     }
 }
 

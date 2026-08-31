@@ -4,6 +4,7 @@ enum ActivityWorkflowAction: Equatable {
     case openInLibrary(String)
     case runModel(ConversionWorkflow)
     case retryPreview(ConversionWorkflow)
+    case keepAnyway(ConversionWorkflow)
 }
 
 struct ActivityWorkflowCardPresentation: Identifiable, Equatable {
@@ -22,10 +23,13 @@ struct ActivityWorkflowCardPresentation: Identifiable, Equatable {
         case .queued: return "Queued"
         case .running: return "Running"
         case .completed: return "Completed"
+        case .verifying: return "Verifying"
+        case .verified: return "Verified"
+        case .verificationFailed: return "Verification failed"
         case .failed: return "Failed"
         }
     }
-    var isActive: Bool { workflow.state == .queued || workflow.state == .running }
+    var isActive: Bool { workflow.state == .queued || workflow.state == .running || workflow.state == .verifying }
 
     init(
         workflow: ConversionWorkflow,
@@ -39,10 +43,13 @@ struct ActivityWorkflowCardPresentation: Identifiable, Equatable {
         self.logPath = job?.logPath
         var available: [ActivityWorkflowAction] = []
         if let path = workflow.completedModelPath,
-           workflow.state == .completed,
+           workflow.state == .completed || workflow.state == .verified,
            let model = snapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) {
             available.append(.openInLibrary(path))
             if model.readiness == .ready { available.append(.runModel(workflow)) }
+        }
+        if workflow.state == .verificationFailed {
+            available.append(.keepAnyway(workflow))
         }
         let hasUsableSourceEvidence = sourceEvidence?.path == workflow.sourcePath
             && sourceEvidence?.readable != false
@@ -245,6 +252,7 @@ struct JobsView: View {
         case .openInLibrary: return "Open in Library"
         case .runModel: return "Run model"
         case .retryPreview: return "Retry preview"
+        case .keepAnyway: return "Keep anyway (unverified)"
         }
     }
 
@@ -256,11 +264,13 @@ struct JobsView: View {
         case .runModel(let record):
             guard let path = record.completedModelPath else { return }
             guard let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) else { return }
-            guard record.state == .completed, model.readiness == .ready else { return }
+            guard record.state == .completed || record.state == .verified, model.readiness == .ready else { return }
             appHost.modelWorkflow.restore(record)
             appHost.modelWorkflow.prepareServe(model: model, exactPath: path)
             appHost.selectedModelPath = path
             onRouteSelection("serve")
+        case .keepAnyway(let record):
+            appHost.verification.keepAnyway(recordID: record.id)
         case .retryPreview(let record):
             appHost.modelWorkflow.restore(record)
             appHost.selectedModelPath = record.sourcePath
