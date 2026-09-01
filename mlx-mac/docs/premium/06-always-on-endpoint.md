@@ -1,6 +1,6 @@
 # 06 — Always-on Endpoint + Menu Bar
 
-**Status:** spec · **Tier:** Premium · **Synergy:** endpoint feeds spec 02 (Wiring)
+**Status:** implemented (all three phases) · **Tier:** Premium · **Synergy:** endpoint feeds spec 02 (Wiring)
 
 ## Problem
 

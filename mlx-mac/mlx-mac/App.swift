@@ -12,6 +12,9 @@ struct MlxWorkbenchApp: App {
                     // Conversion Quality Gate: route completed conversions
                     // through canary verification. Idempotent.
                     appHost.verification.attach(to: appHost.modelWorkflow)
+                    // Always-on endpoint: reconcile desired state against
+                    // authoritative serve status on a slow timer.
+                    appHost.endpoint.startMonitoring()
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -42,6 +45,10 @@ struct MlxWorkbenchApp: App {
         Settings {
             SettingsView(appHost: appHost)
         }
+        MenuBarExtra("mlx-workbench", systemImage: EndpointIcon.name(for: appHost.endpoint.state)) {
+            MenuBarView(appHost: appHost)
+        }
+        .menuBarExtraStyle(.menu)
     }
 
     private func openSettings() {
