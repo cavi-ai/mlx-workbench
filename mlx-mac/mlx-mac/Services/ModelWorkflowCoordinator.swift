@@ -54,6 +54,9 @@ final class ModelWorkflowCoordinator: ObservableObject {
     /// state. When nil, behavior is unchanged: completion goes straight to
     /// `.completed`.
     weak var completionVerifier: (any ConversionCompletionVerifying)?
+    /// Stamps usage evidence when a serve reaches confirmed-running — feeds
+    /// the Disk Pressure Advisor's staleness detector.
+    var onServeStarted: ((String) -> Void)?
     private var selectedSource: ModelItem?
     private var selectedSnapshot: LibrarySnapshot?
     private var conversionPreviewQBits: Int?
@@ -342,6 +345,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 return
             }
             update(serveState: .running, message: "Server is running.", errorMessage: .some(nil), persist: true)
+            onServeStarted?(model)
         } catch {
             update(serveState: .failed, message: "Server could not be started: \(AppHost.render(error))", errorMessage: AppHost.render(error), persist: true)
         }

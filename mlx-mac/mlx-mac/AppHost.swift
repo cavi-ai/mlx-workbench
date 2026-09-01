@@ -30,6 +30,10 @@ class AppHost: ObservableObject {
     let wiring: WiringCoordinator
     /// Always-on endpoint supervisor (premium spec 06).
     let endpoint: EndpointSupervisor
+    /// Usage evidence per model path (premium spec 04).
+    let usage: UsageTracker
+    /// Disk Pressure Advisor apply surface (premium spec 04).
+    let reclaim: ReclaimCoordinator
 
     let api: WorkbenchAPI
 
@@ -61,7 +65,9 @@ class AppHost: ObservableObject {
         verification: VerificationCoordinator? = nil,
         comparison: ComparisonCoordinator? = nil,
         wiring: WiringCoordinator? = nil,
-        endpoint: EndpointSupervisor? = nil
+        endpoint: EndpointSupervisor? = nil,
+        usage: UsageTracker? = nil,
+        reclaim: ReclaimCoordinator? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -99,6 +105,10 @@ class AppHost: ObservableObject {
             statusProvider: { try await api.serveStatus() },
             store: JSONStore<EndpointConfig>(fileURL: JSONStore<EndpointConfig>.defaultFileURL("endpoint-config.json"))
         )
+        self.usage = usage ?? UsageTracker(
+            store: JSONStore<UsageStamp>(fileURL: JSONStore<UsageStamp>.defaultFileURL("usage-stamps.json"))
+        )
+        self.reclaim = reclaim ?? ReclaimCoordinator()
         self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
         self.configPath = configPath ?? configModule.configPath()
         self.vendorAgentPath = vendorAgentPath ?? configModule.vendorAgentPath()
@@ -130,15 +140,15 @@ class AppHost: ObservableObject {
         // The always-on endpoint only serves verified models by default;
         // the quality gate's per-signature status is the verdict source.
         self.endpoint.isVerified = { [weak self] path in
-            guard let self else { return false }
-            let signature = self.librarySnapshot?.models
-                .first(where: { $0.item.path == path || $0.outputPaths.contains(path) })?
-                .item.signature
-            if case .verified = self.verification.status(for: path, signature: signature) {
-                return true
-            }
-            return false
+            self?.isModelVerified(path) ?? false
         }
+        // Usage evidence: serve, verify, and measure all count as "used" for
+        // the Disk Pressure Advisor's staleness detector.
+        self.modelWorkflow.onServeStarted = { [weak self] path in self?.usage.record(path) }
+        self.verification.onReport = { [weak self] report in self?.usage.record(report.modelPath) }
+        self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
+        self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }
+        self.reclaim.ggufRoots = { [weak self] in self?.config.ggufRoots ?? [] }
     }
 
     func requestRescan() {
@@ -406,6 +416,43 @@ class AppHost: ObservableObject {
 
     func model(for recommendation: Recommendation) -> LibraryModel? {
         librarySnapshot?.models.first(where: { $0.item.path == recommendation.modelID })
+    }
+
+    /// Whether the quality gate has verified this exact model file
+    /// (path + signature).
+    func isModelVerified(_ path: String) -> Bool {
+        let signature = librarySnapshot?.models
+            .first(where: { $0.item.path == path || $0.outputPaths.contains(path) })?
+            .item.signature
+        if case .verified = verification.status(for: path, signature: signature) {
+            return true
+        }
+        return false
+    }
+
+    /// Paths that must never be reclaimed: running servers and the active
+    /// conversion's source/output.
+    var occupiedModelPaths: Set<String> {
+        var occupied = Set(modelWorkflow.servers.compactMap {
+            $0.state?.lowercased() == "running" ? $0.repo : nil
+        })
+        if modelWorkflow.workflow.state == .queued || modelWorkflow.workflow.state == .running {
+            occupied.insert(modelWorkflow.workflow.outputPath)
+            occupied.insert(modelWorkflow.workflow.sourcePath)
+        }
+        return occupied
+    }
+
+    /// Recompute Disk Pressure Advisor opportunities from the latest
+    /// snapshot, duplicate groups, usage evidence, and verification status.
+    func analyzeReclaim() {
+        reclaim.analyze(
+            snapshot: librarySnapshot,
+            duplicates: scanResult?.duplicates ?? [],
+            lastUsedByPath: usage.lastUsedByPath,
+            isVerified: { [weak self] path in self?.isModelVerified(path) ?? false },
+            occupiedPaths: occupiedModelPaths
+        )
     }
 }
 

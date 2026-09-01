@@ -28,6 +28,9 @@ final class VerificationCoordinator: ObservableObject {
 
     /// Resolution callback into the model workflow. Set by `attach(to:)`.
     var onResolution: ((UUID, VerificationResolution) -> Void)?
+    /// Called after every completed probe run — stamps usage evidence for the
+    /// Disk Pressure Advisor.
+    var onReport: ((VerificationReport) -> Void)?
 
     init(probe: ServeProbe, store: VerificationStore, now: @escaping () -> Date = Date.init) {
         self.probe = probe
@@ -149,6 +152,7 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                     outcome: outcome
                 )
                 persist(report)
+                onReport?(report)
                 activeModelPath = nil
                 progressMessage = nil
                 if let recordID {

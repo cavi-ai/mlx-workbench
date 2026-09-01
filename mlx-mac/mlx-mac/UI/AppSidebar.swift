@@ -5,6 +5,8 @@ import SwiftUI
 struct AppSidebar: View {
     @Binding var selectedTab: String
     @State private var showMore = false
+    /// Optional badge text per tab (e.g. reclaimable bytes on Duplicates).
+    var badges: [String: String] = [:]
     
     let primaryTabs = ["quickstart", "models", "scout", "convert", "serve", "jobs", "settings"]
     let secondaryTabs = ["duplicates", "lmstudio", "training-studio", "quant", "doctor", "adopt", "wire", "model-arch", "sloth"]
@@ -38,8 +40,16 @@ struct AppSidebar: View {
     
     private func sidebarRow(tab: String) -> some View {
         Button(action: { selectedTab = tab }) {
-            Label(tabTitle(for: tab), systemImage: tabIcon(for: tab))
-                .foregroundColor(selectedTab == tab ? .accentColor : .primary)
+            HStack {
+                Label(tabTitle(for: tab), systemImage: tabIcon(for: tab))
+                    .foregroundColor(selectedTab == tab ? .accentColor : .primary)
+                Spacer()
+                if let badge = badges[tab] {
+                    Text(badge)
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+            }
         }
         .buttonStyle(.plain)
     }
