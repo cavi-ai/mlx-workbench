@@ -26,6 +26,9 @@ final class ComparisonCoordinator: ObservableObject {
     /// Receives benchmark aggregates when a run completes. AppHost wires
     /// this into `benchmarkResults` for the RecommendationEngine.
     var onBenchmarks: (([RecommendationBenchmarkResult]) -> Void)?
+    /// Called after each successfully measured variant — stamps usage
+    /// evidence for the Disk Pressure Advisor.
+    var onVariantMeasured: ((String) -> Void)?
 
     init(
         probe: ServeProbe,
@@ -161,6 +164,9 @@ final class ComparisonCoordinator: ObservableObject {
             }
             runs[runIndex].results.append(result)
             persist(runs[runIndex])
+            if result.error == nil {
+                onVariantMeasured?(variant.path)
+            }
         }
 
         guard let finalIndex = runs.firstIndex(where: { $0.id == runID }) else { return }

@@ -23,7 +23,9 @@ struct HomeNextAction: Equatable {
         lastError: String?,
         agentReady: Bool,
         convertRuntimeReady: Bool,
-        serveRuntimeReady: Bool
+        serveRuntimeReady: Bool,
+        reclaimableBytes: Int64 = 0,
+        diskFreeFraction: Double? = nil
     ) -> HomeNextAction {
         if workflow.state == .queued || workflow.state == .running {
             return HomeNextAction(kind: .activity, title: "Monitor conversion", reason: "A conversion is \(workflow.state.rawValue); Activity has the authoritative receipt and live status.", route: "jobs")
@@ -70,6 +72,16 @@ struct HomeNextAction: Equatable {
             }
             return HomeNextAction(kind: .prepare(source.item.path), title: "Prepare a GGUF model", reason: "The latest Library snapshot contains a GGUF source that needs MLX conversion.", route: "convert")
         }
+        if reclaimableBytes >= ReclaimAdvisor.badgeThresholdBytes,
+           let free = diskFreeFraction, free < 0.15 {
+            let amount = ByteCountFormatter.string(fromByteCount: reclaimableBytes, countStyle: .file)
+            return HomeNextAction(
+                kind: .library,
+                title: "Reclaim \(amount) of disk",
+                reason: "Reclaim opportunities exceed the threshold and the disk is under 15% free. Duplicates has the ranked list; quarantine moves, never deletes.",
+                route: "duplicates"
+            )
+        }
         return HomeNextAction(
             kind: .library,
             title: "Review the model library",
@@ -111,7 +123,9 @@ struct HomeView: View {
             lastError: appHost.lastError,
             agentReady: agentReady,
             convertRuntimeReady: appHost.runtimeReport.convert.ok,
-            serveRuntimeReady: appHost.runtimeReport.serve.ok
+            serveRuntimeReady: appHost.runtimeReport.serve.ok,
+            reclaimableBytes: appHost.reclaim.totalReclaimableBytes,
+            diskFreeFraction: DiskProbe.freeFraction()
         )
     }
 
@@ -129,6 +143,7 @@ struct HomeView: View {
             }
             .padding(24)
         }
+        .onAppear { appHost.analyzeReclaim() }
     }
 
     private var nextActionCard: some View {

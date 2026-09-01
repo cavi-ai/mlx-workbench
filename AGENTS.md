@@ -41,6 +41,12 @@ from `mlx-agent` at runtime.
   `LaunchAgentManager` optionally installs a RunAtLoad login item (no
   KeepAlive — the app's supervisor reconciles; receipts stay authoritative).
   A `MenuBarExtra` reports endpoint state and start/stop actions.
+- The Duplicates tab hosts the **Disk Pressure Advisor**: `ReclaimAdvisor`
+  ranks reclaim opportunities (stale per `UsageTracker` evidence, superseded
+  by verified siblings, cross-root duplicates) and `ReclaimCoordinator`
+  applies them as batched quarantine moves via `Services/Quarantine.swift`
+  (a Swift port of `mlx_workbench/quarantine.py` — same guard: `.gguf` only,
+  inside configured roots, never deletes).
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 

@@ -105,6 +105,12 @@
 		24BBLD054 /* LaunchAgentManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF052 /* LaunchAgentManager.swift */; };
 		24BBLD055 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF053 /* MenuBarView.swift */; };
 		24BBLD056 /* EndpointSupervisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF054 /* EndpointSupervisorTests.swift */; };
+		24BBLD057 /* ReclaimModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF055 /* ReclaimModels.swift */; };
+		24BBLD058 /* Quarantine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF056 /* Quarantine.swift */; };
+		24BBLD059 /* UsageTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF057 /* UsageTracker.swift */; };
+		24BBLD05A /* ReclaimAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF058 /* ReclaimAdvisor.swift */; };
+		24BBLD05B /* ReclaimCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF059 /* ReclaimCoordinator.swift */; };
+		24BBLD05C /* ReclaimAdvisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF05A /* ReclaimAdvisorTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
@@ -206,6 +212,12 @@
 		24FREF052 /* LaunchAgentManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LaunchAgentManager.swift; path = Services/LaunchAgentManager.swift; sourceTree = "<group>"; };
 		24FREF053 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MenuBarView.swift; path = UI/MenuBarView.swift; sourceTree = "<group>"; };
 		24FREF054 /* EndpointSupervisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointSupervisorTests.swift; sourceTree = "<group>"; };
+		24FREF055 /* ReclaimModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimModels.swift; path = Models/ReclaimModels.swift; sourceTree = "<group>"; };
+		24FREF056 /* Quarantine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Quarantine.swift; path = Services/Quarantine.swift; sourceTree = "<group>"; };
+		24FREF057 /* UsageTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = UsageTracker.swift; path = Services/UsageTracker.swift; sourceTree = "<group>"; };
+		24FREF058 /* ReclaimAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimAdvisor.swift; path = Services/ReclaimAdvisor.swift; sourceTree = "<group>"; };
+		24FREF059 /* ReclaimCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimCoordinator.swift; path = Services/ReclaimCoordinator.swift; sourceTree = "<group>"; };
+		24FREF05A /* ReclaimAdvisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReclaimAdvisorTests.swift; sourceTree = "<group>"; };
 		26SCREF001 /* ScanContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScanContractTests.swift; path = ScanContractTests.swift; sourceTree = "<group>"; };
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
@@ -288,6 +300,11 @@
 				24FREF051 /* EndpointSupervisor.swift */,
 				24FREF052 /* LaunchAgentManager.swift */,
 				24FREF053 /* MenuBarView.swift */,
+				24FREF055 /* ReclaimModels.swift */,
+				24FREF056 /* Quarantine.swift */,
+				24FREF057 /* UsageTracker.swift */,
+				24FREF058 /* ReclaimAdvisor.swift */,
+				24FREF059 /* ReclaimCoordinator.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
@@ -348,6 +365,7 @@
 				24FREF04A /* ComparisonCoordinatorTests.swift */,
 				24FREF04F /* WiringCoordinatorTests.swift */,
 				24FREF054 /* EndpointSupervisorTests.swift */,
+				24FREF05A /* ReclaimAdvisorTests.swift */,
 				26SCREF001 /* ScanContractTests.swift */,
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
 			);
@@ -567,6 +585,11 @@
 				24BBLD053 /* EndpointSupervisor.swift in Sources */,
 				24BBLD054 /* LaunchAgentManager.swift in Sources */,
 				24BBLD055 /* MenuBarView.swift in Sources */,
+				24BBLD057 /* ReclaimModels.swift in Sources */,
+				24BBLD058 /* Quarantine.swift in Sources */,
+				24BBLD059 /* UsageTracker.swift in Sources */,
+				24BBLD05A /* ReclaimAdvisor.swift in Sources */,
+				24BBLD05B /* ReclaimCoordinator.swift in Sources */,
 
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -589,6 +612,7 @@
 				24BBLD04C /* ComparisonCoordinatorTests.swift in Sources */,
 				24BBLD051 /* WiringCoordinatorTests.swift in Sources */,
 				24BBLD056 /* EndpointSupervisorTests.swift in Sources */,
+				24BBLD05C /* ReclaimAdvisorTests.swift in Sources */,
 				26SCBL001 /* ScanContractTests.swift in Sources */,
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
 			);

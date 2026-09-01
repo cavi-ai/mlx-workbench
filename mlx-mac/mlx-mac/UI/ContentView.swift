@@ -12,7 +12,7 @@ struct ContentView: View {
     
     var body: some View {
         NavigationSplitView {
-            AppSidebar(selectedTab: $selectedTab)
+            AppSidebar(selectedTab: $selectedTab, badges: sidebarBadges)
         } detail: {
             TabView(selection: $selectedTab) {
                 HomeView(appHost: appHost) { route in
@@ -52,5 +52,10 @@ struct ContentView: View {
         .onAppear {
             Task { await appHost.rescan() }
         }
+    }
+
+    private var sidebarBadges: [String: String] {
+        guard let badge = appHost.reclaim.badgeText else { return [:] }
+        return ["duplicates": badge]
     }
 }
