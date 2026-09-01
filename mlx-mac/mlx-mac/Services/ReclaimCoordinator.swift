@@ -45,6 +45,17 @@ final class ReclaimCoordinator: ObservableObject {
     @Published private(set) var lastMoves: [ReclaimMoveResult] = []
     @Published private(set) var isApplying = false
     @Published private(set) var lastError: String?
+    /// Incomplete HF-cache findings from the last cache check, with the
+    /// prune preview hash when one has been previewed.
+    @Published private(set) var cacheFindings: [DoctorFinding] = []
+    @Published private(set) var cachePruneHash: String?
+    @Published private(set) var cachePruneNote: String?
+
+    /// Injected by AppHost: the authoritative doctor flows. Nil when the
+    /// agent is unavailable — cache reclaim rows hide.
+    var doctorScan: (() async throws -> DoctorResult)?
+    var doctorPrunePreview: (() async throws -> DoctorResult)?
+    var doctorPruneConfirm: ((String) async throws -> DoctorResult)?
 
     private let now: () -> Date
     private let fileManager: FileManager
@@ -158,5 +169,59 @@ final class ReclaimCoordinator: ObservableObject {
         let canonical = items.map { "\($0.path)|\($0.bytes)" }.joined(separator: "\n")
         let digest = SHA256.hash(data: Data(canonical.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    // MARK: - HF-cache prune (via doctor)
+
+    var cacheReclaimableBytes: Int64 {
+        cacheFindings.reduce(0) { $0 + ($1.size ?? 0) }
+    }
+
+    /// Scan for incomplete-cache reclaim candidates (read-only).
+    func checkCache() async {
+        guard let doctorScan else { return }
+        do {
+            let result = try await doctorScan()
+            cacheFindings = result.findings ?? []
+            cachePruneNote = nil
+        } catch {
+            lastError = AppHost.render(error)
+        }
+    }
+
+    /// Preview the prune through the authoritative doctor flow.
+    func previewCachePrune() async {
+        guard let doctorPrunePreview else { return }
+        do {
+            let result = try await doctorPrunePreview()
+            cachePruneHash = result.preview_hash
+            if result.preview_hash == nil {
+                cachePruneNote = "Nothing to prune."
+            }
+        } catch {
+            cachePruneHash = nil
+            lastError = AppHost.render(error)
+        }
+    }
+
+    /// Confirm a previously previewed prune. The hash must match the one the
+    /// preview produced — same intent-drift discipline as everything else.
+    @discardableResult
+    func confirmCachePrune() async -> Bool {
+        guard let doctorPruneConfirm, let hash = cachePruneHash else {
+            lastError = ReclaimError.previewHashMismatch.errorDescription
+            return false
+        }
+        do {
+            let result = try await doctorPruneConfirm(hash)
+            let removed = (result.removed ?? []).filter { $0.removed == true }.count
+            cachePruneNote = "Pruned \(removed) cache item(s)."
+            cacheFindings = result.findings ?? []
+            cachePruneHash = nil
+            return true
+        } catch {
+            lastError = AppHost.render(error)
+            return false
+        }
     }
 }
