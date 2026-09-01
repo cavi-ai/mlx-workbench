@@ -165,6 +165,11 @@ class AppHost: ObservableObject {
         self.comparison.onBenchmarks = { [weak self] newBenchmarks in
             self?.benchmarkResults.append(contentsOf: newBenchmarks)
         }
+        // Benchmarks carry the environment fingerprint so drifted evidence
+        // is down-weighted instead of silently trusted.
+        self.comparison.environmentFingerprint = { [weak self] in
+            self?.watch.currentFingerprintDescription
+        }
         // The always-on endpoint only serves verified models by default;
         // the quality gate's per-signature status is the verdict source.
         self.endpoint.isVerified = { [weak self] path in
@@ -448,7 +453,8 @@ class AppHost: ObservableObject {
                         snapshot: snapshot,
                         catalog: catalog,
                         benchmarkResults: benchmarkResults,
-                        preferences: recommendationPreferences
+                        preferences: recommendationPreferences,
+                        currentEnvironment: watch.currentFingerprintDescription
                     )
                 )
             }
