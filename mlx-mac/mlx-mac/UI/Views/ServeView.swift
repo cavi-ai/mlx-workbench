@@ -42,13 +42,18 @@ struct RunPresentation: Equatable {
 struct ServeView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
+    @ObservedObject private var endpoint: EndpointSupervisor
     private let onRouteSelection: (String) -> Void
     @State private var runtime = "mlx_lm"
     @State private var portText = ""
+    @State private var endpointPortText = ""
+    @State private var showLoginItemPreview = false
+    @State private var loginItemMessage: String?
 
     init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
+        _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -80,12 +85,160 @@ struct ServeView: View {
                 }
                 selectedModelSection
                 launchSection
+                endpointSection
                 serverSection
             }
             .padding(24)
         }
         .task {
             await appHost.refreshWorkflowStatus()
+        }
+        .onAppear {
+            if endpointPortText.isEmpty {
+                endpointPortText = String(appHost.endpoint.config.port)
+            }
+        }
+    }
+
+    // MARK: - Always-on endpoint
+
+    private var endpointSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle(text: "Always-on endpoint")
+            Text("Keep the selected model serving on a stable loopback port, across restarts and model swaps. Clients wired in Wire keep working.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            HStack {
+                StatusPill(state: endpoint.config.enabled ? "enabled" : "disabled")
+                Text(endpoint.state.summary).font(.callout)
+                Spacer()
+                if endpoint.restartAttempts > 0 && endpoint.config.enabled {
+                    Text("\(endpoint.restartAttempts) restart(s)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if case .modelMismatch = endpoint.state {
+                Button("Swap to configured model") {
+                    Task { await endpoint.swap(to: endpoint.config.modelPath, allowUnverified: true) }
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if !endpoint.config.enabled {
+                HStack(spacing: 10) {
+                    TextField("Port", text: $endpointPortText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                    Button("Enable for selected model") {
+                        Task {
+                            guard let model = selectedModel else { return }
+                            let port = Int(endpointPortText) ?? EndpointConfig.defaultPort
+                            await endpoint.enable(modelPath: model.item.path, port: port)
+                        }
+                    }
+                    .disabled(selectedModel == nil)
+                    Button("Enable anyway (unverified)") {
+                        Task {
+                            guard let model = selectedModel else { return }
+                            let port = Int(endpointPortText) ?? EndpointConfig.defaultPort
+                            await endpoint.enable(modelPath: model.item.path, port: port, allowUnverified: true)
+                        }
+                    }
+                    .disabled(selectedModel == nil)
+                    .foregroundColor(.orange)
+                }
+                .buttonStyle(.bordered)
+            } else {
+                HStack(spacing: 10) {
+                    Button("Disable endpoint") {
+                        Task { await endpoint.disable() }
+                    }
+                    loginItemControls
+                }
+                .buttonStyle(.bordered)
+            }
+
+            ErrorBanner(text: endpoint.lastError)
+            ErrorBanner(text: endpoint.persistenceError)
+            if let loginItemMessage {
+                Text(loginItemMessage).font(.caption).foregroundColor(.green)
+            }
+        }
+        .padding(16).background(Color(nsColor: .controlBackgroundColor)).cornerRadius(12)
+    }
+
+    private var loginItemControls: some View {
+        HStack(spacing: 10) {
+            if appHost.endpoint.config.installedAtLogin {
+                Button("Remove login item") {
+                    do {
+                        try LaunchAgentManager().uninstall()
+                        appHost.endpoint.markLoginItemInstalled(false)
+                        loginItemMessage = "Login item removed."
+                    } catch {
+                        loginItemMessage = AppHost.render(error)
+                    }
+                }
+            } else {
+                Button("Install login item…") { showLoginItemPreview.toggle() }
+            }
+            if showLoginItemPreview, !appHost.endpoint.config.installedAtLogin {
+                Button("Confirm install") { installLoginItem() }
+            }
+        }
+        .sheet(isPresented: $showLoginItemPreview) {
+            loginItemPreviewSheet
+        }
+    }
+
+    private var loginItemPreviewSheet: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Login item preview").font(.headline)
+            Text("This LaunchAgent starts the endpoint once at login (RunAtLoad). The app keeps reconciling while it runs; mlx-agent receipts remain the process authority.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            ScrollView {
+                Text(loginItemPlistText)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            HStack {
+                Button("Cancel") { showLoginItemPreview = false }
+                Spacer()
+                Button("Confirm install") { installLoginItem() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(width: 640, height: 420)
+    }
+
+    private var agentRootPath: String {
+        appHost.config.mlxAgentPath.isEmpty ? appHost.vendorAgentPath : appHost.config.mlxAgentPath
+    }
+
+    private var loginItemPlistText: String {
+        (try? LaunchAgentManager().plistPreview(
+            config: appHost.endpoint.config,
+            agentPath: agentRootPath
+        )) ?? "plist preview unavailable"
+    }
+
+    private func installLoginItem() {
+        do {
+            try LaunchAgentManager().install(
+                config: appHost.endpoint.config,
+                agentPath: agentRootPath
+            )
+            appHost.endpoint.markLoginItemInstalled(true)
+            loginItemMessage = "Login item installed."
+            showLoginItemPreview = false
+        } catch {
+            loginItemMessage = AppHost.render(error)
         }
     }
 

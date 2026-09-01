@@ -34,6 +34,13 @@ from `mlx-agent` at runtime.
   advisory-only) and previews/confirms atomic writes to each client's own
   config with per-file backups, drift re-checks, and rollback. Client write
   targets are a fixed allowlist of well-known config paths.
+- The Run tab hosts the **Always-on Endpoint**: `EndpointSupervisor` keeps a
+  chosen verified model serving on a stable loopback port by reconciling
+  desired state against authoritative serve status (crash-loop guarded;
+  enable/swap require verified models unless explicitly overridden).
+  `LaunchAgentManager` optionally installs a RunAtLoad login item (no
+  KeepAlive — the app's supervisor reconciles; receipts stay authoritative).
+  A `MenuBarExtra` reports endpoint state and start/stop actions.
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 

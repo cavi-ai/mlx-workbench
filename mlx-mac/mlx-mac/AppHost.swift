@@ -28,6 +28,8 @@ class AppHost: ObservableObject {
     let comparison: ComparisonCoordinator
     /// Cross-client wiring transactions (premium spec 02).
     let wiring: WiringCoordinator
+    /// Always-on endpoint supervisor (premium spec 06).
+    let endpoint: EndpointSupervisor
 
     let api: WorkbenchAPI
 
@@ -58,7 +60,8 @@ class AppHost: ObservableObject {
         modelWorkflowPersistence: ModelWorkflowPersistence? = nil,
         verification: VerificationCoordinator? = nil,
         comparison: ComparisonCoordinator? = nil,
-        wiring: WiringCoordinator? = nil
+        wiring: WiringCoordinator? = nil,
+        endpoint: EndpointSupervisor? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -91,6 +94,11 @@ class AppHost: ObservableObject {
         self.wiring = wiring ?? WiringCoordinator(
             store: JSONStore<WiringTransaction>(fileURL: JSONStore<WiringTransaction>.defaultFileURL("wiring-transactions.json"))
         )
+        self.endpoint = endpoint ?? EndpointSupervisor(
+            lifecycle: .live(api: api),
+            statusProvider: { try await api.serveStatus() },
+            store: JSONStore<EndpointConfig>(fileURL: JSONStore<EndpointConfig>.defaultFileURL("endpoint-config.json"))
+        )
         self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
         self.configPath = configPath ?? configModule.configPath()
         self.vendorAgentPath = vendorAgentPath ?? configModule.vendorAgentPath()
@@ -118,6 +126,18 @@ class AppHost: ObservableObject {
         benchmarkResults.append(contentsOf: self.comparison.aggregateBenchmarks())
         self.comparison.onBenchmarks = { [weak self] newBenchmarks in
             self?.benchmarkResults.append(contentsOf: newBenchmarks)
+        }
+        // The always-on endpoint only serves verified models by default;
+        // the quality gate's per-signature status is the verdict source.
+        self.endpoint.isVerified = { [weak self] path in
+            guard let self else { return false }
+            let signature = self.librarySnapshot?.models
+                .first(where: { $0.item.path == path || $0.outputPaths.contains(path) })?
+                .item.signature
+            if case .verified = self.verification.status(for: path, signature: signature) {
+                return true
+            }
+            return false
         }
     }
 
