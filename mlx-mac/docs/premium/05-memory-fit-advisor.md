@@ -1,6 +1,6 @@
 # 05 — Memory-fit Advisor at serve time
 
-**Status:** spec · **Tier:** **Free** (trust-builder for the core loop)
+**Status:** implemented (Serve view verdict + context suggestion) · **Tier:** **Free** (trust-builder for the core loop)
 
 ## Problem
 
