@@ -46,6 +46,7 @@ struct ServeView: View {
     private let onRouteSelection: (String) -> Void
     @State private var runtime = "mlx_lm"
     @State private var portText = ""
+    @State private var contextText = String(FitAdvisor.defaultContextTokens)
     @State private var endpointPortText = ""
     @State private var showLoginItemPreview = false
     @State private var loginItemMessage: String?
@@ -97,6 +98,62 @@ struct ServeView: View {
             if endpointPortText.isEmpty {
                 endpointPortText = String(appHost.endpoint.config.port)
             }
+        }
+    }
+
+    // MARK: - Memory fit
+
+    private var contextTokens: Int {
+        Int(contextText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? FitAdvisor.defaultContextTokens
+    }
+
+    private var fitVerdict: FitVerdict? {
+        guard let model = selectedModel else { return nil }
+        return FitAdvisor.verdict(
+            modelBytes: model.item.bytes > 0 ? model.item.bytes : nil,
+            contextTokens: contextTokens,
+            parameters: model.item.parameters,
+            hardware: appHost.hardwareProfile,
+            memory: MemorySnapshot.probe()
+        )
+    }
+
+    @ViewBuilder
+    private var fitVerdictLine: some View {
+        if let verdict = fitVerdict {
+            HStack(spacing: 8) {
+                Image(systemName: fitIcon(verdict))
+                    .foregroundColor(fitColor(verdict))
+                Text(verdict.summary)
+                    .font(.caption)
+                    .foregroundColor(fitColor(verdict))
+                if case .wontFit(_, let suggestion) = verdict, let suggestion {
+                    Button("Use \(suggestion) instead") {
+                        contextText = String(suggestion)
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func fitIcon(_ verdict: FitVerdict) -> String {
+        switch verdict {
+        case .fits: return "checkmark.circle.fill"
+        case .tight: return "exclamationmark.circle.fill"
+        case .wontFit: return "xmark.octagon.fill"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+
+    private func fitColor(_ verdict: FitVerdict) -> Color {
+        switch verdict {
+        case .fits: return .green
+        case .tight: return .orange
+        case .wontFit: return .red
+        case .unknown: return .secondary
         }
     }
 
@@ -277,8 +334,10 @@ struct ServeView: View {
                 }
                 .frame(width: 180)
                 TextField("Port (optional)", text: $portText).textFieldStyle(.roundedBorder).frame(width: 140)
+                TextField("Context", text: $contextText).textFieldStyle(.roundedBorder).frame(width: 90)
                 Spacer()
             }
+            fitVerdictLine
             detailLine("Serve state", modelWorkflow.workflow.serveState.rawValue)
             if let message = modelWorkflow.workflow.message {
                 Text(message).font(.callout).foregroundColor(.secondary)

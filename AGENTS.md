@@ -56,6 +56,11 @@ from `mlx-agent` at runtime.
   check; network failures stay silent) and macOS/MLX environment-drift
   alerts offering one-click re-verification of stale verified models.
   Alerts dedupe by fingerprint and persist snooze/mute state.
+- The Run view shows a **Memory-fit Advisor** verdict before serving:
+  `FitAdvisor` estimates weights + KV cache + runtime overhead against live
+  available memory (`MemorySnapshot` via Mach probes), yielding
+  fits/tight/won't-fit with a suggested max context. Verdicts are derived,
+  never persisted.
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 
