@@ -1,6 +1,6 @@
 # 08 — Watch & Regression Alerts
 
-**Status:** spec · **Tier:** Premium · **Priority:** lowest (passive value; build last)
+**Status:** implemented (upstream watch + environment-drift re-verification, in-app alerts; Notification Center delivery and RecommendationEngine staleness marking are follow-ups) · **Tier:** Premium · **Priority:** lowest (passive value; build last)
 
 ## Problem
 

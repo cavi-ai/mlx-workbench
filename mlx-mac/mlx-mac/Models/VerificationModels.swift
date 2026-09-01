@@ -230,6 +230,46 @@ struct VerificationReport: Codable, Equatable, Identifiable, Sendable {
     let startedAt: Date
     let finishedAt: Date
     var outcome: VerificationOutcome
+    /// macOS/chip/MLX tuple when the report was produced; a drift makes the
+    /// evidence stale in the environment dimension (spec 08). Optional so
+    /// reports written before this field existed still decode.
+    let environmentFingerprint: String?
+
+    init(
+        id: UUID,
+        modelPath: String,
+        modelSignature: String?,
+        workflowRecordID: UUID?,
+        suiteVersion: Int,
+        canaries: [CanaryResult],
+        tokensPerSecond: Double?,
+        timeToFirstTokenSeconds: Double?,
+        metricsEstimated: Bool,
+        startedAt: Date,
+        finishedAt: Date,
+        outcome: VerificationOutcome,
+        environmentFingerprint: String? = nil
+    ) {
+        self.id = id
+        self.modelPath = modelPath
+        self.modelSignature = modelSignature
+        self.workflowRecordID = workflowRecordID
+        self.suiteVersion = suiteVersion
+        self.canaries = canaries
+        self.tokensPerSecond = tokensPerSecond
+        self.timeToFirstTokenSeconds = timeToFirstTokenSeconds
+        self.metricsEstimated = metricsEstimated
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.outcome = outcome
+        self.environmentFingerprint = environmentFingerprint
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, modelPath, modelSignature, workflowRecordID, suiteVersion
+        case canaries, tokensPerSecond, timeToFirstTokenSeconds, metricsEstimated
+        case startedAt, finishedAt, outcome, environmentFingerprint
+    }
 }
 
 /// UI-facing verification status for one model, keyed by canonical path and

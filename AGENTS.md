@@ -51,6 +51,11 @@ from `mlx-agent` at runtime.
   a read-only provenance timeline per model (source, converted, verified,
   benchmarked, served, wired, quarantined) from the stores the app already
   keeps, with signature-based staleness dimming and Markdown/JSON export.
+- `WatchCoordinator` provides **Watch & Regression Alerts**: upstream
+  `mlx-agent watch diff` digests (baseline established silently on first
+  check; network failures stay silent) and macOS/MLX environment-drift
+  alerts offering one-click re-verification of stale verified models.
+  Alerts dedupe by fingerprint and persist snooze/mute state.
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 

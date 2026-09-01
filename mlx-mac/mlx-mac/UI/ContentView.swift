@@ -55,7 +55,14 @@ struct ContentView: View {
     }
 
     private var sidebarBadges: [String: String] {
-        guard let badge = appHost.reclaim.badgeText else { return [:] }
-        return ["duplicates": badge]
+        var badges: [String: String] = [:]
+        if let reclaimBadge = appHost.reclaim.badgeText {
+            badges["duplicates"] = reclaimBadge
+        }
+        let alertCount = appHost.watch.activeAlerts.count
+        if alertCount > 0 {
+            badges["quickstart"] = "\(alertCount) alert\(alertCount == 1 ? "" : "s")"
+        }
+        return badges
     }
 }

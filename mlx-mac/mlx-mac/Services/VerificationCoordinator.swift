@@ -31,6 +31,9 @@ final class VerificationCoordinator: ObservableObject {
     /// Called after every completed probe run — stamps usage evidence for the
     /// Disk Pressure Advisor.
     var onReport: ((VerificationReport) -> Void)?
+    /// Environment fingerprint provider (spec 08): recorded on every report
+    /// so macOS/MLX drift can mark old evidence stale. Default: none.
+    var environmentFingerprint: () -> String? = { nil }
 
     init(probe: ServeProbe, store: VerificationStore, now: @escaping () -> Date = Date.init) {
         self.probe = probe
@@ -149,7 +152,8 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                     metricsEstimated: result.samples.values.contains(where: \.metricsEstimated),
                     startedAt: startedAt,
                     finishedAt: finishedAt,
-                    outcome: outcome
+                    outcome: outcome,
+                    environmentFingerprint: self.environmentFingerprint()
                 )
                 persist(report)
                 onReport?(report)
