@@ -47,6 +47,10 @@ from `mlx-agent` at runtime.
   applies them as batched quarantine moves via `Services/Quarantine.swift`
   (a Swift port of `mlx_workbench/quarantine.py` — same guard: `.gguf` only,
   inside configured roots, never deletes).
+- `ModelDetailsView` hosts the **Model Lineage**: `LineageIndexer` assembles
+  a read-only provenance timeline per model (source, converted, verified,
+  benchmarked, served, wired, quarantined) from the stores the app already
+  keeps, with signature-based staleness dimming and Markdown/JSON export.
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 

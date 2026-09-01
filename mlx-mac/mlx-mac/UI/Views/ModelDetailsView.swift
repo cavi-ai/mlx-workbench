@@ -49,6 +49,8 @@ struct ModelDetailsView: View {
 
                 verificationSection
 
+                lineageSection
+
                 if let error = model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionTitle(text: "Observed issue")
@@ -178,6 +180,75 @@ struct ModelDetailsView: View {
                 detailRow(canary.title, canary.passed ? "Passed" : "Failed: \(canary.failureReason ?? "unknown")")
             }
         }
+    }
+
+    // MARK: - Lineage
+
+    private var lineageSection: some View {
+        let lineage = appHost.lineage(for: model.item.path)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                SectionTitle(text: "Lineage")
+                Spacer()
+                Button("Copy Markdown") {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(lineage.markdown, forType: .string)
+                }
+                .controlSize(.small)
+                Button("Export JSON…") { exportLineage(lineage) }
+                    .controlSize(.small)
+            }
+            if lineage.events.isEmpty {
+                Text("No recorded history for this model yet.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(lineage.events) { event in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: event.kind.systemImage)
+                            .foregroundColor(event.kind == .verificationFailed ? .red : .accentColor)
+                            .frame(width: 18)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(event.kind.title).font(.callout).fontWeight(.medium)
+                                if event.stale {
+                                    Text("predates current bytes")
+                                        .font(.caption2)
+                                        .foregroundColor(.orange)
+                                }
+                                Spacer()
+                                Text(event.at, format: .dateTime.month(.abbreviated).day().hour().minute())
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text(event.summary)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            ForEach(event.detail.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                                Text("\(key): \(value)")
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .opacity(event.stale ? 0.6 : 1)
+                }
+            }
+        }
+    }
+
+    private func exportLineage(_ lineage: ModelLineage) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "\(model.item.name)-lineage.json"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(lineage) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     private var readinessExplanation: String {

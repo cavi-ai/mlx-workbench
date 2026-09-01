@@ -454,6 +454,26 @@ class AppHost: ObservableObject {
             occupiedPaths: occupiedModelPaths
         )
     }
+
+    /// Provenance timeline for one model, assembled read-only from the
+    /// stores the app already keeps (premium spec 07).
+    func lineage(for path: String) -> ModelLineage {
+        let canonicalPath = Quarantine.resolve(path)
+        let item = librarySnapshot?.models.first(where: {
+            Quarantine.resolve($0.item.path) == canonicalPath
+                || $0.outputPaths.contains(where: { Quarantine.resolve($0) == canonicalPath })
+        })?.item
+        return LineageIndexer.assemble(
+            modelPath: path,
+            item: item,
+            workflows: modelWorkflow.history,
+            reports: verification.reports,
+            runs: comparison.runs,
+            lastUsedByPath: usage.lastUsedByPath,
+            transactions: wiring.transactions,
+            quarantineRecords: Quarantine.ledger(quarantineDir: config.quarantineDir)
+        )
+    }
 }
 
 // MARK: - Config
