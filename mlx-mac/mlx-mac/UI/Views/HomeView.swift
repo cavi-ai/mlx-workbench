@@ -94,11 +94,13 @@ struct HomeNextAction: Equatable {
 struct HomeView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
+    @ObservedObject private var watch: WatchCoordinator
     private let onRouteSelection: (String) -> Void
 
     init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
+        _watch = ObservedObject(wrappedValue: appHost.watch)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -138,6 +140,7 @@ struct HomeView: View {
                         .font(.callout).foregroundColor(.secondary)
                 }
                 nextActionCard
+                alertsSection
                 statusSection
                 recommendationEvidence
             }
@@ -155,6 +158,38 @@ struct HomeView: View {
         }
         .padding(20).frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.accentColor.opacity(0.09)).cornerRadius(14)
+    }
+
+    @ViewBuilder
+    private var alertsSection: some View {
+        let alerts = watch.activeAlerts
+        if !alerts.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionTitle(text: "Watch alerts")
+                ForEach(alerts) { alert in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(alert.title).font(.headline)
+                        Text(alert.body).font(.caption).foregroundColor(.secondary)
+                        HStack(spacing: 10) {
+                            Button("Open") {
+                                watch.act(on: alert.id)
+                                onRouteSelection(alert.route)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            Button("Snooze 7 days") { watch.snooze(alert.id) }
+                                .controlSize(.small)
+                            Button("Mute") { watch.mute(alert.id) }
+                                .controlSize(.small)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(10)
+                }
+            }
+        }
     }
 
     private var statusSection: some View {

@@ -34,6 +34,8 @@ class AppHost: ObservableObject {
     let usage: UsageTracker
     /// Disk Pressure Advisor apply surface (premium spec 04).
     let reclaim: ReclaimCoordinator
+    /// Watch & regression alerts (premium spec 08).
+    let watch: WatchCoordinator
 
     let api: WorkbenchAPI
 
@@ -67,7 +69,8 @@ class AppHost: ObservableObject {
         wiring: WiringCoordinator? = nil,
         endpoint: EndpointSupervisor? = nil,
         usage: UsageTracker? = nil,
-        reclaim: ReclaimCoordinator? = nil
+        reclaim: ReclaimCoordinator? = nil,
+        watch: WatchCoordinator? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -109,6 +112,31 @@ class AppHost: ObservableObject {
             store: JSONStore<UsageStamp>(fileURL: JSONStore<UsageStamp>.defaultFileURL("usage-stamps.json"))
         )
         self.reclaim = reclaim ?? ReclaimCoordinator()
+        let verificationCoordinator = self.verification
+        let watchStateDir = JSONStore<WatchState>.defaultFileURL("placeholder")
+            .deletingLastPathComponent()
+            .appendingPathComponent("watch-state", isDirectory: true)
+            .path
+        self.watch = watch ?? WatchCoordinator(
+            watchDiff: {
+                let data = try await api.raw(["watch", "diff", "--state-dir", watchStateDir], isScout: true)
+                return (data["findings"] as? [[String: Any]]) ?? []
+            },
+            watchSnapshot: {
+                _ = try await api.raw(["watch", "snapshot", "--state-dir", watchStateDir], isScout: true)
+            },
+            fingerprint: {
+                EnvironmentFingerprint.current(
+                    hardware: hardwareProfile,
+                    mlxLMVersion: WatchCoordinator.probeMLXLVersion
+                )
+            },
+            verifiedReports: {
+                verificationCoordinator.reports.filter { $0.outcome == .passed }
+            },
+            alertStore: JSONStore<WatchAlert>(fileURL: JSONStore<WatchAlert>.defaultFileURL("watch-alerts.json")),
+            stateStore: JSONStore<WatchState>(fileURL: JSONStore<WatchState>.defaultFileURL("watch-state.json"))
+        )
         self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
         self.configPath = configPath ?? configModule.configPath()
         self.vendorAgentPath = vendorAgentPath ?? configModule.vendorAgentPath()
@@ -149,6 +177,23 @@ class AppHost: ObservableObject {
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
         self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }
         self.reclaim.ggufRoots = { [weak self] in self?.config.ggufRoots ?? [] }
+        // Watch drift action: re-verify stale models one at a time (the gate
+        // already serializes verification runs).
+        self.watch.reverify = { [weak self] paths in
+            Task { [weak self] in
+                guard let self else { return }
+                for path in paths {
+                    await MainActor.run { self.verification.verifyNow(modelPath: path, signature: nil) }
+                    while await MainActor.run(body: { self.verification.activeModelPath != nil }) {
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                    }
+                }
+            }
+        }
+        // Record the environment fingerprint on every verification report.
+        self.verification.environmentFingerprint = { [weak self] in
+            self?.watch.currentFingerprintDescription
+        }
     }
 
     func requestRescan() {

@@ -15,6 +15,9 @@ struct MlxWorkbenchApp: App {
                     // Always-on endpoint: reconcile desired state against
                     // authoritative serve status on a slow timer.
                     appHost.endpoint.startMonitoring()
+                    // Watch: check upstream/environment drift on launch when
+                    // stale, then daily.
+                    appHost.watch.startMonitoring()
                 }
         }
         .windowStyle(.hiddenTitleBar)

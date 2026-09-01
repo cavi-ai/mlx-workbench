@@ -114,6 +114,9 @@
 		24BBLD05D /* LineageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF05B /* LineageModels.swift */; };
 		24BBLD05E /* LineageIndexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF05C /* LineageIndexer.swift */; };
 		24BBLD05F /* LineageIndexerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF05D /* LineageIndexerTests.swift */; };
+		24BBLD060 /* WatchModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF05E /* WatchModels.swift */; };
+		24BBLD061 /* WatchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF05F /* WatchCoordinator.swift */; };
+		24BBLD062 /* WatchCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF060 /* WatchCoordinatorTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
@@ -224,6 +227,9 @@
 		24FREF05B /* LineageModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LineageModels.swift; path = Models/LineageModels.swift; sourceTree = "<group>"; };
 		24FREF05C /* LineageIndexer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LineageIndexer.swift; path = Services/LineageIndexer.swift; sourceTree = "<group>"; };
 		24FREF05D /* LineageIndexerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LineageIndexerTests.swift; sourceTree = "<group>"; };
+		24FREF05E /* WatchModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WatchModels.swift; path = Models/WatchModels.swift; sourceTree = "<group>"; };
+		24FREF05F /* WatchCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WatchCoordinator.swift; path = Services/WatchCoordinator.swift; sourceTree = "<group>"; };
+		24FREF060 /* WatchCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchCoordinatorTests.swift; sourceTree = "<group>"; };
 		26SCREF001 /* ScanContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScanContractTests.swift; path = ScanContractTests.swift; sourceTree = "<group>"; };
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
@@ -313,6 +319,8 @@
 				24FREF059 /* ReclaimCoordinator.swift */,
 				24FREF05B /* LineageModels.swift */,
 				24FREF05C /* LineageIndexer.swift */,
+				24FREF05E /* WatchModels.swift */,
+				24FREF05F /* WatchCoordinator.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
@@ -375,6 +383,7 @@
 				24FREF054 /* EndpointSupervisorTests.swift */,
 				24FREF05A /* ReclaimAdvisorTests.swift */,
 				24FREF05D /* LineageIndexerTests.swift */,
+				24FREF060 /* WatchCoordinatorTests.swift */,
 				26SCREF001 /* ScanContractTests.swift */,
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
 			);
@@ -601,6 +610,8 @@
 				24BBLD05B /* ReclaimCoordinator.swift in Sources */,
 				24BBLD05D /* LineageModels.swift in Sources */,
 				24BBLD05E /* LineageIndexer.swift in Sources */,
+				24BBLD060 /* WatchModels.swift in Sources */,
+				24BBLD061 /* WatchCoordinator.swift in Sources */,
 
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -625,6 +636,7 @@
 				24BBLD056 /* EndpointSupervisorTests.swift in Sources */,
 				24BBLD05C /* ReclaimAdvisorTests.swift in Sources */,
 				24BBLD05F /* LineageIndexerTests.swift in Sources */,
+				24BBLD062 /* WatchCoordinatorTests.swift in Sources */,
 				26SCBL001 /* ScanContractTests.swift in Sources */,
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
 			);
