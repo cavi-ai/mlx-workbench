@@ -16,6 +16,8 @@ struct QuantView: View {
 
     @State private var selectedVariants: Set<String> = []
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
+    @State private var diffLeftPath: String?
+    @State private var diffRightPath: String?
 
     init(appHost: AppHost) {
         self.appHost = appHost
@@ -87,6 +89,13 @@ struct QuantView: View {
                 }
                 .frame(width: 240)
 
+                Button("Import my prompts") {
+                    if let imported = comparison.importHistory() {
+                        selectedPromptSetID = imported.id
+                    }
+                }
+                .help("Read-only import of your opencode user prompts as a prompt set.")
+
                 Button("Run comparison") { startRun() }
                     .disabled(selectedVariants.isEmpty || comparison.activeRunID != nil)
             }
@@ -157,6 +166,70 @@ struct QuantView: View {
                     .font(.caption)
                     .foregroundColor(.green)
             }
+            if run.state == .completed, run.results.filter({ $0.error == nil }).count >= 2 {
+                diffSection(run)
+            }
+        }
+    }
+
+    // MARK: - Output diff (phase 2)
+
+    private func diffSection(_ run: ComparisonRun) -> some View {
+        let candidates = run.results.filter { $0.error == nil }
+        let left = candidates.first { $0.modelPath == diffLeftPath }
+        let right = candidates.first { $0.modelPath == diffRightPath }
+        return VStack(alignment: .leading, spacing: 8) {
+            SectionTitle(text: "Output diff")
+            HStack(spacing: 10) {
+                Picker("Left", selection: $diffLeftPath) {
+                    Text("Choose…").tag(String?.none)
+                    ForEach(candidates) { result in
+                        Text(URL(fileURLWithPath: result.modelPath).lastPathComponent).tag(String?.some(result.modelPath))
+                    }
+                }
+                Picker("Right", selection: $diffRightPath) {
+                    Text("Choose…").tag(String?.none)
+                    ForEach(candidates) { result in
+                        Text(URL(fileURLWithPath: result.modelPath).lastPathComponent).tag(String?.some(result.modelPath))
+                    }
+                }
+            }
+            .frame(maxWidth: 520)
+
+            if let left, let right, left.modelPath != right.modelPath {
+                ForEach(ComparisonDiff.pairs(left, right)) { pair in
+                    DisclosureGroup(pair.promptID) {
+                        let lines = LineDiff.diff(before: pair.left, after: pair.right)
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                                Text(diffText(line))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(diffColor(line.kind))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private func diffText(_ line: DiffLine) -> String {
+        switch line.kind {
+        case .context: return "  \(line.text)"
+        case .added: return "+ \(line.text)"
+        case .removed: return "- \(line.text)"
+        }
+    }
+
+    private func diffColor(_ kind: DiffLineKind) -> Color {
+        switch kind {
+        case .context: return .primary
+        case .added: return .green
+        case .removed: return .red
         }
     }
 
