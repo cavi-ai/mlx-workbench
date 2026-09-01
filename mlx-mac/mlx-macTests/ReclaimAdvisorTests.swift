@@ -307,6 +307,58 @@ final class ReclaimAdvisorTests: XCTestCase {
         XCTAssertNotNil(coordinator.badgeText)
     }
 
+    // MARK: - HF-cache prune
+
+    func testCacheCheckSurfacesFindingsAndReclaimableBytes() async {
+        let coordinator = ReclaimCoordinator(now: { self.now })
+        coordinator.doctorScan = {
+            DoctorResult(
+                findings: [DoctorFinding(path: "/cache/a", kind: "incomplete", message: nil, size: 2_000)],
+                prune_count: 1, preview_hash: nil, reclaimedBytes: nil, removed: nil
+            )
+        }
+
+        await coordinator.checkCache()
+
+        XCTAssertEqual(coordinator.cacheFindings.count, 1)
+        XCTAssertEqual(coordinator.cacheReclaimableBytes, 2_000)
+    }
+
+    func testCachePruneConfirmRequiresPreviewHash() async {
+        let coordinator = ReclaimCoordinator(now: { self.now })
+        coordinator.doctorPruneConfirm = { _ in
+            DoctorResult(findings: [], prune_count: 0, preview_hash: nil, reclaimedBytes: nil, removed: [])
+        }
+
+        let confirmed = await coordinator.confirmCachePrune()
+
+        XCTAssertFalse(confirmed)
+        XCTAssertEqual(coordinator.lastError, ReclaimError.previewHashMismatch.errorDescription)
+    }
+
+    func testCachePrunePreviewConfirmFlow() async {
+        let coordinator = ReclaimCoordinator(now: { self.now })
+        coordinator.doctorPrunePreview = {
+            DoctorResult(findings: nil, prune_count: 2, preview_hash: "hash-1", reclaimedBytes: 5_000, removed: nil)
+        }
+        coordinator.doctorPruneConfirm = { hash in
+            XCTAssertEqual(hash, "hash-1")
+            return DoctorResult(
+                findings: [], prune_count: 2, preview_hash: nil, reclaimedBytes: 5_000,
+                removed: [PrunedItem(repo: "a", removed: true, bytes: 5_000)]
+            )
+        }
+
+        await coordinator.previewCachePrune()
+        XCTAssertEqual(coordinator.cachePruneHash, "hash-1")
+
+        let confirmed = await coordinator.confirmCachePrune()
+
+        XCTAssertTrue(confirmed)
+        XCTAssertNil(coordinator.cachePruneHash)
+        XCTAssertEqual(coordinator.cachePruneNote, "Pruned 1 cache item(s).")
+    }
+
     // MARK: - Helpers
 
     private func makeRoot() throws -> URL {

@@ -121,6 +121,8 @@ struct DuplicatesView: View {
                     }
                 }
 
+                cachePruneSection
+
                 if !reclaim.lastMoves.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(reclaim.lastMoves, id: \.path) { move in
@@ -147,6 +149,38 @@ struct DuplicatesView: View {
                 if isOn { selectedOpportunities.insert(id) } else { selectedOpportunities.remove(id) }
             }
         )
+    }
+
+    // MARK: - HF-cache prune (authoritative doctor flow)
+
+    @ViewBuilder
+    private var cachePruneSection: some View {
+        if reclaim.doctorScan != nil {
+            Divider()
+            HStack(spacing: 10) {
+                Button("Check HF cache") {
+                    Task { await reclaim.checkCache() }
+                }
+                if !reclaim.cacheFindings.isEmpty {
+                    Text("\(reclaim.cacheFindings.count) incomplete cache item(s), \(ByteCountFormatter.string(fromByteCount: reclaim.cacheReclaimableBytes, countStyle: .file)) reclaimable")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                    if reclaim.cachePruneHash == nil {
+                        Button("Preview prune") {
+                            Task { await reclaim.previewCachePrune() }
+                        }
+                    } else {
+                        Button("Confirm prune") {
+                            Task { await reclaim.confirmCachePrune() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+            if let note = reclaim.cachePruneNote {
+                Text(note).font(.caption).foregroundColor(.green)
+            }
+        }
     }
 
     private func groupCard(_ group: DuplicateGroup) -> some View {
