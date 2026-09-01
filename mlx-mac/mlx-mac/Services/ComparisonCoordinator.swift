@@ -29,6 +29,8 @@ final class ComparisonCoordinator: ObservableObject {
     /// Called after each successfully measured variant — stamps usage
     /// evidence for the Disk Pressure Advisor.
     var onVariantMeasured: ((String) -> Void)?
+    /// Per-prompt max_tokens cap from Settings (wired by AppHost).
+    var maxTokensCap: () -> Int = { Int.max }
 
     init(
         probe: ServeProbe,
@@ -124,7 +126,7 @@ final class ComparisonCoordinator: ObservableObject {
         now: () -> Date
     ) async {
         let prompts = promptSet.prompts.map {
-            ProbePrompt(id: $0.id, prompt: $0.text, maxTokens: $0.maxTokens)
+            ProbePrompt(id: $0.id, prompt: $0.text, maxTokens: min($0.maxTokens, maxTokensCap()))
         }
 
         for variant in variants {

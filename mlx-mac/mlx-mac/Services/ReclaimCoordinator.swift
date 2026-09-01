@@ -78,14 +78,16 @@ final class ReclaimCoordinator: ObservableObject {
         duplicates: [DuplicateGroup],
         lastUsedByPath: [String: Date],
         isVerified: (String) -> Bool,
-        occupiedPaths: Set<String>
+        occupiedPaths: Set<String>,
+        staleDays: Int = ReclaimAdvisor.defaultStaleDays
     ) {
         opportunities = ReclaimAdvisor.opportunities(
             snapshot: snapshot,
             duplicates: duplicates,
             lastUsedByPath: lastUsedByPath,
             isVerified: isVerified,
-            occupiedPaths: occupiedPaths
+            occupiedPaths: occupiedPaths,
+            staleDays: staleDays
         )
         plan = nil
         lastMoves = []

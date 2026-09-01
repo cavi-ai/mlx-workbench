@@ -114,7 +114,8 @@ struct ServeView: View {
             contextTokens: contextTokens,
             parameters: model.item.parameters,
             hardware: appHost.hardwareProfile,
-            memory: MemorySnapshot.probe()
+            memory: MemorySnapshot.probe(),
+            reserveBytes: Int64(appHost.config.fitReserveGB * 1_000_000_000)
         )
     }
 
