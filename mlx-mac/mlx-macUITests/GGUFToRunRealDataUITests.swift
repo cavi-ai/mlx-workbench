@@ -6,12 +6,24 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         let receipt: String
     }
 
+    private struct ServerReceiptEvidence: Equatable {
+        let receipt: String
+        let repo: String
+        let runtime: String
+        let port: Int
+        let pid: Int
+        let alive: Bool
+        let argvMatch: Bool
+
+        var isLive: Bool { alive && argvMatch }
+    }
+
     private var app: XCUIApplication!
     private var evidenceDirectory: URL!
     private var observations: [String] = []
     private var runtimeValues: [String: String] = [:]
     private var runtimeManifest: [String: String] = [:]
-    private var ownedServerReceipt: String?
+    private var ownedServer: ServerReceiptEvidence?
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -46,8 +58,13 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         let modelQuery = try XCTUnwrap(runtimeValues["TASK6_MODEL_QUERY"])
         let sourceDirectory = URL(fileURLWithPath: sourcePath).deletingLastPathComponent().standardizedFileURL.path
 
-        XCTAssertTrue(app.buttons["Library"].waitForExistence(timeout: 30), "Library navigation was not exposed by the launched native app.")
-        app.buttons["Library"].click()
+        let libraryButton = app.buttons["Library"]
+        guard libraryButton.waitForExistence(timeout: 30) else {
+            capture("00-launch-navigation-missing", note: "The launched app did not expose Library navigation.")
+            XCTFail("Library navigation was not exposed by the launched native app.")
+            return
+        }
+        libraryButton.click()
         XCTAssertTrue(app.staticTexts["Library"].waitForExistence(timeout: 20))
 
         let search = app.textFields["Search family, variant, path, key, or evidence"]
@@ -150,14 +167,25 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         XCTAssertTrue(waitForButtonEnabled("Confirm and run", timeout: 300), "Serve preview did not produce a hash-gated confirmation.")
         capture("08-serve-preview-ready", note: "Serve preview enabled confirmation for the selected MLX model.")
 
+        let preexistingServerReceipts = Set(try authoritativeServerReceipts().map(\.receipt))
         app.buttons["Confirm and run"].click()
         XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 180), "Confirmed serve did not route to Activity.")
         app.buttons["Run"].click()
         XCTAssertTrue(app.buttons["Stop server"].waitForExistence(timeout: 180), "Authoritative running server state was not visible in Run.")
-        ownedServerReceipt = app.staticTexts["active-server-receipt"].exists
+        let visibleServerReceipt = app.staticTexts["active-server-receipt"].exists
             ? nonPlaceholderReceipt(app.staticTexts["active-server-receipt"].label)
             : nil
-        XCTAssertNotNil(ownedServerReceipt, "The running server did not expose a receipt that the test could own.")
+        let serverReceipt = try XCTUnwrap(visibleServerReceipt, "The running server did not expose a receipt that the test could own.")
+        let observedServer = try XCTUnwrap(
+            authoritativeServerReceipts().first(where: { $0.receipt == serverReceipt }),
+            "The displayed server receipt was not returned by authoritative serve status."
+        )
+        XCTAssertFalse(preexistingServerReceipts.contains(observedServer.receipt), "The server receipt existed before this test confirmed serving, so cleanup cannot claim ownership.")
+        XCTAssertEqual(observedServer.repo, destinationPath, "The new server receipt did not identify the workflow-selected MLX model.")
+        XCTAssertEqual(observedServer.runtime, "mlx_lm", "The new server receipt did not identify the previewed runtime.")
+        XCTAssertTrue(observedServer.isLive, "The new server receipt did not describe a live, argv-matched server.")
+        XCTAssertTrue(receiptIsBoundToObservedServer(observedServer), "The new server receipt file did not match authoritative server status.")
+        ownedServer = observedServer
         capture("09-server-running", note: "Run displayed the authoritative running server and stop control.")
 
         app.buttons["Stop server"].click()
@@ -170,6 +198,11 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         app.launchEnvironment["MLX_AGENT_HOME"] = runtimeValues["TASK6_AGENT_HOME"]
         app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = runtimeValues["TASK6_CONFIG_PATH"]
         app.launch()
+        app.activate()
+        if !app.windows.firstMatch.waitForExistence(timeout: 5) {
+            app.typeKey("n", modifierFlags: .command)
+            _ = app.windows.firstMatch.waitForExistence(timeout: 10)
+        }
     }
 
     private func restartAndReconcile(sourcePath: String, destinationPath: String, receipt: String) {
@@ -430,6 +463,72 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         return trimmed
     }
 
+    private func authoritativeServerReceipts() throws -> [ServerReceiptEvidence] {
+        guard let agentHome = runtimeValues["TASK6_AGENT_HOME"] else {
+            throw HarnessError.missingAgentHome
+        }
+        let executable = URL(fileURLWithPath: agentHome)
+            .appendingPathComponent("scripts/mlx-agent", isDirectory: false)
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            throw HarnessError.agentCLIUnavailable(executable.path)
+        }
+
+        let process = Process()
+        let output = Pipe()
+        let error = Pipe()
+        process.executableURL = executable
+        process.arguments = ["serve", "status", "--json"]
+        process.standardOutput = output
+        process.standardError = error
+        try process.run()
+        process.waitUntilExit()
+
+        let stdout = output.fileHandleForReading.readDataToEndOfFile()
+        guard process.terminationStatus == 0 else {
+            let stderr = String(data: error.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            throw HarnessError.serverStatusFailed(stderr)
+        }
+        guard let payload = try JSONSerialization.jsonObject(with: stdout) as? [String: Any],
+              let data = payload["data"] as? [String: Any],
+              let rawServers = data["servers"] as? [[String: Any]] else {
+            throw HarnessError.serverStatusUnreadable
+        }
+
+        return rawServers.compactMap { raw in
+            guard let receipt = raw["receipt"] as? String,
+                  let repo = raw["repo"] as? String,
+                  let runtime = raw["runtime"] as? String,
+                  let port = raw["port"] as? Int,
+                  let pid = raw["pid"] as? Int,
+                  let alive = raw["alive"] as? Bool,
+                  let argvMatch = raw["argv_match"] as? Bool else {
+                return nil
+            }
+            return ServerReceiptEvidence(
+                receipt: receipt,
+                repo: repo,
+                runtime: runtime,
+                port: port,
+                pid: pid,
+                alive: alive,
+                argvMatch: argvMatch
+            )
+        }
+    }
+
+    private func receiptIsBoundToObservedServer(_ server: ServerReceiptEvidence) -> Bool {
+        let receiptURL = URL(fileURLWithPath: server.receipt).standardizedFileURL
+        guard FileManager.default.fileExists(atPath: receiptURL.path),
+              let data = try? Data(contentsOf: receiptURL),
+              let receipt = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        return receipt["repo"] as? String == server.repo
+            && receipt["runtime"] as? String == server.runtime
+            && receipt["port"] as? Int == server.port
+            && receipt["pid"] as? Int == server.pid
+    }
+
     private func visibleLabels() -> [String] {
         app.staticTexts.allElementsBoundByIndex.compactMap { element in
             let parts = [element.label, element.value as? String]
@@ -466,8 +565,15 @@ final class GGUFToRunRealDataUITests: XCTestCase {
 
     private func stopServerIfNeeded() {
         guard app != nil, app.state == .runningForeground || app.state == .runningBackground else { return }
-        guard let ownedServerReceipt, !ownedServerReceipt.isEmpty else {
+        guard let ownedServer else {
             record("teardown: no server receipt owned by this test; no stop attempted")
+            return
+        }
+        guard let currentServer = try? authoritativeServerReceipts().first(where: { $0.receipt == ownedServer.receipt }),
+              currentServer == ownedServer,
+              currentServer.isLive,
+              receiptIsBoundToObservedServer(currentServer) else {
+            record("teardown: authoritative server receipt did not match the test-owned live receipt; no stop attempted")
             return
         }
         if !app.buttons["Stop server"].exists, app.buttons["Run"].exists {
@@ -476,11 +582,31 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         }
         guard app.buttons["Stop server"].exists,
               app.staticTexts["active-server-receipt"].exists,
-              compacted(app.staticTexts["active-server-receipt"].label) == compacted(ownedServerReceipt) else {
+              compacted(app.staticTexts["active-server-receipt"].label) == compacted(ownedServer.receipt) else {
             record("teardown: visible server receipt did not match the test-owned receipt; no stop attempted")
             return
         }
         app.buttons["Stop server"].click()
         record("teardown: stopped the test-owned server receipt")
+    }
+
+    private enum HarnessError: LocalizedError {
+        case missingAgentHome
+        case agentCLIUnavailable(String)
+        case serverStatusFailed(String)
+        case serverStatusUnreadable
+
+        var errorDescription: String? {
+            switch self {
+            case .missingAgentHome:
+                return "TASK6_AGENT_HOME is unavailable."
+            case .agentCLIUnavailable(let path):
+                return "mlx-agent CLI is unavailable at \(path)."
+            case .serverStatusFailed(let stderr):
+                return "mlx-agent serve status failed: \(stderr)"
+            case .serverStatusUnreadable:
+                return "mlx-agent serve status did not return a server list."
+            }
+        }
     }
 }

@@ -26,6 +26,48 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
+    func testConfirmServeRejectsChangedRuntimeWithoutLaunching() async {
+        let launches = ServeLaunchRecorder()
+        let host = await makeHost(onServeStart: { runtime, port in
+            await launches.record(runtime: runtime, port: port)
+        })
+        await MainActor.run {
+            host.modelWorkflow.restore(
+                makeWorkflow(state: .completed, receipt: "receipt-1", completedModelPath: "/Models/ready")
+            )
+        }
+
+        await host.modelWorkflow.previewServe(runtime: "mlx_lm", port: 8080)
+        await host.modelWorkflow.confirmServe(runtime: "mlx-vlm", port: 8080)
+
+        let state = await MainActor.run { host.modelWorkflow.workflow }
+        let launchCount = await launches.count
+        XCTAssertEqual(state.serveState, .failed)
+        XCTAssertTrue(state.errorMessage?.contains("intent changed") == true)
+        XCTAssertEqual(launchCount, 0)
+    }
+
+    func testConfirmServeRejectsChangedPortWithoutLaunching() async {
+        let launches = ServeLaunchRecorder()
+        let host = await makeHost(onServeStart: { runtime, port in
+            await launches.record(runtime: runtime, port: port)
+        })
+        await MainActor.run {
+            host.modelWorkflow.restore(
+                makeWorkflow(state: .completed, receipt: "receipt-1", completedModelPath: "/Models/ready")
+            )
+        }
+
+        await host.modelWorkflow.previewServe(runtime: "mlx_lm", port: 8080)
+        await host.modelWorkflow.confirmServe(runtime: "mlx_lm", port: 8081)
+
+        let state = await MainActor.run { host.modelWorkflow.workflow }
+        let launchCount = await launches.count
+        XCTAssertEqual(state.serveState, .failed)
+        XCTAssertTrue(state.errorMessage?.contains("intent changed") == true)
+        XCTAssertEqual(launchCount, 0)
+    }
+
     func testFailedStatusPreservesLastKnownRunningState() async {
         let host = await makeHost(statusError: TestError.offline)
         await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
@@ -269,7 +311,8 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
     private func makeWorkflow(
         id: String = "workflow",
         state: ConversionWorkflowState,
-        receipt: String?
+        receipt: String?,
+        completedModelPath: String? = nil
     ) -> ConversionWorkflow {
         ConversionWorkflow(
             id: workflowID(id),
@@ -279,7 +322,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             outputPath: "/Models/source",
             previewHash: "preview-1",
             jobReceipt: receipt,
-            completedModelPath: nil,
+            completedModelPath: completedModelPath,
             state: state,
             serveState: .idle,
             message: nil,
@@ -337,6 +380,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         jobs: [Job] = [],
         statusError: Error? = nil,
         onStatus: (@Sendable () async -> Void)? = nil,
+        onServeStart: (@Sendable (String, Int?) async -> Void)? = nil,
         scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil
     ) async -> AppHost {
         let api = ModelWorkflowAPI(
@@ -348,7 +392,10 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
                 return jobs
             },
             servePreview: { _, _, _ in ["preview_hash": "serve-hash"] },
-            serveStart: { _, _, _, _ in ["receipt": "serve-receipt"] },
+            serveStart: { _, runtime, port, _ in
+                if let onServeStart { await onServeStart(runtime, port) }
+                return ["receipt": "serve-receipt"]
+            },
             serveStatus: { [] },
             serveStop: { _ in [:] }
         )
@@ -418,6 +465,16 @@ private actor ScanSequence {
         count += 1
         return values.removeFirst()
     }
+}
+
+private actor ServeLaunchRecorder {
+    private var launches: [(String, Int?)] = []
+
+    func record(runtime: String, port: Int?) {
+        launches.append((runtime, port))
+    }
+
+    var count: Int { launches.count }
 }
 
 private enum TestSequenceError: Error {
