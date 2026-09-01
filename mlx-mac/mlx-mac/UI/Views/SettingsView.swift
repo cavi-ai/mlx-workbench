@@ -15,6 +15,11 @@ struct SettingsView: View {
     @State private var qBits = 4
     @State private var signatures = true
     @State private var portText = "8765"
+    @State private var verificationEnabled = true
+    @State private var watchEnabled = true
+    @State private var fitReserveText = "4"
+    @State private var staleDaysText = "60"
+    @State private var comparisonMaxTokensText = "512"
     @State private var isSaving = false
     @State private var notice: String?
 
@@ -91,6 +96,33 @@ struct SettingsView: View {
                 Toggle("Signatures", isOn: $signatures)
             }
 
+            SectionTitle(text: "Premium features")
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("Verify conversions (canary quality gate)", isOn: $verificationEnabled)
+                Toggle("Watch & regression alerts", isOn: $watchEnabled)
+                HStack {
+                    TextField("Fit reserve GB", text: $fitReserveText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 140)
+                    Text("Memory kept free for the system when judging fit.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                HStack {
+                    TextField("Stale after days", text: $staleDaysText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 140)
+                    Text("Reclaim advisor flags models unused this long.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                HStack {
+                    TextField("Comparison max tokens", text: $comparisonMaxTokensText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 140)
+                    Text("Per-prompt cap during measured comparisons.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            }
+
             HStack {
                 Button("Discard Changes") { loadFromConfig() }
                 Spacer()
@@ -150,6 +182,11 @@ struct SettingsView: View {
         qBits = config.qBits
         signatures = config.signatures
         portText = "\(config.port)"
+        verificationEnabled = config.verificationEnabled
+        watchEnabled = config.watchEnabled
+        fitReserveText = String(format: "%g", config.fitReserveGB)
+        staleDaysText = "\(config.reclaimStaleDays)"
+        comparisonMaxTokensText = "\(config.comparisonMaxTokens)"
     }
 
     private func save() {
@@ -158,6 +195,24 @@ struct SettingsView: View {
         guard let port = Int(portText.trimmingCharacters(in: .whitespacesAndNewlines)),
               (1...65535).contains(port) else {
             notice = "Port must be an integer between 1 and 65535."
+            isSaving = false
+            return
+        }
+        guard let reserve = Double(fitReserveText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              Config.FIT_RESERVE_RANGE.contains(reserve) else {
+            notice = "Fit reserve must be a number between 0 and 16 GB."
+            isSaving = false
+            return
+        }
+        guard let staleDays = Int(staleDaysText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              Config.STALE_DAYS_RANGE.contains(staleDays) else {
+            notice = "Stale days must be an integer between 2 and 365."
+            isSaving = false
+            return
+        }
+        guard let maxTokens = Int(comparisonMaxTokensText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              Config.COMPARISON_MAX_TOKENS_RANGE.contains(maxTokens) else {
+            notice = "Comparison max tokens must be an integer between 64 and 4096."
             isSaving = false
             return
         }
@@ -179,7 +234,12 @@ struct SettingsView: View {
             qBits: qBits,
             signatures: signatures,
             host: host.isEmpty ? "127.0.0.1" : host,
-            port: port
+            port: port,
+            verificationEnabled: verificationEnabled,
+            watchEnabled: watchEnabled,
+            fitReserveGB: reserve,
+            reclaimStaleDays: staleDays,
+            comparisonMaxTokens: maxTokens
         )
         Task {
             defer { isSaving = false }
