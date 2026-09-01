@@ -135,7 +135,8 @@ class AppHost: ObservableObject {
                 verificationCoordinator.reports.filter { $0.outcome == .passed }
             },
             alertStore: JSONStore<WatchAlert>(fileURL: JSONStore<WatchAlert>.defaultFileURL("watch-alerts.json")),
-            stateStore: JSONStore<WatchState>(fileURL: JSONStore<WatchState>.defaultFileURL("watch-state.json"))
+            stateStore: JSONStore<WatchState>(fileURL: JSONStore<WatchState>.defaultFileURL("watch-state.json")),
+            notify: AlertNotifier.post
         )
         self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
         self.configPath = configPath ?? configModule.configPath()
