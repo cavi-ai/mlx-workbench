@@ -29,6 +29,11 @@ from `mlx-agent` at runtime.
   replays a prompt set against selected ready variants (one at a time, via
   the shared `ServeProbe` harness), persists runs, and feeds measured
   tok/s/TTFT into the RecommendationEngine as local benchmark evidence.
+- The Wire tab also does **Cross-client Wiring**: `WiringCoordinator` detects
+  installed clients (opencode/Continue/Zed/Aider writable; LM Studio/Ollama
+  advisory-only) and previews/confirms atomic writes to each client's own
+  config with per-file backups, drift re-checks, and rollback. Client write
+  targets are a fixed allowlist of well-known config paths.
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 

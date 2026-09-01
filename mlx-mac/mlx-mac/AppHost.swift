@@ -26,6 +26,8 @@ class AppHost: ObservableObject {
     let verification: VerificationCoordinator
     /// Measured Comparisons (prompt-set replay across variants).
     let comparison: ComparisonCoordinator
+    /// Cross-client wiring transactions (premium spec 02).
+    let wiring: WiringCoordinator
 
     let api: WorkbenchAPI
 
@@ -55,7 +57,8 @@ class AppHost: ObservableObject {
         modelWorkflowAPI: ModelWorkflowAPI? = nil,
         modelWorkflowPersistence: ModelWorkflowPersistence? = nil,
         verification: VerificationCoordinator? = nil,
-        comparison: ComparisonCoordinator? = nil
+        comparison: ComparisonCoordinator? = nil,
+        wiring: WiringCoordinator? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -84,6 +87,9 @@ class AppHost: ObservableObject {
             ),
             runStore: JSONStore<ComparisonRun>(fileURL: JSONStore<ComparisonRun>.defaultFileURL("comparison-runs.json")),
             promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json"))
+        )
+        self.wiring = wiring ?? WiringCoordinator(
+            store: JSONStore<WiringTransaction>(fileURL: JSONStore<WiringTransaction>.defaultFileURL("wiring-transactions.json"))
         )
         self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
         self.configPath = configPath ?? configModule.configPath()
