@@ -55,6 +55,15 @@ final class VerificationCoordinator: ObservableObject {
         }
     }
 
+    /// Unlink (Settings toggle off). In-flight verification still completes
+    /// and persists its report; the workflow record resolves to completed.
+    func detach(from workflow: ModelWorkflowCoordinator) {
+        if workflow.completionVerifier === self {
+            workflow.completionVerifier = nil
+        }
+        onResolution = nil
+    }
+
     /// Manual re-verification for any model (no workflow record attached).
     func verifyNow(modelPath: String, signature: String?) {
         guard activeModelPath == nil else {

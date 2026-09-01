@@ -182,6 +182,11 @@ class AppHost: ObservableObject {
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
         self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }
         self.reclaim.ggufRoots = { [weak self] in self?.config.ggufRoots ?? [] }
+        self.comparison.maxTokensCap = { [weak self] in self?.config.comparisonMaxTokens ?? 512 }
+        // HF-cache reclaim rides the authoritative doctor prune flow.
+        self.reclaim.doctorScan = { try await api.doctor(wiredRoots: [], hfCache: nil) }
+        self.reclaim.doctorPrunePreview = { try await api.doctorPrunePreview(hfCache: nil) }
+        self.reclaim.doctorPruneConfirm = { hash in try await api.doctorPruneConfirm(previewHash: hash, hfCache: nil) }
         // Watch drift action: re-verify stale models one at a time (the gate
         // already serializes verification runs).
         self.watch.reverify = { [weak self] paths in
@@ -263,6 +268,7 @@ class AppHost: ObservableObject {
             agentHealth = Self.checkAgentHealth(path: saved.mlxAgentPath, cli: cli)
             runtimeReport = RuntimeChecker.report()
             lastError = nil
+            applyFeatureToggles()
             return saved
         } catch {
             lastError = Self.render(error)
@@ -494,6 +500,22 @@ class AppHost: ObservableObject {
         return occupied
     }
 
+    /// Apply the premium feature toggles from the current config: attach or
+    /// detach the quality gate, start or stop watch monitoring. Idempotent;
+    /// called at app launch and after every config save.
+    func applyFeatureToggles() {
+        if config.verificationEnabled {
+            verification.attach(to: modelWorkflow)
+        } else {
+            verification.detach(from: modelWorkflow)
+        }
+        if config.watchEnabled {
+            watch.startMonitoring()
+        } else {
+            watch.stopMonitoring()
+        }
+    }
+
     /// Recompute Disk Pressure Advisor opportunities from the latest
     /// snapshot, duplicate groups, usage evidence, and verification status.
     func analyzeReclaim() {
@@ -502,7 +524,8 @@ class AppHost: ObservableObject {
             duplicates: scanResult?.duplicates ?? [],
             lastUsedByPath: usage.lastUsedByPath,
             isVerified: { [weak self] path in self?.isModelVerified(path) ?? false },
-            occupiedPaths: occupiedModelPaths
+            occupiedPaths: occupiedModelPaths,
+            staleDays: config.reclaimStaleDays
         )
     }
 
@@ -540,11 +563,39 @@ struct Config: Codable, Equatable {
     var signatures: Bool
     var host: String
     var port: Int
+    // Premium feature toggles (specs 01–08). All have defaults, so configs
+    // written before these keys existed keep working.
+    var verificationEnabled: Bool
+    var watchEnabled: Bool
+    var fitReserveGB: Double
+    var reclaimStaleDays: Int
+    var comparisonMaxTokens: Int
 
     static let SCHEMA_VERSION = "1.0"
     static let Q_BITS_CHOICES: Set<Int> = [4, 8]
     static let MAX_ROOTS = 32
     static let LOOPBACK_HOSTS: Set<String> = ["127.0.0.1", "localhost", "::1"]
+    static let FIT_RESERVE_RANGE: ClosedRange<Double> = 0...16
+    // 2…365: 1 collides with JSON bool coercion (true → 1).
+    static let STALE_DAYS_RANGE: ClosedRange<Int> = 2...365
+    static let COMPARISON_MAX_TOKENS_RANGE: ClosedRange<Int> = 64...4096
+
+    // Snake-case on disk, matching the coerce()/encode() contract.
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case ggufRoots = "gguf_roots"
+        case mlxRoots = "mlx_roots"
+        case outputDir = "output_dir"
+        case mlxAgentPath = "mlx_agent_path"
+        case quarantineDir = "quarantine_dir"
+        case qBits = "q_bits"
+        case signatures, host, port
+        case verificationEnabled = "verification_enabled"
+        case watchEnabled = "watch_enabled"
+        case fitReserveGB = "fit_reserve_gb"
+        case reclaimStaleDays = "reclaim_stale_days"
+        case comparisonMaxTokens = "comparison_max_tokens"
+    }
 
     static func defaults() -> Config {
         return Config(
@@ -557,7 +608,12 @@ struct Config: Codable, Equatable {
             qBits: 4,
             signatures: true,
             host: "127.0.0.1",
-            port: 8765
+            port: 8765,
+            verificationEnabled: true,
+            watchEnabled: true,
+            fitReserveGB: 4,
+            reclaimStaleDays: ReclaimAdvisor.defaultStaleDays,
+            comparisonMaxTokens: 512
         )
     }
 
@@ -633,8 +689,16 @@ enum ConfigError: LocalizedError {
 struct ConfigModule {
     private let configEnv = "MLX_WORKBENCH_CONFIG"
     private let agentEnv = "MLX_AGENT_HOME"
+    /// Test seam: ProcessInfo caches the environment at process start, so
+    /// setenv-based overrides are invisible. Tests inject the path directly.
+    private let pathOverride: String?
+
+    init(pathOverride: String? = nil) {
+        self.pathOverride = pathOverride
+    }
 
     func configPath() -> String {
+        if let pathOverride { return pathOverride }
         if let override = ProcessInfo.processInfo.environment[configEnv] {
             return Path.expandedURL(override).path
         }
@@ -753,6 +817,22 @@ private func coerce(_ dict: [String: Any]) -> Config {
         merged.port = port
     }
 
+    if let verificationEnabled = dict["verification_enabled"] as? Bool {
+        merged.verificationEnabled = verificationEnabled
+    }
+    if let watchEnabled = dict["watch_enabled"] as? Bool {
+        merged.watchEnabled = watchEnabled
+    }
+    if let reserve = dict["fit_reserve_gb"] as? Double, Config.FIT_RESERVE_RANGE.contains(reserve) {
+        merged.fitReserveGB = reserve
+    }
+    if let days = dict["reclaim_stale_days"] as? Int, !days.isBool, Config.STALE_DAYS_RANGE.contains(days) {
+        merged.reclaimStaleDays = days
+    }
+    if let maxTokens = dict["comparison_max_tokens"] as? Int, !maxTokens.isBool, Config.COMPARISON_MAX_TOKENS_RANGE.contains(maxTokens) {
+        merged.comparisonMaxTokens = maxTokens
+    }
+
     if merged.mlxAgentPath.isEmpty {
         merged.mlxAgentPath = Config.discoverAgentPath()
     }
@@ -772,6 +852,11 @@ private func encode(_ config: Config) -> [String: Any] {
         "signatures": config.signatures,
         "host": config.host,
         "port": config.port,
+        "verification_enabled": config.verificationEnabled,
+        "watch_enabled": config.watchEnabled,
+        "fit_reserve_gb": config.fitReserveGB,
+        "reclaim_stale_days": config.reclaimStaleDays,
+        "comparison_max_tokens": config.comparisonMaxTokens,
     ]
 }
 

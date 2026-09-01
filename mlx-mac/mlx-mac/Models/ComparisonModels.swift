@@ -175,8 +175,27 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-enum ComparisonAggregation {
-    static func medianTokensPerSecond(_ samples: [ComparisonSample]) -> Double? {
+// MARK: - Output diffs (phase 2)
+
+/// Pairs per-prompt outputs from two variants for the side-by-side diff view.
+enum ComparisonDiff {
+    struct Pair: Equatable, Identifiable {
+        let promptID: String
+        let left: String
+        let right: String
+        var id: String { promptID }
+    }
+
+    static func pairs(_ left: VariantResult, _ right: VariantResult) -> [Pair] {
+        let rightByID = Dictionary(uniqueKeysWithValues: right.samples.map { ($0.promptID, $0) })
+        return left.samples.compactMap { sample in
+            guard let other = rightByID[sample.promptID] else { return nil }
+            return Pair(promptID: sample.promptID, left: sample.outputExcerpt, right: other.outputExcerpt)
+        }
+    }
+}
+
+enum ComparisonAggregation {    static func medianTokensPerSecond(_ samples: [ComparisonSample]) -> Double? {
         let values = samples.compactMap(\.tokensPerSecond).sorted()
         guard !values.isEmpty else { return nil }
         let mid = values.count / 2

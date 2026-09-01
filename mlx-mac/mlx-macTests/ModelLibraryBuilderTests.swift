@@ -334,7 +334,12 @@ final class ModelLibraryBuilderTests: XCTestCase {
             qBits: 4,
             signatures: true,
             host: "127.0.0.1",
-            port: 8765
+            port: 8765,
+            verificationEnabled: true,
+            watchEnabled: true,
+            fitReserveGB: 4,
+            reclaimStaleDays: 60,
+            comparisonMaxTokens: 512
         )
     }
 
