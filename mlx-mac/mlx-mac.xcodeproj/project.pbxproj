@@ -111,6 +111,9 @@
 		24BBLD05A /* ReclaimAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF058 /* ReclaimAdvisor.swift */; };
 		24BBLD05B /* ReclaimCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF059 /* ReclaimCoordinator.swift */; };
 		24BBLD05C /* ReclaimAdvisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF05A /* ReclaimAdvisorTests.swift */; };
+		24BBLD05D /* LineageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF05B /* LineageModels.swift */; };
+		24BBLD05E /* LineageIndexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF05C /* LineageIndexer.swift */; };
+		24BBLD05F /* LineageIndexerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF05D /* LineageIndexerTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
@@ -218,6 +221,9 @@
 		24FREF058 /* ReclaimAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimAdvisor.swift; path = Services/ReclaimAdvisor.swift; sourceTree = "<group>"; };
 		24FREF059 /* ReclaimCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimCoordinator.swift; path = Services/ReclaimCoordinator.swift; sourceTree = "<group>"; };
 		24FREF05A /* ReclaimAdvisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReclaimAdvisorTests.swift; sourceTree = "<group>"; };
+		24FREF05B /* LineageModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LineageModels.swift; path = Models/LineageModels.swift; sourceTree = "<group>"; };
+		24FREF05C /* LineageIndexer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LineageIndexer.swift; path = Services/LineageIndexer.swift; sourceTree = "<group>"; };
+		24FREF05D /* LineageIndexerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LineageIndexerTests.swift; sourceTree = "<group>"; };
 		26SCREF001 /* ScanContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScanContractTests.swift; path = ScanContractTests.swift; sourceTree = "<group>"; };
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
@@ -305,6 +311,8 @@
 				24FREF057 /* UsageTracker.swift */,
 				24FREF058 /* ReclaimAdvisor.swift */,
 				24FREF059 /* ReclaimCoordinator.swift */,
+				24FREF05B /* LineageModels.swift */,
+				24FREF05C /* LineageIndexer.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
@@ -366,6 +374,7 @@
 				24FREF04F /* WiringCoordinatorTests.swift */,
 				24FREF054 /* EndpointSupervisorTests.swift */,
 				24FREF05A /* ReclaimAdvisorTests.swift */,
+				24FREF05D /* LineageIndexerTests.swift */,
 				26SCREF001 /* ScanContractTests.swift */,
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
 			);
@@ -590,6 +599,8 @@
 				24BBLD059 /* UsageTracker.swift in Sources */,
 				24BBLD05A /* ReclaimAdvisor.swift in Sources */,
 				24BBLD05B /* ReclaimCoordinator.swift in Sources */,
+				24BBLD05D /* LineageModels.swift in Sources */,
+				24BBLD05E /* LineageIndexer.swift in Sources */,
 
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -613,6 +624,7 @@
 				24BBLD051 /* WiringCoordinatorTests.swift in Sources */,
 				24BBLD056 /* EndpointSupervisorTests.swift in Sources */,
 				24BBLD05C /* ReclaimAdvisorTests.swift in Sources */,
+				24BBLD05F /* LineageIndexerTests.swift in Sources */,
 				26SCBL001 /* ScanContractTests.swift in Sources */,
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
 			);

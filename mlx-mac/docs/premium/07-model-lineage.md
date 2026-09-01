@@ -1,6 +1,6 @@
 # 07 — Model Lineage & Receipt Timeline
 
-**Status:** spec · **Tier:** Premium (the coherence layer — makes the tier feel like one product)
+**Status:** implemented · **Tier:** Premium (the coherence layer — makes the tier feel like one product)
 
 ## Problem
 
