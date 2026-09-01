@@ -464,6 +464,7 @@ class ConvertQueueTests(unittest.TestCase):
             "hf_cache": None,
             "label": "/a.gguf",
             "state": "queued",
+            "failure": None,
         }])
         self.assertEqual(len(commands), 1)
         self.assertIn("status", commands[0])
@@ -481,6 +482,7 @@ class ConvertQueueTests(unittest.TestCase):
             "hf_cache": None,
             "label": "a.gguf",
             "state": "starting",
+            "failure": None,
         }
         convert_queue.QueueStore(state_path).save([item])
         queue = convert_queue.ConvertQueue(path=state_path)
