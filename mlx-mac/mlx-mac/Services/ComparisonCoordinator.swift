@@ -84,6 +84,31 @@ final class ComparisonCoordinator: ObservableObject {
         }
     }
 
+    /// Opt-in: import the user's real opencode prompts as a comparison
+    /// prompt set. Returns the created set, or nil when no history exists.
+    /// The button press is the consent; import only happens here.
+    @discardableResult
+    func importHistory(databasePath: String? = PromptHistoryImport.defaultDatabasePath()) -> PromptSet? {
+        guard let databasePath else {
+            lastError = "No opencode history found on this machine."
+            return nil
+        }
+        guard let result = PromptHistoryImport.importPrompts(databasePath: databasePath) else {
+            lastError = "No usable prompts found in the opencode history."
+            return nil
+        }
+        let set = PromptSet(
+            id: UUID().uuidString,
+            name: "My opencode prompts (\(result.prompts.count))",
+            useCase: .coding,
+            prompts: result.prompts.map { PromptEntry(id: UUID().uuidString, text: $0) },
+            origin: .userCreated
+        )
+        savePromptSet(set)
+        lastError = nil
+        return set
+    }
+
     /// Start a comparison run. One run at a time; variants are measured
     /// sequentially so memory pressure from one server never contaminates
     /// another variant's numbers.
