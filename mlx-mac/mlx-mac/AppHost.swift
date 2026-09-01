@@ -178,6 +178,10 @@ class AppHost: ObservableObject {
         self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }
         self.reclaim.ggufRoots = { [weak self] in self?.config.ggufRoots ?? [] }
         self.comparison.maxTokensCap = { [weak self] in self?.config.comparisonMaxTokens ?? 512 }
+        // HF-cache reclaim rides the authoritative doctor prune flow.
+        self.reclaim.doctorScan = { try await api.doctor(wiredRoots: [], hfCache: nil) }
+        self.reclaim.doctorPrunePreview = { try await api.doctorPrunePreview(hfCache: nil) }
+        self.reclaim.doctorPruneConfirm = { hash in try await api.doctorPruneConfirm(previewHash: hash, hfCache: nil) }
         // Watch drift action: re-verify stale models one at a time (the gate
         // already serializes verification runs).
         self.watch.reverify = { [weak self] paths in
