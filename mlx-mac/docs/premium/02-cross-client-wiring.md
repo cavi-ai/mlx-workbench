@@ -1,6 +1,6 @@
 # 02 — Cross-client Wiring
 
-**Status:** spec · **Tier:** Premium
+**Status:** implemented (opencode, Continue, Zed, Aider writable; LM Studio + Ollama advisory) · **Tier:** Premium
 
 ## Problem
 

@@ -5,6 +5,7 @@ import SwiftUI
 
 struct WireView: View {
     @ObservedObject var appHost: AppHost
+    @ObservedObject private var wiring: WiringCoordinator
 
     @State private var model = ""
     @State private var path = ""
@@ -15,9 +16,31 @@ struct WireView: View {
     @State private var result: String?
     @State private var errorMessage: String?
 
+    @State private var selectedServerID: String?
+    @State private var wiringResult: String?
+
+    init(appHost: AppHost) {
+        self.appHost = appHost
+        _wiring = ObservedObject(wrappedValue: appHost.wiring)
+    }
+
+    private var runningServers: [ServerInfo] {
+        appHost.modelWorkflow.servers.filter { $0.state?.lowercased() == "running" }
+    }
+
+    private var selectedEndpoint: WireEndpoint? {
+        guard let server = runningServers.first(where: { $0.id == selectedServerID }),
+              let port = server.port, let repo = server.repo else { return nil }
+        return WireEndpoint(
+            baseURL: "http://127.0.0.1:\(port)/v1",
+            modelName: URL(fileURLWithPath: repo).deletingPathExtension().lastPathComponent
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                clientWiringSection
                 formSection
                 ErrorBanner(text: errorMessage)
                 if let result {
@@ -41,7 +64,136 @@ struct WireView: View {
             }
             .padding()
         }
+        .onAppear { wiring.detect() }
     }
+
+    // MARK: - Cross-client wiring
+
+    private var clientWiringSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle(text: "Client wiring")
+            Text("Point installed clients at a running local server. Each client's own config is written atomically with backup and rollback.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            if runningServers.isEmpty {
+                Text("No authoritative running server. Start one in Run first.")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+            } else {
+                Picker("Endpoint", selection: $selectedServerID) {
+                    Text("Choose a running server…").tag(String?.none)
+                    ForEach(runningServers) { server in
+                        Text("\(server.repo.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "server") :\(server.port.map(String.init) ?? "?")")
+                            .tag(String?.some(server.id))
+                    }
+                }
+                .frame(width: 340)
+            }
+
+            if wiring.installations.isEmpty {
+                Text("No supported clients detected (opencode, Continue, Zed, Aider).")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(wiring.installations, id: \.clientID) { installation in
+                    HStack {
+                        Text(installation.displayName).font(.callout)
+                        Spacer()
+                        if installation.advisoryOnly {
+                            Text(installation.advisoryNote ?? "Advisory only")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text(installation.configPath ?? "")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button("Preview client wiring") {
+                    if let endpoint = selectedEndpoint { wiring.preview(endpoint: endpoint) }
+                }
+                .disabled(selectedEndpoint == nil || wiring.installations.allSatisfy(\.advisoryOnly))
+
+                if wiring.rollbackAvailable {
+                    Button("Roll back last wiring") { wiring.rollback() }
+                }
+            }
+
+            ErrorBanner(text: wiring.lastError)
+            ErrorBanner(text: wiring.persistenceError)
+
+            if !wiring.plans.isEmpty, let hash = wiring.previewHash {
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionTitle(text: "Wiring preview")
+                    ForEach(wiring.plans) { plan in
+                        DisclosureGroup {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(Array(plan.redactedDiff.enumerated()), id: \.offset) { _, line in
+                                    Text(diffText(line))
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundColor(diffColor(line.kind))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .padding(.top, 4)
+                        } label: {
+                            HStack {
+                                Text(plan.displayName).font(.headline)
+                                if plan.rewritesFile {
+                                    Text("reformats file").font(.caption).foregroundColor(.orange)
+                                }
+                                Spacer()
+                                Text(plan.summary).font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    Button("Confirm client wiring") {
+                        if let endpoint = selectedEndpoint {
+                            let transaction = wiring.confirm(endpoint: endpoint, previewHash: hash)
+                            wiringResult = transaction.map {
+                                $0.failures.isEmpty
+                                    ? "Wired \($0.receipts.count) client(s) to \($0.modelName)."
+                                    : "Wired with issues: \($0.failures.joined(separator: "; "))"
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(wiring.isApplying)
+                }
+                .formSection {}
+            }
+
+            if let wiringResult {
+                Text(wiringResult).font(.caption).foregroundColor(.green)
+            }
+        }
+        .formSection {}
+    }
+
+    private func diffText(_ line: DiffLine) -> String {
+        switch line.kind {
+        case .context: return "  \(line.text)"
+        case .added: return "+ \(line.text)"
+        case .removed: return "- \(line.text)"
+        }
+    }
+
+    private func diffColor(_ kind: DiffLineKind) -> Color {
+        switch kind {
+        case .context: return .primary
+        case .added: return .green
+        case .removed: return .red
+        }
+    }
+
 
     private var formSection: some View {
         VStack(alignment: .leading, spacing: 10) {
