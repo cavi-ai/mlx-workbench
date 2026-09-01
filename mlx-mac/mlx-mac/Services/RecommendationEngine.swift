@@ -71,6 +71,10 @@ struct RecommendationBenchmarkResult: Equatable, Hashable {
     let timeToFirstTokenSeconds: Double?
     let measuredAt: Date
     let sampleCount: Int
+    /// macOS/chip/MLX fingerprint when measured (spec 08 follow-up). A
+    /// mismatch with the current environment marks the evidence stale:
+    /// still shown, but scored below fresh measurements.
+    let environmentFingerprint: String?
 
     init(
         modelID: String,
@@ -78,7 +82,8 @@ struct RecommendationBenchmarkResult: Equatable, Hashable {
         tokensPerSecond: Double? = nil,
         timeToFirstTokenSeconds: Double? = nil,
         measuredAt: Date,
-        sampleCount: Int = 1
+        sampleCount: Int = 1,
+        environmentFingerprint: String? = nil
     ) {
         self.modelID = modelID
         self.useCase = useCase
@@ -86,6 +91,12 @@ struct RecommendationBenchmarkResult: Equatable, Hashable {
         self.timeToFirstTokenSeconds = timeToFirstTokenSeconds
         self.measuredAt = measuredAt
         self.sampleCount = max(1, sampleCount)
+        self.environmentFingerprint = environmentFingerprint
+    }
+
+    func isStale(currentEnvironment: String?) -> Bool {
+        guard let environmentFingerprint, let currentEnvironment else { return false }
+        return environmentFingerprint != currentEnvironment
     }
 }
 
@@ -114,7 +125,8 @@ enum RecommendationEngine {
         snapshot: LibrarySnapshot,
         catalog: CatalogState,
         benchmarkResults: [RecommendationBenchmarkResult],
-        preferences: RecommendationPreferences
+        preferences: RecommendationPreferences,
+        currentEnvironment: String? = nil
     ) -> [Recommendation] {
         let authority = CatalogAuthority(catalog)
         let benchmarks = benchmarkIndex(from: benchmarkResults)
@@ -176,13 +188,14 @@ enum RecommendationEngine {
             }
 
             if let benchmark {
-                let benchmarkBonus = benchmarkScore(for: benchmark)
+                let stale = benchmark.isStale(currentEnvironment: currentEnvironment)
+                let benchmarkBonus = benchmarkScore(for: benchmark, stale: stale)
                 score += benchmarkBonus
-                reasons.append(benchmarkReason(for: benchmark, useCase: useCase))
+                reasons.append(benchmarkReason(for: benchmark, useCase: useCase, stale: stale))
                 evidence.append(
                     RecommendationEvidence(
                         name: "local_benchmark",
-                        value: benchmarkSummary(for: benchmark),
+                        value: benchmarkSummary(for: benchmark) + (stale ? " (stale environment)" : ""),
                         observedAt: benchmark.measuredAt,
                         isHint: false
                     )
@@ -617,21 +630,28 @@ private extension RecommendationEngine {
         max(record?.estimatedMemoryBytes ?? model.item.bytes, 1)
     }
 
-    static func benchmarkScore(for benchmark: RecommendationBenchmarkResult) -> Int {
-        let base = benchmark.sampleCount > 1 ? Score.benchmarkRepeatedRuns : Score.benchmarkSingleRun
+    static func benchmarkScore(for benchmark: RecommendationBenchmarkResult, stale: Bool = false) -> Int {
+        var base = benchmark.sampleCount > 1 ? Score.benchmarkRepeatedRuns : Score.benchmarkSingleRun
         let throughput = min(Int((benchmark.tokensPerSecond ?? 0) / 4), Score.benchmarkSampleCap / 2)
         let latency = benchmark.timeToFirstTokenSeconds.map { max(0, min(Int((5 - $0) * 10), Score.benchmarkSampleCap / 2)) } ?? 0
+        if stale {
+            // Stale-environment evidence still counts, but at half the base —
+            // fresh measurements always outrank it.
+            base /= 2
+        }
         return base + throughput + latency
     }
 
     static func benchmarkReason(
         for benchmark: RecommendationBenchmarkResult,
-        useCase: UseCase
+        useCase: UseCase,
+        stale: Bool = false
     ) -> RecommendationReason {
         let sampleLabel = benchmark.sampleCount == 1 ? "one local sample" : "\(benchmark.sampleCount) local samples"
+        let staleness = stale ? " It was measured under a previous macOS/MLX environment, so it is weighted down." : ""
         return RecommendationReason(
             name: "local_benchmark",
-            message: "A \(useCase.title) benchmark is available from \(sampleLabel), so this ranking uses measured local speed conservatively.",
+            message: "A \(useCase.title) benchmark is available from \(sampleLabel), so this ranking uses measured local speed conservatively.\(staleness)",
             isHint: false
         )
     }

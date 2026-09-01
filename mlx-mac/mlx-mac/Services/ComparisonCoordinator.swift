@@ -29,6 +29,9 @@ final class ComparisonCoordinator: ObservableObject {
     /// Called after each successfully measured variant — stamps usage
     /// evidence for the Disk Pressure Advisor.
     var onVariantMeasured: ((String) -> Void)?
+    /// Environment fingerprint stamped on every measured variant (spec 08
+    /// follow-up): the RecommendationEngine down-weights stale evidence.
+    var environmentFingerprint: () -> String? = { nil }
     /// Per-prompt max_tokens cap from Settings (wired by AppHost).
     var maxTokensCap: () -> Int = { Int.max }
 
@@ -177,7 +180,8 @@ final class ComparisonCoordinator: ObservableObject {
                     samples: samples,
                     aggregateTokensPerSecond: ComparisonAggregation.medianTokensPerSecond(samples),
                     aggregateTTFTSeconds: ComparisonAggregation.bestTTFT(samples),
-                    error: nil
+                    error: nil,
+                    environmentFingerprint: environmentFingerprint()
                 )
             } catch {
                 result = VariantResult(
@@ -216,7 +220,8 @@ final class ComparisonCoordinator: ObservableObject {
                 tokensPerSecond: result.aggregateTokensPerSecond,
                 timeToFirstTokenSeconds: result.aggregateTTFTSeconds,
                 measuredAt: measuredAt,
-                sampleCount: result.samples.count
+                sampleCount: result.samples.count,
+                environmentFingerprint: result.environmentFingerprint
             )
         }
     }

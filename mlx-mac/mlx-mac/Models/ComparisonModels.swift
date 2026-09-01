@@ -122,8 +122,29 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
     let aggregateTokensPerSecond: Double?
     let aggregateTTFTSeconds: Double?
     let error: String?
+    /// Environment fingerprint at measurement time; mismatch with the
+    /// current environment marks the benchmark stale in the engine.
+    let environmentFingerprint: String?
 
     var id: String { modelPath }
+
+    init(
+        modelPath: String,
+        modelSignature: String?,
+        samples: [ComparisonSample],
+        aggregateTokensPerSecond: Double?,
+        aggregateTTFTSeconds: Double?,
+        error: String?,
+        environmentFingerprint: String? = nil
+    ) {
+        self.modelPath = modelPath
+        self.modelSignature = modelSignature
+        self.samples = samples
+        self.aggregateTokensPerSecond = aggregateTokensPerSecond
+        self.aggregateTTFTSeconds = aggregateTTFTSeconds
+        self.error = error
+        self.environmentFingerprint = environmentFingerprint
+    }
 }
 
 enum ComparisonRunState: String, Codable, Sendable {
