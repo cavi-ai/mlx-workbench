@@ -29,6 +29,11 @@ final class ComparisonCoordinator: ObservableObject {
     /// Called after each successfully measured variant — stamps usage
     /// evidence for the Disk Pressure Advisor.
     var onVariantMeasured: ((String) -> Void)?
+    /// Environment fingerprint stamped on every measured variant (spec 08
+    /// follow-up): the RecommendationEngine down-weights stale evidence.
+    var environmentFingerprint: () -> String? = { nil }
+    /// Per-prompt max_tokens cap from Settings (wired by AppHost).
+    var maxTokensCap: () -> Int = { Int.max }
 
     init(
         probe: ServeProbe,
@@ -84,6 +89,31 @@ final class ComparisonCoordinator: ObservableObject {
         }
     }
 
+    /// Opt-in: import the user's real opencode prompts as a comparison
+    /// prompt set. Returns the created set, or nil when no history exists.
+    /// The button press is the consent; import only happens here.
+    @discardableResult
+    func importHistory(databasePath: String? = PromptHistoryImport.defaultDatabasePath()) -> PromptSet? {
+        guard let databasePath else {
+            lastError = "No opencode history found on this machine."
+            return nil
+        }
+        guard let result = PromptHistoryImport.importPrompts(databasePath: databasePath) else {
+            lastError = "No usable prompts found in the opencode history."
+            return nil
+        }
+        let set = PromptSet(
+            id: UUID().uuidString,
+            name: "My opencode prompts (\(result.prompts.count))",
+            useCase: .coding,
+            prompts: result.prompts.map { PromptEntry(id: UUID().uuidString, text: $0) },
+            origin: .userCreated
+        )
+        savePromptSet(set)
+        lastError = nil
+        return set
+    }
+
     /// Start a comparison run. One run at a time; variants are measured
     /// sequentially so memory pressure from one server never contaminates
     /// another variant's numbers.
@@ -124,7 +154,7 @@ final class ComparisonCoordinator: ObservableObject {
         now: () -> Date
     ) async {
         let prompts = promptSet.prompts.map {
-            ProbePrompt(id: $0.id, prompt: $0.text, maxTokens: $0.maxTokens)
+            ProbePrompt(id: $0.id, prompt: $0.text, maxTokens: min($0.maxTokens, maxTokensCap()))
         }
 
         for variant in variants {
@@ -150,7 +180,8 @@ final class ComparisonCoordinator: ObservableObject {
                     samples: samples,
                     aggregateTokensPerSecond: ComparisonAggregation.medianTokensPerSecond(samples),
                     aggregateTTFTSeconds: ComparisonAggregation.bestTTFT(samples),
-                    error: nil
+                    error: nil,
+                    environmentFingerprint: environmentFingerprint()
                 )
             } catch {
                 result = VariantResult(
@@ -189,7 +220,8 @@ final class ComparisonCoordinator: ObservableObject {
                 tokensPerSecond: result.aggregateTokensPerSecond,
                 timeToFirstTokenSeconds: result.aggregateTTFTSeconds,
                 measuredAt: measuredAt,
-                sampleCount: result.samples.count
+                sampleCount: result.samples.count,
+                environmentFingerprint: result.environmentFingerprint
             )
         }
     }

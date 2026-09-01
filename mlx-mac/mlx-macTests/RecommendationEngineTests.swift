@@ -194,6 +194,63 @@ final class RecommendationEngineTests: XCTestCase {
         XCTAssertTrue(first.first?.reasons.contains(where: { $0.name == "catalog_role" }) == true)
     }
 
+    func testStaleEnvironmentBenchmarkRanksBelowFreshEvidence() {
+        let fresh = readyModel(path: "/mlx/fresh", name: "Coder Fresh", modelKey: "org/coder-fresh", bytes: 2_000)
+        let stale = readyModel(path: "/mlx/stale", name: "Coder Stale", modelKey: "org/coder-stale", bytes: 2_000)
+        let snapshot = makeSnapshot(models: [stale, fresh], memoryBytes: 16_000)
+        let catalog = CatalogState.current(
+            makeCatalogSnapshot(
+                records: [
+                    catalogRecord(repoIdentity: "org/coder-fresh", roles: [.coding], estimatedMemoryBytes: 4_000, updatedAt: fixtureNow),
+                    catalogRecord(repoIdentity: "org/coder-stale", roles: [.coding], estimatedMemoryBytes: 4_000, updatedAt: fixtureNow)
+                ]
+            )
+        )
+        // Identical measurements; only the environment fingerprint differs.
+        let benchmarks = [
+            RecommendationBenchmarkResult(
+                modelID: fresh.item.path, useCase: .coding,
+                tokensPerSecond: 20, timeToFirstTokenSeconds: 1.0,
+                measuredAt: fixtureNow, sampleCount: 3,
+                environmentFingerprint: "current"
+            ),
+            RecommendationBenchmarkResult(
+                modelID: stale.item.path, useCase: .coding,
+                tokensPerSecond: 20, timeToFirstTokenSeconds: 1.0,
+                measuredAt: fixtureNow, sampleCount: 3,
+                environmentFingerprint: "old-macos"
+            ),
+        ]
+
+        let result = RecommendationEngine.recommend(
+            useCase: .coding,
+            snapshot: snapshot,
+            catalog: catalog,
+            benchmarkResults: benchmarks,
+            preferences: .defaults,
+            currentEnvironment: "current"
+        )
+
+        XCTAssertEqual(result.map(\.modelID), [fresh.item.path, stale.item.path])
+        let staleEntry = result.first { $0.modelID == stale.item.path }
+        XCTAssertTrue(staleEntry?.evidence.contains { $0.name == "local_benchmark" && $0.value.contains("stale environment") } == true)
+    }
+
+    func testBenchmarkWithoutFingerprintIsNeverStale() {
+        let benchmark = RecommendationBenchmarkResult(
+            modelID: "/m", useCase: .coding, tokensPerSecond: 10,
+            measuredAt: fixtureNow, sampleCount: 1, environmentFingerprint: nil
+        )
+        XCTAssertFalse(benchmark.isStale(currentEnvironment: "current"))
+        XCTAssertFalse(benchmark.isStale(currentEnvironment: nil))
+        let fingerprinted = RecommendationBenchmarkResult(
+            modelID: "/m", useCase: .coding, tokensPerSecond: 10,
+            measuredAt: fixtureNow, sampleCount: 1, environmentFingerprint: "old"
+        )
+        XCTAssertTrue(fingerprinted.isStale(currentEnvironment: "current"))
+        XCTAssertFalse(fingerprinted.isStale(currentEnvironment: nil))
+    }
+
     func testLocalBenchmarkEvidenceBreaksTieConservatively() {
         let faster = readyModel(path: "/mlx/faster", name: "Coder Fast", modelKey: "org/coder-fast", bytes: 2_000)
         let slower = readyModel(path: "/mlx/slower", name: "Coder Slow", modelKey: "org/coder-slow", bytes: 2_000)

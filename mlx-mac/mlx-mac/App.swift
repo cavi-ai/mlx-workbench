@@ -9,15 +9,10 @@ struct MlxWorkbenchApp: App {
         WindowGroup {
             ContentView(appHost: appHost)
                 .onAppear {
-                    // Conversion Quality Gate: route completed conversions
-                    // through canary verification. Idempotent.
-                    appHost.verification.attach(to: appHost.modelWorkflow)
-                    // Always-on endpoint: reconcile desired state against
-                    // authoritative serve status on a slow timer.
+                    // Premium feature toggles: attach the quality gate when
+                    // enabled, start endpoint + watch monitoring per config.
+                    appHost.applyFeatureToggles()
                     appHost.endpoint.startMonitoring()
-                    // Watch: check upstream/environment drift on launch when
-                    // stale, then daily.
-                    appHost.watch.startMonitoring()
                 }
         }
         .windowStyle(.hiddenTitleBar)
