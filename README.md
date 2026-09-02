@@ -64,6 +64,8 @@ Every conversion is previewed before it runs: command, output path, and preview 
 
 mlx-agent allows one live convert at a time. Every confirmed plan is persisted before launch; extra plans remain FIFO in the workbench **queue**, auto-start when the live job finishes, and resume automatically after a server restart. Once launched, mlx-agent receipts remain the authority for process state and handoff recovery.
 
+Terminal launch failures remain in **Jobs** with their classified error and remediation, survive a restart, and do not block later pending work. **Retry** reuses the original reviewed plan and places it at the pending tail; it never creates or approves a replacement preview. **Up** and **Down** move pending items one step at a time, while starting handoffs stay pinned until receipt reconciliation finishes.
+
 By default the queue is stored at `$XDG_STATE_HOME/mlx-workbench/convert-queue.json`, or `~/.local/state/mlx-workbench/convert-queue.json` when `XDG_STATE_HOME` is unset. An explicitly selected config profile keeps `convert-queue.json` beside that config. Invalid saved state is preserved as a numbered `convert-queue.json.N.corrupt` file and reported in **Jobs** instead of being overwritten silently.
 
 **GGUF** sources come from **Models** (single Convert or multi-select Queue selected). **HF-cache** sources use the **Convert** tab (`publisher/model` already present under the local Hugging Face cache). Convert never downloads from the Hub.

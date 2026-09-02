@@ -11,13 +11,16 @@ from pathlib import Path
 from . import bridge
 
 
-QUEUE_SCHEMA_VERSION = "1.0"
+QUEUE_SCHEMA_VERSION = "1.1"
+LEGACY_QUEUE_SCHEMA_VERSION = "1.0"
 QUEUE_FILENAME = "convert-queue.json"
-ITEM_STATES = ("queued", "starting")
+ITEM_STATES = ("queued", "starting", "failed")
 QUEUE_ITEM_KEYS = {
     "id", "kind", "preview_hash", "q_bits", "out", "path", "repo",
-    "hf_cache", "label", "state",
+    "hf_cache", "label", "state", "failure",
 }
+LEGACY_QUEUE_ITEM_KEYS = QUEUE_ITEM_KEYS - {"failure"}
+FAILURE_KEYS = {"code", "message", "remediation"}
 
 
 def queue_path(config_path=None):
@@ -54,12 +57,29 @@ class QueuePersistenceError(RuntimeError):
         return payload
 
 
+class QueueOperationError(RuntimeError):
+    """A classified invalid conversion queue operation."""
+
+    def __init__(self, code, message, remediation):
+        super().__init__(message)
+        self.code = code
+        self.remediation = remediation
+
+    def to_dict(self):
+        return {
+            "code": self.code,
+            "message": str(self),
+            "remediation": self.remediation,
+        }
+
+
 def _optional_string(value):
     return value is None or (isinstance(value, str) and bool(value))
 
 
-def _validate_item(item):
-    if not isinstance(item, dict) or set(item) != QUEUE_ITEM_KEYS:
+def _validate_item(item, legacy=False):
+    expected_keys = LEGACY_QUEUE_ITEM_KEYS if legacy else QUEUE_ITEM_KEYS
+    if not isinstance(item, dict) or set(item) != expected_keys:
         raise ValueError("queue item fields do not match schema")
     item_id = item["id"]
     if (
@@ -79,13 +99,25 @@ def _validate_item(item):
             raise ValueError("queue item {0} is invalid".format(field))
     if not isinstance(item["label"], str) or not item["label"]:
         raise ValueError("queue item label is invalid")
-    if item["state"] not in ITEM_STATES:
+    allowed_states = ("queued", "starting") if legacy else ITEM_STATES
+    if item["state"] not in allowed_states:
         raise ValueError("queue item state is invalid")
     if item["kind"] == "gguf":
         if not item["path"] or item["repo"] is not None:
             raise ValueError("GGUF queue item requires only path")
     elif not item["repo"] or item["path"] is not None:
         raise ValueError("repo queue item requires only repo")
+    if legacy:
+        return
+    failure = item["failure"]
+    if item["state"] == "failed":
+        if not isinstance(failure, dict) or set(failure) != FAILURE_KEYS:
+            raise ValueError("failed queue item requires failure details")
+        if any(not isinstance(failure[key], str) or not failure[key]
+               for key in FAILURE_KEYS):
+            raise ValueError("queue item failure details are invalid")
+    elif failure is not None:
+        raise ValueError("active queue item cannot include failure details")
 
 
 def _validated_items(payload):
@@ -93,13 +125,17 @@ def _validated_items(payload):
         raise ValueError("queue state must be an object")
     if set(payload) != {"schema_version", "items"}:
         raise ValueError("queue state fields do not match schema")
-    if payload["schema_version"] != QUEUE_SCHEMA_VERSION:
+    version = payload["schema_version"]
+    if version not in (LEGACY_QUEUE_SCHEMA_VERSION, QUEUE_SCHEMA_VERSION):
         raise ValueError("queue schema version is unsupported")
     if not isinstance(payload["items"], list):
         raise ValueError("queue items must be a list")
+    legacy = version == LEGACY_QUEUE_SCHEMA_VERSION
+    items = []
     for item in payload["items"]:
-        _validate_item(item)
-    return [dict(item) for item in payload["items"]]
+        _validate_item(item, legacy=legacy)
+        items.append(dict(item, failure=None) if legacy else dict(item))
+    return items
 
 
 class QueueStore:
@@ -215,6 +251,7 @@ class ConvertQueue:
             "hf_cache": hf_cache,
             "label": label or path or repo or "convert",
             "state": "queued",
+            "failure": None,
         }
         with self._lock:
             self._publish_locked(self._items + [item])
@@ -228,20 +265,126 @@ class ConvertQueue:
         with self._lock:
             return [dict(item) for item in self._items]
 
+    def _find_index_locked(self, item_id):
+        return next(
+            (index for index, item in enumerate(self._items)
+             if item["id"] == item_id),
+            None,
+        )
+
+    def _actionable_index_locked(self):
+        starting = next(
+            (index for index, item in enumerate(self._items)
+             if item["state"] == "starting"),
+            None,
+        )
+        if starting is not None:
+            return starting
+        return next(
+            (index for index, item in enumerate(self._items)
+             if item["state"] == "queued"),
+            None,
+        )
+
+    def _replace_locked(self, item_id, replacement):
+        index = self._find_index_locked(item_id)
+        if index is None:
+            return False
+        candidate = list(self._items)
+        candidate[index] = replacement
+        self._publish_locked(candidate)
+        return True
+
+    def _remove_locked(self, item_id):
+        index = self._find_index_locked(item_id)
+        if index is None:
+            return False
+        self._publish_locked(self._items[:index] + self._items[index + 1:])
+        return True
+
     def cancel(self, item_id):
         with self._lock:
-            kept = [item for item in self._items if item["id"] != item_id]
-            removed = len(kept) != len(self._items)
-            if removed:
-                self._publish_locked(kept)
-        return removed
+            index = self._find_index_locked(item_id)
+            if index is None:
+                return False
+            if self._items[index]["state"] == "starting":
+                raise QueueOperationError(
+                    "invalid_queue_state",
+                    "A starting conversion cannot be removed.",
+                    "Wait for receipt reconciliation, then retry the operation.",
+                )
+            self._remove_locked(item_id)
+            return True
 
     def clear(self):
         with self._lock:
-            count = len(self._items)
+            candidate = [
+                item for item in self._items if item["state"] == "starting"
+            ]
+            count = len(self._items) - len(candidate)
             if count:
-                self._publish_locked([])
+                self._publish_locked(candidate)
         return count
+
+    def retry(self, item_id):
+        with self._drain_lock:
+            with self._lock:
+                index = self._find_index_locked(item_id)
+                if index is None:
+                    raise QueueOperationError(
+                        "queue_item_not_found",
+                        "The conversion queue item no longer exists.",
+                        "Refresh Jobs and retry the operation.",
+                    )
+                item = self._items[index]
+                if item["state"] != "failed":
+                    raise QueueOperationError(
+                        "invalid_queue_state",
+                        "Only a failed conversion can be retried.",
+                        "Wait for the current operation or choose a failed item.",
+                    )
+                retried = dict(item, state="queued", failure=None)
+                candidate = self._items[:index] + self._items[index + 1:] + [retried]
+                self._publish_locked(candidate)
+                return dict(retried)
+
+    def move(self, item_id, direction):
+        if direction not in ("up", "down"):
+            raise QueueOperationError(
+                "invalid_queue_direction",
+                "Queue direction must be up or down.",
+                "Refresh Jobs and use one of the available move controls.",
+            )
+        with self._drain_lock:
+            with self._lock:
+                index = self._find_index_locked(item_id)
+                if index is None:
+                    raise QueueOperationError(
+                        "queue_item_not_found",
+                        "The conversion queue item no longer exists.",
+                        "Refresh Jobs and retry the operation.",
+                    )
+                if self._items[index]["state"] != "queued":
+                    raise QueueOperationError(
+                        "invalid_queue_state",
+                        "Only a queued conversion can be moved.",
+                        "Wait for the current operation or choose a pending item.",
+                    )
+                queued_indices = [
+                    position for position, item in enumerate(self._items)
+                    if item["state"] == "queued"
+                ]
+                queued_position = queued_indices.index(index)
+                adjacent_position = queued_position + (-1 if direction == "up" else 1)
+                if adjacent_position < 0 or adjacent_position >= len(queued_indices):
+                    return False
+                adjacent_index = queued_indices[adjacent_position]
+                candidate = list(self._items)
+                candidate[index], candidate[adjacent_index] = (
+                    candidate[adjacent_index], candidate[index]
+                )
+                self._publish_locked(candidate)
+                return True
 
     def try_start_next(self, agent_path, runner=None):
         """Start the head item if no convert is live. Returns a status dict or None."""
@@ -250,9 +393,10 @@ class ConvertQueue:
 
     def _try_start_next(self, agent_path, runner=None):
         with self._lock:
-            if not self._items:
+            actionable_index = self._actionable_index_locked()
+            if actionable_index is None:
                 return None
-            item = dict(self._items[0])
+            item = dict(self._items[actionable_index])
         status = bridge.jobs(agent_path, runner=runner)
         raw_jobs = status.get("jobs")
         if raw_jobs is None:
@@ -278,24 +422,22 @@ class ConvertQueue:
                 return payload
             if any(self._receipt_matches(item, receipt) for receipt in receipts):
                 with self._lock:
-                    if self._items and self._items[0]["id"] == item["id"]:
-                        self._publish_locked(self._items[1:])
+                    self._remove_locked(item["id"])
                 self.last_error = None
                 return {"status": "recovered", "item": item}
-            queued = dict(item, state="queued")
+            queued = dict(item, state="queued", failure=None)
             with self._lock:
-                if self._items and self._items[0]["id"] == item["id"]:
-                    self._publish_locked([queued] + self._items[1:])
+                if not self._replace_locked(item["id"], queued):
+                    return None
             item = queued
 
         if any(entry.get("state") == "running" for entry in entries):
             return None
 
-        starting = dict(item, state="starting")
+        starting = dict(item, state="starting", failure=None)
         with self._lock:
-            if not self._items or self._items[0]["id"] != item["id"]:
+            if not self._replace_locked(item["id"], starting):
                 return None
-            self._publish_locked([starting] + self._items[1:])
         try:
             if starting["kind"] == "gguf":
                 result = bridge.start(
@@ -318,8 +460,7 @@ class ConvertQueue:
                 )
             try:
                 with self._lock:
-                    if self._items and self._items[0]["id"] == starting["id"]:
-                        self._publish_locked(self._items[1:])
+                    self._remove_locked(starting["id"])
             except QueuePersistenceError as error:
                 persistence_error = error.to_dict()
                 self.last_error = {
@@ -338,19 +479,27 @@ class ConvertQueue:
         except bridge.BridgeError as error:
             if error.code == "job_in_progress":
                 with self._lock:
-                    if self._items and self._items[0]["id"] == starting["id"]:
-                        queued = dict(starting, state="queued")
-                        self._publish_locked([queued] + self._items[1:])
+                    queued = dict(starting, state="queued", failure=None)
+                    self._replace_locked(starting["id"], queued)
                 return None
-            with self._lock:
-                if self._items and self._items[0]["id"] == starting["id"]:
-                    self._publish_locked(self._items[1:])
+            failure = error.to_dict()
+            failed = dict(starting, state="failed", failure=failure)
+            try:
+                with self._lock:
+                    self._replace_locked(starting["id"], failed)
+            except QueuePersistenceError as persistence_error:
+                self.last_error = {
+                    "status": "waiting_recovery",
+                    "item": starting,
+                    "error": persistence_error.to_dict(),
+                }
+                raise
             payload = {
                 "status": "failed",
-                "item": starting,
-                "error": error.to_dict(),
+                "item": failed,
+                "error": failure,
             }
-            self.last_error = payload
+            self.last_error = None
             return payload
 
     @staticmethod

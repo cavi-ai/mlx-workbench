@@ -219,9 +219,12 @@ function renderJobs(data) {
   });
   queueErrorNode.textContent = queueErrors.join('\n');
   queueErrorNode.hidden = queueErrors.length === 0;
-  renderConvertQueue(data.convert_queue || []);
+  const convertQueue = data.convert_queue || [];
+  renderConvertQueue(convertQueue);
   const runningConvert = jobs.find(function (job) { return job.state === 'running'; });
-  state.jobBusy = Boolean(runningConvert) || (data.convert_queue || []).length > 0;
+  state.jobBusy = Boolean(runningConvert) || convertQueue.some(function (item) {
+    return item.state === 'queued' || item.state === 'starting';
+  });
   if (runningConvert && runningConvert.log_path && !state.logManual) {
     state.selectedLog = runningConvert.log_path;
   }
@@ -256,33 +259,76 @@ function renderConvertQueue(queue) {
     return;
   }
   node.hidden = false;
-  node.appendChild(element('strong', null, 'Conversion queue (' + queue.length + ')'));
-  queue.forEach(function (item) {
-    const row = element('div', 'queue-item');
-    row.appendChild(element('span', 'path', item.label || item.path || item.repo || item.id));
-    const stateHint = item.state === 'starting'
-      ? 'starting · reconciling accepted launch'
-      : 'queued';
-    row.appendChild(element('span', 'hint', item.q_bits + '-bit · ' + stateHint));
-    const cancel = element('button', null, 'Cancel');
-    if (item.state === 'starting') {
-      cancel.disabled = true;
-      cancel.title = 'This launch is being reconciled with its mlx-agent receipt.';
-    }
-    cancel.addEventListener('click', async function () {
-      cancel.disabled = true;
+  const pendingCount = queue.filter(function (item) { return item.state === 'queued'; }).length;
+  const startingCount = queue.filter(function (item) { return item.state === 'starting'; }).length;
+  const failedCount = queue.filter(function (item) { return item.state === 'failed'; }).length;
+  const counts = [];
+  if (pendingCount) counts.push(pendingCount + ' pending');
+  if (startingCount) counts.push(startingCount + ' starting');
+  if (failedCount) counts.push(failedCount + ' failed');
+  node.appendChild(element('strong', null, 'Conversion queue (' + counts.join(' · ') + ')'));
+  const queuedIds = queue.filter(function (item) {
+    return item.state === 'queued';
+  }).map(function (item) { return item.id; });
+
+  function action(row, label, endpoint, body, disabled, title) {
+    const button = element('button', null, label);
+    button.disabled = Boolean(disabled);
+    if (title) button.title = title;
+    button.addEventListener('click', async function () {
+      button.disabled = true;
       try {
-        await api('/api/convert/queue/cancel', { body: { id: item.id } });
+        await api(endpoint, { body: body });
         await refreshJobs();
       } catch (error) {
         notify(error.message);
-        cancel.disabled = false;
+        button.disabled = Boolean(disabled);
       }
     });
-    row.appendChild(cancel);
+    row.appendChild(button);
+  }
+
+  queue.forEach(function (item) {
+    const row = element('div', 'queue-item');
+    row.appendChild(element('span', 'path', item.label || item.path || item.repo || item.id));
+    if (item.state === 'failed') {
+      const failure = item.failure || {};
+      row.appendChild(element(
+        'span',
+        'hint',
+        [item.q_bits + '-bit · failed', failure.message, failure.remediation]
+          .filter(Boolean).join(' · ')
+      ));
+      action(row, 'Retry', '/api/convert/queue/retry', { id: item.id });
+      action(row, 'Remove', '/api/convert/queue/cancel', { id: item.id });
+    } else if (item.state === 'starting') {
+      row.appendChild(element(
+        'span', 'hint', item.q_bits + '-bit · starting · reconciling accepted launch'
+      ));
+      action(
+        row,
+        'Reconciling',
+        '/api/convert/queue/cancel',
+        { id: item.id },
+        true,
+        'This launch is being reconciled with its mlx-agent receipt.'
+      );
+    } else {
+      row.appendChild(element('span', 'hint', item.q_bits + '-bit · queued'));
+      const queuedIndex = queuedIds.indexOf(item.id);
+      action(
+        row, 'Up', '/api/convert/queue/move', { id: item.id, direction: 'up' },
+        queuedIndex === 0
+      );
+      action(
+        row, 'Down', '/api/convert/queue/move', { id: item.id, direction: 'down' },
+        queuedIndex === queuedIds.length - 1
+      );
+      action(row, 'Cancel', '/api/convert/queue/cancel', { id: item.id });
+    }
     node.appendChild(row);
   });
-  const clear = element('button', null, 'Clear queue');
+  const clear = element('button', null, 'Clear pending and failed');
   clear.addEventListener('click', async function () {
     clear.disabled = true;
     try {
