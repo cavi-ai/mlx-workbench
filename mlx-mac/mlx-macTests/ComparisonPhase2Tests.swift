@@ -152,8 +152,10 @@ final class ComparisonPhase2Tests: XCTestCase {
 }
 
 private struct NeverUsedProber: EndpointProbing {
+    func listModels(baseURL: URL) async -> [String] { [] }
+
     func isReady(baseURL: URL) async -> Bool { false }
-    func chat(baseURL: URL, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
         throw StubProbeError.unused
     }
 }
