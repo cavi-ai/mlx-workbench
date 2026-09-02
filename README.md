@@ -25,6 +25,29 @@ That is the whole setup. `make install` creates a project `.venv` (not Homebrew 
 
 The default agent path is `vendor/mlx-agent` (pinned release). Override with Settings, or `$MLX_AGENT_HOME`, for a local mlx-agent checkout. `make install` and `make check` use that resolved configured path first, and initialize the vendored submodule only when no usable agent is configured.
 
+## Native macOS app
+
+`mlx-mac/` is a native SwiftUI app over the same agent boundary — same preview/confirm discipline, same receipts — plus a lifecycle layer the web UI does not have:
+
+- **Conversion Quality Gate**: every conversion output is served on an ephemeral loopback port and probed with a canary suite before it is marked verified.
+- **Measured Comparisons**: replay prompt sets (built-in or imported from your opencode history) across variants; measured tok/s and TTFT feed the recommendation engine.
+- **Cross-client Wiring**: point opencode, Continue, Zed, or Aider at a running local server with atomic config writes, backups, and rollback.
+- **Always-on Endpoint**: a stable loopback port with crash-loop-guarded supervision, optional login item, and a menu-bar status item.
+- **Disk Pressure Advisor**: ranked reclaim opportunities (stale, superseded, cross-root duplicates) applied as batched quarantine moves — nothing is deleted.
+- **Model Lineage**: a per-model provenance timeline (source → converted → verified → benchmarked → served → wired), exportable as Markdown or JSON.
+- **Watch & Regression Alerts**: upstream Hugging Face digests and macOS/MLX environment-drift re-verification prompts.
+- **Memory-fit Advisor**: fits/tight/won't-fit verdict with a suggested max context before serving.
+
+Build and run:
+
+```bash
+make build-swift   # Release build of the native app
+make run-swift     # open it
+make test-swift    # XCTest suite
+```
+
+See `mlx-mac/README.md` for the operator guide and `mlx-mac/docs/premium/` for the feature specs.
+
 ## Run
 
 ```bash
