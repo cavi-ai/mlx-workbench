@@ -41,7 +41,7 @@ enum CanarySuite {
             id: "echo",
             title: "Echo",
             prompt: "Reply with exactly this token and nothing else: CRIMSON-OKAPI-42",
-            maxTokens: 32,
+            maxTokens: 256,  // thinking models can spend >100 tokens on reasoning before answering
             requiredSubstrings: ["CRIMSON-OKAPI-42"],
             minResponseLength: 1
         ),

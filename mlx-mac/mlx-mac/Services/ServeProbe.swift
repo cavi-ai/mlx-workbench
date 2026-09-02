@@ -35,7 +35,8 @@ struct ProbePrompt: Equatable, Sendable {
 
 protocol EndpointProbing: Sendable {
     func isReady(baseURL: URL) async -> Bool
-    func chat(baseURL: URL, prompt: String, maxTokens: Int) async throws -> ProbeSample
+    func listModels(baseURL: URL) async -> [String]
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample
 }
 
 enum ServeProbeError: LocalizedError {
@@ -108,11 +109,13 @@ struct ServeProbe: Sendable {
             guard await waitUntilReady(baseURL: baseURL) else {
                 throw ServeProbeError.serverNeverReady(timeout: readyTimeout)
             }
+            let modelID = await resolveModelID(baseURL: baseURL, modelPath: modelPath)
             var samples: [String: ProbeSample] = [:]
             for prompt in prompts {
                 try Task.checkCancellation()
                 samples[prompt.id] = try await prober.chat(
                     baseURL: baseURL,
+                    model: modelID,
                     prompt: prompt.prompt,
                     maxTokens: prompt.maxTokens
                 )
@@ -124,6 +127,17 @@ struct ServeProbe: Sendable {
             try? await lifecycle.stop(port)
             throw error
         }
+    }
+
+    /// The model id the server will accept: the served identity when the
+    /// server lists it, else the first listed model, else the identity.
+    /// (A bogus model id makes mlx_lm.server try to resolve it against the
+    /// Hub — slow failure, or a hang when the network is unhappy.)
+    private func resolveModelID(baseURL: URL, modelPath: String) async -> String {
+        let identity = HFRepoID.serveIdentity(for: modelPath)
+        let listed = await prober.listModels(baseURL: baseURL)
+        if listed.contains(identity) { return identity }
+        return listed.first ?? identity
     }
 
     private func waitUntilReady(baseURL: URL) async -> Bool {
@@ -209,13 +223,22 @@ struct OpenAIEndpointProber: EndpointProbing {
         return (200..<300).contains(http.statusCode)
     }
 
-    func chat(baseURL: URL, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+    func listModels(baseURL: URL) async -> [String] {
+        var request = URLRequest(url: baseURL.appendingPathComponent("v1/models"))
+        request.timeoutInterval = 5
+        guard let result = try? await session.data(for: request),
+              let object = try? JSONSerialization.jsonObject(with: result.0) as? [String: Any],
+              let models = object["data"] as? [[String: Any]] else { return [] }
+        return models.compactMap { $0["id"] as? String }
+    }
+
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/chat/completions"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = requestTimeout
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": "probe",
+            "model": model,
             "messages": [["role": "user", "content": prompt]],
             "max_tokens": maxTokens,
             "temperature": 0,
@@ -242,11 +265,15 @@ struct OpenAIEndpointProber: EndpointProbing {
                 completionTokens = count
             }
             if let choices = chunk["choices"] as? [[String: Any]],
-               let delta = choices.first?["delta"] as? [String: Any],
-               let content = delta["content"] as? String,
-               !content.isEmpty {
-                if firstTokenAt == nil { firstTokenAt = Date() }
-                text += content
+               let delta = choices.first?["delta"] as? [String: Any] {
+                // Thinking models (Qwen3 et al.) put output in `reasoning`
+                // with empty `content`; both count as the response.
+                let piece = (delta["content"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                    ?? (delta["reasoning"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                if let piece {
+                    if firstTokenAt == nil { firstTokenAt = Date() }
+                    text += piece
+                }
             }
         }
 

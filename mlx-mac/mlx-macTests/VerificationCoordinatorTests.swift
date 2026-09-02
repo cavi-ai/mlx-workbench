@@ -289,9 +289,11 @@ private actor CompletionGate {
 private struct StubVerificationProber: EndpointProbing {
     let responder: @Sendable (String) async throws -> ProbeSample
 
+    func listModels(baseURL: URL) async -> [String] { [] }
+
     func isReady(baseURL: URL) async -> Bool { true }
 
-    func chat(baseURL: URL, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
         let id = CanarySuite.cases.first(where: { $0.prompt == prompt })?.id ?? "unknown"
         return try await responder(id)
     }

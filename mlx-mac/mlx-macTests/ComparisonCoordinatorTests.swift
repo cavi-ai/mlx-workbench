@@ -278,9 +278,11 @@ private actor ProbeGate {
 private struct StubComparisonProber: EndpointProbing {
     let gate: ProbeGate?
 
+    func listModels(baseURL: URL) async -> [String] { [] }
+
     func isReady(baseURL: URL) async -> Bool { true }
 
-    func chat(baseURL: URL, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
         if let gate { await gate.wait() }
         if prompt == "Say OK." {
             return ProbeSample(text: "OK", completionTokens: 2, timeToFirstTokenSeconds: 0.01, durationSeconds: 0.02, metricsEstimated: false)

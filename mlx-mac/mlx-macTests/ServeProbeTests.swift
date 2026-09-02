@@ -85,8 +85,29 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertFalse(recorded.contains { $0.hasPrefix("chat") })
     }
 
-    func testMissingPreviewHashDoesNotStart() async {
-        let events = LifecycleRecorder()
+    func testChatsUseServedIdentityWhenListed() async throws {
+        let models = ModelListBox(listed: ["mlx-community/Qwen3-0.6B-4bit"])
+        let probe = makeProbeWithModels(models)
+        let cachePath = "/Users/x/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/abc"
+
+        _ = try await probe.run(modelPath: cachePath)
+
+        let used = await models.usedModels
+        XCTAssertTrue(used.allSatisfy { $0 == "mlx-community/Qwen3-0.6B-4bit" })
+        XCTAssertFalse(used.isEmpty)
+    }
+
+    func testChatsFallBackToFirstListedModelWhenIdentityUnlisted() async throws {
+        let models = ModelListBox(listed: ["other/loaded-model"])
+        let probe = makeProbeWithModels(models)
+
+        _ = try await probe.run(modelPath: "/models/outside-cache")
+
+        let used = await models.usedModels
+        XCTAssertTrue(used.allSatisfy { $0 == "other/loaded-model" })
+    }
+
+    func testMissingPreviewHashDoesNotStart() async {        let events = LifecycleRecorder()
         let probe = makeProbe(events: events, previewHash: "") { _ in self.sample() }
 
         do {
@@ -102,7 +123,38 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertFalse(recorded.contains { $0.hasPrefix("start") })
     }
 
+    private func makeProbeWithModels(_ models: ModelListBox) -> ServeProbe {
+        ServeProbe(
+            lifecycle: ServeLifecycle(
+                preview: { _, _ in "hash-1" },
+                start: { _, _, _ in },
+                stop: { _ in }
+            ),
+            prober: models,
+            readyPollIntervalNanoseconds: 1_000_000,
+            pickPort: { 9999 }
+        )
+    }
+
     private enum StubError: Error { case boom }
+}
+
+private actor ModelListBox {
+    let listed: [String]
+    private(set) var usedModels: [String] = []
+
+    init(listed: [String]) { self.listed = listed }
+
+    func record(_ model: String) { usedModels.append(model) }
+}
+
+extension ModelListBox: EndpointProbing {
+    func isReady(baseURL: URL) async -> Bool { true }
+    func listModels(baseURL: URL) async -> [String] { listed }
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+        record(model)
+        return ProbeSample(text: "ok", completionTokens: 5, timeToFirstTokenSeconds: 0.05, durationSeconds: 0.2, metricsEstimated: false)
+    }
 }
 
 private actor LifecycleRecorder {
@@ -114,9 +166,11 @@ private struct StubProber: EndpointProbing {
     let ready: Bool
     let responder: @Sendable (String) throws -> ProbeSample
 
+    func listModels(baseURL: URL) async -> [String] { [] }
+
     func isReady(baseURL: URL) async -> Bool { ready }
 
-    func chat(baseURL: URL, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
         let id = CanarySuite.cases.first(where: { $0.prompt == prompt })?.id ?? "unknown"
         return try responder(id)
     }
