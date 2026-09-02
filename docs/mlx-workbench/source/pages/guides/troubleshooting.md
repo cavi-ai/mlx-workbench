@@ -19,6 +19,21 @@ it expects the checkout root.
 Run `make install` and `make doctor`. Confirm that the project `.venv` uses
 Python 3.12. The foreground command `make run` exposes startup diagnostics.
 
+## GGUF conversions fail at the quantization step
+
+The converter dequantizes GGUF weights with `transformers` and then invokes
+`mlx_lm.convert`. Two known environment failures:
+
+- `accelerate is required when loading a GGUF file` — run `make install`;
+  `accelerate` is part of the convert package set.
+- `ModelArgs.__init__() missing ... 'rope_theta'` — `transformers` 5.x writes
+  nested rope parameters that the pinned `mlx-lm` does not read. The workbench
+  pins `transformers<5`; re-run `make install` to align an older environment.
+
+If conversion still fails, confirm that `mlx_lm.convert` resolves to the
+project `.venv` (`make run` logs the environment). A separately installed
+mlx-lm earlier on `PATH` (for example a uv tool) can shadow the project copy.
+
 ## A queue file is invalid
 
 Invalid persisted queue state is preserved rather than overwritten. Open

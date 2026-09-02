@@ -1,6 +1,6 @@
 # 04 — Disk Pressure Advisor
 
-**Status:** implemented (stale / superseded / cross-root detectors, batched quarantine apply; doctor-prune cache path remains a follow-up) · **Tier:** Premium
+**Status:** implemented (stale / superseded / cross-root detectors, batched quarantine apply, HF-cache reclaim via doctor prune preview/confirm) · **Tier:** Premium
 
 ## Problem
 
