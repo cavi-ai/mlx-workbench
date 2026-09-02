@@ -121,6 +121,8 @@
 		24BBLD064 /* FitAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF062 /* FitAdvisor.swift */; };
 		24BBLD065 /* FitAdvisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF063 /* FitAdvisorTests.swift */; };
 		24BBLD069 /* AlertNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF067 /* AlertNotifier.swift */; };
+		24BBLD06A /* HFRepoID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF068 /* HFRepoID.swift */; };
+		24BBLD06B /* HFRepoIDTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF069 /* HFRepoIDTests.swift */; };
 		24BBLD067 /* PromptHistoryImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF065 /* PromptHistoryImport.swift */; };
 		24BBLD068 /* ComparisonPhase2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF066 /* ComparisonPhase2Tests.swift */; };
 		24BBLD066 /* PremiumSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF064 /* PremiumSettingsTests.swift */; };
@@ -241,6 +243,8 @@
 		24FREF062 /* FitAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FitAdvisor.swift; path = Services/FitAdvisor.swift; sourceTree = "<group>"; };
 		24FREF063 /* FitAdvisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitAdvisorTests.swift; sourceTree = "<group>"; };
 		24FREF067 /* AlertNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AlertNotifier.swift; path = Services/AlertNotifier.swift; sourceTree = "<group>"; };
+		24FREF068 /* HFRepoID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HFRepoID.swift; path = Models/HFRepoID.swift; sourceTree = "<group>"; };
+		24FREF069 /* HFRepoIDTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HFRepoIDTests.swift; sourceTree = "<group>"; };
 		24FREF065 /* PromptHistoryImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PromptHistoryImport.swift; path = Services/PromptHistoryImport.swift; sourceTree = "<group>"; };
 		24FREF066 /* ComparisonPhase2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonPhase2Tests.swift; sourceTree = "<group>"; };
 		24FREF064 /* PremiumSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PremiumSettingsTests.swift; sourceTree = "<group>"; };
@@ -338,6 +342,7 @@
 				24FREF061 /* FitModels.swift */,
 				24FREF062 /* FitAdvisor.swift */,
 				24FREF067 /* AlertNotifier.swift */,
+				24FREF068 /* HFRepoID.swift */,
 				24FREF065 /* PromptHistoryImport.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				24FREF025 /* CatalogClient.swift */,
@@ -396,6 +401,7 @@
 				24FREF044 /* VerificationModelTests.swift */,
 				24FREF045 /* ServeProbeTests.swift */,
 				24FREF046 /* VerificationCoordinatorTests.swift */,
+				24FREF069 /* HFRepoIDTests.swift */,
 				24FREF04A /* ComparisonCoordinatorTests.swift */,
 				24FREF04F /* WiringCoordinatorTests.swift */,
 				24FREF054 /* EndpointSupervisorTests.swift */,
@@ -636,6 +642,7 @@
 				24BBLD063 /* FitModels.swift in Sources */,
 				24BBLD064 /* FitAdvisor.swift in Sources */,
 				24BBLD069 /* AlertNotifier.swift in Sources */,
+				24BBLD06A /* HFRepoID.swift in Sources */,
 				24BBLD067 /* PromptHistoryImport.swift in Sources */,
 
 			);
@@ -656,6 +663,7 @@
 				24BBLD046 /* VerificationModelTests.swift in Sources */,
 				24BBLD047 /* ServeProbeTests.swift in Sources */,
 				24BBLD048 /* VerificationCoordinatorTests.swift in Sources */,
+				24BBLD06B /* HFRepoIDTests.swift in Sources */,
 				24BBLD04C /* ComparisonCoordinatorTests.swift in Sources */,
 				24BBLD051 /* WiringCoordinatorTests.swift in Sources */,
 				24BBLD056 /* EndpointSupervisorTests.swift in Sources */,

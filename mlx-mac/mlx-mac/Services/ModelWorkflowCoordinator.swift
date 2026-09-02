@@ -300,7 +300,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             update(serveState: .failed, message: "Serve status is unavailable; serving remains blocked.", errorMessage: AppHost.render(error))
             return
         }
-        guard !servers.contains(where: { $0.state?.lowercased() == "running" && $0.repo == model }) else {
+        guard !servers.contains(where: { serverRunsModel($0, model) }) else {
             update(serveState: .failed, message: "A server is already running for the selected model.", errorMessage: "Stop the authoritative running server before starting another.")
             return
         }
@@ -342,7 +342,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             )
             return
         }
-        guard !servers.contains(where: { $0.state?.lowercased() == "running" && $0.repo == model }) else {
+        guard !servers.contains(where: { serverRunsModel($0, model) }) else {
             update(serveState: .failed, message: "A server is already running for the selected model.", errorMessage: "Stop the authoritative running server before starting another.")
             return
         }
@@ -352,7 +352,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             _ = try await api.serveStart(model, runtime, port, hash)
             let statusAvailable = await refreshOperationalStatus()
             guard statusAvailable,
-                  servers.contains(where: { $0.state?.lowercased() == "running" && $0.repo == model }) else {
+                  servers.contains(where: { serverRunsModel($0, model) }) else {
                 update(serveState: .failed, message: "Server start was requested, but authoritative status did not report it running.", errorMessage: "Refresh server status before trying again.", persist: true)
                 return
             }
@@ -368,7 +368,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         isServeSubmissionInFlight = true
         defer { isServeSubmissionInFlight = false }
         guard let server = servers.first(where: {
-            $0.state?.lowercased() == "running" && $0.repo == modelPath
+            serverRunsModel($0, modelPath)
         }), let port = server.port else {
             update(serveState: .failed, message: "No authoritative running server is available for the selected model.", errorMessage: "Selected model server status is unavailable.")
             return
@@ -382,7 +382,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 update(serveState: .failed, message: "Server stop was requested, but authoritative status is unavailable.", errorMessage: "Refresh server status before assuming the server stopped.", persist: true)
                 return
             }
-            if servers.contains(where: { $0.state?.lowercased() == "running" && $0.repo == modelPath }) {
+            if servers.contains(where: { serverRunsModel($0, modelPath) }) {
                 update(serveState: .running, message: "The authoritative server is still running.", errorMessage: "Stop was requested but has not been confirmed.", persist: true)
             } else {
                 update(serveState: .stopped, message: "Server stopped.", errorMessage: .some(nil), persist: true)
@@ -665,6 +665,14 @@ final class ModelWorkflowCoordinator: ObservableObject {
             .standardizedFileURL
             .resolvingSymlinksInPath()
             .path
+    }
+
+    /// Serve status reports the repo id for HF-cache models while the
+    /// workflow tracks filesystem paths; normalize both sides through the
+    /// serve identity before comparing.
+    private func serverRunsModel(_ server: ServerInfo, _ modelPath: String) -> Bool {
+        guard server.state?.lowercased() == "running" else { return false }
+        return HFRepoID.serveIdentity(for: server.repo ?? "") == HFRepoID.serveIdentity(for: modelPath)
     }
 
     private func makeWorkflow(
