@@ -231,7 +231,19 @@ final class ModelWorkflowCoordinator: ObservableObject {
         defer { isConversionSubmissionInFlight = false }
         do {
             let response = try await api.convertStart(workflow.sourcePath, qBits, workflow.outputPath, hash)
-            guard let receipt = response.string("receipt"), !receipt.isEmpty else {
+            // Newer agents return the receipt as an object (no path inside);
+            // the authoritative receipt path only exists in convert status.
+            // Prefer a plain string receipt (older agents), else resolve the
+            // just-started job by output path.
+            var receipt = response.string("receipt")
+            if receipt == nil, let jobs = try? await api.convertStatus() {
+                let target = canonicalPath(workflow.outputPath)
+                receipt = jobs.first(where: {
+                    guard let out = $0.out else { return false }
+                    return canonicalPath(out) == target
+                })?.receipt
+            }
+            guard let receipt, !receipt.isEmpty else {
                 fail("Conversion start did not include a job receipt.")
                 return
             }

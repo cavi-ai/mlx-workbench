@@ -298,6 +298,25 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
+    func testConfirmResolvesReceiptFromStatusWhenStartReturnsReceiptObject() async {
+        // mlx-agent ≥ 0.5.x: convert start returns receipt as an object; the
+        // authoritative receipt path only exists in convert status.
+        let startedJob = Job(receipt: "/receipts/stories.json", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: 42, logPath: nil, startedAt: nil, completedAt: nil, state: "running")
+        let host = await makeHost(
+            confirmResponse: ["status": "started", "receipt": ["pid": 42]],
+            jobs: [startedJob]
+        )
+        await MainActor.run { host.modelWorkflow.inspect(source: ggufSource, snapshot: nil) }
+        await host.modelWorkflow.preview(qBits: 4, out: nil)
+
+        await host.modelWorkflow.confirm(qBits: 4)
+
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .queued)
+            XCTAssertEqual(host.modelWorkflow.workflow.jobReceipt, "/receipts/stories.json")
+        }
+    }
+
     private func makeStore() -> ModelWorkflowStore {
         ModelWorkflowStore(fileURL: temporaryURL("workflows.json"))
     }
@@ -377,6 +396,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         snapshot: LibrarySnapshot? = nil,
         preview: [String: Any] = ["preview_hash": "preview-1"],
         confirmReceipt: String = "receipt-1",
+        confirmResponse: [String: Any]? = nil,
         jobs: [Job] = [],
         statusError: Error? = nil,
         onStatus: (@Sendable () async -> Void)? = nil,
@@ -385,7 +405,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
     ) async -> AppHost {
         let api = ModelWorkflowAPI(
             convertPreview: { _, _, _ in preview },
-            convertStart: { _, _, _, _ in ["receipt": confirmReceipt] },
+            convertStart: { _, _, _, _ in confirmResponse ?? ["receipt": confirmReceipt] },
             convertStatus: {
                 if let onStatus { await onStatus() }
                 if let statusError { throw statusError }

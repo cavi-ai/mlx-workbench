@@ -47,6 +47,62 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
 #endif
     }
 
+    func testConvertPreviewUnwrapsPlanEnvelope() async throws {
+        // mlx-agent ≥ 0.5.x wraps previews in {plan, requires_confirmation}.
+        let agent = try FixtureAgent(
+            convertPreviewPayload: [
+                "plan": ["preview_hash": "hash-plan", "out": "/out"],
+                "requires_confirmation": true,
+            ]
+        )
+        defer { agent.remove() }
+
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+        let result = try await api.convertPreview(ggufPath: "/m/a.gguf", qBits: 4, out: nil)
+
+        XCTAssertEqual(result["preview_hash"] as? String, "hash-plan")
+        XCTAssertEqual(result["out"] as? String, "/out")
+    }
+
+    func testConvertPreviewAcceptsFlatLegacyShape() async throws {
+        let agent = try FixtureAgent(
+            convertPreviewPayload: ["preview_hash": "hash-flat", "out": "/out"]
+        )
+        defer { agent.remove() }
+
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+        let result = try await api.convertPreview(ggufPath: "/m/a.gguf", qBits: 4, out: nil)
+
+        XCTAssertEqual(result["preview_hash"] as? String, "hash-flat")
+    }
+
+    func testRunPrependsInterpreterDirectoryToPath() async throws {
+        let agent = try FixtureAgent(pathProbe: true)
+        defer { agent.remove() }
+
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+        let result = try await api.raw(["probe"])
+
+        let reported = try XCTUnwrap(result["process_path"] as? String)
+        let python = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PYTHON"]
+            ?? ProcessInfo.processInfo.environment["PYTHON"]
+            ?? "python3"
+        let resolvedPython = python.hasPrefix("/") ? python : findOnPath(python)
+        let expectedDir = URL(fileURLWithPath: resolvedPython).deletingLastPathComponent().path
+        XCTAssertTrue(
+            reported.hasPrefix(expectedDir + ":"),
+            "agent PATH should start with the interpreter's directory; got \(reported)"
+        )
+    }
+
+    private func findOnPath(_ name: String) -> String {
+        for dir in (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":") {
+            let full = "\(dir)/\(name)"
+            if FileManager.default.isExecutableFile(atPath: full) { return full }
+        }
+        return name
+    }
+
     private func fixture(named name: String) throws -> [String: Any] {
         let directory = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -60,22 +116,47 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
 private final class FixtureAgent {
     let root: URL
 
-    init(scanPayload: [String: Any]) throws {
+    private init() {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-fixture-agent-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    convenience init(scanPayload: [String: Any]) throws {
+        self.init()
+        try write(scriptAssertion: "\"convert\" in sys.argv and \"scan\" in sys.argv", payload: scanPayload)
+    }
+
+    convenience init(convertPreviewPayload: [String: Any]) throws {
+        self.init()
+        try write(scriptAssertion: "\"convert\" in sys.argv and \"start\" in sys.argv and \"--confirm\" not in sys.argv", payload: convertPreviewPayload)
+    }
+
+    /// Emits the child process PATH in the payload, for the PATH-prepend test.
+    convenience init(pathProbe: Bool) throws {
+        self.init()
         let scripts = root.appendingPathComponent("scripts", isDirectory: true)
         try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import json
+        import os
+        print(json.dumps({"status": "ok", "data": {"process_path": os.environ.get("PATH", "")}}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
 
+    private func write(scriptAssertion: String, payload: [String: Any]) throws {
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
         let envelope: [String: Any] = [
             "status": "ok",
-            "data": scanPayload,
+            "data": payload,
         ]
         let encoded = try JSONSerialization.data(withJSONObject: envelope).base64EncodedString()
         let script = """
         import base64
         import sys
 
-        assert "convert" in sys.argv and "scan" in sys.argv and "--json" in sys.argv
+        assert \(scriptAssertion) and "--json" in sys.argv
         print(base64.b64decode("\(encoded)").decode("utf-8"))
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))

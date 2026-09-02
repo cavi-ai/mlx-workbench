@@ -107,6 +107,13 @@ struct CLIProcess {
         let process = Process()
         process.executableURL = pythonURL
         process.arguments = Array(command[1...])
+        // The agent resolves sibling executables (e.g. mlx_lm.convert) via
+        // PATH; put the running interpreter's directory first so a uv-tool
+        // or Homebrew install of a different version cannot shadow it.
+        var environment = ProcessInfo.processInfo.environment
+        let pythonDirectory = pythonURL.deletingLastPathComponent().path
+        environment["PATH"] = pythonDirectory + ":" + (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+        process.environment = environment
 
         let stdout = Pipe()
         let stderr = Pipe()
