@@ -4,7 +4,7 @@ Local UI for the [mlx-agent](https://github.com/cavi-ai/mlx-agent) model lifecyc
 
 This app is a browser front end. Conversion, discovery, doctor, and serve logic live in mlx-agent; workbench shells out to `scripts/mlx-agent` with `--json` and renders what comes back. The two repositories stay independently versioned: no Python imports from mlx-agent, one subprocess boundary.
 
-The workbench package itself is stdlib-only (no pip deps for the UI server). `make install` creates a local `.venv` and adds convert/serve packages (`torch`, `transformers`, `gguf`, `mlx-lm`). The HTTP server binds loopback only. Child mlx-agent commands may contact the Hugging Face Hub (Scout / Doctor).
+The workbench package itself is stdlib-only (no pip deps for the UI server). `make install` creates a local `.venv` and adds convert/serve packages (`torch`, `transformers` 4.x, `gguf`, `mlx-lm`, `accelerate`). The HTTP server binds loopback only. Child mlx-agent commands may contact the Hugging Face Hub (Scout / Doctor).
 
 ## Requirements
 
@@ -17,7 +17,7 @@ The workbench package itself is stdlib-only (no pip deps for the UI server). `ma
 ```bash
 git clone --recurse-submodules https://github.com/cavi-ai/mlx-workbench.git
 cd mlx-workbench
-make install    # submodule + .venv (Python 3.12) + torch/transformers/gguf/mlx-lm
+make install    # submodule + .venv (Python 3.12) + torch/transformers-4/gguf/mlx-lm/accelerate
 make start
 ```
 

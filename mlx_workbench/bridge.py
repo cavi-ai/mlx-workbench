@@ -9,6 +9,7 @@ stay independently versioned.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -681,6 +682,13 @@ def read_log(agent_path, log_path, max_bytes=MAX_LOG_BYTES, runner=None):
 
 
 def _default_runner(command, timeout):
+    # The agent shells out to sibling executables (e.g. mlx_lm.convert) via
+    # PATH; without this, a uv-tool or Homebrew install of a different
+    # version shadows the project venv's. The running interpreter's bin
+    # directory is the one whose packages the agent must see.
+    env = dict(os.environ)
+    bin_dir = str(Path(sys.executable).resolve().parent)
+    env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
     completed = subprocess.run(
         command,
         stdin=subprocess.DEVNULL,
@@ -688,6 +696,7 @@ def _default_runner(command, timeout):
         stderr=subprocess.PIPE,
         timeout=timeout,
         check=False,
+        env=env,
     )
     return {
         "returncode": completed.returncode,

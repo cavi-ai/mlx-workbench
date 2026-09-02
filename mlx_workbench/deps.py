@@ -6,7 +6,7 @@ import importlib.util
 import shutil
 
 
-CONVERT_MODULES = ("torch", "transformers", "gguf")
+CONVERT_MODULES = ("torch", "transformers", "gguf", "accelerate")
 CONVERT_EXECUTABLES = ("mlx_lm.convert",)
 SERVE_EXECUTABLES = ("mlx_lm.server",)
 INSTALL_HINT = "make install"

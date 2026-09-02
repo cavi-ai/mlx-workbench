@@ -19,7 +19,9 @@ PID_FILE := $(RUN_DIR)/mlx-workbench.pid
 LOG_FILE := $(RUN_DIR)/mlx-workbench.log
 LAUNCHER := scripts/mlx-workbench
 URL      := http://$(HOST):$(PORT)/
-CONVERT_PKGS := torch transformers gguf mlx-lm
+# transformers 5 writes nested rope_parameters; mlx-lm 0.31 expects the
+# top-level rope_theta key in GGUF→HF intermediates. Pin transformers 4.
+CONVERT_PKGS := torch 'transformers<5' gguf mlx-lm accelerate
 DOCS_VERSION := $(shell $(PYTHON) -c 'from mlx_workbench import __version__; print(__version__)')
 DOCS_TAG     := v$(DOCS_VERSION)
 DOCS_COMMIT  ?= $(shell git rev-parse HEAD)
@@ -34,7 +36,7 @@ help:
 	@printf '%s\n' \
 		'macOS Apple Silicon only.' \
 		'' \
-		'make install  - submodule + .venv + torch/transformers/gguf/mlx-lm' \
+		'make install  - submodule + .venv + torch/transformers/gguf/mlx-lm/accelerate' \
 		'make start    - background UI' \
 		'make stop     - stop background UI' \
 		'make restart  - stop then start' \

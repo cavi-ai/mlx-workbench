@@ -53,10 +53,21 @@ actor WorkbenchAPI {
 
     // MARK: - Convert
 
+    /// Convert/serve/lora/fuse previews wrap their plan in
+    /// `{plan, requires_confirmation}` (observed mlx-agent ≥ v0.5.x); the
+    /// preview hash and plan fields live inside `plan`. Older agents returned
+    /// the fields at the top level — accept both.
+    static func unwrapPlan(_ data: [String: Any]) -> [String: Any] {
+        if let plan = data["plan"] as? [String: Any], plan["preview_hash"] != nil {
+            return plan
+        }
+        return data
+    }
+
     func convertPreview(ggufPath: String, qBits: Int, out: String?) throws -> [String: Any] {
         var argv = ["convert", "start", "--gguf", ggufPath, "--q-bits", String(qBits)]
         if let out { argv.append(contentsOf: ["--out", out]) }
-        return try raw(argv)
+        return Self.unwrapPlan(try raw(argv))
     }
 
     func convertRepoPreview(repo: String, qBits: Int, out: String?,
@@ -64,7 +75,7 @@ actor WorkbenchAPI {
         var argv = ["convert", "start", "--repo", repo, "--q-bits", String(qBits)]
         if let out { argv.append(contentsOf: ["--out", out]) }
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
-        return try raw(argv)
+        return Self.unwrapPlan(try raw(argv))
     }
 
     func convertStart(ggufPath: String, qBits: Int, out: String?,
@@ -217,7 +228,7 @@ actor WorkbenchAPI {
     func servePreview(repo: String, runtime: String, port: Int?) throws -> [String: Any] {
         var argv = ["serve", "start", "--repo", repo, "--runtime", runtime]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
-        return try raw(argv)
+        return Self.unwrapPlan(try raw(argv))
     }
 
     func serveStart(repo: String, runtime: String, port: Int?,
@@ -240,7 +251,7 @@ actor WorkbenchAPI {
         var argv = ["lora", "start", "--repo", repo, "--data", data]
         if let iters { argv.append(contentsOf: ["--iters", String(iters)]) }
         if let out { argv.append(contentsOf: ["--out", out]) }
-        return try raw(argv)
+        return Self.unwrapPlan(try raw(argv))
     }
 
     func loraStart(repo: String, data: String, previewHash: String,
@@ -257,7 +268,7 @@ actor WorkbenchAPI {
     func fusePreview(repo: String, adapter: String, out: String?) throws -> [String: Any] {
         var argv = ["fuse", "start", "--repo", repo, "--adapter", adapter]
         if let out { argv.append(contentsOf: ["--out", out]) }
-        return try raw(argv)
+        return Self.unwrapPlan(try raw(argv))
     }
 
     func fuseStart(repo: String, adapter: String, previewHash: String,

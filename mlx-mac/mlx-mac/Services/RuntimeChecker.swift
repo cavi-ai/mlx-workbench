@@ -6,7 +6,7 @@ import Foundation
 // conversions/serving for the presence of modules and executables.
 
 struct RuntimeChecker {
-    private static let convertModules = ["torch", "transformers", "gguf"]
+    private static let convertModules = ["torch", "transformers", "gguf", "accelerate"]
     private static let convertExecutables = ["mlx_lm.convert"]
     private static let serveExecutables = ["mlx_lm.server"]
     private static let installHint = "make install"

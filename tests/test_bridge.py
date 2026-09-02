@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -68,6 +69,19 @@ class CliLocationTests(unittest.TestCase):
     def test_health_reports_missing_cli(self):
         health = bridge.agent_health(str(self.root))
         self.assertFalse(health["ok"])
+
+
+class DefaultRunnerTests(unittest.TestCase):
+    def test_default_runner_prepends_interpreter_bin_dir_to_path(self):
+        # The agent resolves sibling executables (mlx_lm.convert) via PATH;
+        # the running interpreter's directory must win over uv/Homebrew.
+        result = bridge._default_runner(["/usr/bin/env"], timeout=10)
+        self.assertEqual(result["returncode"], 0)
+        path_line = next(
+            line for line in result["stdout"].splitlines() if line.startswith("PATH=")
+        )
+        expected = str(Path(sys.executable).resolve().parent)
+        self.assertTrue(path_line.startswith("PATH=" + expected + ":"))
 
 
 class RunTests(unittest.TestCase):
