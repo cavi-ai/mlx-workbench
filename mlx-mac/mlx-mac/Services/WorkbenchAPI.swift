@@ -225,8 +225,15 @@ actor WorkbenchAPI {
 
     // MARK: - Serve
 
+    /// The pinned agent's serve accepts HF repo ids, not filesystem paths.
+    /// HF-cache-resident library models are translated to their repo id at
+    /// this boundary; everything else passes through unchanged.
+    static func serveRepo(_ repo: String) -> String {
+        HFRepoID.serveIdentity(for: repo)
+    }
+
     func servePreview(repo: String, runtime: String, port: Int?) throws -> [String: Any] {
-        var argv = ["serve", "start", "--repo", repo, "--runtime", runtime]
+        var argv = ["serve", "start", "--repo", Self.serveRepo(repo), "--runtime", runtime]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         return Self.unwrapPlan(try raw(argv))
     }
@@ -234,7 +241,7 @@ actor WorkbenchAPI {
     func serveStart(repo: String, runtime: String, port: Int?,
                     previewHash: String) throws -> [String: Any] {
         var argv = [
-            "serve", "start", "--repo", repo, "--runtime", runtime,
+            "serve", "start", "--repo", Self.serveRepo(repo), "--runtime", runtime,
             "--confirm", "--preview-hash", previewHash,
         ]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }

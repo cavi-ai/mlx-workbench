@@ -317,6 +317,30 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
+    func testConfirmServeMatchesAuthoritativeServerByRepoID() async {
+        // The server record reports the HF repo id; the workflow tracks the
+        // HF-cache snapshot path. They must reconcile as the same model.
+        let cachePath = "/Users/x/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/abc123"
+        let runningServer = ServerInfo(repo: "mlx-community/Qwen3-0.6B-4bit", runtime: "mlx_lm", port: 8080, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "srv-1")
+        let started = FlagBox()
+        let host = await makeHost(
+            onServeStart: { _, _ in await started.set(true) },
+            servers: [],
+            dynamicServers: { await started.value ? [runningServer] : [] }
+        )
+        await MainActor.run {
+            host.modelWorkflow.restore(
+                makeWorkflow(state: .completed, receipt: "receipt-1", completedModelPath: cachePath)
+            )
+        }
+
+        await host.modelWorkflow.previewServe(runtime: "mlx_lm", port: 8080)
+        await host.modelWorkflow.confirmServe(runtime: "mlx_lm", port: 8080)
+
+        let state = await MainActor.run { host.modelWorkflow.workflow }
+        XCTAssertEqual(state.serveState, .running)
+    }
+
     private func makeStore() -> ModelWorkflowStore {
         ModelWorkflowStore(fileURL: temporaryURL("workflows.json"))
     }
@@ -401,6 +425,8 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         statusError: Error? = nil,
         onStatus: (@Sendable () async -> Void)? = nil,
         onServeStart: (@Sendable (String, Int?) async -> Void)? = nil,
+        servers: [ServerInfo] = [],
+        dynamicServers: (@Sendable () async -> [ServerInfo])? = nil,
         scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil
     ) async -> AppHost {
         let api = ModelWorkflowAPI(
@@ -416,7 +442,10 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
                 if let onServeStart { await onServeStart(runtime, port) }
                 return ["receipt": "serve-receipt"]
             },
-            serveStatus: { [] },
+            serveStatus: {
+                if let dynamicServers { return await dynamicServers() }
+                return servers
+            },
             serveStop: { _ in [:] }
         )
         let store = makeStore()
@@ -461,6 +490,11 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             }
         }
     }
+}
+
+private actor FlagBox {
+    private(set) var value = false
+    func set(_ newValue: Bool) { value = newValue }
 }
 
 @MainActor
