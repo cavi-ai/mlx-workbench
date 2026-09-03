@@ -21,45 +21,53 @@ struct ModelDetailsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                actionRow
+                WorkbenchSurface { actionRow }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    detailRow("Path", model.item.path)
-                    detailRow("Source", sourceIdentity)
-                    detailRow("Architecture", known(model.item.architecture))
-                    detailRow("Parameters", known(model.item.parameters))
-                    detailRow("Quantization", known(model.item.quantization))
-                    detailRow("Outputs", lines(model.outputPaths))
-                    detailRow("Readiness", model.readiness.title)
-                    detailRow("Duplicate status", duplicateStatus)
-                    detailRow("Prepare destination", prepareDestination)
-                    detailRow("Why", readinessExplanation)
-                    detailRow("Source paths", lines(model.sourcePaths))
-                    detailRow("Signature", known(model.item.signature))
-                    detailRow("Size", ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))
+                WorkbenchSurface {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionTitle(text: "Model identity")
+                        detailRow("Path", model.item.path)
+                        detailRow("Source", sourceIdentity)
+                        detailRow("Architecture", known(model.item.architecture))
+                        detailRow("Parameters", known(model.item.parameters))
+                        detailRow("Quantization", known(model.item.quantization))
+                        detailRow("Outputs", lines(model.outputPaths))
+                        detailRow("Readiness", model.readiness.title)
+                        detailRow("Duplicate status", duplicateStatus)
+                        detailRow("Prepare destination", prepareDestination)
+                        detailRow("Why", readinessExplanation)
+                        detailRow("Source paths", lines(model.sourcePaths))
+                        detailRow("Signature", known(model.item.signature))
+                        detailRow("Size", ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))
+                    }
                 }
                 .textSelection(.enabled)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionTitle(text: "Evidence timestamps")
-                    detailRow("File modified", modifiedAtText)
-                    detailRow("Library scan", format(snapshotGeneratedAt))
+                WorkbenchSurface {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionTitle(text: "Evidence timestamps")
+                        detailRow("File modified", modifiedAtText)
+                        detailRow("Library scan", format(snapshotGeneratedAt))
+                    }
                 }
                 .textSelection(.enabled)
 
-                verificationSection
+                WorkbenchSurface { verificationSection }
 
-                lineageSection
+                WorkbenchSurface { lineageSection }
 
                 if let error = model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
+                    WorkbenchSurface {
+                        VStack(alignment: .leading, spacing: 10) {
                         SectionTitle(text: "Observed issue")
                         detailRow("Error", error)
+                        }
                     }
                     .textSelection(.enabled)
                 }
 
-                DisclosureGroup("Raw model evidence") {
+                WorkbenchSurface {
+                    DisclosureGroup("Raw model evidence") {
                     let evidence = LibraryPresentation.userFacingEvidence(model.evidence)
                     Group {
                         if evidence.isEmpty {
@@ -77,19 +85,20 @@ struct ModelDetailsView: View {
                     }
                     .textSelection(.enabled)
                     .padding(.top, 4)
+                    }
                 }
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(model.displayName)
-                    .font(.title2)
-                StatusPill(state: model.readiness.rawValue)
+                    .font(WorkbenchTypography.display)
+                StatusBadge(state: model.readiness.rawValue)
                 Spacer()
                 if appHost.selectedModelPath == model.item.path {
                     Text("Selected")
@@ -98,14 +107,20 @@ struct ModelDetailsView: View {
                 }
             }
 
-            Text("Model identity: \(known(model.item.modelKey))")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+            Text("MODEL IDENTITY / \(known(model.item.modelKey))")
+                .font(WorkbenchTypography.monoUtility)
+                .foregroundColor(WorkbenchColor.graphiteMuted)
         }
     }
 
     private var actionRow: some View {
-        HStack(spacing: 10) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) { actionButtons }
+            VStack(alignment: .leading, spacing: 8) { actionButtons }
+        }
+    }
+
+    @ViewBuilder private var actionButtons: some View {
             Button("Copy Path") {
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
@@ -121,18 +136,16 @@ struct ModelDetailsView: View {
             Button("Prepare to run") {
                 appHost.selectedModelPath = model.item.path
                 appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
-                onRouteSelection("convert")
+                onRouteSelection(AppRoute.prepare.rawValue)
             }
 
             Button("Select for Compare") {
-                selectAndRoute(to: "quant")
+                selectAndRoute(to: AppRoute.compare.rawValue)
             }
 
             Button("Select for Try") {
-                selectAndRoute(to: "serve")
+                selectAndRoute(to: AppRoute.run.rawValue)
             }
-        }
-        .buttonStyle(.bordered)
     }
 
     private var sourceIdentity: String {
@@ -207,7 +220,7 @@ struct ModelDetailsView: View {
                 ForEach(lineage.events) { event in
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: event.kind.systemImage)
-                            .foregroundColor(event.kind == .verificationFailed ? .red : .accentColor)
+                            .foregroundColor(event.kind == .verificationFailed ? WorkbenchColor.systemRed : WorkbenchColor.fluxTeal)
                             .frame(width: 18)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
@@ -215,7 +228,7 @@ struct ModelDetailsView: View {
                                 if event.stale {
                                     Text("predates current bytes")
                                         .font(.caption2)
-                                        .foregroundColor(.orange)
+                                        .foregroundColor(WorkbenchColor.thermalAmber)
                                 }
                                 Spacer()
                                 Text(event.at, format: .dateTime.month(.abbreviated).day().hour().minute())

@@ -16,7 +16,7 @@ struct ScoutView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 catalogSection
                 formSection
                 if isScouting {
@@ -33,19 +33,15 @@ struct ScoutView: View {
                 ErrorBanner(text: errorMessage)
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
     }
 
     private var catalogSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                SectionTitle(text: "Catalog Metadata")
-                Spacer()
-                Button(appHost.isRefreshingCatalog ? "Refreshing…" : "Refresh Metadata") {
-                    Task { await appHost.refreshCatalog() }
-                }
-                .disabled(appHost.isRefreshingCatalog)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) { catalogHeader }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { catalogHeader }
             }
             Text("Metadata only. Local installation truth comes from the Library scan, not this catalog cache.")
                 .font(.caption)
@@ -77,28 +73,44 @@ struct ScoutView: View {
         .formSection {}
     }
 
+    @ViewBuilder
+    private var catalogHeader: some View {
+        SectionTitle(text: "Catalog Metadata")
+        Spacer()
+        Button(appHost.isRefreshingCatalog ? "Refreshing…" : "Refresh Metadata") {
+            Task { await appHost.refreshCatalog() }
+        }
+        .buttonStyle(.bordered)
+        .disabled(appHost.isRefreshingCatalog)
+    }
+
     private var formSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionTitle(text: "Discovery")
-            HStack {
-                Picker("Role", selection: $role) {
-                    ForEach(roleChoices, id: \.self) { choice in
-                        Text(choice.isEmpty ? "Any" : choice).tag(choice)
-                    }
-                }
-                .frame(width: 180)
-                TextField("Limit", text: $limitText)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 80)
-                Toggle("Fast", isOn: $fast)
-                Spacer()
-                Button("Discover") {
-                    discover()
-                }
-                .disabled(isScouting)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { discoveryControls }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { discoveryControls }
             }
         }
         .formSection {}
+    }
+
+    @ViewBuilder
+    private var discoveryControls: some View {
+        Picker("Role", selection: $role) {
+            ForEach(roleChoices, id: \.self) { choice in
+                Text(choice.isEmpty ? "Any" : choice).tag(choice)
+            }
+        }
+        .frame(maxWidth: 180, alignment: .leading)
+        TextField("Limit", text: $limitText)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 80)
+        Toggle("Fast", isOn: $fast)
+        Button("Discover") { discover() }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(isScouting)
     }
 
     private func catalogResults(_ snapshot: CatalogSnapshot) -> some View {

@@ -22,18 +22,21 @@ struct SettingsView: View {
     @State private var comparisonMaxTokensText = "512"
     @State private var isSaving = false
     @State private var notice: String?
+    @State private var noticeIsError = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 form
                 StatusSection
                 if let notice {
-                    Text(notice).font(.caption).foregroundColor(.green)
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundColor(noticeIsError ? WorkbenchColor.systemRed : WorkbenchColor.verifiedGreen)
                 }
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
         .onAppear { loadFromConfig() }
     }
@@ -41,10 +44,9 @@ struct SettingsView: View {
     private var form: some View {
         VStack(alignment: .leading, spacing: 14) {
             SectionTitle(text: "mlx-agent")
-            HStack {
-                TextField("Path to mlx-agent checkout", text: $mlxAgentPath)
-                    .textFieldStyle(.roundedBorder)
-                Button("Detect") { mlxAgentPath = Config.discoverAgentPath() }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { agentPathControls }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { agentPathControls }
             }
 
             SectionTitle(text: "Scan roots")
@@ -70,13 +72,9 @@ struct SettingsView: View {
             }
 
             SectionTitle(text: "Integration host")
-            HStack {
-                TextField("Host", text: $host)
-                    .textFieldStyle(.roundedBorder)
-                Spacer()
-                TextField("Port", text: $portText)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 120)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { hostControls }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { hostControls }
             }
 
             SectionTitle(text: "Quarantine")
@@ -86,7 +84,7 @@ struct SettingsView: View {
             }
 
             SectionTitle(text: "Conversion")
-            HStack(spacing: 24) {
+            HStack(spacing: WorkbenchSpacing.lg) {
                 Picker("Default bits", selection: $qBits) {
                     Text("4-bit").tag(4)
                     Text("8-bit").tag(8)
@@ -123,14 +121,36 @@ struct SettingsView: View {
                 }
             }
 
-            HStack {
-                Button("Discard Changes") { loadFromConfig() }
-                Spacer()
-                Button("Save") { save() }
-                    .disabled(isSaving)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { saveControls }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { saveControls }
             }
         }
         .formSection {}
+    }
+
+    @ViewBuilder
+    private var agentPathControls: some View {
+        TextField("Path to mlx-agent checkout", text: $mlxAgentPath)
+            .textFieldStyle(.roundedBorder)
+        Button("Detect") { mlxAgentPath = Config.discoverAgentPath() }
+            .buttonStyle(.bordered)
+    }
+
+    @ViewBuilder
+    private var hostControls: some View {
+        TextField("Host", text: $host).textFieldStyle(.roundedBorder)
+        TextField("Port", text: $portText).textFieldStyle(.roundedBorder).frame(width: 120)
+    }
+
+    @ViewBuilder
+    private var saveControls: some View {
+        Button("Discard Changes") { loadFromConfig() }
+            .buttonStyle(.bordered)
+        Button("Save") { save() }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(isSaving)
     }
 
     private var StatusSection: some View {
@@ -148,16 +168,16 @@ struct SettingsView: View {
         switch appHost.agentHealth {
         case .notConfigured:
             Label("Agent: not configured", systemImage: "exclamationmark.triangle")
-                .foregroundColor(.orange)
+                .foregroundColor(WorkbenchColor.thermalAmber)
         case .notUsable(_, let cli, let reason):
             Label("Agent not ready: \(reason): \(cli)", systemImage: "xmark.circle")
-                .foregroundColor(.red)
+                .foregroundColor(WorkbenchColor.systemRed)
         case .notFound(_, let cli):
             Label("Agent missing: \(cli)", systemImage: "xmark.circle")
-                .foregroundColor(.red)
+                .foregroundColor(WorkbenchColor.systemRed)
         case .ready(_, let cli):
             Label("Agent ready: \(cli)", systemImage: "checkmark.circle")
-                .foregroundColor(.green)
+                .foregroundColor(WorkbenchColor.verifiedGreen)
         }
         Label("Config: \(appHost.configPath)", systemImage: "file")
             .font(.caption)
@@ -192,6 +212,7 @@ struct SettingsView: View {
     private func save() {
         isSaving = true
         notice = nil
+        noticeIsError = true
         guard let port = Int(portText.trimmingCharacters(in: .whitespacesAndNewlines)),
               (1...65535).contains(port) else {
             notice = "Port must be an integer between 1 and 65535."
@@ -251,6 +272,7 @@ struct SettingsView: View {
             if appHost.config.mlxAgentPath != newConfig.mlxAgentPath {
                 _ = await appHost.setAgentPath(newConfig.mlxAgentPath)
             }
+            noticeIsError = false
             notice = "Settings saved to \(appHost.configPath)"
         }
     }

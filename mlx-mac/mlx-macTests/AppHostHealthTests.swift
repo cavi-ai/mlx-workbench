@@ -347,6 +347,7 @@ final class AppHostHealthTests: XCTestCase {
         let action = makeHomeAction(workflow: makeOperationalWorkflow(state: .running, receipt: "receipt"))
         XCTAssertEqual(action.kind, .activity)
         XCTAssertEqual(action.route, "jobs")
+        XCTAssertEqual(action.reason, "A conversion is running; Activity has the authoritative receipt and live status.")
     }
 
     func testHomeNextActionForCompletedOutputIsRun() {

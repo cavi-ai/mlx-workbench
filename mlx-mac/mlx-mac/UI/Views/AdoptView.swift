@@ -17,7 +17,7 @@ struct AdoptView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 formSection
                 ErrorBanner(text: errorMessage)
                 if let result {
@@ -26,7 +26,7 @@ struct AdoptView: View {
                 statusSection
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
     }
 
@@ -37,19 +37,24 @@ struct AdoptView: View {
                 TextField("Role (e.g. coding, writing, agent)", text: $role)
                     .textFieldStyle(.roundedBorder)
             }
-            HStack {
-                TextField("State path (optional)", text: $statePath)
-                    .textFieldStyle(.roundedBorder)
-                Toggle("Fast", isOn: $fast)
-                Toggle("Offline", isOn: $offline)
-            }
-            HStack {
-                Button("Start Adoption") { startAdopt() }
-                    .disabled(role.isEmpty || isRunning)
-                Spacer()
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { adoptionControls }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { adoptionControls }
             }
         }
         .formSection {}
+    }
+
+    @ViewBuilder
+    private var adoptionControls: some View {
+        TextField("State path (optional)", text: $statePath)
+            .textFieldStyle(.roundedBorder)
+        Toggle("Fast", isOn: $fast)
+        Toggle("Offline", isOn: $offline)
+        Button("Start Adoption") { startAdopt() }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(role.isEmpty || isRunning)
     }
 
     private func resultSection(_ result: AdoptResult) -> some View {
@@ -83,6 +88,7 @@ struct AdoptView: View {
                 SectionTitle(text: "Adoption status")
                 Spacer()
                 Button("Check Status") { checkStatus() }
+                    .buttonStyle(.bordered)
                     .disabled(statePath.isEmpty || isRunning)
             }
             if let statusResult {

@@ -138,12 +138,12 @@ struct JobsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Activity").font(.title2)
+                        Text("Activity").font(WorkbenchTypography.display).foregroundColor(WorkbenchColor.graphiteInk)
                         Text("Persisted conversion history and authoritative live process state.")
-                            .font(.callout).foregroundColor(.secondary)
+                            .font(WorkbenchTypography.body).foregroundColor(WorkbenchColor.graphiteMuted)
                     }
                     Spacer()
                     Button("Refresh") { Task { await refresh() } }.disabled(isRefreshing)
@@ -158,7 +158,7 @@ struct JobsView: View {
                     ForEach(cards) { conversionCard($0) }
                 }
             }
-            .padding(24)
+            .padding(WorkbenchSpacing.pageInset)
         }
         .sheet(item: $selectedLog) { LogSheet(path: $0.path) }
         .task {
@@ -190,9 +190,7 @@ struct JobsView: View {
                         detailLine("Started", server.startedAt ?? "Not reported")
                         detailLine("Log path", server.logPath ?? "Not reported")
                     }
-                    .padding(14)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .cornerRadius(10)
+                    .formSection {}
                 }
             }
         }
@@ -214,7 +212,7 @@ struct JobsView: View {
             detailLine("Agent state", card.workflow.lastKnownAgentState ?? "Not reported")
             detailLine("Log path", card.logPath ?? "Not reported")
             if let failure = card.workflow.errorMessage {
-                Text(failure).font(.callout).foregroundColor(.red).textSelection(.enabled)
+                Text(failure).font(.callout).foregroundColor(WorkbenchColor.systemRed).textSelection(.enabled)
             } else if let message = card.workflow.message {
                 Text(message).font(.callout).foregroundColor(.secondary)
             }
@@ -227,9 +225,7 @@ struct JobsView: View {
                 .buttonStyle(.bordered)
             }
         }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(12)
+        .formSection {}
     }
 
     private func refresh() async {
@@ -280,11 +276,11 @@ struct JobsView: View {
 
     private func detailLine(_ title: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title).foregroundColor(.secondary).frame(width: 110, alignment: .leading)
-            Text(value).textSelection(.enabled)
+            Text(title).foregroundColor(WorkbenchColor.graphiteMuted).frame(width: 110, alignment: .leading)
+            Text(value).font(WorkbenchTypography.monoUtility).foregroundColor(WorkbenchColor.graphiteInk).textSelection(.enabled)
             Spacer()
         }
-        .font(.caption)
+        .font(WorkbenchTypography.monoUtility)
     }
 
     private func timestamp(_ date: Date) -> String {

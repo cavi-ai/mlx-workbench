@@ -14,13 +14,10 @@ struct SlothView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    TextField("Sloth AI address", text: $address)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Check Connection") { check() }
-                        .disabled(isChecking)
-                    Spacer()
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { connectionControls }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { connectionControls }
                 }
                 if isChecking {
                     ProgressView("Connecting…")
@@ -33,7 +30,7 @@ struct SlothView: View {
                         connected ? "Connected to Sloth AI" : "Not reachable",
                         systemImage: connected ? "checkmark.circle" : "xmark.circle"
                     )
-                    .foregroundColor(connected ? .green : .red)
+                    .foregroundColor(connected ? WorkbenchColor.verifiedGreen : WorkbenchColor.systemRed)
                 }
                 if let health {
                     VStack(alignment: .leading, spacing: 4) {
@@ -44,8 +41,18 @@ struct SlothView: View {
                 }
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
+    }
+
+    @ViewBuilder
+    private var connectionControls: some View {
+        TextField("Sloth AI address", text: $address)
+            .textFieldStyle(.roundedBorder)
+        Button("Check Connection") { check() }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(isChecking)
     }
 
     private func check() {

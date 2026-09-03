@@ -126,6 +126,9 @@
 		24BBLD067 /* PromptHistoryImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF065 /* PromptHistoryImport.swift */; };
 		24BBLD068 /* ComparisonPhase2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF066 /* ComparisonPhase2Tests.swift */; };
 		24BBLD066 /* PremiumSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF064 /* PremiumSettingsTests.swift */; };
+		27ABCD000000000000000001 /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000001 /* AppRoute.swift */; };
+		27ABCD000000000000000002 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000002 /* DesignSystem.swift */; };
+		27ABCD000000000000000003 /* AppRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000003 /* AppRouteTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
@@ -248,6 +251,9 @@
 		24FREF065 /* PromptHistoryImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PromptHistoryImport.swift; path = Services/PromptHistoryImport.swift; sourceTree = "<group>"; };
 		24FREF066 /* ComparisonPhase2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonPhase2Tests.swift; sourceTree = "<group>"; };
 		24FREF064 /* PremiumSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PremiumSettingsTests.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000001 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppRoute.swift; path = UI/AppRoute.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000002 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DesignSystem.swift; path = UI/DesignSystem.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000003 /* AppRouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppRouteTests.swift; path = AppRouteTests.swift; sourceTree = "<group>"; };
 		26SCREF001 /* ScanContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScanContractTests.swift; path = ScanContractTests.swift; sourceTree = "<group>"; };
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
@@ -350,6 +356,8 @@
 				24FREF028 /* RecommendationEngine.swift */,
 				24FREF000007 /* AppSidebar.swift */,
 				24FREF000008 /* Components.swift */,
+				27ABCD100000000000000001 /* AppRoute.swift */,
+				27ABCD100000000000000002 /* DesignSystem.swift */,
 				24FREF000009 /* ContentView.swift */,
 				24FREF00000A /* AdoptView.swift */,
 				24FREF00000B /* ConvertView.swift */,
@@ -413,6 +421,7 @@
 				24FREF064 /* PremiumSettingsTests.swift */,
 				26SCREF001 /* ScanContractTests.swift */,
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
+				27ABCD100000000000000003 /* AppRouteTests.swift */,
 			);
 			path = mlx-macTests;
 			sourceTree = "<group>";
@@ -644,6 +653,8 @@
 				24BBLD069 /* AlertNotifier.swift in Sources */,
 				24BBLD06A /* HFRepoID.swift in Sources */,
 				24BBLD067 /* PromptHistoryImport.swift in Sources */,
+				27ABCD000000000000000001 /* AppRoute.swift in Sources */,
+				27ABCD000000000000000002 /* DesignSystem.swift in Sources */,
 
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -675,6 +686,7 @@
 				24BBLD066 /* PremiumSettingsTests.swift in Sources */,
 				26SCBL001 /* ScanContractTests.swift in Sources */,
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
+				27ABCD000000000000000003 /* AppRouteTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

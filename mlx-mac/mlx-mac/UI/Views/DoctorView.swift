@@ -15,13 +15,10 @@ struct DoctorView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    Button("Doctor Models") { runDoctor() }
-                        .disabled(isRunning)
-                    Button("Preview Prune") { previewPrune() }
-                        .disabled(isRunning)
-                    Spacer()
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { doctorActions }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { doctorActions }
                 }
 
                 if isRunning {
@@ -32,7 +29,7 @@ struct DoctorView: View {
 
                 ErrorBanner(text: errorMessage)
                 if let resultNote {
-                    Text(resultNote).font(.caption).foregroundColor(.green)
+                    Text(resultNote).font(.caption).foregroundColor(WorkbenchColor.verifiedGreen)
                 }
 
                 if !findings.isEmpty {
@@ -79,8 +76,19 @@ struct DoctorView: View {
                 }
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
+    }
+
+    @ViewBuilder
+    private var doctorActions: some View {
+        Button("Doctor Models") { runDoctor() }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(isRunning)
+        Button("Preview Prune") { previewPrune() }
+            .buttonStyle(.bordered)
+            .disabled(isRunning)
     }
 
     private func runDoctor() {
