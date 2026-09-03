@@ -4,6 +4,103 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryViewTests: XCTestCase {
+    func testAdaptiveLibraryLayoutUsesDrillInBelowContentThreshold() {
+        XCTAssertEqual(LibraryPresentation.layoutMode(contentWidth: 759), .drillIn)
+        XCTAssertEqual(LibraryPresentation.layoutMode(contentWidth: 760), .masterDetail)
+        XCTAssertFalse(LibraryPresentation.shouldShowSummary(containerHeight: 619))
+        XCTAssertTrue(LibraryPresentation.shouldShowSummary(containerHeight: 620))
+    }
+
+    func testFlightPathRequiresExactMeasurementIdentityAndBothServingAuthorities() {
+        let model = makeLibraryModel(path: "/models/flight.gguf", name: "Flight", modelKey: "flight", quantization: "Q4_K_M", status: "ready", signature: "new")
+        let result = VariantResult(modelPath: model.item.path, modelSignature: "old", samples: [ComparisonSample(promptID: "p", outputExcerpt: "ok", tokensPerSecond: 1, timeToFirstTokenSeconds: 0.1, error: nil)], aggregateTokensPerSecond: 1, aggregateTTFTSeconds: 0.1, error: nil)
+        let run = ComparisonRun(id: UUID(), promptSetID: "set", promptSetName: "Set", useCase: .coding, variants: [model.item.path], results: [result], startedAt: Date(), finishedAt: Date(), state: .completed)
+        let server = ServerInfo(repo: model.item.path, runtime: "mlx", port: 8766, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "receipt")
+
+        let pendingMeasurement = ModelFlightPathPresentation.derive(model: model, verification: .unverified, completedRuns: [run], endpointState: .running(modelPath: model.item.path, port: 8766), servers: [server])
+        XCTAssertEqual(pendingMeasurement.stages.first(where: { $0.stage == .measured })?.state, .pending)
+        XCTAssertEqual(pendingMeasurement.stages.first(where: { $0.stage == .serving })?.state, .complete)
+
+        let matching = VariantResult(modelPath: model.item.path, modelSignature: "new", samples: result.samples, aggregateTokensPerSecond: 1, aggregateTTFTSeconds: 0.1, error: nil)
+        let matchingRun = ComparisonRun(id: UUID(), promptSetID: "set", promptSetName: "Set", useCase: .coding, variants: [model.item.path], results: [matching], startedAt: Date(), finishedAt: Date(), state: .completed)
+        let mismatchedEndpoint = ModelFlightPathPresentation.derive(model: model, verification: .unverified, completedRuns: [matchingRun], endpointState: .running(modelPath: "/models/other", port: 8766), servers: [server])
+        XCTAssertEqual(mismatchedEndpoint.stages.first(where: { $0.stage == .measured })?.state, .complete)
+        XCTAssertEqual(mismatchedEndpoint.stages.first(where: { $0.stage == .serving })?.state, .pending)
+    }
+
+    func testFlightPathReportsTheActualPendingReadiness() {
+        let model = makeLibraryModel(
+            path: "/models/source.gguf",
+            name: "Source",
+            modelKey: "source",
+            quantization: "Q4_K_M",
+            status: "needs_conversion",
+            signature: "source-signature"
+        )
+
+        let presentation = ModelFlightPathPresentation.derive(
+            model: model,
+            verification: .unverified,
+            completedRuns: [],
+            endpointState: .disabled,
+            servers: []
+        )
+
+        XCTAssertEqual(
+            presentation.stages.first(where: { $0.stage == .prepared })?.detail,
+            "Library readiness is Needs Conversion."
+        )
+    }
+
+    func testFlightPathDoesNotSubstituteAReadyModelWhenNothingIsSelected() {
+        let snapshot = makeSnapshot()
+
+        XCTAssertNil(
+            ModelFlightPathPresentation.selectedModel(
+                in: snapshot,
+                selectedModelPath: nil
+            )
+        )
+    }
+
+    func testFlightPathReportsFailedCanaryEvidenceAsFailure() {
+        let model = makeLibraryModel(
+            path: "/models/failed.gguf",
+            name: "Failed",
+            modelKey: "failed",
+            quantization: "Q4_K_M",
+            status: "ready",
+            signature: "failed-signature"
+        )
+        let report = VerificationReport(
+            id: UUID(),
+            modelPath: model.item.path,
+            modelSignature: model.item.signature,
+            workflowRecordID: nil,
+            suiteVersion: CanarySuite.version,
+            canaries: [],
+            tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil,
+            metricsEstimated: false,
+            startedAt: Date(),
+            finishedAt: Date(),
+            outcome: .failed(canaryIDs: ["echo"])
+        )
+
+        let presentation = ModelFlightPathPresentation.derive(
+            model: model,
+            verification: .failed(report),
+            completedRuns: [],
+            endpointState: .disabled,
+            servers: []
+        )
+        let verification = presentation.stages.first { $0.stage == .verified }
+
+        XCTAssertEqual(verification?.state, .failed)
+        XCTAssertEqual(verification?.state.label, "Failed")
+        XCTAssertEqual(verification?.detail, "Failed canaries: echo.")
+    }
+
     func testSearchMatchesFamilyVariantAndKnownPathFields() {
         let snapshot = makeSnapshot()
 
@@ -195,7 +292,8 @@ final class LibraryViewTests: XCTestCase {
         name: String,
         modelKey: String,
         quantization: String?,
-        status: String
+        status: String,
+        signature: String? = nil
     ) -> LibraryModel {
         LibraryModel(
             item: ModelItem(
@@ -209,7 +307,7 @@ final class LibraryViewTests: XCTestCase {
                 quantization: quantization,
                 parameters: "7B",
                 structure: nil,
-                signature: nil,
+                signature: signature,
                 companion: nil,
                 readable: true,
                 status: status,

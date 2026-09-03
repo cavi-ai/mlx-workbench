@@ -20,13 +20,10 @@ struct LMStudioView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    TextField("Optional source dir", text: $sourceDir)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Scan LM Studio") { scan() }
-                        .disabled(isScanning)
-                    Spacer()
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { scanControls }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { scanControls }
                 }
                 if isScanning {
                     ProgressView("Scanning…")
@@ -55,8 +52,18 @@ struct LMStudioView: View {
                 }
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
+    }
+
+    @ViewBuilder
+    private var scanControls: some View {
+        TextField("Optional source dir", text: $sourceDir)
+            .textFieldStyle(.roundedBorder)
+        Button("Scan LM Studio") { scan() }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(isScanning)
     }
 
     private func scan() {

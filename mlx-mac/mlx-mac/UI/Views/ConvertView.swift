@@ -97,11 +97,13 @@ struct ConvertView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 Text("Prepare")
-                    .font(.title2)
+                    .font(WorkbenchTypography.display)
+                    .foregroundColor(WorkbenchColor.graphiteInk)
                 Text("Prepare a Library GGUF for local MLX use. Conversion plans are previewed before they are confirmed.")
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.body)
+                    .foregroundColor(WorkbenchColor.graphiteMuted)
 
                 workflowCard
                 sourceAndDestinationCard
@@ -117,72 +119,101 @@ struct ConvertView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
     }
 
     private var workflowCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionTitle(text: "Workflow status")
-            HStack(spacing: 8) {
+            HStack(spacing: WorkbenchSpacing.xs) {
                 StatusPill(state: modelWorkflow.workflow.state.rawValue)
                 Text(presentation.stateTitle)
-                    .font(.subheadline)
+                    .font(WorkbenchTypography.body)
+                    .foregroundColor(WorkbenchColor.graphiteInk)
             }
         }
         .formSection {}
     }
 
     private var sourceAndDestinationCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Source and destination")
             detailRow("Source GGUF", presentation.sourcePath.isEmpty ? "Choose Prepare to run from a Library model." : presentation.sourcePath)
             detailRow("Destination", presentation.destinationPath.isEmpty ? "Destination will be calculated from the selected source." : presentation.destinationPath)
             if !presentation.destinationPath.isEmpty {
                 Text("The destination is the coordinator-approved same-directory path. It cannot be overridden in Prepare.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.body)
+                    .foregroundColor(WorkbenchColor.graphiteMuted)
             }
         }
         .formSection {}
     }
 
     private var conversionActions: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Conversion")
             Picker("Quantization", selection: $qBits) {
                 Text("4-bit").tag(4)
                 Text("8-bit").tag(8)
             }
             .pickerStyle(.segmented)
-            .frame(width: 200)
+            .frame(maxWidth: 220, alignment: .leading)
             .disabled(presentation.isQuantizationLocked)
 
-            HStack(spacing: 10) {
-                Button("Preview conversion") {
-                    Task {
-                        await modelWorkflow.preview(qBits: qBits, out: nil)
-                    }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) {
+                    actionButtons
                 }
-                .disabled(!presentation.canPreview || modelWorkflow.isConversionSubmissionInFlight)
-
-                Button("Confirm conversion") {
-                    Task {
-                        await modelWorkflow.confirm(qBits: qBits)
-                    }
-                }
-                .disabled(!presentation.canConfirm || modelWorkflow.isConversionSubmissionInFlight)
-
-                if let existingModel {
-                    Button("Run existing") {
-                        modelWorkflow.useExisting(existingModel)
-                        modelWorkflow.prepareServe(model: existingModel)
-                        onRouteSelection("serve")
-                    }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    actionButtons
                 }
             }
         }
         .formSection {}
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        if presentation.primaryAction == .preview {
+            Button("Preview conversion") {
+                Task { await modelWorkflow.preview(qBits: qBits, out: nil) }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(!presentation.canPreview || modelWorkflow.isConversionSubmissionInFlight)
+        } else {
+            Button("Preview conversion") {
+                Task { await modelWorkflow.preview(qBits: qBits, out: nil) }
+            }
+            .buttonStyle(.bordered)
+            .disabled(!presentation.canPreview || modelWorkflow.isConversionSubmissionInFlight)
+        }
+
+        if presentation.primaryAction == .confirm {
+            Button("Confirm conversion") {
+                Task { await modelWorkflow.confirm(qBits: qBits) }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(!presentation.canConfirm || modelWorkflow.isConversionSubmissionInFlight)
+        } else {
+            Button("Confirm conversion") {
+                Task { await modelWorkflow.confirm(qBits: qBits) }
+            }
+            .buttonStyle(.bordered)
+            .disabled(!presentation.canConfirm || modelWorkflow.isConversionSubmissionInFlight)
+        }
+
+        if let existingModel {
+            Button("Run existing") {
+                modelWorkflow.useExisting(existingModel)
+                modelWorkflow.prepareServe(model: existingModel)
+                onRouteSelection("serve")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+        }
     }
 
     private func detailRow(_ label: String, _ value: String) -> some View {
@@ -216,7 +247,7 @@ struct ModelPickerSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: WorkbenchSpacing.sm) {
                 Text("Choose a GGUF").font(.headline)
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -246,7 +277,7 @@ struct ModelPickerSheet: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding()
+        .padding(WorkbenchSpacing.pageInset)
         .frame(width: 560, height: 480)
         .onAppear {
             if appHost.scanResult == nil {

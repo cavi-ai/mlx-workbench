@@ -19,7 +19,7 @@ struct DuplicatesView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 reclaimSection
                 HStack(spacing: 10) {
                     Button("Scan Duplicates") { scan() }
@@ -42,7 +42,7 @@ struct DuplicatesView: View {
                 }
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
         .onAppear {
             appHost.analyzeReclaim()
@@ -53,16 +53,10 @@ struct DuplicatesView: View {
     // MARK: - Reclaim (Disk Pressure Advisor)
 
     private var reclaimSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                SectionTitle(text: "Reclaim")
-                Spacer()
-                if reclaim.totalReclaimableBytes > 0 {
-                    Text("\(ByteCountFormatter.string(fromByteCount: reclaim.totalReclaimableBytes, countStyle: .file)) reclaimable")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                }
-                Button("Analyze") { appHost.analyzeReclaim() }
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { reclaimHeader }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { reclaimHeader }
             }
             Text("Ranked opportunities with evidence. Confirming moves `.gguf` files to quarantine — nothing is ever deleted.")
                 .font(.caption)
@@ -81,7 +75,7 @@ struct DuplicatesView: View {
                                     Text(opportunity.kind.title).font(.callout).fontWeight(.medium)
                                     Text(ByteCountFormatter.string(fromByteCount: opportunity.bytes, countStyle: .file))
                                         .font(.caption)
-                                        .foregroundColor(.orange)
+                                        .foregroundColor(WorkbenchColor.thermalAmber)
                                     if opportunity.confidence == .review {
                                         Text("review").font(.caption2).foregroundColor(.secondary)
                                     }
@@ -106,19 +100,9 @@ struct DuplicatesView: View {
                     }
                 }
 
-                HStack(spacing: 10) {
-                    Button("Preview reclaim") { reclaim.preview(selected: selectedOpportunities) }
-                        .disabled(selectedOpportunities.isEmpty)
-                    if let plan = reclaim.plan {
-                        Text("Move \(plan.items.count) file(s), reclaim \(ByteCountFormatter.string(fromByteCount: plan.totalBytes, countStyle: .file))")
-                            .font(.caption)
-                        Button("Confirm quarantine") {
-                            reclaim.confirm(previewHash: plan.previewHash)
-                            selectedOpportunities = []
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(reclaim.isApplying)
-                    }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { reclaimActions }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { reclaimActions }
                 }
 
                 cachePruneSection
@@ -128,10 +112,10 @@ struct DuplicatesView: View {
                         ForEach(reclaim.lastMoves, id: \.path) { move in
                             if let destination = move.destination {
                                 Text("Moved \(URL(fileURLWithPath: move.path).lastPathComponent) → \(destination)")
-                                    .font(.caption).foregroundColor(.green)
+                                    .font(.caption).foregroundColor(WorkbenchColor.verifiedGreen)
                             } else {
                                 Text("\(URL(fileURLWithPath: move.path).lastPathComponent): \(move.error ?? "failed")")
-                                    .font(.caption).foregroundColor(.red)
+                                    .font(.caption).foregroundColor(WorkbenchColor.systemRed)
                             }
                         }
                     }
@@ -140,6 +124,61 @@ struct DuplicatesView: View {
             ErrorBanner(text: reclaim.lastError)
         }
         .formSection {}
+    }
+
+    @ViewBuilder
+    private var reclaimHeader: some View {
+        SectionTitle(text: "Reclaim")
+        if reclaim.totalReclaimableBytes > 0 {
+            Text("\(ByteCountFormatter.string(fromByteCount: reclaim.totalReclaimableBytes, countStyle: .file)) reclaimable")
+                .font(WorkbenchTypography.monoUtility)
+                .foregroundColor(WorkbenchColor.thermalAmber)
+        }
+        Button("Analyze") { appHost.analyzeReclaim() }
+            .buttonStyle(.bordered)
+    }
+
+    @ViewBuilder
+    private var reclaimActions: some View {
+        if reclaim.plan == nil {
+            Button("Preview reclaim") { reclaim.preview(selected: selectedOpportunities) }
+                .buttonStyle(.borderedProminent)
+                .tint(WorkbenchColor.fluxTeal)
+                .disabled(selectedOpportunities.isEmpty)
+        } else {
+            Button("Preview reclaim") { reclaim.preview(selected: selectedOpportunities) }
+                .buttonStyle(.bordered)
+                .disabled(selectedOpportunities.isEmpty)
+        }
+        if let plan = reclaim.plan {
+            Text("Move \(plan.items.count) file(s), reclaim \(ByteCountFormatter.string(fromByteCount: plan.totalBytes, countStyle: .file))")
+                .font(WorkbenchTypography.monoUtility)
+            Button("Confirm quarantine") {
+                reclaim.confirm(previewHash: plan.previewHash)
+                selectedOpportunities = []
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(reclaim.isApplying)
+        }
+    }
+
+    @ViewBuilder
+    private var cacheActions: some View {
+        Button("Check HF cache") { Task { await reclaim.checkCache() } }
+            .buttonStyle(.bordered)
+        if !reclaim.cacheFindings.isEmpty {
+            Text("\(reclaim.cacheFindings.count) incomplete cache item(s), \(ByteCountFormatter.string(fromByteCount: reclaim.cacheReclaimableBytes, countStyle: .file)) reclaimable")
+                .font(WorkbenchTypography.monoUtility)
+                .foregroundColor(WorkbenchColor.thermalAmber)
+            if reclaim.cachePruneHash == nil {
+                Button("Preview prune") { Task { await reclaim.previewCachePrune() } }
+            } else {
+                Button("Confirm prune") { Task { await reclaim.confirmCachePrune() } }
+                    .buttonStyle(.borderedProminent)
+                    .tint(WorkbenchColor.fluxTeal)
+            }
+        }
     }
 
     private func opportunityBinding(_ id: String) -> Binding<Bool> {
@@ -157,28 +196,12 @@ struct DuplicatesView: View {
     private var cachePruneSection: some View {
         if reclaim.doctorScan != nil {
             Divider()
-            HStack(spacing: 10) {
-                Button("Check HF cache") {
-                    Task { await reclaim.checkCache() }
-                }
-                if !reclaim.cacheFindings.isEmpty {
-                    Text("\(reclaim.cacheFindings.count) incomplete cache item(s), \(ByteCountFormatter.string(fromByteCount: reclaim.cacheReclaimableBytes, countStyle: .file)) reclaimable")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                    if reclaim.cachePruneHash == nil {
-                        Button("Preview prune") {
-                            Task { await reclaim.previewCachePrune() }
-                        }
-                    } else {
-                        Button("Confirm prune") {
-                            Task { await reclaim.confirmCachePrune() }
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { cacheActions }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { cacheActions }
             }
             if let note = reclaim.cachePruneNote {
-                Text(note).font(.caption).foregroundColor(.green)
+                Text(note).font(.caption).foregroundColor(WorkbenchColor.fluxTeal)
             }
         }
     }
@@ -190,8 +213,8 @@ struct DuplicatesView: View {
                 Spacer()
                 if let reclaim = group.reclaimableBytes {
                     Text("Reclaims \(ByteCountFormatter.string(fromByteCount: reclaim, countStyle: .file))")
-                        .font(.caption)
-                        .foregroundColor(.orange)
+                .font(WorkbenchTypography.monoUtility)
+                .foregroundColor(WorkbenchColor.thermalAmber)
                 }
             }
             ForEach(group.sources, id: \.self) { path in
@@ -204,14 +227,14 @@ struct DuplicatesView: View {
                         .textSelection(.enabled)
                     Spacer()
                     if group.keep == path {
-                        Text("keep").font(.caption2).foregroundColor(.green)
+                        Text("keep").font(.caption2).foregroundColor(WorkbenchColor.fluxTeal)
                     }
                 }
             }
             if let redundant = group.redundant, !redundant.isEmpty {
                 Text("\(redundant.count) redundant")
                     .font(.caption)
-                    .foregroundColor(.orange)
+                    .foregroundColor(WorkbenchColor.thermalAmber)
             }
         }
         .formSection {}

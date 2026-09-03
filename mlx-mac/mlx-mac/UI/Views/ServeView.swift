@@ -51,6 +51,7 @@ struct ServeView: View {
     @State private var endpointPortText = ""
     @State private var showLoginItemPreview = false
     @State private var loginItemMessage: String?
+    @State private var loginItemMessageIsError = false
 
     init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
         self.appHost = appHost
@@ -79,18 +80,18 @@ struct ServeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Run").font(.title2)
+                    Text("Run").font(WorkbenchTypography.display).foregroundColor(WorkbenchColor.graphiteInk)
                     Text("Preview and confirm serving the selected completed MLX model.")
-                        .font(.callout).foregroundColor(.secondary)
+                        .font(WorkbenchTypography.body).foregroundColor(WorkbenchColor.graphiteMuted)
                 }
                 selectedModelSection
                 launchSection
                 endpointSection
                 serverSection
             }
-            .padding(24)
+            .padding(WorkbenchSpacing.pageInset)
         }
         .task {
             await appHost.refreshWorkflowStatus()
@@ -152,9 +153,9 @@ struct ServeView: View {
 
     private func fitColor(_ verdict: FitVerdict) -> Color {
         switch verdict {
-        case .fits: return .green
-        case .tight: return .orange
-        case .wontFit: return .red
+        case .fits: return WorkbenchColor.fluxTeal
+        case .tight: return WorkbenchColor.thermalAmber
+        case .wontFit: return WorkbenchColor.systemRed
         case .unknown: return .secondary
         }
     }
@@ -187,29 +188,10 @@ struct ServeView: View {
             }
 
             if !endpoint.config.enabled {
-                HStack(spacing: 10) {
-                    TextField("Port", text: $endpointPortText)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 90)
-                    Button("Enable for selected model") {
-                        Task {
-                            guard let model = selectedModel else { return }
-                            let port = Int(endpointPortText) ?? EndpointConfig.defaultPort
-                            await endpoint.enable(modelPath: model.item.path, port: port)
-                        }
-                    }
-                    .disabled(selectedModel == nil)
-                    Button("Enable anyway (unverified)") {
-                        Task {
-                            guard let model = selectedModel else { return }
-                            let port = Int(endpointPortText) ?? EndpointConfig.defaultPort
-                            await endpoint.enable(modelPath: model.item.path, port: port, allowUnverified: true)
-                        }
-                    }
-                    .disabled(selectedModel == nil)
-                    .foregroundColor(.orange)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { endpointEnableControls }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { endpointEnableControls }
                 }
-                .buttonStyle(.bordered)
             } else {
                 HStack(spacing: 10) {
                     Button("Disable endpoint") {
@@ -223,10 +205,12 @@ struct ServeView: View {
             ErrorBanner(text: endpoint.lastError)
             ErrorBanner(text: endpoint.persistenceError)
             if let loginItemMessage {
-                Text(loginItemMessage).font(.caption).foregroundColor(.green)
+                Text(loginItemMessage)
+                    .font(.caption)
+                    .foregroundColor(loginItemMessageIsError ? WorkbenchColor.systemRed : WorkbenchColor.verifiedGreen)
             }
         }
-        .padding(16).background(Color(nsColor: .controlBackgroundColor)).cornerRadius(12)
+        .formSection {}
     }
 
     private var loginItemControls: some View {
@@ -236,8 +220,10 @@ struct ServeView: View {
                     do {
                         try LaunchAgentManager().uninstall()
                         appHost.endpoint.markLoginItemInstalled(false)
+                        loginItemMessageIsError = false
                         loginItemMessage = "Login item removed."
                     } catch {
+                        loginItemMessageIsError = true
                         loginItemMessage = AppHost.render(error)
                     }
                 }
@@ -294,9 +280,11 @@ struct ServeView: View {
                 agentPath: agentRootPath
             )
             appHost.endpoint.markLoginItemInstalled(true)
+            loginItemMessageIsError = false
             loginItemMessage = "Login item installed."
             showLoginItemPreview = false
         } catch {
+            loginItemMessageIsError = true
             loginItemMessage = AppHost.render(error)
         }
     }
@@ -319,7 +307,7 @@ struct ServeView: View {
                 Button("Open Library") { onRouteSelection("models") }
             }
         }
-        .padding(16).background(Color(nsColor: .controlBackgroundColor)).cornerRadius(12)
+        .formSection {}
     }
 
     private var launchSection: some View {
@@ -329,15 +317,9 @@ struct ServeView: View {
                 ErrorBanner(text: "Run runtime unavailable: \(remediation). Open Settings after installing the required runtime.")
                 Button("Open Settings") { onRouteSelection("settings") }
             }
-            HStack {
-                Picker("Runtime", selection: $runtime) {
-                    Text("mlx_lm").tag("mlx_lm")
-                    Text("mlx-vlm").tag("mlx-vlm")
-                }
-                .frame(width: 180)
-                TextField("Port (optional)", text: $portText).textFieldStyle(.roundedBorder).frame(width: 140)
-                TextField("Context", text: $contextText).textFieldStyle(.roundedBorder).frame(width: 90)
-                Spacer()
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { launchFields }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { launchFields }
             }
             fitVerdictLine
             detailLine("Serve state", modelWorkflow.workflow.serveState.rawValue)
@@ -345,22 +327,12 @@ struct ServeView: View {
                 Text(message).font(.callout).foregroundColor(.secondary)
             }
             ErrorBanner(text: modelWorkflow.workflow.errorMessage)
-            HStack {
-                Button("Preview serve") {
-                    Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
-                }
-                .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
-                Button("Confirm and run") {
-                    Task {
-                        await modelWorkflow.confirmServe(runtime: runtime, port: port)
-                        if modelWorkflow.workflow.serveState == .running { onRouteSelection("jobs") }
-                    }
-                }
-                .disabled(!presentation.canConfirm || modelWorkflow.isServeSubmissionInFlight)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { serveActions }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { serveActions }
             }
-            .buttonStyle(.bordered)
         }
-        .padding(16).background(Color(nsColor: .controlBackgroundColor)).cornerRadius(12)
+        .formSection {}
     }
 
     private var serverSection: some View {
@@ -395,15 +367,88 @@ struct ServeView: View {
                 Text("No running server is reported.").font(.callout).foregroundColor(.secondary)
             }
         }
-        .padding(16).background(Color(nsColor: .controlBackgroundColor)).cornerRadius(12)
+        .formSection {}
     }
 
     private func detailLine(_ title: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title).foregroundColor(.secondary).frame(width: 120, alignment: .leading)
-            Text(value).textSelection(.enabled)
+            Text(title).foregroundColor(WorkbenchColor.graphiteMuted).frame(width: 120, alignment: .leading)
+            Text(value).font(WorkbenchTypography.monoUtility).foregroundColor(WorkbenchColor.graphiteInk).textSelection(.enabled)
             Spacer()
         }
-        .font(.callout)
+        .font(WorkbenchTypography.body)
+    }
+
+    @ViewBuilder
+    private var endpointEnableControls: some View {
+        TextField("Port", text: $endpointPortText)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 90)
+        Button("Enable for selected model") {
+            Task {
+                guard let model = selectedModel else { return }
+                let port = Int(endpointPortText) ?? EndpointConfig.defaultPort
+                await endpoint.enable(modelPath: model.item.path, port: port)
+            }
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(WorkbenchColor.fluxTeal)
+        .disabled(selectedModel == nil)
+        Button("Enable anyway (unverified)") {
+            Task {
+                guard let model = selectedModel else { return }
+                let port = Int(endpointPortText) ?? EndpointConfig.defaultPort
+                await endpoint.enable(modelPath: model.item.path, port: port, allowUnverified: true)
+            }
+        }
+        .buttonStyle(.bordered)
+        .disabled(selectedModel == nil)
+        .foregroundColor(WorkbenchColor.thermalAmber)
+    }
+
+    @ViewBuilder
+    private var launchFields: some View {
+        Picker("Runtime", selection: $runtime) {
+            Text("mlx_lm").tag("mlx_lm")
+            Text("mlx-vlm").tag("mlx-vlm")
+        }
+        .frame(maxWidth: 180, alignment: .leading)
+        TextField("Port (optional)", text: $portText).textFieldStyle(.roundedBorder).frame(width: 140)
+        TextField("Context", text: $contextText).textFieldStyle(.roundedBorder).frame(width: 90)
+    }
+
+    @ViewBuilder
+    private var serveActions: some View {
+        if presentation.canConfirm {
+            Button("Preview serve") {
+                Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
+            }
+            .buttonStyle(.bordered)
+            .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
+            Button("Confirm and run") {
+                Task {
+                    await modelWorkflow.confirmServe(runtime: runtime, port: port)
+                    if modelWorkflow.workflow.serveState == .running { onRouteSelection("jobs") }
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(modelWorkflow.isServeSubmissionInFlight)
+        } else {
+            Button("Preview serve") {
+                Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
+            Button("Confirm and run") {
+                Task {
+                    await modelWorkflow.confirmServe(runtime: runtime, port: port)
+                    if modelWorkflow.workflow.serveState == .running { onRouteSelection("jobs") }
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(!presentation.canConfirm || modelWorkflow.isServeSubmissionInFlight)
+        }
     }
 }

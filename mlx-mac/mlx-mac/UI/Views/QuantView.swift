@@ -32,12 +32,12 @@ struct QuantView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 measuredComparisonSection
                 planPreviewSection
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
         .sheet(isPresented: $showingPicker) {
             ModelPickerSheet(appHost: appHost, selected: $selectedModel)
@@ -56,11 +56,11 @@ struct QuantView: View {
     }
 
     private var measuredComparisonSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Measured comparison")
             Text("Replay a prompt set against ready variants and measure real decode speed and first-token latency. One variant at a time.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.body)
+                .foregroundColor(WorkbenchColor.graphiteMuted)
 
             if readyModels.isEmpty {
                 Text("No ready models in the latest Library snapshot.")
@@ -70,10 +70,10 @@ struct QuantView: View {
                 ForEach(readyModels, id: \.item.path) { model in
                     Toggle(isOn: variantBinding(model.item.path)) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(model.displayName).font(.callout)
+                            Text(model.displayName).font(WorkbenchTypography.body)
                             Text(model.item.quantization ?? model.item.path)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(WorkbenchTypography.monoUtility)
+                                .foregroundColor(WorkbenchColor.graphiteMuted)
                                 .lineLimit(1)
                         }
                     }
@@ -81,23 +81,9 @@ struct QuantView: View {
                 }
             }
 
-            HStack(spacing: 10) {
-                Picker("Prompt set", selection: $selectedPromptSetID) {
-                    ForEach(comparison.promptSets) { set in
-                        Text(set.name).tag(set.id)
-                    }
-                }
-                .frame(width: 240)
-
-                Button("Import my prompts") {
-                    if let imported = comparison.importHistory() {
-                        selectedPromptSetID = imported.id
-                    }
-                }
-                .help("Read-only import of your opencode user prompts as a prompt set.")
-
-                Button("Run comparison") { startRun() }
-                    .disabled(selectedVariants.isEmpty || comparison.activeRunID != nil)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { comparisonControls }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { comparisonControls }
             }
 
             if comparison.activeRunID != nil {
@@ -132,7 +118,7 @@ struct QuantView: View {
                         }
                     }
                     if let error = result.error {
-                        Text(error).font(.caption).foregroundColor(.red)
+                        Text(error).font(.caption).foregroundColor(WorkbenchColor.systemRed)
                     } else {
                         DisclosureGroup("Per-prompt outputs (\(result.samples.count))") {
                             VStack(alignment: .leading, spacing: 6) {
@@ -157,14 +143,12 @@ struct QuantView: View {
                         }
                     }
                 }
-                .padding(12)
-                .background(Color(nsColor: .controlBackgroundColor))
-                .cornerRadius(10)
+                .formSection {}
             }
             if let winner = run.winner, run.state == .completed {
                 Text("Fastest: \(URL(fileURLWithPath: winner.modelPath).lastPathComponent)")
                     .font(.caption)
-                    .foregroundColor(.green)
+                    .foregroundColor(WorkbenchColor.fluxTeal)
             }
             if run.state == .completed, run.results.filter({ $0.error == nil }).count >= 2 {
                 diffSection(run)
@@ -180,21 +164,10 @@ struct QuantView: View {
         let right = candidates.first { $0.modelPath == diffRightPath }
         return VStack(alignment: .leading, spacing: 8) {
             SectionTitle(text: "Output diff")
-            HStack(spacing: 10) {
-                Picker("Left", selection: $diffLeftPath) {
-                    Text("Choose…").tag(String?.none)
-                    ForEach(candidates) { result in
-                        Text(URL(fileURLWithPath: result.modelPath).lastPathComponent).tag(String?.some(result.modelPath))
-                    }
-                }
-                Picker("Right", selection: $diffRightPath) {
-                    Text("Choose…").tag(String?.none)
-                    ForEach(candidates) { result in
-                        Text(URL(fileURLWithPath: result.modelPath).lastPathComponent).tag(String?.some(result.modelPath))
-                    }
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { diffControls(candidates) }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { diffControls(candidates) }
             }
-            .frame(maxWidth: 520)
 
             if let left, let right, left.modelPath != right.modelPath {
                 ForEach(ComparisonDiff.pairs(left, right)) { pair in
@@ -227,9 +200,50 @@ struct QuantView: View {
 
     private func diffColor(_ kind: DiffLineKind) -> Color {
         switch kind {
-        case .context: return .primary
-        case .added: return .green
-        case .removed: return .red
+        case .context: return WorkbenchColor.graphiteInk
+        case .added: return WorkbenchColor.verifiedGreen
+        case .removed: return WorkbenchColor.systemRed
+        }
+    }
+
+    @ViewBuilder
+    private var comparisonControls: some View {
+        Picker("Prompt set", selection: $selectedPromptSetID) {
+            ForEach(comparison.promptSets) { set in
+                Text(set.name).tag(set.id)
+            }
+        }
+        .frame(maxWidth: 260, alignment: .leading)
+
+        Button("Import my prompts") {
+            if let imported = comparison.importHistory() {
+                selectedPromptSetID = imported.id
+            }
+        }
+        .buttonStyle(.bordered)
+        .help("Read-only import of your opencode user prompts as a prompt set.")
+
+        Button("Run comparison") { startRun() }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(selectedVariants.isEmpty || comparison.activeRunID != nil)
+    }
+
+    @ViewBuilder
+    private func diffControls(_ candidates: [VariantResult]) -> some View {
+        Picker("Left", selection: $diffLeftPath) {
+            Text("Choose…").tag(String?.none)
+            ForEach(candidates) { result in
+                Text(URL(fileURLWithPath: result.modelPath).lastPathComponent)
+                    .tag(String?.some(result.modelPath))
+            }
+        }
+        Picker("Right", selection: $diffRightPath) {
+            Text("Choose…").tag(String?.none)
+            ForEach(candidates) { result in
+                Text(URL(fileURLWithPath: result.modelPath).lastPathComponent)
+                    .tag(String?.some(result.modelPath))
+            }
         }
     }
 

@@ -21,6 +21,20 @@ struct LibraryReadinessCount: Equatable, Hashable {
 
 enum LibraryPresentation {
     static let unknownQuantizationLabel = "Unknown"
+    static let detailDrillInThreshold: CGFloat = 760
+
+    enum LayoutMode: Equatable {
+        case masterDetail
+        case drillIn
+    }
+
+    static func layoutMode(contentWidth: CGFloat) -> LayoutMode {
+        contentWidth < detailDrillInThreshold ? .drillIn : .masterDetail
+    }
+
+    static func shouldShowSummary(containerHeight: CGFloat) -> Bool {
+        containerHeight >= 620
+    }
 
     static func filteredGroups(
         in snapshot: LibrarySnapshot,
@@ -171,6 +185,7 @@ struct LibraryView: View {
     @State private var search = ""
     @State private var readinessFilter: ModelReadiness?
     @State private var quantizationFilter: String?
+    @State private var isShowingDetail = false
 
     init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
         self.appHost = appHost
@@ -211,40 +226,29 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
-            ErrorBanner(text: appHost.lastError)
-
-            if let snapshot {
-                summary(snapshot: snapshot)
-                filters
-                content(snapshot: snapshot)
-            } else if appHost.isScanning {
-                ProgressView("Scanning local library…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            } else {
-                VStack(spacing: 16) {
-                    ContentUnavailableView(
-                        "No local library snapshot yet",
-                        systemImage: "books.vertical",
-                        description: Text("Run a local scan to populate the native Library inventory.")
-                    )
-
-                    HStack(spacing: 10) {
-                        Button("Scan library") {
-                            appHost.requestRescan()
+        GeometryReader { geometry in
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                header
+                ErrorBanner(text: appHost.lastError)
+                if let snapshot {
+                    if LibraryPresentation.shouldShowSummary(containerHeight: geometry.size.height) { summary(snapshot: snapshot) }
+                    filters
+                    content(snapshot: snapshot, width: geometry.size.width)
+                } else if appHost.isScanning {
+                    ProgressView("Scanning local library…").frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                } else {
+                    VStack(spacing: 16) {
+                        ContentUnavailableView("No local library snapshot yet", systemImage: "books.vertical", description: Text("Run a local scan to populate the native Library inventory."))
+                        HStack(spacing: 10) {
+                            Button("Scan library") { appHost.requestRescan() }.disabled(appHost.isScanning)
+                            Button("Open Settings") { onRouteSelection(AppRoute.settings.rawValue) }
                         }
-                        .disabled(appHost.isScanning)
-
-                        Button("Open Settings") {
-                            onRouteSelection("settings")
-                        }
-                    }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .padding(WorkbenchSpacing.pageInset)
         }
-        .padding()
+        .background(WorkbenchColor.alloyCanvas)
         .onAppear {
             if appHost.librarySnapshot == nil, !appHost.isScanning {
                 appHost.requestRescan()
@@ -259,39 +263,44 @@ struct LibraryView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Library")
-                    .font(.title2)
-                Text("Trustworthy local model inventory grouped by family.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                Text("LIBRARY / INVENTORY").font(WorkbenchTypography.monoUtility).foregroundColor(WorkbenchColor.fluxTeal).tracking(0.8)
+                Text("Local model inventory").font(WorkbenchTypography.section)
+                Text("Grouped by family, with readiness and evidence kept visible.").font(WorkbenchTypography.body).foregroundColor(WorkbenchColor.graphiteMuted)
             }
             Spacer()
             if appHost.isScanning {
                 ProgressView()
                     .controlSize(.small)
             }
-            Button("Refresh") {
-                appHost.requestRescan()
-            }
+            Button("Refresh") { appHost.requestRescan() }.accessibilityLabel("Refresh library scan")
             .disabled(appHost.isScanning)
         }
     }
 
     private func summary(snapshot: LibrarySnapshot) -> some View {
-        HStack(spacing: 12) {
-            statCard("Families", "\(snapshot.groups.count)")
-            statCard("Models", "\(snapshot.models.count)")
-            statCard("Storage", byteCount(snapshot.totalBytes))
-            statCard("Reclaimable", byteCount(snapshot.reclaimableBytes))
-            statCard("Scanned", format(snapshot.generatedAt))
+        WorkbenchSurface(padding: WorkbenchSpacing.sm) {
+            HStack(spacing: WorkbenchSpacing.lg) {
+                statValue("FAMILIES", "\(snapshot.groups.count)")
+                statValue("MODELS", "\(snapshot.models.count)")
+                statValue("STORAGE", byteCount(snapshot.totalBytes))
+                statValue("RECLAIMABLE", byteCount(snapshot.reclaimableBytes))
+                statValue("SCANNED", format(snapshot.generatedAt))
+            }
         }
     }
 
     private var filters: some View {
-        HStack(spacing: 12) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: WorkbenchSpacing.sm) { filterControls }
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { filterControls }
+        }
+    }
+
+    @ViewBuilder private var filterControls: some View {
             TextField("Search family, variant, path, key, or evidence", text: $search)
                 .textFieldStyle(.roundedBorder)
-                .frame(minWidth: 280, maxWidth: 420)
+                .frame(maxWidth: 440)
+                .accessibilityLabel("Search model library")
 
             Picker("Readiness", selection: $readinessFilter) {
                 Text("All readiness").tag(ModelReadiness?.none)
@@ -308,33 +317,36 @@ struct LibraryView: View {
                 }
             }
             .pickerStyle(.menu)
+    }
+
+    @ViewBuilder private func content(snapshot: LibrarySnapshot, width: CGFloat) -> some View {
+        switch LibraryPresentation.layoutMode(contentWidth: width) {
+        case .masterDetail:
+            HSplitView {
+                libraryList(snapshot: snapshot).frame(minWidth: 320, idealWidth: 360, maxWidth: 460)
+                detail(snapshot: snapshot)
+            }
+        case .drillIn:
+            if isShowingDetail && selectedModel != nil {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                    Button { isShowingDetail = false } label: { Label("Back to Library", systemImage: "chevron.left") }
+                        .buttonStyle(.link).accessibilityLabel("Back to Library")
+                    detail(snapshot: snapshot)
+                }
+            } else {
+                libraryList(snapshot: snapshot)
+            }
         }
     }
 
-    private func content(snapshot: LibrarySnapshot) -> some View {
-        HSplitView {
-            libraryList(snapshot: snapshot)
-                .frame(minWidth: 420, idealWidth: 500)
-
-            Group {
-                if let selectedModel {
-                    ModelDetailsView(
-                        appHost: appHost,
-                        model: selectedModel,
-                        snapshotGeneratedAt: snapshot.generatedAt,
-                        onRouteSelection: onRouteSelection
-                    )
-                } else {
-                    ContentUnavailableView(
-                        "No model selected",
-                        systemImage: "square.and.pencil",
-                        description: Text("Choose a library row to inspect the local evidence and route selection.")
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+    private func detail(snapshot: LibrarySnapshot) -> some View {
+        Group {
+            if let selectedModel {
+                ModelDetailsView(appHost: appHost, model: selectedModel, snapshotGeneratedAt: snapshot.generatedAt, onRouteSelection: onRouteSelection)
+            } else {
+                ContentUnavailableView("No model selected", systemImage: "square.and.pencil", description: Text("Choose a library row to inspect the local evidence and route selection.")).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(minWidth: 420, maxWidth: .infinity)
-        }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func libraryList(snapshot: LibrarySnapshot) -> some View {
@@ -356,6 +368,7 @@ struct LibraryView: View {
                                     .contentShape(Rectangle())
                                     .onTapGesture {
                                         appHost.selectedModelPath = model.item.path
+                                        isShowingDetail = true
                                     }
                             }
                         } header: {
@@ -364,6 +377,14 @@ struct LibraryView: View {
                     }
                 }
                 .listStyle(.inset)
+                .onChange(of: appHost.selectedModelPath) { _, path in
+                    // A List selection can come from the keyboard as well as
+                    // the pointer. In compact drill-in mode either path must
+                    // open the selected model's detail.
+                    if path != nil {
+                        isShowingDetail = true
+                    }
+                }
             }
         }
     }
@@ -408,19 +429,15 @@ struct LibraryView: View {
         )
     }
 
-    private func statCard(_ title: String, _ value: String) -> some View {
+    private func statValue(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.monoUtility)
+                .foregroundColor(WorkbenchColor.graphiteMuted)
             Text(value)
-                .font(.title3)
-                .fontWeight(.medium)
+                .font(WorkbenchTypography.section)
         }
-        .padding(8)
-        .frame(minWidth: 100, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func byteCount(_ value: Int64) -> String {
@@ -466,7 +483,7 @@ private struct LibraryGroupHeaderView: View {
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption)
-                .foregroundColor(.orange)
+                .foregroundColor(WorkbenchColor.thermalAmber)
             }
         }
         .padding(.vertical, 4)

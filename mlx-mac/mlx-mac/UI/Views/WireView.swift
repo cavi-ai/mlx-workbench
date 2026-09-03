@@ -18,6 +18,7 @@ struct WireView: View {
 
     @State private var selectedServerID: String?
     @State private var wiringResult: String?
+    @State private var wiringResultHasIssues = false
 
     init(appHost: AppHost) {
         self.appHost = appHost
@@ -39,12 +40,12 @@ struct WireView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 clientWiringSection
                 formSection
                 ErrorBanner(text: errorMessage)
                 if let result {
-                    Text(result).font(.caption).foregroundColor(.green)
+                    Text(result).font(.caption).foregroundColor(WorkbenchColor.verifiedGreen)
                 }
                 if let preview {
                     VStack(alignment: .leading, spacing: 8) {
@@ -62,7 +63,7 @@ struct WireView: View {
                 }
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
         .onAppear { wiring.detect() }
     }
@@ -115,15 +116,9 @@ struct WireView: View {
                 }
             }
 
-            HStack(spacing: 10) {
-                Button("Preview client wiring") {
-                    if let endpoint = selectedEndpoint { wiring.preview(endpoint: endpoint) }
-                }
-                .disabled(selectedEndpoint == nil || wiring.installations.allSatisfy(\.advisoryOnly))
-
-                if wiring.rollbackAvailable {
-                    Button("Roll back last wiring") { wiring.rollback() }
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { wiringActions }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { wiringActions }
             }
 
             ErrorBanner(text: wiring.lastError)
@@ -148,7 +143,7 @@ struct WireView: View {
                             HStack {
                                 Text(plan.displayName).font(.headline)
                                 if plan.rewritesFile {
-                                    Text("reformats file").font(.caption).foregroundColor(.orange)
+                                    Text("reformats file").font(.caption).foregroundColor(WorkbenchColor.thermalAmber)
                                 }
                                 Spacer()
                                 Text(plan.summary).font(.caption).foregroundColor(.secondary)
@@ -158,24 +153,45 @@ struct WireView: View {
                     Button("Confirm client wiring") {
                         if let endpoint = selectedEndpoint {
                             let transaction = wiring.confirm(endpoint: endpoint, previewHash: hash)
-                            wiringResult = transaction.map {
-                                $0.failures.isEmpty
-                                    ? "Wired \($0.receipts.count) client(s) to \($0.modelName)."
-                                    : "Wired with issues: \($0.failures.joined(separator: "; "))"
+                            if let transaction {
+                                wiringResultHasIssues = !transaction.failures.isEmpty
+                                wiringResult = transaction.failures.isEmpty
+                                    ? "Wired \(transaction.receipts.count) client(s) to \(transaction.modelName)."
+                                    : "Wired with issues: \(transaction.failures.joined(separator: "; "))"
+                            } else {
+                                wiringResult = nil
+                                wiringResultHasIssues = false
                             }
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(WorkbenchColor.fluxTeal)
                     .disabled(wiring.isApplying)
                 }
                 .formSection {}
             }
 
             if let wiringResult {
-                Text(wiringResult).font(.caption).foregroundColor(.green)
+                Text(wiringResult)
+                    .font(.caption)
+                    .foregroundColor(wiringResultHasIssues ? WorkbenchColor.systemRed : WorkbenchColor.verifiedGreen)
             }
         }
         .formSection {}
+    }
+
+    @ViewBuilder
+    private var wiringActions: some View {
+        Button("Preview client wiring") {
+            if let endpoint = selectedEndpoint { wiring.preview(endpoint: endpoint) }
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(WorkbenchColor.fluxTeal)
+        .disabled(selectedEndpoint == nil || wiring.installations.allSatisfy(\.advisoryOnly))
+        if wiring.rollbackAvailable {
+            Button("Roll back last wiring") { wiring.rollback() }
+                .buttonStyle(.bordered)
+        }
     }
 
     private func diffText(_ line: DiffLine) -> String {
@@ -188,10 +204,26 @@ struct WireView: View {
 
     private func diffColor(_ kind: DiffLineKind) -> Color {
         switch kind {
-        case .context: return .primary
-        case .added: return .green
-        case .removed: return .red
+        case .context: return WorkbenchColor.graphiteInk
+        case .added: return WorkbenchColor.verifiedGreen
+        case .removed: return WorkbenchColor.systemRed
         }
+    }
+
+    @ViewBuilder
+    private var manualWireControls: some View {
+        Picker("Target", selection: $target) {
+            Text("mlx_lm").tag("mlx_lm")
+            Text("mlx-vlm").tag("mlx-vlm")
+            Text("ollama").tag("ollama")
+            Text("lmstudio").tag("lmstudio")
+            Text("litellm").tag("litellm")
+        }
+        .frame(maxWidth: 180, alignment: .leading)
+        Button("Preview Wire") { previewWire() }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(model.isEmpty || path.isEmpty || isPreviewing)
     }
 
 
@@ -206,20 +238,9 @@ struct WireView: View {
                 TextField("Config file path", text: $path)
                     .textFieldStyle(.roundedBorder)
             }
-            HStack {
-                Picker("Target", selection: $target) {
-                    Text("mlx_lm").tag("mlx_lm")
-                    Text("mlx-vlm").tag("mlx-vlm")
-                    Text("ollama").tag("ollama")
-                    Text("lmstudio").tag("lmstudio")
-                    Text("litellm").tag("litellm")
-                }
-                .frame(width: 180)
-                Spacer()
-                Button("Preview Wire") {
-                    previewWire()
-                }
-                .disabled(model.isEmpty || path.isEmpty || isPreviewing)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { manualWireControls }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { manualWireControls }
             }
         }
         .formSection {}

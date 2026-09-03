@@ -27,18 +27,18 @@ struct TrainingView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 formSection
                 if preview != nil {
                     planSection
                 }
                 ErrorBanner(text: errorMessage)
                 if let notice {
-                    Text(notice).font(.caption).foregroundColor(.green)
+                    Text(notice).font(.caption).foregroundColor(WorkbenchColor.verifiedGreen)
                 }
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
     }
 
@@ -53,15 +53,9 @@ struct TrainingView: View {
                 TextField("Dataset path", text: $data)
                     .textFieldStyle(.roundedBorder)
             }
-            HStack {
-                TextField("Iterations", text: $itersText)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 120)
-                TextField("Output (optional)", text: $out)
-                    .textFieldStyle(.roundedBorder)
-                Spacer()
-                Button("Preview Training") { previewTraining() }
-                    .disabled(repo.isEmpty || data.isEmpty || isPreviewing)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { trainingControls }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { trainingControls }
             }
         }
         .formSection {}
@@ -73,11 +67,32 @@ struct TrainingView: View {
                 SectionTitle(text: "Training plan")
                 Spacer()
                 Button("Confirm & Train") { confirmTraining() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(WorkbenchColor.fluxTeal)
                     .disabled(previewHash == nil)
             }
             PreviewDictView(value: preview ?? [:])
         }
         .formSection {}
+    }
+
+    @ViewBuilder
+    private var trainingControls: some View {
+        TextField("Iterations", text: $itersText)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 120)
+        TextField("Output (optional)", text: $out)
+            .textFieldStyle(.roundedBorder)
+            if previewHash == nil {
+                Button("Preview Training") { previewTraining() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(WorkbenchColor.fluxTeal)
+                    .disabled(repo.isEmpty || data.isEmpty || isPreviewing)
+            } else {
+                Button("Preview Training") { previewTraining() }
+                    .buttonStyle(.bordered)
+                    .disabled(repo.isEmpty || data.isEmpty || isPreviewing)
+            }
     }
 
     private func previewTraining() {

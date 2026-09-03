@@ -11,23 +11,32 @@ struct ModelArchView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    Button("Choose Model…") { showingPicker = true }
-                    Text(selectedModel?.name ?? "No model selected")
-                        .foregroundColor(selectedModel == nil ? .secondary : .primary)
-                    Spacer()
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { modelPickerControls }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { modelPickerControls }
                 }
                 if let model = selectedModel {
                     archCard(model)
                 }
                 Spacer()
             }
-            .padding()
+            .padding(WorkbenchSpacing.pageInset)
         }
         .sheet(isPresented: $showingPicker) {
             ModelPickerSheet(appHost: appHost, selected: $selectedModel)
         }
+    }
+
+    @ViewBuilder
+    private var modelPickerControls: some View {
+        Button("Choose Model…") { showingPicker = true }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+        Text(selectedModel?.name ?? "No model selected")
+            .font(WorkbenchTypography.monoUtility)
+            .foregroundColor(selectedModel == nil ? WorkbenchColor.graphiteMuted : WorkbenchColor.graphiteInk)
+            .textSelection(.enabled)
     }
 
     private func archCard(_ model: ModelItem) -> some View {

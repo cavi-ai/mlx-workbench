@@ -28,7 +28,7 @@ struct MenuBarView: View {
             if let error = endpoint.lastError {
                 Text(error)
                     .font(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(WorkbenchColor.systemRed)
             }
             Divider()
             Button("Open mlx-workbench") { openApp() }
