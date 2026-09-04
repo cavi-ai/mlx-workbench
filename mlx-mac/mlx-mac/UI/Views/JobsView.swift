@@ -140,11 +140,6 @@ struct JobsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Activity").font(WorkbenchTypography.display).foregroundColor(WorkbenchColor.graphiteInk)
-                        Text("Persisted conversion history and authoritative live process state.")
-                            .font(WorkbenchTypography.body).foregroundColor(WorkbenchColor.graphiteMuted)
-                    }
                     Spacer()
                     Button("Refresh") { Task { await refresh() } }.disabled(isRefreshing)
                 }
@@ -184,6 +179,11 @@ struct JobsView: View {
                             Text(server.repo ?? "Unknown model").font(.headline).lineLimit(1)
                             Spacer()
                             if let port = server.port { Text(":\(port)").font(.caption) }
+                            if let logPath = server.logPath, !logPath.isEmpty {
+                                Button("View log") { selectedLog = LogSelection(id: logPath, path: logPath) }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                            }
                         }
                         detailLine("PID", server.pid.map(String.init) ?? "Not reported")
                         detailLine("Receipt", server.receipt ?? "Not reported")
@@ -211,6 +211,11 @@ struct JobsView: View {
             detailLine("Created", timestamp(card.workflow.createdAt))
             detailLine("Agent state", card.workflow.lastKnownAgentState ?? "Not reported")
             detailLine("Log path", card.logPath ?? "Not reported")
+            if let logPath = card.logPath, !logPath.isEmpty {
+                Button("View log") { selectedLog = LogSelection(id: logPath, path: logPath) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
             if let failure = card.workflow.errorMessage {
                 Text(failure).font(.callout).foregroundColor(WorkbenchColor.systemRed).textSelection(.enabled)
             } else if let message = card.workflow.message {

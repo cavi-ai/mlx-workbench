@@ -261,12 +261,7 @@ struct LibraryView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("LIBRARY / INVENTORY").font(WorkbenchTypography.monoUtility).foregroundColor(WorkbenchColor.fluxTeal).tracking(0.8)
-                Text("Local model inventory").font(WorkbenchTypography.section)
-                Text("Grouped by family, with readiness and evidence kept visible.").font(WorkbenchTypography.body).foregroundColor(WorkbenchColor.graphiteMuted)
-            }
+        HStack {
             Spacer()
             if appHost.isScanning {
                 ProgressView()

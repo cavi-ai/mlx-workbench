@@ -7,9 +7,6 @@ struct DuplicatesView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var reclaim: ReclaimCoordinator
 
-    @State private var groups: [DuplicateGroup] = []
-    @State private var isScanning = false
-    @State private var errorMessage: String?
     @State private var selectedOpportunities: Set<String> = []
 
     init(appHost: AppHost) {
@@ -17,22 +14,28 @@ struct DuplicatesView: View {
         _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
     }
 
+    /// Duplicate groups come from the authoritative library scan shared with
+    /// Library and Reclaim — this view never runs its own scan.
+    private var groups: [DuplicateGroup] {
+        appHost.scanResult?.duplicates ?? []
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 reclaimSection
                 HStack(spacing: 10) {
-                    Button("Scan Duplicates") { scan() }
-                        .disabled(isScanning)
+                    Button("Rescan library") { appHost.requestRescan() }
+                        .disabled(appHost.isScanning)
                     Spacer()
                 }
-                if isScanning {
+                if appHost.isScanning {
                     ProgressView("Scanning…")
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.top, 24)
                 }
-                ErrorBanner(text: errorMessage)
-                if groups.isEmpty && !isScanning {
+                ErrorBanner(text: appHost.lastError)
+                if groups.isEmpty && !appHost.isScanning {
                     Text("No duplicate groups found.")
                         .foregroundColor(.secondary)
                         .padding(.top, 12)
@@ -46,7 +49,9 @@ struct DuplicatesView: View {
         }
         .onAppear {
             appHost.analyzeReclaim()
-            if groups.isEmpty { scan() }
+            if appHost.scanResult == nil, !appHost.isScanning {
+                appHost.requestRescan()
+            }
         }
     }
 
@@ -238,28 +243,5 @@ struct DuplicatesView: View {
             }
         }
         .formSection {}
-    }
-
-    private func scan() {
-        errorMessage = nil
-        isScanning = true
-        Task {
-            defer { isScanning = false }
-            do {
-                let roots = appHost.config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : appHost.config.ggufRoots
-                let result = try await appHost.api.scan(
-                    ggufRoots: roots,
-                    mlxRoots: appHost.config.mlxRoots,
-                    signatures: appHost.config.signatures
-                )
-                groups = result.duplicates
-            } catch let error as BridgeError {
-                groups = []
-                errorMessage = error.errorDescription
-            } catch {
-                groups = []
-                errorMessage = error.localizedDescription
-            }
-        }
     }
 }

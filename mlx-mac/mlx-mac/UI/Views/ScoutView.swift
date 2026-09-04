@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - ScoutView
@@ -177,6 +178,20 @@ struct ScoutView: View {
                     if let license = candidate.license {
                         Text(license).font(.caption).foregroundColor(.secondary)
                     }
+                    Button("Copy repo id") {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(candidate.repo, forType: .string)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Button("Open on Hugging Face") {
+                        if let url = URL(string: "https://huggingface.co/\(candidate.repo)") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             }
             .frame(height: 380)
