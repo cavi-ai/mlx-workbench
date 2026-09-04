@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - DoctorView
@@ -45,6 +46,13 @@ struct DoctorView: View {
                         .font(.caption)
                         .foregroundColor(WorkbenchColor.thermalAmber)
                         .textSelection(.enabled)
+                    Button("Copy command") {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(appHost.runtimeReport.install, forType: .string)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     Spacer()
                     Button("Open Settings") { onRouteSelection(AppRoute.settings.rawValue) }
                         .buttonStyle(.bordered)
