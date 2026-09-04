@@ -128,7 +128,7 @@ struct HomeView: View {
     }
 
     var body: some View {
-        ScrollView { VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) { Text("WORKBENCH / OVERVIEW").font(WorkbenchTypography.monoUtility).foregroundColor(WorkbenchColor.fluxTeal).tracking(0.8); nextActionSurface; workspaceContext; flightPathSurface; alertsSection; statusSurface; recommendationEvidence }.padding(WorkbenchSpacing.pageInset).frame(maxWidth: .infinity, alignment: .leading) }.background(WorkbenchColor.alloyCanvas).onAppear { appHost.analyzeReclaim() }
+        ScrollView { VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) { nextActionSurface; workspaceContext; flightPathSurface; alertsSection; statusSurface; recommendationEvidence }.padding(WorkbenchSpacing.pageInset).frame(maxWidth: .infinity, alignment: .leading) }.background(WorkbenchColor.alloyCanvas).onAppear { appHost.analyzeReclaim() }
     }
 
     private var nextActionSurface: some View { WorkbenchSurface { VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { HStack(alignment: .firstTextBaseline) { VStack(alignment: .leading, spacing: 4) { Text("NEXT SAFE ACTION").font(WorkbenchTypography.monoUtility).foregroundColor(WorkbenchColor.fluxTeal); Text(nextAction.title).font(WorkbenchTypography.section) }; Spacer(); StatusBadge(status: nextActionStatus) }; Text(nextAction.reason).font(WorkbenchTypography.body).foregroundColor(WorkbenchColor.graphiteMuted).fixedSize(horizontal: false, vertical: true); Button(nextAction.title) { perform(nextAction) }.buttonStyle(.borderedProminent).accessibilityLabel("Next safe action: " + nextAction.title) } } }

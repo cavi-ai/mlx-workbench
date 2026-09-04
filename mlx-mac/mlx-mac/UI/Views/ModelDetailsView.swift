@@ -39,6 +39,12 @@ struct ModelDetailsView: View {
                         detailRow("Source paths", lines(model.sourcePaths))
                         detailRow("Signature", known(model.item.signature))
                         detailRow("Size", ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))
+                        if let tensors = model.item.tensorCount {
+                            detailRow("Tensors", "\(tensors)")
+                        }
+                        if let shard = model.item.shard?.trimmingCharacters(in: .whitespacesAndNewlines), !shard.isEmpty {
+                            detailRow("Shard", shard)
+                        }
                     }
                 }
                 .textSelection(.enabled)

@@ -313,8 +313,30 @@ struct PreviewDictView: View {
     }
 }
 
-struct SectionTitle: View {
-    let text: String
+/// Raw agent payloads stay inspectable but collapsed by default, so primary
+/// surfaces show structured summaries instead of JSON dumps.
+struct RawJSONDisclosure: View {
+    let title: String
+    let value: [String: Any]
+
+    init(_ title: String = "Raw data", value: [String: Any]) {
+        self.title = title
+        self.value = value
+    }
+
+    var body: some View {
+        DisclosureGroup {
+            PreviewDictView(value: value)
+                .padding(.top, WorkbenchSpacing.xxs)
+        } label: {
+            Text(title)
+                .font(WorkbenchTypography.navigation)
+                .foregroundColor(WorkbenchColor.graphiteMuted)
+        }
+    }
+}
+
+struct SectionTitle: View {    let text: String
 
     var body: some View {
         Text(text)

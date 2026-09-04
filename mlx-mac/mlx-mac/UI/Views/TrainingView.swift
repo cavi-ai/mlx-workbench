@@ -71,9 +71,32 @@ struct TrainingView: View {
                     .tint(WorkbenchColor.fluxTeal)
                     .disabled(previewHash == nil)
             }
-            PreviewDictView(value: preview ?? [:])
+            VStack(alignment: .leading, spacing: 4) {
+                planRow("Base model", repo)
+                planRow("Dataset", data)
+                planRow("Iterations", itersText)
+                if !out.isEmpty {
+                    planRow("Output", out)
+                }
+            }
+            if let preview {
+                RawJSONDisclosure("Raw plan payload", value: preview)
+            }
         }
         .formSection {}
+    }
+
+    private func planRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 90, alignment: .trailing)
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     @ViewBuilder

@@ -93,10 +93,6 @@ struct ContentView: View {
             return AnyView(TrainingView(appHost: appHost))
         case .adopt:
             return AnyView(AdoptView(appHost: appHost))
-        case .modelArchitecture:
-            return AnyView(ModelArchView(appHost: appHost))
-        case .sloth:
-            return AnyView(SlothView(appHost: appHost))
         case .settings:
             return AnyView(SettingsView(appHost: appHost))
         }
