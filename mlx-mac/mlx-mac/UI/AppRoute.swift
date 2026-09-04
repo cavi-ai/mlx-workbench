@@ -75,7 +75,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .run: return "Run"
         case .activity: return "Activity"
         case .reclaim: return "Reclaim"
-        case .clientSetup: return "Client Setup"
+        case .clientSetup: return "Clients"
         case .health: return "Health"
         case .discover: return "Discover"
         case .lmStudio: return "LM Studio"

@@ -81,11 +81,6 @@ struct ServeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Run").font(WorkbenchTypography.display).foregroundColor(WorkbenchColor.graphiteInk)
-                    Text("Preview and confirm serving the selected completed MLX model.")
-                        .font(WorkbenchTypography.body).foregroundColor(WorkbenchColor.graphiteMuted)
-                }
                 selectedModelSection
                 launchSection
                 endpointSection
@@ -228,10 +223,7 @@ struct ServeView: View {
                     }
                 }
             } else {
-                Button("Install login item…") { showLoginItemPreview.toggle() }
-            }
-            if showLoginItemPreview, !appHost.endpoint.config.installedAtLogin {
-                Button("Confirm install") { installLoginItem() }
+                Button("Install login item…") { showLoginItemPreview = true }
             }
         }
         .sheet(isPresented: $showLoginItemPreview) {
@@ -358,9 +350,7 @@ struct ServeView: View {
                 }
                 detailLine("Port", server.port.map(String.init) ?? "Not reported")
                 detailLine("PID", server.pid.map(String.init) ?? "Not reported")
-                Text(server.receipt ?? "Not reported")
-                    .accessibilityIdentifier("active-server-receipt")
-                detailLine("Receipt", server.receipt ?? "Not reported")
+                detailLine("Receipt", server.receipt ?? "Not reported", accessibilityID: "active-server-receipt")
                 detailLine("Log path", server.logPath ?? "Not reported")
                 detailLine("Started", server.startedAt ?? "Not reported")
             } else {
@@ -370,10 +360,19 @@ struct ServeView: View {
         .formSection {}
     }
 
-    private func detailLine(_ title: String, _ value: String) -> some View {
+    private func detailLine(_ title: String, _ value: String, accessibilityID: String? = nil) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title).foregroundColor(WorkbenchColor.graphiteMuted).frame(width: 120, alignment: .leading)
-            Text(value).font(WorkbenchTypography.monoUtility).foregroundColor(WorkbenchColor.graphiteInk).textSelection(.enabled)
+            Group {
+                if let accessibilityID {
+                    Text(value).accessibilityIdentifier(accessibilityID)
+                } else {
+                    Text(value)
+                }
+            }
+            .font(WorkbenchTypography.monoUtility)
+            .foregroundColor(WorkbenchColor.graphiteInk)
+            .textSelection(.enabled)
             Spacer()
         }
         .font(WorkbenchTypography.body)
@@ -417,38 +416,37 @@ struct ServeView: View {
         TextField("Context", text: $contextText).textFieldStyle(.roundedBorder).frame(width: 90)
     }
 
+    private func previewServeAction() {
+        Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
+    }
+
+    private func confirmServeAction() {
+        Task {
+            await modelWorkflow.confirmServe(runtime: runtime, port: port)
+            if modelWorkflow.workflow.serveState == .running { onRouteSelection("jobs") }
+        }
+    }
+
     @ViewBuilder
     private var serveActions: some View {
+        // Exactly one action is armed at a time: preview until the intent is
+        // ready to confirm, then confirm. The armed action is prominent.
         if presentation.canConfirm {
-            Button("Preview serve") {
-                Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
-            }
-            .buttonStyle(.bordered)
-            .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
-            Button("Confirm and run") {
-                Task {
-                    await modelWorkflow.confirmServe(runtime: runtime, port: port)
-                    if modelWorkflow.workflow.serveState == .running { onRouteSelection("jobs") }
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
-            .disabled(modelWorkflow.isServeSubmissionInFlight)
+            Button("Preview serve", action: previewServeAction)
+                .buttonStyle(.bordered)
+                .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
+            Button("Confirm and run", action: confirmServeAction)
+                .buttonStyle(.borderedProminent)
+                .tint(WorkbenchColor.fluxTeal)
+                .disabled(modelWorkflow.isServeSubmissionInFlight)
         } else {
-            Button("Preview serve") {
-                Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
-            .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
-            Button("Confirm and run") {
-                Task {
-                    await modelWorkflow.confirmServe(runtime: runtime, port: port)
-                    if modelWorkflow.workflow.serveState == .running { onRouteSelection("jobs") }
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(!presentation.canConfirm || modelWorkflow.isServeSubmissionInFlight)
+            Button("Preview serve", action: previewServeAction)
+                .buttonStyle(.borderedProminent)
+                .tint(WorkbenchColor.fluxTeal)
+                .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
+            Button("Confirm and run", action: confirmServeAction)
+                .buttonStyle(.bordered)
+                .disabled(!presentation.canConfirm || modelWorkflow.isServeSubmissionInFlight)
         }
     }
 }

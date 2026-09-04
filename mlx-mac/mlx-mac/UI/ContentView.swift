@@ -172,7 +172,9 @@ private struct WorkspaceHeader: View {
                 .font(WorkbenchTypography.navigation)
                 .foregroundColor(WorkbenchColor.graphiteMuted)
             StatusBadge(status: endpointBadgeStatus)
-            if showSummary {
+            // The badge already says it when the summary is just the state
+            // label (e.g. "Disabled"); only add genuinely richer context.
+            if showSummary, endpoint.state.summary != endpointBadgeStatus.label {
                 Text(endpoint.state.summary)
                     .font(WorkbenchTypography.monoUtility)
                     .foregroundColor(WorkbenchColor.graphiteInk)
