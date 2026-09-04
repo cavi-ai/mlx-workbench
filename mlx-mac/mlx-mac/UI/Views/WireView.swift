@@ -228,20 +228,28 @@ struct WireView: View {
 
 
     private var formSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionTitle(text: "Wire a model")
-            HStack {
-                TextField("Model repo id", text: $model)
-                    .textFieldStyle(.roundedBorder)
+        // Legacy single-file wiring. Cross-client wiring above is the
+        // supported path; this stays available but collapsed.
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    TextField("Model repo id", text: $model)
+                        .textFieldStyle(.roundedBorder)
+                }
+                HStack {
+                    TextField("Config file path", text: $path)
+                        .textFieldStyle(.roundedBorder)
+                }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { manualWireControls }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { manualWireControls }
+                }
             }
-            HStack {
-                TextField("Config file path", text: $path)
-                    .textFieldStyle(.roundedBorder)
-            }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { manualWireControls }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { manualWireControls }
-            }
+            .padding(.top, WorkbenchSpacing.xs)
+        } label: {
+            Text("Advanced: manual single-file wiring")
+                .font(WorkbenchTypography.navigation)
+                .foregroundColor(WorkbenchColor.graphiteMuted)
         }
         .formSection {}
     }

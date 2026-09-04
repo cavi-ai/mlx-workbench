@@ -30,7 +30,7 @@ final class AppRouteTests: XCTestCase {
             (.run, "Lifecycle", "Run", "play.circle"),
             (.activity, "Operations", "Activity", "clock.arrow.circlepath"),
             (.reclaim, "Operations", "Reclaim", "square.3.layers.3d"),
-            (.clientSetup, "Operations", "Client Setup", "arrow.triangle.branch"),
+            (.clientSetup, "Operations", "Clients", "arrow.triangle.branch"),
             (.health, "Operations", "Health", "stethoscope"),
             (.discover, "Lab", "Discover", "magnifyingglass"),
             (.lmStudio, "Lab", "LM Studio", "square.and.arrow.down"),
