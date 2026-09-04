@@ -70,7 +70,7 @@ struct DoctorView: View {
                             Button("Confirm Prune") { confirmPrune() }
                                 .disabled(isRunning)
                         }
-                        PreviewDictView(value: prunePreview)
+                        RawJSONDisclosure("Raw prune plan", value: prunePreview)
                     }
                     .formSection {}
                 }

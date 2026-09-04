@@ -57,7 +57,7 @@ struct WireView: View {
                             }
                             .disabled(previewHash == nil)
                         }
-                        PreviewDictView(value: preview)
+                        RawJSONDisclosure("Raw wiring payload", value: preview)
                     }
                     .formSection {}
                 }

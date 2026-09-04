@@ -2,23 +2,23 @@ import XCTest
 @testable import mlx_workbench
 
 final class AppRouteTests: XCTestCase {
-    func testRouteRegistryContainsTheSixteenUniqueLegacyIDsInCanonicalOrder() {
+    func testRouteRegistryContainsTheFourteenUniqueLegacyIDsInCanonicalOrder() {
         let routes = AppRoute.allCases
         let expectedIDs = [
             "quickstart", "models",
             "convert", "quant", "serve",
             "jobs", "duplicates", "wire", "doctor",
-            "scout", "lmstudio", "training-studio", "adopt", "model-arch", "sloth",
+            "scout", "lmstudio", "training-studio", "adopt",
             "settings"
         ]
 
-        XCTAssertEqual(routes.count, 16)
+        XCTAssertEqual(routes.count, 14)
         XCTAssertEqual(routes.map(\.rawValue), expectedIDs)
         XCTAssertEqual(Set(routes.map(\.rawValue)).count, routes.count)
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
 
         XCTAssertEqual(AppRoute.grouped.map(\.group), [.workbench, .lifecycle, .operations, .lab, .settings])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 3, 4, 6, 1])
+        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 3, 4, 4, 1])
     }
 
     func testRouteMetadataMatchesTheSiliconInstrumentBenchInformationArchitecture() {
@@ -36,8 +36,6 @@ final class AppRouteTests: XCTestCase {
             (.lmStudio, "Lab", "LM Studio", "square.and.arrow.down"),
             (.training, "Lab", "Training", "sparkles"),
             (.adopt, "Lab", "Adopt", "hand.tap"),
-            (.modelArchitecture, "Lab", "Model Architecture", "cube"),
-            (.sloth, "Lab", "Sloth", "tortoise"),
             (.settings, "Settings", "Settings", "gearshape")
         ]
 

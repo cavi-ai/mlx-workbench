@@ -173,10 +173,6 @@
 
 		24FREF00000F /* LMStudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LMStudioView.swift; path = UI/Views/LMStudioView.swift; sourceTree = "<group>"; };
 
-		24FREF000010 /* ModelArchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelArchView.swift; path = UI/Views/ModelArchView.swift; sourceTree = "<group>"; };
-
-		24FREF000011 /* ModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelsView.swift; path = UI/Views/ModelsView.swift; sourceTree = "<group>"; };
-
 		24FREF000012 /* QuantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QuantView.swift; path = UI/Views/QuantView.swift; sourceTree = "<group>"; };
 
 		24FREF000013 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HomeView.swift; path = UI/Views/HomeView.swift; sourceTree = "<group>"; };
@@ -186,8 +182,6 @@
 		24FREF000015 /* ServeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServeView.swift; path = UI/Views/ServeView.swift; sourceTree = "<group>"; };
 
 		24FREF000016 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = UI/Views/SettingsView.swift; sourceTree = "<group>"; };
-
-		24FREF000017 /* SlothView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SlothView.swift; path = UI/Views/SlothView.swift; sourceTree = "<group>"; };
 
 		24FREF000018 /* TrainingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingView.swift; path = UI/Views/TrainingView.swift; sourceTree = "<group>"; };
 
@@ -365,16 +359,13 @@
 				24FREF00000D /* DuplicatesView.swift */,
 				24FREF00000E /* JobsView.swift */,
 				24FREF00000F /* LMStudioView.swift */,
-				24FREF000010 /* ModelArchView.swift */,
 				24FREF023 /* ModelDetailsView.swift */,
-				24FREF000011 /* ModelsView.swift */,
 				24FREF022 /* LibraryView.swift */,
 				24FREF000012 /* QuantView.swift */,
 				24FREF000013 /* HomeView.swift */,
 				24FREF000014 /* ScoutView.swift */,
 				24FREF000015 /* ServeView.swift */,
 				24FREF000016 /* SettingsView.swift */,
-				24FREF000017 /* SlothView.swift */,
 				24FREF000018 /* TrainingView.swift */,
 				24FREF000019 /* WireView.swift */,
 				24AREF001 /* Assets.xcassets */,

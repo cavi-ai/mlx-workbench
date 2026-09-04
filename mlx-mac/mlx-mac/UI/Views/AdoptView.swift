@@ -1,19 +1,25 @@
 import SwiftUI
 
 // MARK: - AdoptView
-// Durable role handoff via `adopt start`.
+// Durable role handoff via `adopt start`. The state file returned by the
+// agent is tracked automatically; users never type internal paths.
 
 struct AdoptView: View {
     @ObservedObject var appHost: AppHost
 
     @State private var role = ""
-    @State private var statePath = ""
     @State private var fast = false
     @State private var offline = false
     @State private var isRunning = false
     @State private var result: AdoptResult?
     @State private var statusResult: AdoptResult?
     @State private var errorMessage: String?
+
+    /// The state path reported by the most recent adopt run. Status checks
+    /// use this automatically instead of asking the user for a path.
+    private var trackedStatePath: String? {
+        result?.state ?? statusResult?.state
+    }
 
     var body: some View {
         ScrollView {
@@ -33,28 +39,22 @@ struct AdoptView: View {
     private var formSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionTitle(text: "Adopt a role")
-            HStack {
-                TextField("Role (e.g. coding, writing, agent)", text: $role)
-                    .textFieldStyle(.roundedBorder)
-            }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { adoptionControls }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { adoptionControls }
+            Text("Pick the role this machine should fill. The agent verifies and wires a model for it.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            TextField("Role (e.g. coding, writing, agent)", text: $role)
+                .textFieldStyle(.roundedBorder)
+            HStack(spacing: WorkbenchSpacing.md) {
+                Toggle("Fast", isOn: $fast)
+                Toggle("Offline", isOn: $offline)
+                Spacer()
+                Button("Start Adoption") { startAdopt() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(WorkbenchColor.fluxTeal)
+                    .disabled(role.isEmpty || isRunning)
             }
         }
         .formSection {}
-    }
-
-    @ViewBuilder
-    private var adoptionControls: some View {
-        TextField("State path (optional)", text: $statePath)
-            .textFieldStyle(.roundedBorder)
-        Toggle("Fast", isOn: $fast)
-        Toggle("Offline", isOn: $offline)
-        Button("Start Adoption") { startAdopt() }
-            .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
-            .disabled(role.isEmpty || isRunning)
     }
 
     private func resultSection(_ result: AdoptResult) -> some View {
@@ -69,9 +69,6 @@ struct AdoptView: View {
                     .foregroundColor(.secondary)
                 Spacer()
             }
-            if let state = result.state {
-                Text("State: \(state)").font(.caption).textSelection(.enabled)
-            }
             if let model = result.model {
                 Text("Model: \(model)").font(.caption).textSelection(.enabled)
             }
@@ -82,39 +79,47 @@ struct AdoptView: View {
         .formSection {}
     }
 
+    @ViewBuilder
     private var statusSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                SectionTitle(text: "Adoption status")
-                Spacer()
-                Button("Check Status") { checkStatus() }
-                    .buttonStyle(.bordered)
-                    .disabled(statePath.isEmpty || isRunning)
-            }
-            if let statusResult {
-                if let status = statusResult.status {
-                    HStack {
-                        StatusPill(state: status)
-                        Text(statusResult.message ?? "").font(.caption).foregroundColor(.secondary)
+        if let statePath = trackedStatePath {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    SectionTitle(text: "Adoption status")
+                    Spacer()
+                    Button("Refresh Status") { checkStatus(statePath: statePath) }
+                        .buttonStyle(.bordered)
+                        .disabled(isRunning)
+                }
+                if let statusResult {
+                    if let status = statusResult.status {
+                        HStack {
+                            StatusPill(state: status)
+                            Text(statusResult.message ?? "").font(.caption).foregroundColor(.secondary)
+                        }
                     }
-                }
-                if let model = statusResult.model {
-                    Text("Model: \(model)").font(.caption)
+                    if let model = statusResult.model {
+                        Text("Model: \(model)").font(.caption)
+                    }
+                } else {
+                    Text("Adoption is tracked at \(statePath)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
+            .formSection {}
         }
-        .formSection {}
     }
 
     private func startAdopt() {
         errorMessage = nil
         result = nil
+        statusResult = nil
         isRunning = true
-        let r = role, s = statePath.isEmpty ? nil : statePath, f = fast, o = offline
+        let r = role, f = fast, o = offline
         Task {
             defer { isRunning = false }
             do {
-                result = try await appHost.api.adoptStart(role: r, state: s, fast: f, offline: o)
+                result = try await appHost.api.adoptStart(role: r, state: nil, fast: f, offline: o)
             } catch let error as BridgeError {
                 errorMessage = error.errorDescription
             } catch {
@@ -123,15 +128,13 @@ struct AdoptView: View {
         }
     }
 
-    private func checkStatus() {
-        guard !statePath.isEmpty else { return }
+    private func checkStatus(statePath: String) {
         errorMessage = nil
         isRunning = true
-        let s = statePath
         Task {
             defer { isRunning = false }
             do {
-                statusResult = try await appHost.api.adoptStatus(state: s)
+                statusResult = try await appHost.api.adoptStatus(state: statePath)
             } catch let error as BridgeError {
                 errorMessage = error.errorDescription
             } catch {

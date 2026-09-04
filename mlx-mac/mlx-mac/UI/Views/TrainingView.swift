@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - TrainingView
@@ -45,13 +46,25 @@ struct TrainingView: View {
     private var formSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionTitle(text: "LoRA fine-tune")
+            if !cachedRepoIdentities.isEmpty {
+                Picker("Cached base model", selection: cachedRepoSelection) {
+                    Text("Custom repo id…").tag("")
+                    ForEach(cachedRepoIdentities, id: \.self) { identity in
+                        Text(identity).tag(identity)
+                    }
+                }
+                .frame(maxWidth: 420, alignment: .leading)
+            }
             HStack {
                 TextField("Base model repo id", text: $repo)
                     .textFieldStyle(.roundedBorder)
             }
-            HStack {
+            HStack(spacing: WorkbenchSpacing.xs) {
                 TextField("Dataset path", text: $data)
                     .textFieldStyle(.roundedBorder)
+                Button("Choose…") { chooseDataset() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: WorkbenchSpacing.xs) { trainingControls }
@@ -59,6 +72,28 @@ struct TrainingView: View {
             }
         }
         .formSection {}
+    }
+
+    /// Hugging Face repo ids for models already in the local cache, so the
+    /// base model can be picked instead of typed.
+    private var cachedRepoIdentities: [String] {
+        let models = appHost.librarySnapshot?.models ?? []
+        var identities: Set<String> = []
+        for model in models {
+            for path in [model.item.path] + model.outputPaths {
+                if let repoID = HFRepoID.forPath(path) {
+                    identities.insert(repoID)
+                }
+            }
+        }
+        return identities.sorted()
+    }
+
+    private var cachedRepoSelection: Binding<String> {
+        Binding(
+            get: { cachedRepoIdentities.contains(repo) ? repo : "" },
+            set: { if !$0.isEmpty { repo = $0 } }
+        )
     }
 
     private var planSection: some View {
@@ -71,9 +106,32 @@ struct TrainingView: View {
                     .tint(WorkbenchColor.fluxTeal)
                     .disabled(previewHash == nil)
             }
-            PreviewDictView(value: preview ?? [:])
+            VStack(alignment: .leading, spacing: 4) {
+                planRow("Base model", repo)
+                planRow("Dataset", data)
+                planRow("Iterations", itersText)
+                if !out.isEmpty {
+                    planRow("Output", out)
+                }
+            }
+            if let preview {
+                RawJSONDisclosure("Raw plan payload", value: preview)
+            }
         }
         .formSection {}
+    }
+
+    private func planRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 90, alignment: .trailing)
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     @ViewBuilder
@@ -95,8 +153,21 @@ struct TrainingView: View {
             }
     }
 
-    private func previewTraining() {
-        errorMessage = nil
+    private func chooseDataset() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        let trimmed = data.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: trimmed)
+        }
+        if panel.runModal() == .OK, let url = panel.url {
+            data = url.path
+        }
+    }
+
+    private func previewTraining() {        errorMessage = nil
         notice = nil
         isPreviewing = true
         let r = repo, d = data, i = iters, o = out.isEmpty ? nil : out

@@ -19,8 +19,6 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     case lmStudio = "lmstudio"
     case training = "training-studio"
     case adopt = "adopt"
-    case modelArchitecture = "model-arch"
-    case sloth = "sloth"
     case settings = "settings"
 
     enum Group: String, CaseIterable, Hashable {
@@ -63,7 +61,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .overview, .library: return .workbench
         case .prepare, .compare, .run: return .lifecycle
         case .activity, .reclaim, .clientSetup, .health: return .operations
-        case .discover, .lmStudio, .training, .adopt, .modelArchitecture, .sloth: return .lab
+        case .discover, .lmStudio, .training, .adopt: return .lab
         case .settings: return .settings
         }
     }
@@ -83,8 +81,6 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .lmStudio: return "LM Studio"
         case .training: return "Training"
         case .adopt: return "Adopt"
-        case .modelArchitecture: return "Model Architecture"
-        case .sloth: return "Sloth"
         case .settings: return "Settings"
         }
     }
@@ -104,8 +100,6 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .lmStudio: return "square.and.arrow.down"
         case .training: return "sparkles"
         case .adopt: return "hand.tap"
-        case .modelArchitecture: return "cube"
-        case .sloth: return "tortoise"
         case .settings: return "gearshape"
         }
     }
@@ -125,8 +119,6 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .lmStudio: return "Inspect LM Studio-compatible local model files."
         case .training: return "Review local training and fine-tuning tools."
         case .adopt: return "Adopt a model role using the available evidence."
-        case .modelArchitecture: return "Inspect model architecture details and constraints."
-        case .sloth: return "Review low-impact runtime and health diagnostics."
         case .settings: return "Configure Workbench paths, runtime, and feature controls."
         }
     }
