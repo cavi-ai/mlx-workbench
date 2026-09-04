@@ -12,11 +12,72 @@ import Darwin
 struct ProbeSample: Equatable, Sendable {
     let text: String
     let completionTokens: Int?
+    /// Prompt tokens as reported by the server's usage block, when present.
+    let promptTokens: Int?
     let timeToFirstTokenSeconds: Double?
     let durationSeconds: Double
     /// True when `completionTokens` was estimated from text length because
     /// the server did not report usage.
     let metricsEstimated: Bool
+    /// Number of tool calls the model emitted, when the prompt carried tool
+    /// definitions. Nil when no tools were offered.
+    let toolCalls: Int?
+    /// Names of the tools the model called, in order.
+    let toolNames: [String]?
+
+    init(
+        text: String,
+        completionTokens: Int?,
+        promptTokens: Int? = nil,
+        timeToFirstTokenSeconds: Double?,
+        durationSeconds: Double,
+        metricsEstimated: Bool,
+        toolCalls: Int? = nil,
+        toolNames: [String]? = nil
+    ) {
+        self.text = text
+        self.completionTokens = completionTokens
+        self.promptTokens = promptTokens
+        self.timeToFirstTokenSeconds = timeToFirstTokenSeconds
+        self.durationSeconds = durationSeconds
+        self.metricsEstimated = metricsEstimated
+        self.toolCalls = toolCalls
+        self.toolNames = toolNames
+    }
+
+    /// Prompt-processing speed estimated as prompt tokens over TTFT. TTFT
+    /// includes queueing and first decode, so this is a lower bound — the UI
+    /// labels it as an estimate.
+    var prefillTokensPerSecond: Double? {
+        guard let promptTokens, promptTokens > 0,
+              let ttft = timeToFirstTokenSeconds, ttft > 0 else { return nil }
+        return Double(promptTokens) / ttft
+    }
+}
+
+/// A tool definition offered during a probe. The parameters schema stays
+/// JSON text so prompt-set persistence remains schema-stable.
+struct PromptToolSpec: Codable, Equatable, Sendable {
+    let name: String
+    let description: String
+    let parametersJSON: String
+
+    /// The OpenAI `tools` payload fragment for this spec. Nil when the
+    /// parameters JSON is unreadable — the caller then drops the tool.
+    var openAITool: [String: Any]? {
+        guard let data = parametersJSON.data(using: .utf8),
+              let schema = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return [
+            "type": "function",
+            "function": [
+                "name": name,
+                "description": description,
+                "parameters": schema,
+            ],
+        ]
+    }
 }
 
 struct ProbeRunResult: Equatable, Sendable {
@@ -31,12 +92,23 @@ struct ProbePrompt: Equatable, Sendable {
     let id: String
     let prompt: String
     let maxTokens: Int
+    /// When set, the probe offers this tool and records what the model calls.
+    var tool: PromptToolSpec? = nil
 }
 
 protocol EndpointProbing: Sendable {
     func isReady(baseURL: URL) async -> Bool
     func listModels(baseURL: URL) async -> [String]
     func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample
+    /// Tool-aware variant. The default drops the tool so older fakes and
+    /// conformers keep working unchanged.
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int, tool: PromptToolSpec?) async throws -> ProbeSample
+}
+
+extension EndpointProbing {
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int, tool: PromptToolSpec?) async throws -> ProbeSample {
+        try await chat(baseURL: baseURL, model: model, prompt: prompt, maxTokens: maxTokens)
+    }
 }
 
 enum ServeProbeError: LocalizedError {
@@ -117,7 +189,8 @@ struct ServeProbe: Sendable {
                     baseURL: baseURL,
                     model: modelID,
                     prompt: prompt.prompt,
-                    maxTokens: prompt.maxTokens
+                    maxTokens: prompt.maxTokens,
+                    tool: prompt.tool
                 )
             }
             try? await lifecycle.stop(port)
@@ -233,18 +306,26 @@ struct OpenAIEndpointProber: EndpointProbing {
     }
 
     func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+        try await chat(baseURL: baseURL, model: model, prompt: prompt, maxTokens: maxTokens, tool: nil)
+    }
+
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int, tool: PromptToolSpec?) async throws -> ProbeSample {
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/chat/completions"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = requestTimeout
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        var body: [String: Any] = [
             "model": model,
             "messages": [["role": "user", "content": prompt]],
             "max_tokens": maxTokens,
             "temperature": 0,
             "stream": true,
             "stream_options": ["include_usage": true],
-        ])
+        ]
+        if let tool, let openAITool = tool.openAITool {
+            body["tools"] = [openAITool]
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let startedAt = Date()
         let (bytes, response) = try await session.bytes(for: request)
@@ -253,16 +334,24 @@ struct OpenAIEndpointProber: EndpointProbing {
 
         var text = ""
         var completionTokens: Int?
+        var promptTokens: Int?
         var firstTokenAt: Date?
+        // Streamed tool calls arrive as deltas keyed by index; collect the
+        // highest index for the count and names as they stream in.
+        var toolCallNamesByIndex: [Int: String] = [:]
         for try await line in bytes.lines {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if payload == "[DONE]" { break }
             guard let data = payload.data(using: .utf8),
                   let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            if let usage = chunk["usage"] as? [String: Any],
-               let count = usage["completion_tokens"] as? Int {
-                completionTokens = count
+            if let usage = chunk["usage"] as? [String: Any] {
+                if let count = usage["completion_tokens"] as? Int {
+                    completionTokens = count
+                }
+                if let count = usage["prompt_tokens"] as? Int {
+                    promptTokens = count
+                }
             }
             if let choices = chunk["choices"] as? [[String: Any]],
                let delta = choices.first?["delta"] as? [String: Any] {
@@ -273,6 +362,15 @@ struct OpenAIEndpointProber: EndpointProbing {
                 if let piece {
                     if firstTokenAt == nil { firstTokenAt = Date() }
                     text += piece
+                }
+                if let calls = delta["tool_calls"] as? [[String: Any]] {
+                    for call in calls {
+                        let index = call["index"] as? Int ?? 0
+                        if let function = call["function"] as? [String: Any],
+                           let name = function["name"] as? String, !name.isEmpty {
+                            toolCallNamesByIndex[index] = name
+                        }
+                    }
                 }
             }
         }
@@ -289,12 +387,19 @@ struct OpenAIEndpointProber: EndpointProbing {
             tokens = text.isEmpty ? nil : max(1, text.count / 4)
             estimated = true
         }
+        let toolCalls: Int? = tool == nil ? nil : toolCallNamesByIndex.count
+        let toolNames: [String]? = tool == nil
+            ? nil
+            : toolCallNamesByIndex.sorted { $0.key < $1.key }.map(\.value)
         return ProbeSample(
             text: text,
             completionTokens: tokens,
+            promptTokens: promptTokens,
             timeToFirstTokenSeconds: firstTokenAt.map { $0.timeIntervalSince(startedAt) },
             durationSeconds: finishedAt.timeIntervalSince(startedAt),
-            metricsEstimated: estimated
+            metricsEstimated: estimated,
+            toolCalls: toolCalls,
+            toolNames: toolNames
         )
     }
 }

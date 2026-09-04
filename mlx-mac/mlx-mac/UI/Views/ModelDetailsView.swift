@@ -232,6 +232,9 @@ struct ModelDetailsView: View {
                 if let best = profile.bestTokensPerSecond, let worst = profile.worstTokensPerSecond {
                     detailRow("Range", String(format: "%.1f – %.1f tok/s", worst, best))
                 }
+                if let prefill = profile.averagePrefillTokensPerSecond {
+                    detailRow("Prefill speed", String(format: "avg %.0f tok/s (est.)", prefill))
+                }
                 if let ttft = profile.bestTTFTSeconds {
                     detailRow("Best first token", String(format: "%.2fs", ttft))
                 }
