@@ -98,13 +98,6 @@ struct ConvertView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                Text("Prepare")
-                    .font(WorkbenchTypography.display)
-                    .foregroundColor(WorkbenchColor.graphiteInk)
-                Text("Prepare a Library GGUF for local MLX use. Conversion plans are previewed before they are confirmed.")
-                    .font(WorkbenchTypography.body)
-                    .foregroundColor(WorkbenchColor.graphiteMuted)
-
                 workflowCard
                 sourceAndDestinationCard
                 conversionActions
@@ -173,36 +166,37 @@ struct ConvertView: View {
         .formSection {}
     }
 
+    private func previewAction() {
+        Task { await modelWorkflow.preview(qBits: qBits, out: nil) }
+    }
+
+    private func confirmAction() {
+        Task { await modelWorkflow.confirm(qBits: qBits) }
+    }
+
     @ViewBuilder
     private var actionButtons: some View {
+        // The primary action for the current workflow state is prominent.
         if presentation.primaryAction == .preview {
-            Button("Preview conversion") {
-                Task { await modelWorkflow.preview(qBits: qBits, out: nil) }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
-            .disabled(!presentation.canPreview || modelWorkflow.isConversionSubmissionInFlight)
+            Button("Preview conversion", action: previewAction)
+                .buttonStyle(.borderedProminent)
+                .tint(WorkbenchColor.fluxTeal)
+                .disabled(!presentation.canPreview || modelWorkflow.isConversionSubmissionInFlight)
         } else {
-            Button("Preview conversion") {
-                Task { await modelWorkflow.preview(qBits: qBits, out: nil) }
-            }
-            .buttonStyle(.bordered)
-            .disabled(!presentation.canPreview || modelWorkflow.isConversionSubmissionInFlight)
+            Button("Preview conversion", action: previewAction)
+                .buttonStyle(.bordered)
+                .disabled(!presentation.canPreview || modelWorkflow.isConversionSubmissionInFlight)
         }
 
         if presentation.primaryAction == .confirm {
-            Button("Confirm conversion") {
-                Task { await modelWorkflow.confirm(qBits: qBits) }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
-            .disabled(!presentation.canConfirm || modelWorkflow.isConversionSubmissionInFlight)
+            Button("Confirm conversion", action: confirmAction)
+                .buttonStyle(.borderedProminent)
+                .tint(WorkbenchColor.fluxTeal)
+                .disabled(!presentation.canConfirm || modelWorkflow.isConversionSubmissionInFlight)
         } else {
-            Button("Confirm conversion") {
-                Task { await modelWorkflow.confirm(qBits: qBits) }
-            }
-            .buttonStyle(.bordered)
-            .disabled(!presentation.canConfirm || modelWorkflow.isConversionSubmissionInFlight)
+            Button("Confirm conversion", action: confirmAction)
+                .buttonStyle(.bordered)
+                .disabled(!presentation.canConfirm || modelWorkflow.isConversionSubmissionInFlight)
         }
 
         if let existingModel {
