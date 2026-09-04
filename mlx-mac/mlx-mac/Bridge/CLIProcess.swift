@@ -12,30 +12,14 @@ struct CLIProcess {
     private let scoutTimeout: TimeInterval = 600
     static let maxOutputBytes = 8 * 1024 * 1024
 
-    private var python: String {
-        ProcessInfo.processInfo.environment["MLX_WORKBENCH_PYTHON"]
-            ?? ProcessInfo.processInfo.environment["PYTHON"]
-            ?? "python3"
-    }
-
-    /// Absolute path to `python` (resolves via PATH). Process.executableURL
-    /// requires an absolute path; a bare "python3" would throw at launch.
+    /// Absolute path to the interpreter (env override → repo .venv → PATH).
+    /// Process.executableURL requires an absolute path; a bare "python3"
+    /// would throw at launch.
     private func pythonExecutable() throws -> URL {
-        let candidate = Self.normalizePath(python)
-        if candidate.isEmpty {
+        guard let url = WorkbenchPython.preferredExecutable() else {
             throw BridgeError.skillUnavailable
         }
-        if candidate.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: candidate) {
-            return URL(fileURLWithPath: candidate)
-        }
-        let envPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        for dir in envPath.split(separator: ":") {
-            let full = URL(fileURLWithPath: String(dir)).appendingPathComponent(candidate)
-            if FileManager.default.isExecutableFile(atPath: full.path) {
-                return full
-            }
-        }
-        throw BridgeError.skillUnavailable
+        return url
     }
 
     private static func normalizePath(_ path: String) -> String {

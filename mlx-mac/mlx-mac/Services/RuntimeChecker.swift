@@ -141,23 +141,11 @@ struct RuntimeChecker {
         }
     }
 
-    /// Absolute URL to the configured Python (resolves via PATH). Process
-    /// needs an absolute executable URL; a bare "python3" would throw at launch.
+    /// Absolute URL to the Python that would run conversions/serving.
+    /// Shares WorkbenchPython's resolution order (env → repo .venv → PATH)
+    /// so the health report reflects what the bridge actually launches.
     private static func pythonPath() -> URL? {
-        let python = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PYTHON"]
-            ?? ProcessInfo.processInfo.environment["PYTHON"]
-            ?? "python3"
-        if python.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: python) {
-            return URL(fileURLWithPath: python)
-        }
-        let pathValue = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        for dir in pathValue.split(separator: ":") {
-            let full = URL(fileURLWithPath: String(dir)).appendingPathComponent(python)
-            if FileManager.default.isExecutableFile(atPath: full.path) {
-                return full
-            }
-        }
-        return nil
+        WorkbenchPython.preferredExecutable()
     }
 }
 

@@ -58,6 +58,9 @@ struct DoctorView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
+                RuntimeInstallView(installer: appHost.runtimeInstaller) {
+                    appHost.refreshRuntimeReport()
+                }
             }
         }
         .formSection {}

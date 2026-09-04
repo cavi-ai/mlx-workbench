@@ -55,6 +55,96 @@ final class ComparisonPhase2Tests: XCTestCase {
         XCTAssertNotNil(coordinator.lastError)
     }
 
+    // MARK: - Model performance profile
+
+    func testProfileAggregatesCompletedRunsForExactPathAndSignature() {
+        let older = makeRun(
+            finishedAt: Date(timeIntervalSinceReferenceDate: 100),
+            results: [makeResult(path: "/Models/a", signature: "sig-1", tps: 40, ttft: 0.5)]
+        )
+        let newer = makeRun(
+            finishedAt: Date(timeIntervalSinceReferenceDate: 200),
+            results: [makeResult(path: "/Models/a", signature: "sig-1", tps: 50, ttft: 0.4)]
+        )
+
+        let profile = ModelPerformanceProfile.derive(
+            modelPath: "/Models/a",
+            signature: "sig-1",
+            runs: [newer, older]
+        )
+
+        XCTAssertEqual(profile?.runCount, 2)
+        XCTAssertEqual(profile?.lastMeasuredAt, Date(timeIntervalSinceReferenceDate: 200))
+        XCTAssertEqual(profile?.averageTokensPerSecond, 45)
+        XCTAssertEqual(profile?.bestTokensPerSecond, 50)
+        XCTAssertEqual(profile?.worstTokensPerSecond, 40)
+        XCTAssertEqual(profile?.bestTTFTSeconds, 0.4)
+    }
+
+    func testProfileSkipsMismatchedSignatureErroredAndRunningRuns() {
+        let wrongSignature = makeRun(
+            finishedAt: Date(timeIntervalSinceReferenceDate: 100),
+            results: [makeResult(path: "/Models/a", signature: "sig-old", tps: 99, ttft: 0.1)]
+        )
+        let errored = makeRun(
+            finishedAt: Date(timeIntervalSinceReferenceDate: 200),
+            results: [makeResult(path: "/Models/a", signature: "sig-1", tps: nil, ttft: nil, error: "boom")]
+        )
+        var running = makeRun(
+            finishedAt: Date(timeIntervalSinceReferenceDate: 300),
+            results: [makeResult(path: "/Models/a", signature: "sig-1", tps: 88, ttft: 0.1)]
+        )
+        running.state = .running
+        let good = makeRun(
+            finishedAt: Date(timeIntervalSinceReferenceDate: 150),
+            results: [makeResult(path: "/Models/a", signature: "sig-1", tps: 42, ttft: 0.6)]
+        )
+
+        let profile = ModelPerformanceProfile.derive(
+            modelPath: "/Models/a",
+            signature: "sig-1",
+            runs: [wrongSignature, errored, running, good]
+        )
+
+        XCTAssertEqual(profile?.runCount, 1)
+        XCTAssertEqual(profile?.averageTokensPerSecond, 42)
+    }
+
+    func testProfileReturnsNilWhenNothingMatches() {
+        XCTAssertNil(ModelPerformanceProfile.derive(modelPath: "/Models/nope", signature: nil, runs: []))
+    }
+
+    private func makeRun(finishedAt: Date, results: [VariantResult]) -> ComparisonRun {
+        ComparisonRun(
+            id: UUID(),
+            promptSetID: "builtin-coding",
+            promptSetName: "Coding basics",
+            useCase: .coding,
+            variants: results.map(\.modelPath),
+            results: results,
+            startedAt: finishedAt.addingTimeInterval(-60),
+            finishedAt: finishedAt,
+            state: .completed
+        )
+    }
+
+    private func makeResult(
+        path: String,
+        signature: String?,
+        tps: Double?,
+        ttft: Double?,
+        error: String? = nil
+    ) -> VariantResult {
+        VariantResult(
+            modelPath: path,
+            modelSignature: signature,
+            samples: [],
+            aggregateTokensPerSecond: tps,
+            aggregateTTFTSeconds: ttft,
+            error: error
+        )
+    }
+
     // MARK: - Output diff pairing
 
     func testDiffPairsMatchByPromptIDAndDropUnpaired() {

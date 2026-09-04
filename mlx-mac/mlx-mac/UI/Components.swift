@@ -264,6 +264,73 @@ struct RawJSONDisclosure: View {
     }
 }
 
+/// Guided runtime setup: one button that runs `make install` with a live
+/// log tail, then re-probes. Hidden entirely when the app isn't running
+/// from a checkout (no repo root to install into).
+struct RuntimeInstallView: View {
+    @ObservedObject var installer: RuntimeInstaller
+    let onFinished: () -> Void
+
+    @State private var showConfirm = false
+
+    var body: some View {
+        if installer.repoRoot != nil {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Button("Install Runtime…") { showConfirm = true }
+                        .buttonStyle(.borderedProminent)
+                        .tint(WorkbenchColor.fluxTeal)
+                        .disabled(!installer.canInstall)
+                    if installer.state == .running {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(installer.summary)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    if installer.state == .succeeded {
+                        Label("Installed", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundColor(WorkbenchColor.verifiedGreen)
+                    }
+                }
+                if case .failed(let reason) = installer.state {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundColor(WorkbenchColor.systemRed)
+                }
+                if !installer.logTail.isEmpty {
+                    DisclosureGroup("Install log") {
+                        ScrollView {
+                            Text(installer.logTail.joined(separator: "\n"))
+                                .font(.system(.caption2, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 160)
+                        .padding(.top, WorkbenchSpacing.xxs)
+                    }
+                }
+            }
+            .confirmationDialog(
+                "Install the convert/serve runtime?",
+                isPresented: $showConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Run make install") {
+                    Task {
+                        await installer.install()
+                        onFinished()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Runs `make install` in the mlx-workbench checkout: creates the .venv (Python 3.12) and downloads the convert/serve packages. This can take several minutes.")
+            }
+        }
+    }
+}
+
 struct SectionTitle: View {    let text: String
 
     var body: some View {

@@ -1,8 +1,10 @@
+import Charts
 import SwiftUI
 
 // MARK: - QuantView
-// Compare tab: measured comparison of ready variants via prompt-set
-// replay (premium spec 03). Conversion previews live in Prepare.
+// Compare tab: measured comparison of ready variants via prompt-set replay
+// (premium spec 03). Key metrics stay on screen; per-prompt outputs and
+// diffs stay behind disclosures. Past runs are browsable history.
 
 struct QuantView: View {
     @ObservedObject var appHost: AppHost
@@ -10,6 +12,7 @@ struct QuantView: View {
 
     @State private var selectedVariants: Set<String> = []
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
+    @State private var selectedRunID: ComparisonRun.ID?
     @State private var diffLeftPath: String?
     @State private var diffRightPath: String?
 
@@ -22,14 +25,33 @@ struct QuantView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 measuredComparisonSection
+                historySection
+                if let run = selectedRun {
+                    runDetail(run)
+                }
                 Spacer()
             }
             .padding(WorkbenchSpacing.pageInset)
         }
-        .onAppear(perform: preselectVariantFamily)
+        .onAppear {
+            preselectVariantFamily()
+            if selectedRunID == nil {
+                selectedRunID = comparison.runs.first?.id
+            }
+        }
     }
 
-    // MARK: - Measured comparison
+    // MARK: - Selection
+
+    private var selectedRun: ComparisonRun? {
+        if let selectedRunID,
+           let run = comparison.runs.first(where: { $0.id == selectedRunID }) {
+            return run
+        }
+        return comparison.runs.first
+    }
+
+    // MARK: - Measured comparison setup
 
     private var readyModels: [LibraryModel] {
         appHost.librarySnapshot?.models.filter { $0.readiness == .ready } ?? []
@@ -75,68 +97,229 @@ struct QuantView: View {
             }
             ErrorBanner(text: comparison.lastError)
             ErrorBanner(text: comparison.persistenceError)
+        }
+        .formSection {}
+    }
 
-            if let run = comparison.runs.first {
-                runResults(run)
+    @ViewBuilder
+    private var comparisonControls: some View {
+        Picker("Prompt set", selection: $selectedPromptSetID) {
+            ForEach(comparison.promptSets) { set in
+                Text(set.name).tag(set.id)
+            }
+        }
+        .frame(maxWidth: 260, alignment: .leading)
+
+        Button("Import my prompts") {
+            if let imported = comparison.importHistory() {
+                selectedPromptSetID = imported.id
+            }
+        }
+        .buttonStyle(.bordered)
+        .help("Read-only import of your opencode user prompts as a prompt set.")
+
+        Button("Run comparison") { startRun() }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(selectedVariants.isEmpty || comparison.activeRunID != nil)
+    }
+
+    // MARK: - Run history
+
+    @ViewBuilder
+    private var historySection: some View {
+        if !comparison.runs.isEmpty {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                SectionTitle(text: "Run history")
+                ForEach(comparison.runs) { run in
+                    Button {
+                        selectedRunID = run.id
+                    } label: {
+                        HStack(spacing: WorkbenchSpacing.sm) {
+                            StatusBadge(state: run.state == .completed ? "completed" : "running")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(run.promptSetName)
+                                    .font(WorkbenchTypography.body)
+                                    .foregroundColor(WorkbenchColor.graphiteInk)
+                                Text("\(run.results.count) variant(s) · \(run.startedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            if let winner = run.winner, let tps = winner.aggregateTokensPerSecond {
+                                Text(String(format: "%.0f tok/s best", tps))
+                                    .font(WorkbenchTypography.monoUtility)
+                                    .foregroundColor(WorkbenchColor.fluxTeal)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, WorkbenchSpacing.xs)
+                        .contentShape(Rectangle())
+                        .background {
+                            RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous)
+                                .fill(run.id == selectedRun?.id ? WorkbenchColor.fluxTeal.opacity(0.12) : Color.clear)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Run \(run.promptSetName), \(run.results.count) variants")
+                }
+            }
+            .formSection {}
+        }
+    }
+
+    // MARK: - Selected run detail
+
+    private func runDetail(_ run: ComparisonRun) -> some View {
+        let successful = run.results.filter { $0.error == nil }
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            HStack(alignment: .firstTextBaseline) {
+                SectionTitle(text: "\(run.promptSetName) — \(run.startedAt.formatted(date: .abbreviated, time: .shortened))")
+                Spacer()
+                if let winner = run.winner, run.state == .completed {
+                    Label("Fastest: \(shortName(winner.modelPath))", systemImage: "bolt.fill")
+                        .font(.caption)
+                        .foregroundColor(WorkbenchColor.fluxTeal)
+                }
+            }
+
+            if !successful.isEmpty {
+                speedChart(successful)
+            }
+
+            ForEach(run.results) { result in
+                variantCard(result, run: run)
+            }
+
+            if run.state == .completed, successful.count >= 2 {
+                diffSection(run)
             }
         }
         .formSection {}
     }
 
-    private func runResults(_ run: ComparisonRun) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionTitle(text: "Latest run — \(run.promptSetName)")
-            ForEach(run.results) { result in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(URL(fileURLWithPath: result.modelPath).lastPathComponent)
-                            .font(.headline)
-                        Spacer()
-                        if let tps = result.aggregateTokensPerSecond {
-                            Text(String(format: "%.1f tok/s", tps)).font(.caption)
+    /// One glance: decode speed per variant with the run average marked.
+    /// Horizontal bars keep long model names readable.
+    private func speedChart(_ results: [VariantResult]) -> some View {
+        let measured = results.compactMap { result -> (name: String, tps: Double)? in
+            guard let tps = result.aggregateTokensPerSecond else { return nil }
+            return (shortName(result.modelPath), tps)
+        }
+        let average = measured.isEmpty ? 0 : measured.map(\.tps).reduce(0, +) / Double(measured.count)
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Text("Decode speed (tok/s)")
+                .font(WorkbenchTypography.navigation)
+                .foregroundColor(WorkbenchColor.graphiteMuted)
+            Chart {
+                ForEach(measured, id: \.name) { item in
+                    BarMark(
+                        x: .value("tok/s", item.tps),
+                        y: .value("Variant", item.name)
+                    )
+                    .foregroundStyle(WorkbenchColor.fluxTeal.gradient)
+                    .cornerRadius(3)
+                }
+                if average > 0 {
+                    RuleMark(x: .value("Average", average))
+                        .foregroundStyle(WorkbenchColor.graphiteMuted)
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .annotation(position: .top, alignment: .leading) {
+                            Text("avg")
+                                .font(.caption2)
+                                .foregroundColor(WorkbenchColor.graphiteMuted)
                         }
-                        if let ttft = result.aggregateTTFTSeconds {
-                            Text(String(format: "TTFT %.2fs", ttft))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    if let error = result.error {
-                        Text(error).font(.caption).foregroundColor(WorkbenchColor.systemRed)
-                    } else {
-                        DisclosureGroup("Per-prompt outputs (\(result.samples.count))") {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(result.samples, id: \.promptID) { sample in
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(sample.promptID).font(.caption).foregroundColor(.secondary)
-                                        Text(sample.outputExcerpt)
-                                            .font(.system(.caption, design: .monospaced))
-                                            .textSelection(.enabled)
+                }
+            }
+            .chartXAxis {
+                AxisMarks(position: .bottom)
+            }
+            .frame(height: CGFloat(max(measured.count, 1)) * 30 + 28)
+        }
+    }
+
+    private func variantCard(_ result: VariantResult, run: ComparisonRun) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(shortName(result.modelPath))
+                    .font(.headline)
+                Spacer()
+                if let tps = result.aggregateTokensPerSecond {
+                    Text(String(format: "%.1f tok/s", tps)).font(.caption)
+                }
+                if let ttft = result.aggregateTTFTSeconds {
+                    Text(String(format: "TTFT %.2fs", ttft))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if let error = result.error {
+                Text(error).font(.caption).foregroundColor(WorkbenchColor.systemRed)
+            } else {
+                sampleStatStrip(result)
+                DisclosureGroup("Per-prompt outputs (\(result.samples.count))") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(result.samples, id: \.promptID) { sample in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(sample.promptID).font(.caption).foregroundColor(.secondary)
+                                    Spacer()
+                                    if let tps = sample.tokensPerSecond {
+                                        Text(String(format: "%.1f tok/s", tps))
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
                                     }
                                 }
+                                Text(sample.outputExcerpt)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
                             }
-                            .padding(.top, 4)
-                        }
-                        if let useCase = run.useCase {
-                            Button("Set as preferred for \(useCase.title)") {
-                                setPreferred(result.modelPath, for: useCase)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(appHost.recommendationPreferences.preferredModelIDs[useCase] == result.modelPath)
                         }
                     }
+                    .padding(.top, 4)
                 }
-                .formSection {}
+                if let useCase = run.useCase {
+                    Button("Set as preferred for \(useCase.title)") {
+                        setPreferred(result.modelPath, for: useCase)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(appHost.recommendationPreferences.preferredModelIDs[useCase] == result.modelPath)
+                }
             }
-            if let winner = run.winner, run.state == .completed {
-                Text("Fastest: \(URL(fileURLWithPath: winner.modelPath).lastPathComponent)")
-                    .font(.caption)
-                    .foregroundColor(WorkbenchColor.fluxTeal)
+        }
+        .padding(WorkbenchSpacing.sm)
+        .background(WorkbenchColor.alloyCanvas)
+        .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+    }
+
+    /// High/low/average across this variant's per-prompt samples.
+    @ViewBuilder
+    private func sampleStatStrip(_ result: VariantResult) -> some View {
+        let values = result.samples.compactMap(\.tokensPerSecond)
+        if !values.isEmpty {
+            let average = values.reduce(0, +) / Double(values.count)
+            HStack(spacing: WorkbenchSpacing.md) {
+                statChip("avg", value: average)
+                statChip("high", value: values.max() ?? average)
+                statChip("low", value: values.min() ?? average)
+                if let bestTTFT = ComparisonAggregation.bestTTFT(result.samples) {
+                    Text(String(format: "best TTFT %.2fs", bestTTFT))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
             }
-            if run.state == .completed, run.results.filter({ $0.error == nil }).count >= 2 {
-                diffSection(run)
-            }
+        }
+    }
+
+    private func statChip(_ label: String, value: Double) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text(String(format: "%.1f", value))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(WorkbenchColor.graphiteInk)
         }
     }
 
@@ -191,45 +374,24 @@ struct QuantView: View {
     }
 
     @ViewBuilder
-    private var comparisonControls: some View {
-        Picker("Prompt set", selection: $selectedPromptSetID) {
-            ForEach(comparison.promptSets) { set in
-                Text(set.name).tag(set.id)
-            }
-        }
-        .frame(maxWidth: 260, alignment: .leading)
-
-        Button("Import my prompts") {
-            if let imported = comparison.importHistory() {
-                selectedPromptSetID = imported.id
-            }
-        }
-        .buttonStyle(.bordered)
-        .help("Read-only import of your opencode user prompts as a prompt set.")
-
-        Button("Run comparison") { startRun() }
-            .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
-            .disabled(selectedVariants.isEmpty || comparison.activeRunID != nil)
-    }
-
-    @ViewBuilder
     private func diffControls(_ candidates: [VariantResult]) -> some View {
         Picker("Left", selection: $diffLeftPath) {
             Text("Choose…").tag(String?.none)
             ForEach(candidates) { result in
-                Text(URL(fileURLWithPath: result.modelPath).lastPathComponent)
+                Text(shortName(result.modelPath))
                     .tag(String?.some(result.modelPath))
             }
         }
         Picker("Right", selection: $diffRightPath) {
             Text("Choose…").tag(String?.none)
             ForEach(candidates) { result in
-                Text(URL(fileURLWithPath: result.modelPath).lastPathComponent)
+                Text(shortName(result.modelPath))
                     .tag(String?.some(result.modelPath))
             }
         }
     }
+
+    // MARK: - Actions
 
     private func variantBinding(_ path: String) -> Binding<Bool> {
         Binding(
@@ -269,5 +431,9 @@ struct QuantView: View {
             hiddenModelIDs: current.hiddenModelIDs,
             preferredModelIDs: preferred
         )
+    }
+
+    private func shortName(_ path: String) -> String {
+        URL(fileURLWithPath: path).lastPathComponent
     }
 }

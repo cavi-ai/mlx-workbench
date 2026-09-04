@@ -60,6 +60,8 @@ struct ModelDetailsView: View {
 
                 WorkbenchSurface { verificationSection }
 
+                WorkbenchSurface { performanceSection }
+
                 WorkbenchSurface { lineageSection }
 
                 if let error = model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
@@ -197,6 +199,52 @@ struct ModelDetailsView: View {
             }
             ForEach(report.canaries, id: \.id) { canary in
                 detailRow(canary.title, canary.passed ? "Passed" : "Failed: \(canary.failureReason ?? "unknown")")
+            }
+        }
+    }
+
+    // MARK: - Performance profile
+
+    /// Aggregated measured evidence across all completed comparison runs for
+    /// this exact model (path + signature). Numbers only — the charts and
+    /// per-prompt detail live in Compare.
+    private var performanceSection: some View {
+        let profile = ([model.item.path] + model.outputPaths)
+            .lazy
+            .compactMap {
+                ModelPerformanceProfile.derive(
+                    modelPath: $0,
+                    signature: model.item.signature,
+                    runs: appHost.comparison.runs
+                )
+            }
+            .first
+        return VStack(alignment: .leading, spacing: 10) {
+            SectionTitle(text: "Performance")
+            if let profile {
+                if let measuredAt = profile.lastMeasuredAt {
+                    detailRow("Last measured", format(measuredAt))
+                }
+                detailRow("Measured runs", "\(profile.runCount)")
+                if let average = profile.averageTokensPerSecond {
+                    detailRow("Decode speed", String(format: "avg %.1f tok/s", average))
+                }
+                if let best = profile.bestTokensPerSecond, let worst = profile.worstTokensPerSecond {
+                    detailRow("Range", String(format: "%.1f – %.1f tok/s", worst, best))
+                }
+                if let ttft = profile.bestTTFTSeconds {
+                    detailRow("Best first token", String(format: "%.2fs", ttft))
+                }
+            } else {
+                Text("No measured runs for this model yet.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Button("Measure in Compare") {
+                    appHost.selectedModelPath = model.item.path
+                    onRouteSelection(AppRoute.compare.rawValue)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
         }
     }
