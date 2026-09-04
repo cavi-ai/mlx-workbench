@@ -74,6 +74,9 @@ struct SettingsView: View {
                 Text(appHost.runtimeReport.install)
                     .font(WorkbenchTypography.body)
                     .foregroundColor(WorkbenchColor.thermalAmber)
+                RuntimeInstallView(installer: appHost.runtimeInstaller) {
+                    appHost.refreshRuntimeReport()
+                }
             }
         }
     }

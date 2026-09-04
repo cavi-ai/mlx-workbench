@@ -390,8 +390,39 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
-    private let existingMLXPath = "/Models/existing-mlx"
+    func testDismissRemovesFailedRecordAndResetsActiveWorkflow() async {
+        let host = await makeHost()
+        let record = makeWorkflow(id: "remove", state: .failed, receipt: nil)
 
+        await MainActor.run {
+            host.modelWorkflow.restore(record)
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .failed)
+            XCTAssertTrue(host.modelWorkflow.history.contains(where: { $0.id == record.id }))
+
+            host.modelWorkflow.dismiss(recordID: record.id)
+
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .idle)
+            XCTAssertFalse(host.modelWorkflow.history.contains(where: { $0.id == record.id }))
+        }
+    }
+
+    func testDismissLeavesOtherRecordsAndActiveWorkflowAlone() async {
+        let host = await makeHost()
+        let failed = makeWorkflow(id: "remove", state: .failed, receipt: nil)
+        let active = makeWorkflow(id: "remain", state: .completed, receipt: "receipt-2", completedModelPath: "/Models/other")
+
+        await MainActor.run {
+            host.modelWorkflow.restore(failed)
+            host.modelWorkflow.restore(active)
+            host.modelWorkflow.dismiss(recordID: failed.id)
+
+            XCTAssertEqual(host.modelWorkflow.workflow.id, active.id)
+            XCTAssertTrue(host.modelWorkflow.history.contains(where: { $0.id == active.id }))
+            XCTAssertFalse(host.modelWorkflow.history.contains(where: { $0.id == failed.id }))
+        }
+    }
+
+    private let existingMLXPath = "/Models/existing-mlx"
     private var ggufSource: ModelItem {
         ModelItem(
             path: "/Models/source.gguf", name: "source", bytes: 1, modifiedAt: nil, shard: nil,

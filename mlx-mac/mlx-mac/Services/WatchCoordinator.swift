@@ -78,34 +78,94 @@ final class WatchCoordinator: ObservableObject {
         fingerprint().description
     }
 
-    /// Probe the installed mlx-lm version via the configured Python. Returns
+    /// Probe the installed mlx-lm version via the resolved Python. Returns
     /// nil when unavailable — the fingerprint degrades to "unknown".
+    ///
+    /// CRITICAL: this spawns a process. It must never run on the main
+    /// thread with a cold cache — a synchronous `waitUntilExit` during view
+    /// layout spins the run loop, re-enters NSHostingView.layout, and trips
+    /// an AttributeGraph precondition (crash). The cache is prewarmed off
+    /// the main thread at startup; a cold main-thread call degrades to nil.
     nonisolated static func probeMLXLVersion() -> String? {
-        let script = "import importlib.metadata as m; print(m.version('mlx-lm'))"
-        let candidates = [
-            ProcessInfo.processInfo.environment["MLX_WORKBENCH_PYTHON"],
-            ProcessInfo.processInfo.environment["PYTHON"],
-            "/usr/bin/python3",
-        ].compactMap { $0 }
-        guard let python = candidates.first(where: {
-            $0.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: $0)
-        }) else { return nil }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: python)
-        process.arguments = ["-c", script]
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = Pipe()
-        do {
-            try process.run()
-        } catch {
-            return nil
+        if let cached = versionProbe.valueIfProbed { return cached }
+        guard !Thread.isMainThread else { return nil }
+        let version = runVersionProbe()
+        versionProbe.store(version)
+        return version
+    }
+
+    /// Probe off the main thread so the first render hits a warm cache.
+    /// Called once from app startup.
+    nonisolated static func prewarmEnvironmentProbe() {
+        Task.detached(priority: .utility) {
+            _ = probeMLXLVersion()
         }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        let text = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
+    }
+
+    /// The runtime changed (e.g. guided install) — drop the cached version
+    /// and re-probe off the main thread.
+    nonisolated static func invalidateEnvironmentProbe() {
+        versionProbe.reset()
+        prewarmEnvironmentProbe()
+    }
+
+    nonisolated private static let versionProbe = VersionProbeCache()
+
+    nonisolated private static func runVersionProbe() -> String? {
+        let script = "import importlib.metadata as m; print(m.version('mlx-lm'))"
+        var candidates: [URL] = []
+        if let preferred = WorkbenchPython.preferredExecutable() {
+            candidates.append(preferred)
+        }
+        candidates.append(URL(fileURLWithPath: "/usr/bin/python3"))
+        for python in candidates {
+            let process = Process()
+            process.executableURL = python
+            process.arguments = ["-c", script]
+            let stdout = Pipe()
+            process.standardOutput = stdout
+            process.standardError = Pipe()
+            do {
+                try process.run()
+            } catch {
+                continue
+            }
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { continue }
+            let text = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { return text }
+        }
+        return nil
+    }
+
+    /// Lock-protected cache for the version probe, including the probed-but-
+    /// unavailable (nil) result so we probe at most once per invalidation.
+    private final class VersionProbeCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var didProbe = false
+        private var cached: String?
+
+        /// `.some(cached)` once probed (cached may be nil), nil before that.
+        var valueIfProbed: String?? {
+            lock.lock()
+            defer { lock.unlock() }
+            return didProbe ? .some(cached) : .none
+        }
+
+        func store(_ version: String?) {
+            lock.lock()
+            cached = version
+            didProbe = true
+            lock.unlock()
+        }
+
+        func reset() {
+            lock.lock()
+            cached = nil
+            didProbe = false
+            lock.unlock()
+        }
     }
 
     // MARK: - Check cycle

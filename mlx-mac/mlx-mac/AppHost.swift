@@ -36,6 +36,9 @@ class AppHost: ObservableObject {
     let reclaim: ReclaimCoordinator
     /// Watch & regression alerts (premium spec 08).
     let watch: WatchCoordinator
+    /// Guided runtime setup (make install runner). Only actionable when the
+    /// app runs from a checkout; see WorkbenchPython.repoRoot().
+    let runtimeInstaller: RuntimeInstaller
 
     let api: WorkbenchAPI
 
@@ -70,7 +73,8 @@ class AppHost: ObservableObject {
         endpoint: EndpointSupervisor? = nil,
         usage: UsageTracker? = nil,
         reclaim: ReclaimCoordinator? = nil,
-        watch: WatchCoordinator? = nil
+        watch: WatchCoordinator? = nil,
+        runtimeInstaller: RuntimeInstaller? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -112,6 +116,7 @@ class AppHost: ObservableObject {
             store: JSONStore<UsageStamp>(fileURL: JSONStore<UsageStamp>.defaultFileURL("usage-stamps.json"))
         )
         self.reclaim = reclaim ?? ReclaimCoordinator()
+        self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller()
         let verificationCoordinator = self.verification
         let watchStateDir = JSONStore<WatchState>.defaultFileURL("placeholder")
             .deletingLastPathComponent()
@@ -275,6 +280,14 @@ class AppHost: ObservableObject {
             lastError = Self.render(error)
             return config
         }
+    }
+
+    /// Re-probe the convert/serve runtime (e.g. after a guided install).
+    func refreshRuntimeReport() {
+        runtimeReport = RuntimeChecker.report()
+        // The installed mlx-lm version may have changed; the watch
+        // fingerprint must reflect the new runtime.
+        WatchCoordinator.invalidateEnvironmentProbe()
     }
 
     func refreshCatalog() async {
@@ -505,6 +518,9 @@ class AppHost: ObservableObject {
     /// detach the quality gate, start or stop watch monitoring. Idempotent;
     /// called at app launch and after every config save.
     func applyFeatureToggles() {
+        // Prewarm the environment fingerprint probe off the main thread;
+        // the render path (recommendations) must never spawn a process.
+        WatchCoordinator.prewarmEnvironmentProbe()
         if config.verificationEnabled {
             verification.attach(to: modelWorkflow)
         } else {

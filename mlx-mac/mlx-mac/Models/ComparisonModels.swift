@@ -195,6 +195,51 @@ enum ComparisonDiff {
     }
 }
 
+// MARK: - Per-model performance profile
+
+/// Aggregated measured evidence for one model across all completed
+/// comparison runs. Feeds the Model Details "Performance" surface so a
+/// model's speed story is visible without opening individual runs.
+struct ModelPerformanceProfile: Equatable {
+    let runCount: Int
+    let lastMeasuredAt: Date?
+    let averageTokensPerSecond: Double?
+    let bestTokensPerSecond: Double?
+    let worstTokensPerSecond: Double?
+    let bestTTFTSeconds: Double?
+
+    /// Matches on exact path; when the caller knows the model's current
+    /// signature, results recorded against a different signature are skipped
+    /// so stale measurements never blend into the current profile.
+    static func derive(
+        modelPath: String,
+        signature: String?,
+        runs: [ComparisonRun]
+    ) -> ModelPerformanceProfile? {
+        let matches: [(measuredAt: Date, result: VariantResult)] = runs
+            .filter { $0.state == .completed }
+            .compactMap { run in
+                guard let result = run.results.first(where: {
+                    $0.modelPath == modelPath
+                        && $0.error == nil
+                        && (signature == nil || $0.modelSignature == nil || $0.modelSignature == signature)
+                }) else { return nil }
+                return (run.finishedAt ?? run.startedAt, result)
+            }
+        guard !matches.isEmpty else { return nil }
+        let tpsValues = matches.compactMap { $0.result.aggregateTokensPerSecond }
+        let ttftValues = matches.compactMap { $0.result.aggregateTTFTSeconds }
+        return ModelPerformanceProfile(
+            runCount: matches.count,
+            lastMeasuredAt: matches.map(\.measuredAt).max(),
+            averageTokensPerSecond: tpsValues.isEmpty ? nil : tpsValues.reduce(0, +) / Double(tpsValues.count),
+            bestTokensPerSecond: tpsValues.max(),
+            worstTokensPerSecond: tpsValues.min(),
+            bestTTFTSeconds: ttftValues.min()
+        )
+    }
+}
+
 enum ComparisonAggregation {    static func medianTokensPerSecond(_ samples: [ComparisonSample]) -> Double? {
         let values = samples.compactMap(\.tokensPerSecond).sorted()
         guard !values.isEmpty else { return nil }

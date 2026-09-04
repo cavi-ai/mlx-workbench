@@ -197,78 +197,6 @@ struct WorkbenchSurface<Content: View>: View {
     }
 }
 
-struct WorkspacePageHeader: View {
-    let eyebrow: String?
-    let title: String
-    let subtitle: String?
-    private let accessory: AnyView?
-
-    init(eyebrow: String? = nil, title: String, subtitle: String? = nil) {
-        self.eyebrow = eyebrow
-        self.title = title
-        self.subtitle = subtitle
-        self.accessory = nil
-    }
-
-    init<Accessory: View>(eyebrow: String? = nil, title: String, subtitle: String? = nil, @ViewBuilder accessory: () -> Accessory) {
-        self.eyebrow = eyebrow
-        self.title = title
-        self.subtitle = subtitle
-        self.accessory = AnyView(accessory())
-    }
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.md) {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                if let eyebrow, !eyebrow.isEmpty {
-                    Text(eyebrow.uppercased())
-                        .font(WorkbenchTypography.monoUtility)
-                        .foregroundColor(WorkbenchColor.fluxTeal)
-                        .tracking(0.8)
-                }
-                Text(title)
-                    .font(WorkbenchTypography.display)
-                    .foregroundColor(WorkbenchColor.graphiteInk)
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(WorkbenchTypography.body)
-                        .foregroundColor(WorkbenchColor.graphiteMuted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: WorkbenchSpacing.md)
-            accessory
-        }
-    }
-}
-
-struct WorkbenchPage<Content: View>: View {
-    private let header: WorkspacePageHeader?
-    private let content: Content
-
-    init(@ViewBuilder content: () -> Content) {
-        self.header = nil
-        self.content = content()
-    }
-
-    init(title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
-        self.header = WorkspacePageHeader(title: title, subtitle: subtitle)
-        self.content = content()
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                header
-                content
-            }
-            .padding(WorkbenchSpacing.pageInset)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(WorkbenchColor.alloyCanvas)
-    }
-}
-
 struct PreviewDictView: View {
     let value: [String: Any]
     var maxDepth: Int = 3
@@ -332,6 +260,73 @@ struct RawJSONDisclosure: View {
             Text(title)
                 .font(WorkbenchTypography.navigation)
                 .foregroundColor(WorkbenchColor.graphiteMuted)
+        }
+    }
+}
+
+/// Guided runtime setup: one button that runs `make install` with a live
+/// log tail, then re-probes. Hidden entirely when the app isn't running
+/// from a checkout (no repo root to install into).
+struct RuntimeInstallView: View {
+    @ObservedObject var installer: RuntimeInstaller
+    let onFinished: () -> Void
+
+    @State private var showConfirm = false
+
+    var body: some View {
+        if installer.repoRoot != nil {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Button("Install Runtime…") { showConfirm = true }
+                        .buttonStyle(.borderedProminent)
+                        .tint(WorkbenchColor.fluxTeal)
+                        .disabled(!installer.canInstall)
+                    if installer.state == .running {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(installer.summary)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    if installer.state == .succeeded {
+                        Label("Installed", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundColor(WorkbenchColor.verifiedGreen)
+                    }
+                }
+                if case .failed(let reason) = installer.state {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundColor(WorkbenchColor.systemRed)
+                }
+                if !installer.logTail.isEmpty {
+                    DisclosureGroup("Install log") {
+                        ScrollView {
+                            Text(installer.logTail.joined(separator: "\n"))
+                                .font(.system(.caption2, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 160)
+                        .padding(.top, WorkbenchSpacing.xxs)
+                    }
+                }
+            }
+            .confirmationDialog(
+                "Install the convert/serve runtime?",
+                isPresented: $showConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Run make install") {
+                    Task {
+                        await installer.install()
+                        onFinished()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Runs `make install` in the mlx-workbench checkout: creates the .venv (Python 3.12) and downloads the convert/serve packages. This can take several minutes.")
+            }
         }
     }
 }

@@ -84,23 +84,14 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         let result = try await api.raw(["probe"])
 
         let reported = try XCTUnwrap(result["process_path"] as? String)
-        let python = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PYTHON"]
-            ?? ProcessInfo.processInfo.environment["PYTHON"]
-            ?? "python3"
-        let resolvedPython = python.hasPrefix("/") ? python : findOnPath(python)
-        let expectedDir = URL(fileURLWithPath: resolvedPython).deletingLastPathComponent().path
+        // Expect the interpreter the bridge actually resolves (env override →
+        // repo .venv → PATH), not a hard-coded python3.
+        let resolvedPython = try XCTUnwrap(WorkbenchPython.preferredExecutable())
+        let expectedDir = resolvedPython.deletingLastPathComponent().path
         XCTAssertTrue(
             reported.hasPrefix(expectedDir + ":"),
             "agent PATH should start with the interpreter's directory; got \(reported)"
         )
-    }
-
-    private func findOnPath(_ name: String) -> String {
-        for dir in (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":") {
-            let full = "\(dir)/\(name)"
-            if FileManager.default.isExecutableFile(atPath: full) { return full }
-        }
-        return name
     }
 
     private func fixture(named name: String) throws -> [String: Any] {
