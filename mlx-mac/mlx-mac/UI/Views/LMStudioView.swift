@@ -1,15 +1,21 @@
 import SwiftUI
 
 // MARK: - LMStudioView
-// Import GGUF files from LM Studio model directories.
+// Find GGUF files in LM Studio model directories and hand them to Prepare.
 
 struct LMStudioView: View {
     @ObservedObject var appHost: AppHost
+    private let onRouteSelection: (String) -> Void
 
     @State private var sourceDir = ""
     @State private var isScanning = false
     @State private var models: [LMSModel] = []
     @State private var errorMessage: String?
+
+    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+        self.appHost = appHost
+        self.onRouteSelection = onRouteSelection
+    }
 
     struct LMSModel: Identifiable {
         let path: String
@@ -35,16 +41,26 @@ struct LMStudioView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         SectionTitle(text: "Found \(models.count) GGUF models")
                         ForEach(models) { model in
-                            HStack {
-                                Text(model.name).font(.body)
+                            HStack(spacing: WorkbenchSpacing.sm) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(model.name).font(.body)
+                                    Text(model.path)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
                                 Spacer()
                                 Text(ByteCountFormatter.string(fromByteCount: model.size, countStyle: .file))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
+                                Button("Prepare…") { prepare(model) }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
                             }
                             .padding(.vertical, 2)
                         }
-                        Text("Use the Convert tab to convert a chosen GGUF.")
+                        Text("Prepare opens a conversion preview for the chosen GGUF.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -64,6 +80,33 @@ struct LMStudioView: View {
             .buttonStyle(.borderedProminent)
             .tint(WorkbenchColor.fluxTeal)
             .disabled(isScanning)
+    }
+
+    /// Hand a discovered GGUF to the Prepare flow as if the library scan had
+    /// surfaced it: pending conversion status, no outputs yet.
+    private func prepare(_ model: LMSModel) {
+        let item = ModelItem(
+            path: model.path,
+            name: model.name,
+            bytes: model.size,
+            modifiedAt: nil,
+            shard: nil,
+            modelKey: nil,
+            architecture: nil,
+            quantization: nil,
+            parameters: nil,
+            structure: nil,
+            signature: nil,
+            companion: nil,
+            readable: true,
+            status: "pending",
+            outputs: [],
+            tensorCount: nil,
+            error: nil
+        )
+        appHost.selectedModelPath = model.path
+        appHost.modelWorkflow.inspect(source: item, snapshot: appHost.librarySnapshot)
+        onRouteSelection(AppRoute.prepare.rawValue)
     }
 
     private func scan() {

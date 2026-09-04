@@ -88,7 +88,7 @@ struct ContentView: View {
         case .discover:
             return AnyView(ScoutView(appHost: appHost))
         case .lmStudio:
-            return AnyView(LMStudioView(appHost: appHost))
+            return AnyView(LMStudioView(appHost: appHost, onRouteSelection: navigate))
         case .training:
             return AnyView(TrainingView(appHost: appHost))
         case .adopt:
