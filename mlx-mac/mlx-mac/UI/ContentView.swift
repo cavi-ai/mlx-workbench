@@ -6,8 +6,9 @@ struct ContentView: View {
     @StateObject private var appHost: AppHost
     @ObservedObject private var endpoint: EndpointSupervisor
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
-    @State private var selectedRoute: AppRoute = .overview
-    @State private var visitedRoutes: Set<AppRoute> = [.overview]
+    /// Persisted across launches; legacy/unknown values resolve to Overview.
+    @AppStorage("mlx-workbench.selectedRoute") private var selectedRouteID = AppRoute.overview.rawValue
+    @State private var visitedRoutes: Set<AppRoute> = []
 
     init(appHost: AppHost) {
         _appHost = StateObject(wrappedValue: appHost)
@@ -15,9 +16,20 @@ struct ContentView: View {
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
     }
 
+    private var selectedRoute: AppRoute {
+        AppRoute(rawID: selectedRouteID)
+    }
+
+    private var selectedRouteBinding: Binding<AppRoute> {
+        Binding(
+            get: { AppRoute(rawID: selectedRouteID) },
+            set: { selectedRouteID = $0.rawValue }
+        )
+    }
+
     var body: some View {
         NavigationSplitView {
-            AppSidebar(selectedRoute: $selectedRoute, badges: sidebarBadges)
+            AppSidebar(selectedRoute: selectedRouteBinding, badges: sidebarBadges)
                 .navigationSplitViewColumnWidth(min: 176, ideal: 208, max: 220)
         } detail: {
             VStack(spacing: 0) {
@@ -37,10 +49,11 @@ struct ContentView: View {
         }
         .tint(WorkbenchColor.fluxTeal)
         .accentColor(WorkbenchColor.fluxTeal)
-        .onChange(of: selectedRoute) { _, route in
-            visitedRoutes.insert(route)
+        .onChange(of: selectedRouteID) { _, _ in
+            visitedRoutes.insert(selectedRoute)
         }
         .onAppear {
+            visitedRoutes.insert(selectedRoute)
             Task { await appHost.rescan() }
         }
     }
@@ -99,7 +112,7 @@ struct ContentView: View {
     }
 
     private func navigate(rawID: String) {
-        selectedRoute = AppRoute(rawID: rawID)
+        selectedRouteID = AppRoute(rawID: rawID).rawValue
     }
 
     private var sidebarBadges: [AppRoute: String] {

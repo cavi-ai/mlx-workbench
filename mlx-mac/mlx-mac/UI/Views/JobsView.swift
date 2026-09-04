@@ -221,10 +221,15 @@ struct JobsView: View {
             } else if let message = card.workflow.message {
                 Text(message).font(.callout).foregroundColor(.secondary)
             }
-            if !card.actions.isEmpty {
+            if !card.actions.isEmpty || !card.isActive {
                 HStack {
                     ForEach(Array(card.actions.enumerated()), id: \.offset) { _, action in
                         Button(actionTitle(action)) { perform(action) }
+                    }
+                    if !card.isActive {
+                        Spacer()
+                        Button("Dismiss") { appHost.modelWorkflow.dismiss(recordID: card.workflow.id) }
+                            .foregroundColor(WorkbenchColor.graphiteMuted)
                     }
                 }
                 .buttonStyle(.bordered)

@@ -30,9 +30,20 @@ struct ModelWorkflowAPI {
 struct ModelWorkflowPersistence {
     let load: () throws -> [ConversionWorkflow]
     let upsert: (ConversionWorkflow) throws -> Void
+    let remove: (String) throws -> Void
+
+    init(
+        load: @escaping () throws -> [ConversionWorkflow],
+        upsert: @escaping (ConversionWorkflow) throws -> Void,
+        remove: @escaping (String) throws -> Void = { _ in }
+    ) {
+        self.load = load
+        self.upsert = upsert
+        self.remove = remove
+    }
 
     static func live(store: ModelWorkflowStore) -> ModelWorkflowPersistence {
-        ModelWorkflowPersistence(load: store.load, upsert: store.upsert)
+        ModelWorkflowPersistence(load: store.load, upsert: store.upsert, remove: store.remove)
     }
 }
 
@@ -442,6 +453,22 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     func clearTransientError() {
         update(message: .some(nil), errorMessage: .some(nil))
+    }
+
+    /// Dismiss a terminal workflow record from history. Dismissing the active
+    /// record resets the workflow to idle so Overview stops surfacing it as
+    /// the next action. Persisted so the record stays dismissed on relaunch.
+    func dismiss(recordID: UUID) {
+        guard let record = history.first(where: { $0.id == recordID }) else { return }
+        history.removeAll { $0.persistenceIdentifier == record.persistenceIdentifier }
+        do {
+            try persistence.remove(record.persistenceIdentifier)
+        } catch {
+            persistenceError = "Workflow history could not be saved: \(AppHost.render(error))"
+        }
+        if workflow.id == recordID {
+            workflow = Self.emptyWorkflow(at: now())
+        }
     }
 
     func consumeCompletionRescanRequest() -> Bool {
