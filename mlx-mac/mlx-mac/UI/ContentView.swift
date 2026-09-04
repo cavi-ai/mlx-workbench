@@ -84,7 +84,7 @@ struct ContentView: View {
         case .clientSetup:
             return AnyView(WireView(appHost: appHost))
         case .health:
-            return AnyView(DoctorView(appHost: appHost))
+            return AnyView(DoctorView(appHost: appHost, onRouteSelection: navigate))
         case .discover:
             return AnyView(ScoutView(appHost: appHost))
         case .lmStudio:
