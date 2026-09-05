@@ -55,6 +55,43 @@ final class ComparisonPhase2Tests: XCTestCase {
         XCTAssertNotNil(coordinator.lastError)
     }
 
+    // MARK: - Sample metrics threading
+
+    func testAggregationMapsPromptTokensPrefillAndToolCalls() {
+        let probe = ProbeSample(
+            text: "output",
+            completionTokens: 10,
+            promptTokens: 96,
+            timeToFirstTokenSeconds: 0.5,
+            durationSeconds: 1.5,
+            metricsEstimated: false,
+            toolCalls: 1,
+            toolNames: ["get_current_weather"]
+        )
+
+        let sample = ComparisonAggregation.sample(from: probe, promptID: "tool-weather")
+
+        XCTAssertEqual(sample.promptTokens, 96)
+        XCTAssertEqual(sample.prefillTokensPerSecond, 192)
+        XCTAssertEqual(sample.toolCalls, 1)
+        XCTAssertEqual(sample.toolNames, ["get_current_weather"])
+    }
+
+    func testLegacySampleJSONDecodesWithNewFieldsAbsent() throws {
+        let legacy = """
+        {"promptID":"p1","outputExcerpt":"hi","tokensPerSecond":42.5,\
+        "timeToFirstTokenSeconds":0.2,"error":null}
+        """
+        let sample = try JSONDecoder().decode(ComparisonSample.self, from: Data(legacy.utf8))
+
+        XCTAssertEqual(sample.promptID, "p1")
+        XCTAssertEqual(sample.tokensPerSecond, 42.5)
+        XCTAssertNil(sample.promptTokens)
+        XCTAssertNil(sample.prefillTokensPerSecond)
+        XCTAssertNil(sample.toolCalls)
+        XCTAssertNil(sample.toolNames)
+    }
+
     // MARK: - Model performance profile
 
     func testProfileAggregatesCompletedRunsForExactPathAndSignature() {

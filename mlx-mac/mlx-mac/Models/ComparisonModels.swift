@@ -14,11 +14,14 @@ struct PromptEntry: Codable, Equatable, Identifiable, Sendable {
     let id: String
     var text: String
     var maxTokens: Int
+    /// When set, the probe offers this tool and records what the model calls.
+    var tool: PromptToolSpec?
 
-    init(id: String, text: String, maxTokens: Int = 256) {
+    init(id: String, text: String, maxTokens: Int = 256, tool: PromptToolSpec? = nil) {
         self.id = id
         self.text = text
         self.maxTokens = maxTokens
+        self.tool = tool
     }
 }
 
@@ -39,7 +42,7 @@ struct PromptSet: Codable, Equatable, Identifiable, Sendable {
 /// Small built-in starter sets per use case. Versioned content: changing a
 /// prompt's text changes its id's meaning, so edits bump the entry id suffix.
 enum BuiltinPromptSets {
-    static let all: [PromptSet] = [coding, generalChat, reasoning]
+    static let all: [PromptSet] = [coding, generalChat, reasoning, toolCalling]
 
     static let coding = PromptSet(
         id: "builtin-coding",
@@ -103,6 +106,38 @@ enum BuiltinPromptSets {
         ],
         origin: .builtin
     )
+
+    /// Tool-calling probes: the model is offered a tool and measured on
+    /// whether it calls it. Models without tool templates answer in text —
+    /// recorded honestly as zero calls.
+    static let toolCalling = PromptSet(
+        id: "builtin-tool-calling",
+        name: "Tool calling",
+        useCase: nil,
+        prompts: [
+            PromptEntry(
+                id: "tool-weather",
+                text: "What is the current weather in Paris? Use the get_current_weather tool.",
+                maxTokens: 128,
+                tool: PromptToolSpec(
+                    name: "get_current_weather",
+                    description: "Get the current weather for a city.",
+                    parametersJSON: #"{"type":"object","properties":{"city":{"type":"string","description":"The city name"}},"required":["city"]}"#
+                )
+            ),
+            PromptEntry(
+                id: "tool-stock",
+                text: "Look up the latest share price of Apple with the get_stock_price tool.",
+                maxTokens: 128,
+                tool: PromptToolSpec(
+                    name: "get_stock_price",
+                    description: "Get the latest share price for a ticker symbol.",
+                    parametersJSON: #"{"type":"object","properties":{"ticker":{"type":"string","description":"The ticker symbol, e.g. AAPL"}},"required":["ticker"]}"#
+                )
+            ),
+        ],
+        origin: .builtin
+    )
 }
 
 // MARK: Runs and results
@@ -113,6 +148,36 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     let tokensPerSecond: Double?
     let timeToFirstTokenSeconds: Double?
     let error: String?
+    /// Prompt tokens reported by the server's usage block, when present.
+    let promptTokens: Int?
+    /// Prompt-processing speed (prompt tokens over TTFT — a lower bound,
+    /// since TTFT includes queueing and first decode).
+    let prefillTokensPerSecond: Double?
+    /// Tool calls emitted when the prompt offered a tool; nil otherwise.
+    let toolCalls: Int?
+    let toolNames: [String]?
+
+    init(
+        promptID: String,
+        outputExcerpt: String,
+        tokensPerSecond: Double?,
+        timeToFirstTokenSeconds: Double?,
+        error: String?,
+        promptTokens: Int? = nil,
+        prefillTokensPerSecond: Double? = nil,
+        toolCalls: Int? = nil,
+        toolNames: [String]? = nil
+    ) {
+        self.promptID = promptID
+        self.outputExcerpt = outputExcerpt
+        self.tokensPerSecond = tokensPerSecond
+        self.timeToFirstTokenSeconds = timeToFirstTokenSeconds
+        self.error = error
+        self.promptTokens = promptTokens
+        self.prefillTokensPerSecond = prefillTokensPerSecond
+        self.toolCalls = toolCalls
+        self.toolNames = toolNames
+    }
 }
 
 struct VariantResult: Codable, Equatable, Identifiable, Sendable {
@@ -127,6 +192,19 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
     let environmentFingerprint: String?
 
     var id: String { modelPath }
+
+    /// Median prompt-processing speed across samples, when any sample
+    /// reported prompt tokens.
+    var aggregatePrefillTokensPerSecond: Double? {
+        ComparisonAggregation.medianPrefillTokensPerSecond(samples)
+    }
+
+    /// Total tool calls across samples that offered a tool; nil when no
+    /// prompt in the set carried tools.
+    var totalToolCalls: Int? {
+        let counts = samples.compactMap(\.toolCalls)
+        return counts.isEmpty ? nil : counts.reduce(0, +)
+    }
 
     init(
         modelPath: String,
@@ -207,6 +285,8 @@ struct ModelPerformanceProfile: Equatable {
     let bestTokensPerSecond: Double?
     let worstTokensPerSecond: Double?
     let bestTTFTSeconds: Double?
+    let averagePrefillTokensPerSecond: Double?
+    let bestPrefillTokensPerSecond: Double?
 
     /// Matches on exact path; when the caller knows the model's current
     /// signature, results recorded against a different signature are skipped
@@ -229,13 +309,16 @@ struct ModelPerformanceProfile: Equatable {
         guard !matches.isEmpty else { return nil }
         let tpsValues = matches.compactMap { $0.result.aggregateTokensPerSecond }
         let ttftValues = matches.compactMap { $0.result.aggregateTTFTSeconds }
+        let prefillValues = matches.compactMap { $0.result.aggregatePrefillTokensPerSecond }
         return ModelPerformanceProfile(
             runCount: matches.count,
             lastMeasuredAt: matches.map(\.measuredAt).max(),
             averageTokensPerSecond: tpsValues.isEmpty ? nil : tpsValues.reduce(0, +) / Double(tpsValues.count),
             bestTokensPerSecond: tpsValues.max(),
             worstTokensPerSecond: tpsValues.min(),
-            bestTTFTSeconds: ttftValues.min()
+            bestTTFTSeconds: ttftValues.min(),
+            averagePrefillTokensPerSecond: prefillValues.isEmpty ? nil : prefillValues.reduce(0, +) / Double(prefillValues.count),
+            bestPrefillTokensPerSecond: prefillValues.max()
         )
     }
 }
@@ -252,13 +335,25 @@ enum ComparisonAggregation {    static func medianTokensPerSecond(_ samples: [Co
         samples.compactMap(\.timeToFirstTokenSeconds).min()
     }
 
+    static func medianPrefillTokensPerSecond(_ samples: [ComparisonSample]) -> Double? {
+        let values = samples.compactMap(\.prefillTokensPerSecond).sorted()
+        guard !values.isEmpty else { return nil }
+        let mid = values.count / 2
+        if values.count % 2 == 1 { return values[mid] }
+        return (values[mid - 1] + values[mid]) / 2
+    }
+
     static func sample(from probe: ProbeSample, promptID: String) -> ComparisonSample {
         ComparisonSample(
             promptID: promptID,
             outputExcerpt: String(probe.text.prefix(280)),
             tokensPerSecond: decodeTokensPerSecond(probe),
             timeToFirstTokenSeconds: probe.timeToFirstTokenSeconds,
-            error: nil
+            error: nil,
+            promptTokens: probe.promptTokens,
+            prefillTokensPerSecond: probe.prefillTokensPerSecond,
+            toolCalls: probe.toolCalls,
+            toolNames: probe.toolNames
         )
     }
 

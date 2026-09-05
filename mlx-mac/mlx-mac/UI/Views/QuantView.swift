@@ -198,33 +198,47 @@ struct QuantView: View {
         .formSection {}
     }
 
-    /// One glance: decode speed per variant with the run average marked.
-    /// Horizontal bars keep long model names readable.
+    /// One glance: per-variant speed bars — decode (out) and prefill (in) —
+    /// with the run's decode average marked. Horizontal bars keep long model
+    /// names readable.
     private func speedChart(_ results: [VariantResult]) -> some View {
-        let measured = results.compactMap { result -> (name: String, tps: Double)? in
-            guard let tps = result.aggregateTokensPerSecond else { return nil }
-            return (shortName(result.modelPath), tps)
+        struct Point: Identifiable {
+            let id: String
+            let variant: String
+            let metric: String
+            let value: Double
         }
-        let average = measured.isEmpty ? 0 : measured.map(\.tps).reduce(0, +) / Double(measured.count)
+        var points: [Point] = []
+        for result in results {
+            let name = shortName(result.modelPath)
+            if let decode = result.aggregateTokensPerSecond {
+                points.append(Point(id: "\(name)-out", variant: name, metric: "Decode (out)", value: decode))
+            }
+            if let prefill = result.aggregatePrefillTokensPerSecond {
+                points.append(Point(id: "\(name)-in", variant: name, metric: "Prefill (in, est.)", value: prefill))
+            }
+        }
+        let decodeValues = points.filter { $0.metric == "Decode (out)" }.map(\.value)
+        let average = decodeValues.isEmpty ? 0 : decodeValues.reduce(0, +) / Double(decodeValues.count)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            Text("Decode speed (tok/s)")
+            Text("Speed (tok/s)")
                 .font(WorkbenchTypography.navigation)
                 .foregroundColor(WorkbenchColor.graphiteMuted)
             Chart {
-                ForEach(measured, id: \.name) { item in
+                ForEach(points) { point in
                     BarMark(
-                        x: .value("tok/s", item.tps),
-                        y: .value("Variant", item.name)
+                        x: .value("tok/s", point.value),
+                        y: .value("Variant", point.variant)
                     )
-                    .foregroundStyle(WorkbenchColor.fluxTeal.gradient)
+                    .foregroundStyle(by: .value("Metric", point.metric))
                     .cornerRadius(3)
                 }
                 if average > 0 {
-                    RuleMark(x: .value("Average", average))
+                    RuleMark(x: .value("Decode average", average))
                         .foregroundStyle(WorkbenchColor.graphiteMuted)
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .annotation(position: .top, alignment: .leading) {
-                            Text("avg")
+                            Text("avg out")
                                 .font(.caption2)
                                 .foregroundColor(WorkbenchColor.graphiteMuted)
                         }
@@ -233,7 +247,7 @@ struct QuantView: View {
             .chartXAxis {
                 AxisMarks(position: .bottom)
             }
-            .frame(height: CGFloat(max(measured.count, 1)) * 30 + 28)
+            .frame(height: CGFloat(max(results.count, 1)) * 44 + 40)
         }
     }
 
@@ -244,7 +258,12 @@ struct QuantView: View {
                     .font(.headline)
                 Spacer()
                 if let tps = result.aggregateTokensPerSecond {
-                    Text(String(format: "%.1f tok/s", tps)).font(.caption)
+                    Text(String(format: "%.1f tok/s out", tps)).font(.caption)
+                }
+                if let prefill = result.aggregatePrefillTokensPerSecond {
+                    Text(String(format: "%.0f tok/s in (est.)", prefill))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
                 if let ttft = result.aggregateTTFTSeconds {
                     Text(String(format: "TTFT %.2fs", ttft))
@@ -257,6 +276,14 @@ struct QuantView: View {
                 Text(error).font(.caption).foregroundColor(WorkbenchColor.systemRed)
             } else {
                 sampleStatStrip(result)
+                if let toolCalls = result.totalToolCalls {
+                    Label(
+                        "\(toolCalls) tool call(s) across prompts offering tools",
+                        systemImage: toolCalls > 0 ? "checkmark.circle" : "xmark.circle"
+                    )
+                    .font(.caption)
+                    .foregroundColor(toolCalls > 0 ? WorkbenchColor.verifiedGreen : WorkbenchColor.thermalAmber)
+                }
                 DisclosureGroup("Per-prompt outputs (\(result.samples.count))") {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(result.samples, id: \.promptID) { sample in
@@ -266,6 +293,16 @@ struct QuantView: View {
                                     Spacer()
                                     if let tps = sample.tokensPerSecond {
                                         Text(String(format: "%.1f tok/s", tps))
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    if let prefill = sample.prefillTokensPerSecond {
+                                        Text(String(format: "in %.0f", prefill))
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    if let toolCalls = sample.toolCalls {
+                                        Text("\(toolCalls) call(s): \((sample.toolNames ?? []).joined(separator: ", "))")
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
                                     }

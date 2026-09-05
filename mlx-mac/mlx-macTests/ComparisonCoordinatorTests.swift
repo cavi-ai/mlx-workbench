@@ -8,14 +8,19 @@ final class ComparisonCoordinatorTests: XCTestCase {
     // MARK: - Builtin prompt sets
 
     func testBuiltinPromptSetsAreSane() {
-        XCTAssertEqual(BuiltinPromptSets.all.count, 3)
-        XCTAssertEqual(Set(BuiltinPromptSets.all.map(\.id)).count, 3)
+        XCTAssertEqual(BuiltinPromptSets.all.count, 4)
+        XCTAssertEqual(Set(BuiltinPromptSets.all.map(\.id)).count, 4)
         for set in BuiltinPromptSets.all {
             XCTAssertFalse(set.prompts.isEmpty, "\(set.id) has no prompts")
             XCTAssertEqual(Set(set.prompts.map(\.id)).count, set.prompts.count, "\(set.id) has duplicate entry ids")
             XCTAssertEqual(set.origin, .builtin)
-            XCTAssertNotNil(set.useCase)
+            // Capability probes (tool calling) measure a capability, not a
+            // use case; use-case sets must declare one.
+            if set.id != BuiltinPromptSets.toolCalling.id {
+                XCTAssertNotNil(set.useCase)
+            }
         }
+        XCTAssertTrue(BuiltinPromptSets.toolCalling.prompts.allSatisfy { $0.tool != nil })
     }
 
     // MARK: - Aggregation

@@ -137,6 +137,95 @@ final class ServeProbeTests: XCTestCase {
     }
 
     private enum StubError: Error { case boom }
+
+    // MARK: - OpenAIEndpointProber parsing
+
+    func testChatCapturesPromptTokensAndDerivesPrefill() async throws {
+        let sse = [
+            #"data: {"choices":[{"delta":{"content":"Hello"}}]}"#,
+            #"data: {"choices":[{"delta":{"content":" world"}}],"usage":{"prompt_tokens":96,"completion_tokens":2}}"#,
+            "data: [DONE]",
+        ].joined(separator: "\n")
+        let session = stubSession(body: sse)
+        let prober = OpenAIEndpointProber(session: session)
+
+        let sample = try await prober.chat(
+            baseURL: URL(string: "http://127.0.0.1:9")!,
+            model: "m",
+            prompt: "p",
+            maxTokens: 16
+        )
+
+        XCTAssertEqual(sample.text, "Hello world")
+        XCTAssertEqual(sample.promptTokens, 96)
+        XCTAssertEqual(sample.completionTokens, 2)
+        XCTAssertFalse(sample.metricsEstimated)
+        XCTAssertNil(sample.toolCalls)
+        let ttft = try XCTUnwrap(sample.timeToFirstTokenSeconds)
+        XCTAssertEqual(sample.prefillTokensPerSecond ?? 0, 96 / ttft, accuracy: 1)
+    }
+
+    func testChatCountsStreamedToolCallsByIndex() async throws {
+        let sse = [
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"get_current_weather","arguments":""}}]}}]}"#,
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":\"Paris\"}"}}]}}],"finish_reason":"tool_calls"}"#,
+            #"data: {"usage":{"prompt_tokens":40,"completion_tokens":9}}"#,
+            "data: [DONE]",
+        ].joined(separator: "\n")
+        let session = stubSession(body: sse)
+        let prober = OpenAIEndpointProber(session: session)
+        let tool = PromptToolSpec(
+            name: "get_current_weather",
+            description: "Get the current weather for a city.",
+            parametersJSON: #"{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}"#
+        )
+
+        let sample = try await prober.chat(
+            baseURL: URL(string: "http://127.0.0.1:9")!,
+            model: "m",
+            prompt: "Weather in Paris?",
+            maxTokens: 64,
+            tool: tool
+        )
+
+        XCTAssertEqual(sample.toolCalls, 1)
+        XCTAssertEqual(sample.toolNames, ["get_current_weather"])
+        XCTAssertEqual(sample.promptTokens, 40)
+    }
+
+    func testToolSpecWithUnreadableSchemaDropsTool() {
+        let spec = PromptToolSpec(name: "broken", description: "d", parametersJSON: "not json")
+        XCTAssertNil(spec.openAITool)
+    }
+
+    /// URLProtocol-backed session that replays a canned SSE body.
+    private func stubSession(body: String) -> URLSession {
+        SSEStub.body = body
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SSEStub.self]
+        return URLSession(configuration: configuration)
+    }
+
+    private final class SSEStub: URLProtocol {
+        static var body = ""
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "text/event-stream"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(Self.body.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
+    }
 }
 
 private actor ModelListBox {

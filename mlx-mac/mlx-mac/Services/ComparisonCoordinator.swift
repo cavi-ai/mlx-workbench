@@ -154,7 +154,7 @@ final class ComparisonCoordinator: ObservableObject {
         now: () -> Date
     ) async {
         let prompts = promptSet.prompts.map {
-            ProbePrompt(id: $0.id, prompt: $0.text, maxTokens: min($0.maxTokens, maxTokensCap()))
+            ProbePrompt(id: $0.id, prompt: $0.text, maxTokens: min($0.maxTokens, maxTokensCap()), tool: $0.tool)
         }
 
         for variant in variants {
