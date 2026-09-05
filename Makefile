@@ -29,7 +29,7 @@ DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
 DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert deps \
-	start stop restart status run test test-live-scan test-swift test-swift-live-scan open check check-convert doctor clean clean-venv \
+	start stop restart status run test test-live-scan test-swift test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
 	docs-test docs-build docs-verify docs-release
 
 help:
@@ -46,6 +46,7 @@ help:
 		'make test-live-scan - validate live model bytes against configured filesystem paths' \
 		'make test-swift - unit tests for Swift app' \
 		'make test-swift-live-scan - validate native app scan bytes against configured filesystem paths' \
+		'make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json - opt-in native GGUF-to-Run acceptance' \
 		'make docs-test - release documentation contract tests' \
 		'make docs-build - build deterministic versioned documentation' \
 		'make docs-verify - verify the versioned documentation' \
@@ -215,6 +216,13 @@ test-swift-live-scan:
 		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) \
 		OTHER_SWIFT_FLAGS='$(OTHER_SWIFT_FLAGS) -DMLX_WORKBENCH_LIVE_SCAN' test
+
+accept-native-gguf:
+	@case "$(RUNTIME_MANIFEST)" in \
+		/*) ;; \
+		*) echo "RUNTIME_MANIFEST is required and must be an absolute path" >&2; exit 2 ;; \
+	esac
+	@$(PYTHON) scripts/native_gguf_acceptance.py --manifest "$(RUNTIME_MANIFEST)"
 
 docs-test:
 	$(PYTHON) -m unittest tests.test_release_docs -v
