@@ -94,6 +94,36 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         )
     }
 
+    func testLiveServeLifecycleUsesPinnedMLXRuntime() async throws {
+        let agent = try FixtureAgent(expectedServeRuntime: "mlx_lm")
+        defer { agent.remove() }
+
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+        let lifecycle = ServeLifecycle.live(api: api)
+        let previewHash = try await lifecycle.preview("mlx-community/Qwen3-0.6B-4bit", 8766)
+        try await lifecycle.start("mlx-community/Qwen3-0.6B-4bit", 8766, previewHash)
+
+        XCTAssertEqual(previewHash, "serve-hash")
+    }
+
+    func testLiveServeLifecycleUsesExplicitReceiptDirectory() async throws {
+        let receiptDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-workbench-live-receipts-\(UUID().uuidString)", isDirectory: true)
+        let agent = try FixtureAgent(expectedReceiptDirectory: receiptDirectory.path)
+        defer { agent.remove() }
+
+        let api = WorkbenchAPI(
+            cli: CLIProcess(),
+            agentPath: agent.root.path,
+            receiptDirectory: receiptDirectory.path
+        )
+        let lifecycle = ServeLifecycle.live(api: api)
+        let previewHash = try await lifecycle.preview("mlx-community/Qwen3-0.6B-4bit", 8766)
+        try await lifecycle.start("mlx-community/Qwen3-0.6B-4bit", 8766, previewHash)
+
+        XCTAssertEqual(previewHash, "serve-hash")
+    }
+
     private func fixture(named name: String) throws -> [String: Any] {
         let directory = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -131,6 +161,46 @@ private final class FixtureAgent {
         import json
         import os
         print(json.dumps({"status": "ok", "data": {"process_path": os.environ.get("PATH", "")}}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
+
+    convenience init(expectedServeRuntime: String) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import json
+        import sys
+
+        runtime_index = sys.argv.index("--runtime") + 1
+        assert "serve" in sys.argv and "start" in sys.argv
+        assert sys.argv[runtime_index] == "\(expectedServeRuntime)"
+        if "--confirm" in sys.argv:
+            data = {}
+        else:
+            data = {"plan": {"preview_hash": "serve-hash"}}
+        print(json.dumps({"status": "ok", "data": data}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
+
+    convenience init(expectedReceiptDirectory: String) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import json
+        import sys
+
+        receipts_index = sys.argv.index("--receipts-dir") + 1
+        assert "serve" in sys.argv and "start" in sys.argv
+        assert sys.argv[receipts_index] == "\(expectedReceiptDirectory)"
+        if "--confirm" in sys.argv:
+            data = {}
+        else:
+            data = {"plan": {"preview_hash": "serve-hash"}}
+        print(json.dumps({"status": "ok", "data": data}))
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
     }

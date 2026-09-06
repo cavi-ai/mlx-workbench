@@ -8,10 +8,18 @@ import Foundation
 actor WorkbenchAPI {
     private let cli: CLIProcess
     private var agentPath: String
+    private let receiptDirectory: String
 
-    init(cli: CLIProcess, agentPath: String) {
+    init(
+        cli: CLIProcess,
+        agentPath: String,
+        receiptDirectory: String = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Application Support/mlx-workbench", isDirectory: true)
+            .path
+    ) {
         self.cli = cli
         self.agentPath = agentPath
+        self.receiptDirectory = receiptDirectory
     }
 
     func setAgentPath(_ path: String) {
@@ -107,7 +115,7 @@ actor WorkbenchAPI {
     }
 
     func serveStatus() throws -> [ServerInfo] {
-        let data = try raw(["serve", "status"])
+        let data = try raw(["serve", "status", "--receipts-dir", receiptDirectory])
         return Self.servers(from: data) ?? []
     }
 
@@ -233,7 +241,10 @@ actor WorkbenchAPI {
     }
 
     func servePreview(repo: String, runtime: String, port: Int?) throws -> [String: Any] {
-        var argv = ["serve", "start", "--repo", Self.serveRepo(repo), "--runtime", runtime]
+        var argv = [
+            "serve", "start", "--repo", Self.serveRepo(repo), "--runtime", runtime,
+            "--receipts-dir", receiptDirectory,
+        ]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         return Self.unwrapPlan(try raw(argv))
     }
@@ -243,13 +254,17 @@ actor WorkbenchAPI {
         var argv = [
             "serve", "start", "--repo", Self.serveRepo(repo), "--runtime", runtime,
             "--confirm", "--preview-hash", previewHash,
+            "--receipts-dir", receiptDirectory,
         ]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         return try raw(argv)
     }
 
     func serveStop(port: Int) throws -> [String: Any] {
-        return try raw(["serve", "stop", "--port", String(port)])
+        return try raw([
+            "serve", "stop", "--port", String(port),
+            "--receipts-dir", receiptDirectory,
+        ])
     }
 
     // MARK: - LoRA / Fuse
