@@ -160,8 +160,8 @@ struct ServeLifecycle: Sendable {
 }
 
 extension ServeLifecycle {
-    /// Production lifecycle: mlx-agent serve preview/start/stop, runtime mlx.
-    static func live(api: WorkbenchAPI, runtime: String = "mlx") -> ServeLifecycle {
+    /// Production lifecycle: mlx-agent serve preview/start/stop, runtime mlx_lm.
+    static func live(api: WorkbenchAPI, runtime: String = "mlx_lm") -> ServeLifecycle {
         ServeLifecycle(
             preview: { modelPath, port in
                 let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port)
