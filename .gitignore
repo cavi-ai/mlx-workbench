@@ -18,6 +18,7 @@ docs/superpowers/
 .run/
 .mlx-agent-receipts/
 .venv/
+.build/
 .mcp.json
 mlx-mac/build/
 /docs/mlx-workbench/v*/

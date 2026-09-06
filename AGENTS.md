@@ -39,6 +39,21 @@ from `mlx-agent` at runtime.
   replays a prompt set against selected ready variants (one at a time, via
   the shared `ServeProbe` harness), persists runs, and feeds measured
   tok/s/TTFT into the RecommendationEngine as local benchmark evidence.
+  Samples also capture `prompt_tokens` (prefill speed = prompt tokens over
+  TTFT, always labeled an estimate) and tool calls (builtin "Tool calling"
+  set offers `PromptToolSpec`s; streamed `tool_calls` are counted and their
+  arguments validated against the schema's required keys). Past runs are
+  browsable history with Swift Charts; `ModelPerformanceProfile` aggregates
+  per-model stats into Model Details.
+- Python resolution is centralized in `Services/WorkbenchPython.swift`
+  (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
+  `RuntimeChecker`, and the watch fingerprint probe. `RuntimeInstaller`
+  runs `make install` in-app when the runtime is missing.
+- **Never spawn a process synchronously inside view evaluation.** A
+  `Process.waitUntilExit` reached from a view body/layout crashes the app
+  (AttributeGraph precondition via re-entrant layout). The watch
+  fingerprint probe answers from a prewarmed cache and degrades to
+  "unknown" on the main thread instead of probing. Keep this invariant.
 - The Wire tab also does **Cross-client Wiring**: `WiringCoordinator` detects
   installed clients (opencode/Continue/Zed/Aider writable; LM Studio/Ollama
   advisory-only) and previews/confirms atomic writes to each client's own
