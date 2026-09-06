@@ -198,6 +198,72 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertNil(spec.openAITool)
     }
 
+    func testToolSpecValidatesArgumentsAgainstRequiredKeys() {
+        let spec = PromptToolSpec(
+            name: "get_current_weather",
+            description: "Get the current weather for a city.",
+            parametersJSON: #"{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}"#
+        )
+        XCTAssertTrue(spec.argumentsAreValid(#"{"city":"Paris"}"#))
+        XCTAssertFalse(spec.argumentsAreValid(#"{"location":"Paris"}"#))  // missing required key
+        XCTAssertFalse(spec.argumentsAreValid("not json"))
+        XCTAssertFalse(spec.argumentsAreValid(""))
+        XCTAssertFalse(spec.argumentsAreValid(#"["city"]"#))  // not an object
+    }
+
+    func testChatValidatesStreamedToolCallArguments() async throws {
+        let sse = [
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"get_current_weather","arguments":""}}]}}]}"#,
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":"}}]}}]}"#,
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Paris\"}"}}]}}]}"#,
+            #"data: {"usage":{"prompt_tokens":40,"completion_tokens":9}}"#,
+            "data: [DONE]",
+        ].joined(separator: "\n")
+        let session = stubSession(body: sse)
+        let prober = OpenAIEndpointProber(session: session)
+        let tool = PromptToolSpec(
+            name: "get_current_weather",
+            description: "Get the current weather for a city.",
+            parametersJSON: #"{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}"#
+        )
+
+        let sample = try await prober.chat(
+            baseURL: URL(string: "http://127.0.0.1:9")!,
+            model: "m",
+            prompt: "Weather in Paris?",
+            maxTokens: 64,
+            tool: tool
+        )
+
+        XCTAssertEqual(sample.toolCalls, 1)
+        XCTAssertEqual(sample.toolCallsValid, 1)
+    }
+
+    func testChatFlagsToolCallWithMissingRequiredKeysAsInvalid() async throws {
+        let sse = [
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"get_current_weather","arguments":"{\"wrong\":\"key\"}"}}]}}]}"#,
+            "data: [DONE]",
+        ].joined(separator: "\n")
+        let session = stubSession(body: sse)
+        let prober = OpenAIEndpointProber(session: session)
+        let tool = PromptToolSpec(
+            name: "get_current_weather",
+            description: "d",
+            parametersJSON: #"{"type":"object","required":["city"]}"#
+        )
+
+        let sample = try await prober.chat(
+            baseURL: URL(string: "http://127.0.0.1:9")!,
+            model: "m",
+            prompt: "Weather?",
+            maxTokens: 64,
+            tool: tool
+        )
+
+        XCTAssertEqual(sample.toolCalls, 1)
+        XCTAssertEqual(sample.toolCallsValid, 0)
+    }
+
     /// URLProtocol-backed session that replays a canned SSE body.
     private func stubSession(body: String) -> URLSession {
         SSEStub.body = body

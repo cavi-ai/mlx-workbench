@@ -24,6 +24,9 @@ struct ProbeSample: Equatable, Sendable {
     let toolCalls: Int?
     /// Names of the tools the model called, in order.
     let toolNames: [String]?
+    /// Of the emitted calls, how many carried arguments that parse as JSON
+    /// and contain the offered tool's required keys.
+    let toolCallsValid: Int?
 
     init(
         text: String,
@@ -33,7 +36,8 @@ struct ProbeSample: Equatable, Sendable {
         durationSeconds: Double,
         metricsEstimated: Bool,
         toolCalls: Int? = nil,
-        toolNames: [String]? = nil
+        toolNames: [String]? = nil,
+        toolCallsValid: Int? = nil
     ) {
         self.text = text
         self.completionTokens = completionTokens
@@ -43,6 +47,7 @@ struct ProbeSample: Equatable, Sendable {
         self.metricsEstimated = metricsEstimated
         self.toolCalls = toolCalls
         self.toolNames = toolNames
+        self.toolCallsValid = toolCallsValid
     }
 
     /// Prompt-processing speed estimated as prompt tokens over TTFT. TTFT
@@ -65,10 +70,7 @@ struct PromptToolSpec: Codable, Equatable, Sendable {
     /// The OpenAI `tools` payload fragment for this spec. Nil when the
     /// parameters JSON is unreadable — the caller then drops the tool.
     var openAITool: [String: Any]? {
-        guard let data = parametersJSON.data(using: .utf8),
-              let schema = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
+        guard let schema = parametersSchema else { return nil }
         return [
             "type": "function",
             "function": [
@@ -77,6 +79,28 @@ struct PromptToolSpec: Codable, Equatable, Sendable {
                 "parameters": schema,
             ],
         ]
+    }
+
+    /// Keys the schema marks required; used to judge whether a model's
+    /// tool-call arguments are usable, not just parseable.
+    var requiredKeys: [String] {
+        guard let required = parametersSchema?["required"] as? [String] else { return [] }
+        return required
+    }
+
+    private var parametersSchema: [String: Any]? {
+        guard let data = parametersJSON.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    /// Whether raw tool-call arguments are usable: parse as a JSON object
+    /// and contain every required key.
+    func argumentsAreValid(_ raw: String) -> Bool {
+        guard let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        return requiredKeys.allSatisfy { object.keys.contains($0) }
     }
 }
 
@@ -337,8 +361,9 @@ struct OpenAIEndpointProber: EndpointProbing {
         var promptTokens: Int?
         var firstTokenAt: Date?
         // Streamed tool calls arrive as deltas keyed by index; collect the
-        // highest index for the count and names as they stream in.
+        // names and accumulate argument fragments per call.
         var toolCallNamesByIndex: [Int: String] = [:]
+        var toolCallArgumentsByIndex: [Int: String] = [:]
         for try await line in bytes.lines {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
@@ -366,9 +391,13 @@ struct OpenAIEndpointProber: EndpointProbing {
                 if let calls = delta["tool_calls"] as? [[String: Any]] {
                     for call in calls {
                         let index = call["index"] as? Int ?? 0
-                        if let function = call["function"] as? [String: Any],
-                           let name = function["name"] as? String, !name.isEmpty {
-                            toolCallNamesByIndex[index] = name
+                        if let function = call["function"] as? [String: Any] {
+                            if let name = function["name"] as? String, !name.isEmpty {
+                                toolCallNamesByIndex[index] = name
+                            }
+                            if let fragment = function["arguments"] as? String {
+                                toolCallArgumentsByIndex[index, default: ""] += fragment
+                            }
                         }
                     }
                 }
@@ -387,10 +416,16 @@ struct OpenAIEndpointProber: EndpointProbing {
             tokens = text.isEmpty ? nil : max(1, text.count / 4)
             estimated = true
         }
-        let toolCalls: Int? = tool == nil ? nil : toolCallNamesByIndex.count
+        let toolCallIndices = Set(toolCallNamesByIndex.keys).union(toolCallArgumentsByIndex.keys)
+        let toolCalls: Int? = tool == nil ? nil : toolCallIndices.count
         let toolNames: [String]? = tool == nil
             ? nil
             : toolCallNamesByIndex.sorted { $0.key < $1.key }.map(\.value)
+        let toolCallsValid: Int? = tool.map { spec in
+            toolCallIndices.filter { index in
+                spec.argumentsAreValid(toolCallArgumentsByIndex[index] ?? "")
+            }.count
+        }
         return ProbeSample(
             text: text,
             completionTokens: tokens,
@@ -399,7 +434,8 @@ struct OpenAIEndpointProber: EndpointProbing {
             durationSeconds: finishedAt.timeIntervalSince(startedAt),
             metricsEstimated: estimated,
             toolCalls: toolCalls,
-            toolNames: toolNames
+            toolNames: toolNames,
+            toolCallsValid: toolCallsValid
         )
     }
 }

@@ -277,12 +277,15 @@ struct QuantView: View {
             } else {
                 sampleStatStrip(result)
                 if let toolCalls = result.totalToolCalls {
+                    let valid = result.totalToolCallsValid
                     Label(
-                        "\(toolCalls) tool call(s) across prompts offering tools",
-                        systemImage: toolCalls > 0 ? "checkmark.circle" : "xmark.circle"
+                        valid == nil
+                            ? "\(toolCalls) tool call(s)"
+                            : "\(toolCalls) tool call(s), \(valid!) with usable arguments",
+                        systemImage: toolCalls > 0 && valid == toolCalls ? "checkmark.circle" : "xmark.circle"
                     )
                     .font(.caption)
-                    .foregroundColor(toolCalls > 0 ? WorkbenchColor.verifiedGreen : WorkbenchColor.thermalAmber)
+                    .foregroundColor(toolCalls > 0 && valid == toolCalls ? WorkbenchColor.verifiedGreen : WorkbenchColor.thermalAmber)
                 }
                 DisclosureGroup("Per-prompt outputs (\(result.samples.count))") {
                     VStack(alignment: .leading, spacing: 6) {

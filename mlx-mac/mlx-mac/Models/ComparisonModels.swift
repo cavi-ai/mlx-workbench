@@ -156,6 +156,9 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     /// Tool calls emitted when the prompt offered a tool; nil otherwise.
     let toolCalls: Int?
     let toolNames: [String]?
+    /// Of the emitted calls, how many carried usable arguments (parse as a
+    /// JSON object containing the offered tool's required keys).
+    let toolCallsValid: Int?
 
     init(
         promptID: String,
@@ -166,7 +169,8 @@ struct ComparisonSample: Codable, Equatable, Sendable {
         promptTokens: Int? = nil,
         prefillTokensPerSecond: Double? = nil,
         toolCalls: Int? = nil,
-        toolNames: [String]? = nil
+        toolNames: [String]? = nil,
+        toolCallsValid: Int? = nil
     ) {
         self.promptID = promptID
         self.outputExcerpt = outputExcerpt
@@ -177,6 +181,7 @@ struct ComparisonSample: Codable, Equatable, Sendable {
         self.prefillTokensPerSecond = prefillTokensPerSecond
         self.toolCalls = toolCalls
         self.toolNames = toolNames
+        self.toolCallsValid = toolCallsValid
     }
 }
 
@@ -203,6 +208,12 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
     /// prompt in the set carried tools.
     var totalToolCalls: Int? {
         let counts = samples.compactMap(\.toolCalls)
+        return counts.isEmpty ? nil : counts.reduce(0, +)
+    }
+
+    /// Total calls with usable arguments; nil when no prompt offered tools.
+    var totalToolCallsValid: Int? {
+        let counts = samples.compactMap(\.toolCallsValid)
         return counts.isEmpty ? nil : counts.reduce(0, +)
     }
 
@@ -353,7 +364,8 @@ enum ComparisonAggregation {    static func medianTokensPerSecond(_ samples: [Co
             promptTokens: probe.promptTokens,
             prefillTokensPerSecond: probe.prefillTokensPerSecond,
             toolCalls: probe.toolCalls,
-            toolNames: probe.toolNames
+            toolNames: probe.toolNames,
+            toolCallsValid: probe.toolCallsValid
         )
     }
 
