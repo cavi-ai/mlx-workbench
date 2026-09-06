@@ -49,12 +49,31 @@ struct ContentView: View {
         }
         .tint(WorkbenchColor.fluxTeal)
         .accentColor(WorkbenchColor.fluxTeal)
+        .background { routeShortcutButtons }
         .onChange(of: selectedRouteID) { _, _ in
             visitedRoutes.insert(selectedRoute)
         }
         .onAppear {
             visitedRoutes.insert(selectedRoute)
             Task { await appHost.rescan() }
+        }
+    }
+
+    /// ⌘1…⌘9, ⌘0 jump between the main tabs (Lab items stay click-only).
+    private static let shortcutRoutes: [AppRoute] = [
+        .overview, .library, .prepare, .compare, .run,
+        .activity, .reclaim, .clientSetup, .health, .settings,
+    ]
+    private static let shortcutKeys: [KeyEquivalent] = [
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
+    ]
+
+    private var routeShortcutButtons: some View {
+        ForEach(Array(Self.shortcutRoutes.enumerated()), id: \.element) { index, route in
+            Button(route.label) { selectedRouteID = route.rawValue }
+                .keyboardShortcut(Self.shortcutKeys[index], modifiers: .command)
+                .hidden()
+                .accessibilityHidden(true)
         }
     }
 
@@ -122,7 +141,9 @@ struct ContentView: View {
         }
         let alertCount = appHost.watch.activeAlerts.count
         if alertCount > 0 {
-            badges[AppRoute.BadgeDestination.alerts.route] = "\(alertCount) alert\(alertCount == 1 ? "" : "s")"
+            // Compact: the badge shares a 220pt sidebar with the route label;
+            // the count is the signal, not the word "alerts".
+            badges[AppRoute.BadgeDestination.alerts.route] = "\(alertCount)"
         }
         return badges
     }

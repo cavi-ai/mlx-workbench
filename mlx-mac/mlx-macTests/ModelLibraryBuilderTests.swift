@@ -51,6 +51,85 @@ final class ModelLibraryBuilderTests: XCTestCase {
         XCTAssertEqual(mlxOutput.outputPaths, ["/mlx/Llama-3.2-3B-Instruct-4bit"])
     }
 
+    // MARK: - HF-cache outputs
+
+    func testHFCacheSnapshotsGroupByRepoIdentityWithRealBytesAndArchitecture() throws {
+        let fixture = try makeHFCacheFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let snapshot = ModelLibraryBuilder.build(
+            scan: ScanResult(
+                roots: nil,
+                models: [],
+                outputs: [
+                    MLXOutput(
+                        path: fixture.snapshotA.path,
+                        name: "0555d34cb1ed80c0e61a5635194c70027b4c2ff3",
+                        modelKey: nil,
+                        quantization: QuantInfo(bits: 4, groupSize: nil, modelType: nil),
+                        provenance: nil
+                    ),
+                    MLXOutput(
+                        path: fixture.snapshotB.path,
+                        name: "9999ffffcb1ed80c0e61a5635194c70027b4c2ff3",
+                        modelKey: nil,
+                        quantization: QuantInfo(bits: 4, groupSize: nil, modelType: nil),
+                        provenance: nil
+                    ),
+                ],
+                pending: [],
+                duplicates: [],
+                totals: ScanTotals(gguf: 0, pending: 0, converted: 2, unreadable: 0, bytes: 0, reclaimableBytes: 0)
+            ),
+            hardware: fixtureHardware,
+            now: fixtureDate
+        )
+
+        // One family per repo, not per snapshot revision hash.
+        XCTAssertEqual(snapshot.groups.count, 1)
+        XCTAssertEqual(snapshot.groups.first?.primaryDisplayName, "mlx-community/Qwen3-0.6B-4bit")
+        XCTAssertEqual(snapshot.groups.first?.variants.count, 2)
+
+        let modelA = snapshot.models.first { $0.item.path == fixture.snapshotA.path }
+        // Real bytes: tokenizer.json (100) + symlinked blob (200) +
+        // config.json (22); the dangling symlink contributes nothing.
+        XCTAssertEqual(modelA?.item.bytes, 322)
+        XCTAssertEqual(modelA?.item.architecture, "qwen3")
+    }
+
+    /// Builds a tiny HF-cache layout: blobs + two snapshot dirs for one repo.
+    private func makeHFCacheFixture() throws -> (root: URL, snapshotA: URL, snapshotB: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-hfcache-\(UUID().uuidString)", isDirectory: true)
+        let repo = root
+            .appendingPathComponent("hub/models--mlx-community--Qwen3-0.6B-4bit", isDirectory: true)
+        let blobs = repo.appendingPathComponent("blobs", isDirectory: true)
+        let snapshotA = repo.appendingPathComponent("snapshots/0555d34cb1ed80c0e61a5635194c70027b4c2ff3", isDirectory: true)
+        let snapshotB = repo.appendingPathComponent("snapshots/9999ffffcb1ed80c0e61a5635194c70027b4c2ff3", isDirectory: true)
+        let fm = FileManager.default
+        try fm.createDirectory(at: blobs, withIntermediateDirectories: true)
+        try fm.createDirectory(at: snapshotA, withIntermediateDirectories: true)
+        try fm.createDirectory(at: snapshotB, withIntermediateDirectories: true)
+
+        let blob = blobs.appendingPathComponent("blob-weights")
+        try Data(repeating: 1, count: 200).write(to: blob)
+        try Data(repeating: 2, count: 100).write(to: snapshotA.appendingPathComponent("tokenizer.json"))
+        try fm.createSymbolicLink(
+            atPath: snapshotA.appendingPathComponent("weights.safetensors").path,
+            withDestinationPath: "../../blobs/blob-weights"
+        )
+        try fm.createSymbolicLink(
+            atPath: snapshotA.appendingPathComponent("dangling.safetensors").path,
+            withDestinationPath: "../../blobs/missing"
+        )
+        try Data(#"{"model_type":"qwen3"}"#.utf8).write(to: snapshotA.appendingPathComponent("config.json"))
+        try Data(repeating: 3, count: 50).write(to: snapshotB.appendingPathComponent("tokenizer.json"))
+
+        return (root, snapshotA, snapshotB)
+    }
+
+    // MARK: - Readiness and totals
+
     func testBuildMapsReadinessAndComputesByteTotalsWithoutDoubleCountingDuplicateSources() {
         let snapshot = ModelLibraryBuilder.build(
             scan: makeFixtureScan(),

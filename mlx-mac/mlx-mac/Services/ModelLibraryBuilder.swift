@@ -50,11 +50,11 @@ enum ModelLibraryBuilder {
             let item = ModelItem(
                 path: output.path,
                 name: output.name,
-                bytes: 0,
+                bytes: directoryBytes(at: output.path),
                 modifiedAt: nil,
                 shard: nil,
                 modelKey: output.modelKey,
-                architecture: nil,
+                architecture: configModelType(at: output.path),
                 quantization: output.quantization.map { "q\($0.bits)" },
                 parameters: nil,
                 structure: nil,
@@ -206,6 +206,12 @@ enum ModelLibraryBuilder {
             return normalizedToken(modelKey)
         }
 
+        // HF-cache snapshots live at …/hub/models--org--name/snapshots/<rev>;
+        // the revision hash must never become the family identity.
+        if let repoID = HFRepoID.forPath(path) {
+            return normalizedToken(repoID)
+        }
+
         let pathCandidate = normalizedToken(cleanedFamilyStem(from: path))
         if !pathCandidate.isEmpty {
             return pathCandidate
@@ -220,6 +226,12 @@ enum ModelLibraryBuilder {
     }
 
     private static func displayName(path: String, fallbackName: String) -> String {
+        // HF-cache snapshots name their revision hash; the repo id is the
+        // identity the user recognizes.
+        if let repoID = HFRepoID.forPath(path) {
+            return repoID
+        }
+
         let trimmedName = fallbackName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedName.isEmpty {
             return trimmedName
@@ -227,6 +239,56 @@ enum ModelLibraryBuilder {
 
         let stem = cleanedFamilyStem(from: path)
         return stem.isEmpty ? path : stem
+    }
+
+    /// Byte size of a model directory. HF-cache snapshots symlink into a
+    /// shared blobs dir and the links themselves report zero, so symlink
+    /// destinations are resolved; broken links contribute nothing.
+    private static func directoryBytes(at path: String, fileManager: FileManager = .default) -> Int64 {
+        let url = URL(fileURLWithPath: path)
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return 0 }
+        guard isDirectory.boolValue else {
+            let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            return Int64(size ?? 0)
+        }
+        guard let enumerator = fileManager.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.fileSizeKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let item as URL in enumerator {
+            let values = try? item.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true {
+                guard let destination = try? fileManager.destinationOfSymbolicLink(atPath: item.path) else { continue }
+                let resolved = URL(fileURLWithPath: destination, relativeTo: item.deletingLastPathComponent())
+                    .standardizedFileURL
+                if let size = try? resolved.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                    total += Int64(size)
+                }
+            } else if let size = values?.fileSize {
+                total += Int64(size)
+            }
+        }
+        return total
+    }
+
+    /// Architecture from the snapshot's config.json (`model_type`), when the
+    /// scan didn't report one. Read once at build time; absence is fine.
+    private static func configModelType(at path: String) -> String? {
+        let configURL = URL(fileURLWithPath: path).appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let modelType = object["model_type"] as? String, !modelType.isEmpty {
+            return modelType
+        }
+        if let architectures = object["architectures"] as? [String], let first = architectures.first, !first.isEmpty {
+            return first
+        }
+        return nil
     }
 
     private static func cleanedFamilyStem(from rawValue: String) -> String {
