@@ -44,9 +44,16 @@ Build and run:
 make build-swift   # Release build of the native app
 make run-swift     # open it
 make test-swift    # XCTest suite
+# Explicit, real local-model acceptance only:
+make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/to/runtime.json
 ```
 
-See `mlx-mac/README.md` for the operator guide and `mlx-mac/docs/premium/` for the feature specs.
+The acceptance target is not part of `make test`: it may perform a real
+conversion and must be given an explicit local runtime manifest. It retains
+the app's preview/confirm and loopback-only boundaries and writes a unique
+evidence directory for each accepted run. See `mlx-mac/README.md` for the
+manifest contract, prerequisites, evidence layout, and failure classes, and
+`mlx-mac/docs/premium/` for the feature specs.
 
 ## Run
 

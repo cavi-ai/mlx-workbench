@@ -24,6 +24,69 @@ local models live behind the `mlx-workbench-real-data-e2e` scheme and require
 runtime values (`TASK6_*` environment or manifest) — they are not part of the
 default test action.
 
+## Opt-in GGUF-to-Run acceptance
+
+The existing native real-data harness can be launched through one guarded
+Make target:
+
+```bash
+make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/to/runtime.json
+```
+
+`RUNTIME_MANIFEST` is mandatory and must be an absolute path. The target runs
+only `GGUFToRunRealDataUITests.testRealGGUFToRunningMLXGoldenPath`; neither
+`make test` nor `make test-swift` selects it. The harness may convert the named
+GGUF, reuse an equivalent existing MLX output, and briefly start a local model
+server. Use a deliberately selected disposable or otherwise approved source,
+not an arbitrary model library entry.
+
+The manifest is a strict JSON object with these fields and no additional
+keys:
+
+```json
+{
+  "source_path": "/absolute/path/to/models/example-Q4_K_M.gguf",
+  "model_query": "example-Q4_K_M",
+  "agent_home": "/absolute/path/to/mlx-agent",
+  "config_path": "/absolute/path/to/mlx-workbench-config.json",
+  "evidence_root": "/absolute/path/to/acceptance-evidence"
+}
+```
+
+Prerequisites and preflight constraints:
+
+- Apple Silicon macOS with Xcode's `xcodebuild` on `PATH`.
+- The repository's conversion/serving runtime installed with `make install`.
+- `source_path` is an existing regular `.gguf` smaller than 29 GB and resolves
+  beneath one of the config's explicit, non-empty `gguf_roots` entries.
+- `agent_home/scripts/mlx-agent` exists and is executable.
+- If the config sets `mlx_agent_path`, it resolves to the same checkout as
+  `agent_home`; divergent runtime identities are rejected before Xcode starts.
+- `config_path` contains a JSON object whose `host` is `127.0.0.1`,
+  `localhost`, or `::1` (an omitted or empty host uses `127.0.0.1`).
+- `evidence_root` is absolute and outside every configured GGUF root.
+
+The runner creates and prints a unique
+`<evidence_root>/native-gguf-<UTC timestamp>-<pid>/` directory before invoking
+Xcode. It contains `xcodebuild.log`, `result.xcresult` when Xcode produces one,
+`DerivedData/`, screenshots and `ui-observations.log` from the harness, and an
+atomic `outcome.json` summary. Existing evidence directories are never reused.
+
+Failure classification:
+
+| Exit | Classification | Meaning and evidence |
+| --- | --- | --- |
+| 2 | `manifest-invalid` | The manifest or referenced local inputs failed preflight. No run directory is promised because `evidence_root` was not trusted. |
+| 3 | `prerequisite-unavailable` | The validated runtime cannot launch on this host. `outcome.json` records the reason. |
+| 4 | `acceptance-failed` | Xcode launched but its test action failed. Use `xcodebuild.log` and `result.xcresult` to distinguish a product assertion, local model/runtime failure, or Xcode/build infrastructure failure. |
+| 0 | `passed` | This manifest's configured real-data path passed; it does not certify other local models. |
+
+The wrapper does not call conversion or serve commands itself. The UI harness
+still previews each conversion and serve plan, confirms with the returned
+preview hash, reconciles process state from mlx-agent receipts, binds serving
+to loopback through the native app, and stops only the exact server receipt it
+created. It does not delete or quarantine model data.
+
 ## Feature map
 
 | Surface | What it does |

@@ -19,6 +19,11 @@ from `mlx-agent` at runtime.
   `project.pbxproj` — register new sources there). `make test-swift` runs its
   XCTest suite. Design specs for premium features live in
   `mlx-mac/docs/premium/`.
+- `make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json` is the
+  opt-in real-data native GGUF-to-Run acceptance surface. Its runner validates
+  an explicit allowlisted local source and loopback config, selects only the
+  existing golden-path UI test, and writes per-run evidence beneath the
+  manifest's `evidence_root`. Never invoke it with an arbitrary local model.
 - The Swift app gates conversions with a **Conversion Quality Gate**: after a
   fresh scan confirms a conversion output, `VerificationCoordinator` serves it
   on an ephemeral loopback port (via the existing serve preview/confirm
@@ -76,6 +81,8 @@ from `mlx-agent` at runtime.
 - `make run` runs foreground.
 - `make status`, `make stop`, `make open` are standard operations.
 - `make test` and `python3 -m unittest discover -s tests -t .` run unit tests.
+- `make accept-native-gguf` is excluded from normal tests and requires an
+  explicit runtime manifest because it may perform a real conversion.
 - `make docs-test` and `make docs-verify` run documentation contract checks.
 
 ## Ingest/pipeline behavior to respect
