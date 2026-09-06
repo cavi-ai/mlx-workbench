@@ -34,7 +34,9 @@ struct ModelDetailsView: View {
                         detailRow("Outputs", lines(model.outputPaths))
                         detailRow("Readiness", model.readiness.title)
                         detailRow("Duplicate status", duplicateStatus)
-                        detailRow("Prepare destination", prepareDestination)
+                        if model.readiness == .needsConversion {
+                            detailRow("Prepare destination", prepareDestination)
+                        }
                         detailRow("Why", readinessExplanation)
                         detailRow("Source paths", lines(model.sourcePaths))
                         detailRow("Signature", known(model.item.signature))
@@ -115,10 +117,20 @@ struct ModelDetailsView: View {
                 }
             }
 
-            Text("MODEL IDENTITY / \(known(model.item.modelKey))")
+            Text("MODEL IDENTITY / \(identityLabel)")
                 .font(WorkbenchTypography.monoUtility)
                 .foregroundColor(WorkbenchColor.graphiteMuted)
         }
+    }
+
+    /// HF-cache models carry the snapshot revision as their scan modelKey —
+    /// a hash is not an identity. Prefer the repo id; keep the modelKey only
+    /// when it is real metadata.
+    private var identityLabel: String {
+        if let repoID = HFRepoID.forPath(model.item.path) {
+            return repoID
+        }
+        return known(model.item.modelKey)
     }
 
     private var actionRow: some View {
@@ -141,10 +153,14 @@ struct ModelDetailsView: View {
 
             Spacer()
 
-            Button("Prepare to run") {
-                appHost.selectedModelPath = model.item.path
-                appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
-                onRouteSelection(AppRoute.prepare.rawValue)
+            // Ready models have nothing to prepare; offering it just renders
+            // a "destination already exists" blocker.
+            if model.readiness != .ready {
+                Button("Prepare to run") {
+                    appHost.selectedModelPath = model.item.path
+                    appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
+                    onRouteSelection(AppRoute.prepare.rawValue)
+                }
             }
 
             Button("Select for Compare") {
