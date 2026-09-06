@@ -249,6 +249,7 @@ struct LibraryView: View {
             .padding(WorkbenchSpacing.pageInset)
         }
         .background(WorkbenchColor.alloyCanvas)
+        .searchable(text: $search, placement: .sidebar, prompt: "Search family, variant, path, key, or evidence")
         .onAppear {
             if appHost.librarySnapshot == nil, !appHost.isScanning {
                 appHost.requestRescan()
@@ -292,11 +293,6 @@ struct LibraryView: View {
     }
 
     @ViewBuilder private var filterControls: some View {
-            TextField("Search family, variant, path, key, or evidence", text: $search)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 440)
-                .accessibilityLabel("Search model library")
-
             Picker("Readiness", selection: $readinessFilter) {
                 Text("All readiness").tag(ModelReadiness?.none)
                 ForEach(ModelReadiness.allCases) { readiness in
@@ -495,17 +491,16 @@ private struct LibraryVariantRow: View {
                 Text(model.displayName)
                     .font(.body)
                 Text(model.item.path)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer()
-            Text(model.item.quantization ?? LibraryPresentation.unknownQuantizationLabel)
+            Text("\(model.item.quantization ?? LibraryPresentation.unknownQuantizationLabel) · \(ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Text(ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .lineLimit(1)
         }
         .padding(.vertical, 2)
     }
