@@ -94,7 +94,7 @@ class ReleaseDocsContractTests(unittest.TestCase):
             resolveReleaseIdentity
           } from './scripts/docs/lib.mjs';
           const release = resolveReleaseIdentity({
-            version: '0.1.0', tag: 'v0.1.0',
+            version: '@VERSION@', tag: '@TAG@',
             commit: '0123456789abcdef0123456789abcdef01234567',
             sourceDateEpoch: 1700000000
           });
@@ -103,6 +103,7 @@ class ReleaseDocsContractTests(unittest.TestCase):
             repository: RELEASE_REPOSITORY, tag: release.tag
           }));
         """
+        program = program.replace("@VERSION@", VERSION).replace("@TAG@", TAG)
         result = subprocess.run(
             ["node", "--input-type=module", "--eval", program],
             cwd=ROOT,
@@ -170,12 +171,13 @@ class ReleaseDocsContractTests(unittest.TestCase):
                 "--source-date-epoch", EPOCH,
                 "--output", output,
             )
+            mismatch_version = VERSION + ".1"
             mismatch = run_node(
-                "scripts/docs/build.mjs", "--version", "0.1.1", *common,
+                "scripts/docs/build.mjs", "--version", mismatch_version, *common,
                 check=False,
             )
             self.assertNotEqual(mismatch.returncode, 0)
-            self.assertIn("release version must be 0.1.0", mismatch.stderr)
+            self.assertIn(f"release version must be {VERSION}", mismatch.stderr)
 
             run_node("scripts/docs/build.mjs", "--version", VERSION, *common)
             (output / "navigation.json").write_text("dirty\n")

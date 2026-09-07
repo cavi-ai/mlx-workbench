@@ -8,6 +8,10 @@ from `mlx-agent` at runtime.
 - `README.md` is the primary operator guide.
 - `docs/mlx-workbench` contains versioned guide pages and documentation tests.
 - `Makefile` defines the supported local command surface.
+- `mlx_workbench/__init__.py` (`__version__`) is the single version source of
+  truth; `CHANGELOG.md` records releases. Use `make version-bump V=x.y.z` to
+  bump both plus the Swift `MARKETING_VERSION` and docs-test constants;
+  `tests/test_version_sync.py` enforces the sync.
 
 ## Repository shape to keep in sync
 

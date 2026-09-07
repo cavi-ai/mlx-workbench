@@ -30,7 +30,7 @@ DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert deps \
 	start stop restart status run test test-live-scan test-swift test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
-	docs-test docs-build docs-verify docs-release
+	docs-test docs-build docs-verify docs-release version-bump
 
 help:
 	@printf '%s\n' \
@@ -51,6 +51,7 @@ help:
 		'make docs-build - build deterministic versioned documentation' \
 		'make docs-verify - verify the versioned documentation' \
 		'make docs-release - create the release archive and checksum' \
+		'make version-bump V=x.y.z - bump version + CHANGELOG everywhere' \
 		'make open     - open $(URL)' \
 		'make check    - verify mlx-agent + .venv' \
 		'make clean    - remove .run/' \
@@ -235,6 +236,13 @@ docs-verify:
 
 docs-release: docs-build docs-verify
 	node scripts/docs/release-artifact.mjs --docs-root "docs/mlx-workbench/v$(DOCS_VERSION)" --output "$(DOCS_RELEASE_DIR)" --version "$(DOCS_VERSION)" --tag "$(DOCS_TAG)" --repository "cavi-ai/mlx-workbench" --commit "$(DOCS_COMMIT)" --source-date-epoch "$(DOCS_EPOCH)"
+
+version-bump:
+	@case "$(V)" in \
+		[0-9]*.[0-9]*.[0-9]*) ;; \
+		*) echo "V is required and must be semver: make version-bump V=x.y.z" >&2; exit 2 ;; \
+	esac
+	@$(PYTHON) scripts/version_bump.py "$(V)"
 
 open:
 	@$(PYTHON) -c "import webbrowser; webbrowser.open('$(URL)')"
