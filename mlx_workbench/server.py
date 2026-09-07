@@ -259,385 +259,417 @@ class Handler(BaseHTTPRequestHandler):
         settings = self.app.config()
         agent = settings["mlx_agent_path"]
         runner = self.app.runner
-        if method == "GET" and route == "/api/config":
-            return _ok({
-                "config": settings,
-                "discovered_roots": config_module.discover_gguf_roots(),
-                "config_path": str(self.app.config_path or config_module.config_path()),
-                "agent": bridge.agent_health(agent),
-                "vendor_agent_path": config_module.vendor_agent_path(),
-                "runtime": deps_module.runtime_report(),
-            })
-        if method == "POST" and route == "/api/config":
-            payload = self._body()
-            if payload is None:
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            return _ok({
-                "config": self.app.save_config(payload),
-                "agent": bridge.agent_health(self.app.config()["mlx_agent_path"]),
-                "runtime": deps_module.runtime_report(),
-            })
-        if method == "GET" and route == "/api/health":
-            return _ok({
-                "agent": bridge.agent_health(agent),
-                "runtime": deps_module.runtime_report(),
-            })
-        if method == "GET" and route == "/api/scan":
-            return _ok(bridge.scan(
-                agent,
-                gguf_roots=config_module.scan_roots(settings),
-                mlx_roots=settings["mlx_roots"],
-                signatures=settings["signatures"],
-                runner=runner,
-            ))
-        if method == "GET" and route == "/api/jobs":
-            payload = bridge.all_job_lists(agent, runner=runner)
-            payload["convert_queue"] = self.app.convert_queue.snapshot()
-            if self.app.convert_queue.load_error is not None:
-                payload["convert_queue_load_error"] = self.app.convert_queue.load_error
-            if self.app.convert_queue.last_error is not None:
-                payload["convert_queue_error"] = self.app.convert_queue.last_error
-            if self.app.worker.last_result is not None:
-                payload["convert_worker_result"] = self.app.worker.last_result
-            elif self.app.worker.last_error is not None:
-                payload["convert_worker_result"] = {
-                    "status": "failed",
-                    "error": self.app.worker.last_error,
-                }
-            return _ok(payload)
-        if method == "GET" and route == "/api/jobs/log":
-            params = parse_qs(urlparse(self.path).query)
-            values = params.get("path") or []
-            log_path = values[0] if values else ""
-            return _ok(bridge.read_log(agent, log_path, runner=runner))
-        if method == "GET" and route == "/api/quarantine":
-            return _ok({"records": quarantine_module.ledger(settings["quarantine_dir"])})
-        if method == "POST" and route == "/api/convert/queue":
-            return _ok({"queue": self.app.convert_queue.snapshot()})
-        if method == "POST" and route == "/api/convert/queue/cancel":
-            payload = self._body() or {}
-            if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
-                return _error("invalid_body", "id is required.", "Retry from the UI.")
-            removed = self.app.convert_queue.cancel(payload["id"])
-            self.app.worker.wake()
-            return _ok({
-                "removed": removed,
-                "queue": self.app.convert_queue.snapshot(),
-            })
-        if method == "POST" and route == "/api/convert/queue/clear":
-            cleared = self.app.convert_queue.clear()
-            self.app.worker.wake()
-            return _ok({
-                "cleared": cleared,
-                "queue": self.app.convert_queue.snapshot(),
-            })
-        if method == "POST" and route == "/api/convert/queue/retry":
-            payload = self._body() or {}
-            if (
-                not isinstance(payload, dict)
-                or not isinstance(payload.get("id"), str)
-                or not payload["id"]
-            ):
-                return _error("invalid_body", "id is required.", "Retry from the UI.")
-            retried = self.app.convert_queue.retry(payload["id"])
-            self.app.worker.wake()
-            return _ok({
-                "retried": retried,
-                "queue": self.app.convert_queue.snapshot(),
-            })
-        if method == "POST" and route == "/api/convert/queue/move":
-            payload = self._body() or {}
-            if (
-                not isinstance(payload, dict)
-                or not isinstance(payload.get("id"), str)
-                or not payload["id"]
-                or payload.get("direction") not in ("up", "down")
-            ):
-                return _error(
-                    "invalid_body",
-                    "id and direction (up or down) are required.",
-                    "Retry from the UI.",
-                )
-            moved = self.app.convert_queue.move(
-                payload["id"], payload["direction"],
+        handler = _API_ROUTES.get((method, route))
+        if handler is None:
+            return 404, "text/plain; charset=utf-8", b"not found"
+        return handler(self, route, settings, agent, runner)
+
+    # MARK: route handlers (registered in _API_ROUTES below)
+
+    def _api_config_get(self, route, settings, agent, runner):
+        return _ok({
+            "config": settings,
+            "discovered_roots": config_module.discover_gguf_roots(),
+            "config_path": str(self.app.config_path or config_module.config_path()),
+            "agent": bridge.agent_health(agent),
+            "vendor_agent_path": config_module.vendor_agent_path(),
+            "runtime": deps_module.runtime_report(),
+        })
+
+    def _api_config_post(self, route, settings, agent, runner):
+        payload = self._body()
+        if payload is None:
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        return _ok({
+            "config": self.app.save_config(payload),
+            "agent": bridge.agent_health(self.app.config()["mlx_agent_path"]),
+            "runtime": deps_module.runtime_report(),
+        })
+
+    def _api_health(self, route, settings, agent, runner):
+        return _ok({
+            "agent": bridge.agent_health(agent),
+            "runtime": deps_module.runtime_report(),
+        })
+
+    def _api_scan(self, route, settings, agent, runner):
+        return _ok(bridge.scan(
+            agent,
+            gguf_roots=config_module.scan_roots(settings),
+            mlx_roots=settings["mlx_roots"],
+            signatures=settings["signatures"],
+            runner=runner,
+        ))
+
+    def _api_jobs(self, route, settings, agent, runner):
+        payload = bridge.all_job_lists(agent, runner=runner)
+        payload["convert_queue"] = self.app.convert_queue.snapshot()
+        if self.app.convert_queue.load_error is not None:
+            payload["convert_queue_load_error"] = self.app.convert_queue.load_error
+        if self.app.convert_queue.last_error is not None:
+            payload["convert_queue_error"] = self.app.convert_queue.last_error
+        if self.app.worker.last_result is not None:
+            payload["convert_worker_result"] = self.app.worker.last_result
+        elif self.app.worker.last_error is not None:
+            payload["convert_worker_result"] = {
+                "status": "failed",
+                "error": self.app.worker.last_error,
+            }
+        return _ok(payload)
+
+    def _api_jobs_log(self, route, settings, agent, runner):
+        params = parse_qs(urlparse(self.path).query)
+        values = params.get("path") or []
+        log_path = values[0] if values else ""
+        return _ok(bridge.read_log(agent, log_path, runner=runner))
+
+    def _api_quarantine_list(self, route, settings, agent, runner):
+        return _ok({"records": quarantine_module.ledger(settings["quarantine_dir"])})
+
+    def _api_queue_snapshot(self, route, settings, agent, runner):
+        return _ok({"queue": self.app.convert_queue.snapshot()})
+
+    def _api_queue_cancel(self, route, settings, agent, runner):
+        payload = self._body() or {}
+        if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
+            return _error("invalid_body", "id is required.", "Retry from the UI.")
+        removed = self.app.convert_queue.cancel(payload["id"])
+        self.app.worker.wake()
+        return _ok({
+            "removed": removed,
+            "queue": self.app.convert_queue.snapshot(),
+        })
+
+    def _api_queue_clear(self, route, settings, agent, runner):
+        cleared = self.app.convert_queue.clear()
+        self.app.worker.wake()
+        return _ok({
+            "cleared": cleared,
+            "queue": self.app.convert_queue.snapshot(),
+        })
+
+    def _api_queue_retry(self, route, settings, agent, runner):
+        payload = self._body() or {}
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("id"), str)
+            or not payload["id"]
+        ):
+            return _error("invalid_body", "id is required.", "Retry from the UI.")
+        retried = self.app.convert_queue.retry(payload["id"])
+        self.app.worker.wake()
+        return _ok({
+            "retried": retried,
+            "queue": self.app.convert_queue.snapshot(),
+        })
+
+    def _api_queue_move(self, route, settings, agent, runner):
+        payload = self._body() or {}
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("id"), str)
+            or not payload["id"]
+            or payload.get("direction") not in ("up", "down")
+        ):
+            return _error(
+                "invalid_body",
+                "id and direction (up or down) are required.",
+                "Retry from the UI.",
             )
-            self.app.worker.wake()
-            return _ok({
-                "moved": moved,
-                "queue": self.app.convert_queue.snapshot(),
-            })
-        if method == "POST" and route in ("/api/convert/preview", "/api/convert/start"):
-            return self._convert_route(route, settings, agent, runner)
-        if method == "POST" and route == "/api/scout":
-            payload = self._body() or {}
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            role = payload.get("role") or None
-            if role is not None and not isinstance(role, str):
-                return _error("invalid_body", "role must be a string.", "Pick a role in the UI.")
-            limit = payload.get("limit")
-            if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
-                return _error("invalid_body", "limit must be a positive integer.", "Retry from the UI.")
-            return _ok(bridge.discover(
-                agent,
-                role=role or None,
-                limit=limit,
-                fast=bool(payload.get("fast")),
-                new=bool(payload.get("new")),
-                runner=runner,
-            ))
-        if method == "POST" and route == "/api/doctor":
-            payload = self._body() or {}
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            wired = payload.get("wired_roots") or []
-            if not isinstance(wired, list) or not all(isinstance(item, str) for item in wired):
-                return _error("invalid_body", "wired_roots must be a list of strings.", "Retry from the UI.")
-            hf_cache = payload.get("hf_cache")
-            if hf_cache is not None and not isinstance(hf_cache, str):
-                return _error("invalid_body", "hf_cache must be a string.", "Retry from the UI.")
-            return _ok(bridge.doctor_models(
-                agent, wired_roots=wired, hf_cache=hf_cache or None, runner=runner,
-            ))
-        if method == "POST" and route in ("/api/doctor/prune/preview", "/api/doctor/prune/confirm"):
-            payload = self._body() or {}
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            hf_cache = payload.get("hf_cache")
-            if hf_cache is not None and not isinstance(hf_cache, str):
-                return _error("invalid_body", "hf_cache must be a string.", "Retry from the UI.")
-            if route.endswith("preview"):
-                return _ok(bridge.doctor_prune_preview(
-                    agent, hf_cache=hf_cache or None, runner=runner,
-                ))
-            preview_hash = payload.get("preview_hash")
-            if not isinstance(preview_hash, str) or not preview_hash:
-                return _error(
-                    "preview_required",
-                    "Prune needs the hash from its preview.",
-                    "Preview incomplete snapshots first, then confirm.",
-                )
-            return _ok(bridge.doctor_prune_confirm(
-                agent, preview_hash, hf_cache=hf_cache or None, runner=runner,
-            ))
-        if method == "POST" and route == "/api/adopt/start":
-            payload = self._body() or {}
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            role = payload.get("role")
-            state = payload.get("state")
-            if role is not None and not isinstance(role, str):
-                return _error("invalid_body", "role must be a string.", "Pick a role.")
-            if state is not None and not isinstance(state, str):
-                return _error("invalid_body", "state must be a path string.", "Retry.")
-            return _ok(bridge.adopt_start(
-                agent,
-                role=role or None,
-                state=state or None,
-                fast=bool(payload.get("fast")),
-                offline=bool(payload.get("offline")),
-                runner=runner,
-            ))
-        if method == "POST" and route == "/api/adopt/status":
-            payload = self._body() or {}
-            if not isinstance(payload, dict) or not isinstance(payload.get("state"), str):
-                return _error("invalid_body", "state path is required.", "Retry from the UI.")
-            return _ok(bridge.adopt_status(agent, payload["state"], runner=runner))
-        if method == "POST" and route in ("/api/wire/preview", "/api/wire/apply"):
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            model = payload.get("model")
-            path = payload.get("path")
-            target = payload.get("target") or "mlx_lm"
-            if not isinstance(model, str) or not model.strip():
-                return _error("invalid_body", "model is required.", "Enter a repo id.")
-            if not isinstance(path, str) or not path.strip():
-                return _error("invalid_body", "path is required.", "Enter a config file path.")
-            if target not in ("ollama", "lmstudio", "mlx_lm", "mlx-vlm", "litellm"):
-                return _error("invalid_body", "unsupported wire target.", "Pick a target.")
-            if route.endswith("preview"):
-                return _ok(bridge.wire_preview(agent, model, path, target, runner=runner))
-            preview_hash = payload.get("preview_hash")
-            if not isinstance(preview_hash, str) or not preview_hash:
-                return _error(
-                    "preview_required",
-                    "Wire apply needs the hash from its preview.",
-                    "Preview first, then confirm.",
-                )
-            return _ok(bridge.wire_apply(
-                agent, model, path, preview_hash, target, runner=runner,
-            ))
-        if method == "POST" and route in ("/api/lora/preview", "/api/lora/start"):
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            repo = payload.get("repo")
-            data = payload.get("data")
-            if not isinstance(repo, str) or not repo.strip():
-                return _error("invalid_body", "repo is required.", "Enter a cached base model.")
-            if not isinstance(data, str) or not data.strip():
-                return _error("invalid_body", "data path is required.", "Point at a dataset dir.")
-            iters = payload.get("iters")
-            if iters is not None and (not isinstance(iters, int) or isinstance(iters, bool) or iters < 1):
-                return _error("invalid_body", "iters must be a positive integer.", "Retry.")
-            out = payload.get("out")
-            if out is not None and not isinstance(out, str):
-                return _error("invalid_body", "out must be a string.", "Retry.")
-            if route.endswith("preview"):
-                return _ok(bridge.lora_preview(
-                    agent, repo, data, iters=iters, out=out or None, runner=runner,
-                ))
-            preview_hash = payload.get("preview_hash")
-            if not isinstance(preview_hash, str) or not preview_hash:
-                return _error(
-                    "preview_required",
-                    "LoRA needs the hash from its preview.",
-                    "Preview first, then confirm.",
-                )
-            return _ok(bridge.lora_start(
-                agent, repo, data, preview_hash, iters=iters, out=out or None, runner=runner,
-            ))
-        if method == "POST" and route in ("/api/fuse/preview", "/api/fuse/start"):
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            repo = payload.get("repo")
-            adapter = payload.get("adapter")
-            if not isinstance(repo, str) or not repo.strip():
-                return _error("invalid_body", "repo is required.", "Enter a cached base model.")
-            if not isinstance(adapter, str) or not adapter.strip():
-                return _error("invalid_body", "adapter path is required.", "Point at a LoRA adapter.")
-            out = payload.get("out")
-            if out is not None and not isinstance(out, str):
-                return _error("invalid_body", "out must be a string.", "Retry.")
-            if route.endswith("preview"):
-                return _ok(bridge.fuse_preview(
-                    agent, repo, adapter, out=out or None, runner=runner,
-                ))
-            preview_hash = payload.get("preview_hash")
-            if not isinstance(preview_hash, str) or not preview_hash:
-                return _error(
-                    "preview_required",
-                    "Fuse needs the hash from its preview.",
-                    "Preview first, then confirm.",
-                )
-            return _ok(bridge.fuse_start(
-                agent, repo, adapter, preview_hash, out=out or None, runner=runner,
-            ))
-        if method == "POST" and route in ("/api/serve/preview", "/api/serve/start"):
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            repo = payload.get("repo")
-            runtime = payload.get("runtime")
-            if not isinstance(repo, str) or not repo.strip():
-                return _error("invalid_body", "repo is required.", "Enter a cached model id.")
-            if runtime not in ("mlx_lm", "mlx-vlm"):
-                return _error("invalid_body", "runtime must be mlx_lm or mlx-vlm.", "Pick a runtime.")
-            port = payload.get("port")
-            if port is not None and (not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535):
-                return _error("invalid_body", "port must be 1–65535.", "Retry from the UI.")
-            if route.endswith("preview"):
-                return _ok(bridge.serve_preview(agent, repo, runtime, port, runner=runner))
-            preview_hash = payload.get("preview_hash")
-            if not isinstance(preview_hash, str) or not preview_hash:
-                return _error(
-                    "preview_required",
-                    "Confirming a serve plan needs the hash from its preview.",
-                    "Preview the plan first, then confirm it.",
-                )
-            return _ok(bridge.serve_start(
-                agent, repo, runtime, preview_hash, port, runner=runner,
-            ))
-        if method == "POST" and route == "/api/duplicates/scan":
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            return _ok(bridge.scan_duplicates(
-                agent,
-                gguf_roots=config_module.scan_roots(settings),
-                mlx_roots=settings["mlx_roots"],
-                runner=runner,
-            ))
+        moved = self.app.convert_queue.move(
+            payload["id"], payload["direction"],
+        )
+        self.app.worker.wake()
+        return _ok({
+            "moved": moved,
+            "queue": self.app.convert_queue.snapshot(),
+        })
 
-        if method == "POST" and route == "/api/model/arch":
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            path = payload.get("path")
-            if not isinstance(path, str) or not path.strip():
-                return _error("invalid_body", "path is required.", "Enter model path.")
-            return _ok(bridge.model_architecture(agent, path=path, runner=runner))
+    def _api_convert(self, route, settings, agent, runner):
+        return self._convert_route(route, settings, agent, runner)
 
-        if method == "POST" and route == "/api/serve/metrics":
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            port = payload.get("port")
-            if not isinstance(port, int) or isinstance(port, bool):
-                return _error("invalid_body", "port is required.", "Enter a server port.")
-            return _ok(bridge.serve_metrics(agent, port))
+    def _api_scout(self, route, settings, agent, runner):
+        payload = self._body() or {}
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        role = payload.get("role") or None
+        if role is not None and not isinstance(role, str):
+            return _error("invalid_body", "role must be a string.", "Pick a role in the UI.")
+        limit = payload.get("limit")
+        if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
+            return _error("invalid_body", "limit must be a positive integer.", "Retry from the UI.")
+        return _ok(bridge.discover(
+            agent,
+            role=role or None,
+            limit=limit,
+            fast=bool(payload.get("fast")),
+            new=bool(payload.get("new")),
+            runner=runner,
+        ))
 
-        if method == "POST" and route == "/api/serve/stop":
-            payload = self._body()
-            if not isinstance(payload, dict) or not isinstance(payload.get("port"), int):
-                return _error("invalid_body", "port is required.", "Retry from the UI.")
-            return _ok(bridge.serve_stop(agent, payload["port"], runner=runner))
-        if method == "POST" and route == "/api/sloth/connect":
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            address = payload.get("address")
-            if not isinstance(address, str):
-                return _error("invalid_body", "address is required.", "Enter a server address.")
-            return _ok(bridge.sloth_connect(
-                agent,
-                address=address or "http://localhost:3000",
-                gguf_roots=config_module.scan_roots(settings),
-                mlx_roots=settings["mlx_roots"],
-                runner=runner,
+    def _api_doctor(self, route, settings, agent, runner):
+        payload = self._body() or {}
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        wired = payload.get("wired_roots") or []
+        if not isinstance(wired, list) or not all(isinstance(item, str) for item in wired):
+            return _error("invalid_body", "wired_roots must be a list of strings.", "Retry from the UI.")
+        hf_cache = payload.get("hf_cache")
+        if hf_cache is not None and not isinstance(hf_cache, str):
+            return _error("invalid_body", "hf_cache must be a string.", "Retry from the UI.")
+        return _ok(bridge.doctor_models(
+            agent, wired_roots=wired, hf_cache=hf_cache or None, runner=runner,
+        ))
+
+    def _api_prune(self, route, settings, agent, runner):
+        payload = self._body() or {}
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        hf_cache = payload.get("hf_cache")
+        if hf_cache is not None and not isinstance(hf_cache, str):
+            return _error("invalid_body", "hf_cache must be a string.", "Retry from the UI.")
+        if route.endswith("preview"):
+            return _ok(bridge.doctor_prune_preview(
+                agent, hf_cache=hf_cache or None, runner=runner,
             ))
-
-        if method == "POST" and route == "/api/cli":
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            argv = payload.get("argv")
-            return _ok(bridge.run_cli(agent, argv, runner=runner))
-        if method == "POST" and route == "/api/lmstudio/import":
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            source = payload.get("source_dir")
-            if source is not None and not isinstance(source, str):
-                return _error("invalid_body", "source_dir must be a string.", "Retry.")
-            convert = payload.get("convert_immediately", True)
-            if not isinstance(convert, bool):
-                return _error("invalid_body", "convert_immediately must be a boolean.", "Retry.")
-            return _ok(bridge.lmstudio_import(agent, source_dir=source or None, convertImmediately=convert))
-        if method == "POST" and route == "/api/quant/profile":
-            payload = self._body()
-            if not isinstance(payload, dict):
-                return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-            path = payload.get("path")
-            targets = payload.get("targets")
-            if not isinstance(path, str) or not path.strip():
-                return _error("invalid_body", "path is required.", "Enter a model path.")
-            if not isinstance(targets, list) or not all(isinstance(t, str) for t in targets):
-                return _error("invalid_body", "targets must be a list of strings.", "Select formats.")
-            return _ok(bridge.quant_profile(agent, path, targets, runner=runner))
-        if method == "POST" and route == "/api/quarantine":
-            payload = self._body()
-            if not isinstance(payload, dict) or not isinstance(payload.get("path"), str):
-                return _error("invalid_body", "A gguf path is required.", "Retry from the UI.")
-            record = quarantine_module.quarantine(
-                payload["path"],
-                config_module.scan_roots(settings),
-                settings["quarantine_dir"],
+        preview_hash = payload.get("preview_hash")
+        if not isinstance(preview_hash, str) or not preview_hash:
+            return _error(
+                "preview_required",
+                "Prune needs the hash from its preview.",
+                "Preview incomplete snapshots first, then confirm.",
             )
-            return _ok({"moved": record})
-        return 404, "text/plain; charset=utf-8", b"not found"
+        return _ok(bridge.doctor_prune_confirm(
+            agent, preview_hash, hf_cache=hf_cache or None, runner=runner,
+        ))
+
+    def _api_adopt_start(self, route, settings, agent, runner):
+        payload = self._body() or {}
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        role = payload.get("role")
+        state = payload.get("state")
+        if role is not None and not isinstance(role, str):
+            return _error("invalid_body", "role must be a string.", "Pick a role.")
+        if state is not None and not isinstance(state, str):
+            return _error("invalid_body", "state must be a path string.", "Retry.")
+        return _ok(bridge.adopt_start(
+            agent,
+            role=role or None,
+            state=state or None,
+            fast=bool(payload.get("fast")),
+            offline=bool(payload.get("offline")),
+            runner=runner,
+        ))
+
+    def _api_adopt_status(self, route, settings, agent, runner):
+        payload = self._body() or {}
+        if not isinstance(payload, dict) or not isinstance(payload.get("state"), str):
+            return _error("invalid_body", "state path is required.", "Retry from the UI.")
+        return _ok(bridge.adopt_status(agent, payload["state"], runner=runner))
+
+    def _api_wire(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        model = payload.get("model")
+        path = payload.get("path")
+        target = payload.get("target") or "mlx_lm"
+        if not isinstance(model, str) or not model.strip():
+            return _error("invalid_body", "model is required.", "Enter a repo id.")
+        if not isinstance(path, str) or not path.strip():
+            return _error("invalid_body", "path is required.", "Enter a config file path.")
+        if target not in ("ollama", "lmstudio", "mlx_lm", "mlx-vlm", "litellm"):
+            return _error("invalid_body", "unsupported wire target.", "Pick a target.")
+        if route.endswith("preview"):
+            return _ok(bridge.wire_preview(agent, model, path, target, runner=runner))
+        preview_hash = payload.get("preview_hash")
+        if not isinstance(preview_hash, str) or not preview_hash:
+            return _error(
+                "preview_required",
+                "Wire apply needs the hash from its preview.",
+                "Preview first, then confirm.",
+            )
+        return _ok(bridge.wire_apply(
+            agent, model, path, preview_hash, target, runner=runner,
+        ))
+
+    def _api_lora(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        repo = payload.get("repo")
+        data = payload.get("data")
+        if not isinstance(repo, str) or not repo.strip():
+            return _error("invalid_body", "repo is required.", "Enter a cached base model.")
+        if not isinstance(data, str) or not data.strip():
+            return _error("invalid_body", "data path is required.", "Point at a dataset dir.")
+        iters = payload.get("iters")
+        if iters is not None and (not isinstance(iters, int) or isinstance(iters, bool) or iters < 1):
+            return _error("invalid_body", "iters must be a positive integer.", "Retry.")
+        out = payload.get("out")
+        if out is not None and not isinstance(out, str):
+            return _error("invalid_body", "out must be a string.", "Retry.")
+        if route.endswith("preview"):
+            return _ok(bridge.lora_preview(
+                agent, repo, data, iters=iters, out=out or None, runner=runner,
+            ))
+        preview_hash = payload.get("preview_hash")
+        if not isinstance(preview_hash, str) or not preview_hash:
+            return _error(
+                "preview_required",
+                "LoRA needs the hash from its preview.",
+                "Preview first, then confirm.",
+            )
+        return _ok(bridge.lora_start(
+            agent, repo, data, preview_hash, iters=iters, out=out or None, runner=runner,
+        ))
+
+    def _api_fuse(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        repo = payload.get("repo")
+        adapter = payload.get("adapter")
+        if not isinstance(repo, str) or not repo.strip():
+            return _error("invalid_body", "repo is required.", "Enter a cached base model.")
+        if not isinstance(adapter, str) or not adapter.strip():
+            return _error("invalid_body", "adapter path is required.", "Point at a LoRA adapter.")
+        out = payload.get("out")
+        if out is not None and not isinstance(out, str):
+            return _error("invalid_body", "out must be a string.", "Retry.")
+        if route.endswith("preview"):
+            return _ok(bridge.fuse_preview(
+                agent, repo, adapter, out=out or None, runner=runner,
+            ))
+        preview_hash = payload.get("preview_hash")
+        if not isinstance(preview_hash, str) or not preview_hash:
+            return _error(
+                "preview_required",
+                "Fuse needs the hash from its preview.",
+                "Preview first, then confirm.",
+            )
+        return _ok(bridge.fuse_start(
+            agent, repo, adapter, preview_hash, out=out or None, runner=runner,
+        ))
+
+    def _api_serve(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        repo = payload.get("repo")
+        runtime = payload.get("runtime")
+        if not isinstance(repo, str) or not repo.strip():
+            return _error("invalid_body", "repo is required.", "Enter a cached model id.")
+        if runtime not in ("mlx_lm", "mlx-vlm"):
+            return _error("invalid_body", "runtime must be mlx_lm or mlx-vlm.", "Pick a runtime.")
+        port = payload.get("port")
+        if port is not None and (not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535):
+            return _error("invalid_body", "port must be 1–65535.", "Retry from the UI.")
+        if route.endswith("preview"):
+            return _ok(bridge.serve_preview(agent, repo, runtime, port, runner=runner))
+        preview_hash = payload.get("preview_hash")
+        if not isinstance(preview_hash, str) or not preview_hash:
+            return _error(
+                "preview_required",
+                "Confirming a serve plan needs the hash from its preview.",
+                "Preview the plan first, then confirm it.",
+            )
+        return _ok(bridge.serve_start(
+            agent, repo, runtime, preview_hash, port, runner=runner,
+        ))
+
+    def _api_duplicates_scan(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        return _ok(bridge.scan_duplicates(
+            agent,
+            gguf_roots=config_module.scan_roots(settings),
+            mlx_roots=settings["mlx_roots"],
+            runner=runner,
+        ))
+
+    def _api_model_arch(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        path = payload.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return _error("invalid_body", "path is required.", "Enter model path.")
+        return _ok(bridge.model_architecture(agent, path=path, runner=runner))
+
+    def _api_serve_metrics(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        port = payload.get("port")
+        if not isinstance(port, int) or isinstance(port, bool):
+            return _error("invalid_body", "port is required.", "Enter a server port.")
+        return _ok(bridge.serve_metrics(agent, port))
+
+    def _api_serve_stop(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict) or not isinstance(payload.get("port"), int):
+            return _error("invalid_body", "port is required.", "Retry from the UI.")
+        return _ok(bridge.serve_stop(agent, payload["port"], runner=runner))
+
+    def _api_sloth_connect(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        address = payload.get("address")
+        if not isinstance(address, str):
+            return _error("invalid_body", "address is required.", "Enter a server address.")
+        return _ok(bridge.sloth_connect(
+            agent,
+            address=address or "http://localhost:3000",
+            gguf_roots=config_module.scan_roots(settings),
+            mlx_roots=settings["mlx_roots"],
+            runner=runner,
+        ))
+
+    def _api_cli(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        argv = payload.get("argv")
+        return _ok(bridge.run_cli(agent, argv, runner=runner))
+
+    def _api_lmstudio_import(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        source = payload.get("source_dir")
+        if source is not None and not isinstance(source, str):
+            return _error("invalid_body", "source_dir must be a string.", "Retry.")
+        convert = payload.get("convert_immediately", True)
+        if not isinstance(convert, bool):
+            return _error("invalid_body", "convert_immediately must be a boolean.", "Retry.")
+        return _ok(bridge.lmstudio_import(agent, source_dir=source or None, convertImmediately=convert))
+
+    def _api_quant_profile(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        path = payload.get("path")
+        targets = payload.get("targets")
+        if not isinstance(path, str) or not path.strip():
+            return _error("invalid_body", "path is required.", "Enter a model path.")
+        if not isinstance(targets, list) or not all(isinstance(t, str) for t in targets):
+            return _error("invalid_body", "targets must be a list of strings.", "Select formats.")
+        return _ok(bridge.quant_profile(agent, path, targets, runner=runner))
+
+    def _api_quarantine_move(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict) or not isinstance(payload.get("path"), str):
+            return _error("invalid_body", "A gguf path is required.", "Retry from the UI.")
+        record = quarantine_module.quarantine(
+            payload["path"],
+            config_module.scan_roots(settings),
+            settings["quarantine_dir"],
+        )
+        return _ok({"moved": record})
 
     def _convert_route(self, route, settings, agent, runner):
         payload = self._body()
@@ -725,6 +757,49 @@ def _output_path(settings, payload):
         return None
     q_bits = payload.get("q_bits", settings["q_bits"])
     return str(Path(directory).expanduser() / "{0}-MLX-{1}bit".format(stem, q_bits))
+
+
+# Exact-match API routes: (method, path) -> Handler method. Prefix routes
+# (/, /static/) live in Handler._route; anything absent here is a 404.
+_API_ROUTES = {
+    ("GET", "/api/config"): Handler._api_config_get,
+    ("POST", "/api/config"): Handler._api_config_post,
+    ("GET", "/api/health"): Handler._api_health,
+    ("GET", "/api/scan"): Handler._api_scan,
+    ("GET", "/api/jobs"): Handler._api_jobs,
+    ("GET", "/api/jobs/log"): Handler._api_jobs_log,
+    ("GET", "/api/quarantine"): Handler._api_quarantine_list,
+    ("POST", "/api/quarantine"): Handler._api_quarantine_move,
+    ("POST", "/api/convert/queue"): Handler._api_queue_snapshot,
+    ("POST", "/api/convert/queue/cancel"): Handler._api_queue_cancel,
+    ("POST", "/api/convert/queue/clear"): Handler._api_queue_clear,
+    ("POST", "/api/convert/queue/retry"): Handler._api_queue_retry,
+    ("POST", "/api/convert/queue/move"): Handler._api_queue_move,
+    ("POST", "/api/convert/preview"): Handler._api_convert,
+    ("POST", "/api/convert/start"): Handler._api_convert,
+    ("POST", "/api/scout"): Handler._api_scout,
+    ("POST", "/api/doctor"): Handler._api_doctor,
+    ("POST", "/api/doctor/prune/preview"): Handler._api_prune,
+    ("POST", "/api/doctor/prune/confirm"): Handler._api_prune,
+    ("POST", "/api/adopt/start"): Handler._api_adopt_start,
+    ("POST", "/api/adopt/status"): Handler._api_adopt_status,
+    ("POST", "/api/wire/preview"): Handler._api_wire,
+    ("POST", "/api/wire/apply"): Handler._api_wire,
+    ("POST", "/api/lora/preview"): Handler._api_lora,
+    ("POST", "/api/lora/start"): Handler._api_lora,
+    ("POST", "/api/fuse/preview"): Handler._api_fuse,
+    ("POST", "/api/fuse/start"): Handler._api_fuse,
+    ("POST", "/api/serve/preview"): Handler._api_serve,
+    ("POST", "/api/serve/start"): Handler._api_serve,
+    ("POST", "/api/serve/metrics"): Handler._api_serve_metrics,
+    ("POST", "/api/serve/stop"): Handler._api_serve_stop,
+    ("POST", "/api/duplicates/scan"): Handler._api_duplicates_scan,
+    ("POST", "/api/model/arch"): Handler._api_model_arch,
+    ("POST", "/api/sloth/connect"): Handler._api_sloth_connect,
+    ("POST", "/api/cli"): Handler._api_cli,
+    ("POST", "/api/lmstudio/import"): Handler._api_lmstudio_import,
+    ("POST", "/api/quant/profile"): Handler._api_quant_profile,
+}
 
 
 class Server(ThreadingHTTPServer):

@@ -128,6 +128,7 @@
 		24BBLD065 /* FitAdvisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF063 /* FitAdvisorTests.swift */; };
 		24BBLD06C /* WorkbenchPython.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF06A /* WorkbenchPython.swift */; };
 		24BBLD06D /* RuntimeInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF06B /* RuntimeInstaller.swift */; };
+		27CFG0001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27CFG0002 /* AppConfig.swift */; };
 		24BBLD069 /* AlertNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF067 /* AlertNotifier.swift */; };
 		24BBLD06A /* HFRepoID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF068 /* HFRepoID.swift */; };
 		24BBLD06B /* HFRepoIDTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF069 /* HFRepoIDTests.swift */; };
@@ -261,6 +262,7 @@
 		24FREF064 /* PremiumSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PremiumSettingsTests.swift; sourceTree = "<group>"; };
 		24FREF06A /* WorkbenchPython.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchPython.swift; path = Services/WorkbenchPython.swift; sourceTree = "<group>"; };
 		24FREF06B /* RuntimeInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RuntimeInstaller.swift; path = Services/RuntimeInstaller.swift; sourceTree = "<group>"; };
+		27CFG0002 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppConfig.swift; path = Services/AppConfig.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000001 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppRoute.swift; path = UI/AppRoute.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000002 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DesignSystem.swift; path = UI/DesignSystem.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000003 /* AppRouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppRouteTests.swift; path = AppRouteTests.swift; sourceTree = "<group>"; };
@@ -360,6 +362,7 @@
 				24FREF067 /* AlertNotifier.swift */,
 				24FREF06A /* WorkbenchPython.swift */,
 				24FREF06B /* RuntimeInstaller.swift */,
+				27CFG0002 /* AppConfig.swift */,
 				24FREF068 /* HFRepoID.swift */,
 				24FREF065 /* PromptHistoryImport.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
@@ -669,6 +672,7 @@
 				24BBLD06A /* HFRepoID.swift in Sources */,
 				24BBLD06C /* WorkbenchPython.swift in Sources */,
 				24BBLD06D /* RuntimeInstaller.swift in Sources */,
+				27CFG0001 /* AppConfig.swift in Sources */,
 				24BBLD067 /* PromptHistoryImport.swift in Sources */,
 				27ABCD000000000000000001 /* AppRoute.swift in Sources */,
 				27ABCD000000000000000002 /* DesignSystem.swift in Sources */,

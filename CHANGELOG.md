@@ -12,6 +12,22 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
+### Changed
+
+- Internal: `server.py` route dispatch is a route table with per-route
+  handlers instead of a single `_api` if-chain (behavior verified unchanged
+  by the HTTP-level test suite).
+- Internal: `AppHost.swift` split — `Config`, `ConfigModule`, coercion, and
+  agent health moved to `Services/AppConfig.swift`.
+
+### Added
+
+- PR gates CI: `make test`, `make docs-test`, and `make test-swift` run on
+  every pull request and push to main.
+- Test hardening: Swift suites for quarantine parity, JSONStore,
+  JSONCTolerant, workflow/verification stores, LaunchAgentManager, and
+  WorkbenchPython; Python entry-point tests (`tests/test_main.py`).
+
 ## [0.1.0] - 2026-09-07
 
 Initial release. Local loopback UI over the vendored `mlx-agent` CLI, plus a
