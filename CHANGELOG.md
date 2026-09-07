@@ -12,22 +12,6 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
-### Changed
-
-- Internal: `server.py` route dispatch is a route table with per-route
-  handlers instead of a single `_api` if-chain (behavior verified unchanged
-  by the HTTP-level test suite).
-- Internal: `AppHost.swift` split — `Config`, `ConfigModule`, coercion, and
-  agent health moved to `Services/AppConfig.swift`.
-
-### Added
-
-- PR gates CI: `make test`, `make docs-test`, and `make test-swift` run on
-  every pull request and push to main.
-- Test hardening: Swift suites for quarantine parity, JSONStore,
-  JSONCTolerant, workflow/verification stores, LaunchAgentManager, and
-  WorkbenchPython; Python entry-point tests (`tests/test_main.py`).
-
 ## [0.1.0] - 2026-09-07
 
 Initial release. Local loopback UI over the vendored `mlx-agent` CLI, plus a
@@ -35,6 +19,16 @@ native SwiftUI app (`mlx-mac`) that layers a full model-lifecycle workflow on
 the same agent boundary.
 
 ### Added
+
+- Release provenance: this CHANGELOG (Keep a Changelog), a single version
+  source of truth (`mlx_workbench.__version__`) mirrored by the Swift app's
+  `MARKETING_VERSION` and the docs-release contract, `make version-bump
+  V=x.y.z`, and `tests/test_version_sync.py` enforcing the sync.
+- PR gates CI: `make test`, `make docs-test`, and `make test-swift` run on
+  every pull request and push to main.
+- Test hardening: Swift suites for quarantine parity, JSONStore,
+  JSONCTolerant, workflow/verification stores, LaunchAgentManager, and
+  WorkbenchPython; Python entry-point tests (`tests/test_main.py`).
 
 - Web UI (`mlx_workbench/`): stdlib-only loopback HTTP server with token
   header auth and host allowlist, subprocess bridge to `scripts/mlx-agent
@@ -85,6 +79,13 @@ the same agent boundary.
 - Health surface in the native app narrowed to environment status and
   findings; UX consolidated across Run/Compare/Wire/Library after live
   dogfooding.
+- Internal: `server.py` route dispatch is a route table with per-route
+  handlers instead of a single `_api` if-chain (behavior verified unchanged
+  by the HTTP-level test suite).
+- Internal: `AppHost.swift` split — `Config`, `ConfigModule`, coercion, and
+  agent health moved to `Services/AppConfig.swift`.
+- Internal: the release workflow now derives the expected tag from
+  `mlx_workbench.__version__` instead of a hardcoded `v0.1.0`.
 
 ### Fixed
 
