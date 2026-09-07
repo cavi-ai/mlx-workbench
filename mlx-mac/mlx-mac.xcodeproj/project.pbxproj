@@ -80,6 +80,12 @@
 		24BBLD031 /* CatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF025 /* CatalogClient.swift */; };
 		24BBLD032 /* CatalogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF026 /* CatalogStore.swift */; };
 		24BBLD033 /* CatalogStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF027 /* CatalogStoreTests.swift */; };
+		27TSTB01 /* QuarantineParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST001 /* QuarantineParityTests.swift */; };
+		27TSTB02 /* JSONStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST002 /* JSONStoreTests.swift */; };
+		27TSTB03 /* JSONCTolerantTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST003 /* JSONCTolerantTests.swift */; };
+		27TSTB04 /* WorkflowStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST004 /* WorkflowStoreTests.swift */; };
+		27TSTB05 /* LaunchAgentManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST005 /* LaunchAgentManagerTests.swift */; };
+		27TSTB06 /* WorkbenchPythonTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST006 /* WorkbenchPythonTests.swift */; };
 		24BBLD034 /* RecommendationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF028 /* RecommendationEngine.swift */; };
 		24BBLD035 /* RecommendationEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF029 /* RecommendationEngineTests.swift */; };
 		24BBLD037 /* ModelWorkflowResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF031 /* ModelWorkflowResolverTests.swift */; };
@@ -208,6 +214,12 @@
 		24FREF040 /* VerificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VerificationModels.swift; path = Models/VerificationModels.swift; sourceTree = "<group>"; };
 		24FREF041 /* ServeProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServeProbe.swift; path = Services/ServeProbe.swift; sourceTree = "<group>"; };
 		24FREF042 /* VerificationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VerificationStore.swift; path = Services/VerificationStore.swift; sourceTree = "<group>"; };
+		27TST001 /* QuarantineParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QuarantineParityTests.swift; path = QuarantineParityTests.swift; sourceTree = "<group>"; };
+		27TST002 /* JSONStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = JSONStoreTests.swift; path = JSONStoreTests.swift; sourceTree = "<group>"; };
+		27TST003 /* JSONCTolerantTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = JSONCTolerantTests.swift; path = JSONCTolerantTests.swift; sourceTree = "<group>"; };
+		27TST004 /* WorkflowStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkflowStoreTests.swift; path = WorkflowStoreTests.swift; sourceTree = "<group>"; };
+		27TST005 /* LaunchAgentManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LaunchAgentManagerTests.swift; path = LaunchAgentManagerTests.swift; sourceTree = "<group>"; };
+		27TST006 /* WorkbenchPythonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchPythonTests.swift; path = WorkbenchPythonTests.swift; sourceTree = "<group>"; };
 		24FREF043 /* VerificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VerificationCoordinator.swift; path = Services/VerificationCoordinator.swift; sourceTree = "<group>"; };
 		24FREF044 /* VerificationModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationModelTests.swift; sourceTree = "<group>"; };
 		24FREF045 /* ServeProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeProbeTests.swift; sourceTree = "<group>"; };
@@ -418,6 +430,12 @@
 				24FREF064 /* PremiumSettingsTests.swift */,
 				26SCREF001 /* ScanContractTests.swift */,
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
+				27TST001 /* QuarantineParityTests.swift */,
+				27TST002 /* JSONStoreTests.swift */,
+				27TST003 /* JSONCTolerantTests.swift */,
+				27TST004 /* WorkflowStoreTests.swift */,
+				27TST005 /* LaunchAgentManagerTests.swift */,
+				27TST006 /* WorkbenchPythonTests.swift */,
 				27ABCD100000000000000003 /* AppRouteTests.swift */,
 			);
 			path = mlx-macTests;
@@ -686,6 +704,12 @@
 				26SCBL001 /* ScanContractTests.swift in Sources */,
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
 				27ABCD000000000000000003 /* AppRouteTests.swift in Sources */,
+				27TSTB01 /* QuarantineParityTests.swift in Sources */,
+				27TSTB02 /* JSONStoreTests.swift in Sources */,
+				27TSTB03 /* JSONCTolerantTests.swift in Sources */,
+				27TSTB04 /* WorkflowStoreTests.swift in Sources */,
+				27TSTB05 /* LaunchAgentManagerTests.swift in Sources */,
+				27TSTB06 /* WorkbenchPythonTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
