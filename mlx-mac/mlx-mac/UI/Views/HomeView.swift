@@ -94,7 +94,7 @@ struct ModelFlightPathPresentation: Equatable {
         }
         let measured = completedRuns.contains { run in run.state == .completed && run.results.contains { result in result.modelPath == path && result.modelSignature == signature && result.error == nil && !result.samples.isEmpty } }
         let identity = HFRepoID.serveIdentity(for: path)
-        let serverConfirms = servers.contains { $0.state?.lowercased() == "running" && HFRepoID.serveIdentity(for: $0.repo ?? "") == identity }
+        let serverConfirms = servers.contains { $0.state?.lowercased() == "running" && HFRepoID.serveIdentity(for: $0.modelIdentity) == identity }
         let stateConfirms: Bool
         if case .running(let servedPath, _) = endpointState { stateConfirms = HFRepoID.serveIdentity(for: servedPath) == identity } else { stateConfirms = false }
         let serving = serverConfirms && stateConfirms

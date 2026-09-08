@@ -198,6 +198,7 @@ struct Job: Codable, Equatable, Identifiable {
 
 struct ServerInfo: Codable, Equatable, Identifiable {
     let repo: String?
+    let path: String?
     let runtime: String?
     let port: Int?
     let pid: Int?
@@ -207,12 +208,39 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let receipt: String?
 
     enum CodingKeys: String, CodingKey {
-        case repo, runtime, port, pid, state, receipt
+        case repo, path, runtime, port, pid, state, receipt
         case logPath = "log_path"
         case startedAt = "started_at"
     }
 
-    var id: String { "\(repo ?? "")-\(port.map(String.init) ?? "")" }
+    init(
+        repo: String? = nil,
+        path: String? = nil,
+        runtime: String? = nil,
+        port: Int? = nil,
+        pid: Int? = nil,
+        state: String? = nil,
+        logPath: String? = nil,
+        startedAt: String? = nil,
+        receipt: String? = nil
+    ) {
+        self.repo = repo
+        self.path = path
+        self.runtime = runtime
+        self.port = port
+        self.pid = pid
+        self.state = state
+        self.logPath = logPath
+        self.startedAt = startedAt
+        self.receipt = receipt
+    }
+
+    /// The identity serve reports for this server's model: the repo id for
+    /// cache serves, the local path for `--path` serves, whichever the agent
+    /// populated.
+    var modelIdentity: String { repo ?? path ?? "" }
+
+    var id: String { "\(modelIdentity)-\(port.map(String.init) ?? "")" }
 }
 
 // MARK: - DiscoverResult

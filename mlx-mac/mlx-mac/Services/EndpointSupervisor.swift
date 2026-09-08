@@ -123,11 +123,13 @@ final class EndpointSupervisor: ObservableObject {
 
         let running = servers.filter { $0.state?.lowercased() == "running" }
         if let ours = running.first(where: { $0.port == config.port }) {
-            if HFRepoID.serveIdentity(for: ours.repo ?? "") == HFRepoID.serveIdentity(for: config.modelPath) {
+            if HFRepoID.serveIdentity(for: ours.modelIdentity) == HFRepoID.serveIdentity(for: config.modelPath) {
                 state = .running(modelPath: config.modelPath, port: config.port)
             } else {
                 state = .modelMismatch(
-                    servedModel: ours.repo.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "unknown",
+                    servedModel: ours.modelIdentity.isEmpty
+                        ? "unknown"
+                        : URL(fileURLWithPath: ours.modelIdentity).lastPathComponent,
                     port: config.port
                 )
             }

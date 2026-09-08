@@ -233,29 +233,34 @@ actor WorkbenchAPI {
 
     // MARK: - Serve
 
-    /// The pinned agent's serve accepts HF repo ids, not filesystem paths.
-    /// HF-cache-resident library models are translated to their repo id at
-    /// this boundary; everything else passes through unchanged.
-    static func serveRepo(_ repo: String) -> String {
-        HFRepoID.serveIdentity(for: repo)
+    /// The agent's serve accepts HF repo ids for cache-resident models and
+    /// `--path` for local directories (converted outputs outside the cache).
+    /// HF-cache library models are translated to their repo id here; absolute
+    /// paths outside the HF layout go through `--path`; anything else is
+    /// passed as a repo id unchanged.
+    static func serveModelArguments(for model: String) -> [String] {
+        if let repoID = HFRepoID.forPath(model) { return ["--repo", repoID] }
+        if model.hasPrefix("/") || model.hasPrefix("~") { return ["--path", model] }
+        return ["--repo", model]
     }
 
     func servePreview(repo: String, runtime: String, port: Int?) throws -> [String: Any] {
-        var argv = [
-            "serve", "start", "--repo", Self.serveRepo(repo), "--runtime", runtime,
-            "--receipts-dir", receiptDirectory,
-        ]
+        var argv = ["serve", "start"]
+            + Self.serveModelArguments(for: repo)
+            + ["--runtime", runtime, "--receipts-dir", receiptDirectory]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         return Self.unwrapPlan(try raw(argv))
     }
 
     func serveStart(repo: String, runtime: String, port: Int?,
                     previewHash: String) throws -> [String: Any] {
-        var argv = [
-            "serve", "start", "--repo", Self.serveRepo(repo), "--runtime", runtime,
-            "--confirm", "--preview-hash", previewHash,
-            "--receipts-dir", receiptDirectory,
-        ]
+        var argv = ["serve", "start"]
+            + Self.serveModelArguments(for: repo)
+            + [
+                "--runtime", runtime,
+                "--confirm", "--preview-hash", previewHash,
+                "--receipts-dir", receiptDirectory,
+            ]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         return try raw(argv)
     }
@@ -335,6 +340,7 @@ actor WorkbenchAPI {
         return raw.map { r in
             ServerInfo(
                 repo: r.string("repo"),
+                path: r.string("path"),
                 runtime: r.string("runtime"),
                 port: r.int("port"),
                 pid: r.int("pid"),

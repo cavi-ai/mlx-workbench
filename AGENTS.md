@@ -34,11 +34,11 @@ from `mlx-agent` at runtime.
   boundary), runs the canary suite in `Models/VerificationModels.swift`, and
   only then marks the workflow `verified`. The gate attaches in `App.swift`;
   without an attached verifier the workflow behavior is unchanged.
-- Serve accepts HF repo ids only (agent contract: `model_not_local` for
-  paths). `HFRepoID.serveIdentity(for:)` maps HF-cache snapshot paths to repo
-  ids at the WorkbenchAPI boundary, and status comparisons normalize through
-  the same identity. Converted outputs outside the HF cache cannot be served
-  by the pinned agent yet — that is an upstream gap.
+- Serve accepts HF repo ids or local directories (`serve start --path`,
+  upstream ≥ the local-path serve change). `WorkbenchAPI.serveModelArguments`
+  maps HF-cache snapshot paths to repo ids and absolute paths outside the HF
+  layout to `--path`; status comparisons normalize through
+  `ServerInfo.modelIdentity` (repo id or path, whichever the agent reports).
 - The Compare tab runs **Measured Comparisons**: `ComparisonCoordinator`
   replays a prompt set against selected ready variants (one at a time, via
   the shared `ServeProbe` harness), persists runs, and feeds measured

@@ -558,16 +558,25 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
         repo = payload.get("repo")
+        path = payload.get("path")
+        has_repo = isinstance(repo, str) and bool(repo.strip())
+        has_path = isinstance(path, str) and bool(path.strip())
+        if has_repo == has_path:
+            return _error(
+                "invalid_body",
+                "Provide exactly one of repo (HF cache) or path (local directory).",
+                "Pick a cached model or a local model directory in the UI.",
+            )
         runtime = payload.get("runtime")
-        if not isinstance(repo, str) or not repo.strip():
-            return _error("invalid_body", "repo is required.", "Enter a cached model id.")
         if runtime not in ("mlx_lm", "mlx-vlm"):
             return _error("invalid_body", "runtime must be mlx_lm or mlx-vlm.", "Pick a runtime.")
         port = payload.get("port")
         if port is not None and (not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535):
             return _error("invalid_body", "port must be 1–65535.", "Retry from the UI.")
+        local_path = path if has_path else None
+        model_repo = repo.strip() if has_repo else None
         if route.endswith("preview"):
-            return _ok(bridge.serve_preview(agent, repo, runtime, port, runner=runner))
+            return _ok(bridge.serve_preview(agent, model_repo, runtime, port, runner=runner, path=local_path))
         preview_hash = payload.get("preview_hash")
         if not isinstance(preview_hash, str) or not preview_hash:
             return _error(
@@ -576,7 +585,7 @@ class Handler(BaseHTTPRequestHandler):
                 "Preview the plan first, then confirm it.",
             )
         return _ok(bridge.serve_start(
-            agent, repo, runtime, preview_hash, port, runner=runner,
+            agent, model_repo, runtime, preview_hash, port, runner=runner, path=local_path,
         ))
 
     def _api_duplicates_scan(self, route, settings, agent, runner):

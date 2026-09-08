@@ -29,4 +29,54 @@ final class HFRepoIDTests: XCTestCase {
         XCTAssertNil(HFRepoID.forPath("/tmp/models--/snapshots/x"))
         XCTAssertNil(HFRepoID.forPath("/tmp/models----org/snapshots/x"))
     }
+
+    // MARK: - Serve argv selection (WorkbenchAPI boundary)
+
+    func testHFCachePathServesByRepoID() {
+        let path = "/Users/x/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/abc123"
+        XCTAssertEqual(
+            WorkbenchAPI.serveModelArguments(for: path),
+            ["--repo", "mlx-community/Qwen3-0.6B-4bit"]
+        )
+    }
+
+    func testLocalPathServesByPath() {
+        XCTAssertEqual(
+            WorkbenchAPI.serveModelArguments(for: "/models/mlx/qwen3-8b-mlx"),
+            ["--path", "/models/mlx/qwen3-8b-mlx"]
+        )
+        XCTAssertEqual(
+            WorkbenchAPI.serveModelArguments(for: "~/models/mlx/qwen3-8b-mlx"),
+            ["--path", "~/models/mlx/qwen3-8b-mlx"]
+        )
+    }
+
+    func testBareRepoIDServesByRepo() {
+        XCTAssertEqual(
+            WorkbenchAPI.serveModelArguments(for: "mlx-community/Qwen3-0.6B-4bit"),
+            ["--repo", "mlx-community/Qwen3-0.6B-4bit"]
+        )
+    }
+
+    // MARK: - ServerInfo identity
+
+    func testServerInfoModelIdentityPrefersRepoThenPath() {
+        XCTAssertEqual(ServerInfo(repo: "org/model", path: "/models/x").modelIdentity, "org/model")
+        XCTAssertEqual(ServerInfo(path: "/models/x").modelIdentity, "/models/x")
+        XCTAssertEqual(ServerInfo().modelIdentity, "")
+    }
+
+    func testServersDecodesPathServes() {
+        let data: [String: Any] = [
+            "servers": [[
+                "path": "/models/mlx/qwen3-8b-mlx",
+                "runtime": "mlx_lm",
+                "port": 8080,
+                "state": "running",
+            ]]
+        ]
+        let servers = WorkbenchAPI.servers(from: data)
+        XCTAssertEqual(servers?.first?.path, "/models/mlx/qwen3-8b-mlx")
+        XCTAssertEqual(servers?.first?.modelIdentity, "/models/mlx/qwen3-8b-mlx")
+    }
 }

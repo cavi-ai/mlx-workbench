@@ -23,7 +23,7 @@ struct RunPresentation: Equatable {
         guard let modelPath else { return nil }
         return servers.first(where: {
             $0.state?.lowercased() == "running"
-                && HFRepoID.serveIdentity(for: $0.repo ?? "") == HFRepoID.serveIdentity(for: modelPath)
+                && HFRepoID.serveIdentity(for: $0.modelIdentity) == HFRepoID.serveIdentity(for: modelPath)
         })
     }
     var canPreview: Bool {
@@ -337,7 +337,7 @@ struct ServeView: View {
             if let server = presentation.activeServer {
                 HStack {
                     StatusPill(state: server.state ?? "unknown")
-                    Text(server.repo ?? "Unknown model").font(.headline)
+                    Text(server.modelIdentity.isEmpty ? "Unknown model" : server.modelIdentity).font(.headline)
                     Spacer()
                     Button("Stop server") {
                         Task {

@@ -408,6 +408,84 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(payload["data"]["connected"])
         self.assertEqual(calls, [(str(self.agent), 8766, {})])
 
+    def test_serve_preview_forwards_a_local_path(self):
+        calls = []
+        original = bridge.serve_preview
+        self.addCleanup(setattr, bridge, "serve_preview", original)
+
+        def preview(agent_path, repo, runtime, port, **kwargs):
+            calls.append((agent_path, repo, runtime, port, kwargs))
+            return {"plan": {"preview_hash": "h"}}
+
+        bridge.serve_preview = preview
+        status, payload = self._request(
+            "/api/serve/preview", "POST",
+            {"path": "/models/mlx/qwen3-8b-mlx", "runtime": "mlx_lm"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, [(
+            str(self.agent), None, "mlx_lm", None,
+            {"runner": self._runner, "path": "/models/mlx/qwen3-8b-mlx"},
+        )])
+
+    def test_serve_preview_forwards_a_repo(self):
+        calls = []
+        original = bridge.serve_preview
+        self.addCleanup(setattr, bridge, "serve_preview", original)
+
+        def preview(agent_path, repo, runtime, port, **kwargs):
+            calls.append((agent_path, repo, runtime, port, kwargs))
+            return {"plan": {"preview_hash": "h"}}
+
+        bridge.serve_preview = preview
+        status, payload = self._request(
+            "/api/serve/preview", "POST",
+            {"repo": "org/model", "runtime": "mlx_lm"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, [(
+            str(self.agent), "org/model", "mlx_lm", None,
+            {"runner": self._runner, "path": None},
+        )])
+
+    def test_serve_preview_rejects_repo_and_path_together(self):
+        status, payload = self._request(
+            "/api/serve/preview", "POST",
+            {"repo": "org/model", "path": "/models/x", "runtime": "mlx_lm"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_body")
+
+    def test_serve_preview_rejects_neither_repo_nor_path(self):
+        status, payload = self._request(
+            "/api/serve/preview", "POST", {"runtime": "mlx_lm"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_body")
+
+    def test_serve_start_forwards_path_and_hash(self):
+        calls = []
+        original = bridge.serve_start
+        self.addCleanup(setattr, bridge, "serve_start", original)
+
+        def start(agent_path, repo, runtime, preview_hash, port, **kwargs):
+            calls.append((agent_path, repo, runtime, preview_hash, port, kwargs))
+            return {"status": "started"}
+
+        bridge.serve_start = start
+        status, payload = self._request(
+            "/api/serve/start", "POST",
+            {"path": "/models/mlx/qwen3-8b-mlx", "runtime": "mlx_lm", "preview_hash": "h"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, [(
+            str(self.agent), None, "mlx_lm", "h", None,
+            {"runner": self._runner, "path": "/models/mlx/qwen3-8b-mlx"},
+        )])
+
     def test_sloth_route_forwards_configured_roots_and_runner(self):
         calls = []
         original = bridge.sloth_connect
