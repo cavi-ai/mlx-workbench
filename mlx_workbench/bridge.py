@@ -529,21 +529,26 @@ def all_job_lists(agent_path, runner=None):
     return result
 
 
-def serve_preview(agent_path, repo, runtime, port=None, timeout=DEFAULT_TIMEOUT, runner=None):
-    """Render a serve plan without launching."""
-    argv = ["serve", "start", "--repo", repo, "--runtime", runtime]
+def serve_preview(agent_path, repo, runtime, port=None, timeout=DEFAULT_TIMEOUT,
+                  runner=None, path=None):
+    """Render a serve plan without launching. Exactly one of repo/path."""
+    argv = ["serve", "start"]
+    argv.extend(["--path", path] if path is not None else ["--repo", repo])
+    argv.extend(["--runtime", runtime])
     if port is not None:
         argv.extend(["--port", str(port)])
     return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
 
 
 def serve_start(agent_path, repo, runtime, preview_hash, port=None,
-                timeout=DEFAULT_TIMEOUT, runner=None):
-    """Start a reviewed serve plan."""
-    argv = [
-        "serve", "start", "--repo", repo, "--runtime", runtime,
+                timeout=DEFAULT_TIMEOUT, runner=None, path=None):
+    """Start a reviewed serve plan. Exactly one of repo/path."""
+    argv = ["serve", "start"]
+    argv.extend(["--path", path] if path is not None else ["--repo", repo])
+    argv.extend([
+        "--runtime", runtime,
         "--confirm", "--preview-hash", preview_hash,
-    ]
+    ])
     if port is not None:
         argv.extend(["--port", str(port)])
     return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))

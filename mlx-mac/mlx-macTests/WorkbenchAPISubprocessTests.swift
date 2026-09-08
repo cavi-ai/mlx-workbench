@@ -124,6 +124,31 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(previewHash, "serve-hash")
     }
 
+    func testLocalModelPathServesViaPathFlag() async throws {
+        let agent = try FixtureAgent(expectedModelFlag: "--path", expectedModelValue: "/models/mlx/qwen3-8b-mlx")
+        defer { agent.remove() }
+
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+        let lifecycle = ServeLifecycle.live(api: api)
+        let previewHash = try await lifecycle.preview("/models/mlx/qwen3-8b-mlx", 8766)
+        try await lifecycle.start("/models/mlx/qwen3-8b-mlx", 8766, previewHash)
+
+        XCTAssertEqual(previewHash, "serve-hash")
+    }
+
+    func testHFCachePathServesViaRepoFlag() async throws {
+        let cachePath = "/Users/x/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/abc123"
+        let agent = try FixtureAgent(expectedModelFlag: "--repo", expectedModelValue: "mlx-community/Qwen3-0.6B-4bit")
+        defer { agent.remove() }
+
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+        let lifecycle = ServeLifecycle.live(api: api)
+        let previewHash = try await lifecycle.preview(cachePath, 8766)
+        try await lifecycle.start(cachePath, 8766, previewHash)
+
+        XCTAssertEqual(previewHash, "serve-hash")
+    }
+
     private func fixture(named name: String) throws -> [String: Any] {
         let directory = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -196,6 +221,28 @@ private final class FixtureAgent {
         receipts_index = sys.argv.index("--receipts-dir") + 1
         assert "serve" in sys.argv and "start" in sys.argv
         assert sys.argv[receipts_index] == "\(expectedReceiptDirectory)"
+        if "--confirm" in sys.argv:
+            data = {}
+        else:
+            data = {"plan": {"preview_hash": "serve-hash"}}
+        print(json.dumps({"status": "ok", "data": data}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
+
+    convenience init(expectedModelFlag: String, expectedModelValue: String) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import json
+        import sys
+
+        assert "serve" in sys.argv and "start" in sys.argv
+        assert "--repo" not in sys.argv or "\(expectedModelFlag)" == "--repo"
+        assert "--path" not in sys.argv or "\(expectedModelFlag)" == "--path"
+        flag_index = sys.argv.index("\(expectedModelFlag)") + 1
+        assert sys.argv[flag_index] == "\(expectedModelValue)"
         if "--confirm" in sys.argv:
             data = {}
         else:

@@ -699,7 +699,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     /// serve identity before comparing.
     private func serverRunsModel(_ server: ServerInfo, _ modelPath: String) -> Bool {
         guard server.state?.lowercased() == "running" else { return false }
-        return HFRepoID.serveIdentity(for: server.repo ?? "") == HFRepoID.serveIdentity(for: modelPath)
+        return HFRepoID.serveIdentity(for: server.modelIdentity) == HFRepoID.serveIdentity(for: modelPath)
     }
 
     private func makeWorkflow(

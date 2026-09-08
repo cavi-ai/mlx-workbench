@@ -12,6 +12,15 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- Serve converted outputs outside the Hugging Face cache: the agent's
+  `serve start --path` flows through the workbench bridge, web route
+  (`/api/serve/preview|start` accept exactly one of `repo`/`path`), and the
+  SwiftUI app (WorkbenchAPI picks `--repo` vs `--path`; serve-status
+  comparisons normalize through `ServerInfo.modelIdentity`). Requires the
+  pinned mlx-agent with local-path serve support.
+
 ## [0.1.0] - 2026-09-07
 
 Initial release. Local loopback UI over the vendored `mlx-agent` CLI, plus a
