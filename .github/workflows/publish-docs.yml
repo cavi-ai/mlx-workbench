@@ -10,7 +10,7 @@ jobs:
   publish:
     permissions:
       contents: write
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Check out release source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -94,7 +94,7 @@ jobs:
         run: |
           existing="$RUNNER_TEMP/existing-$ARTIFACT"
           if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ARTIFACT" --output "$existing" 2>/dev/null; then
-            existing_sha="$(sha256sum "$existing" | cut -d' ' -f1)"
+            existing_sha="$(shasum -a 256 "$existing" | cut -d' ' -f1)"
             if [[ "$existing_sha" != "$SHA256" ]]; then
               echo "::error::Existing release asset differs; refusing overwrite"
               exit 1
