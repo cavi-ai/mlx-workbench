@@ -52,18 +52,11 @@ async function api(path, options) {
   }
   const response = await fetch(path, request);
   const payload = await response.json().catch(() => null);
-  if (!payload || payload.status !== 'ok') {
-    const error = (payload && payload.error) || {};
-    throw new Error([error.message, error.remediation].filter(Boolean).join('\n') ||
-      'Request failed (' + response.status + ').');
-  }
-  return payload.data;
+  return MLXWorkbenchEnvelope.unwrap(payload, response.status);
 }
 
 function notify(message) {
-  const notice = $('notice');
-  notice.textContent = message || '';
-  notice.hidden = !message;
+  MLXWorkbenchDOM.notify(document, 'notice', message);
 }
 
 function bytes(count) {
@@ -71,14 +64,11 @@ function bytes(count) {
 }
 
 function element(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
+  return MLXWorkbenchDOM.element(document, tag, className, text);
 }
 
 function pill(status) {
-  return element('span', 'pill pill-' + status, status);
+  return MLXWorkbenchDOM.pill(document, status);
 }
 
 function showJson(node, data) {
@@ -87,7 +77,7 @@ function showJson(node, data) {
 }
 
 function tokenize(value) {
-  return value.trim().split(/\s+/).filter(Boolean);
+  return MLXWorkbenchPayloads.tokenize(value);
 }
 
 function renderModels() {
@@ -487,17 +477,7 @@ async function queueSelectedModels() {
 }
 
 function convertStartBody(plan) {
-  const body = {
-    q_bits: plan.q_bits,
-    out: plan.out,
-    preview_hash: plan.preview_hash,
-  };
-  if (plan.source && plan.source.path) {
-    body.path = plan.source.path;
-  } else if (plan.repo) {
-    body.repo = plan.repo;
-  }
-  return body;
+  return MLXWorkbenchPayloads.convertStartBody(plan);
 }
 
 function fillPlanDialog(title, pairs, warn) {
@@ -1576,8 +1556,9 @@ function renderDuplicateScan(dupes) {
     return;
   }
 
-  const exactGroups = dupes.filter(function (group) { return group.kind === 'exact'; });
-  const variantGroups = dupes.filter(function (group) { return group.kind === 'variant'; });
+  const groups = MLXWorkbenchDuplicates.splitGroups(dupes);
+  const exactGroups = groups.exact;
+  const variantGroups = groups.variant;
   if (exactGroups.length) {
     container.appendChild(element(
       'p',

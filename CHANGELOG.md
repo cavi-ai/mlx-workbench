@@ -14,6 +14,13 @@ and is versioned independently; submodule bumps are recorded here.
 
 ### Added
 
+- Web UI modularization: DOM helpers (`dom.js`), API envelope unwrapping
+  (`envelope.js`), payload assembly (`payloads.js`), and duplicate-group
+  splitting (`duplicates.js`) extracted from `app.js` following the existing
+  module pattern, with behavioral tests. Static JS tests now run as part of
+  `make test` (new `test-js` target).
+- View presentation tests: `HomeNextAction` derivation ladder (Home tab's
+  next safe action).
 - Serve converted outputs outside the Hugging Face cache: the agent's
   `serve start --path` flows through the workbench bridge, web route
   (`/api/serve/preview|start` accept exactly one of `repo`/`path`), and the
