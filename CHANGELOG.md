@@ -12,6 +12,17 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Native app settings save: the second and later saves failed with
+  "config.json.tmp couldn't be moved" because `ConfigModule.save` used
+  `moveItem`, which refuses to overwrite. Save is now idempotent
+  (unique temp + replace-on-existing) and clears stale fixed-name temp
+  litter from the old writer.
+- Library STORAGE stat: `totalBytes` counted only GGUF sources, so a
+  library of pure MLX outputs (HF-cache models) showed Zero KB. Outputs'
+  on-disk sizes are now included (deduped by path).
+
 ## [0.2.0] - 2026-09-08
 ### Added
 

@@ -204,9 +204,26 @@ struct ConfigModule {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         let data = try encoder.encode(merged)
-        let temp = location.appendingPathExtension(".tmp")
-        try data.write(to: temp)
-        try FileManager.default.moveItem(at: temp, to: location)
+        // Unique temp + replace-on-existing: re-saving a config that already
+        // exists must succeed (moveItem refuses to overwrite), and a stale
+        // temp from a crashed save can never block the next one.
+        let temp = location.appendingPathExtension("tmp-\(UUID().uuidString)")
+        do {
+            try data.write(to: temp, options: .atomic)
+            if FileManager.default.fileExists(atPath: location.path) {
+                _ = try FileManager.default.replaceItemAt(
+                    location, withItemAt: temp,
+                    backupItemName: nil, options: .usingNewMetadataOnly
+                )
+            } else {
+                try FileManager.default.moveItem(at: temp, to: location)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: temp)
+            throw error
+        }
+        // Litter from the pre-replace fixed-name temp writer, if any.
+        try? FileManager.default.removeItem(at: location.appendingPathExtension(".tmp"))
         return merged
     }
 
