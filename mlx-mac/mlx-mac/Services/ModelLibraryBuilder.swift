@@ -10,7 +10,10 @@ enum ModelLibraryBuilder {
             pendingPaths: pendingPaths
         )
         let groups = buildGroups(from: models)
-        let pathBytes = uniquePathBytes(for: scan.models)
+        // Total storage counts every displayed model — GGUF sources and MLX
+        // outputs alike. scan.models alone would show Zero KB for a library
+        // that is entirely converted/HF-cache outputs.
+        let pathBytes = uniquePathBytes(for: models.map(\.item))
 
         return LibrarySnapshot(
             models: models,

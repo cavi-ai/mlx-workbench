@@ -181,6 +181,40 @@ final class ModelLibraryBuilderTests: XCTestCase {
         )
     }
 
+    func testTotalBytesIncludesOutputsWithRealOnDiskSizes() throws {
+        // A library of pure MLX outputs (no GGUF sources) must not report
+        // Zero KB of storage: the scan's outputs carry no byte field, so the
+        // builder measures their directories.
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-workbench-totalbytes-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDir) }
+        try Data(repeating: 1, count: 2_048).write(to: outputDir.appendingPathComponent("model.safetensors"))
+
+        let scan = ScanResult(
+            roots: nil,
+            models: [],
+            outputs: [
+                MLXOutput(
+                    path: outputDir.path,
+                    name: outputDir.lastPathComponent,
+                    modelKey: "local/output",
+                    quantization: QuantInfo(bits: 4, groupSize: 64, modelType: "llm"),
+                    provenance: nil
+                )
+            ],
+            pending: [],
+            duplicates: [],
+            totals: ScanTotals(gguf: 0, pending: 0, converted: 0, unreadable: 0, bytes: 0, reclaimableBytes: 0)
+        )
+
+        let snapshot = ModelLibraryBuilder.build(scan: scan, hardware: fixtureHardware, now: fixtureDate)
+
+        XCTAssertEqual(snapshot.models.count, 1)
+        XCTAssertEqual(snapshot.models.first?.item.bytes, 2_048)
+        XCTAssertEqual(snapshot.totalBytes, 2_048)
+    }
+
     @MainActor
     func testAppHostPreservesLastSuccessfulLibrarySnapshotOnFailedScan() async throws {
         let scan = makeFixtureScan()

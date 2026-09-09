@@ -97,4 +97,49 @@ final class PremiumSettingsTests: XCTestCase {
             .appendingPathComponent("mlx-workbench-config-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("config.json", isDirectory: false)
     }
+
+    // MARK: - Save idempotency
+
+    func testSaveOverExistingConfigSucceeds() throws {
+        let url = temporaryConfigURL()
+        let module = ConfigModule(pathOverride: url.path)
+
+        var first = Config.defaults()
+        first.qBits = 4
+        _ = try module.save(first)
+        var second = Config.defaults()
+        second.qBits = 8
+        _ = try module.save(second)
+
+        XCTAssertEqual(module.load().qBits, 8)
+    }
+
+    func testStaleFixedNameTempDoesNotBlockSave() throws {
+        let url = temporaryConfigURL()
+        let module = ConfigModule(pathOverride: url.path)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        // Litter from the pre-replaceItemAt writer.
+        try Data("stale".utf8).write(to: url.appendingPathExtension(".tmp"))
+
+        _ = try module.save(Config.defaults())
+
+        XCTAssertEqual(module.load().qBits, Config.defaults().qBits)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: url.appendingPathExtension(".tmp").path)
+        )
+    }
+
+    func testSaveLeavesNoTempLitter() throws {
+        let url = temporaryConfigURL()
+        let module = ConfigModule(pathOverride: url.path)
+        _ = try module.save(Config.defaults())
+        _ = try module.save(Config.defaults())
+
+        let leftovers = try FileManager.default.contentsOfDirectory(
+            atPath: url.deletingLastPathComponent().path
+        ).filter { $0.contains(".tmp") }
+        XCTAssertEqual(leftovers, [])
+    }
 }
