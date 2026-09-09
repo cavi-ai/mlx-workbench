@@ -33,29 +33,38 @@ DOCS_RELEASE_DIR ?= .release
 	docs-test docs-build docs-verify docs-release version-bump
 
 help:
-	@printf '%s\n' \
-		'macOS Apple Silicon only.' \
-		'' \
-		'make install  - submodule + .venv + torch/transformers/gguf/mlx-lm/accelerate' \
-		'make start    - background UI' \
-		'make stop     - stop background UI' \
-		'make restart  - stop then start' \
-		'make status   - running?' \
-		'make run      - foreground UI' \
-		'make test     - unittest suite + static JS tests' \
-		'make test-live-scan - validate live model bytes against configured filesystem paths' \
-		'make test-swift - unit tests for Swift app' \
-		'make test-swift-live-scan - validate native app scan bytes against configured filesystem paths' \
-		'make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json - opt-in native GGUF-to-Run acceptance' \
-		'make docs-test - release documentation contract tests' \
-		'make docs-build - build deterministic versioned documentation' \
-		'make docs-verify - verify the versioned documentation' \
-		'make docs-release - create the release archive and checksum' \
-		'make version-bump V=x.y.z - bump version + CHANGELOG everywhere' \
-		'make open     - open $(URL)' \
-		'make check    - verify mlx-agent + .venv' \
-		'make clean    - remove .run/' \
-		'make clean-venv - remove .venv'
+	@B=''; C=''; D=''; G=''; N=''; \
+	if [ -t 1 ] && [ -z "$$NO_COLOR" ]; then \
+		B='\033[1m'; C='\033[36m'; D='\033[2m'; G='\033[33m'; N='\033[0m'; \
+	fi; \
+	hdr() { printf "$${G}%s$${N}\n" "$$1"; }; \
+	row() { printf "  $${C}%-24s$${N} $${D}%s$${N}\n" "$$1" "$$2"; }; \
+	printf "$${B}%s$${N} $${D}%s$${N}\n" "mlx-workbench" "— macOS Apple Silicon only."; \
+	hdr "Setup"; \
+	row "make install" "submodule + .venv + torch/transformers/gguf/mlx-lm/accelerate"; \
+	row "make check" "verify mlx-agent + .venv"; \
+	hdr "Run"; \
+	row "make start" "background UI"; \
+	row "make stop" "stop background UI"; \
+	row "make restart" "stop then start"; \
+	row "make status" "running?"; \
+	row "make run" "foreground UI"; \
+	row "make open" "open $(URL)"; \
+	hdr "Test"; \
+	row "make test" "unittest suite + static JS tests"; \
+	row "make test-swift" "unit tests for Swift app"; \
+	row "make test-live-scan" "validate live model bytes against configured filesystem paths"; \
+	row "make test-swift-live-scan" "validate native app scan bytes against configured filesystem paths"; \
+	row "make accept-native-gguf" "RUNTIME_MANIFEST=/absolute/path/runtime.json — opt-in native GGUF-to-Run acceptance"; \
+	hdr "Docs & release"; \
+	row "make docs-test" "release documentation contract tests"; \
+	row "make docs-build" "build deterministic versioned documentation"; \
+	row "make docs-verify" "verify the versioned documentation"; \
+	row "make docs-release" "create the release archive and checksum"; \
+	row "make version-bump" "V=x.y.z — bump version + CHANGELOG everywhere"; \
+	hdr "Manage"; \
+	row "make clean" "remove .run/"; \
+	row "make clean-venv" "remove .venv"
 
 mac-only:
 	@sys=$$(uname -s); arch=$$(uname -m); \
