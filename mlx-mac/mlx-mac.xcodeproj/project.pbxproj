@@ -87,6 +87,9 @@
 		27TSTB05 /* LaunchAgentManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST005 /* LaunchAgentManagerTests.swift */; };
 		27TSTB06 /* WorkbenchPythonTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST006 /* WorkbenchPythonTests.swift */; };
 		27TSTB07 /* HomeNextActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST007 /* HomeNextActionTests.swift */; };
+		27STPB01 /* SetupCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27STP001 /* SetupCoordinator.swift */; };
+		27STPB02 /* SetupAssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27STP002 /* SetupAssistantView.swift */; };
+		27TSTB08 /* SetupCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST008 /* SetupCoordinatorTests.swift */; };
 		24BBLD034 /* RecommendationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF028 /* RecommendationEngine.swift */; };
 		24BBLD035 /* RecommendationEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF029 /* RecommendationEngineTests.swift */; };
 		24BBLD037 /* ModelWorkflowResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF031 /* ModelWorkflowResolverTests.swift */; };
@@ -223,6 +226,9 @@
 		27TST005 /* LaunchAgentManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LaunchAgentManagerTests.swift; path = LaunchAgentManagerTests.swift; sourceTree = "<group>"; };
 		27TST006 /* WorkbenchPythonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchPythonTests.swift; path = WorkbenchPythonTests.swift; sourceTree = "<group>"; };
 		27TST007 /* HomeNextActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HomeNextActionTests.swift; path = HomeNextActionTests.swift; sourceTree = "<group>"; };
+		27STP001 /* SetupCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SetupCoordinator.swift; path = Services/SetupCoordinator.swift; sourceTree = "<group>"; };
+		27STP002 /* SetupAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SetupAssistantView.swift; path = UI/Views/SetupAssistantView.swift; sourceTree = "<group>"; };
+		27TST008 /* SetupCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SetupCoordinatorTests.swift; path = SetupCoordinatorTests.swift; sourceTree = "<group>"; };
 		24FREF043 /* VerificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VerificationCoordinator.swift; path = Services/VerificationCoordinator.swift; sourceTree = "<group>"; };
 		24FREF044 /* VerificationModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationModelTests.swift; sourceTree = "<group>"; };
 		24FREF045 /* ServeProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeProbeTests.swift; sourceTree = "<group>"; };
@@ -365,6 +371,7 @@
 				24FREF06A /* WorkbenchPython.swift */,
 				24FREF06B /* RuntimeInstaller.swift */,
 				27CFG0002 /* AppConfig.swift */,
+				27STP001 /* SetupCoordinator.swift */,
 				24FREF068 /* HFRepoID.swift */,
 				24FREF065 /* PromptHistoryImport.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
@@ -384,6 +391,7 @@
 				24FREF00000F /* LMStudioView.swift */,
 				24FREF023 /* ModelDetailsView.swift */,
 				24FREF022 /* LibraryView.swift */,
+				27STP002 /* SetupAssistantView.swift */,
 				24FREF000012 /* QuantView.swift */,
 				24FREF000013 /* HomeView.swift */,
 				24FREF000014 /* ScoutView.swift */,
@@ -442,6 +450,7 @@
 				27TST005 /* LaunchAgentManagerTests.swift */,
 				27TST006 /* WorkbenchPythonTests.swift */,
 				27TST007 /* HomeNextActionTests.swift */,
+				27TST008 /* SetupCoordinatorTests.swift */,
 				27ABCD100000000000000003 /* AppRouteTests.swift */,
 			);
 			path = mlx-macTests;
@@ -676,6 +685,8 @@
 				24BBLD06C /* WorkbenchPython.swift in Sources */,
 				24BBLD06D /* RuntimeInstaller.swift in Sources */,
 				27CFG0001 /* AppConfig.swift in Sources */,
+				27STPB01 /* SetupCoordinator.swift in Sources */,
+				27STPB02 /* SetupAssistantView.swift in Sources */,
 				24BBLD067 /* PromptHistoryImport.swift in Sources */,
 				27ABCD000000000000000001 /* AppRoute.swift in Sources */,
 				27ABCD000000000000000002 /* DesignSystem.swift in Sources */,
@@ -718,6 +729,7 @@
 				27TSTB05 /* LaunchAgentManagerTests.swift in Sources */,
 				27TSTB06 /* WorkbenchPythonTests.swift in Sources */,
 				27TSTB07 /* HomeNextActionTests.swift in Sources */,
+				27TSTB08 /* SetupCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

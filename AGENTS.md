@@ -85,6 +85,10 @@ from `mlx-agent` at runtime.
   check; network failures stay silent) and macOS/MLX environment-drift
   alerts offering one-click re-verification of stale verified models.
   Alerts dedupe by fingerprint and persist snooze/mute state.
+- `SetupCoordinator` provides the **first-launch Setup Assistant**: a guided
+  sheet over the app's existing probes (agent health, runtime report,
+  discovered roots) with the RuntimeInstaller for one-click runtime setup.
+  Persisted via UserDefaults once completed; re-openable from Health.
 - The Run view shows a **Memory-fit Advisor** verdict before serving:
   `FitAdvisor` estimates weights + KV cache + runtime overhead against live
   available memory (`MemorySnapshot` via Mach probes), yielding

@@ -6,6 +6,7 @@ struct ContentView: View {
     @StateObject private var appHost: AppHost
     @ObservedObject private var endpoint: EndpointSupervisor
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
+    @ObservedObject private var setup: SetupCoordinator
     /// Persisted across launches; legacy/unknown values resolve to Overview.
     @AppStorage("mlx-workbench.selectedRoute") private var selectedRouteID = AppRoute.overview.rawValue
     @State private var visitedRoutes: Set<AppRoute> = []
@@ -14,6 +15,7 @@ struct ContentView: View {
         _appHost = StateObject(wrappedValue: appHost)
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
+        _setup = ObservedObject(wrappedValue: appHost.setup)
     }
 
     private var selectedRoute: AppRoute {
@@ -56,6 +58,10 @@ struct ContentView: View {
         .onAppear {
             visitedRoutes.insert(selectedRoute)
             Task { await appHost.rescan() }
+        }
+        .sheet(isPresented: $setup.isPresented) {
+            SetupAssistantView(appHost: appHost, coordinator: setup)
+                .interactiveDismissDisabled(false)
         }
     }
 

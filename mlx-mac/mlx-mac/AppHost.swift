@@ -39,6 +39,8 @@ class AppHost: ObservableObject {
     /// Guided runtime setup (make install runner). Only actionable when the
     /// app runs from a checkout; see WorkbenchPython.repoRoot().
     let runtimeInstaller: RuntimeInstaller
+    /// First-launch setup assistant state (persisted once completed).
+    let setup: SetupCoordinator
 
     let api: WorkbenchAPI
 
@@ -74,7 +76,8 @@ class AppHost: ObservableObject {
         usage: UsageTracker? = nil,
         reclaim: ReclaimCoordinator? = nil,
         watch: WatchCoordinator? = nil,
-        runtimeInstaller: RuntimeInstaller? = nil
+        runtimeInstaller: RuntimeInstaller? = nil,
+        setup: SetupCoordinator? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -117,6 +120,7 @@ class AppHost: ObservableObject {
         )
         self.reclaim = reclaim ?? ReclaimCoordinator()
         self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller()
+        self.setup = setup ?? SetupCoordinator()
         let verificationCoordinator = self.verification
         let watchStateDir = JSONStore<WatchState>.defaultFileURL("placeholder")
             .deletingLastPathComponent()

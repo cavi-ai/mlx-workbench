@@ -62,6 +62,9 @@ struct DoctorView: View {
                     appHost.refreshRuntimeReport()
                 }
             }
+            Button("Run setup assistant again") { appHost.setup.presentAgain() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
         }
         .formSection {}
     }

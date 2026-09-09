@@ -12,6 +12,13 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- First-launch Setup Assistant in the native app: a guided sheet that walks
+  agent connection, Python runtime (one-click guided install), and model
+  roots, then runs the first library scan. Persisted once completed;
+  re-openable from Health via "Run setup assistant again".
+
 ### Fixed
 
 - Native app settings save: the second and later saves failed with
