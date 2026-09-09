@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF001 /* GGUFToRunRealDataUITests.swift */; };
+		26UIBLD101 /* SetupAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF101 /* SetupAssistantUITests.swift */; };
 		26UIBLD002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
 		24BBLD000000 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000000 /* x */; };
 
@@ -149,6 +150,7 @@
 
 /* Begin PBXFileReference section */
 		26UIREF001 /* GGUFToRunRealDataUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GGUFToRunRealDataUITests.swift; sourceTree = "<group>"; };
+		26UIREF101 /* SetupAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupAssistantUITests.swift; sourceTree = "<group>"; };
 		26UIREF002 /* mlx-workbenchUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "mlx-workbenchUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		24FREF000000 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = App.swift; path = App.swift; sourceTree = "<group>"; };
 
@@ -460,6 +462,7 @@
 			isa = PBXGroup;
 			children = (
 				26UIREF001 /* GGUFToRunRealDataUITests.swift */,
+				26UIREF101 /* SetupAssistantUITests.swift */,
 			);
 			path = "mlx-macUITests";
 			sourceTree = "<group>";
@@ -608,6 +611,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */,
+				26UIBLD101 /* SetupAssistantUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

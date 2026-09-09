@@ -197,6 +197,10 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["MLX_AGENT_HOME"] = runtimeValues["TASK6_AGENT_HOME"]
         app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = runtimeValues["TASK6_CONFIG_PATH"]
+        // The setup assistant overlays the window on first launch; the golden
+        // path test is not about onboarding, so bypass it via the argument
+        // domain (UserDefaults launch arguments never persist).
+        app.launchArguments = ["-mlx-workbench.setupCompleted.v1", "YES"]
         app.launch()
         app.activate()
         if !app.windows.firstMatch.waitForExistence(timeout: 5) {
