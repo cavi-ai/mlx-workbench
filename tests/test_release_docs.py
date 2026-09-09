@@ -9,8 +9,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.1.0"
-TAG = "v0.1.0"
+VERSION = "0.2.0"
+TAG = "v0.2.0"
 SLUG = "mlx-workbench"
 REPOSITORY = "cavi-ai/mlx-workbench"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -229,12 +229,12 @@ class ReleaseDocsContractTests(unittest.TestCase):
             self.assertEqual(
                 envelopes[0]["artifact"]["url"],
                 "https://github.com/cavi-ai/mlx-workbench/releases/download/"
-                "v0.1.0/mlx-workbench-docs-v0.1.0.tar.gz",
+                f"{TAG}/mlx-workbench-docs-{TAG}.tar.gz",
             )
             checksum = Path(str(archives[0]) + ".sha256").read_text()
             self.assertEqual(
                 checksum,
-                f"{archive_digest}  mlx-workbench-docs-v0.1.0.tar.gz\n",
+                f"{archive_digest}  mlx-workbench-docs-{TAG}.tar.gz\n",
             )
 
             with tarfile.open(archives[0], "r:gz") as archive:
@@ -243,7 +243,7 @@ class ReleaseDocsContractTests(unittest.TestCase):
                 self.assertTrue(
                     all(
                         member.name == "cavi-release.json"
-                        or member.name.startswith("docs/mlx-workbench/v0.1.0/")
+                        or member.name.startswith(f"docs/mlx-workbench/{TAG}/")
                         for member in members
                     )
                 )
