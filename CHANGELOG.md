@@ -12,6 +12,7 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-08
 ### Added
 
 - Web UI modularization: DOM helpers (`dom.js`), API envelope unwrapping
@@ -121,5 +122,6 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.1.0
