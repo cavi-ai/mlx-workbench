@@ -29,7 +29,7 @@ DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
 DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert deps \
-	start stop restart status run test test-live-scan test-swift test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
+	start stop restart status run test test-js test-live-scan test-swift test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
 	docs-test docs-build docs-verify docs-release version-bump
 
 help:
@@ -42,7 +42,7 @@ help:
 		'make restart  - stop then start' \
 		'make status   - running?' \
 		'make run      - foreground UI' \
-		'make test     - unittest suite' \
+		'make test     - unittest suite + static JS tests' \
 		'make test-live-scan - validate live model bytes against configured filesystem paths' \
 		'make test-swift - unit tests for Swift app' \
 		'make test-swift-live-scan - validate native app scan bytes against configured filesystem paths' \
@@ -203,6 +203,10 @@ run: check
 
 test:
 	$(PYTHON) -m unittest discover -s tests -t .
+	$(MAKE) --no-print-directory test-js
+
+test-js:
+	@node --test tests/static_*.test.js
 
 test-live-scan:
 	MLX_WORKBENCH_LIVE_SCAN=1 $(PYTHON) -m unittest tests.test_live_scan_e2e -v
