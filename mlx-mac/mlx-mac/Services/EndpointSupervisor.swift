@@ -59,6 +59,22 @@ final class EndpointSupervisor: ObservableObject {
 
     /// Enable the endpoint for a model. Verified models only, unless the
     /// user explicitly overrides (the same discipline as the quality gate).
+    /// Enable from raw UI text: an empty field means the default port; a
+    /// non-numeric or out-of-range value is refused with an error instead of
+    /// being silently coerced onto the default port.
+    func enable(modelPath: String, portText: String, allowUnverified: Bool = false) async {
+        let trimmed = portText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            await enable(modelPath: modelPath, port: EndpointConfig.defaultPort, allowUnverified: allowUnverified)
+            return
+        }
+        guard let port = Int(trimmed), (1...65535).contains(port) else {
+            lastError = "Port must be a number between 1 and 65535."
+            return
+        }
+        await enable(modelPath: modelPath, port: port, allowUnverified: allowUnverified)
+    }
+
     func enable(modelPath: String, port: Int, allowUnverified: Bool = false) async {
         guard !modelPath.isEmpty else {
             lastError = "Choose a model before enabling the endpoint."

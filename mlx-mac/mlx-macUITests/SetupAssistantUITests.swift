@@ -45,7 +45,7 @@ final class SetupAssistantUITests: XCTestCase {
 
         // Every middle step is reachable and navigable both ways.
         sheet.buttons["Continue"].click()
-        XCTAssertTrue(sheet.staticTexts["Install the Python runtime"].waitForExistence(timeout: 15))
+        XCTAssertTrue(sheet.staticTexts["Python runtime"].waitForExistence(timeout: 15))
         capture("02-step-runtime")
         sheet.buttons["Back"].click()
         XCTAssertTrue(sheet.staticTexts["Connect mlx-agent"].waitForExistence(timeout: 15))

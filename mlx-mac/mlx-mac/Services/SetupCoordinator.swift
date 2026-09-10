@@ -18,7 +18,7 @@ final class SetupCoordinator: ObservableObject {
         var title: String {
             switch self {
             case .agent: return "Connect mlx-agent"
-            case .runtime: return "Install the Python runtime"
+            case .runtime: return "Python runtime"
             case .roots: return "Choose model roots"
             case .done: return "Ready"
             }
