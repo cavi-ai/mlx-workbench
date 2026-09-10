@@ -89,6 +89,12 @@ from `mlx-agent` at runtime.
   sheet over the app's existing probes (agent health, runtime report,
   discovered roots) with the RuntimeInstaller for one-click runtime setup.
   Persisted via UserDefaults once completed; re-openable from Health.
+- `UpdateCoordinator` provides **in-app updates** for checkout-run installs:
+  Official channel checks out the newest `v*` tag, Beta fast-forwards to
+  `origin/main`; both refuse a dirty tree, sync submodules, and finish with a
+  streamed `make build-swift` rebuild-and-relaunch. Git runs as argv tokens
+  through an injectable runner; the apply path is integration-tested against
+  a throwaway git repo.
 - The Run view shows a **Memory-fit Advisor** verdict before serving:
   `FitAdvisor` estimates weights + KV cache + runtime overhead against live
   available memory (`MemorySnapshot` via Mach probes), yielding

@@ -41,6 +41,8 @@ class AppHost: ObservableObject {
     let runtimeInstaller: RuntimeInstaller
     /// First-launch setup assistant state (persisted once completed).
     let setup: SetupCoordinator
+    /// In-app updates (official tags or beta/main) for checkout-run installs.
+    let updater: UpdateCoordinator
 
     let api: WorkbenchAPI
 
@@ -77,7 +79,8 @@ class AppHost: ObservableObject {
         reclaim: ReclaimCoordinator? = nil,
         watch: WatchCoordinator? = nil,
         runtimeInstaller: RuntimeInstaller? = nil,
-        setup: SetupCoordinator? = nil
+        setup: SetupCoordinator? = nil,
+        updater: UpdateCoordinator? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -121,6 +124,7 @@ class AppHost: ObservableObject {
         self.reclaim = reclaim ?? ReclaimCoordinator()
         self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller()
         self.setup = setup ?? SetupCoordinator()
+        self.updater = updater ?? UpdateCoordinator()
         let verificationCoordinator = self.verification
         let watchStateDir = JSONStore<WatchState>.defaultFileURL("placeholder")
             .deletingLastPathComponent()

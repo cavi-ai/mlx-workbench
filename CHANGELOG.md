@@ -14,6 +14,16 @@ and is versioned independently; submodule bumps are recorded here.
 
 ### Added
 
+- In-app updates in the native app's Settings: two channels — Official
+  (checkout the newest `v*` release tag) and Beta (fast-forward to
+  `origin/main`). Read-only check previews current → target with a dirty-tree
+  count; applying refuses an uncommitted checkout, syncs submodules, and
+  streams git output into a log; a "Rebuild & relaunch" action then runs
+  `make build-swift` and restarts the app on the new build. Channel choice
+  persists across launches.
+
+### Added
+
 - Quarantine put-back in the native app: the Reclaim surface lists
   currently-quarantined files from the ledger, newest first, with a
   one-click "Put back" that restores the file to its original location
