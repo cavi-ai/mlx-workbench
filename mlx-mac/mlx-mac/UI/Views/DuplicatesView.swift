@@ -24,6 +24,7 @@ struct DuplicatesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 reclaimSection
+                quarantinedSection
                 HStack(spacing: 10) {
                     Button("Rescan library") { appHost.requestRescan() }
                         .disabled(appHost.isScanning)
@@ -49,6 +50,7 @@ struct DuplicatesView: View {
         }
         .onAppear {
             appHost.analyzeReclaim()
+            reclaim.refreshQuarantined()
             if appHost.scanResult == nil, !appHost.isScanning {
                 appHost.requestRescan()
             }
@@ -193,6 +195,50 @@ struct DuplicatesView: View {
                 if isOn { selectedOpportunities.insert(id) } else { selectedOpportunities.remove(id) }
             }
         )
+    }
+
+    // MARK: - Quarantine ledger (review + put back)
+
+    private var quarantinedSection: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SectionTitle(text: "Recently quarantined")
+            Text("Everything this Mac has moved aside, newest first. Nothing is ever deleted — put a file back with one click if it was wanted.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            if reclaim.quarantined.isEmpty {
+                Text("Nothing is currently in quarantine.")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+            } else {
+                let visible = reclaim.quarantined.prefix(8)
+                ForEach(Array(visible.enumerated()), id: \.element.to) { _, record in
+                    HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(URL(fileURLWithPath: record.from).lastPathComponent)
+                                .font(.callout)
+                            Text(record.from)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                        }
+                        Spacer()
+                        Button("Put back") { reclaim.restore(record) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                    .padding(.vertical, 2)
+                }
+                if reclaim.quarantined.count > visible.count {
+                    Text("Showing the \(visible.count) most recent of \(reclaim.quarantined.count) records.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            ErrorBanner(text: reclaim.lastError)
+        }
+        .formSection {}
     }
 
     // MARK: - HF-cache prune (authoritative doctor flow)
