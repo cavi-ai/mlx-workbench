@@ -12,6 +12,20 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Endpoint port field: a non-numeric or out-of-range port was silently
+  coerced to the default port and the endpoint enabled anyway. Invalid
+  input is now refused with an error; an empty field still means the
+  default.
+- Setup assistant wording: the runtime step no longer reads "Install…"
+  when the probe already reports READY — the badge carries the state.
+
+### Added
+
+- Setup assistant UI dogfood (XCUITest with screenshot evidence) and the
+  golden-path e2e bypass for the first-launch overlay.
+
 ### Added
 
 - First-launch Setup Assistant in the native app: a guided sheet that walks

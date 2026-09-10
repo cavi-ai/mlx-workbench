@@ -26,6 +26,41 @@ final class EndpointSupervisorTests: XCTestCase {
         XCTAssertEqual(supervisor.state, .running(modelPath: "/Models/q4", port: 8766))
     }
 
+    // MARK: - Port text validation (no silent coercion)
+
+    func testNonNumericPortTextIsRefusedWithoutEnabling() async {
+        let lifecycle = LifecycleRecorder()
+        let (supervisor, _) = makeSupervisor(lifecycle: lifecycle)
+
+        await supervisor.enable(modelPath: "/Models/q4", portText: "8o80")
+
+        XCTAssertEqual(supervisor.state, .disabled)
+        XCTAssertFalse(supervisor.config.enabled)
+        XCTAssertEqual(supervisor.lastError, "Port must be a number between 1 and 65535.")
+        XCTAssertTrue(lifecycle.events.isEmpty)
+    }
+
+    func testOutOfRangePortTextIsRefused() async {
+        let (supervisor, _) = makeSupervisor()
+
+        await supervisor.enable(modelPath: "/Models/q4", portText: "99999")
+
+        XCTAssertEqual(supervisor.state, .disabled)
+        XCTAssertFalse(supervisor.config.enabled)
+        XCTAssertEqual(supervisor.lastError, "Port must be a number between 1 and 65535.")
+    }
+
+    func testEmptyPortTextUsesTheDefaultPort() async {
+        let lifecycle = LifecycleRecorder()
+        let (supervisor, _) = makeSupervisor(lifecycle: lifecycle)
+
+        await supervisor.enable(modelPath: "/Models/q4", portText: "  ")
+
+        XCTAssertEqual(supervisor.config.port, EndpointConfig.defaultPort)
+        XCTAssertEqual(supervisor.state, .waitingForServer)
+        XCTAssertNil(supervisor.lastError)
+    }
+
     func testEnabledWithoutServerStartsViaPreviewHashFlow() async {
         let lifecycle = LifecycleRecorder()
         let (supervisor, _) = makeSupervisor(lifecycle: lifecycle)

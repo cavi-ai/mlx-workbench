@@ -23,3 +23,4 @@ docs/superpowers/
 mlx-mac/build/
 /docs/mlx-workbench/v*/
 /.release/
+default.profraw

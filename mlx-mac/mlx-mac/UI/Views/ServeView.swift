@@ -386,8 +386,7 @@ struct ServeView: View {
         Button("Enable for selected model") {
             Task {
                 guard let model = selectedModel else { return }
-                let port = Int(endpointPortText) ?? EndpointConfig.defaultPort
-                await endpoint.enable(modelPath: model.item.path, port: port)
+                await endpoint.enable(modelPath: model.item.path, portText: endpointPortText)
             }
         }
         .buttonStyle(.borderedProminent)
@@ -396,8 +395,7 @@ struct ServeView: View {
         Button("Enable anyway (unverified)") {
             Task {
                 guard let model = selectedModel else { return }
-                let port = Int(endpointPortText) ?? EndpointConfig.defaultPort
-                await endpoint.enable(modelPath: model.item.path, port: port, allowUnverified: true)
+                await endpoint.enable(modelPath: model.item.path, portText: endpointPortText, allowUnverified: true)
             }
         }
         .buttonStyle(.bordered)
