@@ -12,6 +12,7 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-09
 ### Added
 
 - In-app updates in the native app's Settings: two channels — Official
@@ -22,14 +23,19 @@ and is versioned independently; submodule bumps are recorded here.
   `make build-swift` and restarts the app on the new build. Channel choice
   persists across launches.
 
-### Added
-
 - Quarantine put-back in the native app: the Reclaim surface lists
   currently-quarantined files from the ledger, newest first, with a
   one-click "Put back" that restores the file to its original location
   (refused with a classified error if the original is taken again; the
   ledger itself stays an append-only audit trail).
 
+- Setup assistant UI dogfood (XCUITest with screenshot evidence) and the
+  golden-path e2e bypass for the first-launch overlay.
+
+- First-launch Setup Assistant in the native app: a guided sheet that walks
+  agent connection, Python runtime (one-click guided install), and model
+  roots, then runs the first library scan. Persisted once completed;
+  re-openable from Health via "Run setup assistant again".
 ### Fixed
 
 - Endpoint port field: a non-numeric or out-of-range port was silently
@@ -38,20 +44,6 @@ and is versioned independently; submodule bumps are recorded here.
   default.
 - Setup assistant wording: the runtime step no longer reads "Install…"
   when the probe already reports READY — the badge carries the state.
-
-### Added
-
-- Setup assistant UI dogfood (XCUITest with screenshot evidence) and the
-  golden-path e2e bypass for the first-launch overlay.
-
-### Added
-
-- First-launch Setup Assistant in the native app: a guided sheet that walks
-  agent connection, Python runtime (one-click guided install), and model
-  roots, then runs the first library scan. Persisted once completed;
-  re-openable from Health via "Run setup assistant again".
-
-### Fixed
 
 - Native app settings save: the second and later saves failed with
   "config.json.tmp couldn't be moved" because `ConfigModule.save` used
@@ -172,6 +164,7 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.1.0
