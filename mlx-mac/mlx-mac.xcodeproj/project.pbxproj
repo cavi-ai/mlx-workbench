@@ -792,7 +792,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = mlx-mac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cavi.mlxworkbench;
 				PRODUCT_NAME = "mlx-workbench";
 				PRODUCT_MODULE_NAME = mlx_workbench;
@@ -817,7 +817,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = mlx-mac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cavi.mlxworkbench;
 				PRODUCT_NAME = "mlx-workbench";
 				PRODUCT_MODULE_NAME = mlx_workbench;

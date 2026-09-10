@@ -9,8 +9,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.2.0"
-TAG = "v0.2.0"
+VERSION = "0.3.0"
+TAG = "v0.3.0"
 SLUG = "mlx-workbench"
 REPOSITORY = "cavi-ai/mlx-workbench"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
