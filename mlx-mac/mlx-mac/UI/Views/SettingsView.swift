@@ -11,6 +11,12 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var appHost: AppHost
+    @ObservedObject private var updater: UpdateCoordinator
+
+    init(appHost: AppHost) {
+        _appHost = ObservedObject(wrappedValue: appHost)
+        _updater = ObservedObject(wrappedValue: appHost.updater)
+    }
 
     @State private var ggufRoots: [String] = []
     @State private var mlxRoots: [String] = []
@@ -37,6 +43,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                     statusCard
                     engineCard
+                    updateCard
                     locationsCard
                     storageCard
                     integrationCard
@@ -127,6 +134,77 @@ struct SettingsView: View {
             )
             Divider().overlay(WorkbenchColor.hairline)
             SettingsRootsEditor(label: "MLX roots", roots: $mlxRoots, suggestions: [])
+        }
+    }
+
+    // MARK: - Updates
+
+    private var updateCard: some View {
+        SettingsCard(title: "Updates", subtitle: "Keep this app in step with its own repository.") {
+            Picker("Channel", selection: $updater.channel) {
+                ForEach(UpdateCoordinator.Channel.allCases) { channel in
+                    Text(channel.title).tag(channel)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 360)
+            Text(updater.channel.blurb)
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            HStack(spacing: WorkbenchSpacing.xs) {
+                Button("Check for updates") {
+                    Task { await updater.check() }
+                }
+                .buttonStyle(.bordered)
+                .disabled(!updater.canUpdate)
+                if case .available(let offer) = updater.phase {
+                    Button("Update to \(offer.target)") {
+                        Task { await updater.apply(offer: offer) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(WorkbenchColor.fluxTeal)
+                }
+                if case .updated = updater.phase {
+                    Button("Rebuild & relaunch") {
+                        Task { await updater.rebuildAndRelaunch() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(WorkbenchColor.fluxTeal)
+                }
+                if case .checking = updater.phase {
+                    ProgressView().controlSize(.small)
+                }
+                if case .applying = updater.phase {
+                    ProgressView().controlSize(.small)
+                }
+                Text(updater.summary)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+
+            if case .available(let offer) = updater.phase, offer.dirtyFiles > 0 {
+                Text("\(offer.dirtyFiles) uncommitted change(s) in the checkout — commit or discard them before updating.")
+                    .font(.caption)
+                    .foregroundColor(WorkbenchColor.thermalAmber)
+            }
+            if !updater.logTail.isEmpty {
+                DisclosureGroup("Update log") {
+                    ScrollView {
+                        Text(updater.logTail.joined(separator: "\n"))
+                            .font(.system(.caption2, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 160)
+                }
+            }
+            if updater.repoRoot == nil {
+                Text("This app is not running from a repository checkout, so in-app updates are unavailable. Install updates by replacing the app with a newly built one.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
     }
 
