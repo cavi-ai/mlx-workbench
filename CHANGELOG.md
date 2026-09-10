@@ -12,6 +12,14 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- Quarantine put-back in the native app: the Reclaim surface lists
+  currently-quarantined files from the ledger, newest first, with a
+  one-click "Put back" that restores the file to its original location
+  (refused with a classified error if the original is taken again; the
+  ledger itself stays an append-only audit trail).
+
 ### Fixed
 
 - Endpoint port field: a non-numeric or out-of-range port was silently

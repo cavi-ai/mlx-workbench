@@ -45,6 +45,10 @@ final class ReclaimCoordinator: ObservableObject {
     @Published private(set) var lastMoves: [ReclaimMoveResult] = []
     @Published private(set) var isApplying = false
     @Published private(set) var lastError: String?
+    /// Currently-quarantined files from the ledger, newest first — records
+    /// whose quarantined file no longer exists (restored, or removed by the
+    /// user) drop out of the view.
+    @Published private(set) var quarantined: [QuarantineRecord] = []
     /// Incomplete HF-cache findings from the last cache check, with the
     /// prune preview hash when one has been previewed.
     @Published private(set) var cacheFindings: [DoctorFinding] = []
@@ -109,6 +113,28 @@ final class ReclaimCoordinator: ObservableObject {
         opportunities = value
     }
 
+    /// Re-read the quarantine ledger, keeping only records whose quarantined
+    /// file still exists — the list means "currently quarantined". The ledger
+    /// file itself stays an append-only audit trail (a restored record's file
+    /// simply leaves the directory).
+    func refreshQuarantined() {
+        let dir = quarantineDir()
+        quarantined = Quarantine.ledger(quarantineDir: dir).filter { record in
+            FileManager.default.fileExists(atPath: Quarantine.resolve(record.to))
+        }
+    }
+
+    /// Put a quarantined file back where it came from, then refresh.
+    func restore(_ record: QuarantineRecord) {
+        do {
+            try Quarantine.restore(record, fileManager: fileManager)
+            lastError = nil
+        } catch {
+            lastError = AppHost.render(error)
+        }
+        refreshQuarantined()
+    }
+
     /// Freeze the selected actionable paths into a hashed plan.
     func preview(selected: Set<String>) {
         lastError = nil
@@ -160,6 +186,7 @@ final class ReclaimCoordinator: ObservableObject {
             ? "Some items could not be moved; see per-item results."
             : nil
         self.plan = nil
+        refreshQuarantined()
         // Moved items leave the opportunity set immediately; the next
         // library scan is the authoritative refresh.
         let moved = Set(results.compactMap { $0.error == nil ? $0.path : nil })

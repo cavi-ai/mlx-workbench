@@ -307,6 +307,58 @@ final class ReclaimAdvisorTests: XCTestCase {
         XCTAssertNotNil(coordinator.badgeText)
     }
 
+    // MARK: - Quarantine ledger (review + put back)
+
+    func testConfirmMovesAppearInTheLedgerAndRestorePutsBack() throws {
+        let root = try makeRoot()
+        let quarantine = try makeRoot()
+        let file = root.appendingPathComponent("stale.gguf")
+        try Data("weights".utf8).write(to: file)
+
+        let coordinator = ReclaimCoordinator(now: { self.now })
+        coordinator.quarantineDir = { quarantine.path }
+        coordinator.ggufRoots = { [root.path] }
+        coordinator.refreshQuarantined()
+        XCTAssertTrue(coordinator.quarantined.isEmpty)
+
+        let opportunity = ReclaimOpportunity(
+            kind: .stale, paths: [file.path], bytes: 7,
+            evidence: "test", confidence: .high, actionable: true
+        )
+        coordinator.setOpportunitiesForTesting([opportunity])
+        coordinator.preview(selected: [opportunity.id])
+        _ = coordinator.confirm(previewHash: coordinator.plan!.previewHash)
+
+        coordinator.refreshQuarantined()
+        XCTAssertEqual(coordinator.quarantined.count, 1)
+        XCTAssertEqual(coordinator.quarantined.first?.from, Quarantine.resolve(file.path))
+
+        coordinator.restore(coordinator.quarantined[0])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertTrue(coordinator.quarantined.isEmpty, "the ledger still lists a file that left quarantine")
+        XCTAssertNil(coordinator.lastError)
+    }
+
+    func testRestoreFailureSurfacesAnError() throws {
+        let root = try makeRoot()
+        let quarantine = try makeRoot()
+        let file = root.appendingPathComponent("wanted.gguf")
+        try Data("weights".utf8).write(to: file)
+
+        let coordinator = ReclaimCoordinator(now: { self.now })
+        coordinator.quarantineDir = { quarantine.path }
+        coordinator.ggufRoots = { [root.path] }
+
+        let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: quarantine.path, now: now)
+        try Data("re-downloaded".utf8).write(to: file) // original taken again
+
+        coordinator.refreshQuarantined()
+        coordinator.restore(record)
+
+        XCTAssertNotNil(coordinator.lastError)
+        XCTAssertTrue(coordinator.lastError?.contains("already exists") == true)
+    }
+
     // MARK: - HF-cache prune
 
     func testCacheCheckSurfacesFindingsAndReclaimableBytes() async {

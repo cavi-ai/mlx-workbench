@@ -107,6 +107,58 @@ final class QuarantineParityTests: XCTestCase {
         XCTAssertEqual(Quarantine.ledger(quarantineDir: missing.path), [])
     }
 
+    // MARK: - Restore (put back)
+
+    func testRestoreMovesTheFileBackToItsOrigin() throws {
+        let root = try makeRoot()
+        let quarantineDir = try makeRoot()
+        let file = root.appendingPathComponent("wanted.gguf")
+        try Data("weights".utf8).write(to: file)
+
+        let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: quarantineDir.path, now: now)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+
+        try Quarantine.restore(record)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual(try Data(contentsOf: file), Data("weights".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: record.to))
+    }
+
+    func testRestoreRefusesWhenTheOriginalLocationIsTaken() throws {
+        let root = try makeRoot()
+        let quarantineDir = try makeRoot()
+        let file = root.appendingPathComponent("wanted.gguf")
+        try Data("weights".utf8).write(to: file)
+        let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: quarantineDir.path, now: now)
+        // Someone re-downloaded a file at the original path since the move.
+        try Data("new download".utf8).write(to: file)
+
+        XCTAssertThrowsError(try Quarantine.restore(record)) { error in
+            guard case QuarantineError.restoreBlocked = error else {
+                return XCTFail("expected restoreBlocked, got \(error)")
+            }
+        }
+        // Neither copy is touched.
+        XCTAssertEqual(try Data(contentsOf: file), Data("new download".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: record.to))
+    }
+
+    func testRestoreRefusesWhenTheQuarantinedFileIsGone() throws {
+        let record = QuarantineRecord(
+            movedAt: "2026-09-10T00:00:00Z",
+            from: "/tmp/never-was.gguf",
+            to: "/tmp/also-gone.gguf",
+            bytes: 1
+        )
+
+        XCTAssertThrowsError(try Quarantine.restore(record)) { error in
+            guard case QuarantineError.notFound = error else {
+                return XCTFail("expected notFound, got \(error)")
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func makeRoot() throws -> URL {

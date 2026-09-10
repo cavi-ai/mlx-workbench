@@ -13,6 +13,7 @@ enum QuarantineError: LocalizedError {
     case outsideRoots(String)
     case alreadyQuarantined(String)
     case moveFailed(String)
+    case restoreBlocked(String)
 
     var errorDescription: String? {
         switch self {
@@ -26,6 +27,8 @@ enum QuarantineError: LocalizedError {
             return "\(path) is already in the quarantine directory."
         case .moveFailed(let detail):
             return "The file could not be moved: \(detail). Check free space and permissions on the quarantine directory."
+        case .restoreBlocked(let path):
+            return "Cannot put \(path) back: a file already exists at the original location. Resolve it yourself first."
         }
     }
 }
@@ -115,6 +118,28 @@ enum Quarantine {
         return text.split(separator: "\n").suffix(limit).compactMap { line in
             try? decoder.decode(QuarantineRecord.self, from: Data(line.utf8))
         }.reversed()
+    }
+
+    /// Put a quarantined file back where it came from. Extends the Python
+    /// original (which has no restore): the guard is the same spirit — move,
+    /// never delete, and refuse rather than overwrite. The original location
+    /// must be free; the quarantined copy must still exist. The ledger is
+    /// left untouched: the record's file simply leaves the quarantine dir.
+    static func restore(_ record: QuarantineRecord, fileManager: FileManager = .default) throws {
+        let quarantined = resolve(record.to)
+        var isDirectory = ObjCBool(false)
+        guard fileManager.fileExists(atPath: quarantined, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            throw QuarantineError.notFound(quarantined)
+        }
+        let original = resolve(record.from)
+        if fileManager.fileExists(atPath: original) {
+            throw QuarantineError.restoreBlocked(original)
+        }
+        do {
+            try fileManager.moveItem(atPath: quarantined, toPath: original)
+        } catch {
+            throw QuarantineError.moveFailed(error.localizedDescription)
+        }
     }
 
     // MARK: - Internals
