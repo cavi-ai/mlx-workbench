@@ -1,6 +1,6 @@
 # 09 — Fleet Endpoints (multi-model always-on) + Role Router
 
-**Status:** P1 + P2 implemented (model/migration/supervisor; Run tab fleet UI + menu-bar aggregate); P3–P4 design · **Tier:** Premium · **Synergy:** extends spec 06 (Always-on Endpoint), feeds spec 02 (Cross-client Wiring) and `mlx-agent fleet`
+**Status:** P1–P3 implemented (model/migration/supervisor; Run tab fleet UI + menu-bar aggregate; fleet memory budget); P4 design · **Tier:** Premium · **Synergy:** extends spec 06 (Always-on Endpoint), feeds spec 02 (Cross-client Wiring) and `mlx-agent fleet`
 
 ## Problem
 

@@ -50,7 +50,16 @@ struct ServeView: View {
     @State private var contextText = String(FitAdvisor.defaultContextTokens)
     @State private var endpointPortText = ""
     @State private var newSlotRole: UseCase?
+    @State private var pendingFleetAction: PendingFleetAction?
     @State private var showLoginItemPreview = false
+
+    /// A wont-fit fleet action awaiting the user's explicit override (spec
+    /// 09 P3 — same escape-hatch discipline as the quality gate).
+    private struct PendingFleetAction: Identifiable {
+        let id = UUID()
+        let summary: String
+        let confirm: () -> Void
+    }
     @State private var loginItemMessage: String?
     @State private var loginItemMessageIsError = false
 
@@ -179,6 +188,35 @@ struct ServeView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
+            if let verdict = prospectiveFleetVerdict(addingModelPath: nil) {
+                HStack(spacing: 8) {
+                    Image(systemName: fitIcon(verdict))
+                        .foregroundColor(fitColor(verdict))
+                    Text("Fleet memory: \(verdict.summary)")
+                        .font(.caption)
+                        .foregroundColor(fitColor(verdict))
+                }
+            }
+
+            if let pending = pendingFleetAction {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Fleet memory: \(pending.summary). Enable anyway?")
+                        .font(.caption)
+                        .foregroundColor(WorkbenchColor.systemRed)
+                    HStack(spacing: 10) {
+                        Button("Enable anyway") {
+                            pending.confirm()
+                            pendingFleetAction = nil
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(WorkbenchColor.systemRed)
+                        Button("Cancel") { pendingFleetAction = nil }
+                            .buttonStyle(.bordered)
+                    }
+                    .controlSize(.small)
+                }
+            }
+
             if endpoint.fleet.slots.isEmpty {
                 Text("No endpoints yet. Add one for the selected model.")
                     .font(.callout)
@@ -238,7 +276,11 @@ struct ServeView: View {
                     }
                 }
                 Button(slot.enabled ? "Disable" : "Enable") {
-                    Task { await endpoint.setSlotEnabled(id: slot.id, !slot.enabled) }
+                    if slot.enabled {
+                        Task { await endpoint.setSlotEnabled(id: slot.id, false) }
+                    } else {
+                        enableSlotWithFitCheck(slot)
+                    }
                 }
                 rolePicker(slot)
                 Spacer()
@@ -343,15 +385,77 @@ struct ServeView: View {
 
     private func addEndpoint(allowUnverified: Bool) {
         guard let model = selectedModel else { return }
-        Task {
-            let port = Int(endpointPortText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? suggestedPort
-            await endpoint.addSlot(
-                modelPath: model.item.path,
-                port: port,
-                role: newSlotRole,
-                allowUnverified: allowUnverified
-            )
+        let port = Int(endpointPortText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? suggestedPort
+        let role = newSlotRole
+        let action = {
+            _ = Task {
+                await endpoint.addSlot(
+                    modelPath: model.item.path,
+                    port: port,
+                    role: role,
+                    allowUnverified: allowUnverified
+                )
+            }
         }
+        if let verdict = prospectiveFleetVerdict(addingModelPath: model.item.path),
+           case .wontFit = verdict {
+            pendingFleetAction = PendingFleetAction(summary: verdict.summary, confirm: action)
+            return
+        }
+        action()
+    }
+
+    /// Enabling a slot that tips the fleet past wont-fit needs the explicit
+    /// override; tight is warned in place by the header verdict line.
+    private func enableSlotWithFitCheck(_ slot: EndpointSlot) {
+        let action = { _ = Task { await endpoint.setSlotEnabled(id: slot.id, true) } }
+        if let verdict = prospectiveFleetVerdict(addingModelPath: slot.modelPath),
+           case .wontFit = verdict {
+            pendingFleetAction = PendingFleetAction(summary: verdict.summary, confirm: action)
+            return
+        }
+        action()
+    }
+
+    // MARK: - Fleet memory budget (spec 09 P3)
+
+    /// Summed verdict over enabled slots, or over enabled slots plus a
+    /// candidate — nil when there is nothing to sum. Derived, never
+    /// persisted.
+    private func prospectiveFleetVerdict(addingModelPath: String?) -> FitVerdict? {
+        var paths = endpoint.fleet.slots
+            .filter { $0.enabled && !$0.modelPath.isEmpty }
+            .map(\.modelPath)
+        if let addingModelPath { paths.append(addingModelPath) }
+        guard !paths.isEmpty else { return nil }
+        guard let available = availableMemoryBytes else {
+            return .unknown(reason: "memory probe unavailable")
+        }
+        return FleetFitAdvisor.verdict(
+            estimates: paths.map { fleetEstimate(for: $0) },
+            availableBytes: available,
+            reserveBytes: Int64(appHost.config.fitReserveGB * 1_000_000_000)
+        )
+    }
+
+    private func fleetEstimate(for modelPath: String) -> FleetFitAdvisor.Estimate {
+        let model = appHost.librarySnapshot?.models.first(where: {
+            $0.item.path == modelPath || $0.outputPaths.contains(modelPath)
+        })
+        guard let bytes = model?.item.bytes, bytes > 0 else { return .unknown }
+        return .known(
+            modelBytes: bytes,
+            contextTokens: FitAdvisor.defaultContextTokens,
+            parameters: model?.item.parameters
+        )
+    }
+
+    /// Live available memory, with FitAdvisor's 60%-of-total fallback when
+    /// the Mach probe fails.
+    private var availableMemoryBytes: Int64? {
+        if let probed = MemorySnapshot.probe() { return probed.availableBytes }
+        guard let total = appHost.hardwareProfile.memoryBytes, total > 0 else { return nil }
+        return Int64(Double(total) * 0.6)
     }
 
     private var loginItemSection: some View {

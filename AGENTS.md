@@ -96,9 +96,15 @@ from `mlx-agent` at runtime.
   all enabled slots, per-slot crash guards. The single-slot API is a shim
   over slot 0. The Run tab's **Endpoints** section (spec 09 P2) lists the
   slots with per-slot status/restarts/fit chip, enable/disable, role picker,
-  remove, and an "Add endpoint" flow (suggested next-free port, verified
+  remove,   and an "Add endpoint" flow (suggested next-free port, verified
   gating with explicit unverified override, cap 4). The menu bar aggregates
   ("N of M endpoints running", worst-state icon, per-slot start/stop).
+  The **fleet memory budget** (spec 09 P3): `FleetFitAdvisor` sums
+  FitAdvisor estimates over enabled slots against one live
+  `MemorySnapshot` (per-slot runtime overhead; unknown model sizes make the
+  verdict unknown, never fabricated). The section header shows the summed
+  verdict; enabling a slot that tips the fleet past won't-fit needs an
+  explicit inline override.
   `LaunchAgentManager` optionally installs a RunAtLoad login item (no
   KeepAlive — the app's supervisor reconciles; receipts stay authoritative).
 - The Duplicates tab hosts the **Disk Pressure Advisor**: `ReclaimAdvisor`
