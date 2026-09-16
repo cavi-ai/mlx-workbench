@@ -23,6 +23,7 @@ format, or chat surface.
 | 06 | [Always-on Endpoint + Menu Bar](06-always-on-endpoint.md) | Premium | launchd-backed stable port, auto-restart, hot-swap, minimal menu-bar status |
 | 07 | [Model Lineage](07-model-lineage.md) | Premium | One provenance timeline per model, assembled from existing stores, exportable |
 | 08 | [Watch & Regression Alerts](08-watch-regression-alerts.md) | Premium | Upstream change digests + re-verify prompts on macOS/MLX drift |
+| 09 | [Fleet Endpoints + Role Router](09-fleet-endpoints.md) | Premium | Multiple supervised endpoints (one model per stable port) + one-click per-role router via `mlx-agent fleet` — **design stage** |
 
 ## Shared components (build once)
 
@@ -46,6 +47,7 @@ format, or chat surface.
 02 Wiring ◄── 06 (stable endpoint as wire target)
 04 Disk Advisor (standalone; consumes 01's verified state for supersede rules)
 07 Lineage (indexes 01–04 stores — ship after them)
+09 Fleet ◄── 06 (multi-slot supervisor) + 05 (fleet memory budget) ──► mlx-agent fleet (role router)
 ```
 
 ## Suggested build order
