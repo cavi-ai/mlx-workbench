@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from mlx_workbench import bridge, config, quarantine
+from mlx_workbench import bridge, config, convert_queue, quarantine
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -82,6 +82,33 @@ class QuarantineLedgerFixtureTests(unittest.TestCase):
         self.assertEqual(records[1]["bytes"], 1024)
         # The quarantined files do not exist on disk in the fixture.
         self.assertFalse(any(record["exists"] for record in records))
+
+
+class ConvertQueueFixtureTests(unittest.TestCase):
+    def test_current_queue_loads_three_items_in_order(self):
+        queue = convert_queue.ConvertQueue(path=FIXTURES / "convert-queue.json")
+        self.assertIsNone(queue.load_error)
+        items = queue.snapshot()
+        self.assertEqual([item["id"] for item in items], ["cq-1", "cq-2", "cq-3"])
+        self.assertEqual(
+            [item["state"] for item in items],
+            ["queued", "starting", "failed"],
+        )
+        self.assertEqual(items[0]["kind"], "gguf")
+        self.assertEqual(items[1]["kind"], "repo")
+        self.assertEqual(items[1]["repo"], "mlx-community/Qwen3-8B-8bit")
+        self.assertEqual(items[2]["failure"]["code"], "convert_failed")
+
+    def test_legacy_queue_migrates_items_with_null_failure(self):
+        queue = convert_queue.ConvertQueue(
+            path=FIXTURES / "convert-queue-legacy.json"
+        )
+        self.assertIsNone(queue.load_error)
+        items = queue.snapshot()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["id"], "cq-7")
+        self.assertEqual(items[0]["state"], "queued")
+        self.assertIsNone(items[0]["failure"])
 
 
 if __name__ == "__main__":

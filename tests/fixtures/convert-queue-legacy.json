@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "items": [
+    {
+      "id": "cq-7",
+      "kind": "repo",
+      "preview_hash": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      "q_bits": 4,
+      "out": "/fixtures/out/legacy-MLX-4bit",
+      "path": null,
+      "repo": "mlx-community/Legacy-7B-4bit",
+      "hf_cache": null,
+      "label": "mlx-community/Legacy-7B-4bit",
+      "state": "queued"
+    }
+  ]
+}

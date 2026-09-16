@@ -50,6 +50,30 @@ final class ContractFixtureTests: XCTestCase {
         XCTAssertEqual(records[1].bytes, 1024)
     }
 
+    // MARK: - convert-queue.json
+
+    func testCurrentQueueFixtureLoadsThreeItemsInOrder() throws {
+        let snapshot = WebConvertQueue.load(from: fixtureURL("convert-queue", ext: "json"))
+
+        XCTAssertNil(snapshot.problem)
+        XCTAssertEqual(snapshot.items.map(\.id), ["cq-1", "cq-2", "cq-3"])
+        XCTAssertEqual(snapshot.items.map(\.state), [.queued, .starting, .failed])
+        XCTAssertEqual(snapshot.items[0].kind, .gguf)
+        XCTAssertEqual(snapshot.items[1].kind, .repo)
+        XCTAssertEqual(snapshot.items[1].repo, "mlx-community/Qwen3-8B-8bit")
+        XCTAssertEqual(snapshot.items[2].failure?.code, "convert_failed")
+    }
+
+    func testLegacyQueueFixtureMigratesItemsWithNilFailure() throws {
+        let snapshot = WebConvertQueue.load(from: fixtureURL("convert-queue-legacy", ext: "json"))
+
+        XCTAssertNil(snapshot.problem)
+        XCTAssertEqual(snapshot.items.count, 1)
+        XCTAssertEqual(snapshot.items[0].id, "cq-7")
+        XCTAssertEqual(snapshot.items[0].state, .queued)
+        XCTAssertNil(snapshot.items[0].failure)
+    }
+
     // MARK: - helpers
 
     private func fixturesDirectory() -> URL {
@@ -61,10 +85,14 @@ final class ContractFixtureTests: XCTestCase {
             .appendingPathComponent("fixtures", isDirectory: true)
     }
 
-    private func copyFixtureToTemp(_ name: String, ext: String, as finalName: String) throws -> URL {
-        let source = fixturesDirectory()
+    private func fixtureURL(_ name: String, ext: String) -> URL {
+        fixturesDirectory()
             .appendingPathComponent(name)
             .appendingPathExtension(ext)
+    }
+
+    private func copyFixtureToTemp(_ name: String, ext: String, as finalName: String) throws -> URL {
+        let source = fixtureURL(name, ext: ext)
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

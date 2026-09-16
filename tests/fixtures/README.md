@@ -13,6 +13,8 @@ not a test bug.
 | `convert-scan-missing-bytes.json` | Scan payload missing a required per-model byte count; both sides must reject it | same |
 | `config-premium-keys.json` | `config.json` containing keys written by the native app's premium toggles; a load/save cycle must preserve them | `config.load`/`save` (Python), `ConfigModule` (Swift) |
 | `quarantine-ledger.jsonl` | Quarantine ledger lines (`moved_at`/`from`/`to`/`bytes`, newest last) | `quarantine.ledger` (Python), `Quarantine.ledger` (Swift) |
+| `convert-queue.json` | Web UI durable convert queue, schema 1.1 (queued/starting/failed) | `convert_queue.ConvertQueue` (Python), `WebConvertQueue` (Swift, read-only) |
+| `convert-queue-legacy.json` | Schema 1.0 queue; both sides must migrate items to `failure: null` | same |
 
 Rules:
 

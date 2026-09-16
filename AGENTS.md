@@ -29,6 +29,12 @@ from `mlx-agent` at runtime.
   Python suite (`tests/test_contract_fixtures.py`) and the XCTest suite
   (`ScanContractTests`, `WorkbenchAPISubprocessTests`, `ContractFixtureTests`).
   A fixture change must keep both suites green; see `tests/fixtures/README.md`.
+- The web UI's durable convert queue (`convert-queue.json`, schema 1.1) has
+  exactly one writer: the web server. The native app reads it read-only via
+  `Services/WebConvertQueue.swift` and shows it in Jobs as "Web Queue" with
+  provenance; schema and path resolution mirror
+  `mlx_workbench/convert_queue.py` and are pinned by shared fixtures. Never
+  write to that file from the native app.
 - `tests/` contains unit and release-doc coverage.
 - `mlx-mac/` is the native SwiftUI app (Xcode project, explicit file list in
   `project.pbxproj` — register new sources there). `make test-swift` runs its

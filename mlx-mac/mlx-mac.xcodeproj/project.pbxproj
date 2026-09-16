@@ -72,6 +72,7 @@
 		26SCBL001 /* ScanContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26SCREF001 /* ScanContractTests.swift */; };
 		26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26SCREF002 /* WorkbenchAPISubprocessTests.swift */; };
 		26CFBL001 /* ContractFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26CFREF001 /* ContractFixtureTests.swift */; };
+		26WQBL002 /* WebConvertQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26WQREF002 /* WebConvertQueueTests.swift */; };
 		24BBLD021 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
 		24BBLD025 /* LibraryDomainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF01F /* LibraryDomainTests.swift */; };
 		24BBLD026 /* ModelLibraryBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF020 /* ModelLibraryBuilder.swift */; };
@@ -139,6 +140,7 @@
 		24BBLD06A /* HFRepoID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF068 /* HFRepoID.swift */; };
 		24BBLD06B /* HFRepoIDTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF069 /* HFRepoIDTests.swift */; };
 		24BBLD067 /* PromptHistoryImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF065 /* PromptHistoryImport.swift */; };
+		26WQBL001 /* WebConvertQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26WQREF001 /* WebConvertQueue.swift */; };
 		24BBLD068 /* ComparisonPhase2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF066 /* ComparisonPhase2Tests.swift */; };
 		24BBLD066 /* PremiumSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF064 /* PremiumSettingsTests.swift */; };
 		27ABCD000000000000000001 /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000001 /* AppRoute.swift */; };
@@ -273,6 +275,7 @@
 		24FREF068 /* HFRepoID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HFRepoID.swift; path = Models/HFRepoID.swift; sourceTree = "<group>"; };
 		24FREF069 /* HFRepoIDTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HFRepoIDTests.swift; sourceTree = "<group>"; };
 		24FREF065 /* PromptHistoryImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PromptHistoryImport.swift; path = Services/PromptHistoryImport.swift; sourceTree = "<group>"; };
+		26WQREF001 /* WebConvertQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WebConvertQueue.swift; path = Services/WebConvertQueue.swift; sourceTree = "<group>"; };
 		24FREF066 /* ComparisonPhase2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonPhase2Tests.swift; sourceTree = "<group>"; };
 		24FREF064 /* PremiumSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PremiumSettingsTests.swift; sourceTree = "<group>"; };
 		24FREF06A /* WorkbenchPython.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchPython.swift; path = Services/WorkbenchPython.swift; sourceTree = "<group>"; };
@@ -284,6 +287,7 @@
 		26SCREF001 /* ScanContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScanContractTests.swift; path = ScanContractTests.swift; sourceTree = "<group>"; };
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
 		26CFREF001 /* ContractFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractFixtureTests.swift; sourceTree = "<group>"; };
+		26WQREF002 /* WebConvertQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebConvertQueueTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -383,6 +387,7 @@
 				27UPD001 /* UpdateCoordinator.swift */,
 				24FREF068 /* HFRepoID.swift */,
 				24FREF065 /* PromptHistoryImport.swift */,
+				26WQREF001 /* WebConvertQueue.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
@@ -453,6 +458,7 @@
 				26SCREF001 /* ScanContractTests.swift */,
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
 				26CFREF001 /* ContractFixtureTests.swift */,
+				26WQREF002 /* WebConvertQueueTests.swift */,
 				27TST001 /* QuarantineParityTests.swift */,
 				27TST002 /* JSONStoreTests.swift */,
 				27TST003 /* JSONCTolerantTests.swift */,
@@ -702,6 +708,7 @@
 				27UPDB01 /* UpdateCoordinator.swift in Sources */,
 				27STPB02 /* SetupAssistantView.swift in Sources */,
 				24BBLD067 /* PromptHistoryImport.swift in Sources */,
+				26WQBL001 /* WebConvertQueue.swift in Sources */,
 				27ABCD000000000000000001 /* AppRoute.swift in Sources */,
 				27ABCD000000000000000002 /* DesignSystem.swift in Sources */,
 
@@ -736,6 +743,7 @@
 				26SCBL001 /* ScanContractTests.swift in Sources */,
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
 				26CFBL001 /* ContractFixtureTests.swift in Sources */,
+				26WQBL002 /* WebConvertQueueTests.swift in Sources */,
 				27ABCD000000000000000003 /* AppRouteTests.swift in Sources */,
 				27TSTB01 /* QuarantineParityTests.swift in Sources */,
 				27TSTB02 /* JSONStoreTests.swift in Sources */,
