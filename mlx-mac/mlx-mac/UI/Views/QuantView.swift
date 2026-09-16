@@ -9,16 +9,27 @@ import SwiftUI
 struct QuantView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
+    private let onRouteSelection: (String) -> Void
 
     @State private var selectedVariants: Set<String> = []
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
     @State private var selectedRunID: ComparisonRun.ID?
     @State private var diffLeftPath: String?
     @State private var diffRightPath: String?
+    @State private var promoteContext: PromoteContext?
+    @State private var promotedWinnerPath: String?
 
-    init(appHost: AppHost) {
+    /// A completed run plus its fastest variant, presented for promotion.
+    struct PromoteContext: Identifiable {
+        let run: ComparisonRun
+        let winner: VariantResult
+        var id: ComparisonRun.ID { run.id }
+    }
+
+    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
         self.appHost = appHost
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
+        self.onRouteSelection = onRouteSelection
     }
 
     var body: some View {
@@ -180,6 +191,23 @@ struct QuantView: View {
                     Label("Fastest: \(shortName(winner.modelPath))", systemImage: "bolt.fill")
                         .font(.caption)
                         .foregroundColor(WorkbenchColor.fluxTeal)
+                    Button("Promote winner") {
+                        promoteContext = PromoteContext(run: run, winner: winner)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+
+            if promotedWinnerPath != nil {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Label("Winner promoted.", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundColor(WorkbenchColor.verifiedGreen)
+                    Button("Wire into clients…") { onRouteSelection(AppRoute.clientSetup.rawValue) }
+                        .controlSize(.small)
+                    Button("Reclaim losers…") { onRouteSelection(AppRoute.reclaim.rawValue) }
+                        .controlSize(.small)
                 }
             }
 
@@ -196,6 +224,13 @@ struct QuantView: View {
             }
         }
         .formSection {}
+        .sheet(item: $promoteContext) { context in
+            PromoteWinnerSheet(
+                appHost: appHost,
+                context: context,
+                onPromoted: { path in promotedWinnerPath = path }
+            )
+        }
     }
 
     /// One glance: per-variant speed bars — decode (out) and prefill (in) —
@@ -462,18 +497,144 @@ struct QuantView: View {
     }
 
     private func setPreferred(_ path: String, for useCase: UseCase) {
-        let current = appHost.recommendationPreferences
-        var preferred = current.preferredModelIDs
-        preferred[useCase] = path
-        appHost.recommendationPreferences = RecommendationPreferences(
-            speedWeight: current.speedWeight,
-            qualityWeight: current.qualityWeight,
-            hiddenModelIDs: current.hiddenModelIDs,
-            preferredModelIDs: preferred
-        )
+        appHost.setPreferredModel(path, for: useCase)
     }
 
     private func shortName(_ path: String) -> String {
         URL(fileURLWithPath: path).lastPathComponent
+    }
+}
+
+// MARK: - Promote winner
+
+/// One reviewed action that chains the comparison verdict into the rest of
+/// the lifecycle: mark the winner preferred for the run's use case and,
+/// optionally, keep it serving on the always-on endpoint. Client wiring and
+/// loser reclaim stay in their own tabs, so every mutating step keeps its
+/// own preview/confirm discipline.
+struct PromoteWinnerSheet: View {
+    @ObservedObject var appHost: AppHost
+    let context: QuantView.PromoteContext
+    let onPromoted: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var enableEndpoint = true
+    @State private var allowUnverified = false
+    @State private var isApplying = false
+    @State private var errorText: String?
+
+    private var winnerPath: String { context.winner.modelPath }
+    private var winnerName: String { URL(fileURLWithPath: winnerPath).lastPathComponent }
+    private var endpoint: EndpointSupervisor { appHost.endpoint }
+    private var winnerVerified: Bool { appHost.isModelVerified(winnerPath) }
+    private var endpointAlreadyWinner: Bool {
+        endpoint.config.enabled && endpoint.config.modelPath == winnerPath
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Promote \(winnerName)")
+                .font(.headline)
+            Text(statsLine)
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            if let useCase = context.run.useCase {
+                Label("Set as preferred for \(useCase.title)", systemImage: "star.fill")
+                    .font(.callout)
+            }
+
+            endpointSection
+
+            ErrorBanner(text: errorText)
+
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(isApplying ? "Promoting…" : "Promote") { Task { await confirm() } }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isApplying)
+            }
+        }
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(width: 460)
+    }
+
+    private var statsLine: String {
+        var parts: [String] = []
+        if let tps = context.winner.aggregateTokensPerSecond {
+            parts.append(String(format: "%.1f tok/s", tps))
+        }
+        if let ttft = context.winner.aggregateTTFTSeconds {
+            parts.append(String(format: "TTFT %.2fs", ttft))
+        }
+        return parts.isEmpty ? "Fastest measured variant in this run." : parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var endpointSection: some View {
+        if endpointAlreadyWinner {
+            Label("Already the always-on endpoint model (port \(endpoint.config.port)).",
+                  systemImage: "checkmark.circle")
+                .font(.callout)
+        } else {
+            Toggle(isOn: $enableEndpoint) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Keep it always-on")
+                        .font(.callout)
+                    Text(endpointCaption)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .disabled(!winnerVerified && !allowUnverified)
+
+            if !winnerVerified {
+                Toggle("Enable anyway (unverified)", isOn: $allowUnverified)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("This model has not passed the verification canary suite.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private var endpointCaption: String {
+        if endpoint.config.enabled {
+            return "Swap the supervised endpoint to this model; port \(endpoint.config.port) stays stable for clients."
+        }
+        return "Supervise this model on the stable loopback port \(endpoint.config.port), restarting it if it crashes."
+    }
+
+    private func confirm() async {
+        isApplying = true
+        defer { isApplying = false }
+        errorText = nil
+
+        if let useCase = context.run.useCase {
+            appHost.setPreferredModel(winnerPath, for: useCase)
+        }
+
+        if enableEndpoint, !endpointAlreadyWinner {
+            if endpoint.config.enabled {
+                await endpoint.swap(to: winnerPath, allowUnverified: allowUnverified)
+            } else {
+                await endpoint.enable(
+                    modelPath: winnerPath,
+                    port: endpoint.config.port,
+                    allowUnverified: allowUnverified
+                )
+            }
+            if let lastError = endpoint.lastError {
+                errorText = lastError
+                return
+            }
+        }
+
+        onPromoted(winnerPath)
+        dismiss()
     }
 }

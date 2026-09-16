@@ -73,6 +73,7 @@
 		26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26SCREF002 /* WorkbenchAPISubprocessTests.swift */; };
 		26CFBL001 /* ContractFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26CFREF001 /* ContractFixtureTests.swift */; };
 		26WQBL002 /* WebConvertQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26WQREF002 /* WebConvertQueueTests.swift */; };
+		26PWBL001 /* PromoteWinnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26PWREF001 /* PromoteWinnerTests.swift */; };
 		24BBLD021 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
 		24BBLD025 /* LibraryDomainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF01F /* LibraryDomainTests.swift */; };
 		24BBLD026 /* ModelLibraryBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF020 /* ModelLibraryBuilder.swift */; };
@@ -288,6 +289,7 @@
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
 		26CFREF001 /* ContractFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractFixtureTests.swift; sourceTree = "<group>"; };
 		26WQREF002 /* WebConvertQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebConvertQueueTests.swift; sourceTree = "<group>"; };
+		26PWREF001 /* PromoteWinnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromoteWinnerTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -459,6 +461,7 @@
 				26SCREF002 /* WorkbenchAPISubprocessTests.swift */,
 				26CFREF001 /* ContractFixtureTests.swift */,
 				26WQREF002 /* WebConvertQueueTests.swift */,
+				26PWREF001 /* PromoteWinnerTests.swift */,
 				27TST001 /* QuarantineParityTests.swift */,
 				27TST002 /* JSONStoreTests.swift */,
 				27TST003 /* JSONCTolerantTests.swift */,
@@ -744,6 +747,7 @@
 				26SCBL002 /* WorkbenchAPISubprocessTests.swift in Sources */,
 				26CFBL001 /* ContractFixtureTests.swift in Sources */,
 				26WQBL002 /* WebConvertQueueTests.swift in Sources */,
+				26PWBL001 /* PromoteWinnerTests.swift in Sources */,
 				27ABCD000000000000000003 /* AppRouteTests.swift in Sources */,
 				27TSTB01 /* QuarantineParityTests.swift in Sources */,
 				27TSTB02 /* JSONStoreTests.swift in Sources */,

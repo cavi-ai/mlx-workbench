@@ -96,7 +96,7 @@ created. It does not delete or quarantine model data.
 | **Discover** | Hub candidates by role via the agent's scout |
 | **Prepare** | Preview/confirm conversion; completed outputs pass through the **Conversion Quality Gate** (canary suite on an ephemeral loopback server) before they are marked verified |
 | **Run** | Preview/confirm serving with a live **memory-fit verdict** (fits/tight/won't-fit + suggested context); hosts the **Always-on Endpoint** card |
-| **Compare** | **Measured comparisons**: replay built-in or imported prompt sets across variants; per-prompt output diffs; measured tok/s/TTFT feed recommendations |
+| **Compare** | **Measured comparisons**: replay built-in or imported prompt sets across variants; per-prompt output diffs; measured tok/s/TTFT feed recommendations; **Promote winner** marks the fastest variant preferred (persisted), optionally makes it the always-on endpoint, and links onward to wiring and loser reclaim |
 | **Activity** | Conversion receipts, log tails, server table |
 | **Duplicates** | Duplicate groups plus the **Disk Pressure Advisor** (stale / superseded / cross-root reclaim via batched quarantine; HF-cache prune via doctor) |
 | **Wire** | mlx-agent wiring plus **cross-client wiring** (opencode, Continue, Zed, Aider — atomic writes with backup and rollback; LM Studio/Ollama advisory) |

@@ -60,6 +60,12 @@ from `mlx-agent` at runtime.
   replays a prompt set against selected ready variants (one at a time, via
   the shared `ServeProbe` harness), persists runs, and feeds measured
   tok/s/TTFT into the RecommendationEngine as local benchmark evidence.
+  **Promote winner** (on a completed run) chains the verdict:
+  `AppHost.setPreferredModel` persists the winner as the use-case preference
+  (`recommendation-preferences.json`), optionally enables/swaps the
+  Always-on Endpoint (verified gating kept), and links onward to the Wire
+  and Duplicates tabs — wiring and reclaim keep their own preview/confirm
+  flows.
   Samples also capture `prompt_tokens` (prefill speed = prompt tokens over
   TTFT, always labeled an estimate) and tool calls (builtin "Tool calling"
   set offers `PromptToolSpec`s; streamed `tool_calls` are counted and their

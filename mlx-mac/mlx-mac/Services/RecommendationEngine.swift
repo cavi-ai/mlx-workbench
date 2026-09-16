@@ -43,7 +43,7 @@ struct RecommendationEvidence: Equatable, Hashable {
     let isHint: Bool
 }
 
-struct RecommendationPreferences: Equatable, Hashable {
+struct RecommendationPreferences: Equatable, Hashable, Codable {
     let speedWeight: Int
     let qualityWeight: Int
     let hiddenModelIDs: Set<String>
