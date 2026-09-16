@@ -49,6 +49,7 @@ struct ServeView: View {
     @State private var portText = ""
     @State private var contextText = String(FitAdvisor.defaultContextTokens)
     @State private var endpointPortText = ""
+    @State private var newSlotRole: UseCase?
     @State private var showLoginItemPreview = false
     @State private var loginItemMessage: String?
     @State private var loginItemMessageIsError = false
@@ -93,7 +94,7 @@ struct ServeView: View {
         }
         .onAppear {
             if endpointPortText.isEmpty {
-                endpointPortText = String(appHost.endpoint.config.port)
+                endpointPortText = String(suggestedPort)
             }
         }
     }
@@ -155,47 +156,41 @@ struct ServeView: View {
         }
     }
 
-    // MARK: - Always-on endpoint
+    // MARK: - Endpoints (fleet, spec 09 P2)
+
+    /// Smallest port from the default that no slot claims yet.
+    private var suggestedPort: Int {
+        var candidate = EndpointConfig.defaultPort
+        let used = Set(endpoint.fleet.slots.map(\.port))
+        while used.contains(candidate) { candidate += 1 }
+        return candidate
+    }
 
     private var endpointSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionTitle(text: "Always-on endpoint")
-            Text("Keep the selected model serving on a stable loopback port, across restarts and model swaps. Clients wired in Wire keep working.")
+            HStack {
+                SectionTitle(text: "Endpoints")
+                Spacer()
+                Text("\(endpoint.fleet.slots.count)/\(EndpointFleetConfig.maxSlots)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Text("Keep models serving on stable loopback ports — one model per endpoint, across restarts and swaps. Clients wired in Wire keep working.")
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            HStack {
-                StatusPill(state: endpoint.config.enabled ? "enabled" : "disabled")
-                Text(endpoint.state.summary).font(.callout)
-                Spacer()
-                if endpoint.restartAttempts > 0 && endpoint.config.enabled {
-                    Text("\(endpoint.restartAttempts) restart(s)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            if case .modelMismatch = endpoint.state {
-                Button("Swap to configured model") {
-                    Task { await endpoint.swap(to: endpoint.config.modelPath, allowUnverified: true) }
-                }
-                .buttonStyle(.bordered)
-            }
-
-            if !endpoint.config.enabled {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: WorkbenchSpacing.xs) { endpointEnableControls }
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { endpointEnableControls }
-                }
+            if endpoint.fleet.slots.isEmpty {
+                Text("No endpoints yet. Add one for the selected model.")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
             } else {
-                HStack(spacing: 10) {
-                    Button("Disable endpoint") {
-                        Task { await endpoint.disable() }
-                    }
-                    loginItemControls
+                ForEach(endpoint.fleet.slots) { slot in
+                    slotCard(slot)
                 }
-                .buttonStyle(.bordered)
             }
+
+            addEndpointControls
+            loginItemSection
 
             ErrorBanner(text: endpoint.lastError)
             ErrorBanner(text: endpoint.persistenceError)
@@ -208,9 +203,160 @@ struct ServeView: View {
         .formSection {}
     }
 
-    private var loginItemControls: some View {
+    private func slotCard(_ slot: EndpointSlot) -> some View {
+        let slotState = endpoint.slotStates[slot.id] ?? .disabled
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                StatusPill(state: slotStateLabel(slotState, enabled: slot.enabled))
+                Text(URL(fileURLWithPath: slot.modelPath).lastPathComponent)
+                    .font(.headline)
+                    .lineLimit(1)
+                if let role = slot.role {
+                    Text(role.title)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                Text(":\(slot.port)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                slotFitChip(slot)
+                let attempts = endpoint.slotRestartAttempts[slot.id] ?? 0
+                if attempts > 0 {
+                    Text("\(attempts) restart(s)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            Text(slotState.summary)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            HStack(spacing: 10) {
+                if case .modelMismatch = slotState {
+                    Button("Swap to configured model") {
+                        Task { await endpoint.swapSlot(id: slot.id, to: slot.modelPath, allowUnverified: true) }
+                    }
+                }
+                Button(slot.enabled ? "Disable" : "Enable") {
+                    Task { await endpoint.setSlotEnabled(id: slot.id, !slot.enabled) }
+                }
+                rolePicker(slot)
+                Spacer()
+                Button("Remove") { Task { await endpoint.removeSlot(id: slot.id) } }
+                    .foregroundColor(WorkbenchColor.systemRed)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(WorkbenchSpacing.sm)
+        .background(WorkbenchColor.alloyCanvas)
+        .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+    }
+
+    private func slotStateLabel(_ state: EndpointState, enabled: Bool) -> String {
+        guard enabled else { return "disabled" }
+        switch state {
+        case .running: return "running"
+        case .starting, .waitingForServer: return "starting"
+        case .degraded: return "degraded"
+        case .modelMismatch: return "mismatch"
+        case .disabled: return "disabled"
+        }
+    }
+
+    @ViewBuilder
+    private func slotFitChip(_ slot: EndpointSlot) -> some View {
+        if let verdict = slotFitVerdict(slot) {
+            Image(systemName: fitIcon(verdict))
+                .foregroundColor(fitColor(verdict))
+                .help(verdict.summary)
+        }
+    }
+
+    private func slotFitVerdict(_ slot: EndpointSlot) -> FitVerdict? {
+        guard !slot.modelPath.isEmpty else { return nil }
+        let model = appHost.librarySnapshot?.models.first(where: {
+            $0.item.path == slot.modelPath || $0.outputPaths.contains(slot.modelPath)
+        })
+        return FitAdvisor.verdict(
+            modelBytes: model.flatMap { $0.item.bytes > 0 ? $0.item.bytes : nil },
+            contextTokens: FitAdvisor.defaultContextTokens,
+            parameters: model?.item.parameters,
+            hardware: appHost.hardwareProfile,
+            memory: MemorySnapshot.probe(),
+            reserveBytes: Int64(appHost.config.fitReserveGB * 1_000_000_000)
+        )
+    }
+
+    private func rolePicker(_ slot: EndpointSlot) -> some View {
+        Picker("Role", selection: Binding(
+            get: { slot.role },
+            set: { newRole in
+                Task { await endpoint.updateSlot(id: slot.id, modelPath: slot.modelPath, port: slot.port, role: newRole) }
+            }
+        )) {
+            Text("Unassigned").tag(UseCase?.none)
+            ForEach(UseCase.allCases) { role in
+                Text(role.title).tag(UseCase?.some(role))
+            }
+        }
+        .labelsHidden()
+        .frame(width: 120)
+    }
+
+    @ViewBuilder
+    private var addEndpointControls: some View {
+        if endpoint.fleet.slots.count >= EndpointFleetConfig.maxSlots {
+            Text("Endpoint cap reached (\(EndpointFleetConfig.maxSlots)). Remove one to add another.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { addEndpointFields }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { addEndpointFields }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var addEndpointFields: some View {
+        TextField("Port", text: $endpointPortText)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 90)
+        Picker("Role", selection: $newSlotRole) {
+            Text("Unassigned").tag(UseCase?.none)
+            ForEach(UseCase.allCases) { role in
+                Text(role.title).tag(UseCase?.some(role))
+            }
+        }
+        .labelsHidden()
+        .frame(width: 120)
+        Button("Add endpoint for selected model") { addEndpoint(allowUnverified: false) }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.fluxTeal)
+            .disabled(selectedModel == nil)
+        Button("Add anyway (unverified)") { addEndpoint(allowUnverified: true) }
+            .buttonStyle(.bordered)
+            .disabled(selectedModel == nil)
+            .foregroundColor(WorkbenchColor.thermalAmber)
+    }
+
+    private func addEndpoint(allowUnverified: Bool) {
+        guard let model = selectedModel else { return }
+        Task {
+            let port = Int(endpointPortText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? suggestedPort
+            await endpoint.addSlot(
+                modelPath: model.item.path,
+                port: port,
+                role: newSlotRole,
+                allowUnverified: allowUnverified
+            )
+        }
+    }
+
+    private var loginItemSection: some View {
         HStack(spacing: 10) {
-            if appHost.endpoint.config.installedAtLogin {
+            if appHost.endpoint.fleet.installedAtLogin {
                 Button("Remove login item") {
                     do {
                         try LaunchAgentManager().uninstall()
@@ -226,10 +372,13 @@ struct ServeView: View {
                 Button("Install login item…") { showLoginItemPreview = true }
             }
         }
+        .buttonStyle(.bordered)
         .sheet(isPresented: $showLoginItemPreview) {
             loginItemPreviewSheet
         }
     }
+
+    private var loginItemControls: some View { loginItemSection }
 
     private var loginItemPreviewSheet: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -376,31 +525,6 @@ struct ServeView: View {
             Spacer()
         }
         .font(WorkbenchTypography.body)
-    }
-
-    @ViewBuilder
-    private var endpointEnableControls: some View {
-        TextField("Port", text: $endpointPortText)
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 90)
-        Button("Enable for selected model") {
-            Task {
-                guard let model = selectedModel else { return }
-                await endpoint.enable(modelPath: model.item.path, portText: endpointPortText)
-            }
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(WorkbenchColor.fluxTeal)
-        .disabled(selectedModel == nil)
-        Button("Enable anyway (unverified)") {
-            Task {
-                guard let model = selectedModel else { return }
-                await endpoint.enable(modelPath: model.item.path, portText: endpointPortText, allowUnverified: true)
-            }
-        }
-        .buttonStyle(.bordered)
-        .disabled(selectedModel == nil)
-        .foregroundColor(WorkbenchColor.thermalAmber)
     }
 
     @ViewBuilder

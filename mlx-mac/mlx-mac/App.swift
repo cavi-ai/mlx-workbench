@@ -43,7 +43,7 @@ struct MlxWorkbenchApp: App {
         Settings {
             SettingsView(appHost: appHost)
         }
-        MenuBarExtra("mlx-workbench", systemImage: EndpointIcon.name(for: appHost.endpoint.state)) {
+        MenuBarExtra("mlx-workbench", systemImage: EndpointIcon.name(forStates: appHost.endpoint.fleet.slots.filter(\.enabled).compactMap { appHost.endpoint.slotStates[$0.id] })) {
             MenuBarView(appHost: appHost)
         }
         .menuBarExtraStyle(.menu)

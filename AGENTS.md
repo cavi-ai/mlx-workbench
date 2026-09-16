@@ -94,11 +94,13 @@ from `mlx-agent` at runtime.
   `endpoint-fleet.json` (migrated one-time from the legacy
   `endpoint-config.json`, which stays read-only), one reconcile pass over
   all enabled slots, per-slot crash guards. The single-slot API is a shim
-  over slot 0; slot APIs (`addSlot`/`updateSlot`/`setSlotEnabled`/
-  `swapSlot`/`removeSlot`) await the P2 fleet UI. `LaunchAgentManager`
-  optionally installs a RunAtLoad login item (no KeepAlive — the app's
-  supervisor reconciles; receipts stay authoritative). A `MenuBarExtra`
-  reports endpoint state and start/stop actions.
+  over slot 0. The Run tab's **Endpoints** section (spec 09 P2) lists the
+  slots with per-slot status/restarts/fit chip, enable/disable, role picker,
+  remove, and an "Add endpoint" flow (suggested next-free port, verified
+  gating with explicit unverified override, cap 4). The menu bar aggregates
+  ("N of M endpoints running", worst-state icon, per-slot start/stop).
+  `LaunchAgentManager` optionally installs a RunAtLoad login item (no
+  KeepAlive — the app's supervisor reconciles; receipts stay authoritative).
 - The Duplicates tab hosts the **Disk Pressure Advisor**: `ReclaimAdvisor`
   ranks reclaim opportunities (stale per `UsageTracker` evidence, superseded
   by verified siblings, cross-root duplicates) and `ReclaimCoordinator`
