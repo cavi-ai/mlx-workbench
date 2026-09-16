@@ -173,8 +173,12 @@ final class EndpointSupervisorTests: XCTestCase {
 
         XCTAssertEqual(supervisor.state, .disabled)
         XCTAssertEqual(lifecycle.events, ["stop:8766"])
-        let persisted = try JSONStore<EndpointConfig>(fileURL: storeURL).load()
-        XCTAssertEqual(persisted.first?.enabled, false)
+        // Persistence moved to the fleet store in spec 09 P1; the legacy
+        // endpoint-config.json is now a read-only migration source.
+        let fleetURL = storeURL.deletingLastPathComponent()
+            .appendingPathComponent("endpoint-fleet.json")
+        let persisted = try JSONStore<EndpointFleetConfig>(fileURL: fleetURL).load()
+        XCTAssertEqual(persisted.first?.slots.first?.enabled, false)
     }
 
     // MARK: - LaunchAgentManager
@@ -271,68 +275,6 @@ final class EndpointSupervisorTests: XCTestCase {
     }
 
     private enum StubError: Error { case offline }
-}
-
-/// A mutable fake serve world: start adds a running server (unless the run
-/// is configured to crash), stop removes it, status reports the truth.
-private final class FakeServeWorld: @unchecked Sendable {
-    private let lock = NSLock()
-    private var servers: [ServerInfo] = []
-    var recorder: LifecycleRecorder?
-    /// When false, started servers vanish immediately (crash-loop scenario).
-    var survives = true
-    var statusError: Error?
-
-    func preload(repo: String, port: Int) {
-        lock.lock()
-        servers.append(ServerInfo(repo: repo, runtime: "mlx", port: port, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "r"))
-        lock.unlock()
-    }
-
-    func status() throws -> [ServerInfo] {
-        if let statusError { throw statusError }
-        lock.lock()
-        defer { lock.unlock() }
-        return servers
-    }
-
-    var lifecycle: ServeLifecycle {
-        ServeLifecycle(
-            preview: { modelPath, port in
-                self.recorder?.record("preview:\(modelPath):\(port)")
-                return "hash-1"
-            },
-            start: { modelPath, port, hash in
-                self.recorder?.record("start:\(modelPath):\(port):\(hash)")
-                self.lock.lock()
-                if self.survives {
-                    self.servers.append(ServerInfo(repo: modelPath, runtime: "mlx", port: port, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "r"))
-                }
-                self.lock.unlock()
-            },
-            stop: { port in
-                self.recorder?.record("stop:\(port)")
-                self.lock.lock()
-                self.servers.removeAll { $0.port == port }
-                self.lock.unlock()
-            }
-        )
-    }
-}
-
-private final class LifecycleRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var recorded: [String] = []
-    var events: [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return recorded
-    }
-    func record(_ event: String) {
-        lock.lock()
-        recorded.append(event)
-        lock.unlock()
-    }
 }
 
 private final class InvocationRecorder: @unchecked Sendable {

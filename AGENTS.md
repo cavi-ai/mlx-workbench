@@ -90,9 +90,15 @@ from `mlx-agent` at runtime.
   chosen verified model serving on a stable loopback port by reconciling
   desired state against authoritative serve status (crash-loop guarded;
   enable/swap require verified models unless explicitly overridden).
-  `LaunchAgentManager` optionally installs a RunAtLoad login item (no
-  KeepAlive — the app's supervisor reconciles; receipts stay authoritative).
-  A `MenuBarExtra` reports endpoint state and start/stop actions.
+  Internally it is fleet-shaped (spec 09 P1): `EndpointFleetConfig` slots in
+  `endpoint-fleet.json` (migrated one-time from the legacy
+  `endpoint-config.json`, which stays read-only), one reconcile pass over
+  all enabled slots, per-slot crash guards. The single-slot API is a shim
+  over slot 0; slot APIs (`addSlot`/`updateSlot`/`setSlotEnabled`/
+  `swapSlot`/`removeSlot`) await the P2 fleet UI. `LaunchAgentManager`
+  optionally installs a RunAtLoad login item (no KeepAlive — the app's
+  supervisor reconciles; receipts stay authoritative). A `MenuBarExtra`
+  reports endpoint state and start/stop actions.
 - The Duplicates tab hosts the **Disk Pressure Advisor**: `ReclaimAdvisor`
   ranks reclaim opportunities (stale per `UsageTracker` evidence, superseded
   by verified siblings, cross-root duplicates) and `ReclaimCoordinator`

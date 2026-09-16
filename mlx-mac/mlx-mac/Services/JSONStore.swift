@@ -13,6 +13,9 @@ final class JSONStore<Value: Codable> {
     private let replaceItem: (URL, URL) throws -> Void
     private let mutationLock = NSLock()
 
+    /// The on-disk location, for stores that derive sibling files.
+    var url: URL { fileURL }
+
     init(fileURL: URL, fileManager: FileManager = .default) {
         self.fileURL = fileURL
         self.fileManager = fileManager
