@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "gguf_roots": ["/fixtures/gguf"],
+  "mlx_roots": ["/fixtures/mlx"],
+  "output_dir": "/fixtures/out",
+  "mlx_agent_path": "",
+  "quarantine_dir": "/fixtures/quarantine",
+  "q_bits": 8,
+  "signatures": false,
+  "host": "127.0.0.1",
+  "port": 8765,
+  "verification_enabled": false,
+  "watch_enabled": false,
+  "fit_reserve_gb": 8,
+  "reclaim_stale_days": 30,
+  "comparison_max_tokens": 256
+}

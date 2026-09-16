@@ -25,6 +25,10 @@ from `mlx-agent` at runtime.
   it does not manage (e.g. the native app's premium toggles), and the web
   Settings save overlays posted fields onto the loaded config so a web save
   never strips native-app keys. Keep that invariant.
+- `tests/fixtures/` is the shared contract-fixture set consumed by BOTH the
+  Python suite (`tests/test_contract_fixtures.py`) and the XCTest suite
+  (`ScanContractTests`, `WorkbenchAPISubprocessTests`, `ContractFixtureTests`).
+  A fixture change must keep both suites green; see `tests/fixtures/README.md`.
 - `tests/` contains unit and release-doc coverage.
 - `mlx-mac/` is the native SwiftUI app (Xcode project, explicit file list in
   `project.pbxproj` — register new sources there). `make test-swift` runs its

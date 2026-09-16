@@ -30,9 +30,14 @@ final class ScanContractTests: XCTestCase {
     }
 
     private func fixture(named name: String) -> [String: Any] {
+        // Shared contract fixtures live at the repo root so the Python
+        // suite consumes the same files; see tests/fixtures/README.md.
         let directory = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures", isDirectory: true)
+            .deletingLastPathComponent()  // mlx-macTests
+            .deletingLastPathComponent()  // mlx-mac
+            .deletingLastPathComponent()  // repo root
+            .appendingPathComponent("tests", isDirectory: true)
+            .appendingPathComponent("fixtures", isDirectory: true)
         let url = directory.appendingPathComponent(name).appendingPathExtension("json")
         let data = try! Data(contentsOf: url)
         return try! JSONSerialization.jsonObject(with: data) as! [String: Any]

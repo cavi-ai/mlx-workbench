@@ -1,0 +1,2 @@
+{"bytes": 1024, "from": "/fixtures/gguf/older.gguf", "moved_at": "2026-08-01T10:00:00+00:00", "to": "/fixtures/quarantine/20260801T100000Z-older.gguf"}
+{"bytes": 2048, "from": "/fixtures/gguf/newer.gguf", "moved_at": "2026-08-02T11:00:00+00:00", "to": "/fixtures/quarantine/20260802T110000Z-newer.gguf"}
