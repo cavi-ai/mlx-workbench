@@ -60,10 +60,33 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(config.ConfigError):
             config.load(self.path)
 
-    def test_unknown_keys_are_dropped(self):
+    def test_unknown_keys_are_preserved(self):
         saved = config.save({"surprise": True}, self.path)
-        self.assertNotIn("surprise", saved)
+        self.assertEqual(saved["surprise"], True)
         self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")), saved)
+        self.assertEqual(config.load(self.path)["surprise"], True)
+
+    def test_native_app_premium_keys_survive_a_web_save(self):
+        premium = {
+            "verification_enabled": False,
+            "watch_enabled": False,
+            "fit_reserve_gb": 8,
+            "reclaim_stale_days": 30,
+            "comparison_max_tokens": 256,
+        }
+        original = dict(premium)
+        original["q_bits"] = 8
+        config.save(original, self.path)
+        # What _api_config_post does: overlay the posted fields on the
+        # current loaded config, then save.
+        combined = config.load(self.path)
+        combined.update({"port": 9100})
+        saved = config.save(combined, self.path)
+        for key, value in premium.items():
+            self.assertEqual(saved[key], value)
+        reloaded = config.load(self.path)
+        for key, value in premium.items():
+            self.assertEqual(reloaded[key], value)
 
     def test_scan_roots_falls_back_to_discovery(self):
         self.assertEqual(

@@ -17,7 +17,14 @@ from `mlx-agent` at runtime.
 
 - `vendor/mlx-agent` is a git submodule used as the execution engine.
 - `scripts/mlx-workbench` is the launcher.
-- `mlx_workbench/` is the application package.
+- `mlx_workbench/` is the application package. The web UI is scoped to the
+  core loop (Models / Convert / Duplicates / Scout / Doctor / Serve /
+  Training Studio / Compare Conversions / Model Arch / Jobs / Settings);
+  Adopt, Wire, and the other lifecycle surfaces live in the native app.
+- The shared `config.json` contract: `mlx_workbench/config.py` preserves keys
+  it does not manage (e.g. the native app's premium toggles), and the web
+  Settings save overlays posted fields onto the loaded config so a web save
+  never strips native-app keys. Keep that invariant.
 - `tests/` contains unit and release-doc coverage.
 - `mlx-mac/` is the native SwiftUI app (Xcode project, explicit file list in
   `project.pbxproj` — register new sources there). `make test-swift` runs its

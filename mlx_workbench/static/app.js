@@ -2,21 +2,6 @@
 
 const TOKEN = document.querySelector('meta[name="mlx-token"]').content;
 
-// Tab name mappings
-const TAB_LABELS = {
-  'scout': 'Scout',
-  'lmstudio': 'LM Studio',  
-  'training-studio': 'Training',
-  'model-arch': 'Model Arch',
-  'quant': 'Compare',
-  'doctor': 'Doctor',
-  'adopt': 'Adopt',
-  'wire': 'Wire',
-  'sloth': 'Sloth',
-  'train': 'Train',
-  'settings': 'Settings'
-};
-
 const PANELS = [
   'models', 'duplicates', 'convert', 'serve', 'jobs', 'settings', 'doctor', 'scout',
   'training-studio', 'quant', 'model-arch',
@@ -69,15 +54,6 @@ function element(tag, className, text) {
 
 function pill(status) {
   return MLXWorkbenchDOM.pill(document, status);
-}
-
-function showJson(node, data) {
-  node.hidden = false;
-  node.textContent = JSON.stringify(data, null, 2);
-}
-
-function tokenize(value) {
-  return MLXWorkbenchPayloads.tokenize(value);
 }
 
 function renderModels() {
@@ -207,6 +183,15 @@ function renderJobs(data) {
     return [detail.message || detail.code || 'Conversion queue recovery needs attention.', detail.remediation]
       .filter(Boolean).join(' ');
   });
+  if (data.errors) {
+    Object.keys(data.errors).forEach(function (name) {
+      const detail = data.errors[name] || {};
+      queueErrors.push(
+        ['Agent ' + name + ' status probe failed: ' + (detail.message || detail.code || 'unknown error'), detail.remediation]
+          .filter(Boolean).join(' ')
+      );
+    });
+  }
   queueErrorNode.textContent = queueErrors.join('\n');
   queueErrorNode.hidden = queueErrors.length === 0;
   const convertQueue = data.convert_queue || [];
@@ -534,15 +519,6 @@ async function confirmPlan() {
           hf_cache: $('doctor-hf').value.trim() || null,
         },
       });
-    } else if (state.pendingKind === 'wire') {
-      await api('/api/wire/apply', {
-        body: {
-          model: state.pending.model,
-          path: state.pending.path,
-          target: state.pending.target,
-          preview_hash: state.pending.preview_hash,
-        },
-      });
     } else if (state.pendingKind === 'lora') {
       await api('/api/lora/start', {
         body: {
@@ -568,8 +544,6 @@ async function confirmPlan() {
     if (kind === 'prune') {
       selectPanel('doctor');
       await runDoctor({ preventDefault: function () {}, target: $('doctor-form') });
-    } else if (kind === 'wire' || kind === 'adopt') {
-      notify('Done.');
     } else {
       state.logManual = false;
       selectPanel('jobs');
@@ -934,168 +908,6 @@ async function previewPrune() {
   }
 }
 
-async function runAdopt(event) {
-  event.preventDefault();
-  notify('');
-  try {
-    const data = await api('/api/adopt/start', {
-      body: {
-        role: $('adopt-role').value || null,
-        state: $('adopt-state').value.trim() || null,
-        fast: $('adopt-fast').checked,
-        offline: $('adopt-offline').checked,
-      },
-    });
-    showJson($('adopt-out'), data);
-    const pick = data.recommendation && data.recommendation.repo;
-    if (pick) {
-      $('wire-model').value = pick;
-      notify('Adopt finished. Recommendation loaded into Wire: ' + pick);
-    }
-  } catch (error) {
-    notify(error.message);
-  }
-}
-
-async function importFromLMStudio(event) {
-  event.preventDefault();
-  notify('');
-  const source = $('lmstudio-source').value.trim() || undefined;
-  const convert = $('lmstudio-convert').checked;
-  
-  try {
-    const data = await api('/api/lmstudio/import', { 
-      body: { source_dir: source, convert_immediately: convert } 
-    });
-    renderLMStudioResults(data);
-  } catch (error) {
-    notify(error.message);
-  }
-}
-async function connectSloth(event) {
-  event.preventDefault();
-  notify('');
-  const address = $('sloth-address').value.trim() || "http://localhost:3000";
-  
-  try {
-    const data = await api('/api/sloth/connect', { 
-      body: { address: address } 
-    });
-    renderSlothResults(data);
-  } catch (error) {
-    notify(error.message);
-  }
-}
-
-function renderSlothResults(data) {
-  const container = $('sloth-results');
-  
-  if (!data || !data.connected) {
-    container.innerHTML = '<p class="empty">Failed to connect to Sloth AI server.</p>';
-    return;
-  }
-  
-  let html = '<h3>Sloth Server Status</h3>';
-  html += '<table class="grid"><tbody>';
-  html += '<tr><td>Address</td><td>' + data.address + '</td></tr>';
-  html += '<tr><td>Status</td><td>' + (data.health && data.health.status || 'unknown') + '</td></tr>';
-  html += '<tr><td>Models Synced</td><td>' + (data.models_synced || 0) + '</td></tr>';
-  html += '</tbody></table>';
-  
-  if (data.health && data.health.version) {
-    html += '<p>Server version: ' + data.health.version + '</p>';
-  }
-  
-  if (data.models_synced > 0) {
-    html += '<p>Models are ready for distributed serving via Sloth AI.</p>';
-  }
-  
-  container.innerHTML = html;
-}
-
-
-function renderLMStudioResults(data) {
-  const container = $('lmstudio-results');
-  
-  if (!data || !data.models) {
-    container.innerHTML = '<p class="empty">No LM Studio models found.</p>';
-    return;
-  }
-  
-  const models = data.models;
-  let html = '<p>Found ' + models.length + ' model(s)</p>';
-  
-  if (models.length === 0) {
-    container.innerHTML = '<p class="empty">No models found in LM Studio directories.</p>';
-    return;
-  }
-  
-  html += '<table class="grid"><thead><tr><th>Name</th><th>Path</th><th>Size</th><th>Status</th></tr></thead><tbody>';
-  
-  models.forEach(function(model) {
-    html += '<tr class="clickable" data-path="' + model.path + '">';
-    html += '<td>' + model.name + '</td>';
-    html += '<td class="path">' + model.path + '</td>';
-    html += '<td class="num">' + bytes(model.size) + '</td>';
-    html += '<td><span class="pill pill-complete">Scan complete</span></td>';
-    html += '</tr>';
-  });
-  
-  html += '</tbody></table>';
-  
-  if (data.conversions) {
-    html += '<h3>Conversion Results</h3><table class="grid"><thead><tr><th>Input</th><th>Status</th></tr></thead><tbody>';
-    data.conversions.forEach(function(conv) {
-      html += '<tr>';
-      html += '<td>' + (conv.path || '—') + '</td>';
-      if (conv.success) {
-        html += '<td><span class="pill pill-complete">Success</span></td>';
-      } else {
-        html += '<td><span class="pill pill-incomplete">Failed</span></td>';
-      }
-      html += '</tr>';
-    });
-    html += '</tbody></table>';
-  }
-  
-  container.innerHTML = html;
-}
-
-
-async function previewWire(event) {
-  event.preventDefault();
-  notify('');
-  const model = $('wire-model').value.trim();
-  const path = $('wire-path').value.trim();
-  const target = $('wire-target').value;
-  if (!model || !path) {
-    notify('Model and config path are required.');
-    return;
-  }
-  try {
-    const data = await api('/api/wire/preview', {
-      body: { model: model, path: path, target: target },
-    });
-    const plan = data.plan || data.preview || data;
-    state.pending = {
-      model: model,
-      path: path,
-      target: target,
-      preview_hash: plan.preview_hash || (plan.preview && plan.preview.preview_hash),
-      raw: plan,
-    };
-    state.pendingKind = 'wire';
-    fillPlanDialog('Review wire apply', [
-      ['Model', model],
-      ['Target', target],
-      ['Path', path],
-      ['Preview hash', state.pending.preview_hash || '—'],
-    ], 'Applies a confirmation-gated config transaction. Receipt-owned files only.');
-  } catch (error) {
-    notify(error.message);
-  }
-}
-
 async function previewLora(event) {
   event.preventDefault();
   notify('');
@@ -1208,87 +1020,6 @@ async function previewServe(event) {
   }
 }
 
-async function getServeStats(event) {
-  event.preventDefault();
-  notify('');
-  const port = $('serve-stats-port').value;
-  
-  if (!port || port < 1024 || port > 65535) {
-    notify('Enter a valid port number (1024-65535).');
-    return;
-  }
-  
-  try {
-    const data = await api('/api/serve/metrics', { 
-      body: { port: Number(port) } 
-    });
-    renderServeStats(data);
-  } catch (error) {
-    notify(error.message);
-  }
-}
-
-function renderServeStats(data) {
-  const container = $('serve-metrics');
-  
-  if (!data || !data.metrics) {
-    container.innerHTML = '<p class="empty">No metrics available for this server.</p>';
-    return;
-  }
-  
-  const m = data.metrics;
-  let html = '<div class="metrics-grid">';
-  html += '<div class="metric-card"><h4>Performance</h4>';
-  html += '<dl><dt>Tokens/Sec</dt><dd>' + (m.tokens_per_sec || '—') + '</dd>';
-  html += '<dt>Batch Size</dt><dd>' + (m.batch_size || '—') + '</dd></dl></div>';
-  
-  html += '<div class="metric-card"><h4>Memory</h4>';
-  html += '<dl><dt>VRAM Used</dt><dd>' + (m.vram_used || '—') + '</dd>';
-  html += '<dt>VRAM Free</dt><dd>' + (m.vram_free || '—') + '</dd></dl></div>';
-  
-  html += '<div class="metric-card"><h4>Model</h4>';
-  html += '<dl><dt>Repo ID</dt><dd>' + (m.repo_id || '—') + '</dd>';
-  html += '<dt>Parameters</dt><dd>' + (m.params || '—') + '</dd></dl></div>';
-  
-  html += '<div class="metric-card"><h4>System</h4>';
-  html += '<dl><dt>CPU Temp</dt><dd>' + (m.cpu_temp || '—') + '</dd>';
-  html += '<dt>GPU Load</dt><dd>' + (m.gpu_load || '—') + '</dd></dl></div>';
-  
-  html += '</div>';
-  
-  if (data.history && data.history.length > 0) {
-    const table = $('serve-history');
-    table.innerHTML = '';
-    data.history.forEach(function(h) {
-      const row = document.createElement('tr');
-      row.innerHTML = '<td>' + h.port + '</td><td>' + (h.repo || '—') + '</td><td>' + (h.runtime || '—') + '</td>';
-      row.innerHTML += '<td class="num">' + (h.tokens_per_sec || '—') + '</td>';
-      row.innerHTML += '<td class="num">' + (h.vram_used || '—') + '</td>';
-      row.innerHTML += '<td>' + (h.status || 'unknown') + '</td>';
-      table.appendChild(row);
-    });
-  }
-  
-  container.innerHTML = html;
-}
-
-
-async function runCli(event) {
-  event.preventDefault();
-  notify('');
-  const argv = tokenize($('cli-argv').value);
-  if (!argv.length) {
-    notify('Enter argv tokens, for example: convert status');
-    return;
-  }
-  try {
-    const data = await api('/api/cli', { body: { argv: argv } });
-    showJson($('cli-out'), data);
-  } catch (error) {
-    notify(error.message);
-  }
-}
-
 async function visualizeArchitecture(event) {
   event.preventDefault();
   notify('');
@@ -1365,41 +1096,51 @@ async function profileQuantizations(event) {
 
 function renderQuantResults(data) {
   const container = $('quant-results');
+  container.textContent = '';
   if (!data || !data.profiles || !data.profiles.length) {
-    container.innerHTML = '<p class="empty">No profiling data available.</p>';
+    container.appendChild(element('p', 'empty', 'No profiling data available.'));
     return;
   }
-  
-  let html = '<div class="grid quant-grid">';
-  html += '<h3>Quantization Profiles</h3>';
-  
-  data.profiles.forEach(function (profile, index) {
-    html += '<div class="quant-card">';
-    html += '<h4>' + profile.target + '</h4>';
-    html += '<dl>';
-    html += '<dt>Source size</dt><dd>' + bytes(profile.source_bytes) + '</dd>';
-    html += '<dt>Destination</dt><dd>' + (profile.output || '—') + '</dd>';
-    html += '<dt>Preview</dt><dd>' + (profile.preview_hash ? 'Ready; confirmation required.' : '—') + '</dd>';
+
+  const grid = element('div', 'grid quant-grid');
+  grid.appendChild(element('h3', null, 'Quantization Profiles'));
+
+  data.profiles.forEach(function (profile) {
+    const card = element('div', 'quant-card');
+    card.appendChild(element('h4', null, profile.target));
+    const facts = element('dl');
+    facts.appendChild(element('dt', null, 'Source size'));
+    facts.appendChild(element('dd', null, bytes(profile.source_bytes)));
+    facts.appendChild(element('dt', null, 'Destination'));
+    facts.appendChild(element('dd', null, profile.output || '—'));
+    facts.appendChild(element('dt', null, 'Preview'));
+    facts.appendChild(element(
+      'dd', null, profile.preview_hash ? 'Ready; confirmation required.' : '—'
+    ));
     if (profile.command) {
-      html += '<dt>Command</dt><dd><code>' + profile.command.join(' ') + '</code></dd>';
+      facts.appendChild(element('dt', null, 'Command'));
+      const command = element('dd');
+      command.appendChild(element('code', null, profile.command.join(' ')));
+      facts.appendChild(command);
     }
-    html += '</dl>';
-    
+    card.appendChild(facts);
+
     if (profile.actions && profile.actions.length) {
-      html += '<div class="quant-actions">';
+      const actions = element('div', 'quant-actions');
       profile.actions.forEach(function (action) {
         if (action.type === 'convert') {
-          html += '<button class="quant-convert" data-path="' + (action.path || '') + '" ' +
-            'data-target="' + profile.target + '">' + action.label + '</button>';
+          const button = element('button', 'quant-convert', action.label);
+          button.dataset.path = action.path || '';
+          button.dataset.target = profile.target;
+          actions.appendChild(button);
         }
       });
-      html += '</div>';
+      card.appendChild(actions);
     }
-    html += '</div>';
+    grid.appendChild(card);
   });
-  
-  html += '</div>';
-  container.innerHTML = html;
+
+  container.appendChild(grid);
 }
 
 function fillSettings(data) {
@@ -1512,24 +1253,6 @@ function selectPanel(name) {
   if (name === 'serve') refreshJobs();
 }
 
-// Dropdown menu toggle
-document.getElementById('more-tabs-btn').addEventListener('click', function() {
-  const dropdown = document.querySelector('.more-dropdown');
-  dropdown.hidden = !dropdown.hidden;
-});
-
-// Close dropdown when clicking outside
-document.addEventListener('click', function(e) {
-  const moreMenu = document.querySelector('.more-menu');
-  if (moreMenu && !moreMenu.contains(e.target)) {
-    const dropdown = document.querySelector('.more-dropdown');
-    if (dropdown && !dropdown.hidden) {
-      dropdown.hidden = true;
-    }
-  }
-});
-
-
 async function scanDuplicates() {
   notify('');
   const panel = document.getElementById('panel-duplicates');
@@ -1614,12 +1337,6 @@ function renderDuplicateScan(dupes) {
   }
 }
 
-function convertSelectedModels() {
-  return queueSelectedModels();
-}
-
-
-
 function showModelDetails(path) {
   const modal = document.getElementById('model-details-modal');
   const title = document.getElementById('model-details-title');
@@ -1681,20 +1398,34 @@ function init() {
   on('scout-form', 'submit', runScout);
   on('doctor-form', 'submit', runDoctor);
   on('doctor-prune', 'click', previewPrune);
-  on('adopt-form', 'submit', runAdopt);
-  on('wire-form', 'submit', previewWire);
   on('lora-form', 'submit', previewLora);
   on('fuse-form', 'submit', previewFuse);
   on('serve-form', 'submit', previewServe);
   on('serve-refresh', 'click', refreshJobs);
-  on('serve-stats-form', 'submit', getServeStats);
-  on('sloth-form', 'submit', connectSloth);
-  on('lmstudio-form', 'submit', importFromLMStudio);
   on('quant-form', 'submit', profileQuantizations);
   on('arch-form', 'submit', visualizeArchitecture);
-  on('cli-form', 'submit', runCli);
   on('confirm', 'click', confirmPlan);
   on('cancel', 'click', closeDialog);
+  on('rescan-models', 'click', rescan);
+  on('scan-duplicates', 'click', scanDuplicates);
+  on('convert-selected', 'click', queueSelectedModels);
+
+  // Dropdown menu toggle
+  on('more-tabs-btn', 'click', function () {
+    const dropdown = document.querySelector('.more-dropdown');
+    if (dropdown) dropdown.hidden = !dropdown.hidden;
+  });
+
+  // Close dropdown when clicking outside
+  document.addEventListener('click', function (event) {
+    const moreMenu = document.querySelector('.more-menu');
+    if (moreMenu && !moreMenu.contains(event.target)) {
+      const dropdown = document.querySelector('.more-dropdown');
+      if (dropdown && !dropdown.hidden) {
+        dropdown.hidden = true;
+      }
+    }
+  });
 
   api('/api/config').then(function (data) {
     fillSettings(data);
@@ -1720,9 +1451,5 @@ function init() {
     setTimeout(function() { rescan(); }, 100);
   }).catch(function (error) { notify(error.message); });
 }
-
-  on('rescan-models', 'click', rescan);
-  on('scan-duplicates', 'click', scanDuplicates);
-  on('convert-selected', 'click', convertSelectedModels);
 
 init();

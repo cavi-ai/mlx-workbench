@@ -25,6 +25,13 @@ MAX_ROOTS = 32
 Q_BITS_CHOICES = (4, 8)
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
+# Keys this file manages. Anything else in the file (e.g. the native app's
+# premium toggles) is carried through untouched so a web Settings save never
+# strips keys written by another frontend.
+_KNOWN_FIELDS = frozenset(
+    _LIST_FIELDS + _STRING_FIELDS + _INT_FIELDS + _BOOL_FIELDS + ("schema_version",)
+)
+
 
 class ConfigError(ValueError):
     """The supplied configuration is not usable."""
@@ -150,6 +157,9 @@ def _coerce(value):
     if not merged["mlx_agent_path"]:
         merged["mlx_agent_path"] = discover_agent_path()
     merged["schema_version"] = SCHEMA_VERSION
+    for key, item in value.items():
+        if key not in _KNOWN_FIELDS:
+            merged[key] = item
     return merged
 
 

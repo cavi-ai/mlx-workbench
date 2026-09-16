@@ -355,6 +355,72 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(payload["error"]["code"], "invalid_config")
 
+    def test_config_post_preserves_keys_the_form_does_not_manage(self):
+        # The native app writes premium toggles into the same config file; a
+        # web Settings save must not strip them.
+        current = config.load(self.config_path)
+        current["verification_enabled"] = False
+        current["fit_reserve_gb"] = 8
+        config.save(current, self.config_path)
+
+        status, payload = self._request("/api/config", "POST", {"port": 9100})
+
+        self.assertEqual(status, 200)
+        saved = payload["data"]["config"]
+        self.assertEqual(saved["port"], 9100)
+        self.assertEqual(saved["verification_enabled"], False)
+        self.assertEqual(saved["fit_reserve_gb"], 8)
+        on_disk = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["verification_enabled"], False)
+        self.assertEqual(on_disk["fit_reserve_gb"], 8)
+
+    def test_unexpected_errors_become_a_classified_500(self):
+        original = bridge.agent_health
+        self.addCleanup(setattr, bridge, "agent_health", original)
+
+        def explode(agent_path):
+            raise OSError("disk went away")
+
+        bridge.agent_health = explode
+        quiet = lambda *args, **kwargs: None
+        original_print = server.traceback.print_exc
+        self.addCleanup(setattr, server.traceback, "print_exc", original_print)
+        server.traceback.print_exc = quiet
+
+        status, payload = self._request("/api/config")
+
+        self.assertEqual(status, 500)
+        self.assertEqual(payload["error"]["code"], "internal_error")
+
+    def test_jobs_surfaces_agent_probe_failures(self):
+        def runner(command, timeout):
+            if "fuse" in command:
+                return {
+                    "returncode": 1,
+                    "stdout": envelope(status="error", error={
+                        "code": "fuse_broken",
+                        "message": "fuse exploded",
+                        "remediation": "Reinstall the agent.",
+                    }),
+                    "stderr": "",
+                }
+            return self._runner(command, timeout)
+
+        self.httpd.app.runner = runner
+
+        status, payload = self._request("/api/jobs")
+
+        self.assertEqual(status, 200)
+        errors = payload["data"]["errors"]
+        self.assertEqual(errors["fuse"]["code"], "fuse_broken")
+        self.assertNotIn("jobs", errors)
+
+    def test_jobs_omit_errors_when_probes_succeed(self):
+        status, payload = self._request("/api/jobs")
+
+        self.assertEqual(status, 200)
+        self.assertNotIn("errors", payload["data"])
+
     def test_scan_passes_configured_roots_to_the_cli(self):
         status, payload = self._request("/api/scan")
         self.assertEqual(status, 200)
@@ -391,22 +457,6 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["data"]["total_models"], 0)
         self.assertIn(str(self.models), self.commands[0])
-
-    def test_serve_metrics_route_does_not_pass_a_subprocess_runner(self):
-        calls = []
-        original = bridge.serve_metrics
-        self.addCleanup(setattr, bridge, "serve_metrics", original)
-
-        def metrics(agent_path, port, **kwargs):
-            calls.append((agent_path, port, kwargs))
-            return {"connected": False, "metrics": {}}
-
-        bridge.serve_metrics = metrics
-        status, payload = self._request("/api/serve/metrics", "POST", {"port": 8766})
-
-        self.assertEqual(status, 200)
-        self.assertFalse(payload["data"]["connected"])
-        self.assertEqual(calls, [(str(self.agent), 8766, {})])
 
     def test_serve_preview_forwards_a_local_path(self):
         calls = []
@@ -484,32 +534,6 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(calls, [(
             str(self.agent), None, "mlx_lm", "h", None,
             {"runner": self._runner, "path": "/models/mlx/qwen3-8b-mlx"},
-        )])
-
-    def test_sloth_route_forwards_configured_roots_and_runner(self):
-        calls = []
-        original = bridge.sloth_connect
-        self.addCleanup(setattr, bridge, "sloth_connect", original)
-
-        def connect(agent_path, address, **kwargs):
-            calls.append((agent_path, address, kwargs))
-            return {"connected": True, "models_synced": 0}
-
-        bridge.sloth_connect = connect
-        status, payload = self._request(
-            "/api/sloth/connect", "POST", {"address": "http://sloth.test"}
-        )
-
-        self.assertEqual(status, 200)
-        self.assertTrue(payload["data"]["connected"])
-        self.assertEqual(calls, [(
-            str(self.agent),
-            "http://sloth.test",
-            {
-                "gguf_roots": [str(self.models)],
-                "mlx_roots": [],
-                "runner": self._runner,
-            },
         )])
 
     def test_model_architecture_route_forwards_the_subprocess_runner(self):
@@ -925,19 +949,6 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(status, 500)
         self.assertEqual(payload["error"]["code"], "queue_write_failed")
-
-    def test_cli_runs_argv(self):
-        self.responses["stdout"] = envelope(data={"ok": True}, operation="discover")
-        status, payload = self._request("/api/cli", "POST", {"argv": ["discover", "--fast"]})
-        self.assertEqual(status, 200)
-        self.assertTrue(payload["data"]["ok"])
-        self.assertIn("discover", self.commands[0])
-        self.assertIn("--fast", self.commands[0])
-
-    def test_cli_rejects_empty_argv(self):
-        status, payload = self._request("/api/cli", "POST", {"argv": []})
-        self.assertEqual(status, 502)
-        self.assertEqual(payload["error"]["code"], "invalid_argv")
 
     def test_jobs_log_rejects_unknown_path(self):
         status, payload = self._request(

@@ -11,8 +11,8 @@ single subprocess boundary: the server invokes the pinned
 renders its result envelope. There are no Python imports from MLX Agent, and
 the two projects remain independently versioned.
 
-The UI server accepts loopback connections only. Commands such as Discover,
-Adopt, Doctor, Wire, and other Hub-backed operations may contact the Hugging
+The UI server accepts loopback connections only. Commands such as Scout
+discovery, Doctor, and other Hub-backed operations may contact the Hugging
 Face Hub; loopback binding is not a promise of network isolation.
 
 This documentation was generated for release {{RELEASE_TAG}} from commit

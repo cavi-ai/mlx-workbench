@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import threading
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -235,6 +236,14 @@ class Handler(BaseHTTPRequestHandler):
             )
         except config_module.ConfigError as error:
             status, content_type, body = _error("invalid_config", str(error), "Fix the field and save again.")
+        except Exception:  # last-resort envelope: never drop the connection
+            traceback.print_exc()
+            status, content_type, body = _error(
+                "internal_error",
+                "Unexpected server error.",
+                "Check the server log for the traceback and retry.",
+                500,
+            )
         self._send(status, content_type, body)
 
     def _route(self, method, route):
@@ -280,8 +289,13 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._body()
         if payload is None:
             return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        # Overlay the posted fields on the current config so keys this form
+        # does not manage (e.g. the native app's premium toggles) survive a
+        # web Settings save.
+        combined = dict(settings)
+        combined.update(payload)
         return _ok({
-            "config": self.app.save_config(payload),
+            "config": self.app.save_config(combined),
             "agent": bridge.agent_health(self.app.config()["mlx_agent_path"]),
             "runtime": deps_module.runtime_report(),
         })
@@ -443,57 +457,6 @@ class Handler(BaseHTTPRequestHandler):
             agent, preview_hash, hf_cache=hf_cache or None, runner=runner,
         ))
 
-    def _api_adopt_start(self, route, settings, agent, runner):
-        payload = self._body() or {}
-        if not isinstance(payload, dict):
-            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-        role = payload.get("role")
-        state = payload.get("state")
-        if role is not None and not isinstance(role, str):
-            return _error("invalid_body", "role must be a string.", "Pick a role.")
-        if state is not None and not isinstance(state, str):
-            return _error("invalid_body", "state must be a path string.", "Retry.")
-        return _ok(bridge.adopt_start(
-            agent,
-            role=role or None,
-            state=state or None,
-            fast=bool(payload.get("fast")),
-            offline=bool(payload.get("offline")),
-            runner=runner,
-        ))
-
-    def _api_adopt_status(self, route, settings, agent, runner):
-        payload = self._body() or {}
-        if not isinstance(payload, dict) or not isinstance(payload.get("state"), str):
-            return _error("invalid_body", "state path is required.", "Retry from the UI.")
-        return _ok(bridge.adopt_status(agent, payload["state"], runner=runner))
-
-    def _api_wire(self, route, settings, agent, runner):
-        payload = self._body()
-        if not isinstance(payload, dict):
-            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-        model = payload.get("model")
-        path = payload.get("path")
-        target = payload.get("target") or "mlx_lm"
-        if not isinstance(model, str) or not model.strip():
-            return _error("invalid_body", "model is required.", "Enter a repo id.")
-        if not isinstance(path, str) or not path.strip():
-            return _error("invalid_body", "path is required.", "Enter a config file path.")
-        if target not in ("ollama", "lmstudio", "mlx_lm", "mlx-vlm", "litellm"):
-            return _error("invalid_body", "unsupported wire target.", "Pick a target.")
-        if route.endswith("preview"):
-            return _ok(bridge.wire_preview(agent, model, path, target, runner=runner))
-        preview_hash = payload.get("preview_hash")
-        if not isinstance(preview_hash, str) or not preview_hash:
-            return _error(
-                "preview_required",
-                "Wire apply needs the hash from its preview.",
-                "Preview first, then confirm.",
-            )
-        return _ok(bridge.wire_apply(
-            agent, model, path, preview_hash, target, runner=runner,
-        ))
-
     def _api_lora(self, route, settings, agent, runner):
         payload = self._body()
         if not isinstance(payload, dict):
@@ -608,54 +571,11 @@ class Handler(BaseHTTPRequestHandler):
             return _error("invalid_body", "path is required.", "Enter model path.")
         return _ok(bridge.model_architecture(agent, path=path, runner=runner))
 
-    def _api_serve_metrics(self, route, settings, agent, runner):
-        payload = self._body()
-        if not isinstance(payload, dict):
-            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-        port = payload.get("port")
-        if not isinstance(port, int) or isinstance(port, bool):
-            return _error("invalid_body", "port is required.", "Enter a server port.")
-        return _ok(bridge.serve_metrics(agent, port))
-
     def _api_serve_stop(self, route, settings, agent, runner):
         payload = self._body()
         if not isinstance(payload, dict) or not isinstance(payload.get("port"), int):
             return _error("invalid_body", "port is required.", "Retry from the UI.")
         return _ok(bridge.serve_stop(agent, payload["port"], runner=runner))
-
-    def _api_sloth_connect(self, route, settings, agent, runner):
-        payload = self._body()
-        if not isinstance(payload, dict):
-            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-        address = payload.get("address")
-        if not isinstance(address, str):
-            return _error("invalid_body", "address is required.", "Enter a server address.")
-        return _ok(bridge.sloth_connect(
-            agent,
-            address=address or "http://localhost:3000",
-            gguf_roots=config_module.scan_roots(settings),
-            mlx_roots=settings["mlx_roots"],
-            runner=runner,
-        ))
-
-    def _api_cli(self, route, settings, agent, runner):
-        payload = self._body()
-        if not isinstance(payload, dict):
-            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-        argv = payload.get("argv")
-        return _ok(bridge.run_cli(agent, argv, runner=runner))
-
-    def _api_lmstudio_import(self, route, settings, agent, runner):
-        payload = self._body()
-        if not isinstance(payload, dict):
-            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
-        source = payload.get("source_dir")
-        if source is not None and not isinstance(source, str):
-            return _error("invalid_body", "source_dir must be a string.", "Retry.")
-        convert = payload.get("convert_immediately", True)
-        if not isinstance(convert, bool):
-            return _error("invalid_body", "convert_immediately must be a boolean.", "Retry.")
-        return _ok(bridge.lmstudio_import(agent, source_dir=source or None, convertImmediately=convert))
 
     def _api_quant_profile(self, route, settings, agent, runner):
         payload = self._body()
@@ -790,23 +710,15 @@ _API_ROUTES = {
     ("POST", "/api/doctor"): Handler._api_doctor,
     ("POST", "/api/doctor/prune/preview"): Handler._api_prune,
     ("POST", "/api/doctor/prune/confirm"): Handler._api_prune,
-    ("POST", "/api/adopt/start"): Handler._api_adopt_start,
-    ("POST", "/api/adopt/status"): Handler._api_adopt_status,
-    ("POST", "/api/wire/preview"): Handler._api_wire,
-    ("POST", "/api/wire/apply"): Handler._api_wire,
     ("POST", "/api/lora/preview"): Handler._api_lora,
     ("POST", "/api/lora/start"): Handler._api_lora,
     ("POST", "/api/fuse/preview"): Handler._api_fuse,
     ("POST", "/api/fuse/start"): Handler._api_fuse,
     ("POST", "/api/serve/preview"): Handler._api_serve,
     ("POST", "/api/serve/start"): Handler._api_serve,
-    ("POST", "/api/serve/metrics"): Handler._api_serve_metrics,
     ("POST", "/api/serve/stop"): Handler._api_serve_stop,
     ("POST", "/api/duplicates/scan"): Handler._api_duplicates_scan,
     ("POST", "/api/model/arch"): Handler._api_model_arch,
-    ("POST", "/api/sloth/connect"): Handler._api_sloth_connect,
-    ("POST", "/api/cli"): Handler._api_cli,
-    ("POST", "/api/lmstudio/import"): Handler._api_lmstudio_import,
     ("POST", "/api/quant/profile"): Handler._api_quant_profile,
 }
 

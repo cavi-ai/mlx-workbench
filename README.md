@@ -78,15 +78,17 @@ python3 scripts/mlx-workbench
 | **Models** | Local `.gguf` inventory via `convert scan`: pending, converted, companion, shard; multi-select queue |
 | **Convert** | HF-cache convert via `convert start --repo` (local cache only; never downloads) |
 | **Duplicates** | Exact vs variant groups; quarantine moves (never deletes) |
-| **Scout** | `discover` — Hub candidates by role (table + Serve/Wire shortcuts) |
-| **Adopt** | `adopt start` — durable role handoff |
-| **Wire** | `wire apply` — preview/confirm config transaction |
+| **Scout** | `discover` — Hub candidates by role (table + Serve shortcuts) |
 | **Doctor** | `doctor models` — findings + incomplete-cache prune |
 | **Serve** | Preview/confirm `serve start`; servers table with Stop |
-| **Train** | LoRA train + fuse (preview/confirm) |
+| **Training Studio** | LoRA train + fuse (preview/confirm) |
+| **Compare Conversions** | `quant profile` — quantization plan previews across target formats |
+| **Model Arch** | Scan-reported architecture metadata for one local GGUF |
 | **Jobs** | Convert / serve / lora / fuse receipts + log tail; workbench convert queue |
-| **Advanced** | Any mlx-agent argv (tokens only; `--json` added for you) |
 | **Settings** | Scan roots, output dir, agent path, quarantine, quantization |
+
+The web UI covers the core loop only. Adopt, Wire, and other lifecycle
+operations live in the native macOS app (`mlx-mac/`).
 
 ## Converting
 
