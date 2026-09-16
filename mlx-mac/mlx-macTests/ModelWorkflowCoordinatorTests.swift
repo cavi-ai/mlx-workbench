@@ -341,6 +341,62 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         XCTAssertEqual(state.serveState, .running)
     }
 
+    func testTerminalFailureNotifiesOnceAcrossReconciles() async {
+        let failedJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "failed")
+        let host = await makeHost(jobs: [failedJob])
+        let recorder = TerminalStateRecorder()
+        await MainActor.run {
+            host.modelWorkflow.onTerminalState = { recorder.states.append($0.state) }
+            host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1"))
+        }
+
+        await host.modelWorkflow.reconcile(snapshot: nil, jobs: [failedJob])
+        await host.modelWorkflow.reconcile(snapshot: nil, jobs: [failedJob])
+
+        XCTAssertEqual(recorder.states, [.failed])
+    }
+
+    func testVerificationResolutionNotifiesTheTerminalOutcome() async {
+        let host = await makeHost()
+        let recorder = TerminalStateRecorder()
+        let record = makeWorkflow(state: .verifying, receipt: "receipt-1", completedModelPath: "/Models/ready")
+
+        await MainActor.run {
+            host.modelWorkflow.onTerminalState = { recorder.states.append($0.state) }
+            host.modelWorkflow.restore(record)
+            host.modelWorkflow.resolveVerification(recordID: record.id, resolution: .passed(summary: "canary ok"))
+        }
+
+        XCTAssertEqual(recorder.states, [.verified])
+    }
+
+    func testVerificationFailureNotifiesOnceEvenWhenRepeated() async {
+        let host = await makeHost()
+        let recorder = TerminalStateRecorder()
+        let record = makeWorkflow(state: .verifying, receipt: "receipt-1", completedModelPath: "/Models/ready")
+
+        await MainActor.run {
+            host.modelWorkflow.onTerminalState = { recorder.states.append($0.state) }
+            host.modelWorkflow.restore(record)
+            host.modelWorkflow.resolveVerification(recordID: record.id, resolution: .failed(summary: "canary mismatch"))
+        }
+
+        XCTAssertEqual(recorder.states, [.verificationFailed])
+    }
+
+    func testRestoringATerminalRecordDoesNotNotify() async {
+        let host = await makeHost()
+        let recorder = TerminalStateRecorder()
+
+        await MainActor.run {
+            host.modelWorkflow.onTerminalState = { recorder.states.append($0.state) }
+            host.modelWorkflow.restore(makeWorkflow(state: .completed, receipt: "receipt-1", completedModelPath: "/Models/ready"))
+            host.modelWorkflow.restore(makeWorkflow(id: "old", state: .failed, receipt: "receipt-2"))
+        }
+
+        XCTAssertTrue(recorder.states.isEmpty)
+    }
+
     private func makeStore() -> ModelWorkflowStore {
         ModelWorkflowStore(fileURL: temporaryURL("workflows.json"))
     }
@@ -526,6 +582,10 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
 private actor FlagBox {
     private(set) var value = false
     func set(_ newValue: Bool) { value = newValue }
+}
+
+private final class TerminalStateRecorder {
+    var states: [ConversionWorkflowState] = []
 }
 
 @MainActor

@@ -200,6 +200,7 @@ class AppHost: ObservableObject {
         // Usage evidence: serve, verify, and measure all count as "used" for
         // the Disk Pressure Advisor's staleness detector.
         self.modelWorkflow.onServeStarted = { [weak self] path in self?.usage.record(path) }
+        self.modelWorkflow.onTerminalState = { record in AlertNotifier.post(workflowOutcome: record) }
         self.verification.onReport = { [weak self] report in self?.usage.record(report.modelPath) }
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
         self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }

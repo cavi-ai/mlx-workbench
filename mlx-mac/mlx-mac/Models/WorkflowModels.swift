@@ -13,6 +13,15 @@ enum ConversionWorkflowState: String, Codable, Equatable {
     case verified
     case verificationFailed
     case failed
+
+    /// States a workflow enters exactly once per attempt — the moments a
+    /// completion notification makes sense for.
+    var isTerminal: Bool {
+        switch self {
+        case .completed, .verified, .verificationFailed, .failed: return true
+        default: return false
+        }
+    }
 }
 
 /// Outcome handed back to the model workflow by the Conversion Quality Gate.

@@ -108,6 +108,11 @@ from `mlx-agent` at runtime.
   check; network failures stay silent) and macOS/MLX environment-drift
   alerts offering one-click re-verification of stale verified models.
   Alerts dedupe by fingerprint and persist snooze/mute state.
+- **Completion notifications**: `ModelWorkflowCoordinator.onTerminalState`
+  fires once when a workflow enters a terminal state (completed / verified /
+  verificationFailed / failed) and AppHost wires it to `AlertNotifier`
+  (Notification Center; silent when permission is denied). Restores and
+  launch-loads never notify — only live transitions.
 - `SetupCoordinator` provides the **first-launch Setup Assistant**: a guided
   sheet over the app's existing probes (agent health, runtime report,
   discovered roots) with the RuntimeInstaller for one-click runtime setup.
