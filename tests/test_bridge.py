@@ -2,7 +2,6 @@ import json
 import subprocess
 import sys
 import unittest
-from unittest import mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -209,24 +208,6 @@ class RunTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, "scan_contract_invalid")
 
-    def test_sloth_connect_rejects_malformed_inventory(self):
-        response = mock.MagicMock()
-        response.read.return_value = b'{"status":"ok"}'
-        malformed_scan = envelope(data={
-            "models": [{"path": "/models/a.gguf", "name": "a.gguf"}],
-            "totals": {"bytes": 1},
-        })
-        with mock.patch("urllib.request.urlopen") as urlopen, mock.patch.object(
-            bridge,
-            "_default_runner",
-            return_value={"returncode": 0, "stdout": malformed_scan, "stderr": ""},
-        ):
-            urlopen.return_value.__enter__.return_value = response
-            with self.assertRaises(bridge.BridgeError) as caught:
-                bridge.sloth_connect(str(self.root), address="http://sloth.test")
-
-        self.assertEqual(caught.exception.code, "scan_contract_invalid")
-
     def test_scan_rejects_missing_model_inventory_and_totals_bytes(self):
         for payload in (
             {"totals": {"bytes": 0}},
@@ -410,19 +391,10 @@ class RunTests(unittest.TestCase):
         recorder = Recorder(stdout=envelope(data={"plan": {"preview_hash": "a" * 64}}))
         bridge.doctor_prune_preview(str(self.root), runner=recorder)
         self.assertIn("--prune", recorder.commands[-1])
-        bridge.adopt_start(str(self.root), role="coding", runner=recorder)
-        self.assertEqual(recorder.commands[-1][2:4], ["adopt", "start"])
-        bridge.wire_preview(str(self.root), "org/m", "/cfg.json", runner=recorder)
-        self.assertIn("wire", recorder.commands[-1])
         bridge.lora_preview(str(self.root), "org/m", "/data", iters=5, runner=recorder)
         self.assertIn("lora", recorder.commands[-1])
         bridge.fuse_preview(str(self.root), "org/m", "/adapter", runner=recorder)
         self.assertIn("fuse", recorder.commands[-1])
-
-    def test_run_cli_rejects_shell_strings(self):
-        with self.assertRaises(bridge.BridgeError) as caught:
-            bridge.run_cli(str(self.root), [])
-        self.assertEqual(caught.exception.code, "invalid_argv")
 
     def test_error_envelope_becomes_bridge_error(self):
         recorder = Recorder(stdout=envelope(
@@ -489,6 +461,61 @@ class RunTests(unittest.TestCase):
 
         result = bridge.read_log(str(self.root), str(log), runner=dual)
         self.assertIn("phase one", result["text"])
+
+
+class AllJobListsTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        script = self.root / bridge.CLI_RELATIVE
+        script.parent.mkdir(parents=True)
+        script.write_text("", encoding="utf-8")
+
+    def _runner(self, failures=()):
+        def run(command, timeout):
+            for name in failures:
+                if name in command:
+                    return {
+                        "returncode": 1,
+                        "stdout": envelope(status="error", error={
+                            "code": "boom",
+                            "message": name + " exploded",
+                            "remediation": "Fix the agent.",
+                        }),
+                        "stderr": "",
+                    }
+            return {
+                "returncode": 0,
+                "stdout": envelope(data={"jobs": [{"id": 1}], "servers": [{"id": 2}]}),
+                "stderr": "",
+            }
+        return run
+
+    def test_successful_probes_have_no_errors_key(self):
+        result = bridge.all_job_lists(str(self.root), runner=self._runner())
+        self.assertNotIn("errors", result)
+        self.assertTrue(result["jobs"])
+        self.assertTrue(result["servers"])
+
+    def test_a_failed_probe_is_reported_not_swallowed(self):
+        result = bridge.all_job_lists(str(self.root), runner=self._runner(failures=("serve",)))
+        self.assertEqual(result["servers"], [])
+        self.assertEqual(result["errors"]["servers"]["code"], "boom")
+        self.assertEqual(result["errors"]["servers"]["remediation"], "Fix the agent.")
+        self.assertNotIn("jobs", result["errors"])
+        self.assertTrue(result["jobs"])
+
+    def test_all_probes_failing_keeps_the_payload_shape(self):
+        result = bridge.all_job_lists(
+            str(self.root),
+            runner=self._runner(failures=("convert", "serve", "lora", "fuse")),
+        )
+        self.assertEqual(result["jobs"], [])
+        self.assertEqual(result["servers"], [])
+        self.assertEqual(result["lora"], [])
+        self.assertEqual(result["fuse"], [])
+        self.assertEqual(sorted(result["errors"]), ["fuse", "jobs", "lora", "servers"])
 
 
 if __name__ == "__main__":

@@ -203,6 +203,10 @@ final class UpdateCoordinatorTests: XCTestCase {
         _ = try UpdateCoordinator.git(["-C", seed.path, "init", "-q", "-b", "main"])
         _ = try UpdateCoordinator.git(["-C", seed.path, "config", "user.email", "test@example.com"])
         _ = try UpdateCoordinator.git(["-C", seed.path, "config", "user.name", "Test"])
+        // Stay hermetic when the host's global config signs commits/tags:
+        // a signed lightweight tag becomes "fatal: no tag message?".
+        _ = try UpdateCoordinator.git(["-C", seed.path, "config", "commit.gpgSign", "false"])
+        _ = try UpdateCoordinator.git(["-C", seed.path, "config", "tag.gpgSign", "false"])
         try Data("one".utf8).write(to: seed.appendingPathComponent("tracked.txt"))
         _ = try UpdateCoordinator.git(["-C", seed.path, "add", "."])
         _ = try UpdateCoordinator.git(["-C", seed.path, "commit", "-q", "-m", "one"])

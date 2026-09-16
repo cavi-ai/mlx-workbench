@@ -17,7 +17,24 @@ from `mlx-agent` at runtime.
 
 - `vendor/mlx-agent` is a git submodule used as the execution engine.
 - `scripts/mlx-workbench` is the launcher.
-- `mlx_workbench/` is the application package.
+- `mlx_workbench/` is the application package. The web UI is scoped to the
+  core loop (Models / Convert / Duplicates / Scout / Doctor / Serve /
+  Training Studio / Compare Conversions / Model Arch / Jobs / Settings);
+  Adopt, Wire, and the other lifecycle surfaces live in the native app.
+- The shared `config.json` contract: `mlx_workbench/config.py` preserves keys
+  it does not manage (e.g. the native app's premium toggles), and the web
+  Settings save overlays posted fields onto the loaded config so a web save
+  never strips native-app keys. Keep that invariant.
+- `tests/fixtures/` is the shared contract-fixture set consumed by BOTH the
+  Python suite (`tests/test_contract_fixtures.py`) and the XCTest suite
+  (`ScanContractTests`, `WorkbenchAPISubprocessTests`, `ContractFixtureTests`).
+  A fixture change must keep both suites green; see `tests/fixtures/README.md`.
+- The web UI's durable convert queue (`convert-queue.json`, schema 1.1) has
+  exactly one writer: the web server. The native app reads it read-only via
+  `Services/WebConvertQueue.swift` and shows it in Jobs as "Web Queue" with
+  provenance; schema and path resolution mirror
+  `mlx_workbench/convert_queue.py` and are pinned by shared fixtures. Never
+  write to that file from the native app.
 - `tests/` contains unit and release-doc coverage.
 - `mlx-mac/` is the native SwiftUI app (Xcode project, explicit file list in
   `project.pbxproj` — register new sources there). `make test-swift` runs its
@@ -43,6 +60,12 @@ from `mlx-agent` at runtime.
   replays a prompt set against selected ready variants (one at a time, via
   the shared `ServeProbe` harness), persists runs, and feeds measured
   tok/s/TTFT into the RecommendationEngine as local benchmark evidence.
+  **Promote winner** (on a completed run) chains the verdict:
+  `AppHost.setPreferredModel` persists the winner as the use-case preference
+  (`recommendation-preferences.json`), optionally enables/swaps the
+  Always-on Endpoint (verified gating kept), and links onward to the Wire
+  and Duplicates tabs — wiring and reclaim keep their own preview/confirm
+  flows.
   Samples also capture `prompt_tokens` (prefill speed = prompt tokens over
   TTFT, always labeled an estimate) and tool calls (builtin "Tool calling"
   set offers `PromptToolSpec`s; streamed `tool_calls` are counted and their
@@ -85,6 +108,11 @@ from `mlx-agent` at runtime.
   check; network failures stay silent) and macOS/MLX environment-drift
   alerts offering one-click re-verification of stale verified models.
   Alerts dedupe by fingerprint and persist snooze/mute state.
+- **Completion notifications**: `ModelWorkflowCoordinator.onTerminalState`
+  fires once when a workflow enters a terminal state (completed / verified /
+  verificationFailed / failed) and AppHost wires it to `AlertNotifier`
+  (Notification Center; silent when permission is denied). Restores and
+  launch-loads never notify — only live transitions.
 - `SetupCoordinator` provides the **first-launch Setup Assistant**: a guided
   sheet over the app's existing probes (agent health, runtime report,
   discovered roots) with the RuntimeInstaller for one-click runtime setup.

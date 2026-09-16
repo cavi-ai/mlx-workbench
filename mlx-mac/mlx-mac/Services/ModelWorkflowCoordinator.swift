@@ -68,6 +68,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
     /// Stamps usage evidence when a serve reaches confirmed-running — feeds
     /// the Disk Pressure Advisor's staleness detector.
     var onServeStarted: ((String) -> Void)?
+    /// Fired once when a workflow transitions into a terminal state
+    /// (completed / verified / verificationFailed / failed). AppHost wires
+    /// this to Notification Center; nil means no notifications. Restore and
+    /// launch-load never fire it — only live transitions.
+    var onTerminalState: ((ConversionWorkflow) -> Void)?
     private var selectedSource: ModelItem?
     private var selectedSnapshot: LibrarySnapshot?
     private var conversionPreviewQBits: Int?
@@ -794,6 +799,9 @@ final class ModelWorkflowCoordinator: ObservableObject {
     }
 
     private func replace(_ record: ConversionWorkflow, persist: Bool, makeCurrent: Bool = true) {
+        let previousState = history.first(where: {
+            $0.persistenceIdentifier == record.persistenceIdentifier
+        })?.state
         if makeCurrent {
             workflow = record
         }
@@ -801,6 +809,9 @@ final class ModelWorkflowCoordinator: ObservableObject {
             history[index] = record
         } else if record.state != .idle {
             history.insert(record, at: 0)
+        }
+        if record.state.isTerminal, previousState != nil, previousState != record.state {
+            onTerminalState?(record)
         }
         guard persist else { return }
         do {

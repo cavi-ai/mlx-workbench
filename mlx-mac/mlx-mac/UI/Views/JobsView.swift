@@ -107,6 +107,7 @@ struct JobsView: View {
     @State private var isRefreshing = false
     @State private var statusError: String?
     @State private var selectedLog: LogSelection?
+    @State private var webQueue = WebConvertQueue.Snapshot(items: [], path: "", problem: nil)
 
     struct LogSelection: Identifiable {
         let id: String
@@ -152,6 +153,7 @@ struct JobsView: View {
                 } else {
                     ForEach(cards) { conversionCard($0) }
                 }
+                webQueueSection
             }
             .padding(WorkbenchSpacing.pageInset)
         }
@@ -189,6 +191,41 @@ struct JobsView: View {
                         detailLine("Receipt", server.receipt ?? "Not reported")
                         detailLine("Started", server.startedAt ?? "Not reported")
                         detailLine("Log path", server.logPath ?? "Not reported")
+                    }
+                    .formSection {}
+                }
+            }
+        }
+    }
+
+    private var webQueueSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionTitle(text: "Web Queue")
+            if let problem = webQueue.problem {
+                Text(problem + " The web UI preserves it as a numbered .corrupt file.")
+                    .font(.callout).foregroundColor(.secondary)
+            } else if webQueue.items.isEmpty {
+                Text("Nothing queued by the web UI.")
+                    .font(.callout).foregroundColor(.secondary)
+            } else {
+                Text("Queued by the web UI at \(webQueue.path). Read-only here; it drains while the web server runs.")
+                    .font(.caption).foregroundColor(.secondary)
+                ForEach(webQueue.items) { item in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            StatusPill(state: item.state.rawValue)
+                            Text(item.label).font(.headline).lineLimit(1)
+                            Spacer()
+                            Text(item.kind == .gguf ? "GGUF" : "HF cache")
+                                .font(.caption).foregroundColor(.secondary)
+                            Text("q\(item.qBits)")
+                                .font(.caption).foregroundColor(.secondary)
+                        }
+                        detailLine("Source", item.path ?? item.repo ?? "—")
+                        if let out = item.out { detailLine("Output", out) }
+                        if let failure = item.failure {
+                            detailLine("Failure", "\(failure.message) \(failure.remediation)")
+                        }
                     }
                     .formSection {}
                 }
@@ -242,6 +279,7 @@ struct JobsView: View {
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
+        webQueue = WebConvertQueue.loadDefault()
         do {
             let jobs = try await appHost.api.convertStatus()
             lastKnownJobs = jobs

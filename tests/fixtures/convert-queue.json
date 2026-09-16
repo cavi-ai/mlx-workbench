@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.1",
+  "items": [
+    {
+      "id": "cq-1",
+      "kind": "gguf",
+      "preview_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "q_bits": 4,
+      "out": "/fixtures/out/compact-MLX-4bit",
+      "path": "/fixtures/gguf/compact.gguf",
+      "repo": null,
+      "hf_cache": null,
+      "label": "compact.gguf → MLX 4-bit",
+      "state": "queued",
+      "failure": null
+    },
+    {
+      "id": "cq-2",
+      "kind": "repo",
+      "preview_hash": "f90e8d7c6b5a4938271605f4e3d2c1b0f90e8d7c6b5a4938271605f4e3d2c1b0",
+      "q_bits": 8,
+      "out": null,
+      "path": null,
+      "repo": "mlx-community/Qwen3-8B-8bit",
+      "hf_cache": null,
+      "label": "mlx-community/Qwen3-8B-8bit",
+      "state": "starting",
+      "failure": null
+    },
+    {
+      "id": "cq-3",
+      "kind": "gguf",
+      "preview_hash": "0011223344556677889900aabbccddee0011223344556677889900aabbccddee",
+      "q_bits": 4,
+      "out": "/fixtures/out/large-MLX-4bit",
+      "path": "/fixtures/gguf/large.gguf",
+      "repo": null,
+      "hf_cache": null,
+      "label": "large.gguf → MLX 4-bit",
+      "state": "failed",
+      "failure": {
+        "code": "convert_failed",
+        "message": "mlx_lm.convert exited with status 1.",
+        "remediation": "Open the job log in the web UI for details."
+      }
+    }
+  ]
+}

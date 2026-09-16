@@ -29,8 +29,13 @@ diffs** per prompt. Results persist and feed the RecommendationEngine.
   (opt-in) builds a set from local client histories where readable
   (opencode session files) — prompts never leave the machine.
 - Run → progress per (variant × prompt) → results grid. **"Promote winner"**
-  sets the RecommendationEngine's `preferredModelIDs[useCase]` and offers to
-  quarantine the losers via the Disk Advisor flow (spec 04).
+  sets the RecommendationEngine's `preferredModelIDs[useCase]` (persisted in
+  `recommendation-preferences.json` so the decision survives relaunch),
+  optionally enables/swaps the Always-on Endpoint to the winner (verified
+  gating applies, with an explicit "enable anyway" override), and then links
+  onward: wire the now-running endpoint into clients (spec 02, its own
+  preview/confirm) and review the losers for reclaim via the Disk Advisor
+  flow (spec 04).
 
 ## Architecture
 

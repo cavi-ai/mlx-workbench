@@ -141,26 +141,6 @@ def unwrap(envelope):
     )
 
 
-def run_cli(agent_path, argv, timeout=DEFAULT_TIMEOUT, runner=None):
-    """Run arbitrary argv through the CLI and return unwrapped data."""
-    if not isinstance(argv, (list, tuple)) or not argv:
-        raise BridgeError(
-            "invalid_argv",
-            "CLI argv must be a non-empty list of strings.",
-            "Pass subcommand tokens such as ['discover', '--role', 'coding'].",
-        )
-    cleaned = []
-    for item in argv:
-        if not isinstance(item, str) or not item:
-            raise BridgeError(
-                "invalid_argv",
-                "CLI argv entries must be non-empty strings.",
-                "Do not pass a shell string; pass discrete argv tokens.",
-            )
-        cleaned.append(item)
-    return unwrap(run(agent_path, cleaned, timeout=timeout, runner=runner))
-
-
 def scan(agent_path, gguf_roots=(), mlx_roots=(), signatures=True, limit=None,
          timeout=DEFAULT_TIMEOUT, runner=None):
     """Inventory local GGUF weights through convert scan."""
@@ -413,46 +393,6 @@ def doctor_prune_confirm(agent_path, preview_hash, hf_cache=None,
     return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
 
 
-def adopt_start(agent_path, role=None, state=None, fast=False, offline=False,
-                timeout=SCOUT_TIMEOUT, runner=None):
-    """Start a durable adopt workflow for a role."""
-    argv = ["adopt", "start"]
-    if role:
-        argv.extend(["--role", role])
-    if state:
-        argv.extend(["--state", state])
-    if fast:
-        argv.append("--fast")
-    if offline:
-        argv.append("--offline")
-    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
-
-
-def adopt_status(agent_path, state, timeout=DEFAULT_TIMEOUT, runner=None):
-    """Inspect an adoption handoff file."""
-    return unwrap(run(
-        agent_path, ["adopt", "status", "--state", state],
-        timeout=timeout, runner=runner,
-    ))
-
-
-def wire_preview(agent_path, model, path, target="mlx_lm",
-                 timeout=DEFAULT_TIMEOUT, runner=None):
-    """Preview a wire apply transaction (no mutation)."""
-    argv = ["wire", "apply", model, "--path", path, "--target", target]
-    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
-
-
-def wire_apply(agent_path, model, path, preview_hash, target="mlx_lm",
-               timeout=DEFAULT_TIMEOUT, runner=None):
-    """Apply a reviewed wire configuration."""
-    argv = [
-        "wire", "apply", model, "--path", path, "--target", target,
-        "--confirm", "--preview-hash", preview_hash,
-    ]
-    return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
-
-
 def lora_preview(agent_path, repo, data, iters=None, out=None,
                  timeout=DEFAULT_TIMEOUT, runner=None):
     """Preview LoRA training without starting."""
@@ -508,24 +448,26 @@ def fuse_status(agent_path, timeout=DEFAULT_TIMEOUT, runner=None):
 
 
 def all_job_lists(agent_path, runner=None):
-    """Aggregate convert / serve / lora / fuse status payloads."""
+    """Aggregate convert / serve / lora / fuse status payloads.
+
+    Per-probe failures are reported under "errors" instead of being
+    swallowed, so the Jobs tab can tell "agent broken" apart from "idle".
+    """
     result = {"jobs": [], "servers": [], "lora": [], "fuse": []}
-    try:
-        result["jobs"] = jobs(agent_path, runner=runner).get("jobs") or []
-    except BridgeError:
-        pass
-    try:
-        result["servers"] = serve_status(agent_path, runner=runner).get("servers") or []
-    except BridgeError:
-        pass
-    try:
-        result["lora"] = lora_status(agent_path, runner=runner).get("jobs") or []
-    except BridgeError:
-        pass
-    try:
-        result["fuse"] = fuse_status(agent_path, runner=runner).get("jobs") or []
-    except BridgeError:
-        pass
+    probes = (
+        ("jobs", lambda: jobs(agent_path, runner=runner).get("jobs") or []),
+        ("servers", lambda: serve_status(agent_path, runner=runner).get("servers") or []),
+        ("lora", lambda: lora_status(agent_path, runner=runner).get("jobs") or []),
+        ("fuse", lambda: fuse_status(agent_path, runner=runner).get("jobs") or []),
+    )
+    errors = {}
+    for name, probe in probes:
+        try:
+            result[name] = probe()
+        except BridgeError as error:
+            errors[name] = error.to_dict()
+    if errors:
+        result["errors"] = errors
     return result
 
 
@@ -565,68 +507,6 @@ def serve_stop(agent_path, port, timeout=DEFAULT_TIMEOUT, runner=None):
         agent_path, ["serve", "stop", "--port", str(port)],
         timeout=timeout, runner=runner,
     ))
-
-
-def serve_metrics(agent_path, port):
-    """Get performance metrics for a running mlx server.
-    
-    Returns real-time metrics including tokens/sec, VRAM usage,
-    CPU/GPU stats for the specified server port.
-    """
-    if not agent_path:
-        raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
-        )
-    
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
-        raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
-        )
-    
-    try:
-        import urllib.request
-        import json as json_module
-        
-        # Try to connect to the mlx server metrics endpoint
-        try:
-            req = urllib.request.Request(
-                "http://127.0.0.1:" + str(port) + "/metrics",
-                method="GET"
-            )
-            
-            with urllib.request.urlopen(req, timeout=5) as response:
-                metrics = json_module.loads(response.read().decode())
-            
-            return {
-                "metrics": metrics,
-                "connected": True,
-            }
-        except Exception as e:
-            # Server not responding, return placeholder
-            return {
-                "metrics": {
-                    "tokens_per_sec": None,
-                    "vram_used": None,
-                    "vram_free": None,
-                    "cpu_temp": None,
-                    "gpu_load": None,
-                },
-                "connected": False,
-                "error": str(e),
-            }
-    except Exception as error:
-        raise BridgeError(
-            "serve_metrics_failed",
-            "Could not get metrics: {0}".format(str(error)),
-            "Ensure the server is running and accessible.",
-        )
-
 
 
 def allowed_log_paths(agent_path, runner=None):
@@ -712,48 +592,6 @@ def _default_runner(command, timeout):
 
 
 
-def sloth_connect(agent_path, address="http://localhost:3000", gguf_roots=(),
-                  mlx_roots=(), runner=None):
-    """Connect to Sloth AI server and sync models.
-    
-    Provides integration with Sloth AI for distributed serving
-    and model sharing capabilities.
-    """
-    # Check connection to Sloth server
-    try:
-        import urllib.request
-        import json as json_module
-        
-        req = urllib.request.Request(
-            address + "/api/health",
-            method="GET"
-        )
-        
-        with urllib.request.urlopen(req, timeout=5) as response:
-            health = json_module.loads(response.read().decode())
-
-        models = scan(
-            agent_path,
-            gguf_roots=gguf_roots,
-            mlx_roots=mlx_roots,
-            runner=runner,
-        )["models"]
-
-        return {
-            "connected": True,
-            "address": address,
-            "health": health,
-            "models_synced": len(models),
-        }
-    except BridgeError:
-        raise
-    except Exception as error:
-        raise BridgeError(
-            "sloth_connection_failed",
-            "Could not connect to Sloth AI at {0}: {1}".format(address, str(error)),
-            "Check that Sloth AI server is running and accessible.",
-        )
-
 def quant_profile(agent_path, path, targets, runner=None):
     """Preview supported MLX conversion plans for a local GGUF model."""
     target_bits = {"mlx-4bit": 4, "mlx-8bit": 8}
@@ -784,82 +622,6 @@ def quant_profile(agent_path, path, targets, runner=None):
             "command": plan.get("argv"),
         })
     return {"profiles": profiles}
-
-
-def lmstudio_import(agent_path, source_dir=None, convertImmediately=True):
-    """Import models from LM Studio to mlx format.
-    
-    Scans LM Studio's default model directories and returns models that can be
-    imported. Optionally converts them immediately to mlx format.
-    """
-    if not agent_path:
-        raise BridgeError(
-            "agent_not_configured",
-            "No mlx-agent checkout is configured.",
-            "Clone with --recurse-submodules, or set mlx_agent_path / MLX_AGENT_HOME.",
-        )
-    script = Path(agent_path).expanduser() / CLI_RELATIVE
-    if not script.is_file():
-        raise BridgeError(
-            "agent_not_found",
-            "No mlx-agent CLI at {0}.".format(script),
-            "Run `git submodule update --init --recursive`, or point mlx_agent_path "
-            "at an mlx-agent checkout that contains scripts/mlx-agent.",
-        )
-
-    import_paths = [
-        Path.home() / ".lmstudio" / "models",
-        Path.home() / ".cache" / "lm-studio" / "models",
-    ]
-    
-    if source_dir:
-        import_paths.insert(0, Path(source_dir))
-    
-    models = []
-    for path in import_paths:
-        if not path.exists():
-            continue
-        for gguf_file in path.glob("*.gguf"):
-            models.append({
-                "path": str(gguf_file),
-                "name": gguf_file.name,
-                "size": gguf_file.stat().st_size,
-            })
-    
-    if convertImmediately and models:
-        conversions = []
-        for model in models:
-            argv = [
-                "convert", "--path", model["path"],
-                "--q-bits", "4",
-                "--out", str(Path.home() / "models" / "mlx" / (model["name"] + ". mlx")),
-            ]
-            argv.append("--json")
-            command = [sys.executable, str(script)] + argv
-            try:
-                result = _default_runner(command, timeout=DEFAULT_TIMEOUT)
-                if result["returncode"] == 0:
-                    output = json.loads(result["stdout"])
-                    conversions.append({
-                        "path": model["path"],
-                        "success": True,
-                        "output": output,
-                    })
-                else:
-                    conversions.append({
-                        "path": model["path"],
-                        "success": False,
-                        "error": result["stderr"],
-                    })
-            except Exception as error:
-                conversions.append({
-                    "path": model["path"],
-                    "success": False,
-                    "error": str(error),
-                })
-        return {"models": models, "conversions": conversions}
-    
-    return {"models": models}
 
 
 def model_architecture(agent_path, path, runner=None):

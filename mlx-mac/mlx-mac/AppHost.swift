@@ -51,6 +51,7 @@ class AppHost: ObservableObject {
     private let catalogStore: CatalogStore
     private let catalogClient: any CatalogRefreshing
     private let catalogTTL: TimeInterval
+    private let preferencesStore: JSONStore<RecommendationPreferences>
     private let now: @Sendable () -> Date
     private let scanOperation: @Sendable ([String], [String], Bool, Int?) async throws -> ScanResult
 
@@ -80,13 +81,20 @@ class AppHost: ObservableObject {
         watch: WatchCoordinator? = nil,
         runtimeInstaller: RuntimeInstaller? = nil,
         setup: SetupCoordinator? = nil,
-        updater: UpdateCoordinator? = nil
+        updater: UpdateCoordinator? = nil,
+        preferencesStore: JSONStore<RecommendationPreferences>? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
         self.catalogStore = catalogStore
         self.catalogClient = catalogClient
         self.catalogTTL = catalogTTL
+        self.preferencesStore = preferencesStore ?? JSONStore<RecommendationPreferences>(
+            fileURL: JSONStore<RecommendationPreferences>.defaultFileURL("recommendation-preferences.json")
+        )
+        if let stored = try? self.preferencesStore.load().first {
+            recommendationPreferences = stored
+        }
         let loadedConfig = config ?? configModule.load()
         self.config = loadedConfig
         let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
@@ -192,6 +200,7 @@ class AppHost: ObservableObject {
         // Usage evidence: serve, verify, and measure all count as "used" for
         // the Disk Pressure Advisor's staleness detector.
         self.modelWorkflow.onServeStarted = { [weak self] path in self?.usage.record(path) }
+        self.modelWorkflow.onTerminalState = { record in AlertNotifier.post(workflowOutcome: record) }
         self.verification.onReport = { [weak self] report in self?.usage.record(report.modelPath) }
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
         self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }
@@ -507,6 +516,21 @@ class AppHost: ObservableObject {
             return true
         }
         return false
+    }
+
+    /// Mark a model as the preferred choice for a use case ("promote winner"
+    /// and the per-variant affordance share this one write path). Persisted
+    /// so a promoted winner survives relaunch.
+    func setPreferredModel(_ path: String, for useCase: UseCase) {
+        var preferred = recommendationPreferences.preferredModelIDs
+        preferred[useCase] = path
+        recommendationPreferences = RecommendationPreferences(
+            speedWeight: recommendationPreferences.speedWeight,
+            qualityWeight: recommendationPreferences.qualityWeight,
+            hiddenModelIDs: recommendationPreferences.hiddenModelIDs,
+            preferredModelIDs: preferred
+        )
+        try? preferencesStore.replaceAll([recommendationPreferences])
     }
 
     /// Paths that must never be reclaimed: running servers and the active

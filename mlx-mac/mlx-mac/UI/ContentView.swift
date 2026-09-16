@@ -112,7 +112,7 @@ struct ContentView: View {
         case .prepare:
             return AnyView(ConvertView(appHost: appHost, onRouteSelection: navigate))
         case .compare:
-            return AnyView(QuantView(appHost: appHost))
+            return AnyView(QuantView(appHost: appHost, onRouteSelection: navigate))
         case .run:
             return AnyView(ServeView(appHost: appHost, onRouteSelection: navigate))
         case .activity:
