@@ -18,6 +18,28 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(result.totals.bytes, 29_950_538_400)
     }
 
+    func testFleetRenderSendsAssignmentsAndPortMap() async throws {
+        let agent = try FixtureAgent(fleetMode: ())
+        defer { agent.remove() }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+        let assignments = [(role: "coding", repo: "pub/coder", port: 8766)]
+
+        let render = try await api.fleetRender(path: "/tmp/router.yaml", assignments: assignments)
+        XCTAssertEqual(render["config"] as? String, "rendered")
+
+        let preview = try await api.fleetApplyPreview(path: "/tmp/router.yaml", assignments: assignments)
+        let previewData = try XCTUnwrap(preview["preview"] as? [String: Any])
+        XCTAssertEqual(previewData["preview_hash"] as? String, "fleet-hash")
+
+        let applied = try await api.fleetApplyConfirm(
+            path: "/tmp/router.yaml",
+            assignments: assignments,
+            previewHash: "fleet-hash"
+        )
+        let receipt = try XCTUnwrap(applied["receipt"] as? [String: Any])
+        XCTAssertEqual(receipt["status"] as? String, "applied")
+    }
+
     func testConfiguredScanMatchesFilesystemBytesWhenEnabled() async throws {
 #if !MLX_WORKBENCH_LIVE_SCAN
         throw XCTSkip("run make test-swift-live-scan to validate the configured local inventory")
@@ -252,6 +274,32 @@ private final class FixtureAgent {
             data = {}
         else:
             data = {"plan": {"preview_hash": "serve-hash"}}
+        print(json.dumps({"status": "ok", "data": data}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
+
+    /// Fleet fixture: asserts the argv contract (assignments, port-map,
+    /// allow-missing, confirm discipline) and answers per subcommand.
+    convenience init(fleetMode: Void) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import json
+        import sys
+
+        assert "fleet" in sys.argv and "--json" in sys.argv
+        assert "--assign" in sys.argv and "coding=pub/coder" in sys.argv
+        assert "--port-map" in sys.argv and "coding=8766" in sys.argv
+        assert "--allow-missing" in sys.argv
+        if "render" in sys.argv:
+            data = {"config": "rendered"}
+        elif "--confirm" in sys.argv:
+            assert "--preview-hash" in sys.argv and "fleet-hash" in sys.argv
+            data = {"receipt": {"status": "applied"}}
+        else:
+            data = {"preview": {"preview_hash": "fleet-hash", "diff": "diff-text"}}
         print(json.dumps({"status": "ok", "data": data}))
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))

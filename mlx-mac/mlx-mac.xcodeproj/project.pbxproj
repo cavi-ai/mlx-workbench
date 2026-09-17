@@ -74,6 +74,10 @@
 		26CFBL001 /* ContractFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26CFREF001 /* ContractFixtureTests.swift */; };
 		26WQBL002 /* WebConvertQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26WQREF002 /* WebConvertQueueTests.swift */; };
 		26PWBL001 /* PromoteWinnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26PWREF001 /* PromoteWinnerTests.swift */; };
+		26EFBL001 /* EndpointFleetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26EFREF001 /* EndpointFleetTests.swift */; };
+		26EFBL002 /* ServeWorldFakes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26EFREF002 /* ServeWorldFakes.swift */; };
+		26FFBL01 /* FleetFitAdvisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26FFREF01 /* FleetFitAdvisorTests.swift */; };
+		26FRBL01 /* FleetRouterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26FRREF01 /* FleetRouterTests.swift */; };
 		24BBLD021 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
 		24BBLD025 /* LibraryDomainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF01F /* LibraryDomainTests.swift */; };
 		24BBLD026 /* ModelLibraryBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF020 /* ModelLibraryBuilder.swift */; };
@@ -235,6 +239,14 @@
 		27STP001 /* SetupCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SetupCoordinator.swift; path = Services/SetupCoordinator.swift; sourceTree = "<group>"; };
 		27UPD001 /* UpdateCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = UpdateCoordinator.swift; path = Services/UpdateCoordinator.swift; sourceTree = "<group>"; };
 		27UPDB01 /* UpdateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27UPD001 /* UpdateCoordinator.swift */; };
+		27FS0001 /* EndpointFleetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EndpointFleetStore.swift; path = Services/EndpointFleetStore.swift; sourceTree = "<group>"; };
+		27FSB001 /* EndpointFleetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27FS0001 /* EndpointFleetStore.swift */; };
+		27FF0001 /* FleetFitAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FleetFitAdvisor.swift; path = Services/FleetFitAdvisor.swift; sourceTree = "<group>"; };
+		27FFB001 /* FleetFitAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27FF0001 /* FleetFitAdvisor.swift */; };
+		27FR0001 /* FleetRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FleetRouter.swift; path = Services/FleetRouter.swift; sourceTree = "<group>"; };
+		27FRB001 /* FleetRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27FR0001 /* FleetRouter.swift */; };
+		27FR0002 /* FleetRouterSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FleetRouterSheet.swift; path = UI/Views/FleetRouterSheet.swift; sourceTree = "<group>"; };
+		27FRB002 /* FleetRouterSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27FR0002 /* FleetRouterSheet.swift */; };
 		27TST009 /* UpdateCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = UpdateCoordinatorTests.swift; path = UpdateCoordinatorTests.swift; sourceTree = "<group>"; };
 		27TSTB09 /* UpdateCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST009 /* UpdateCoordinatorTests.swift */; };
 		27STP002 /* SetupAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SetupAssistantView.swift; path = UI/Views/SetupAssistantView.swift; sourceTree = "<group>"; };
@@ -290,6 +302,10 @@
 		26CFREF001 /* ContractFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractFixtureTests.swift; sourceTree = "<group>"; };
 		26WQREF002 /* WebConvertQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebConvertQueueTests.swift; sourceTree = "<group>"; };
 		26PWREF001 /* PromoteWinnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromoteWinnerTests.swift; sourceTree = "<group>"; };
+		26EFREF001 /* EndpointFleetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointFleetTests.swift; sourceTree = "<group>"; };
+		26EFREF002 /* ServeWorldFakes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeWorldFakes.swift; sourceTree = "<group>"; };
+		26FFREF01 /* FleetFitAdvisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetFitAdvisorTests.swift; sourceTree = "<group>"; };
+		26FRREF01 /* FleetRouterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetRouterTests.swift; sourceTree = "<group>"; };
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -387,6 +403,10 @@
 				27CFG0002 /* AppConfig.swift */,
 				27STP001 /* SetupCoordinator.swift */,
 				27UPD001 /* UpdateCoordinator.swift */,
+				27FS0001 /* EndpointFleetStore.swift */,
+				27FF0001 /* FleetFitAdvisor.swift */,
+				27FR0001 /* FleetRouter.swift */,
+				27FR0002 /* FleetRouterSheet.swift */,
 				24FREF068 /* HFRepoID.swift */,
 				24FREF065 /* PromptHistoryImport.swift */,
 				26WQREF001 /* WebConvertQueue.swift */,
@@ -462,6 +482,10 @@
 				26CFREF001 /* ContractFixtureTests.swift */,
 				26WQREF002 /* WebConvertQueueTests.swift */,
 				26PWREF001 /* PromoteWinnerTests.swift */,
+				26EFREF001 /* EndpointFleetTests.swift */,
+				26EFREF002 /* ServeWorldFakes.swift */,
+				26FFREF01 /* FleetFitAdvisorTests.swift */,
+				26FRREF01 /* FleetRouterTests.swift */,
 				27TST001 /* QuarantineParityTests.swift */,
 				27TST002 /* JSONStoreTests.swift */,
 				27TST003 /* JSONCTolerantTests.swift */,
@@ -709,6 +733,10 @@
 				27CFG0001 /* AppConfig.swift in Sources */,
 				27STPB01 /* SetupCoordinator.swift in Sources */,
 				27UPDB01 /* UpdateCoordinator.swift in Sources */,
+				27FSB001 /* EndpointFleetStore.swift in Sources */,
+				27FFB001 /* FleetFitAdvisor.swift in Sources */,
+				27FRB001 /* FleetRouter.swift in Sources */,
+				27FRB002 /* FleetRouterSheet.swift in Sources */,
 				27STPB02 /* SetupAssistantView.swift in Sources */,
 				24BBLD067 /* PromptHistoryImport.swift in Sources */,
 				26WQBL001 /* WebConvertQueue.swift in Sources */,
@@ -748,6 +776,10 @@
 				26CFBL001 /* ContractFixtureTests.swift in Sources */,
 				26WQBL002 /* WebConvertQueueTests.swift in Sources */,
 				26PWBL001 /* PromoteWinnerTests.swift in Sources */,
+				26EFBL001 /* EndpointFleetTests.swift in Sources */,
+				26EFBL002 /* ServeWorldFakes.swift in Sources */,
+				26FFBL01 /* FleetFitAdvisorTests.swift in Sources */,
+				26FRBL01 /* FleetRouterTests.swift in Sources */,
 				27ABCD000000000000000003 /* AppRouteTests.swift in Sources */,
 				27TSTB01 /* QuarantineParityTests.swift in Sources */,
 				27TSTB02 /* JSONStoreTests.swift in Sources */,

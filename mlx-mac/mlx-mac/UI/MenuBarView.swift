@@ -18,7 +18,7 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(endpoint.state.summary)
+            Text(fleetSummary)
                 .font(.headline)
             if case .running = endpoint.state, let latest = latestBenchmark {
                 Text(latest)
@@ -31,24 +31,49 @@ struct MenuBarView: View {
                     .foregroundColor(WorkbenchColor.systemRed)
             }
             Divider()
-            Button("Open mlx-workbench") { openApp() }
-            if endpoint.config.enabled {
-                Button("Restart endpoint") {
-                    Task {
-                        await appHost.endpoint.disable()
-                        await appHost.endpoint.enable(
-                            modelPath: endpoint.config.modelPath,
-                            port: endpoint.config.port,
-                            allowUnverified: true
-                        )
-                    }
-                }
-                Button("Stop endpoint") { Task { await endpoint.disable() } }
+            ForEach(endpoint.fleet.slots) { slot in
+                slotRow(slot)
             }
+            if endpoint.fleet.slots.isEmpty {
+                Text("No endpoints configured")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Divider()
+            Button("Open mlx-workbench") { openApp() }
             Divider()
             Button("Quit mlx-workbench") { NSApp.terminate(nil) }
         }
         .padding(8)
+    }
+
+    /// "N of M endpoints running" across the fleet (spec 09 P2).
+    private var fleetSummary: String {
+        let enabled = endpoint.fleet.slots.filter { $0.enabled && !$0.modelPath.isEmpty }
+        guard !enabled.isEmpty else { return "No always-on endpoints" }
+        let running = enabled.filter { isRunning(endpoint.slotStates[$0.id]) }.count
+        let noun = enabled.count == 1 ? "endpoint" : "endpoints"
+        return "\(running) of \(enabled.count) \(noun) running"
+    }
+
+    private func slotRow(_ slot: EndpointSlot) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: EndpointIcon.name(for: endpoint.slotStates[slot.id] ?? .disabled))
+                .frame(width: 14)
+            Text("\(URL(fileURLWithPath: slot.modelPath).lastPathComponent) :\(slot.port)")
+                .font(.caption)
+                .lineLimit(1)
+            Spacer()
+            Button(slot.enabled ? "Stop" : "Start") {
+                Task { await endpoint.setSlotEnabled(id: slot.id, !slot.enabled) }
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private func isRunning(_ state: EndpointState?) -> Bool {
+        guard case .running = state else { return false }
+        return true
     }
 
     /// Last measured tok/s for the served model, when comparison evidence
@@ -82,5 +107,23 @@ enum EndpointIcon {
         case .degraded, .modelMismatch: return "exclamationmark.triangle"
         case .disabled: return "bolt.slash"
         }
+    }
+
+    /// Fleet aggregate: the worst state wins (degraded > starting > running
+    /// > idle), so the icon never hides a problem behind a healthy slot.
+    static func name(forStates states: [EndpointState]) -> String {
+        var sawStarting = false
+        var sawRunning = false
+        for state in states {
+            switch state {
+            case .degraded, .modelMismatch: return "exclamationmark.triangle"
+            case .starting, .waitingForServer: sawStarting = true
+            case .running: sawRunning = true
+            case .disabled: break
+            }
+        }
+        if sawStarting { return "bolt.horizontal" }
+        if sawRunning { return "bolt.fill" }
+        return "bolt.slash"
     }
 }

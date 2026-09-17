@@ -231,6 +231,47 @@ actor WorkbenchAPI {
                           applied: applied)
     }
 
+    // MARK: - Fleet router (spec 09 P4)
+
+    /// Render the per-role router config without mutating anything.
+    /// Requires an mlx-agent with `--port-map` support (fleet ≥ the
+    /// port-map change); older agents fail the call with a classified
+    /// argparse error the UI surfaces as "update mlx-agent".
+    func fleetRender(path: String, assignments: [(role: String, repo: String, port: Int)]) throws -> [String: Any] {
+        try raw(fleetArgv("render", path: path, assignments: assignments))
+    }
+
+    /// Preview the router-config write (no --confirm): data carries
+    /// `preview.preview_hash` and `preview.diff` for review.
+    func fleetApplyPreview(path: String, assignments: [(role: String, repo: String, port: Int)]) throws -> [String: Any] {
+        try raw(fleetArgv("apply", path: path, assignments: assignments))
+    }
+
+    /// Apply a previously reviewed preview; the hash must match exactly.
+    func fleetApplyConfirm(path: String, assignments: [(role: String, repo: String, port: Int)],
+                           previewHash: String) throws -> [String: Any] {
+        try raw(fleetArgv("apply", path: path, assignments: assignments,
+                          extra: ["--confirm", "--preview-hash", previewHash]))
+    }
+
+    private func fleetArgv(_ action: String, path: String,
+                           assignments: [(role: String, repo: String, port: Int)],
+                           extra: [String] = []) -> [String] {
+        var argv = ["fleet", action, "--path", path]
+        for assignment in assignments {
+            argv.append(contentsOf: ["--assign", "\(assignment.role)=\(assignment.repo)"])
+        }
+        for assignment in assignments {
+            argv.append(contentsOf: ["--port-map", "\(assignment.role)=\(assignment.port)"])
+        }
+        // Models are served locally by our own endpoints; the agent's
+        // inventory check runs against HF-cache/runtime inventories and may
+        // not see them — record a reviewed warning instead of failing.
+        argv.append("--allow-missing")
+        argv.append(contentsOf: extra)
+        return argv
+    }
+
     // MARK: - Serve
 
     /// The agent's serve accepts HF repo ids for cache-resident models and

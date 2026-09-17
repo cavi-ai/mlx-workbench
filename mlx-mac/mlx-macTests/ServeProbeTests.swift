@@ -9,7 +9,7 @@ final class ServeProbeTests: XCTestCase {
     }
 
     private func makeProbe(
-        events: LifecycleRecorder,
+        events: ProbeEventRecorder,
         ready: Bool = true,
         readyTimeout: TimeInterval = 0.2,
         previewHash: String = "hash-1",
@@ -36,7 +36,7 @@ final class ServeProbeTests: XCTestCase {
     }
 
     func testRunServesEveryCanaryThenStops() async throws {
-        let events = LifecycleRecorder()
+        let events = ProbeEventRecorder()
         let probe = makeProbe(events: events) { _ in self.sample() }
 
         let result = try await probe.run(modelPath: "/Models/converted")
@@ -50,7 +50,7 @@ final class ServeProbeTests: XCTestCase {
     }
 
     func testStopIsCalledWhenACanaryThrows() async {
-        let events = LifecycleRecorder()
+        let events = ProbeEventRecorder()
         let probe = makeProbe(events: events) { id in
             if id == "arithmetic" { throw StubError.boom }
             return self.sample()
@@ -68,7 +68,7 @@ final class ServeProbeTests: XCTestCase {
     }
 
     func testNeverReadyThrowsAndStops() async {
-        let events = LifecycleRecorder()
+        let events = ProbeEventRecorder()
         let probe = makeProbe(events: events, ready: false) { _ in self.sample() }
 
         do {
@@ -107,7 +107,7 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertTrue(used.allSatisfy { $0 == "other/loaded-model" })
     }
 
-    func testMissingPreviewHashDoesNotStart() async {        let events = LifecycleRecorder()
+    func testMissingPreviewHashDoesNotStart() async {        let events = ProbeEventRecorder()
         let probe = makeProbe(events: events, previewHash: "") { _ in self.sample() }
 
         do {
@@ -312,7 +312,7 @@ extension ModelListBox: EndpointProbing {
     }
 }
 
-private actor LifecycleRecorder {
+private actor ProbeEventRecorder {
     private(set) var values: [String] = []
     func record(_ value: String) { values.append(value) }
 }
