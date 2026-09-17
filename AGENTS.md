@@ -105,6 +105,14 @@ from `mlx-agent` at runtime.
   verdict unknown, never fabricated). The section header shows the summed
   verdict; enabling a slot that tips the fleet past won't-fit needs an
   explicit inline override.
+  The **role router** (spec 09 P4): "Wire roles…" in the Endpoints section
+  maps roles onto running slots via `mlx-agent fleet render/apply` with
+  `--port-map` (requires an mlx-agent that includes the port-map change;
+  the vendored pin tracks the upstream PR branch until the next release).
+  Only running slots with HF-cache repo ids are assigned — everything else
+  is reported skipped, never pointed at a dead port. The router config is
+  written exclusively through `fleet apply` (preview/confirm + receipt), so
+  the target file stays fleet-managed.
   `LaunchAgentManager` optionally installs a RunAtLoad login item (no
   KeepAlive — the app's supervisor reconciles; receipts stay authoritative).
 - The Duplicates tab hosts the **Disk Pressure Advisor**: `ReclaimAdvisor`

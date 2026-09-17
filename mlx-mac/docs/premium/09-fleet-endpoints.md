@@ -1,6 +1,6 @@
 # 09 — Fleet Endpoints (multi-model always-on) + Role Router
 
-**Status:** P1–P3 implemented (model/migration/supervisor; Run tab fleet UI + menu-bar aggregate; fleet memory budget); P4 design · **Tier:** Premium · **Synergy:** extends spec 06 (Always-on Endpoint), feeds spec 02 (Cross-client Wiring) and `mlx-agent fleet`
+**Status:** implemented (P1–P4). P4 required an upstream change first: `mlx-agent fleet` hard-coded `api_base` to :8080/:8083 and validated exactly those — `--port-map role=port` (cavi-ai/mlx-agent#41) added per-role port overrides through the same preview/confirm boundary. The app's router writes exclusively via `fleet apply`, so the target file stays fleet-managed. · **Tier:** Premium · **Synergy:** extends spec 06 (Always-on Endpoint), feeds spec 02 (Cross-client Wiring) and `mlx-agent fleet`
 
 ## Problem
 

@@ -51,6 +51,7 @@ struct ServeView: View {
     @State private var endpointPortText = ""
     @State private var newSlotRole: UseCase?
     @State private var pendingFleetAction: PendingFleetAction?
+    @State private var showFleetRouter = false
     @State private var showLoginItemPreview = false
 
     /// A wont-fit fleet action awaiting the user's explicit override (spec
@@ -228,6 +229,20 @@ struct ServeView: View {
             }
 
             addEndpointControls
+
+            if endpoint.fleet.slots.contains(where: { $0.role != nil }) {
+                HStack(spacing: 10) {
+                    Button("Wire roles…") { showFleetRouter = true }
+                        .buttonStyle(.bordered)
+                    Text("Map roles onto running endpoints via mlx-agent fleet.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .sheet(isPresented: $showFleetRouter) {
+                    FleetRouterSheet(appHost: appHost)
+                }
+            }
+
             loginItemSection
 
             ErrorBanner(text: endpoint.lastError)
