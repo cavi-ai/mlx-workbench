@@ -298,6 +298,19 @@ class ReleaseDocsContractTests(unittest.TestCase):
             "Hugging Face Hub",
             "convert-queue.json",
             "not a promise of network isolation",
+            # Hardened runtime surface (P0-P3) must be documented, not just
+            # implemented: the security model page pins these guarantees.
+            "server_busy",
+            "frame-ancestors",
+            "X-Frame-Options",
+            "process group",
+            "allowlist",
+            "fsync",
+            "audit.jsonl",
+            "requirements.txt",
+            "make pip-audit",
+            "Symbolic links are refused",
+            "closed",
         )
         for phrase in required:
             self.assertIn(phrase, text)
