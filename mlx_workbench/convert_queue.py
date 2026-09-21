@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 
 from . import bridge
+from .atomicio import write_text_atomic
 
 
 QUEUE_SCHEMA_VERSION = "1.1"
@@ -165,23 +166,34 @@ class QueueStore:
             "schema_version": QUEUE_SCHEMA_VERSION,
             "items": items,
         })
-        temporary = self.path.with_name(self.path.name + ".tmp")
         payload = {
             "schema_version": QUEUE_SCHEMA_VERSION,
             "items": items,
         }
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temporary.write_text(
-                json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
+        if self.path.is_symlink():
+            raise QueuePersistenceError(
+                "queue_write_failed",
+                "{0} is a symbolic link; refusing to write through it.".format(
+                    self.path
+                ),
+                "Remove the symbolic link and let the queue recreate the file.",
+                path=self.path,
             )
-            os.replace(temporary, self.path)
+        temporary = self.path.with_name(self.path.name + ".tmp")
+        if temporary.is_symlink():
+            raise QueuePersistenceError(
+                "queue_write_failed",
+                "{0} is a symbolic link; refusing to write through it.".format(
+                    temporary
+                ),
+                "Remove the symbolic link and let the queue recreate the file.",
+                path=self.path,
+            )
+        try:
+            write_text_atomic(
+                self.path, json.dumps(payload, indent=2, sort_keys=True) + "\n"
+            )
         except (OSError, UnicodeError) as error:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
             raise QueuePersistenceError(
                 "queue_write_failed",
                 "The conversion queue could not be saved: {0}".format(error),

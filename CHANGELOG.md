@@ -11,6 +11,26 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
+### Security
+
+- Hardened response headers: CSP now pins `frame-ancestors 'none'`,
+  `form-action 'self'`, and `base-uri 'none'`; `X-Frame-Options: DENY` added;
+  the `Server:` header no longer advertises the Python version.
+- Durable writes (`config.json`, `convert-queue.json`) now fsync file contents
+  before the atomic rename and fsync the containing directory afterwards, so
+  a power loss can no longer leave truncated state under the real name
+  (`mlx_workbench/atomicio.py`).
+- Concurrent HTTP requests are capped by a bounded semaphore; excess requests
+  receive a structured 503 (`server_busy`) instead of unbounded thread growth.
+- Timed-out agent subprocesses are now killed as a whole process group
+  (`start_new_session=True`, SIGTERM then SIGKILL to the group), so a
+  timeout can no longer orphan grandchildren such as in-flight conversions.
+- The agent subprocess environment is an explicit allowlist
+  (`bridge.agent_environment`): PATH (interpreter bin dir first), HOME,
+  XDG_*, HF_*, TLS/proxy basics — never the web server's full environment.
+- Symbolic links are refused before every durable write: config saves,
+  queue saves, quarantine moves (both source and quarantine dir), and the
+  native app's cross-client wiring writes (target, backup, and restore).
 
 ## [0.3.0] - 2026-09-09
 ### Added

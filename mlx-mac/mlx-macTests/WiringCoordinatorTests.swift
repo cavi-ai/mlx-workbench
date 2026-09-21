@@ -187,6 +187,27 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.lastError, WiringError.noPlansPreviewed.errorDescription)
     }
 
+    func testSymlinkedConfigIsRefusedNotWrittenThrough() throws {
+        let home = try makeHome()
+        let opencodeConfig = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: opencodeConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let victim = home.appendingPathComponent("victim.json")
+        try "{\"theme\": \"dark\"}".write(to: victim, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: opencodeConfig, withDestinationURL: victim
+        )
+        let coordinator = makeCoordinator(home: home)
+
+        coordinator.preview(endpoint: endpoint)
+        let transaction = coordinator.confirm(endpoint: endpoint, previewHash: coordinator.previewHash!)
+
+        // The plan reads through the link, so `before` matches the victim's
+        // content; the write itself must refuse and never touch the victim.
+        XCTAssertEqual(transaction?.receipts.count, 0)
+        XCTAssertTrue(transaction?.failures.contains { $0.contains("symbolic link") } == true)
+        XCTAssertEqual(try String(contentsOf: victim), "{\"theme\": \"dark\"}")
+    }
+
     // MARK: - Hashing, diff, redaction
 
     func testPreviewHashIsDeterministicAndEndpointSensitive() {

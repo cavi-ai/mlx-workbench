@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 
+from .atomicio import write_text_atomic
+
 
 APP_NAME = "mlx-workbench"
 CONFIG_ENV = "MLX_WORKBENCH_CONFIG"
@@ -176,15 +178,22 @@ def load(path=None):
 
 
 def save(value, path=None):
-    """Validate and atomically write the configuration."""
+    """Validate and atomically write the configuration.
+
+    A symbolic link at the target path is refused, never written through.
+    """
     location = Path(path) if path is not None else config_path()
     merged = _coerce(value)
-    location.parent.mkdir(parents=True, exist_ok=True)
+    if location.is_symlink():
+        raise ConfigError(
+            "{0} is a symbolic link; refusing to write through it.".format(location)
+        )
     temporary = location.with_name(location.name + ".tmp")
-    temporary.write_text(
-        json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    os.replace(str(temporary), str(location))
+    if temporary.is_symlink():
+        raise ConfigError(
+            "{0} is a symbolic link; refusing to write through it.".format(temporary)
+        )
+    write_text_atomic(location, json.dumps(merged, indent=2, sort_keys=True) + "\n")
     return merged
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,19 @@ DEFAULT_TIMEOUT = 300
 SCOUT_TIMEOUT = 600
 MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_LOG_BYTES = 64 * 1024
+
+# Only these variables (plus HF_*) reach the agent subprocess. The web UI's
+# request environment is never trusted wholesale.
+AGENT_ENV_KEYS = (
+    "PATH", "HOME", "TMPDIR", "USER", "LOGNAME", "SHELL",
+    "LANG", "LC_ALL",
+    "MLX_AGENT_HOME", "MLX_WORKBENCH_CONFIG",
+    "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
+    "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "no_proxy",
+)
+AGENT_ENV_PREFIXES = ("HF_",)
 
 
 class BridgeError(RuntimeError):
@@ -566,27 +580,72 @@ def read_log(agent_path, log_path, max_bytes=MAX_LOG_BYTES, runner=None):
     }
 
 
-def _default_runner(command, timeout):
-    # The agent shells out to sibling executables (e.g. mlx_lm.convert) via
-    # PATH; without this, a uv-tool or Homebrew install of a different
-    # version shadows the project venv's. The running interpreter's bin
-    # directory is the one whose packages the agent must see.
-    env = dict(os.environ)
+def agent_environment(base=None):
+    """A curated environment for agent subprocesses, never the whole env."""
+    source = dict(os.environ) if base is None else dict(base)
+    environment = {}
+    for key in AGENT_ENV_KEYS:
+        value = source.get(key)
+        if value is not None:
+            environment[key] = value
+    for key, value in source.items():
+        if key.startswith(AGENT_ENV_PREFIXES):
+            environment[key] = value
+    # The agent resolves sibling executables (e.g. mlx_lm.convert) via PATH;
+    # without this, a uv-tool or Homebrew install of a different version
+    # shadows the project venv's. The running interpreter's bin directory is
+    # the one whose packages the agent must see.
     bin_dir = str(Path(sys.executable).resolve().parent)
-    env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
-    completed = subprocess.run(
+    environment["PATH"] = bin_dir + os.pathsep + environment.get("PATH", "")
+    return environment
+
+
+def _kill_process_group(process):
+    """Terminate, then kill, the whole process group of a timed-out child."""
+    try:
+        group = os.getpgid(process.pid)
+    except OSError:
+        group = None
+    for number in (signal.SIGTERM, signal.SIGKILL):
+        if process.poll() is not None:
+            return
+        try:
+            if group is not None and group == process.pid:
+                os.killpg(group, number)
+            else:
+                process.send_signal(number)
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=5)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _default_runner(command, timeout):
+    with subprocess.Popen(
         command,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
-        env=env,
-    )
+        start_new_session=True,
+        env=agent_environment(),
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_process_group(process)
+            stdout, stderr = process.communicate()
+            raise BridgeError(
+                "skill_timeout",
+                "The agent did not finish within {0}s.".format(timeout),
+                "Narrow the request (for example discover --fast), or raise the timeout.",
+            )
     return {
-        "returncode": completed.returncode,
-        "stdout": completed.stdout.decode("utf-8", "replace"),
-        "stderr": completed.stderr.decode("utf-8", "replace"),
+        "returncode": process.returncode,
+        "stdout": stdout.decode("utf-8", "replace"),
+        "stderr": stderr.decode("utf-8", "replace"),
     }
 
 

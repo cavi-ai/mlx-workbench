@@ -21,6 +21,7 @@ from . import (
 
 STATIC_ROOT = Path(__file__).resolve().with_name("static")
 MAX_BODY_BYTES = 64 * 1024
+MAX_CONCURRENT_REQUESTS = 16
 TOKEN_HEADER = "X-MLX-Workbench-Token"
 _ALLOWED_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _CONTENT_TYPES = {
@@ -88,11 +89,13 @@ class Application:
     """Everything the handler needs, with no global state."""
 
     def __init__(self, config_path=None, token=None, runner=None,
-                 queue_path_override=None, worker_interval=2.0):
+                 queue_path_override=None, worker_interval=2.0,
+                 request_slots=MAX_CONCURRENT_REQUESTS):
         self.config_path = config_path
         self.token = token or secrets.token_urlsafe(24)
         self.runner = runner
         self.lock = threading.Lock()
+        self.request_slots = threading.BoundedSemaphore(request_slots)
         state_path = (
             Path(queue_path_override)
             if queue_path_override is not None
@@ -141,6 +144,7 @@ def _static(name):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "mlx-workbench"
+    sys_version = ""
     protocol_version = "HTTP/1.1"
 
     @property
@@ -171,13 +175,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'",
+            "default-src 'none'; style-src 'self'; script-src 'self'; "
+            "connect-src 'self'; img-src 'self'; form-action 'self'; "
+            "base-uri 'none'; frame-ancestors 'none'",
         )
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def version_string(self):
+        """No Python version in the Server header."""
+        return self.server_version
 
     def _body(self):
         length = self.headers.get("Content-Length")
@@ -199,6 +210,20 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("POST")
 
     def _dispatch(self, method):
+        if not self.app.request_slots.acquire(blocking=False):
+            self._send(*_error(
+                "server_busy",
+                "This server is already handling the maximum number of requests.",
+                "Wait for an in-flight request to finish, then retry.",
+                503,
+            ))
+            return
+        try:
+            self._dispatch_checked(method)
+        finally:
+            self.app.request_slots.release()
+
+    def _dispatch_checked(self, method):
         if not self._host_is_local() or not self._origin_is_local():
             self._send(*_error(
                 "forbidden_origin",
@@ -741,7 +766,8 @@ class Server(ThreadingHTTPServer):
 
 
 def build(host="127.0.0.1", port=8765, config_path=None, token=None, runner=None,
-          start_worker=True, queue_path_override=None, worker_interval=2.0):
+          start_worker=True, queue_path_override=None, worker_interval=2.0,
+          request_slots=MAX_CONCURRENT_REQUESTS):
     """Create a bound server; the caller decides how to run it."""
     app = Application(
         config_path,
@@ -749,5 +775,6 @@ def build(host="127.0.0.1", port=8765, config_path=None, token=None, runner=None
         runner,
         queue_path_override=queue_path_override,
         worker_interval=worker_interval,
+        request_slots=request_slots,
     )
     return Server((host, port), app, start_worker=start_worker)

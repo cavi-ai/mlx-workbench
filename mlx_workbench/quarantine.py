@@ -84,16 +84,38 @@ def _stamp(clock=None):
 
 
 def quarantine(target, roots, quarantine_dir, clock=None, move=shutil.move):
-    """Move one redundant GGUF into the quarantine directory."""
+    """Move one redundant GGUF into the quarantine directory.
+
+    Symbolic links are never moved and never written through: a symlinked
+    source would let a move escape the root guard, and a symlink at the
+    destination would redirect where the file lands.
+    """
+    expanded = Path(target).expanduser()
+    if expanded.is_symlink():
+        raise QuarantineError(
+            "symlink_refused",
+            "{0} is a symbolic link; only regular files are moved.".format(expanded),
+            "Inspect the link; quarantine the real file instead if you choose.",
+        )
     location = guard(target, roots)
     destination_root = Path(quarantine_dir).expanduser()
-    if _within(location, _resolve(destination_root) if destination_root.exists() else destination_root):
+    resolved_root = (
+        _resolve(destination_root) if destination_root.exists() else destination_root
+    )
+    if _within(location, resolved_root):
         raise QuarantineError(
             "already_quarantined",
             "{0} is already in the quarantine directory.".format(location),
             "Delete it yourself when you are sure you no longer need it.",
         )
     destination_root.mkdir(parents=True, exist_ok=True)
+    if destination_root.is_symlink():
+        raise QuarantineError(
+            "symlink_refused",
+            "The quarantine directory is a symbolic link; refusing to write "
+            "through it.",
+            "Point quarantine_dir at a real directory.",
+        )
     stamp, iso = _stamp(clock)
     destination = destination_root / "{0}-{1}".format(stamp, location.name)
     suffix = 1
