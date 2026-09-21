@@ -159,6 +159,66 @@ final class QuarantineParityTests: XCTestCase {
         }
     }
 
+    // MARK: - Symlink refusal (P1-6 parity with mlx_workbench/quarantine.py)
+
+    func testMoveRefusesSymlinkedSource() throws {
+        let root = try makeRoot()
+        let models = root.appendingPathComponent("models")
+        try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
+        let real = root.appendingPathComponent("real").appendingPathComponent("x.gguf")
+        try FileManager.default.createDirectory(at: real.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: real)
+        let link = models.appendingPathComponent("x.gguf")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+        XCTAssertThrowsError(
+            try Quarantine.move(target: link.path, roots: [models.path], quarantineDir: try makeRoot().path, now: now)
+        ) { error in
+            guard case QuarantineError.symlinkRefused = error else {
+                return XCTFail("expected symlinkRefused, got \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: real), Data("x".utf8))
+    }
+
+    func testMoveRefusesSymlinkedQuarantineDir() throws {
+        let root = try makeRoot()
+        let file = root.appendingPathComponent("dupe.gguf")
+        try Data("x".utf8).write(to: file)
+        let realHold = try makeRoot()
+        let linkHold = try makeRoot().appendingPathComponent("hold")
+        try FileManager.default.createSymbolicLink(at: linkHold, withDestinationURL: realHold)
+
+        XCTAssertThrowsError(
+            try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: linkHold.path, now: now)
+        ) { error in
+            guard case QuarantineError.symlinkRefused = error else {
+                return XCTFail("expected symlinkRefused, got \(error)")
+            }
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testRestoreRefusesSymlinkAtTheOriginalLocation() throws {
+        let root = try makeRoot()
+        let quarantineDir = try makeRoot()
+        let file = root.appendingPathComponent("wanted.gguf")
+        try Data("weights".utf8).write(to: file)
+        let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: quarantineDir.path, now: now)
+        // The original spot now holds a symlink instead of the gone file.
+        let decoy = try makeRoot().appendingPathComponent("decoy.gguf")
+        try Data("decoy".utf8).write(to: decoy)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: decoy)
+
+        XCTAssertThrowsError(try Quarantine.restore(record)) { error in
+            guard case QuarantineError.symlinkRefused = error else {
+                return XCTFail("expected symlinkRefused, got \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: decoy), Data("decoy".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: record.to))
+    }
+
     // MARK: - Helpers
 
     private func makeRoot() throws -> URL {

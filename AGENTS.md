@@ -189,7 +189,9 @@ from `mlx-agent` at runtime.
   every write refuses symbolic links at the target or temp path. The
   quarantine guard additionally refuses symlinked sources and symlinked
   quarantine directories; the Swift `WiringCoordinator` refuses symlinked
-  client configs, backup paths, and restore targets.
+  client configs, backup paths, and restore targets, `JSONStore` refuses a
+  symlinked store file, and Swift `Quarantine` mirrors the Python guards
+  (source, quarantine dir, and restore target).
 - Agent subprocesses run with `start_new_session=True`; on timeout the whole
   process group is terminated then killed (`bridge._kill_process_group`), and
   the child environment is an allowlist (`bridge.agent_environment`), never
@@ -209,9 +211,10 @@ from `mlx-agent` at runtime.
   durable stores stay authoritative).
 - Convert/serve Python deps are pinned in `requirements.txt` (exact
   versions); `make install` installs from it and `make pip-audit` checks the
-  runtime against the OSV database. The transformers 4.x pin is required by
+  runtime against the OSV database — both in local runs and as PR gates
+  (`.github/workflows/pr.yml`). The transformers 4.x pin is required by
   mlx-lm's GGUF→HF path and is a tracked, accepted risk (known advisories
-  without a 4.x fix).
+  without a 4.x fix; see `PIP_AUDIT_IGNORES` in the Makefile).
 
 ## Review/build guidance for an agent
 

@@ -63,6 +63,21 @@ final class JSONStoreTests: XCTestCase {
         XCTAssertEqual(leftovers, [])
     }
 
+    func testSymlinkedStoreIsRefusedNotWrittenThrough() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-workbench-jsonstore-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let victim = directory.appendingPathComponent("victim.json")
+        try Data("{}".utf8).write(to: victim)
+        let link = directory.appendingPathComponent("store.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: victim)
+
+        let store = JSONStore<Item>(fileURL: link)
+        XCTAssertThrowsError(try store.replaceAll([Item(id: "a", note: "one")]))
+        XCTAssertEqual(try String(contentsOf: victim), "{}")
+    }
+
     private func storeURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-jsonstore-\(UUID().uuidString)", isDirectory: true)

@@ -134,7 +134,15 @@ pip-audit: venv
 		$(MAKE) --no-print-directory _audit_pkgs; \
 	fi
 	@"$(VENV_PY)" -m pip_audit --version
-	@"$(VENV_PY)" -m pip_audit -r requirements.txt --progress-spinner off
+	@"$(VENV_PY)" -m pip_audit --no-deps -r requirements.txt --progress-spinner off \
+		$(PIP_AUDIT_IGNORES)
+
+# Accepted risk: the transformers 4.x pin is required by mlx-lm's GGUF→HF
+# path (transformers 5 writes incompatible rope keys). These advisories have
+# no 4.x fix; drop the ignores and re-run `make pip-audit` when the pin moves.
+PIP_AUDIT_IGNORES := --ignore-vuln PYSEC-2025-217 --ignore-vuln PYSEC-2026-2290 \
+	--ignore-vuln PYSEC-2026-2288 --ignore-vuln PYSEC-2026-2289 \
+	--ignore-vuln PYSEC-2026-3929
 
 _audit_pkgs:
 	@if command -v uv >/dev/null 2>&1; then \
