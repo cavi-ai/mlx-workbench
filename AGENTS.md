@@ -180,6 +180,20 @@ from `mlx-agent` at runtime.
 - UI binds loopback only; non-loopback hosts are rejected.
 - Job arguments are argv tokens (no shell string execution).
 - Quarantine operations are constrained to configured model roots and `.gguf` files.
+- Hardened response surface: CSP with `frame-ancestors 'none'`, `form-action`,
+  `base-uri`, `X-Frame-Options: DENY`, and a `Server:` header without the
+  Python version (`mlx_workbench/server.py`). Concurrent requests are capped
+  by a bounded semaphore (503 when exhausted); see `test_hardening.py`.
+- Durable state files (`config.json`, `convert-queue.json`) are written via
+  `mlx_workbench/atomicio.py`: fsync-before-replace plus directory fsync, and
+  every write refuses symbolic links at the target or temp path. The
+  quarantine guard additionally refuses symlinked sources and symlinked
+  quarantine directories; the Swift `WiringCoordinator` refuses symlinked
+  client configs, backup paths, and restore targets.
+- Agent subprocesses run with `start_new_session=True`; on timeout the whole
+  process group is terminated then killed (`bridge._kill_process_group`), and
+  the child environment is an allowlist (`bridge.agent_environment`), never
+  the web server's full environment.
 
 ## Review/build guidance for an agent
 

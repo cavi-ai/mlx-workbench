@@ -14,6 +14,7 @@ enum WiringError: LocalizedError {
     case fileChangedSincePreview(client: String)
     case postWriteValidationFailed(client: String)
     case noTransactionToRollback
+    case symlinkRefused(client: String)
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +23,7 @@ enum WiringError: LocalizedError {
         case .fileChangedSincePreview(let client): return "\(client): the config file changed after the preview; preview again."
         case .postWriteValidationFailed(let client): return "\(client): the written config did not validate; the previous file was restored."
         case .noTransactionToRollback: return "There is no wiring transaction to roll back."
+        case .symlinkRefused(let client): return "\(client): the config path or its backup target is a symbolic link; refusing to write through it."
         }
     }
 }
@@ -189,6 +191,8 @@ final class WiringCoordinator: ObservableObject {
         var backupPath: String?
         if plan.before != nil {
             let backup = fileURL.appendingPathExtension("mlxmac-backup-\(Self.backupStamp(now()))")
+            try Self.refuseSymlink(fileURL, client: plan.displayName, fileManager: fileManager)
+            try Self.refuseSymlink(backup, client: plan.displayName, fileManager: fileManager)
             try fileManager.copyItem(at: fileURL, to: backup)
             backupPath = backup.path
         }
@@ -228,6 +232,7 @@ final class WiringCoordinator: ObservableObject {
         do {
             try Data(contents.utf8).write(to: temporary, options: .atomic)
             if fileManager.fileExists(atPath: url.path) {
+                try Self.refuseSymlink(url, client: nil, fileManager: fileManager)
                 _ = try fileManager.replaceItemAt(url, withItemAt: temporary)
             } else {
                 try fileManager.moveItem(at: temporary, to: url)
@@ -238,9 +243,27 @@ final class WiringCoordinator: ObservableObject {
         }
     }
 
+    /// A symlink at a write target would redirect the write outside the
+    /// allowlisted client-config paths. Never follow one.
+    private static func refuseSymlink(
+        _ url: URL, client: String?, fileManager: FileManager
+    ) throws {
+        do {
+            _ = try fileManager.destinationOfSymbolicLink(atPath: url.path)
+        } catch {
+            // Not a symbolic link; the write proceeds normally.
+            return
+        }
+        if let client {
+            throw WiringError.symlinkRefused(client: client)
+        }
+        throw CocoaError(.fileWriteUnknown)
+    }
+
     private func restore(backup: String, to path: String) throws {
         let backupURL = URL(fileURLWithPath: backup)
         let targetURL = URL(fileURLWithPath: path)
+        try Self.refuseSymlink(targetURL, client: nil, fileManager: fileManager)
         if fileManager.fileExists(atPath: targetURL.path) {
             // replaceItemAt consumes its source; restore from a temp copy so
             // the backup survives for repeatability.
