@@ -14,6 +14,7 @@ enum QuarantineError: LocalizedError {
     case alreadyQuarantined(String)
     case moveFailed(String)
     case restoreBlocked(String)
+    case symlinkRefused(String)
 
     var errorDescription: String? {
         switch self {
@@ -29,6 +30,8 @@ enum QuarantineError: LocalizedError {
             return "The file could not be moved: \(detail). Check free space and permissions on the quarantine directory."
         case .restoreBlocked(let path):
             return "Cannot put \(path) back: a file already exists at the original location. Resolve it yourself first."
+        case .symlinkRefused(let path):
+            return "\(path) is a symbolic link; refusing to move or write through it."
         }
     }
 }
@@ -52,6 +55,12 @@ enum Quarantine {
     /// Allow only .gguf files that live under a configured scan root.
     /// Returns the canonical resolved path.
     static func guardPath(_ target: String, roots: [String], fileManager: FileManager = .default) throws -> String {
+        // A symlinked source must be refused before resolve() follows it:
+        // the check runs on the user-supplied path, not the canonical one.
+        let expanded = NSString(string: target).expandingTildeInPath
+        if (try? fileManager.destinationOfSymbolicLink(atPath: expanded)) != nil {
+            throw QuarantineError.symlinkRefused(expanded)
+        }
         let location = resolve(target)
         guard location.lowercased().hasSuffix(".gguf") else {
             throw QuarantineError.notGGUF(location)
@@ -77,11 +86,21 @@ enum Quarantine {
         fileManager: FileManager = .default
     ) throws -> QuarantineRecord {
         let location = try guardPath(target, roots: roots, fileManager: fileManager)
+        // A symlink at the quarantine dir would redirect where files land;
+        // check the user-supplied path before resolve() hides the link.
+        let expandedRoot = NSString(string: quarantineDir).expandingTildeInPath
         let destinationRoot = resolve(quarantineDir)
+        if fileManager.fileExists(atPath: destinationRoot),
+           (try? fileManager.destinationOfSymbolicLink(atPath: expandedRoot)) != nil {
+            throw QuarantineError.symlinkRefused(expandedRoot)
+        }
         if isWithin(location, parent: destinationRoot) {
             throw QuarantineError.alreadyQuarantined(location)
         }
         try fileManager.createDirectory(atPath: destinationRoot, withIntermediateDirectories: true)
+        if (try? fileManager.destinationOfSymbolicLink(atPath: destinationRoot)) != nil {
+            throw QuarantineError.symlinkRefused(destinationRoot)
+        }
 
         let stamp = stampFormatter.string(from: now)
         let name = (location as NSString).lastPathComponent
@@ -132,6 +151,12 @@ enum Quarantine {
             throw QuarantineError.notFound(quarantined)
         }
         let original = resolve(record.from)
+        // Never write through a symlink when putting a file back; resolve()
+        // follows links, so the check must use the unresolved path.
+        let expandedOriginal = NSString(string: record.from).expandingTildeInPath
+        if (try? fileManager.destinationOfSymbolicLink(atPath: expandedOriginal)) != nil {
+            throw QuarantineError.symlinkRefused(original)
+        }
         if fileManager.fileExists(atPath: original) {
             throw QuarantineError.restoreBlocked(original)
         }

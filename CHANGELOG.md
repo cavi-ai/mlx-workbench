@@ -13,6 +13,13 @@ and is versioned independently; submodule bumps are recorded here.
 ## [Unreleased]
 ### Security
 
+- P3 hardening: `make pip-audit` joins the PR gates (`.github/pr.yml`) with
+  the five transformers 4.x advisories recorded as explicit accepted-risk
+  ignores in the Makefile, so only new advisories fail CI; the native app's
+  durable stores gain symlink refusal parity with the Python side —
+  `JSONStore` refuses a symlinked store file, and Swift `Quarantine` refuses
+  symlinked sources, quarantine directories, and restore targets (checks run
+  on the unresolved path, matching `mlx_workbench/quarantine.py`).
 - P2 hardening: adversarial route tests pin classified 4xx handling for
   type-confused bodies, header spoofing, control-character paths, and
   oversized payloads (the NUL-byte 500 and the boolean string-coercion gap

@@ -34,6 +34,9 @@ jobs:
       - name: Run unit tests
         run: make test
 
+      - name: Audit Python dependencies
+        run: make pip-audit
+
       - name: Run release documentation contract tests
         run: make docs-test
 

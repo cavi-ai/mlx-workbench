@@ -75,6 +75,10 @@ final class JSONStore<Value: Codable> {
         let directory = fileURL.deletingLastPathComponent()
         let temporaryURL = fileURL.appendingPathExtension("tmp-\(UUID().uuidString)")
 
+        // A symbolic link at the store path would redirect every durable
+        // write to wherever the link points. Refuse, never follow.
+        try Self.refuseSymlink(fileURL, fileManager: fileManager)
+
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         if fileManager.fileExists(atPath: temporaryURL.path) {
             try? fileManager.removeItem(at: temporaryURL)
@@ -91,6 +95,15 @@ final class JSONStore<Value: Codable> {
             try? fileManager.removeItem(at: temporaryURL)
             throw error
         }
+    }
+
+    static func refuseSymlink(_ url: URL, fileManager: FileManager) throws {
+        do {
+            _ = try fileManager.destinationOfSymbolicLink(atPath: url.path)
+        } catch {
+            return // Not a symbolic link; normal write proceeds.
+        }
+        throw JSONStoreError.symlinkRefused(url.path)
     }
 
     private func withLock<T>(_ operation: () throws -> T) rethrows -> T {
@@ -116,5 +129,16 @@ final class JSONStore<Value: Codable> {
         return applicationSupport
             .appendingPathComponent("mlx-workbench", isDirectory: true)
             .appendingPathComponent(fileName, isDirectory: false)
+    }
+}
+
+enum JSONStoreError: LocalizedError {
+    case symlinkRefused(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .symlinkRefused(let path):
+            return "Refusing to write a durable store through a symbolic link: \(path)"
+        }
     }
 }
