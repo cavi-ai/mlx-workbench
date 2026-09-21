@@ -43,6 +43,17 @@ Cutting a release:
    tag matches `__version__`, re-runs the test gates, and attaches the
    immutable docs archive to the release.
 
+### Versioned docs rebuilds
+
+`docs/mlx-workbench/v*/` is a gitignored build artifact of
+`make docs-build`, not source. After editing anything under
+`docs/mlx-workbench/source/`, just re-run `make docs-build`: a versioned
+tree with the same file set but stale content is regenerated in place, and
+`make docs-verify` then re-checks the manifest. A versioned tree holding
+*unexpected files* (stray writes, a different schema) still refuses with
+`dirty output` — delete `docs/mlx-workbench/v<current>/` and rebuild in that
+case, which is always safe because the directory is generated.
+
 Patch releases may correct behavior and docs without changing the subprocess
 contract; bumping `vendor/mlx-agent` is a product change and gets its own
 release note.
