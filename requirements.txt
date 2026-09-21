@@ -1,0 +1,11 @@
+# Convert/serve runtime for the local .venv. Installed by `make install`
+# (uv preferred, pip fallback). Pins match the versions validated together on
+# Apple Silicon; `make pip-audit` checks this environment against the OSV DB.
+torch==2.14.0
+transformers==4.57.6
+gguf==0.19.0
+mlx-lm==0.29.1
+accelerate==1.15.0
+
+# Audit tooling (used by `make pip-audit`, not imported at runtime).
+pip-audit==2.7.3

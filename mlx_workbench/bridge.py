@@ -624,14 +624,23 @@ def _kill_process_group(process):
 
 
 def _default_runner(command, timeout):
-    with subprocess.Popen(
-        command,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-        env=agent_environment(),
-    ) as process:
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+            env=agent_environment(),
+        )
+    except (OSError, ValueError) as error:
+        # ValueError covers e.g. embedded NUL bytes in an argument.
+        raise BridgeError(
+            "skill_invalid_arguments",
+            "The agent could not be started: {0}".format(error),
+            "Check the submitted fields for control characters and retry.",
+        ) from error
+    with process:
         try:
             stdout, stderr = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:

@@ -254,6 +254,128 @@ class RunnerHardeningTests(unittest.TestCase):
         self.assertTrue(path_line.startswith("PATH=" + expected + ":"))
 
 
+class ConfigKeyUniverseTests(unittest.TestCase):
+    """P2-9: the web save cannot inject keys outside the shared contract."""
+
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.config_path = self.root / "config.json"
+        config.save({}, self.config_path)
+
+    def test_web_save_rejects_unknown_keys(self):
+        status = None
+        import threading
+        import urllib.error
+        import urllib.request
+        httpd = server.build(
+            "127.0.0.1", 0, config_path=self.config_path, token="keys",
+            start_worker=False,
+        )
+        self.addCleanup(httpd.server_close)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+        url = "http://127.0.0.1:{0}/api/config".format(port)
+        body = json.dumps({"port": 9100, "smuggled": {"evil": True}}).encode("utf-8")
+        request = urllib.request.Request(url, data=body, method="POST")
+        request.add_header(server.TOKEN_HEADER, "keys")
+        request.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                status = response.status
+        except urllib.error.HTTPError as error:
+            with error:
+                payload = json.loads(error.read().decode("utf-8"))
+            status = error.code
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_config")
+        on_disk = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertNotIn("smuggled", on_disk)
+
+
+class AuditTrailTests(unittest.TestCase):
+    """P2-10: state-changing operations land in one readable trail."""
+
+    def setUp(self):
+        from mlx_workbench import audit
+        self.audit = audit
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.path = self.root / "audit.jsonl"
+
+    def test_record_appends_and_recent_reverses(self):
+        self.audit.record("a.one", path=self.path)
+        self.audit.record("a.two", path=self.path, detail="x")
+        entries = self.audit.recent(path=self.path)
+        self.assertEqual([e["operation"] for e in entries], ["a.two", "a.one"])
+        self.assertEqual(entries[0]["detail"], "x")
+        self.assertIn("at", entries[0])
+
+    def test_record_skips_empty_operation(self):
+        self.assertIsNone(self.audit.record("", path=self.path))
+        self.assertEqual(self.audit.recent(path=self.path), [])
+
+    def test_record_is_silent_when_the_disk_refuses(self):
+        # A missing directory chain that cannot be created must not raise.
+        blocker = self.root / "file-blocks-the-way"
+        blocker.write_text("not a directory", encoding="utf-8")
+        self.assertIsNone(
+            self.audit.record("a.op", path=blocker / "audit.jsonl")
+        )
+
+    def test_record_drops_entries_once_the_file_is_full(self):
+        self.audit.record("a.seed", path=self.path)
+        with open(self.path, "r+", encoding="utf-8") as handle:
+            handle.seek(self.audit.MAX_AUDIT_BYTES)
+            handle.write("x")
+        self.assertIsNone(self.audit.record("a.late", path=self.path))
+        entries = self.audit.recent(path=self.path)
+        self.assertEqual([e["operation"] for e in entries], ["a.seed"])
+
+    def test_recent_skips_corrupt_lines(self):
+        self.audit.record("a.good", path=self.path)
+        with open(self.path, "a", encoding="utf-8") as handle:
+            handle.write("{broken\n")
+        entries = self.audit.recent(path=self.path)
+        self.assertEqual([e["operation"] for e in entries], ["a.good"])
+
+    def test_server_routes_write_the_trail(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        config_path = self.root / "profile" / "config.json"
+        config.save({
+            "gguf_roots": [],
+            "quarantine_dir": str(self.root / "hold"),
+            "output_dir": str(self.root / "out"),
+        }, config_path)
+        httpd = server.build(
+            "127.0.0.1", 0, config_path=config_path, token="audit",
+            start_worker=False,
+        )
+        self.addCleanup(httpd.server_close)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+        url = "http://127.0.0.1:{0}/api/config".format(port)
+        body = json.dumps({"port": 9200}).encode("utf-8")
+        request = urllib.request.Request(url, data=body, method="POST")
+        request.add_header(server.TOKEN_HEADER, "audit")
+        request.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(request, timeout=10):
+            pass
+        audit_file = self.root / "profile" / "audit.jsonl"
+        entries = self.audit.recent(path=audit_file)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["operation"], "config.save")
+        self.assertEqual(entries[0]["changed"], ["port"])
+
+
 class QuarantineSymlinkTests(unittest.TestCase):
     """P1-6: quarantine never follows symlinks, in or out."""
 
@@ -288,6 +410,140 @@ class QuarantineSymlinkTests(unittest.TestCase):
             quarantine.quarantine(str(source), [self.roots], str(link_hold))
         self.assertEqual(caught.exception.code, "symlink_refused")
         self.assertTrue(source.exists())
+
+
+class AdversarialRouteTests(unittest.TestCase):
+    """P2-8: hostile requests must get classified 4xx, never a 500 or a hang.
+
+    Complements ServerTests: here the point is that every malformed input —
+    type-confused JSON, header edge cases, oversized arrays — is refused by
+    the same envelope contract as ordinary misuse.
+    """
+
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.config_path = self.root / "config.json"
+        config.save({
+            "gguf_roots": [str(self.root / "models")],
+            "quarantine_dir": str(self.root / "hold"),
+            "output_dir": str(self.root / "out"),
+        }, self.config_path)
+        self.httpd = server.build(
+            "127.0.0.1", 0, config_path=self.config_path, token="adversarial",
+            start_worker=False,
+        )
+        self.addCleanup(self.httpd.server_close)
+        self.port = self.httpd.server_address[1]
+        import threading
+        thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(self.httpd.shutdown)
+
+    def _raw(self, path, method="GET", body=None, headers=None):
+        url = "http://127.0.0.1:{0}{1}".format(self.port, path)
+        request = urllib.request.Request(url, data=body, method=method)
+        request.add_header(server.TOKEN_HEADER, "adversarial")
+        for key, value in (headers or {}).items():
+            request.add_header(key, value)
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status
+        except urllib.error.HTTPError as error:
+            with error:
+                error.read()
+            return error.code
+
+    def _post_json(self, route, payload):
+        body = json.dumps(payload).encode("utf-8")
+        return self._raw(route, "POST", body, {"Content-Type": "application/json"})
+
+    def test_host_spoofing_suffix_is_rejected(self):
+        # DNS-rebinding shape: "127.0.0.1.evil.com" is not a loopback host.
+        self.assertEqual(
+            self._raw("/", headers={"Host": "127.0.0.1.evil.com"}), 403
+        )
+
+    def test_origin_subdomain_trick_is_rejected(self):
+        self.assertEqual(
+            self._raw(
+                "/api/config",
+                headers={"Origin": "http://127.0.0.1.attacker.example"},
+            ),
+            403,
+        )
+
+    def test_origin_hostname_with_embedded_loopback_is_rejected(self):
+        self.assertEqual(
+            self._raw(
+                "/api/config",
+                headers={"Origin": "http://localhost.evil.example"},
+            ),
+            403,
+        )
+
+    def test_type_confused_bodies_are_classified_not_500(self):
+        hostile_bodies = [
+            ("list", []),
+            ("string", "convert everything"),
+            ("int", 7),
+            ("bool", True),
+            ("null", None),
+            ("nested_list", {"path": ["nested", "list", "not", "string"]}),
+            ("numeric_path", {"path": 3.14}),
+            ("dict_path", {"path": {"deep": True}}),
+        ]
+        for name, payload in hostile_bodies:
+            with self.subTest(body=name):
+                status = self._post_json("/api/convert/preview", payload)
+                self.assertIn(status, (400, 409))
+
+    def test_type_confused_scout_body_is_classified(self):
+        for payload in ({"role": {"deep": True}}, {"limit": "many"},
+                        {"limit": True}, {"fast": "yes"}):
+            with self.subTest(payload=payload):
+                status = self._post_json("/api/scout", payload)
+                self.assertIn(status, (400, 502))
+
+    def test_oversized_body_is_rejected(self):
+        # 64 KiB is the cap; a 1 MiB body must not be read or buffered. The
+        # client may learn of the refusal either as the 400 reply or as a
+        # broken pipe while still uploading; either way the server must
+        # answer its next request normally.
+        blob = "x" * (1024 * 1024)
+        try:
+            status = self._post_json("/api/convert/preview", {"path": blob})
+            self.assertEqual(status, 400)
+        except (urllib.error.URLError, BrokenPipeError, ConnectionResetError):
+            pass
+        self.assertEqual(self._raw("/api/config"), 200)
+
+    def test_content_length_garbage_is_rejected(self):
+        body = b'{"path": "/x.gguf"}'
+        status = self._raw(
+            "/api/convert/preview", "POST", body, {"Content-Length": "abc"}
+        )
+        self.assertEqual(status, 400)
+
+    def test_huge_root_list_is_rejected(self):
+        payload = {"gguf_roots": ["/r{0}".format(i) for i in range(64)]}
+        status = self._post_json("/api/config", payload)
+        self.assertEqual(status, 400)
+
+    def test_unicode_and_null_bytes_in_paths_are_classified(self):
+        for path in ("mod\x00el.gguf", "mødel.gguf", "../../etc/passwd"):
+            with self.subTest(path=path):
+                status = self._post_json(
+                    "/api/convert/preview", {"path": path, "preview_hash": "a" * 64}
+                )
+                self.assertIn(status, (400, 502))
+
+    def test_broken_json_body_is_classified(self):
+        status = self._raw(
+            "/api/convert/preview", "POST", b'{"path": ', {"Content-Type": "application/json"}
+        )
+        self.assertEqual(status, 400)
 
 
 if __name__ == "__main__":

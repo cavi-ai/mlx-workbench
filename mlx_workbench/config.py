@@ -34,6 +34,22 @@ _KNOWN_FIELDS = frozenset(
     _LIST_FIELDS + _STRING_FIELDS + _INT_FIELDS + _BOOL_FIELDS + ("schema_version",)
 )
 
+# Keys the native app owns. They survive load/save cycles but are never
+# produced by the web UI; see mlx-mac/mlx-mac/Services/AppConfig.swift.
+# A config file carrying any other key was not written by either frontend
+# and is dropped on the next save instead of being passed through.
+_FOREIGN_KEYS = frozenset((
+    "verification_enabled",
+    "watch_enabled",
+    "fit_reserve_gb",
+    "reclaim_stale_days",
+    "comparison_max_tokens",
+))
+
+# The full universe of keys a config file may carry. Anything outside this
+# set is rejected on load and dropped on save.
+_ALLOWED_KEYS = _KNOWN_FIELDS | _FOREIGN_KEYS
+
 
 class ConfigError(ValueError):
     """The supplied configuration is not usable."""
@@ -161,6 +177,10 @@ def _coerce(value):
     merged["schema_version"] = SCHEMA_VERSION
     for key, item in value.items():
         if key not in _KNOWN_FIELDS:
+            if key not in _ALLOWED_KEYS:
+                raise ConfigError(
+                    "unknown config key: {0}".format(key)
+                )
             merged[key] = item
     return merged
 
@@ -174,7 +194,17 @@ def load(path=None):
         return defaults()
     except (OSError, ValueError) as error:
         raise ConfigError("{0} is not readable JSON: {1}".format(location, error))
-    return _coerce(raw)
+    try:
+        return _coerce(raw)
+    except ConfigError:
+        # A file with keys neither frontend writes is corrupt in kind; refuse
+        # the whole file rather than silently half-loading it.
+        unknown = sorted(set(raw or {}) - _ALLOWED_KEYS) if isinstance(raw, dict) else None
+        if unknown:
+            raise ConfigError(
+                "{0} has unknown config keys: {1}".format(location, ", ".join(unknown))
+            )
+        raise
 
 
 def save(value, path=None):

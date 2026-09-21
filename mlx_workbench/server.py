@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import (
+    audit as audit_module,
     bridge,
     config as config_module,
     convert_queue as convert_queue_module,
@@ -102,6 +103,7 @@ class Application:
             else convert_queue_module.queue_path(config_path)
         )
         self.convert_queue = convert_queue_module.ConvertQueue(path=state_path)
+        self.audit_file = audit_module.audit_path(config_path)
         self.worker = ConversionWorker(
             self.convert_queue,
             lambda: self.config()["mlx_agent_path"],
@@ -115,6 +117,12 @@ class Application:
     def save_config(self, value):
         with self.lock:
             return config_module.save(value, self.config_path)
+
+    def audit(self, operation, **details):
+        """Note a state-changing operation in the local audit trail."""
+        return audit_module.record(
+            operation, path=self.audit_file, **details
+        )
 
 
 def _json_bytes(payload, status=200):
@@ -132,6 +140,18 @@ def _error(code, message, remediation, status=400):
 
 def _ok(data):
     return _json_bytes({"status": "ok", "data": data})
+
+
+def _rejects_control_characters(*values):
+    """True when any value is a string carrying C0 control characters.
+
+    Paths travel as argv tokens; embedded NULs crash subprocess spawn and
+    other control characters are never legitimate in a filesystem path.
+    """
+    return any(
+        isinstance(value, str) and any(ord(ch) < 32 for ch in value)
+        for value in values
+    )
 
 
 def _static(name):
@@ -195,13 +215,31 @@ class Handler(BaseHTTPRequestHandler):
         try:
             size = int(length or 0)
         except ValueError:
+            # Drain what the client already sent so it can read the reply
+            # instead of dying on a broken pipe mid-upload.
+            self._drain_body()
             return None
         if size <= 0 or size > MAX_BODY_BYTES:
+            self._drain_body()
             return None
         try:
             return json.loads(self.rfile.read(size).decode("utf-8"))
         except (OSError, ValueError, UnicodeDecodeError):
             return None
+
+    def _drain_body(self, cap=256 * 1024):
+        """Read and discard an unread request body, bounded."""
+        try:
+            remaining = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            remaining = 0
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 65536))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            if remaining > cap:
+                break
 
     def do_GET(self):
         self._dispatch("GET")
@@ -319,8 +357,13 @@ class Handler(BaseHTTPRequestHandler):
         # web Settings save.
         combined = dict(settings)
         combined.update(payload)
+        saved = self.app.save_config(combined)
+        self.app.audit(
+            "config.save",
+            changed=sorted(set(payload) & config_module._ALLOWED_KEYS),
+        )
         return _ok({
-            "config": self.app.save_config(combined),
+            "config": saved,
             "agent": bridge.agent_health(self.app.config()["mlx_agent_path"]),
             "runtime": deps_module.runtime_report(),
         })
@@ -374,6 +417,7 @@ class Handler(BaseHTTPRequestHandler):
             return _error("invalid_body", "id is required.", "Retry from the UI.")
         removed = self.app.convert_queue.cancel(payload["id"])
         self.app.worker.wake()
+        self.app.audit("queue.cancel", item_id=payload["id"], removed=removed)
         return _ok({
             "removed": removed,
             "queue": self.app.convert_queue.snapshot(),
@@ -382,6 +426,7 @@ class Handler(BaseHTTPRequestHandler):
     def _api_queue_clear(self, route, settings, agent, runner):
         cleared = self.app.convert_queue.clear()
         self.app.worker.wake()
+        self.app.audit("queue.clear", cleared=cleared)
         return _ok({
             "cleared": cleared,
             "queue": self.app.convert_queue.snapshot(),
@@ -397,6 +442,7 @@ class Handler(BaseHTTPRequestHandler):
             return _error("invalid_body", "id is required.", "Retry from the UI.")
         retried = self.app.convert_queue.retry(payload["id"])
         self.app.worker.wake()
+        self.app.audit("queue.retry", item_id=payload["id"])
         return _ok({
             "retried": retried,
             "queue": self.app.convert_queue.snapshot(),
@@ -419,6 +465,7 @@ class Handler(BaseHTTPRequestHandler):
             payload["id"], payload["direction"],
         )
         self.app.worker.wake()
+        self.app.audit("queue.move", item_id=payload["id"], direction=payload["direction"])
         return _ok({
             "moved": moved,
             "queue": self.app.convert_queue.snapshot(),
@@ -437,12 +484,18 @@ class Handler(BaseHTTPRequestHandler):
         limit = payload.get("limit")
         if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
             return _error("invalid_body", "limit must be a positive integer.", "Retry from the UI.")
+        fast = payload.get("fast")
+        new = payload.get("new")
+        if not isinstance(fast, bool) or not isinstance(new, bool):
+            return _error(
+                "invalid_body", "fast and new must be booleans.", "Retry from the UI."
+            )
         return _ok(bridge.discover(
             agent,
             role=role or None,
             limit=limit,
-            fast=bool(payload.get("fast")),
-            new=bool(payload.get("new")),
+            fast=fast,
+            new=new,
             runner=runner,
         ))
 
@@ -572,9 +625,16 @@ class Handler(BaseHTTPRequestHandler):
                 "Confirming a serve plan needs the hash from its preview.",
                 "Preview the plan first, then confirm it.",
             )
-        return _ok(bridge.serve_start(
+        started = bridge.serve_start(
             agent, model_repo, runtime, preview_hash, port, runner=runner, path=local_path,
-        ))
+        )
+        self.app.audit(
+            "serve.start",
+            model=model_repo or local_path,
+            runtime=runtime,
+            port=port,
+        )
+        return _ok(started)
 
     def _api_duplicates_scan(self, route, settings, agent, runner):
         payload = self._body()
@@ -600,7 +660,9 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._body()
         if not isinstance(payload, dict) or not isinstance(payload.get("port"), int):
             return _error("invalid_body", "port is required.", "Retry from the UI.")
-        return _ok(bridge.serve_stop(agent, payload["port"], runner=runner))
+        stopped = bridge.serve_stop(agent, payload["port"], runner=runner)
+        self.app.audit("serve.stop", port=payload["port"])
+        return _ok(stopped)
 
     def _api_quant_profile(self, route, settings, agent, runner):
         payload = self._body()
@@ -623,6 +685,11 @@ class Handler(BaseHTTPRequestHandler):
             config_module.scan_roots(settings),
             settings["quarantine_dir"],
         )
+        self.app.audit(
+            "quarantine.move",
+            source=record.get("from"),
+            destination=record.get("to"),
+        )
         return _ok({"moved": record})
 
     def _convert_route(self, route, settings, agent, runner):
@@ -631,6 +698,13 @@ class Handler(BaseHTTPRequestHandler):
             return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
         path = payload.get("path")
         repo = payload.get("repo")
+        out = payload.get("out")
+        if _rejects_control_characters(path, repo, out):
+            return _error(
+                "invalid_body",
+                "Path fields must not contain control characters.",
+                "Retry with a plain filesystem path.",
+            )
         has_path = isinstance(path, str) and bool(path.strip())
         has_repo = isinstance(repo, str) and bool(repo.strip())
         if has_path == has_repo:
@@ -684,6 +758,13 @@ class Handler(BaseHTTPRequestHandler):
             and drain.get("status") == "started"
             and isinstance(drain.get("item"), dict)
             and drain["item"].get("id") == item["id"]
+        )
+        self.app.audit(
+            "convert.submit",
+            item_id=item["id"],
+            model=label,
+            q_bits=q_bits,
+            state="started" if started_submitted else "queued",
         )
         return _ok({
             "status": "started" if started_submitted else "queued",

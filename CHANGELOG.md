@@ -13,6 +13,21 @@ and is versioned independently; submodule bumps are recorded here.
 ## [Unreleased]
 ### Security
 
+- P2 hardening: adversarial route tests pin classified 4xx handling for
+  type-confused bodies, header spoofing, control-character paths, and
+  oversized payloads (the NUL-byte 500 and the boolean string-coercion gap
+  they found are fixed); the config key universe is closed — unknown keys are
+  rejected on load and refused on save while native premium keys stay
+  preserved; state-changing web operations now append to a bounded local
+  audit trail (`mlx_workbench/audit.py`,
+  `$XDG_STATE_HOME/mlx-workbench/audit.jsonl`).
+- Supply chain: `make install` now installs from pinned `requirements.txt`
+  (exact versions validated together on Apple Silicon), and a new
+  `make pip-audit` target checks the runtime against the OSV database. The
+  audit currently reports 5 known `transformers` 4.x advisories; the pin is
+  required by mlx-lm's GGUF→HF path (transformers 5 writes incompatible rope
+  keys) and is a tracked, accepted risk — see the pip-audit note in
+  `requirements.txt` when a 4.x patch release lands.
 - Hardened response headers: CSP now pins `frame-ancestors 'none'`,
   `form-action 'self'`, and `base-uri 'none'`; `X-Frame-Options: DENY` added;
   the `Server:` header no longer advertises the Python version.

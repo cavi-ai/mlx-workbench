@@ -60,11 +60,39 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(config.ConfigError):
             config.load(self.path)
 
-    def test_unknown_keys_are_preserved(self):
-        saved = config.save({"surprise": True}, self.path)
-        self.assertEqual(saved["surprise"], True)
-        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")), saved)
-        self.assertEqual(config.load(self.path)["surprise"], True)
+    def test_unknown_keys_are_rejected(self):
+        # Keys neither the web UI nor the native app writes are refused, so
+        # a corrupted or hostile config cannot smuggle arbitrary fields into
+        # every save.
+        with self.assertRaises(config.ConfigError):
+            config.save({"surprise": True}, self.path)
+
+    def test_load_rejects_unknown_keys_naming_them(self):
+        self.path.write_text(
+            json.dumps({**config.defaults(), "sneaky_key": 1}),
+            encoding="utf-8",
+        )
+        with self.assertRaises(config.ConfigError) as caught:
+            config.load(self.path)
+        self.assertIn("sneaky_key", str(caught.exception))
+
+    def test_foreign_keys_are_listed_and_preserved(self):
+        # The universe is explicit: native premium keys are the only foreign
+        # keys a config may carry.
+        self.assertEqual(
+            sorted(config._FOREIGN_KEYS),
+            sorted([
+                "verification_enabled",
+                "watch_enabled",
+                "fit_reserve_gb",
+                "reclaim_stale_days",
+                "comparison_max_tokens",
+            ]),
+        )
+        self.assertEqual(
+            sorted(config._ALLOWED_KEYS - config._FOREIGN_KEYS),
+            sorted(config._KNOWN_FIELDS),
+        )
 
     def test_native_app_premium_keys_survive_a_web_save(self):
         premium = {

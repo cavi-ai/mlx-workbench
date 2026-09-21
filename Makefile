@@ -21,14 +21,17 @@ LAUNCHER := scripts/mlx-workbench
 URL      := http://$(HOST):$(PORT)/
 # transformers 5 writes nested rope_parameters; mlx-lm 0.31 expects the
 # top-level rope_theta key in GGUF→HF intermediates. Pin transformers 4.
-CONVERT_PKGS := torch 'transformers<5' gguf mlx-lm accelerate
+# Exact pins live in requirements.txt (versions validated together on
+# Apple Silicon); `make install` installs from that file.
+CONVERT_PKGS := -r requirements.txt
+CONVERT_PKGS_LOOSE := torch 'transformers<5' gguf mlx-lm accelerate
 DOCS_VERSION := $(shell $(PYTHON) -c 'from mlx_workbench import __version__; print(__version__)')
 DOCS_TAG     := v$(DOCS_VERSION)
 DOCS_COMMIT  ?= $(shell git rev-parse HEAD)
 DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
 DOCS_RELEASE_DIR ?= .release
 
-.PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert deps \
+.PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert pip-audit _audit_pkgs deps \
 	start stop restart status run test test-js test-live-scan test-swift test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
 	docs-test docs-build docs-verify docs-release version-bump
 
@@ -56,6 +59,7 @@ help:
 	row "make test-live-scan" "validate live model bytes against configured filesystem paths"; \
 	row "make test-swift-live-scan" "validate native app scan bytes against configured filesystem paths"; \
 	row "make accept-native-gguf" "RUNTIME_MANIFEST=/absolute/path/runtime.json — opt-in native GGUF-to-Run acceptance"; \
+	row "make pip-audit" "audit .venv convert/serve deps against the OSV DB"; \
 	hdr "Docs & release"; \
 	row "make docs-test" "release documentation contract tests"; \
 	row "make docs-build" "build deterministic versioned documentation"; \
@@ -94,21 +98,21 @@ agent-bootstrap:
 
 venv: mac-only
 	@if [ -x "$(VENV_PY)" ]; then \
-		echo "venv OK: $$($(VENV_PY) -c 'import sys; print(sys.executable + \" (\" + sys.version.split()[0] + \")\")')"; \
-		exit 0; \
-	fi
-	@echo "Creating $(VENV) with Python $(VENV_PYTHON) (Apple Silicon)…"
-	@if command -v uv >/dev/null 2>&1; then \
-		uv venv "$(VENV)" --python "$(VENV_PYTHON)"; \
-	elif command -v python$(VENV_PYTHON) >/dev/null 2>&1; then \
-		python$(VENV_PYTHON) -m venv "$(VENV)"; \
+		echo "venv OK: $$($(VENV_PY) -c 'import sys; print(sys.executable + " (" + sys.version.split()[0] + ")")')"; \
 	else \
-		echo "Need Python $(VENV_PYTHON) on this Mac." >&2; \
-		echo "  brew install python@$(VENV_PYTHON)" >&2; \
-		echo "  # or: uv python install $(VENV_PYTHON)" >&2; \
-		exit 1; \
+		echo "Creating $(VENV) with Python $(VENV_PYTHON) (Apple Silicon)…"; \
+		if command -v uv >/dev/null 2>&1; then \
+			uv venv "$(VENV)" --python "$(VENV_PYTHON)"; \
+		elif command -v python$(VENV_PYTHON) >/dev/null 2>&1; then \
+			python$(VENV_PYTHON) -m venv "$(VENV)"; \
+		else \
+			echo "Need Python $(VENV_PYTHON) on this Mac." >&2; \
+			echo "  brew install python@$(VENV_PYTHON)" >&2; \
+			echo "  # or: uv python install $(VENV_PYTHON)" >&2; \
+			exit 1; \
+		fi; \
+		echo "venv created: $$($(VENV_PY) -c 'import sys; print(sys.executable)')"; \
 	fi
-	@echo "venv created: $$($(VENV_PY) -c 'import sys; print(sys.executable)')"
 
 _pkgs:
 	@echo "Installing into $$($(VENV_PY) -c 'import sys; print(sys.executable)')"
@@ -123,6 +127,21 @@ _pkgs:
 install-convert deps: mac-only venv
 	@$(MAKE) --no-print-directory _pkgs
 	@$(MAKE) --no-print-directory check-convert
+
+pip-audit: venv
+	@command -v uv >/dev/null 2>&1 && echo "uv found; using uv pip install" || true
+	@if ! "$(VENV_PY)" -c "import pip_audit" 2>/dev/null; then \
+		$(MAKE) --no-print-directory _audit_pkgs; \
+	fi
+	@"$(VENV_PY)" -m pip_audit --version
+	@"$(VENV_PY)" -m pip_audit -r requirements.txt --progress-spinner off
+
+_audit_pkgs:
+	@if command -v uv >/dev/null 2>&1; then \
+		uv pip install --python "$(VENV_PY)" pip-audit; \
+	else \
+		"$(VENV_PY)" -m pip install pip-audit; \
+	fi
 
 check: mac-only
 	@agent_path="$$($(PYTHON) -c 'from mlx_workbench import config; print(config.load()["mlx_agent_path"])')"; \

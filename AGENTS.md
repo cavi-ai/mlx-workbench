@@ -193,7 +193,25 @@ from `mlx-agent` at runtime.
 - Agent subprocesses run with `start_new_session=True`; on timeout the whole
   process group is terminated then killed (`bridge._kill_process_group`), and
   the child environment is an allowlist (`bridge.agent_environment`), never
-  the web server's full environment.
+  the web server's full environment. Malformed request bodies (type-confused
+  JSON, control characters in path fields, oversized/undecodable payloads)
+  are refused with classified 4xx envelopes (`tests/test_hardening.py`
+  adversarial route tests); oversized bodies are drained so clients can read
+  the reply.
+- The config key universe is closed (`config._ALLOWED_KEYS` = known web
+  fields + `config._FOREIGN_KEYS` native premium keys): unknown keys are
+  rejected on load and refused on save, so neither frontend can smuggle
+  arbitrary fields into the shared `config.json`.
+- Every state-changing web operation (config save, convert submit, queue
+  cancel/clear/retry/move, serve start/stop, quarantine move) appends a line
+  to a local audit trail via `mlx_workbench/audit.py`
+  (`$XDG_STATE_HOME/mlx-workbench/audit.jsonl`, bounded, best-effort —
+  durable stores stay authoritative).
+- Convert/serve Python deps are pinned in `requirements.txt` (exact
+  versions); `make install` installs from it and `make pip-audit` checks the
+  runtime against the OSV database. The transformers 4.x pin is required by
+  mlx-lm's GGUF→HF path and is a tracked, accepted risk (known advisories
+  without a 4.x fix).
 
 ## Review/build guidance for an agent
 
