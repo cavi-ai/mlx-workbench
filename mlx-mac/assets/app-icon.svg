@@ -1,0 +1,23 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#4A63E7"/>
+  <path d="M100 380 C 240 300 784 300 924 380 L 924 285 C 924 180 840 100 735 100 L 289 100 C 184 100 100 180 100 285 Z" fill="#7D93F5" fill-opacity="0.35"/>
+
+  <!-- anvil: body + horn, wide face -->
+  <path fill="#EDF1FF" d="M180 470 C 180 440 208 424 244 424 L 780 424 C 820 424 848 448 848 484 C 848 518 822 542 784 542 L 640 542 L 640 590 L 700 706 C 710 728 696 740 672 740 L 452 740 C 428 740 414 728 438 706 L 498 590 L 498 542 L 244 542 C 206 542 180 518 180 470 Z"/>
+  <rect x="230" y="424" width="564" height="38" rx="19" fill="#FFFFFF"/>
+  <rect x="452" y="740" width="248" height="40" rx="20" fill="#C9D4F9"/>
+
+  <!-- MLX wordmark centered on the face (spans 322..702) -->
+  <g fill="#3A4CC9">
+    <path d="M322 492 L352 392 L384 392 L404 448 L424 392 L416 392 L448 392 L468 492 L434 492 L420 440 L402 492 L370 492 L352 440 L338 492 Z"/>
+    <path d="M482 392 L514 392 L514 464 L556 464 L556 492 L514 492 L482 492 Z"/>
+    <path d="M572 392 L606 392 L626 424 L646 392 L680 392 L644 440 L682 492 L648 492 L624 458 L600 492 L566 492 L602 440 Z"/>
+  </g>
+
+  <!-- spark above the anvil -->
+  <path fill="#FFC53D" d="M496 330 L528 258 L504 304 L544 232 L588 232 L560 292 L590 292 L520 396 L544 322 Z"/>
+
+  <!-- loopback dot -->
+  <circle cx="196" cy="806" r="28" fill="#FFC53D"/>
+  <circle cx="196" cy="806" r="50" fill="none" stroke="#FFC53D" stroke-opacity="0.4" stroke-width="12"/>
+</svg>

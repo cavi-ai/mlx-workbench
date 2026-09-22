@@ -33,7 +33,7 @@ DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert pip-audit _audit_pkgs deps \
 	start stop restart status run test test-js test-live-scan test-swift test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
-	docs-test docs-build docs-verify docs-release version-bump
+	docs-test docs-build docs-verify docs-release version-bump dmg
 
 help:
 	@B=''; C=''; D=''; G=''; N=''; \
@@ -60,6 +60,7 @@ help:
 	row "make test-swift-live-scan" "validate native app scan bytes against configured filesystem paths"; \
 	row "make accept-native-gguf" "RUNTIME_MANIFEST=/absolute/path/runtime.json — opt-in native GGUF-to-Run acceptance"; \
 	row "make pip-audit" "audit .venv convert/serve deps against the OSV DB"; \
+	row "make dmg" "build the Release .app and package it as a DMG"; \
 	hdr "Docs & release"; \
 	row "make docs-test" "release documentation contract tests"; \
 	row "make docs-build" "build deterministic versioned documentation"; \
@@ -307,6 +308,32 @@ build-swift:
 	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Release -arch arm64 \
 		-derivedDataPath $(MLX_SWIFT_DD) build
+
+# Package the Release app into a DMG. Ad-hoc signed by default; set
+# CODESIGN_IDENTITY="Developer ID Application: …" to sign for distribution
+# (then notarize separately with notarytool).
+DMG_DIR       := .release
+DMG_VOLUME    := mlx-workbench
+DMG_OUTPUT    := $(DMG_DIR)/mlx-workbench-$(shell $(PYTHON) -c 'from mlx_workbench import __version__; print(__version__)').dmg
+CODESIGN_IDENTITY ?= -
+
+dmg: build-swift
+	@mkdir -p $(DMG_DIR)
+	@rm -rf "$(DMG_DIR)/stage" && mkdir -p "$(DMG_DIR)/stage"
+	@cp -R "$(MLX_SWIFT_APP)" "$(DMG_DIR)/stage/"
+	@ln -s /Applications "$(DMG_DIR)/stage/Applications"
+	@if [ "$(CODESIGN_IDENTITY)" != "-" ]; then \
+		codesign --force --deep --options runtime \
+			--sign "$(CODESIGN_IDENTITY)" "$(DMG_DIR)/stage/mlx-workbench.app"; \
+	else \
+		codesign --force --deep --sign - "$(DMG_DIR)/stage/mlx-workbench.app"; \
+	fi
+	@hdiutil create -volname "$(DMG_VOLUME)" \
+		-srcfolder "$(DMG_DIR)/stage" \
+		-format UDZO -ov -fs HFS+J \
+		"$(DMG_OUTPUT)"
+	@rm -rf "$(DMG_DIR)/stage"
+	@echo "DMG ready: $(DMG_OUTPUT)"
 
 run-swift: build-swift
 	@open $(MLX_SWIFT_APP)
