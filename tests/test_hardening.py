@@ -669,6 +669,202 @@ class ServePresetTests(unittest.TestCase):
         self.assertIn("--adapter-path", commands[-1])
 
 
+class ConvertPreflightTests(unittest.TestCase):
+    """Fail-fast GGUF architecture check at conversion confirm time."""
+
+    def setUp(self):
+        from mlx_workbench import convert_preflight, gguf_arch
+        self.preflight = convert_preflight
+        self.gguf_arch = gguf_arch
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+
+    def _gguf(self, name, architecture):
+        import struct
+        path = self.root / name
+        with path.open("wb") as handle:
+            handle.write(b"GGUF")
+            handle.write(struct.pack("<I", 3))      # version
+            handle.write(struct.pack("<Q", 0))      # tensor count
+            handle.write(struct.pack("<Q", 1))      # one metadata pair
+            key = b"general.architecture"
+            handle.write(struct.pack("<Q", len(key)))
+            handle.write(key)
+            handle.write(struct.pack("<I", 8))      # string value type
+            value = architecture.encode("utf-8")
+            handle.write(struct.pack("<Q", len(value)))
+            handle.write(value)
+        return str(path)
+
+    def test_reader_extracts_architecture(self):
+        self.assertEqual(
+            self.gguf_arch.read_architecture(self._gguf("m.gguf", "llama")),
+            "llama",
+        )
+
+    def test_reader_rejects_non_gguf(self):
+        path = self.root / "junk.bin"
+        path.write_bytes(b"not-a-gguf")
+        with self.assertRaises(self.gguf_arch.GGUFFormatError):
+            self.gguf_arch.read_architecture(str(path))
+
+    def _with_supported(self, archs):
+        original = self.preflight.supported_architectures
+        self.addCleanup(setattr, self.preflight, "supported_architectures", original)
+        self.preflight.supported_architectures = lambda: archs
+
+    def test_supported_architecture_passes(self):
+        self._with_supported({"llama"})
+        path = self._gguf("ok.gguf", "llama")
+        arch = self.preflight.check(path)
+        self.assertEqual(arch, "llama")
+
+    def test_unsupported_architecture_is_refused_and_named(self):
+        self._with_supported({"llama"})
+        path = self._gguf("flash.gguf", "dflash")
+        with self.assertRaises(self.preflight.UnsupportedArchitecture) as caught:
+            self.preflight.check(path)
+        self.assertEqual(caught.exception.code, "architecture_unsupported")
+        self.assertIn("dflash", str(caught.exception))
+        self.assertIn("dflash", caught.exception.to_dict()["message"])
+
+    def test_missing_supported_set_allows(self):
+        self._with_supported(None)
+        path = self._gguf("unknown.gguf", "anything")
+        self.assertEqual(self.preflight.check(path), "anything")
+
+    def test_unreadable_file_defers_to_the_agent(self):
+        path = self.root / "broken.gguf"
+        path.write_bytes(b"\x00\x01")
+        self.assertIsNone(self.preflight.check(str(path)))
+
+    def test_server_confirm_returns_422_for_unsupported_architecture(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        config_path = self.root / "config.json"
+        models = self.root / "models"
+        models.mkdir()
+        path = self._gguf("flash.gguf", "dflash")
+        target = models / "flash.gguf"
+        target.write_bytes(Path(path).read_bytes())
+        config.save({
+            "gguf_roots": [str(models)],
+            "quarantine_dir": str(self.root / "hold"),
+            "output_dir": str(self.root / "out"),
+            "mlx_agent_path": _fake_agent_checkout(self.root),
+        }, config_path)
+        # Deterministic supported set: the test interpreter has no transformers.
+        original = self.preflight.supported_architectures
+        self.addCleanup(setattr, self.preflight, "supported_architectures", original)
+        self.preflight.supported_architectures = lambda: {"llama", "qwen2"}
+        httpd = server.build(
+            "127.0.0.1", 0, config_path=config_path, token="pf",
+            start_worker=False,
+        )
+        self.addCleanup(httpd.server_close)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+        url = "http://127.0.0.1:{0}/api/convert/start".format(port)
+        body = json.dumps({
+            "path": str(target),
+            "preview_hash": "h" * 64,
+            "q_bits": 4,
+        }).encode("utf-8")
+        request = urllib.request.Request(url, data=body, method="POST")
+        request.add_header(server.TOKEN_HEADER, "pf")
+        request.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(request, timeout=10):
+                self.fail("expected a refusal")
+        except urllib.error.HTTPError as error:
+            status = error.code
+            payload = json.loads(error.read().decode("utf-8"))
+        self.assertEqual(status, 422)
+        self.assertEqual(payload["error"]["code"], "architecture_unsupported")
+        self.assertIn("dflash", payload["error"]["message"])
+
+
+class ConvertProgressTests(unittest.TestCase):
+    """Live progress endpoint: phase, percent, failed state."""
+
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.config_path = self.root / "config.json"
+        config.save({
+            "gguf_roots": [],
+            "quarantine_dir": str(self.root / "hold"),
+            "output_dir": str(self.root / "out"),
+            "mlx_agent_path": _fake_agent_checkout(self.root),
+        }, self.config_path)
+
+    def test_progress_parses_percent(self):
+        from mlx_workbench.bridge import convert_progress
+        parsed = convert_progress("[mlx-converter] quantizing: 63%")
+        self.assertEqual(parsed["percent"], 63)
+        self.assertFalse(parsed["failed"])
+
+    def test_progress_marks_failures(self):
+        from mlx_workbench.bridge import convert_progress
+        parsed = convert_progress(
+            "[mlx-converter] conversion failed: GGUF model with architecture "
+            "dflash is not supported yet."
+        )
+        self.assertTrue(parsed["failed"])
+        self.assertEqual(parsed["phase"], "failed")
+        self.assertIn("dflash", parsed["summary"])
+
+    def test_idle_when_no_jobs(self):
+        httpd = server.build(
+            "127.0.0.1", 0, config_path=self.config_path, token="prog",
+            start_worker=False,
+        )
+        self.addCleanup(httpd.server_close)
+
+        def runner(command, timeout):
+            data = {"jobs": [], "servers": [], "lora": [], "fuse": []}
+            key = "servers" if "serve" in command else "jobs"
+            if "serve" in command:
+                key = "servers"
+            return {
+                "returncode": 0,
+                "stdout": json.dumps({
+                    "schema_version": "1.0", "generated_at": "now",
+                    "operation": "status", "status": "ok",
+                    "data": {key: data[key]}, "warnings": [],
+                }),
+                "stderr": "",
+            }
+
+        httpd.app.runner = runner
+        app = httpd.app
+        settings = app.config()
+        handler = server.Handler
+        route = handler._api_convert_progress
+        status, _, body = route(
+            _HandlerShim(app), "/api/convert/progress", settings,
+            settings["mlx_agent_path"], app.runner,
+        )
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["state"], "idle")
+
+
+class _HandlerShim:
+    """Minimal stand-in for Handler so route methods can be unit-called."""
+
+    def __init__(self, app):
+        self.app = app
+        self.server = type("Srv", (), {"app": app})
+        self.path = "/"
+        self.headers = {}
+
+
 class QuarantineDeleteTests(unittest.TestCase):
     """Bug 2: quarantine contents are visible and deletable (to Trash)."""
 

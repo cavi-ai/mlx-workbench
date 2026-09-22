@@ -46,6 +46,15 @@
 
 <p id="notice" class="notice" hidden></p>
 
+<div id="convert-progress" class="progress-banner" hidden>
+  <div class="progress-banner-head">
+    <strong id="progress-title">Converting…</strong>
+    <span id="progress-phase" class="hint"></span>
+  </div>
+  <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+  <p id="progress-line" class="hint progress-line"></p>
+</div>
+
 <div id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" hidden>
   <div class="dialog-card">
     <h2 id="dialog-title">Review plan</h2>
@@ -339,19 +348,27 @@
 <section id="panel-quant" class="panel" hidden>
   <div class="summary">Compare conversion options for a model</div>
   <form id="quant-form" class="toolbar">
-    <label>Model Path
-      <input id="quant-path" type="text" spellcheck="false">
-    </label>
-    <label>MLX Quantization
-      <select id="quant-targets" multiple size="2">
-        <option value="mlx-4bit" selected>MLX 4-bit</option>
-        <option value="mlx-8bit">MLX 8-bit</option>
-      </select>
-    </label>
     <div class="row">
-      <button type="submit" class="primary">Compare Conversions</button>
+      <label class="inline">Model
+        <select id="quant-model"></select>
+      </label>
+      <label class="inline">Format
+        <select id="quant-targets">
+          <option value="both" selected>4-bit and 8-bit</option>
+          <option value="mlx-4bit">4-bit only</option>
+          <option value="mlx-8bit">8-bit only</option>
+        </select>
+      </label>
+      <button type="submit" class="primary">Compare</button>
     </div>
+    <p class="hint">Groups show publisher → model from your latest scan; pick a specific file or "custom path…" to type one.</p>
   </form>
+  <div id="quant-custom" class="toolbar" hidden>
+    <label>Custom model path
+      <input id="quant-path" type="text" spellcheck="false" placeholder="/path/to/model.gguf">
+    </label>
+  </div>
+  <div id="quant-summary"></div>
   <div id="quant-results"></div>
 </section>
 
