@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from mlx_workbench import bridge, config, convert_queue, quarantine, server
+from mlx_workbench import audit, bridge, config, convert_queue, quarantine, server
 from mlx_workbench.atomicio import write_text_atomic
 
 
@@ -374,6 +374,241 @@ class AuditTrailTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["operation"], "config.save")
         self.assertEqual(entries[0]["changed"], ["port"])
+
+
+class ScanCacheTests(unittest.TestCase):
+    """Bug 3: /api/scan serves a cached snapshot and refreshes in the
+    background, so screens never block on a full signature scan."""
+
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.config_path = self.root / "config.json"
+        config.save({
+            "gguf_roots": [str(self.root / "models")],
+            "quarantine_dir": str(self.root / "hold"),
+            "output_dir": str(self.root / "out"),
+        }, self.config_path)
+        self.scans = []
+
+    def _scan_payload(self, marker):
+        return {
+            "models": [{"path": "/m/a.gguf", "name": "a.gguf", "bytes": 1}],
+            "duplicates": [],
+            "totals": {"gguf": 1, "bytes": 1, "pending": 1, "converted": 0},
+            "generation": len(self.scans),
+        }
+
+    def _build(self, ttl=60.0):
+        httpd = server.build(
+            "127.0.0.1", 0, config_path=self.config_path, token="cache",
+            start_worker=False, scan_ttl_seconds=ttl,
+        )
+        self.addCleanup(httpd.server_close)
+
+        def runner(command, timeout):
+            self.scans.append(list(command))
+            return {
+                "returncode": 0,
+                "stdout": json.dumps({
+                    "schema_version": "1.0", "generated_at": "now",
+                    "operation": "convert-scan", "status": "ok",
+                    "data": self._scan_payload(len(self.scans)), "warnings": [],
+                }),
+                "stderr": "",
+            }
+
+        httpd.app.runner = runner
+        return httpd
+
+    def test_first_scan_populates_and_second_call_serves_cache(self):
+        httpd = self._build()
+        app = httpd.app
+        settings = app.config()
+        agent = settings["mlx_agent_path"]
+
+        first, stale1 = app.cached_scan(settings, agent, app.runner)
+        second, stale2 = app.cached_scan(settings, agent, app.runner)
+
+        self.assertFalse(stale1)
+        self.assertFalse(stale2)
+        self.assertEqual(first["generation"], second["generation"])
+        self.assertEqual(len(self.scans), 1)
+
+    def test_refresh_true_scans_synchronously(self):
+        httpd = self._build()
+        app = httpd.app
+        settings = app.config()
+        agent = settings["mlx_agent_path"]
+
+        app.cached_scan(settings, agent, app.runner)
+        payload, stale = app.cached_scan(settings, agent, app.runner, refresh=True)
+
+        self.assertFalse(stale)
+        self.assertEqual(len(self.scans), 2)
+
+    def test_stale_cache_is_served_while_background_refresh_runs(self):
+        httpd = self._build(ttl=0.05)
+        app = httpd.app
+        settings = app.config()
+        agent = settings["mlx_agent_path"]
+
+        app.cached_scan(settings, agent, app.runner)
+        time.sleep(0.1)
+        stale_payload, stale = app.cached_scan(settings, agent, app.runner)
+
+        self.assertTrue(stale)
+        self.assertIn("generation", stale_payload)
+        # The background refresh completes on its own.
+        for _ in range(100):
+            with app.lock:
+                if not app._scan_refreshing:
+                    break
+            time.sleep(0.02)
+        self.assertFalse(app._scan_refreshing)
+
+    def test_route_reports_cache_flags(self):
+        import threading
+        import urllib.request
+        httpd = self._build()
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+
+        def get(path):
+            request = urllib.request.Request(
+                "http://127.0.0.1:{0}{1}".format(port, path)
+            )
+            request.add_header(server.TOKEN_HEADER, "cache")
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+        first = get("/api/scan")
+        self.assertTrue(first["data"]["cached"])
+        self.assertFalse(first["data"]["stale"])
+        second = get("/api/scan?refresh=1")
+        self.assertFalse(second["data"]["cached"])
+
+
+class QuarantineDeleteTests(unittest.TestCase):
+    """Bug 2: quarantine contents are visible and deletable (to Trash)."""
+
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.roots = [str(self.root / "models")]
+        (self.root / "models").mkdir()
+        self.hold = self.root / "hold"
+
+    def _quarantine_file(self, name="dupe.gguf", payload=b"x" * 16):
+        source = self.root / "models" / name
+        source.write_bytes(payload)
+        record = quarantine.quarantine(str(source), self.roots, str(self.hold))
+        return record
+
+    def test_purge_moves_file_to_trash_and_marks_ledger(self):
+        record = self._quarantine_file()
+        quarantined = record["to"]
+        trashed = []
+
+        def fake_trash(path):
+            trashed.append(path)
+            os.unlink(path)
+
+        result = quarantine.purge(
+            quarantined, str(self.hold), trash=fake_trash
+        )
+        self.assertEqual(trashed, [str(Path(quarantined).resolve())])
+        self.assertFalse(Path(trashed[0]).exists())
+        self.assertEqual(result["deleted"], str(Path(quarantined).resolve()))
+        self.assertEqual(result["bytes"], 16)
+        entries = quarantine.ledger(str(self.hold))
+        entry = next(e for e in entries if e["to"] == quarantined)
+        self.assertTrue(entry["deleted"])
+        self.assertIn("deleted_at", entry)
+
+    def test_purge_refuses_paths_outside_quarantine(self):
+        outside = self.root / "models" / "keep.gguf"
+        outside.write_bytes(b"x")
+        with self.assertRaises(quarantine.QuarantineError) as caught:
+            quarantine.purge(str(outside), str(self.hold), trash=lambda p: None)
+        self.assertEqual(caught.exception.code, "not_in_quarantine")
+        self.assertTrue(outside.exists())
+
+    def test_purge_refuses_relative_paths_and_the_ledger(self):
+        with self.assertRaises(quarantine.QuarantineError):
+            quarantine.purge("relative/file.gguf", str(self.hold), trash=lambda p: None)
+        with self.assertRaises(quarantine.QuarantineError) as caught:
+            quarantine.purge(
+                str(self.hold / quarantine.LEDGER_NAME), str(self.hold),
+                trash=lambda p: None,
+            )
+        self.assertEqual(caught.exception.code, "ledger_protected")
+
+    def test_purge_refuses_symlinks(self):
+        record = self._quarantine_file()
+        real = self.root / "real.bin"
+        real.write_bytes(b"payload")
+        link = self.hold / "link.gguf"
+        os.symlink(real, link)
+        with self.assertRaises(quarantine.QuarantineError) as caught:
+            quarantine.purge(str(link), str(self.hold), trash=lambda p: None)
+        self.assertEqual(caught.exception.code, "symlink_refused")
+        self.assertTrue(real.exists())
+        self.assertTrue(Path(record["to"]).exists())
+
+    def test_purge_failure_leaves_file_in_place(self):
+        record = self._quarantine_file()
+
+        def explode(path):
+            raise OSError("disk refusing")
+
+        with self.assertRaises(quarantine.QuarantineError) as caught:
+            quarantine.purge(record["to"], str(self.hold), trash=explode)
+        self.assertEqual(caught.exception.code, "delete_failed")
+        self.assertTrue(Path(record["to"]).exists())
+        # Ledger not marked when nothing was deleted.
+        entry = next(
+            e for e in quarantine.ledger(str(self.hold))
+            if e["to"] == record["to"]
+        )
+        self.assertFalse(entry["deleted"])
+
+    def test_server_route_deletes_and_audits(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        record = self._quarantine_file()
+        config_path = self.root / "config.json"
+        config.save({
+            "gguf_roots": self.roots,
+            "quarantine_dir": str(self.hold),
+            "output_dir": str(self.root / "out"),
+        }, config_path)
+        httpd = server.build(
+            "127.0.0.1", 0, config_path=config_path, token="purge",
+            start_worker=False,
+        )
+        self.addCleanup(httpd.server_close)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+        url = "http://127.0.0.1:{0}/api/quarantine/delete".format(port)
+        body = json.dumps({"path": record["to"]}).encode("utf-8")
+        request = urllib.request.Request(url, data=body, method="POST")
+        request.add_header(server.TOKEN_HEADER, "purge")
+        request.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(payload["data"]["deleted"], str(Path(record["to"]).resolve()))
+        self.assertFalse(Path(record["to"]).exists())
+        audit_file = self.root / "audit.jsonl"
+        entries = audit.recent(path=audit_file)
+        self.assertEqual(entries[0]["operation"], "quarantine.delete")
 
 
 class QuarantineSymlinkTests(unittest.TestCase):

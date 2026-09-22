@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -91,12 +92,16 @@ class Application:
 
     def __init__(self, config_path=None, token=None, runner=None,
                  queue_path_override=None, worker_interval=2.0,
-                 request_slots=MAX_CONCURRENT_REQUESTS):
+                 request_slots=MAX_CONCURRENT_REQUESTS, scan_ttl_seconds=60.0):
         self.config_path = config_path
         self.token = token or secrets.token_urlsafe(24)
         self.runner = runner
         self.lock = threading.Lock()
         self.request_slots = threading.BoundedSemaphore(request_slots)
+        self._scan_cache = None
+        self._scan_cached_at = 0.0
+        self._scan_refreshing = False
+        self.scan_ttl_seconds = scan_ttl_seconds
         state_path = (
             Path(queue_path_override)
             if queue_path_override is not None
@@ -123,6 +128,71 @@ class Application:
         return audit_module.record(
             operation, path=self.audit_file, **details
         )
+
+    def cached_scan(self, settings, agent, runner, refresh=False):
+        """Scan results with stale-while-revalidate caching.
+
+        A scan walks every configured root with full signatures and can take
+        minutes on a large library, so screens must never block on it. The
+        first scan populates the cache; later calls return the cached
+        snapshot immediately (marked ``cached``/``stale``) and kick off a
+        background refresh so the next load is fresher. ``refresh=True``
+        (the Rescan button) scans synchronously instead.
+        """
+        now = time.monotonic()
+        with self.lock:
+            cached = self._scan_cache
+            cache_fresh = (
+                cached is not None and now - self._scan_cached_at < self.scan_ttl_seconds
+            )
+            if cached is not None and not refresh and cache_fresh:
+                return dict(cached), False
+            if cached is not None and not refresh:
+                # Serve the stale snapshot now; refresh in the background.
+                self._start_scan_refresh(settings, agent, runner)
+                return dict(cached), True
+        payload = bridge.scan(
+            agent,
+            gguf_roots=config_module.scan_roots(settings),
+            mlx_roots=settings["mlx_roots"],
+            signatures=settings["signatures"],
+            runner=runner,
+        )
+        with self.lock:
+            self._scan_cache = payload
+            self._scan_cached_at = time.monotonic()
+        return payload, False
+
+    def _start_scan_refresh(self, settings, agent, runner):
+        """Spawn a background refresh. Callers must NOT hold self.lock."""
+        if self._scan_refreshing:
+            return
+        self._scan_refreshing = True
+
+        def refresh():
+            try:
+                payload = bridge.scan(
+                    agent,
+                    gguf_roots=config_module.scan_roots(settings),
+                    mlx_roots=settings["mlx_roots"],
+                    signatures=settings["signatures"],
+                    runner=runner,
+                )
+                with self.lock:
+                    self._scan_cache = payload
+                    self._scan_cached_at = time.monotonic()
+            except Exception:
+                # Keep serving the previous snapshot; the next request
+                # retries. A failed background scan is never fatal.
+                pass
+            finally:
+                with self.lock:
+                    self._scan_refreshing = False
+
+        thread = threading.Thread(
+            target=refresh, name="mlx-workbench-scan-refresh", daemon=True
+        )
+        thread.start()
 
 
 def _json_bytes(payload, status=200):
@@ -375,13 +445,14 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _api_scan(self, route, settings, agent, runner):
-        return _ok(bridge.scan(
-            agent,
-            gguf_roots=config_module.scan_roots(settings),
-            mlx_roots=settings["mlx_roots"],
-            signatures=settings["signatures"],
-            runner=runner,
-        ))
+        params = parse_qs(urlparse(self.path).query)
+        refresh = params.get("refresh", [""])[0] in ("1", "true")
+        payload, stale = self.app.cached_scan(settings, agent, runner, refresh=refresh)
+        payload = dict(payload)
+        payload["cached"] = not refresh
+        payload["stale"] = stale
+        payload["cached_at"] = time.time()
+        return _ok(payload)
 
     def _api_jobs(self, route, settings, agent, runner):
         payload = bridge.all_job_lists(agent, runner=runner)
@@ -692,6 +763,25 @@ class Handler(BaseHTTPRequestHandler):
         )
         return _ok({"moved": record})
 
+    def _api_quarantine_delete(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict) or not isinstance(payload.get("path"), str):
+            return _error(
+                "invalid_body",
+                "A quarantined file path is required.",
+                "Pick a file from the Quarantine list.",
+            )
+        result = quarantine_module.purge(
+            payload["path"],
+            settings["quarantine_dir"],
+        )
+        self.app.audit(
+            "quarantine.delete",
+            source=result.get("deleted"),
+            bytes=result.get("bytes"),
+        )
+        return _ok(result)
+
     def _convert_route(self, route, settings, agent, runner):
         payload = self._body()
         if not isinstance(payload, dict):
@@ -805,6 +895,7 @@ _API_ROUTES = {
     ("GET", "/api/jobs/log"): Handler._api_jobs_log,
     ("GET", "/api/quarantine"): Handler._api_quarantine_list,
     ("POST", "/api/quarantine"): Handler._api_quarantine_move,
+    ("POST", "/api/quarantine/delete"): Handler._api_quarantine_delete,
     ("POST", "/api/convert/queue"): Handler._api_queue_snapshot,
     ("POST", "/api/convert/queue/cancel"): Handler._api_queue_cancel,
     ("POST", "/api/convert/queue/clear"): Handler._api_queue_clear,
@@ -848,7 +939,7 @@ class Server(ThreadingHTTPServer):
 
 def build(host="127.0.0.1", port=8765, config_path=None, token=None, runner=None,
           start_worker=True, queue_path_override=None, worker_interval=2.0,
-          request_slots=MAX_CONCURRENT_REQUESTS):
+          request_slots=MAX_CONCURRENT_REQUESTS, scan_ttl_seconds=60.0):
     """Create a bound server; the caller decides how to run it."""
     app = Application(
         config_path,
@@ -857,5 +948,6 @@ def build(host="127.0.0.1", port=8765, config_path=None, token=None, runner=None
         queue_path_override=queue_path_override,
         worker_interval=worker_interval,
         request_slots=request_slots,
+        scan_ttl_seconds=scan_ttl_seconds,
     )
     return Server((host, port), app, start_worker=start_worker)

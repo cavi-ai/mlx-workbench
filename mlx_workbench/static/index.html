@@ -85,7 +85,7 @@
   <div id="exact-duplicates" class="duplicates-section"></div>
   
   <h3>Quarantine Area</h3>
-  <p class="hint">Moved duplicates go here (never deleted). Paths configured in Settings.</p>
+  <p class="hint">Moved duplicates land here. Review them, then delete permanently (to the Trash) when you are sure.</p>
   <div id="quarantined" class="duplicates-section"></div>
 </section>
 
@@ -141,17 +141,19 @@
   <div class="summary">Serve MLX models locally</div>
   
   <form id="serve-form" class="toolbar">
-    <label>Repo ID
-      <input id="serve-repo" type="text" spellcheck="false" placeholder="mlx-community/Qwen3-8B-4bit">
+    <label>Model
+      <input id="serve-repo" type="text" spellcheck="false" list="serve-model-options" placeholder="mlx-community/Qwen3-8B-4bit">
+      <datalist id="serve-model-options"></datalist>
+      <span class="hint">Pick a converted model or type a repo id already in the HF cache.</span>
     </label>
     <div class="row">
       <label class="inline">Runtime
-        <select id="serve-runtime"><option value="mlx_lm">mlx_lm</option><option value="mlx-vlm">mlx-vlm</option></select>
+        <select id="serve-runtime"><option value="mlx_lm">mlx_lm (text)</option><option value="mlx-vlm">mlx-vlm (vision)</option></select>
       </label>
       <label class="inline">Port
-        <input id="serve-port" type="number" min="1024" max="65535">
+        <input id="serve-port" type="number" min="1024" max="65535" placeholder="auto">
       </label>
-      <button type="submit" class="primary">Preview & Start</button>
+      <button type="submit" class="primary">Preview &amp; Start</button>
     </div>
   </form>
   

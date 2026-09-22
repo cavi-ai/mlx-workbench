@@ -146,6 +146,28 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(previewHash, "serve-hash")
     }
 
+    /// Regression: without --receipts-dir the agent derives its receipts dir
+    /// from the CWD, which for a GUI app is "/" → Errno 30 (read-only) and
+    /// "Conversion could not be queued".
+    func testConvertCommandsCarryExplicitReceiptDirectory() async throws {
+        let receiptDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-workbench-convert-receipts-\(UUID().uuidString)", isDirectory: true)
+        let agent = try FixtureAgent(expectedConvertReceiptDirectory: receiptDirectory.path)
+        defer { agent.remove() }
+
+        let api = WorkbenchAPI(
+            cli: CLIProcess(),
+            agentPath: agent.root.path,
+            receiptDirectory: receiptDirectory.path
+        )
+
+        _ = try await api.convertPreview(ggufPath: "/models/a.gguf", qBits: 4, out: "/out")
+        _ = try await api.convertStart(ggufPath: "/models/a.gguf", qBits: 4, out: "/models/out", previewHash: "h")
+        _ = try await api.convertRepoStart(repo: "org/model", qBits: 4, out: nil, hfCache: nil, previewHash: "h")
+        _ = try await api.convertStatus()
+        _ = try await api.allJobs()
+    }
+
     func testLocalModelPathServesViaPathFlag() async throws {
         let agent = try FixtureAgent(expectedModelFlag: "--path", expectedModelValue: "/models/mlx/qwen3-8b-mlx")
         defer { agent.remove() }
@@ -252,6 +274,34 @@ private final class FixtureAgent {
             data = {}
         else:
             data = {"plan": {"preview_hash": "serve-hash"}}
+        print(json.dumps({"status": "ok", "data": data}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
+
+    /// Asserts every convert invocation (start with/without --confirm, and
+    /// status) carries --receipts-dir pointing at the expected directory.
+    convenience init(expectedConvertReceiptDirectory: String) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import json
+        import sys
+
+        assert sys.argv[1] == "convert"
+        if "status" in sys.argv:
+            receipts_index = sys.argv.index("--receipts-dir") + 1
+            assert sys.argv[receipts_index] == "\(expectedConvertReceiptDirectory)"
+            data = {"jobs": []}
+        else:
+            assert "start" in sys.argv
+            if "--confirm" in sys.argv:
+                receipts_index = sys.argv.index("--receipts-dir") + 1
+                assert sys.argv[receipts_index] == "\(expectedConvertReceiptDirectory)"
+                data = {}
+            else:
+                data = {"plan": {"preview_hash": "convert-hash"}}
         print(json.dumps({"status": "ok", "data": data}))
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))

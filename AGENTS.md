@@ -179,7 +179,11 @@ from `mlx-agent` at runtime.
 
 - UI binds loopback only; non-loopback hosts are rejected.
 - Job arguments are argv tokens (no shell string execution).
-- Quarantine operations are constrained to configured model roots and `.gguf` files.
+- Quarantine operations are constrained to configured model roots and `.gguf`
+  files. The web UI can also purge quarantined files to the macOS Trash
+  (`quarantine.purge`: fenced to existing files inside the quarantine dir,
+  ledger entries marked `deleted_at`, never the ledger itself, symlink
+  refused, audited as `quarantine.delete`).
 - Hardened response surface: CSP with `frame-ancestors 'none'`, `form-action`,
   `base-uri`, `X-Frame-Options: DENY`, and a `Server:` header without the
   Python version (`mlx_workbench/server.py`). Concurrent requests are capped
@@ -209,6 +213,11 @@ from `mlx-agent` at runtime.
   to a local audit trail via `mlx_workbench/audit.py`
   (`$XDG_STATE_HOME/mlx-workbench/audit.jsonl`, bounded, best-effort —
   durable stores stay authoritative).
+- `/api/scan` is served through a stale-while-revalidate cache
+  (`Application.cached_scan`): the first scan populates it, later calls
+  return the snapshot instantly with `cached`/`stale` flags and refresh in
+  the background; `?refresh=1` scans synchronously. The web UI additionally
+  keeps the last inventory in `localStorage` so reloads never render empty.
 - Convert/serve Python deps are pinned in `requirements.txt` (exact
   versions); `make install` installs from it and `make pip-audit` checks the
   runtime against the OSV database — both in local runs and as PR gates

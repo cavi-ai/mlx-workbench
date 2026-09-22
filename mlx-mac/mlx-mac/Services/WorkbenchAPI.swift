@@ -91,6 +91,9 @@ actor WorkbenchAPI {
         var argv = [
             "convert", "start", "--gguf", ggufPath, "--q-bits", String(qBits),
             "--confirm", "--preview-hash", previewHash,
+            // Without this the agent derives its receipts dir from the CWD,
+            // which for a GUI app is "/" — a read-only filesystem.
+            "--receipts-dir", receiptDirectory,
         ]
         if let out { argv.append(contentsOf: ["--out", out]) }
         return try raw(argv)
@@ -101,6 +104,7 @@ actor WorkbenchAPI {
         var argv = [
             "convert", "start", "--repo", repo, "--q-bits", String(qBits),
             "--confirm", "--preview-hash", previewHash,
+            "--receipts-dir", receiptDirectory,
         ]
         if let out { argv.append(contentsOf: ["--out", out]) }
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
@@ -110,7 +114,7 @@ actor WorkbenchAPI {
     // MARK: - Jobs
 
     func convertStatus() throws -> [Job] {
-        let data = try raw(["convert", "status"])
+        let data = try raw(["convert", "status", "--receipts-dir", receiptDirectory])
         return Self.jobs(from: data) ?? []
     }
 
@@ -120,7 +124,7 @@ actor WorkbenchAPI {
     }
 
     func allJobs() throws -> [Job] {
-        let data = try raw(["convert", "status"])
+        let data = try raw(["convert", "status", "--receipts-dir", receiptDirectory])
         return Self.jobs(from: data, key: "jobs") ?? []
     }
 
