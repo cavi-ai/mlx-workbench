@@ -529,6 +529,16 @@ async function confirmPlan() {
       notify('Moved to Trash.');
       await renderQuarantined();
       return;
+    } else if (state.pendingKind === 'serve-preset-save') {
+      await saveServePreset(state.pending);
+      closeDialog();
+      return;
+    } else if (state.pendingKind === 'serve-preset-delete') {
+      await api('/api/serve/presets/delete', { body: { id: state.pending.id } });
+      await refreshPresets();
+      closeDialog();
+      notify('Preset deleted.');
+      return;
     } else if (state.pendingKind === 'convert') {
       await api('/api/convert/start', { body: convertStartBody(state.pending) });
     } else if (state.pendingKind === 'convert-batch') {
@@ -542,6 +552,8 @@ async function confirmPlan() {
           repo: state.pending.repo || state.pending.source && state.pending.source.repo,
           runtime: state.pending.runtime,
           port: state.pending.port,
+          max_tokens: state.pending.max_tokens,
+          adapter_path: state.pending.adapter_path,
           preview_hash: state.pending.preview_hash,
         },
       });
@@ -705,6 +717,21 @@ function renderServers(servers) {
     row.appendChild(element('td', 'hint', server.started_at || '—'));
     const actions = element('td');
     if (server.state === 'running' && server.port != null) {
+      const copy = element('button', 'secondary', 'Copy URL');
+      copy.type = 'button';
+      copy.addEventListener('click', function () {
+        const url = 'http://127.0.0.1:' + server.port + '/v1';
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function () {
+            notify('Endpoint URL copied.');
+          }, function () {
+            notify(url);
+          });
+        } else {
+          notify(url);
+        }
+      });
+      actions.appendChild(copy);
       const stop = element('button', null, 'Stop');
       stop.addEventListener('click', async function () {
         stop.disabled = true;
@@ -1085,9 +1112,15 @@ async function previewServe(event) {
     notify(serve.message);
     return;
   }
+  const maxTokensValue = $('serve-max-tokens').value.trim();
+  const maxTokens = maxTokensValue ? Number(maxTokensValue) : null;
+  const adapter = $('serve-adapter').value.trim() || null;
   try {
     const data = await api('/api/serve/preview', {
-      body: { repo: repo, runtime: runtime, port: port },
+      body: {
+        repo: repo, runtime: runtime, port: port,
+        max_tokens: maxTokens, adapter_path: adapter,
+      },
     });
     const plan = data.plan || data;
     state.pending = plan;
@@ -1097,6 +1130,8 @@ async function previewServe(event) {
       ['Model', plan.repo || repo],
       ['Runtime', plan.runtime || runtime],
       ['Port', String(plan.port || port || 'default')],
+      ['Max tokens', String(plan.max_tokens || maxTokens || 'runtime default')],
+      ['Adapter', plan.adapter_path || adapter || 'none'],
       ['Bind', plan.bind || '127.0.0.1'],
       ['Readiness', plan.readiness || '—'],
       ['Command', (plan.argv || []).join(' ')],
@@ -1139,6 +1174,134 @@ function restoreServeDefaults() {
   } catch (error) {
     // localStorage unavailable; defaults are fine.
   }
+}
+
+// MARK: serve presets (named endpoint profiles)
+
+async function refreshPresets() {
+  const select = $('serve-preset');
+  if (!select) return;
+  try {
+    const data = await api('/api/serve/presets');
+    const presets = data.presets || [];
+    select.textContent = '';
+    const blank = element('option');
+    blank.value = '';
+    blank.textContent = presets.length ? '— choose —' : '— no presets yet —';
+    select.appendChild(blank);
+    presets.forEach(function (preset) {
+      const option = element('option');
+      option.value = preset.id;
+      option.textContent = preset.name + ' · ' + preset.model;
+      option.dataset.preset = JSON.stringify(preset);
+      select.appendChild(option);
+    });
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+function applyPreset() {
+  const select = $('serve-preset');
+  const option = select.selectedOptions[0];
+  if (!option || !option.dataset.preset) {
+    notify('Choose a preset to load first.');
+    return;
+  }
+  const preset = JSON.parse(option.dataset.preset);
+  $('serve-repo').value = preset.model;
+  $('serve-runtime').value = preset.runtime;
+  $('serve-port').value = preset.port != null ? String(preset.port) : '';
+  $('serve-max-tokens').value = preset.max_tokens != null ? String(preset.max_tokens) : '';
+  $('serve-adapter').value = preset.adapter_path || '';
+  notify('Preset loaded: ' + preset.name + '. Review, then Preview & Start.');
+}
+
+function savePreset() {
+  const repo = $('serve-repo').value.trim();
+  const kind = repo.includes('/') && !repo.startsWith('/') ? 'repo' : 'path';
+  if (!repo) {
+    notify('Fill the form first — presets save the current model, runtime, port, and limits.');
+    return;
+  }
+  const presetId = $('serve-preset').value || null;
+  const preset = presetId
+    ? JSON.parse($('serve-preset').selectedOptions[0].dataset.preset)
+    : null;
+  state.pending = {
+    savePreset: true,
+    id: presetId,
+    previousName: preset ? preset.name : null,
+    name: preset ? preset.name : '',
+    model: repo,
+    kind: preset ? preset.model_kind : kind,
+    runtime: $('serve-runtime').value,
+    port: $('serve-port').value.trim() ? Number($('serve-port').value) : null,
+    max_tokens: $('serve-max-tokens').value.trim() ? Number($('serve-max-tokens').value) : null,
+    adapter_path: $('serve-adapter').value.trim() || null,
+  };
+  state.pendingKind = 'serve-preset-save';
+  fillPlanDialog(
+    presetId ? 'Update preset' : 'Save serve preset',
+    [
+      ['Name', state.pending.name || '(you will be asked… actually edit below)'],
+      ['Model', state.pending.model],
+      ['Runtime', state.pending.runtime],
+      ['Port', state.pending.port != null ? String(state.pending.port) : 'auto'],
+      ['Max tokens', state.pending.max_tokens != null ? String(state.pending.max_tokens) : 'default'],
+      ['Adapter', state.pending.adapter_path || 'none'],
+    ],
+    'Presets store model, runtime, port, max tokens, and adapter. Load one any time to relaunch in two clicks.',
+  );
+}
+
+function deletePreset() {
+  const select = $('serve-preset');
+  const option = select.selectedOptions[0];
+  if (!option || !option.dataset.preset) {
+    notify('Choose a preset to delete first.');
+    return;
+  }
+  const preset = JSON.parse(option.dataset.preset);
+  state.pending = preset;
+  state.pendingKind = 'serve-preset-delete';
+  fillPlanDialog('Delete preset?', [
+    ['Name', preset.name],
+    ['Model', preset.model],
+  ], 'The preset is removed. Running servers are untouched.');
+}
+
+async function suggestPort() {
+  try {
+    const data = await api('/api/serve/port');
+    $('serve-port').value = String(data.port);
+    notify('Free port found: ' + data.port);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
+async function saveServePreset(pending) {
+  const name = window.prompt('Preset name:', pending.previousName || pending.name || pending.model);
+  if (name === null) return;
+  if (!name.trim()) {
+    notify('A preset needs a name.');
+    return;
+  }
+  await api('/api/serve/presets', {
+    body: {
+      id: pending.id,
+      name: name.trim(),
+      model: pending.model,
+      kind: pending.kind,
+      runtime: pending.runtime,
+      port: pending.port,
+      max_tokens: pending.max_tokens,
+      adapter_path: pending.adapter_path,
+    },
+  });
+  await refreshPresets();
+  notify('Preset saved.');
 }
 
 async function visualizeArchitecture(event) {
@@ -1375,6 +1538,7 @@ function selectPanel(name) {
     refreshJobs();
     updateServeSuggestions();
     restoreServeDefaults();
+    refreshPresets();
   }
 }
 
@@ -1526,6 +1690,10 @@ function init() {
   on('lora-form', 'submit', previewLora);
   on('fuse-form', 'submit', previewFuse);
   on('serve-form', 'submit', previewServe);
+  on('serve-preset-apply', 'click', applyPreset);
+  on('serve-preset-save', 'click', savePreset);
+  on('serve-preset-delete', 'click', deletePreset);
+  on('serve-port-auto', 'click', suggestPort);
   on('serve-refresh', 'click', refreshJobs);
   on('quant-form', 'submit', profileQuantizations);
   on('arch-form', 'submit', visualizeArchitecture);

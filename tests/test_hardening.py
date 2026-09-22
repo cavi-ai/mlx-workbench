@@ -14,6 +14,16 @@ from mlx_workbench import audit, bridge, config, convert_queue, quarantine, serv
 from mlx_workbench.atomicio import write_text_atomic
 
 
+
+def _fake_agent_checkout(root):
+    """Create a minimal mlx-agent checkout so agent resolution is deterministic."""
+    from mlx_workbench import bridge
+    agent = root / "mlx-agent"
+    script = agent / bridge.CLI_RELATIVE
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("", encoding="utf-8")
+    return str(agent)
+
 class ServerHeaderTests(unittest.TestCase):
     """P0-1: response hardening headers must be present and informative."""
 
@@ -389,6 +399,7 @@ class ScanCacheTests(unittest.TestCase):
             "gguf_roots": [str(self.root / "models")],
             "quarantine_dir": str(self.root / "hold"),
             "output_dir": str(self.root / "out"),
+            "mlx_agent_path": _fake_agent_checkout(self.root),
         }, self.config_path)
         self.scans = []
 
@@ -490,6 +501,172 @@ class ScanCacheTests(unittest.TestCase):
         self.assertFalse(first["data"]["stale"])
         second = get("/api/scan?refresh=1")
         self.assertFalse(second["data"]["cached"])
+
+
+class ServePresetTests(unittest.TestCase):
+    """Named endpoint profiles: CRUD, schema discipline, API surface."""
+
+    def setUp(self):
+        from mlx_workbench import serve_presets
+        self.sp = serve_presets
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.config_dir = Path(self.directory.name)
+        self.book = self.sp.PresetBook(
+            self.sp.presets_path(self.config_dir / "config.json")
+        )
+
+    def test_upsert_create_update_delete_round_trip(self):
+        created = self.book.upsert(
+            name="Coder", model="mlx-community/Qwen3-8B-4bit", kind="repo",
+            runtime="mlx_lm", port=8766, max_tokens=4096,
+        )
+        self.assertEqual(created["id"], "sp-1")
+        updated = self.book.upsert(
+            preset_id=created["id"], name="Coder (8k)", port=None,
+        )
+        self.assertEqual(updated["name"], "Coder (8k)"[:0] + "Coder (8k)")
+        self.assertIsNone(updated["port"])
+        self.assertEqual(updated["max_tokens"], 4096)
+        self.book.delete(created["id"])
+        self.assertEqual(self.book.list(), [])
+
+    def test_persisted_file_survives_reload_and_rejects_schema_drift(self):
+        created = self.book.upsert(
+            name="Vision", model="/models/mlx/vlm", kind="path", runtime="mlx-vlm",
+        )
+        again = self.sp.PresetBook(self.sp.presets_path(self.config_dir / "config.json"))
+        loaded = again.list()
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0]["model"], "/models/mlx/vlm")
+
+        corrupt = self.sp.presets_path(self.config_dir / "config.json")
+        corrupt.write_text('{"schema_version": "9.9", "presets": []}', encoding="utf-8")
+        self.assertEqual(again.list(), [])
+
+        _ = created
+
+    def test_invalid_fields_are_classified(self):
+        for fields in (
+            {"name": "", "model": "m", "kind": "repo", "runtime": "mlx_lm"},
+            {"name": "x", "model": "", "kind": "repo", "runtime": "mlx_lm"},
+            {"name": "x", "model": "m", "kind": "nope", "runtime": "mlx_lm"},
+            {"name": "x", "model": "m", "kind": "repo", "runtime": "ollama"},
+            {"name": "x", "model": "m", "kind": "repo", "runtime": "mlx_lm", "port": 70000},
+        ):
+            with self.subTest(fields=fields):
+                with self.assertRaises(self.sp.PresetError):
+                    self.book.upsert(**fields)
+
+    def test_route_crud_and_audit(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        config_path = self.config_dir / "config.json"
+        config.save({"mlx_agent_path": _fake_agent_checkout(self.config_dir)}, config_path)
+        httpd = server.build(
+            "127.0.0.1", 0, config_path=config_path, token="presets",
+            start_worker=False,
+        )
+        self.addCleanup(httpd.server_close)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+
+        def request(path, method="GET", body=None, expect=200):
+            url = "http://127.0.0.1:{0}{1}".format(port, path)
+            data = None if body is None else json.dumps(body).encode("utf-8")
+            request = urllib.request.Request(url, data=data, method=method)
+            request.add_header(server.TOKEN_HEADER, "presets")
+            if data is not None:
+                request.add_header("Content-Type", "application/json")
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    return response.status, json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as error:
+                with error:
+                    payload = json.loads(error.read().decode("utf-8"))
+                return error.code, payload
+
+        free = request("/api/serve/port")
+        self.assertEqual(free[0], 200)
+        self.assertTrue(1 <= free[1]["data"]["port"] <= 65535)
+
+        status, payload = request("/api/serve/presets", "POST", {
+            "name": "Coder", "model": "mlx-community/Qwen3-8B-4bit",
+            "kind": "repo", "runtime": "mlx_lm", "port": 8766,
+        })
+        self.assertEqual(status, 200)
+        preset_id = payload["data"]["preset"]["id"]
+
+        status, payload = request("/api/serve/presets")
+        self.assertEqual(len(payload["data"]["presets"]), 1)
+
+        status, payload = request("/api/serve/presets", "POST", {"name": ""})
+        self.assertEqual(status, 400)
+
+        status, _ = request(
+            "/api/serve/presets/delete", "POST", {"id": preset_id}
+        )
+        self.assertEqual(status, 200)
+        status, payload = request("/api/serve/presets")
+        self.assertEqual(payload["data"]["presets"], [])
+
+        entries = audit.recent(path=self.config_dir / "audit.jsonl")
+        operations = [entry["operation"] for entry in entries]
+        self.assertIn("serve.preset.save", operations)
+        self.assertIn("serve.preset.delete", operations)
+
+    def test_serve_preview_and_start_forward_max_tokens_and_adapter(self):
+        import threading
+        import urllib.request
+        config_path = self.config_dir / "config.json"
+        config.save({"mlx_agent_path": _fake_agent_checkout(self.config_dir)}, config_path)
+        commands = []
+
+        def runner(command, timeout):
+            commands.append(list(command))
+            if "--confirm" in command:
+                data = {}
+            else:
+                data = {"plan": {"preview_hash": "h" * 64}}
+            return {
+                "returncode": 0,
+                "stdout": json.dumps({
+                    "schema_version": "1.0", "generated_at": "now",
+                    "operation": "serve-start", "status": "ok",
+                    "data": data, "warnings": [],
+                }),
+                "stderr": "",
+            }
+
+        httpd = server.build(
+            "127.0.0.1", 0, config_path=config_path, token="tokens",
+            start_worker=False, runner=runner,
+        )
+        self.addCleanup(httpd.server_close)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+
+        def post(body):
+            url = "http://127.0.0.1:{0}/api/serve/preview".format(port)
+            data = json.dumps(body).encode("utf-8")
+            request = urllib.request.Request(url, data=data, method="POST")
+            request.add_header(server.TOKEN_HEADER, "tokens")
+            request.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+        post({
+            "repo": "org/model", "runtime": "mlx_lm", "port": 8900,
+            "max_tokens": 8192, "adapter_path": "/adapters/coder",
+        })
+        self.assertIn("--max-tokens", commands[-1])
+        self.assertIn("8192", commands[-1])
+        self.assertIn("--adapter-path", commands[-1])
 
 
 class QuarantineDeleteTests(unittest.TestCase):

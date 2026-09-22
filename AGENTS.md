@@ -21,6 +21,11 @@ from `mlx-agent` at runtime.
   core loop (Models / Convert / Duplicates / Scout / Doctor / Serve /
   Training Studio / Compare Conversions / Model Arch / Jobs / Settings);
   Adopt, Wire, and the other lifecycle surfaces live in the native app.
+  Serve presets are the web's named endpoint profiles
+  (`mlx_workbench/serve_presets.py`, persisted in `serve-presets.json`
+  beside the queue state file — deliberately separate from `config.json`
+  so the native app's endpoint fleet and web presets never clobber each
+  other).
 - The shared `config.json` contract: `mlx_workbench/config.py` preserves keys
   it does not manage (e.g. the native app's premium toggles), and the web
   Settings save overlays posted fields onto the loaded config so a web save

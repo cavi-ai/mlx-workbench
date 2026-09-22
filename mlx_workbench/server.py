@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import socket
 import threading
 import time
 import traceback
@@ -18,6 +19,7 @@ from . import (
     convert_queue as convert_queue_module,
     deps as deps_module,
     quarantine as quarantine_module,
+    serve_presets as serve_presets_module,
 )
 
 
@@ -109,6 +111,9 @@ class Application:
         )
         self.convert_queue = convert_queue_module.ConvertQueue(path=state_path)
         self.audit_file = audit_module.audit_path(config_path)
+        self.preset_book = serve_presets_module.PresetBook(
+            serve_presets_module.presets_path(config_path)
+        )
         self.worker = ConversionWorker(
             self.convert_queue,
             lambda: self.config()["mlx_agent_path"],
@@ -685,10 +690,24 @@ class Handler(BaseHTTPRequestHandler):
         port = payload.get("port")
         if port is not None and (not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535):
             return _error("invalid_body", "port must be 1–65535.", "Retry from the UI.")
+        max_tokens = payload.get("max_tokens")
+        if max_tokens is not None and (
+            isinstance(max_tokens, bool)
+            or not isinstance(max_tokens, int)
+            or not 1 <= max_tokens <= 131072
+        ):
+            return _error("invalid_body", "max_tokens must be 1-131072.", "Adjust max tokens.")
+        adapter = payload.get("adapter_path")
+        if adapter is not None and (not isinstance(adapter, str) or not adapter.strip()):
+            return _error("invalid_body", "adapter_path must be a path or null.", "Clear the adapter.")
         local_path = path if has_path else None
         model_repo = repo.strip() if has_repo else None
+        adapter_path = adapter.strip() if isinstance(adapter, str) and adapter.strip() else None
         if route.endswith("preview"):
-            return _ok(bridge.serve_preview(agent, model_repo, runtime, port, runner=runner, path=local_path))
+            return _ok(bridge.serve_preview(
+                agent, model_repo, runtime, port, runner=runner, path=local_path,
+                max_tokens=max_tokens, adapter_path=adapter_path,
+            ))
         preview_hash = payload.get("preview_hash")
         if not isinstance(preview_hash, str) or not preview_hash:
             return _error(
@@ -698,12 +717,15 @@ class Handler(BaseHTTPRequestHandler):
             )
         started = bridge.serve_start(
             agent, model_repo, runtime, preview_hash, port, runner=runner, path=local_path,
+            max_tokens=max_tokens, adapter_path=adapter_path,
         )
         self.app.audit(
             "serve.start",
             model=model_repo or local_path,
             runtime=runtime,
             port=port,
+            max_tokens=max_tokens,
+            adapter=adapter_path,
         )
         return _ok(started)
 
@@ -734,6 +756,96 @@ class Handler(BaseHTTPRequestHandler):
         stopped = bridge.serve_stop(agent, payload["port"], runner=runner)
         self.app.audit("serve.stop", port=payload["port"])
         return _ok(stopped)
+
+    # MARK: serve presets (named endpoint profiles)
+
+    def _api_presets_list(self, route, settings, agent, runner):
+        return _ok({"presets": self.app.preset_book.list()})
+
+    def _api_presets_save(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict):
+            return _error("invalid_body", "Send a JSON object.", "Retry from the UI.")
+        preset_id = payload.get("id")
+        if preset_id is not None and (not isinstance(preset_id, str) or not preset_id):
+            return _error("invalid_body", "id must be a non-empty string.", "Retry from the UI.")
+        name = payload.get("name")
+        model = payload.get("model")
+        kind = payload.get("kind")
+        runtime = payload.get("runtime")
+        if not isinstance(name, str) or not name.strip():
+            return _error("invalid_body", "A preset name is required.", "Name the preset.")
+        if not isinstance(model, str) or not model.strip():
+            return _error("invalid_body", "A model is required.", "Pick a model.")
+        if kind not in ("repo", "path"):
+            return _error("invalid_body", "kind must be repo or path.", "Retry from the UI.")
+        if runtime not in serve_presets_module.RUNTIMES:
+            return _error("invalid_body", "runtime must be mlx_lm or mlx-vlm.", "Pick a runtime.")
+        port = payload.get("port")
+        if port is not None and (
+            isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535
+        ):
+            return _error("invalid_body", "port must be 1-65535.", "Pick a port.")
+        max_tokens = payload.get("max_tokens")
+        if max_tokens is not None and (
+            isinstance(max_tokens, bool)
+            or not isinstance(max_tokens, int)
+            or not 1 <= max_tokens <= 131072
+        ):
+            return _error("invalid_body", "max_tokens must be 1-131072.", "Adjust max tokens.")
+        adapter = payload.get("adapter_path")
+        if adapter is not None and (not isinstance(adapter, str) or not adapter.strip()):
+            return _error("invalid_body", "adapter_path must be a path or null.", "Clear the adapter.")
+        try:
+            preset = self.app.preset_book.upsert(
+                preset_id=preset_id,
+                name=name.strip(),
+                model=model.strip(),
+                kind=kind,
+                runtime=runtime,
+                port=port,
+                max_tokens=max_tokens,
+                adapter_path=adapter,
+            )
+        except serve_presets_module.PresetError as error:
+            status, content_type, body = _json_bytes(
+                {"status": "error", "error": error.to_dict()}, 400
+            )
+            return status, content_type, body
+        self.app.audit(
+            "serve.preset.save", preset_id=preset["id"], name=preset["name"]
+        )
+        return _ok({"preset": preset, "presets": self.app.preset_book.list()})
+
+    def _api_presets_delete(self, route, settings, agent, runner):
+        payload = self._body()
+        if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
+            return _error("invalid_body", "Preset id is required.", "Retry from the UI.")
+        try:
+            self.app.preset_book.delete(payload["id"])
+        except serve_presets_module.PresetError as error:
+            status, content_type, body = _json_bytes(
+                {"status": "error", "error": error.to_dict()}, 404
+            )
+            return status, content_type, body
+        self.app.audit("serve.preset.delete", preset_id=payload["id"])
+        return _ok({"presets": self.app.preset_book.list()})
+
+    def _api_serve_port(self, route, settings, agent, runner):
+        """Suggest a free loopback port for a new endpoint."""
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe.bind(("127.0.0.1", 0))
+            free = probe.getsockname()[1]
+            probe.close()
+        except OSError:
+            return _error(
+                "no_free_port",
+                "Could not find a free loopback port.",
+                "Pick a port manually.",
+                503,
+            )
+        return _ok({"port": free})
 
     def _api_quant_profile(self, route, settings, agent, runner):
         payload = self._body()
@@ -914,6 +1026,10 @@ _API_ROUTES = {
     ("POST", "/api/serve/preview"): Handler._api_serve,
     ("POST", "/api/serve/start"): Handler._api_serve,
     ("POST", "/api/serve/stop"): Handler._api_serve_stop,
+    ("GET", "/api/serve/port"): Handler._api_serve_port,
+    ("GET", "/api/serve/presets"): Handler._api_presets_list,
+    ("POST", "/api/serve/presets"): Handler._api_presets_save,
+    ("POST", "/api/serve/presets/delete"): Handler._api_presets_delete,
     ("POST", "/api/duplicates/scan"): Handler._api_duplicates_scan,
     ("POST", "/api/model/arch"): Handler._api_model_arch,
     ("POST", "/api/quant/profile"): Handler._api_quant_profile,
