@@ -13,6 +13,28 @@ and is versioned independently; submodule bumps are recorded here.
 ## [Unreleased]
 ### Added
 
+- Quarantine lifecycle in the web UI: the Quarantine Area lists what is
+  being held, and each row gains a "Delete permanently" action that moves
+  the file to the macOS Trash and marks its ledger entry `deleted_at`
+  (append-only history kept). The ledger file itself can never be deleted
+  and symlinked targets are refused; every purge lands in the audit trail
+  (`quarantine.delete`).
+- Scan cache (stale-while-revalidate): `/api/scan` now returns the last
+  scan immediately (with `cached`/`stale` flags) and refreshes in the
+  background, so screens never block on a full signature walk; `?refresh=1`
+  (the Rescan button) still scans synchronously. The UI also keeps the
+  last-known inventory in `localStorage` so a reload renders models
+  instantly, worst case showing a clearly-labeled cold cache.
+- Serve tab UX: the model field is a picker fed by converted models from the
+  latest scan (repo id or local path) instead of raw free text, and the
+  chosen runtime is remembered across visits.
+### Fixed
+
+- Native app conversions failed with "[Errno 30] Read-only file system:
+  '/.mlx-agent-receipts'": convert start/status commands did not pass
+  `--receipts-dir`, so the agent derived its receipts directory from the
+  app's working directory (which is `/` for a GUI app). All convert
+  invocations now pass the app's receipt directory, matching serve.
 - Native app packaging: `make dmg` builds the Release SwiftUI app and
   packages it as a compressed DMG with an `/Applications` symlink, ad-hoc
   signed (Developer ID signing via `make dmg CODESIGN_IDENTITY=…`).

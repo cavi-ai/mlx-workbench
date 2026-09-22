@@ -10,8 +10,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+from .atomicio import write_text_atomic
 
 
 LEDGER_NAME = "quarantine-ledger.jsonl"
@@ -167,6 +170,125 @@ def ledger(quarantine_dir, limit=200):
             continue
         if isinstance(value, dict):
             value["exists"] = os.path.exists(value.get("to", ""))
+            value["deleted"] = bool(value.get("deleted_at"))
             records.append(value)
     records.reverse()
     return records
+
+
+def purge(target, quarantine_dir, trash=None):
+    """Permanently remove one file from the quarantine directory.
+
+    This is the only destructive operation in this module, and it is fenced
+    on every side: the target must be an existing file inside the configured
+    quarantine directory, never the ledger itself, and never a symbolic
+    link. The matching ledger entry is marked ``deleted_at`` rather than
+    removed, so the history stays an append-only audit trail. The default
+    ``trash`` moves to the macOS Trash; passing a callable overrides it in
+    tests. Nothing outside the quarantine directory is ever touched.
+    """
+    root = Path(quarantine_dir).expanduser()
+    resolved_root = _resolve(root) if root.exists() else root
+    if trash is None:
+        trash = _send_to_trash
+
+    target_path = Path(target).expanduser()
+    if not target_path.is_absolute():
+        raise QuarantineError(
+            "not_in_quarantine",
+            "An absolute path inside the quarantine directory is required.",
+            "Pick a file from the Quarantine list.",
+        )
+    if target_path.name == LEDGER_NAME:
+        raise QuarantineError(
+            "ledger_protected",
+            "The quarantine ledger cannot be deleted.",
+            "Delete quarantined weight files instead.",
+        )
+    if target_path.is_symlink():
+        raise QuarantineError(
+            "symlink_refused",
+            "{0} is a symbolic link; refusing to delete through it.".format(target_path),
+            "Inspect the link and resolve it yourself.",
+        )
+    resolved_target = _resolve(target_path)
+    if not _within(resolved_target, resolved_root) or not resolved_target.is_file():
+        raise QuarantineError(
+            "not_in_quarantine",
+            "{0} is not a file inside the quarantine directory.".format(resolved_target),
+            "Pick a file from the Quarantine list.",
+        )
+
+    try:
+        trash(str(resolved_target))
+    except (OSError, shutil.Error) as error:
+        raise QuarantineError(
+            "delete_failed",
+            "{0} could not be deleted: {1}".format(resolved_target, error),
+            "Check Trash permissions and try again.",
+        ) from error
+
+    _rewrite_ledger(
+        root,
+        str(resolved_target),
+        datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    return {
+        "deleted": str(resolved_target),
+        "bytes": _last_known_size(root, str(resolved_target)),
+    }
+
+
+def _last_known_size(root, deleted_path):
+    for record in ledger(root, limit=10000):
+        if str(_resolve(record.get("to", ""))) == deleted_path:
+            return record.get("bytes")
+    return None
+
+
+def _mark_deleted(line, deleted_path, now_iso):
+    try:
+        record = json.loads(line)
+    except ValueError:
+        return line
+    if (
+        isinstance(record, dict)
+        and "deleted_at" not in record
+        and str(_resolve(record.get("to", ""))) == deleted_path
+    ):
+        record["deleted_at"] = now_iso
+        return json.dumps(record, sort_keys=True)
+    return line
+
+
+def _rewrite_ledger(root, deleted_path, now_iso):
+    ledger_path = root / LEDGER_NAME
+    try:
+        lines = ledger_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    updated = [_mark_deleted(line, deleted_path, now_iso) for line in lines]
+    write_text_atomic(
+        ledger_path, "\n".join(updated) + ("\n" if updated else "")
+    )
+
+
+def _send_to_trash(path):
+    """macOS Trash via Finder-safe AppleScript; falls back to unlink."""
+    script = (
+        'tell application "Finder" to delete POSIX file "' + path + '"'
+    )
+    result = subprocess.run(
+        ["/usr/bin/osascript", "-e", script],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        raise OSError(result.stderr.decode("utf-8", "replace").strip()[:200])
+
+
+# Selected at import so tests can patch a fake without patching the symbol
+# used inside quarantine().
+trash = _send_to_trash

@@ -138,24 +138,51 @@ async function renderQuarantined() {
     container.appendChild(element('div', 'empty', error.message));
     return;
   }
-  if (!records.length) {
+  const live = records.filter(function (record) { return record.exists && !record.deleted; });
+  const gone = records.filter(function (record) { return record.deleted; });
+  if (!records.length || (!live.length && !gone.length)) {
     container.appendChild(element('div', 'empty', 'Nothing has been moved aside.'));
     return;
   }
-  records.forEach(function (record) {
+  if (!live.length) {
+    container.appendChild(element('div', 'empty', 'Quarantine is empty — everything here is already deleted.'));
+    return;
+  }
+  live.forEach(function (record) {
     const row = element('div', 'file-row');
     row.appendChild(element('span', 'hint', record.moved_at));
     row.appendChild(element('span', 'path', record.to));
     row.appendChild(element('span', 'hint', bytes(record.bytes)));
+    const del = element('button', 'secondary', 'Delete…');
+    del.type = 'button';
+    del.addEventListener('click', function () { purgeQuarantined(record, del); });
+    row.appendChild(del);
     container.appendChild(row);
   });
+  if (gone.length) {
+    container.appendChild(element('p', 'hint', gone.length + ' previously quarantined file' + (gone.length === 1 ? '' : 's') + ' permanently deleted.'));
+  }
+}
+
+async function purgeQuarantined(record, button) {
+  state.pending = record;
+  state.pendingKind = 'quarantine-delete';
+  fillPlanDialog(
+    'Delete permanently?',
+    [
+      ['File', record.to],
+      ['Size', bytes(record.bytes)],
+      ['Quarantined', record.moved_at],
+    ],
+    'This moves the file to the Trash and marks the ledger entry deleted. It cannot be undone from here.',
+  );
 }
 
 async function quarantine(path, button) {
   button.disabled = true;
   try {
     await api('/api/quarantine', { body: { path: path } });
-    await rescan();
+    await rescan({ force: true });
     await renderQuarantined();
     return true;
   } catch (error) {
@@ -496,6 +523,12 @@ async function confirmPlan() {
         await scanDuplicates();
       }
       return;
+    } else if (state.pendingKind === 'quarantine-delete') {
+      await api('/api/quarantine/delete', { body: { path: state.pending.to } });
+      closeDialog();
+      notify('Moved to Trash.');
+      await renderQuarantined();
+      return;
     } else if (state.pendingKind === 'convert') {
       await api('/api/convert/start', { body: convertStartBody(state.pending) });
     } else if (state.pendingKind === 'convert-batch') {
@@ -563,21 +596,74 @@ function closeDialog() {
   state.pendingBatch = null;
 }
 
-async function rescan() {
+const SCAN_CACHE_KEY = 'mlx_workbench_scan_cache';
+
+function readScanCache() {
+  try {
+    const raw = localStorage.getItem(SCAN_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.scan) return null;
+    return parsed;
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeScanCache(scan) {
+  try {
+    localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify({ scan: scan, at: Date.now() }));
+  } catch (error) {
+    // Storage full or unavailable; the cache is best-effort.
+  }
+}
+
+function describeScanAge(cachedAt) {
+  if (!cachedAt) return '';
+  const minutes = Math.max(1, Math.round((Date.now() - cachedAt) / 60000));
+  if (minutes < 60) return 'about ' + minutes + ' min ago';
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours + ' h ago';
+  return Math.round(hours / 24) + ' d ago';
+}
+
+async function rescan(options) {
+  const force = !!(options && options.force);
   const button = $('rescan');
+  // Worst case: render the last-known inventory from local storage before
+  // any network round trip, so the screen never loads empty.
+  if (!state.scan) {
+    const cached = readScanCache();
+    if (cached) {
+      state.scan = cached.scan;
+      renderModels();
+      notify('Showing models from ' + describeScanAge(cached.at) + ' — rescanning…');
+    }
+  }
   button.disabled = true;
   button.textContent = 'Scanning…';
   try {
-    state.scan = await api('/api/scan');
-    notify('');
+    state.scan = await api('/api/scan' + (force ? '?refresh=1' : ''));
+    writeScanCache(state.scan);
+    if (state.scan.stale) {
+      notify('Cached scan from ' + describeScanAge(cachedAt()) + ' — a fresh scan is running.');
+    } else {
+      notify('');
+    }
     renderModels();
+    updateServeSuggestions();
     renderDuplicateScan(state.duplicateScan);
   } catch (error) {
-    notify(error.message);
+    if (!state.scan) notify(error.message);
   } finally {
     button.disabled = false;
     button.textContent = 'Rescan';
   }
+}
+
+function cachedAt() {
+  const cached = readScanCache();
+  return cached ? cached.at : null;
 }
 
 async function refreshJobs() {
@@ -991,7 +1077,7 @@ async function previewServe(event) {
   const portValue = $('serve-port').value.trim();
   const port = portValue ? Number(portValue) : null;
   if (!repo) {
-    notify('Enter a repo id that is already in the Hugging Face cache.');
+    notify('Pick a converted model or enter a repo id already in the Hugging Face cache.');
     return;
   }
   const serve = state.runtime && state.runtime.serve;
@@ -1006,8 +1092,9 @@ async function previewServe(event) {
     const plan = data.plan || data;
     state.pending = plan;
     state.pendingKind = 'serve';
+    try { localStorage.setItem('mlx_workbench_serve_runtime', runtime); } catch (e) {}
     fillPlanDialog('Review this serve plan', [
-      ['Repo', plan.repo || repo],
+      ['Model', plan.repo || repo],
       ['Runtime', plan.runtime || runtime],
       ['Port', String(plan.port || port || 'default')],
       ['Bind', plan.bind || '127.0.0.1'],
@@ -1017,6 +1104,40 @@ async function previewServe(event) {
     ], 'Loopback only. The model must already be in the Hugging Face cache; serve never downloads.');
   } catch (error) {
     notify(error.message);
+  }
+}
+
+// Fill the serve model picker from the latest scan: converted MLX models
+// become suggestions (their repo id when the model came from the HF cache,
+// otherwise the local path), so the common case is pick-and-go.
+function updateServeSuggestions() {
+  const list = $('serve-model-options');
+  if (!list) return;
+  list.textContent = '';
+  const scan = state.scan;
+  if (!scan || !scan.models) return;
+  const seen = {};
+  scan.models.forEach(function (item) {
+    if (item.status !== 'converted') return;
+    const repo = (item.output && item.output.repo) || null;
+    const value = repo || item.output_dir || null;
+    if (!value || seen[value]) return;
+    seen[value] = true;
+    const option = element('option');
+    option.value = value;
+    option.label = item.name || value;
+    list.appendChild(option);
+  });
+}
+
+function restoreServeDefaults() {
+  try {
+    const runtime = localStorage.getItem('mlx_workbench_serve_runtime');
+    if (runtime === 'mlx_lm' || runtime === 'mlx-vlm') {
+      $('serve-runtime').value = runtime;
+    }
+  } catch (error) {
+    // localStorage unavailable; defaults are fine.
   }
 }
 
@@ -1235,7 +1356,7 @@ async function saveSettings(event) {
       vendor_agent_path: data.vendor_agent_path,
     });
     notify('');
-    await rescan();
+    await rescan({ force: true });
   } catch (error) {
     notify(error.message);
   }
@@ -1250,7 +1371,11 @@ function selectPanel(name) {
     state.jobTimer = null;
   }
   if (name === 'duplicates') renderQuarantined();
-  if (name === 'serve') refreshJobs();
+  if (name === 'serve') {
+    refreshJobs();
+    updateServeSuggestions();
+    restoreServeDefaults();
+  }
 }
 
 async function scanDuplicates() {
@@ -1383,7 +1508,7 @@ function init() {
   on('close-model-details', 'click', function () {
     $('model-details-modal').hidden = true;
   });
-  on('rescan', 'click', rescan);
+  on('rescan', 'click', function () { rescan({ force: true }); });
   on('pending-only', 'change', renderModels);
   on('queue-selected', 'click', queueSelectedModels);
   on('select-all-models', 'change', function () {
@@ -1406,7 +1531,7 @@ function init() {
   on('arch-form', 'submit', visualizeArchitecture);
   on('confirm', 'click', confirmPlan);
   on('cancel', 'click', closeDialog);
-  on('rescan-models', 'click', rescan);
+  on('rescan-models', 'click', function () { rescan({ force: true }); });
   on('scan-duplicates', 'click', scanDuplicates);
   on('convert-selected', 'click', queueSelectedModels);
 
@@ -1448,7 +1573,7 @@ function init() {
     }
     
     // Auto-rescan to populate models on first run
-    setTimeout(function() { rescan(); }, 100);
+    setTimeout(function () { rescan({ force: false }); }, 100);
   }).catch(function (error) { notify(error.message); });
 }
 
