@@ -35,6 +35,13 @@ and is versioned independently; submodule bumps are recorded here.
   `--receipts-dir`, so the agent derived its receipts directory from the
   app's working directory (which is `/` for a GUI app). All convert
   invocations now pass the app's receipt directory, matching serve.
+- Native app packaging: `make dmg` builds the Release SwiftUI app and
+  packages it as a compressed DMG with an `/Applications` symlink, ad-hoc
+  signed (Developer ID signing via `make dmg CODESIGN_IDENTITY=…`).
+- App icon: the app ships a proper macOS squircle icon (anvil + MLX mark +
+  spark + loopback dot), full 16–1024 px ladder in `AppIcon.appiconset`,
+  master SVG checked in at `mlx-mac/assets/app-icon.svg`.
+
 ### Security
 
 - P3 hardening: `make pip-audit` joins the PR gates (`.github/pr.yml`) with
