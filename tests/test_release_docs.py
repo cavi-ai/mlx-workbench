@@ -180,13 +180,52 @@ class ReleaseDocsContractTests(unittest.TestCase):
             self.assertIn(f"release version must be {VERSION}", mismatch.stderr)
 
             run_node("scripts/docs/build.mjs", "--version", VERSION, *common)
-            (output / "navigation.json").write_text("dirty\n")
+            # A stray file is not stale content; the build refuses so a human
+            # looks instead of silently deleting it.
+            (output / "stray.txt").write_text("stray\n")
             dirty = run_node(
                 "scripts/docs/build.mjs", "--version", VERSION, *common,
                 check=False,
             )
             self.assertNotEqual(dirty.returncode, 0)
             self.assertIn("dirty output", dirty.stderr)
+            self.assertTrue((output / "stray.txt").exists())
+
+    def test_build_self_heals_stale_output_with_the_same_file_set(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "docs"
+            common = (
+                "--tag", TAG,
+                "--commit", COMMIT,
+                "--source-date-epoch", EPOCH,
+                "--output", output,
+            )
+            run_node("scripts/docs/build.mjs", "--version", VERSION, *common)
+            # A stale page (same file set, different bytes) regenerates
+            # instead of demanding a manual rm -rf.
+            page = output / "introduction" / "overview.md"
+            page.write_text(page.read_text() + "\nstale\n")
+            run_node("scripts/docs/build.mjs", "--version", VERSION, *common)
+            self.assertNotIn("stale", page.read_text())
+            manifest = json.loads((output / "manifest.json").read_text())
+            self.assertEqual(manifest["version"], VERSION)
+
+    def test_rebuilt_output_is_byte_identical_to_a_fresh_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            common = (
+                "--tag", TAG,
+                "--commit", COMMIT,
+                "--source-date-epoch", EPOCH,
+            )
+            fresh = root / "fresh"
+            run_node("scripts/docs/build.mjs", "--version", VERSION, "--output", fresh, *common)
+            stale = root / "stale"
+            run_node("scripts/docs/build.mjs", "--version", VERSION, "--output", stale, *common)
+            page = stale / "guides" / "configuration.md"
+            page.write_text("out of date\n")
+            run_node("scripts/docs/build.mjs", "--version", VERSION, "--output", stale, *common)
+            self.assertEqual(tree_digest(fresh), tree_digest(stale))
 
     def test_archive_and_envelope_are_deterministic_and_consistent(self):
         with tempfile.TemporaryDirectory() as temporary:

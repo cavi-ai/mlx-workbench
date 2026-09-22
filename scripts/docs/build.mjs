@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -42,18 +42,45 @@ async function expectedFiles(sourceRoot, release) {
   return values;
 }
 
-async function assertCleanOrAbsent(outputRoot, expected) {
-  if (!(await exists(outputRoot))) return false;
+/// Decide what to do with an existing output tree.
+///
+/// - Absent or byte-identical: nothing to do ("clean").
+/// - Present with the exact same file set but stale content (a source edit
+///   after the last build): regenerate in place so the build self-heals
+///   instead of demanding a manual `rm -rf`.
+/// - Present with extra or missing files: that is not stale output but an
+///   artifact of a different schema or a stray write; refuse so a human
+///   looks.
+async function prepareOutputTree(outputRoot, expected) {
+  if (!(await exists(outputRoot))) {
+    for (const [relative, bytes] of expected) {
+      const target = path.join(outputRoot, relative);
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, bytes, { flag: "wx" });
+    }
+    return "fresh";
+  }
   const actualPaths = await listFilesRecursive(outputRoot);
   const expectedPaths = [...expected.keys(), "manifest.json"].sort();
-  if (JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
-    throw new Error(`dirty output: ${outputRoot}`);
+  if (JSON.stringify(actualPaths) === JSON.stringify(expectedPaths)) {
+    let clean = true;
+    for (const [relative, bytes] of expected) {
+      const actual = await readFile(path.join(outputRoot, relative));
+      if (!actual.equals(bytes)) clean = false;
+    }
+    return clean ? "clean" : await regenerateOutputTree(outputRoot, expected);
   }
+  throw new Error(`dirty output: ${outputRoot}`);
+}
+
+async function regenerateOutputTree(outputRoot, expected) {
+  await rm(outputRoot, { recursive: true, force: true });
   for (const [relative, bytes] of expected) {
-    const actual = await readFile(path.join(outputRoot, relative));
-    if (!actual.equals(bytes)) throw new Error(`dirty output: ${relative}`);
+    const target = path.join(outputRoot, relative);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, bytes, { flag: "wx" });
   }
-  return true;
+  return "regenerated";
 }
 
 export async function buildDocumentation(input = {}) {
@@ -64,14 +91,7 @@ export async function buildDocumentation(input = {}) {
     throw new Error("documentation output must be outside the source tree");
   }
   const files = await expectedFiles(sourceRoot, release);
-  const existed = await assertCleanOrAbsent(outputRoot, files);
-  if (!existed) {
-    for (const [relative, bytes] of files) {
-      const target = path.join(outputRoot, relative);
-      await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(target, bytes, { flag: "wx" });
-    }
-  }
+  const outputTree = await prepareOutputTree(outputRoot, files);
   const contentSha256 = await computeContentSha256(outputRoot, [...files.keys()]);
   const manifest = {
     schemaVersion: 2,
@@ -89,7 +109,7 @@ export async function buildDocumentation(input = {}) {
   };
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
   const manifestPath = path.join(outputRoot, "manifest.json");
-  if (existed) {
+  if (outputTree === "clean") {
     const actual = await readFile(manifestPath);
     if (!actual.equals(manifestBytes)) throw new Error("dirty output: manifest.json");
   } else {
