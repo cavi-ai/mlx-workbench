@@ -14,6 +14,16 @@ from mlx_workbench import audit, bridge, config, convert_queue, quarantine, serv
 from mlx_workbench.atomicio import write_text_atomic
 
 
+
+def _fake_agent_checkout(root):
+    """Create a minimal mlx-agent checkout so agent resolution is deterministic."""
+    from mlx_workbench import bridge
+    agent = root / "mlx-agent"
+    script = agent / bridge.CLI_RELATIVE
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("", encoding="utf-8")
+    return str(agent)
+
 class ServerHeaderTests(unittest.TestCase):
     """P0-1: response hardening headers must be present and informative."""
 
@@ -389,6 +399,7 @@ class ScanCacheTests(unittest.TestCase):
             "gguf_roots": [str(self.root / "models")],
             "quarantine_dir": str(self.root / "hold"),
             "output_dir": str(self.root / "out"),
+            "mlx_agent_path": _fake_agent_checkout(self.root),
         }, self.config_path)
         self.scans = []
 
@@ -552,7 +563,7 @@ class ServePresetTests(unittest.TestCase):
         import urllib.error
         import urllib.request
         config_path = self.config_dir / "config.json"
-        config.save({}, config_path)
+        config.save({"mlx_agent_path": _fake_agent_checkout(self.config_dir)}, config_path)
         httpd = server.build(
             "127.0.0.1", 0, config_path=config_path, token="presets",
             start_worker=False,
@@ -611,7 +622,7 @@ class ServePresetTests(unittest.TestCase):
         import threading
         import urllib.request
         config_path = self.config_dir / "config.json"
-        config.save({}, config_path)
+        config.save({"mlx_agent_path": _fake_agent_checkout(self.config_dir)}, config_path)
         commands = []
 
         def runner(command, timeout):
