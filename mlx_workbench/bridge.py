@@ -486,18 +486,23 @@ def all_job_lists(agent_path, runner=None):
 
 
 def serve_preview(agent_path, repo, runtime, port=None, timeout=DEFAULT_TIMEOUT,
-                  runner=None, path=None):
+                  runner=None, path=None, max_tokens=None, adapter_path=None):
     """Render a serve plan without launching. Exactly one of repo/path."""
     argv = ["serve", "start"]
     argv.extend(["--path", path] if path is not None else ["--repo", repo])
     argv.extend(["--runtime", runtime])
     if port is not None:
         argv.extend(["--port", str(port)])
+    if max_tokens is not None:
+        argv.extend(["--max-tokens", str(max_tokens)])
+    if adapter_path is not None:
+        argv.extend(["--adapter-path", adapter_path])
     return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
 
 
 def serve_start(agent_path, repo, runtime, preview_hash, port=None,
-                timeout=DEFAULT_TIMEOUT, runner=None, path=None):
+                timeout=DEFAULT_TIMEOUT, runner=None, path=None,
+                max_tokens=None, adapter_path=None):
     """Start a reviewed serve plan. Exactly one of repo/path."""
     argv = ["serve", "start"]
     argv.extend(["--path", path] if path is not None else ["--repo", repo])
@@ -507,6 +512,10 @@ def serve_start(agent_path, repo, runtime, preview_hash, port=None,
     ])
     if port is not None:
         argv.extend(["--port", str(port)])
+    if max_tokens is not None:
+        argv.extend(["--max-tokens", str(max_tokens)])
+    if adapter_path is not None:
+        argv.extend(["--adapter-path", adapter_path])
     return unwrap(run(agent_path, argv, timeout=timeout, runner=runner))
 
 

@@ -476,7 +476,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(calls, [(
             str(self.agent), None, "mlx_lm", None,
-            {"runner": self._runner, "path": "/models/mlx/qwen3-8b-mlx"},
+            {"runner": self._runner, "path": "/models/mlx/qwen3-8b-mlx", "max_tokens": None, "adapter_path": None},
         )])
 
     def test_serve_preview_forwards_a_repo(self):
@@ -497,7 +497,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(calls, [(
             str(self.agent), "org/model", "mlx_lm", None,
-            {"runner": self._runner, "path": None},
+            {"runner": self._runner, "path": None, "max_tokens": None, "adapter_path": None},
         )])
 
     def test_serve_preview_rejects_repo_and_path_together(self):
@@ -533,7 +533,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(calls, [(
             str(self.agent), None, "mlx_lm", "h", None,
-            {"runner": self._runner, "path": "/models/mlx/qwen3-8b-mlx"},
+            {"runner": self._runner, "path": "/models/mlx/qwen3-8b-mlx", "max_tokens": None, "adapter_path": None},
         )])
 
     def test_model_architecture_route_forwards_the_subprocess_runner(self):

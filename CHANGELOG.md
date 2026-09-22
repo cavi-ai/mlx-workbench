@@ -13,6 +13,14 @@ and is versioned independently; submodule bumps are recorded here.
 ## [Unreleased]
 ### Added
 
+- Serve presets ("endpoint profiles"): save the current model, runtime,
+  port, max tokens, and LoRA adapter as a named preset from the Serve tab,
+  then relaunch it in two clicks (Load → Preview & Start). Presets persist
+  in their own state file (`serve-presets.json`, schema-validated, atomic
+  writes) so neither frontend's config save can clobber them. The tab also
+  gains a "Find free port" suggestion, max-tokens and adapter fields
+  surfaced from the agent CLI, and a "Copy URL" action on running servers
+  (`http://127.0.0.1:<port>/v1`).
 - Quarantine lifecycle in the web UI: the Quarantine Area lists what is
   being held, and each row gains a "Delete permanently" action that moves
   the file to the macOS Trash and marks its ledger entry `deleted_at`

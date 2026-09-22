@@ -141,6 +141,14 @@
   <div class="summary">Serve MLX models locally</div>
   
   <form id="serve-form" class="toolbar">
+    <div class="row presets-bar">
+      <label class="inline">Preset
+        <select id="serve-preset"><option value="">— choose —</option></select>
+      </label>
+      <button type="button" id="serve-preset-apply" class="secondary">Load</button>
+      <button type="button" id="serve-preset-save" class="secondary">Save as preset…</button>
+      <button type="button" id="serve-preset-delete" class="secondary">Delete</button>
+    </div>
     <label>Model
       <input id="serve-repo" type="text" spellcheck="false" list="serve-model-options" placeholder="mlx-community/Qwen3-8B-4bit">
       <datalist id="serve-model-options"></datalist>
@@ -152,6 +160,13 @@
       </label>
       <label class="inline">Port
         <input id="serve-port" type="number" min="1024" max="65535" placeholder="auto">
+      </label>
+      <button type="button" id="serve-port-auto" class="secondary">Find free port</button>
+      <label class="inline">Max tokens
+        <input id="serve-max-tokens" type="number" min="1" max="131072" placeholder="runtime default">
+      </label>
+      <label class="inline">LoRA adapter (mlx_lm)
+        <input id="serve-adapter" type="text" spellcheck="false" placeholder="optional /path/to/adapter">
       </label>
       <button type="submit" class="primary">Preview &amp; Start</button>
     </div>
