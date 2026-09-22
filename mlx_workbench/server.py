@@ -238,6 +238,11 @@ def _static(name):
     return 200, content_type, location.read_bytes()
 
 
+def _idle_progress():
+    return {"summary": "Waiting for output", "last_line": "",
+            "phase": "idle", "percent": None, "failed": False}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "mlx-workbench"
     sys_version = ""
@@ -483,52 +488,91 @@ class Handler(BaseHTTPRequestHandler):
         return _ok(bridge.read_log(agent, log_path, runner=runner))
 
     def _api_convert_progress(self, route, settings, agent, runner):
-        """Live conversion progress for the Jobs tab progress bar.
+        """Live conversion progress for the Convert tab panel and the banner.
 
-        Finds the currently running conversion (or the most recent one), tails
-        its log, and returns the parsed phase/percent/failure state. Idle is a
-        first-class answer so the bar can hide itself.
+        State comes from three sources, reconciled: the agent's job list
+        (authoritative on what is actually running), the durable queue (what
+        is waiting or just failed), and the running job's log tail (phase,
+        percent, failure line). A stale finished job is never presented as
+        running: without a live job the state is "failed" only when the
+        newest queue item just failed, otherwise "idle".
         """
         lists = bridge.all_job_lists(agent, runner=runner)
         jobs = lists.get("jobs") or []
         running = next((job for job in jobs if job.get("state") == "running"), None)
-        candidate = running or (jobs[-1] if jobs else None)
-        if candidate is None:
-            return _ok({"state": "idle", "progress": {
-                "summary": "No conversions yet.", "last_line": "",
-                "phase": "idle", "percent": None, "failed": False,
-            }})
-        log_path = candidate.get("log_path") or (
-            (candidate.get("receipt") or {}).get("log_path") if isinstance(candidate.get("receipt"), dict) else None
+        queue = self.app.convert_queue.snapshot()
+        failed_item = next(
+            (item for item in queue if item.get("state") == "failed"), None
         )
-        progress = {
-            "summary": "Waiting for output", "last_line": "",
-            "phase": "running" if running else "idle",
-            "percent": None, "failed": False,
-        }
-        log_error = None
-        if log_path:
-            try:
-                tail = bridge.read_log(agent, log_path, runner=runner)
-                progress = tail["progress"]
-            except bridge.BridgeError as error:
-                log_error = error.to_dict()
-        failed = progress.get("failed", False)
-        queue_item = next(
-            (item for item in self.app.convert_queue.snapshot()
-             if item.get("state") == "starting"),
+        active_item = next(
+            (item for item in queue if item.get("state") in ("starting", "queued")),
             None,
         )
+
+        if running is None and failed_item is None and active_item is None:
+            return _ok({"state": "idle", "model": None, "out": None, "log_path": None,
+                        "progress": _idle_progress(), "queue": queue,
+                        "current_queue_item": None})
+
+        if running is not None:
+            log_path = running.get("log_path") or (
+                (running.get("receipt") or {}).get("log_path")
+                if isinstance(running.get("receipt"), dict) else None
+            )
+            progress = _idle_progress()
+            progress["phase"] = "running"
+            log_error = None
+            if log_path:
+                try:
+                    tail = bridge.read_log(agent, log_path, runner=runner)
+                    progress = tail["progress"]
+                except bridge.BridgeError as error:
+                    log_error = error.to_dict()
+            state = "failed" if progress.get("failed") else "running"
+            return _ok({
+                "state": state,
+                "model": running.get("repo") or running.get("out") or "conversion",
+                "out": running.get("out"),
+                "log_path": log_path,
+                "progress": progress,
+                "log_error": log_error,
+                "queue": queue,
+                "current_queue_item": active_item,
+            })
+
+        if failed_item is not None:
+            failure = failed_item.get("failure") or {}
+            return _ok({
+                "state": "failed",
+                "model": failed_item.get("label"),
+                "out": failed_item.get("out"),
+                "log_path": None,
+                "progress": {
+                    "summary": failure.get("message", "Conversion failed."),
+                    "last_line": failure.get("remediation", ""),
+                    "phase": "failed",
+                    "percent": None,
+                    "failed": True,
+                },
+                "queue": queue,
+                "current_queue_item": failed_item,
+                "failure": failure,
+            })
+
         return _ok({
-            "state": "running" if running else ("failed" if failed else "idle"),
-            "model": candidate.get("repo") or candidate.get("out") or "conversion",
-            "out": candidate.get("out"),
-            "log_path": log_path,
-            "progress": progress,
-            "log_error": log_error,
-            "queue": self.app.convert_queue.snapshot(),
-            "current_queue_item": queue_item,
+            "state": "queued",
+            "model": active_item.get("label"),
+            "out": active_item.get("out"),
+            "log_path": None,
+            "progress": {
+                "summary": "Queued — waiting for the current conversion to finish.",
+                "last_line": "", "phase": "queued",
+                "percent": None, "failed": False,
+            },
+            "queue": queue,
+            "current_queue_item": active_item,
         })
+
 
     def _api_quarantine_list(self, route, settings, agent, runner):
         return _ok({"records": quarantine_module.ledger(settings["quarantine_dir"])})

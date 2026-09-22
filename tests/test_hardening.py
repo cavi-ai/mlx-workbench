@@ -855,6 +855,92 @@ class ConvertProgressTests(unittest.TestCase):
         self.assertEqual(payload["data"]["state"], "idle")
 
 
+    def test_stale_finished_job_is_never_reported_as_running(self):
+        httpd = server.build(
+            "127.0.0.1", 0, config_path=self.config_path, token="prog",
+            start_worker=False,
+        )
+        self.addCleanup(httpd.server_close)
+
+        def runner(command, timeout):
+            key = "servers" if "serve" in command else "jobs"
+            jobs = []
+            if key == "jobs":
+                jobs = [{
+                    "state": "failed", "repo": "/m/old.gguf",
+                    "log_path": "/nope.log",
+                }]
+            return {
+                "returncode": 0,
+                "stdout": json.dumps({
+                    "schema_version": "1.0", "generated_at": "now",
+                    "operation": "status", "status": "ok",
+                    "data": {key: jobs}, "warnings": [],
+                }),
+                "stderr": "",
+            }
+
+        httpd.app.runner = runner
+        app = httpd.app
+        settings = app.config()
+        status, _, body = server.Handler._api_convert_progress(
+            _HandlerShim(app), "/api/convert/progress", settings,
+            settings["mlx_agent_path"], app.runner,
+        )
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["data"]["state"], "idle")
+
+    def test_failed_queue_item_surfaces_with_failure_details(self):
+        httpd = server.build(
+            "127.0.0.1", 0, config_path=self.config_path, token="prog",
+            start_worker=False,
+        )
+        self.addCleanup(httpd.server_close)
+        app = httpd.app
+        from mlx_workbench import convert_queue
+        queue = app.convert_queue
+        item = queue.enqueue(
+            "gguf", "h" * 64, 4, path="/m/model.gguf", out="/out",
+            label="/m/model.gguf",
+        )
+        items = queue.snapshot()
+        items[0] = dict(items[0], state="failed", failure={
+            "code": "preview_stale",
+            "message": "The supplied preview hash does not match this convert plan.",
+            "remediation": "Re-run convert start without --confirm and review the fresh plan.",
+        })
+        queue.store.save(items)
+        app.convert_queue = convert_queue.ConvertQueue(store=queue.store)
+
+        def runner(command, timeout):
+            key = "servers" if "serve" in command else "jobs"
+            return {
+                "returncode": 0,
+                "stdout": json.dumps({
+                    "schema_version": "1.0", "generated_at": "now",
+                    "operation": "status", "status": "ok",
+                    "data": {key: []}, "warnings": [],
+                }),
+                "stderr": "",
+            }
+
+        app.runner = runner
+        settings = app.config()
+        status, _, body = server.Handler._api_convert_progress(
+            _HandlerShim(app), "/api/convert/progress", settings,
+            settings["mlx_agent_path"], app.runner,
+        )
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(status, 200)
+        data = payload["data"]
+        self.assertEqual(data["state"], "failed")
+        self.assertTrue(data["progress"]["failed"])
+        self.assertEqual(data["failure"]["code"], "preview_stale")
+        self.assertEqual(data["current_queue_item"]["id"], item["id"])
+
+
+
 class _HandlerShim:
     """Minimal stand-in for Handler so route methods can be unit-called."""
 

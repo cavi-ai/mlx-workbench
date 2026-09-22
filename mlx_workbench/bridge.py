@@ -287,6 +287,9 @@ _PROGRESS_FAIL_MARKERS = (
     "conversion failed",
     "is not supported",
     "traceback (most recent call last)",
+    "assertionerror",
+    "error:",
+    "exception:",
 )
 
 

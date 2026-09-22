@@ -522,3 +522,31 @@ tr.is-selected td { background: color-mix(in srgb, var(--accent) 14%, transparen
   margin: 0;
   word-break: break-all;
 }
+
+/* Live conversion panel (Convert tab) */
+.convert-live {
+  margin: 0 0 1.25rem 0;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card, #161b26);
+}
+
+.convert-live-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.convert-live-head strong {
+  font-size: 1rem;
+}
+
+.convert-live .row {
+  margin-top: 0.6rem;
+}
+
+.convert-live[data-state="failed"] {
+  border-color: var(--danger, #e5534b);
+}
