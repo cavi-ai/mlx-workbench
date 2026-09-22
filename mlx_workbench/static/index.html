@@ -121,7 +121,18 @@
 <!-- Convert Tab -->
 <section id="panel-convert" class="panel" hidden>
   <div class="summary">Convert GGUF to MLX format</div>
-  
+
+  <div id="convert-live" class="convert-live" hidden>
+    <div class="convert-live-head">
+      <strong id="live-title">Conversion</strong>
+      <span id="live-state" class="pill"></span>
+      <button type="button" id="live-dismiss" class="secondary" hidden>Dismiss</button>
+    </div>
+    <div class="progress-track"><div id="live-fill" class="progress-fill"></div></div>
+    <p id="live-line" class="hint progress-line"></p>
+    <div id="live-actions" class="row"></div>
+  </div>
+
   <h3>From Models List</h3>
   <p class="hint">Select models from the Models tab and convert them to MLX format.</p>
   <div class="toolbar">

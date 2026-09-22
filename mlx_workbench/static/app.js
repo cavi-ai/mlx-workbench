@@ -14,6 +14,7 @@ const state = {
   pendingKind: null,
   progressTimer: null,
   progressSeenFailed: false,
+  progressDismissed: false,
   pendingBatch: null,
   duplicateScan: null,
   selectedLog: null,
@@ -694,48 +695,114 @@ async function refreshJobs() {
 }
 
 function renderConvertProgress(data) {
-  const banner = $('convert-progress');
-  if (!banner) return;
   const progress = data.progress || {};
   const stateValue = data.state || 'idle';
-  if (stateValue === 'idle' && !progress.failed) {
-    banner.hidden = true;
+
+  // Global banner: visible while running or failed (until dismissed).
+  const banner = $('convert-progress');
+  if (banner) {
+    const showBanner =
+      stateValue === 'running' || stateValue === 'queued' ||
+      (stateValue === 'failed' && !state.progressDismissed);
+    banner.hidden = !showBanner;
+    if (showBanner) {
+      banner.dataset.state = stateValue;
+      $('progress-title').textContent =
+        stateValue === 'failed'
+          ? 'Conversion failed: ' + (data.model || 'conversion')
+          : (stateValue === 'queued' ? 'Queued: ' : 'Converting: ') + (data.model || 'conversion');
+      const phase = $('progress-phase');
+      phase.textContent = progress.percent != null
+        ? progress.percent + '%'
+        : (progress.phase && progress.phase !== 'running' ? progress.phase : '');
+      const fill = $('progress-fill');
+      fill.classList.remove('indeterminate');
+      if (progress.percent != null) {
+        fill.style.width = progress.percent + '%';
+      } else if (stateValue === 'running' || stateValue === 'queued') {
+        fill.classList.add('indeterminate');
+        fill.style.width = '';
+      } else {
+        fill.style.width = '100%';
+      }
+      const line = $('progress-line');
+      line.textContent = progress.summary || '';
+      line.title = progress.last_line || '';
+    }
+  }
+
+  // Convert tab live panel: the primary place the user watches a conversion.
+  const panel = $('convert-live');
+  if (!panel) return;
+  if (stateValue === 'idle') {
+    panel.hidden = true;
     return;
   }
-  banner.hidden = false;
-  banner.dataset.state = stateValue;
-  const title = $('progress-title');
-  const model = data.model || 'conversion';
-  title.textContent =
-    stateValue === 'failed'
-      ? 'Conversion failed: ' + model
-      : 'Converting: ' + model;
-  const phase = $('progress-phase');
-  phase.textContent = progress.percent != null
-    ? progress.percent + '%'
-    : (progress.phase && progress.phase !== 'running' ? progress.phase : '');
-  const fill = $('progress-fill');
+  if (stateValue === 'failed' && state.progressDismissed) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  panel.dataset.state = stateValue;
+  const titles = {
+    running: 'Converting',
+    queued: 'Queued',
+    failed: 'Conversion failed',
+  };
+  $('live-title').textContent =
+    (titles[stateValue] || 'Conversion') + ': ' + (data.model || 'conversion');
+  const pill = $('live-state');
+  pill.textContent = stateValue;
+  pill.className = 'pill ' + (stateValue === 'failed' ? 'warn' : 'ok');
+
+  const fill = $('live-fill');
   fill.classList.remove('indeterminate');
   if (progress.percent != null) {
     fill.style.width = progress.percent + '%';
-  } else if (stateValue === 'running') {
+  } else if (stateValue === 'running' || stateValue === 'queued') {
     fill.classList.add('indeterminate');
     fill.style.width = '';
-  } else if (stateValue === 'failed') {
-    fill.style.width = '100%';
   } else {
-    fill.style.width = '0';
+    fill.style.width = '100%';
   }
-  const line = $('progress-line');
+  const line = $('live-line');
   line.textContent = progress.summary || '';
   line.title = progress.last_line || '';
+
+  const actions = $('live-actions');
+  actions.textContent = '';
+  const item = data.current_queue_item;
+  if (stateValue === 'failed' && item && item.id) {
+    const retry = element('button', 'primary', 'Retry conversion');
+    retry.addEventListener('click', async function () {
+      retry.disabled = true;
+      try {
+        await api('/api/convert/queue/retry', { body: { id: item.id } });
+        state.progressDismissed = false;
+        await refreshProgress();
+      } catch (error) {
+        notify(error.message);
+        retry.disabled = false;
+      }
+    });
+    actions.appendChild(retry);
+  }
+  if (stateValue === 'failed') {
+    const dismiss = element('button', 'secondary', 'Dismiss');
+    dismiss.addEventListener('click', function () {
+      state.progressDismissed = true;
+      panel.hidden = true;
+      if (banner) banner.hidden = true;
+    });
+    actions.appendChild(dismiss);
+  }
 }
 
 async function refreshProgress() {
   try {
     const data = await api('/api/convert/progress');
     renderConvertProgress(data);
-    const busy = data.state === 'running' ||
+    const busy = data.state === 'running' || data.state === 'queued' ||
       (data.queue || []).some(function (item) {
         return item.state === 'queued' || item.state === 'starting';
       });
