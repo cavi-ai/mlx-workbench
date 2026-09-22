@@ -17,8 +17,27 @@ mlx-agent is vendored at `vendor/mlx-agent`. Prefer bumping the submodule to a t
 - `mlx_workbench/` — stdlib server, bridge, UI
 - `vendor/mlx-agent/` — git submodule (CLI source of truth)
 - `.venv/` — local Python 3.12 + convert/serve packages (gitignored)
+- `mlx-mac/` — native SwiftUI app; `mlx-mac/assets/app-icon.svg` is the icon
+  master (regenerate `AppIcon.appiconset` PNGs from it with ImageMagick)
 - `tests/` — unittest, fake subprocess runner (no live Hub)
-- `Makefile` — `install` / `start` / `stop` / `test` / …
+- `Makefile` — `install` / `start` / `stop` / `test` / `dmg` / …
+
+## App icon and DMG
+
+The app icon lives in `mlx-mac/assets/app-icon.svg` (1024×1024 squircle) and
+is compiled into the app from `AppIcon.appiconset` at build time. After
+changing the SVG, re-render the PNGs into the appiconset (16–1024 px, the
+standard macOS ladder) and commit both.
+
+`make dmg` builds the Release app and packages it as a compressed DMG with
+an `/Applications` symlink, ad-hoc signed. For distribution signing:
+
+```bash
+make dmg CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+```
+
+Notarization (`notarytool` + `stapler`) is a separate manual step after
+signing with a Developer ID. DMGs land in `.release/` (gitignored).
 
 ## Boundaries
 
