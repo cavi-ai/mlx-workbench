@@ -424,3 +424,101 @@ tr.is-selected td { background: color-mix(in srgb, var(--accent) 14%, transparen
   opacity: 0.9;
 }
 
+
+/* Conversion progress banner */
+.progress-banner {
+  margin: 0 0 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card, #161b26);
+}
+
+.progress-banner-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent, #4a63e7);
+  transition: width 0.6s ease;
+}
+
+.progress-banner[data-state="failed"] .progress-fill {
+  background: var(--danger, #e5534b);
+}
+
+.progress-banner[data-state="running"] .progress-fill.indeterminate {
+  width: 35% !important;
+  animation: progress-sweep 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes progress-sweep {
+  from { margin-left: 0; }
+  to { margin-left: 65%; }
+}
+
+.progress-line {
+  margin: 0.4rem 0 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Compare-conversions comparison table */
+.quant-summary h3 {
+  margin: 1rem 0 0.25rem 0;
+}
+
+.quant-compare {
+  margin-top: 0.75rem;
+}
+
+.quant-compare .ratio-good {
+  color: var(--ok, #3fb950);
+  font-weight: 600;
+}
+
+.quant-detail {
+  margin-top: 0.75rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.5rem;
+}
+
+.quant-detail summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.quant-detail dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0 0 0;
+}
+
+.quant-detail dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.quant-detail dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  margin: 0;
+  word-break: break-all;
+}

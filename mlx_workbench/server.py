@@ -17,6 +17,7 @@ from . import (
     bridge,
     config as config_module,
     convert_queue as convert_queue_module,
+    convert_preflight,
     deps as deps_module,
     quarantine as quarantine_module,
     serve_presets as serve_presets_module,
@@ -481,6 +482,54 @@ class Handler(BaseHTTPRequestHandler):
         log_path = values[0] if values else ""
         return _ok(bridge.read_log(agent, log_path, runner=runner))
 
+    def _api_convert_progress(self, route, settings, agent, runner):
+        """Live conversion progress for the Jobs tab progress bar.
+
+        Finds the currently running conversion (or the most recent one), tails
+        its log, and returns the parsed phase/percent/failure state. Idle is a
+        first-class answer so the bar can hide itself.
+        """
+        lists = bridge.all_job_lists(agent, runner=runner)
+        jobs = lists.get("jobs") or []
+        running = next((job for job in jobs if job.get("state") == "running"), None)
+        candidate = running or (jobs[-1] if jobs else None)
+        if candidate is None:
+            return _ok({"state": "idle", "progress": {
+                "summary": "No conversions yet.", "last_line": "",
+                "phase": "idle", "percent": None, "failed": False,
+            }})
+        log_path = candidate.get("log_path") or (
+            (candidate.get("receipt") or {}).get("log_path") if isinstance(candidate.get("receipt"), dict) else None
+        )
+        progress = {
+            "summary": "Waiting for output", "last_line": "",
+            "phase": "running" if running else "idle",
+            "percent": None, "failed": False,
+        }
+        log_error = None
+        if log_path:
+            try:
+                tail = bridge.read_log(agent, log_path, runner=runner)
+                progress = tail["progress"]
+            except bridge.BridgeError as error:
+                log_error = error.to_dict()
+        failed = progress.get("failed", False)
+        queue_item = next(
+            (item for item in self.app.convert_queue.snapshot()
+             if item.get("state") == "starting"),
+            None,
+        )
+        return _ok({
+            "state": "running" if running else ("failed" if failed else "idle"),
+            "model": candidate.get("repo") or candidate.get("out") or "conversion",
+            "out": candidate.get("out"),
+            "log_path": log_path,
+            "progress": progress,
+            "log_error": log_error,
+            "queue": self.app.convert_queue.snapshot(),
+            "current_queue_item": queue_item,
+        })
+
     def _api_quarantine_list(self, route, settings, agent, runner):
         return _ok({"records": quarantine_module.ledger(settings["quarantine_dir"])})
 
@@ -931,6 +980,18 @@ class Handler(BaseHTTPRequestHandler):
                 agent, repo.strip(), q_bits, out, hf_cache=hf_cache, runner=runner,
             ))
 
+        # Confirm-path pre-flight: a GGUF whose header names an architecture
+        # the installed transformers cannot load will fail after a long
+        # dequantize. Refuse now, naming the architecture.
+        if has_path:
+            try:
+                convert_preflight.check(path)
+            except convert_preflight.UnsupportedArchitecture as error:
+                status, content_type, body = _json_bytes(
+                    {"status": "error", "error": error.to_dict()}, 422
+                )
+                return status, content_type, body
+
         preview_hash = payload.get("preview_hash")
         if not isinstance(preview_hash, str) or not preview_hash:
             return _error(
@@ -1005,6 +1066,7 @@ _API_ROUTES = {
     ("GET", "/api/scan"): Handler._api_scan,
     ("GET", "/api/jobs"): Handler._api_jobs,
     ("GET", "/api/jobs/log"): Handler._api_jobs_log,
+    ("GET", "/api/convert/progress"): Handler._api_convert_progress,
     ("GET", "/api/quarantine"): Handler._api_quarantine_list,
     ("POST", "/api/quarantine"): Handler._api_quarantine_move,
     ("POST", "/api/quarantine/delete"): Handler._api_quarantine_delete,

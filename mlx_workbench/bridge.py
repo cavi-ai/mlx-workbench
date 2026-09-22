@@ -276,26 +276,61 @@ def convert_is_busy(agent_path, timeout=DEFAULT_TIMEOUT, runner=None):
 _PROGRESS_PHASES = (
     ("loading", "Loading"),
     ("convert", "Converting"),
+    ("dequantiz", "Dequantizing"),
     ("quantiz", "Quantizing"),
     ("saving", "Saving"),
     ("writing", "Writing"),
     ("download", "Downloading"),
 )
 
+_PROGRESS_FAIL_MARKERS = (
+    "conversion failed",
+    "is not supported",
+    "traceback (most recent call last)",
+)
+
 
 def convert_progress(log_text):
-    """Cheap phase summary from a convert log tail."""
+    """Parse a convert log tail into phase, percent, and failure state.
+
+    The log format the agent writes is line-based with a [mlx-converter]
+    tag; percentage lines carry "NN%" and failures carry "conversion failed"
+    or "not supported". The summary is the most informative recent line,
+    truncated for display.
+    """
     lines = [line.strip() for line in (log_text or "").splitlines() if line.strip()]
-    last_line = lines[-1] if lines else ""
-    summary = "Running" if last_line else "Waiting for output"
+    if not lines:
+        return {"summary": "Waiting for output", "last_line": "", "phase": "idle",
+                "percent": None, "failed": False}
+    last_line = lines[-1]
     lower = last_line.lower()
-    for needle, label in _PROGRESS_PHASES:
-        if needle in lower:
-            summary = label
-            break
-    if "%" in last_line:
-        summary = last_line[:120]
-    return {"summary": summary, "last_line": last_line}
+
+    failed = any(marker in lower for marker in _PROGRESS_FAIL_MARKERS)
+    phase = "failed" if failed else "running"
+
+    percent = None
+    import re as _re
+    match = _re.search(r"(\d{1,3})\s*%", last_line)
+    if match:
+        percent = min(100, int(match.group(1)))
+
+    summary = last_line[:120] if last_line else "Running"
+    if not failed and percent is None:
+        for needle, label in _PROGRESS_PHASES:
+            if needle in lower:
+                phase = label.lower()
+                summary = label
+                break
+    if failed:
+        # Surface the failure line itself as the summary.
+        summary = last_line[:160]
+    return {
+        "summary": summary,
+        "last_line": last_line,
+        "phase": phase,
+        "percent": percent,
+        "failed": failed,
+    }
 
 
 def jobs(agent_path, timeout=DEFAULT_TIMEOUT, runner=None):

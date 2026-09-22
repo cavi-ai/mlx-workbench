@@ -12,6 +12,8 @@ const state = {
   runtime: null,
   pending: null,
   pendingKind: null,
+  progressTimer: null,
+  progressSeenFailed: false,
   pendingBatch: null,
   duplicateScan: null,
   selectedLog: null,
@@ -664,6 +666,7 @@ async function rescan(options) {
     }
     renderModels();
     updateServeSuggestions();
+    populateQuantModels();
     renderDuplicateScan(state.duplicateScan);
   } catch (error) {
     if (!state.scan) notify(error.message);
@@ -688,6 +691,71 @@ async function refreshJobs() {
   } catch (error) {
     notify(error.message);
   }
+}
+
+function renderConvertProgress(data) {
+  const banner = $('convert-progress');
+  if (!banner) return;
+  const progress = data.progress || {};
+  const stateValue = data.state || 'idle';
+  if (stateValue === 'idle' && !progress.failed) {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  banner.dataset.state = stateValue;
+  const title = $('progress-title');
+  const model = data.model || 'conversion';
+  title.textContent =
+    stateValue === 'failed'
+      ? 'Conversion failed: ' + model
+      : 'Converting: ' + model;
+  const phase = $('progress-phase');
+  phase.textContent = progress.percent != null
+    ? progress.percent + '%'
+    : (progress.phase && progress.phase !== 'running' ? progress.phase : '');
+  const fill = $('progress-fill');
+  fill.classList.remove('indeterminate');
+  if (progress.percent != null) {
+    fill.style.width = progress.percent + '%';
+  } else if (stateValue === 'running') {
+    fill.classList.add('indeterminate');
+    fill.style.width = '';
+  } else if (stateValue === 'failed') {
+    fill.style.width = '100%';
+  } else {
+    fill.style.width = '0';
+  }
+  const line = $('progress-line');
+  line.textContent = progress.summary || '';
+  line.title = progress.last_line || '';
+}
+
+async function refreshProgress() {
+  try {
+    const data = await api('/api/convert/progress');
+    renderConvertProgress(data);
+    const busy = data.state === 'running' ||
+      (data.queue || []).some(function (item) {
+        return item.state === 'queued' || item.state === 'starting';
+      });
+    scheduleProgress(busy);
+    if (data.state === 'failed' && !state.progressSeenFailed) {
+      state.progressSeenFailed = true;
+      notify(data.progress && data.progress.summary || 'Conversion failed.');
+    } else if (data.state !== 'failed') {
+      state.progressSeenFailed = false;
+    }
+  } catch (error) {
+    // Progress is best-effort; never surface its failure as a toast storm.
+    scheduleProgress(false);
+  }
+}
+
+function scheduleProgress(busy) {
+  if (state.progressTimer) clearTimeout(state.progressTimer);
+  const ms = busy ? 1200 : 8000;
+  state.progressTimer = setTimeout(refreshProgress, ms);
 }
 
 function scheduleJobPoll() {
@@ -1145,6 +1213,52 @@ async function previewServe(event) {
 // Fill the serve model picker from the latest scan: converted MLX models
 // become suggestions (their repo id when the model came from the HF cache,
 // otherwise the local path), so the common case is pick-and-go.
+// MARK: compare-conversions model picker (grouped by provider)
+
+function populateQuantModels() {
+  const select = $('quant-model');
+  if (!select) return;
+  select.textContent = '';
+  const scan = state.scan;
+  const models = (scan && scan.models || []).filter(function (item) {
+    return item.status !== 'shard';
+  });
+  if (!models.length) {
+    const none = element('option');
+    none.value = '__custom__';
+    none.textContent = 'custom path…';
+    select.appendChild(none);
+    return;
+  }
+  // Group by provider: the parent directory of the model file, falling back
+  // to the file's first path segment after the configured roots.
+  const groups = {};
+  models.forEach(function (item) {
+    const path = item.path || '';
+    const parts = path.split('/');
+    const provider = parts.length > 1 ? parts[parts.length - 2] : 'models';
+    (groups[provider] = groups[provider] || []).push(item);
+  });
+  Object.keys(groups).sort().forEach(function (provider) {
+    const group = element('optgroup');
+    group.label = provider;
+    groups[provider].forEach(function (item) {
+      const option = element('option');
+      option.value = item.path;
+      option.textContent = item.name + (item.bytes ? ' · ' + bytes(item.bytes) : '');
+      option.dataset.bytes = String(item.bytes || 0);
+      option.dataset.architecture = item.architecture || '';
+      option.dataset.status = item.status || '';
+      group.appendChild(option);
+    });
+    select.appendChild(group);
+  });
+  const custom = element('option');
+  custom.value = '__custom__';
+  custom.textContent = 'custom path…';
+  select.appendChild(custom);
+}
+
 function updateServeSuggestions() {
   const list = $('serve-model-options');
   if (!list) return;
@@ -1355,76 +1469,120 @@ function renderArchitecture(data) {
 async function profileQuantizations(event) {
   event.preventDefault();
   notify('');
-  const path = $('quant-path').value.trim();
-  if (!path) {
-    notify('Enter a model path or hf-cache repo.');
-    return;
+  let path = $('quant-model').value;
+  if (path === '__custom__') {
+    path = $('quant-path').value.trim();
+    if (!path) {
+      notify('Enter a model path.');
+      return;
+    }
   }
-  const targets = Array.prototype.map.call(
-    document.querySelectorAll('#quant-targets option'),
-    function (option) { return option.value; }
-  ).filter(function (value) {
-    return document.querySelector('#quant-targets option[value="' + value + '"]').selected;
-  });
-  if (!targets.length) {
-    notify('Select at least one target format.');
-    return;
-  }
+  const choice = $('quant-targets').value;
+  const targets = choice === 'both' ? ['mlx-4bit', 'mlx-8bit'] : [choice];
+  const selected = $('quant-model').selectedOptions[0];
+  state.quantSource = {
+    name: selected && selected.dataset ? selected.textContent.split(' · ')[0] : path,
+    bytes: selected && selected.dataset ? Number(selected.dataset.bytes || 0) : 0,
+    architecture: selected && selected.dataset ? selected.dataset.architecture : '',
+    status: selected && selected.dataset ? selected.dataset.status : '',
+  };
   try {
     const data = await api('/api/quant/profile', { body: { path: path, targets: targets } });
-    renderQuantResults(data);
+    renderQuantResults(data, state.quantSource);
   } catch (error) {
     notify(error.message);
   }
 }
 
-function renderQuantResults(data) {
+function renderQuantResults(data, source) {
+  const summary = $('quant-summary');
   const container = $('quant-results');
+  summary.textContent = '';
   container.textContent = '';
   if (!data || !data.profiles || !data.profiles.length) {
     container.appendChild(element('p', 'empty', 'No profiling data available.'));
     return;
   }
 
-  const grid = element('div', 'grid quant-grid');
-  grid.appendChild(element('h3', null, 'Quantization Profiles'));
+  // Headline: model + source stats, prominent.
+  const head = element('div', 'quant-summary');
+  head.appendChild(element('h3', null, source && source.name ? source.name : 'Model'));
+  const facts = element('p', 'hint');
+  const bits = [];
+  if (source && source.bytes) bits.push(bytes(source.bytes));
+  if (source && source.architecture) bits.push(source.architecture);
+  if (source && source.status) bits.push(source.status);
+  facts.textContent = bits.join(' · ') || 'Compare conversion targets below.';
+  head.appendChild(facts);
+  summary.appendChild(head);
 
+  // Side-by-side comparison table: one row per target.
+  const table = element('table', 'grid quant-compare');
+  const thead = element('thead');
+  const headRow = element('tr');
+  ['Target', 'Est. output', 'vs source', 'Readiness', ''].forEach(function (label) {
+    const th = element('th');
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = element('tbody');
+
+  const sourceBytes = source && source.bytes ? source.bytes : null;
   data.profiles.forEach(function (profile) {
-    const card = element('div', 'quant-card');
-    card.appendChild(element('h4', null, profile.target));
+    const row = element('tr');
+    row.appendChild(element('td', 'mono', profile.target));
+    row.appendChild(element('td', 'mono', profile.source_bytes != null ? bytes(profile.source_bytes) : '—'));
+    const ratioCell = element('td', 'mono');
+    if (sourceBytes && profile.source_bytes) {
+      const ratio = profile.source_bytes / sourceBytes;
+      ratioCell.textContent = ratio.toFixed(2) + '×';
+      if (ratio < 0.6) ratioCell.className = 'mono ratio-good';
+    } else {
+      ratioCell.textContent = '—';
+    }
+    row.appendChild(ratioCell);
+    const readyCell = element('td');
+    readyCell.appendChild(element(
+      'span',
+      'pill ' + (profile.preview_hash ? 'ok' : 'warn'),
+      profile.preview_hash ? 'ready' : 'blocked'
+    ));
+    row.appendChild(readyCell);
+    const actionCell = element('td');
+    if (profile.actions && profile.actions.length) {
+      profile.actions.forEach(function (action) {
+        if (action.type === 'convert') {
+          const button = element('button', 'primary', action.label);
+          button.dataset.path = action.path || '';
+          button.dataset.target = profile.target;
+          actionCell.appendChild(button);
+        }
+      });
+    }
+    row.appendChild(actionCell);
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+  container.appendChild(table);
+
+  // Detail: destination paths + commands, expandable per target.
+  data.profiles.forEach(function (profile) {
+    const details = element('details', 'quant-detail');
+    details.appendChild(element('summary', null, profile.target + ' details'));
     const facts = element('dl');
-    facts.appendChild(element('dt', null, 'Source size'));
-    facts.appendChild(element('dd', null, bytes(profile.source_bytes)));
     facts.appendChild(element('dt', null, 'Destination'));
     facts.appendChild(element('dd', null, profile.output || '—'));
-    facts.appendChild(element('dt', null, 'Preview'));
-    facts.appendChild(element(
-      'dd', null, profile.preview_hash ? 'Ready; confirmation required.' : '—'
-    ));
     if (profile.command) {
       facts.appendChild(element('dt', null, 'Command'));
       const command = element('dd');
       command.appendChild(element('code', null, profile.command.join(' ')));
       facts.appendChild(command);
     }
-    card.appendChild(facts);
-
-    if (profile.actions && profile.actions.length) {
-      const actions = element('div', 'quant-actions');
-      profile.actions.forEach(function (action) {
-        if (action.type === 'convert') {
-          const button = element('button', 'quant-convert', action.label);
-          button.dataset.path = action.path || '';
-          button.dataset.target = profile.target;
-          actions.appendChild(button);
-        }
-      });
-      card.appendChild(actions);
-    }
-    grid.appendChild(card);
+    details.appendChild(facts);
+    container.appendChild(details);
   });
-
-  container.appendChild(grid);
 }
 
 function fillSettings(data) {
@@ -1696,6 +1854,9 @@ function init() {
   on('serve-port-auto', 'click', suggestPort);
   on('serve-refresh', 'click', refreshJobs);
   on('quant-form', 'submit', profileQuantizations);
+  on('quant-model', 'change', function () {
+    $('quant-custom').hidden = $('quant-model').value !== '__custom__';
+  });
   on('arch-form', 'submit', visualizeArchitecture);
   on('confirm', 'click', confirmPlan);
   on('cancel', 'click', closeDialog);
@@ -1742,6 +1903,7 @@ function init() {
     
     // Auto-rescan to populate models on first run
     setTimeout(function () { rescan({ force: false }); }, 100);
+  scheduleProgress(true);
   }).catch(function (error) { notify(error.message); });
 }
 
