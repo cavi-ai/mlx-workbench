@@ -40,8 +40,8 @@ struct AdoptView: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionTitle(text: "Adopt a role")
             Text("Pick the role this machine should fill. The agent verifies and wires a model for it.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
             TextField("Role (e.g. coding, writing, agent)", text: $role)
                 .textFieldStyle(.roundedBorder)
             HStack(spacing: WorkbenchSpacing.md) {
@@ -50,7 +50,6 @@ struct AdoptView: View {
                 Spacer()
                 Button("Start Adoption") { startAdopt() }
                     .buttonStyle(.borderedProminent)
-                    .tint(WorkbenchColor.fluxTeal)
                     .disabled(role.isEmpty || isRunning)
             }
         }
@@ -65,15 +64,15 @@ struct AdoptView: View {
                     StatusPill(state: status)
                 }
                 Text(result.message ?? "")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
                 Spacer()
             }
             if let model = result.model {
-                Text("Model: \(model)").font(.caption).textSelection(.enabled)
+                Text("Model: \(model)").font(WorkbenchTypography.secondary).textSelection(.enabled)
             }
             if let manager = result.manager {
-                Text("Manager: \(manager)").font(.caption)
+                Text("Manager: \(manager)").font(WorkbenchTypography.secondary)
             }
         }
         .formSection {}
@@ -94,16 +93,16 @@ struct AdoptView: View {
                     if let status = statusResult.status {
                         HStack {
                             StatusPill(state: status)
-                            Text(statusResult.message ?? "").font(.caption).foregroundColor(.secondary)
+                            Text(statusResult.message ?? "").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         }
                     }
                     if let model = statusResult.model {
-                        Text("Model: \(model)").font(.caption)
+                        Text("Model: \(model)").font(WorkbenchTypography.secondary)
                     }
                 } else {
                     Text("Adoption is tracked at \(statePath)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
             }
             .formSection {}

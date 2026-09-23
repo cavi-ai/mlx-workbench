@@ -19,16 +19,16 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(fleetSummary)
-                .font(.headline)
+                .font(WorkbenchTypography.emphasis)
             if case .running = endpoint.state, let latest = latestBenchmark {
                 Text(latest)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
             if let error = endpoint.lastError {
                 Text(error)
-                    .font(.caption)
-                    .foregroundColor(WorkbenchColor.systemRed)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.failure)
             }
             Divider()
             ForEach(endpoint.fleet.slots) { slot in
@@ -36,8 +36,8 @@ struct MenuBarView: View {
             }
             if endpoint.fleet.slots.isEmpty {
                 Text("No endpoints configured")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
             Divider()
             Button("Open mlx-workbench") { openApp() }
@@ -61,7 +61,7 @@ struct MenuBarView: View {
             Image(systemName: EndpointIcon.name(for: endpoint.slotStates[slot.id] ?? .disabled))
                 .frame(width: 14)
             Text("\(URL(fileURLWithPath: slot.modelPath).lastPathComponent) :\(slot.port)")
-                .font(.caption)
+                .font(WorkbenchTypography.secondary)
                 .lineLimit(1)
             Spacer()
             Button(slot.enabled ? "Stop" : "Start") {

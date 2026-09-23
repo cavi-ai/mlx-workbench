@@ -180,14 +180,15 @@ enum LibraryPresentation {
 
 struct LibraryView: View {
     @ObservedObject var appHost: AppHost
-    private let onRouteSelection: (String) -> Void
+    private let onRouteSelection: (AppRoute) -> Void
 
     @State private var search = ""
     @State private var readinessFilter: ModelReadiness?
     @State private var quantizationFilter: String?
     @State private var isShowingDetail = false
+    @Environment(\.isRouteActive) private var isRouteActive
 
-    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         self.onRouteSelection = onRouteSelection
     }
@@ -228,7 +229,6 @@ struct LibraryView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                header
                 ErrorBanner(text: appHost.lastError)
                 if let snapshot {
                     if LibraryPresentation.shouldShowSummary(containerHeight: geometry.size.height) { summary(snapshot: snapshot) }
@@ -241,15 +241,34 @@ struct LibraryView: View {
                         ContentUnavailableView("No local library snapshot yet", systemImage: "books.vertical", description: Text("Run a local scan to populate the native Library inventory."))
                         HStack(spacing: 10) {
                             Button("Scan library") { appHost.requestRescan() }.disabled(appHost.isScanning)
-                            Button("Open Settings") { onRouteSelection(AppRoute.settings.rawValue) }
+                            Button("Open Settings") { onRouteSelection(.settings) }
                         }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .padding(WorkbenchSpacing.pageInset)
         }
-        .background(WorkbenchColor.alloyCanvas)
-        .searchable(text: $search, placement: .sidebar, prompt: "Search family, variant, path, key, or evidence")
+        .background(WorkbenchColor.canvas)
+        .routeSearchable(text: $search, prompt: "Search family, variant, path, key, or evidence", isActive: isRouteActive)
+        .toolbar {
+            if isRouteActive {
+                if appHost.isScanning {
+                    ToolbarItem(placement: .automatic) {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        appHost.requestRescan()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(appHost.isScanning)
+                    .help("Refresh library scan")
+                }
+            }
+        }
         .onAppear {
             if appHost.librarySnapshot == nil, !appHost.isScanning {
                 appHost.requestRescan()
@@ -258,18 +277,6 @@ struct LibraryView: View {
         }
         .onChange(of: visiblePaths) {
             syncSelection()
-        }
-    }
-
-    private var header: some View {
-        HStack {
-            Spacer()
-            if appHost.isScanning {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            Button("Refresh") { appHost.requestRescan() }.accessibilityLabel("Refresh library scan")
-            .disabled(appHost.isScanning)
         }
     }
 
@@ -423,8 +430,8 @@ struct LibraryView: View {
     private func statValue(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(WorkbenchTypography.monoUtility)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .font(WorkbenchTypography.value)
+                .foregroundStyle(WorkbenchColor.muted)
             Text(value)
                 .font(WorkbenchTypography.section)
         }
@@ -447,23 +454,23 @@ private struct LibraryGroupHeaderView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(group.primaryDisplayName)
-                    .font(.headline)
+                    .font(WorkbenchTypography.emphasis)
                 Text("\(group.variants.count) variant\(group.variants.count == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
                 Spacer()
                 Text(ByteCountFormatter.string(fromByteCount: group.totalBytes, countStyle: .file))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
 
             HStack(spacing: 8) {
                 ForEach(LibraryPresentation.readinessCounts(in: group), id: \.readiness) { item in
                     Text("\(item.readiness.title) \(item.count)")
-                        .font(.caption2)
+                        .font(WorkbenchTypography.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color(nsColor: .controlBackgroundColor))
+                        .background(WorkbenchColor.surface)
                         .cornerRadius(4)
                 }
             }
@@ -473,8 +480,8 @@ private struct LibraryGroupHeaderView: View {
                     "\(ByteCountFormatter.string(fromByteCount: group.duplicateBytes, countStyle: .file)) reclaimable duplicate storage",
                     systemImage: "exclamationmark.triangle"
                 )
-                .font(.caption)
-                .foregroundColor(WorkbenchColor.thermalAmber)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.warning)
             }
         }
         .padding(.vertical, 4)
@@ -489,17 +496,17 @@ private struct LibraryVariantRow: View {
             StatusPill(state: model.readiness.rawValue)
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.displayName)
-                    .font(.body)
+                    .font(WorkbenchTypography.body)
                 Text(model.item.path)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             Spacer()
             Text("\(model.item.quantization ?? LibraryPresentation.unknownQuantizationLabel) · \(ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
                 .lineLimit(1)
         }
         .padding(.vertical, 2)

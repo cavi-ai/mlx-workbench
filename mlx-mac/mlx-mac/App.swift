@@ -4,7 +4,8 @@ import AppKit
 @main
 struct MlxWorkbenchApp: App {
     @StateObject private var appHost = AppHost()
-    
+    @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
+
     var body: some Scene {
         WindowGroup {
             ContentView(appHost: appHost)
@@ -15,15 +16,14 @@ struct MlxWorkbenchApp: App {
                     appHost.endpoint.startMonitoring()
                 }
         }
-        .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.expanded)
+        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About mlx-workbench") {
                     NSApp.activate(ignoringOtherApps: true)
                     let alert = NSAlert()
                     alert.messageText = "mlx-workbench"
-                    alert.informativeText = "Version 1.0.0\nLocal MLX model management for Apple Silicon."
+                    alert.informativeText = "Version \(Self.marketingVersion)\nLocal MLX model management for Apple Silicon."
                     alert.runModal()
                 }
             }
@@ -33,15 +33,14 @@ struct MlxWorkbenchApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command])
             }
+            // Settings is a workbench destination, so one draft state exists;
+            // ⌘, selects it instead of opening a second Settings window.
             CommandGroup(replacing: .appSettings) {
-                Button("Settings...") {
-                    openSettings()
+                Button("Settings…") {
+                    selectedRouteID = AppRoute.settings.rawValue
                 }
                 .keyboardShortcut(",", modifiers: [.command])
             }
-        }
-        Settings {
-            SettingsView(appHost: appHost)
         }
         MenuBarExtra("mlx-workbench", systemImage: EndpointIcon.name(forStates: appHost.endpoint.fleet.slots.filter(\.enabled).compactMap { appHost.endpoint.slotStates[$0.id] })) {
             MenuBarView(appHost: appHost)
@@ -49,7 +48,7 @@ struct MlxWorkbenchApp: App {
         .menuBarExtraStyle(.menu)
     }
 
-    private func openSettings() {
-        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+    private static var marketingVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
     }
 }

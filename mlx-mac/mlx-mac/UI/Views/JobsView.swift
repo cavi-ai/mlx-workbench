@@ -101,20 +101,21 @@ enum ActivityPresentation {
 struct JobsView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
-    private let onRouteSelection: (String) -> Void
+    private let onRouteSelection: (AppRoute) -> Void
 
     @State private var lastKnownJobs: [Job] = []
     @State private var isRefreshing = false
     @State private var statusError: String?
     @State private var selectedLog: LogSelection?
     @State private var webQueue = WebConvertQueue.Snapshot(items: [], path: "", problem: nil)
+    @Environment(\.isRouteActive) private var isRouteActive
 
     struct LogSelection: Identifiable {
         let id: String
         let path: String
     }
 
-    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         self.onRouteSelection = onRouteSelection
@@ -140,16 +141,12 @@ struct JobsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                HStack {
-                    Spacer()
-                    Button("Refresh") { Task { await refresh() } }.disabled(isRefreshing)
-                }
                 ErrorBanner(text: statusError)
                 ErrorBanner(text: modelWorkflow.persistenceError)
                 serversSection
                 SectionTitle(text: "Conversions")
                 if cards.isEmpty {
-                    Text("No conversion activity yet.").font(.callout).foregroundColor(.secondary)
+                    Text("No conversion activity yet.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 } else {
                     ForEach(cards) { conversionCard($0) }
                 }
@@ -158,6 +155,19 @@ struct JobsView: View {
             .padding(WorkbenchSpacing.pageInset)
         }
         .sheet(item: $selectedLog) { LogSheet(path: $0.path) }
+        .toolbar {
+            if isRouteActive {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await refresh() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(isRefreshing)
+                    .help("Refresh conversion and server status")
+                }
+            }
+        }
         .task {
             await refresh()
             while !Task.isCancelled && cards.contains(where: \.isActive) {
@@ -172,15 +182,15 @@ struct JobsView: View {
             SectionTitle(text: "Servers")
             if modelWorkflow.servers.isEmpty {
                 Text("No authoritative server records are available.")
-                    .font(.callout).foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             } else {
                 ForEach(modelWorkflow.servers) { server in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             StatusPill(state: server.state ?? "unknown")
-                            Text(server.repo ?? "Unknown model").font(.headline).lineLimit(1)
+                            Text(server.repo ?? "Unknown model").font(WorkbenchTypography.emphasis).lineLimit(1)
                             Spacer()
-                            if let port = server.port { Text(":\(port)").font(.caption) }
+                            if let port = server.port { Text(":\(port)").font(WorkbenchTypography.secondary) }
                             if let logPath = server.logPath, !logPath.isEmpty {
                                 Button("View log") { selectedLog = LogSelection(id: logPath, path: logPath) }
                                     .buttonStyle(.bordered)
@@ -203,23 +213,23 @@ struct JobsView: View {
             SectionTitle(text: "Web Queue")
             if let problem = webQueue.problem {
                 Text(problem + " The web UI preserves it as a numbered .corrupt file.")
-                    .font(.callout).foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             } else if webQueue.items.isEmpty {
                 Text("Nothing queued by the web UI.")
-                    .font(.callout).foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             } else {
                 Text("Queued by the web UI at \(webQueue.path). Read-only here; it drains while the web server runs.")
-                    .font(.caption).foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 ForEach(webQueue.items) { item in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             StatusPill(state: item.state.rawValue)
-                            Text(item.label).font(.headline).lineLimit(1)
+                            Text(item.label).font(WorkbenchTypography.emphasis).lineLimit(1)
                             Spacer()
                             Text(item.kind == .gguf ? "GGUF" : "HF cache")
-                                .font(.caption).foregroundColor(.secondary)
+                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                             Text("q\(item.qBits)")
-                                .font(.caption).foregroundColor(.secondary)
+                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         }
                         detailLine("Source", item.path ?? item.repo ?? "—")
                         if let out = item.out { detailLine("Output", out) }
@@ -237,10 +247,10 @@ struct JobsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 StatusPill(state: card.workflow.state.rawValue)
-                Text(card.stateTitle).font(.headline)
+                Text(card.stateTitle).font(WorkbenchTypography.emphasis)
                 Spacer()
                 Text("Updated \(timestamp(card.workflow.updatedAt))")
-                    .font(.caption).foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
             detailLine("Source", card.workflow.sourcePath.isEmpty ? "Not recorded" : card.workflow.sourcePath)
             detailLine("Destination", card.workflow.outputPath.isEmpty ? "Not recorded" : card.workflow.outputPath)
@@ -254,9 +264,9 @@ struct JobsView: View {
                     .controlSize(.small)
             }
             if let failure = card.workflow.errorMessage {
-                Text(failure).font(.callout).foregroundColor(WorkbenchColor.systemRed).textSelection(.enabled)
+                Text(failure).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure).textSelection(.enabled)
             } else if let message = card.workflow.message {
-                Text(message).font(.callout).foregroundColor(.secondary)
+                Text(message).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
             if !card.actions.isEmpty || !card.isActive {
                 HStack {
@@ -266,7 +276,7 @@ struct JobsView: View {
                     if !card.isActive {
                         Spacer()
                         Button("Dismiss") { appHost.modelWorkflow.dismiss(recordID: card.workflow.id) }
-                            .foregroundColor(WorkbenchColor.graphiteMuted)
+                            .foregroundStyle(WorkbenchColor.muted)
                     }
                 }
                 .buttonStyle(.bordered)
@@ -304,7 +314,7 @@ struct JobsView: View {
         switch action {
         case .openInLibrary(let path):
             appHost.selectedModelPath = path
-            onRouteSelection("models")
+            onRouteSelection(.library)
         case .runModel(let record):
             guard let path = record.completedModelPath else { return }
             guard let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) else { return }
@@ -312,23 +322,23 @@ struct JobsView: View {
             appHost.modelWorkflow.restore(record)
             appHost.modelWorkflow.prepareServe(model: model, exactPath: path)
             appHost.selectedModelPath = path
-            onRouteSelection("serve")
+            onRouteSelection(.run)
         case .keepAnyway(let record):
             appHost.verification.keepAnyway(recordID: record.id)
         case .retryPreview(let record):
             appHost.modelWorkflow.restore(record)
             appHost.selectedModelPath = record.sourcePath
-            onRouteSelection("convert")
+            onRouteSelection(.prepare)
         }
     }
 
     private func detailLine(_ title: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title).foregroundColor(WorkbenchColor.graphiteMuted).frame(width: 110, alignment: .leading)
-            Text(value).font(WorkbenchTypography.monoUtility).foregroundColor(WorkbenchColor.graphiteInk).textSelection(.enabled)
+            Text(title).foregroundStyle(WorkbenchColor.muted).frame(width: 110, alignment: .leading)
+            Text(value).font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.ink).textSelection(.enabled)
             Spacer()
         }
-        .font(WorkbenchTypography.monoUtility)
+        .font(WorkbenchTypography.value)
     }
 
     private func timestamp(_ date: Date) -> String {
@@ -347,10 +357,10 @@ struct LogSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack { Text(path).font(.headline); Spacer(); Button("Close") { dismiss() } }
-            if truncated { Text("(truncated to the tail)").font(.caption).foregroundColor(.secondary) }
+            HStack { Text(path).font(WorkbenchTypography.emphasis); Spacer(); Button("Close") { dismiss() } }
+            if truncated { Text("(truncated to the tail)").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
             ScrollView {
-                Text(text).font(.system(.caption, design: .monospaced))
+                Text(text).font(WorkbenchTypography.value)
                     .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
             }
         }

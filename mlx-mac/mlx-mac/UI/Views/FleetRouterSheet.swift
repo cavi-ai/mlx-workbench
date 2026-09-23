@@ -38,10 +38,10 @@ struct FleetRouterSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("Wire roles to running endpoints")
-                .font(.headline)
+                .font(WorkbenchTypography.emphasis)
             Text("Renders one router config mapping each role onto its running endpoint's stable port, via mlx-agent fleet.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
 
             planSection
 
@@ -51,14 +51,14 @@ struct FleetRouterSheet: View {
             case .working(let label):
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(label).font(.caption).foregroundColor(.secondary)
+                    Text(label).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
             case .preview(let diff, _):
                 previewSection(diff: diff)
             case .applied(let summary):
                 Label(summary, systemImage: "checkmark.circle.fill")
-                    .font(.callout)
-                    .foregroundColor(WorkbenchColor.verifiedGreen)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.success)
             case .failed(let message):
                 ErrorBanner(text: message)
             }
@@ -67,8 +67,8 @@ struct FleetRouterSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(warnings, id: \.self) { warning in
                         Text(warning)
-                            .font(.caption2)
-                            .foregroundColor(WorkbenchColor.thermalAmber)
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.warning)
                     }
                 }
             }
@@ -83,32 +83,32 @@ struct FleetRouterSheet: View {
     private var planSection: some View {
         if plan.assignments.isEmpty {
             Text("No roles can be wired right now. Assign roles to endpoints, keep them running, and use models from the Hugging Face cache.")
-                .font(.callout)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
         } else {
             ForEach(plan.assignments) { assignment in
                 HStack {
                     Text(assignment.fleetRole)
-                        .font(.callout)
+                        .font(WorkbenchTypography.secondary)
                         .frame(width: 90, alignment: .leading)
                     Text(assignment.repo)
-                        .font(WorkbenchTypography.monoUtility)
+                        .font(WorkbenchTypography.value)
                         .lineLimit(1)
                     Spacer()
                     Text(":\(assignment.port)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
             }
         }
         ForEach(plan.skipped) { skipped in
             HStack {
                 Text(FleetRouter.fleetRoleName(for: skipped.role))
-                    .font(.callout)
+                    .font(WorkbenchTypography.secondary)
                     .frame(width: 90, alignment: .leading)
                 Text("skipped — \(skipped.reason)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
                 Spacer()
             }
         }
@@ -118,10 +118,10 @@ struct FleetRouterSheet: View {
     private func previewSection(diff: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Preview")
-                .font(.callout)
+                .font(WorkbenchTypography.secondary)
             ScrollView {
                 Text(diff)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(WorkbenchTypography.value)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
@@ -163,8 +163,8 @@ struct FleetRouterSheet: View {
 
     private func detailRow(_ title: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title).foregroundColor(.secondary).frame(width: 90, alignment: .leading)
-            Text(value).font(.caption).textSelection(.enabled)
+            Text(title).foregroundStyle(WorkbenchColor.muted).frame(width: 90, alignment: .leading)
+            Text(value).font(WorkbenchTypography.secondary).textSelection(.enabled)
             Spacer()
         }
     }
