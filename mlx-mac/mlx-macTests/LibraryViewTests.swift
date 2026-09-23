@@ -4,11 +4,88 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryViewTests: XCTestCase {
-    func testAdaptiveLibraryLayoutUsesDrillInBelowContentThreshold() {
-        XCTAssertEqual(LibraryPresentation.layoutMode(contentWidth: 759), .drillIn)
-        XCTAssertEqual(LibraryPresentation.layoutMode(contentWidth: 760), .masterDetail)
-        XCTAssertFalse(LibraryPresentation.shouldShowSummary(containerHeight: 619))
-        XCTAssertTrue(LibraryPresentation.shouldShowSummary(containerHeight: 620))
+    func testSummaryDescribesTheSnapshot() {
+        let summary = LibraryPresentation.summary(for: makeSnapshot())
+
+        XCTAssertEqual(summary.families, 3)
+        XCTAssertEqual(summary.models, 3)
+        XCTAssertEqual(summary.storage, ByteCountFormatter.string(fromByteCount: 3_072, countStyle: .file))
+        XCTAssertEqual(summary.reclaimable, ByteCountFormatter.string(fromByteCount: 0, countStyle: .file))
+        XCTAssertFalse(summary.scanned.isEmpty)
+    }
+
+    func testTableRowsFlattenSingleVariantFamiliesAndNestMultiVariantFamilies() {
+        let groups = LibraryPresentation.filteredGroups(in: makeMultiVariantSnapshot(), search: "", readiness: nil, quantization: nil)
+        let rows = LibraryTablePresentation.rows(groups: groups, sortOrder: [])
+
+        XCTAssertEqual(rows.map(\.name), ["Assistant", "Bravo"])
+        XCTAssertTrue(rows[0].id.hasPrefix(LibraryRow.familyIDPrefix))
+        XCTAssertNil(rows[0].modelPath)
+        XCTAssertNil(rows[0].readiness)
+        XCTAssertEqual(rows[0].detail, "2 variants")
+        XCTAssertEqual(rows[0].bytes, 5_120)
+        XCTAssertEqual(rows[0].children?.map(\.modelPath), ["/models/assistant-ready.gguf", "/models/assistant-runtime.gguf"])
+        XCTAssertNil(rows[1].children)
+        XCTAssertEqual(rows[1].id, "/vault/bravo-ready.gguf")
+        XCTAssertEqual(rows[1].readiness, .ready)
+        XCTAssertEqual(rows[1].detail, "/vault")
+    }
+
+    func testTableRowsSortAtEveryLevel() {
+        let groups = LibraryPresentation.filteredGroups(in: makeMultiVariantSnapshot(), search: "", readiness: nil, quantization: nil)
+        let bySizeDescending = LibraryTablePresentation.rows(
+            groups: groups,
+            sortOrder: [KeyPathComparator(\LibraryRow.bytes, order: .reverse)]
+        )
+
+        XCTAssertEqual(bySizeDescending.map(\.bytes), [5_120, 1_024])
+        XCTAssertEqual(bySizeDescending[0].children?.map(\.bytes), [4_096, 1_024])
+
+        let byNameDescending = LibraryTablePresentation.rows(
+            groups: groups,
+            sortOrder: [KeyPathComparator(\LibraryRow.name, order: .reverse)]
+        )
+        XCTAssertEqual(byNameDescending.map(\.name), ["Bravo", "Assistant"])
+        XCTAssertEqual(byNameDescending[1].children?.map(\.name), ["Assistant Runtime", "Assistant"])
+    }
+
+    func testSelectionMapsFamilyRowsToNoModelPath() {
+        XCTAssertNil(LibraryTablePresentation.modelPath(forSelection: nil))
+        XCTAssertNil(LibraryTablePresentation.modelPath(forSelection: LibraryRow.familyIDPrefix + "assistant"))
+        XCTAssertEqual(LibraryTablePresentation.modelPath(forSelection: "/models/a.gguf"), "/models/a.gguf")
+    }
+
+    func testRowDetailPrefersTheHuggingFaceRepoID() {
+        let cached = makeLibraryModel(
+            path: "/Users/x/.cache/huggingface/hub/models--org--name/snapshots/abc/config.json",
+            name: "Cached",
+            modelKey: "cached",
+            quantization: nil,
+            status: "ready"
+        )
+        XCTAssertEqual(LibraryTablePresentation.detail(for: cached), "org/name")
+        XCTAssertEqual(ModelDetailsPresentation.identityLine(for: cached), "org/name · Unknown · 1 KB")
+    }
+
+    func testIdentityRowsCollapseDuplicatePathsAndKeepConditionalRows() {
+        let ready = makeLibraryModel(path: "/models/assistant-ready.gguf", name: "Assistant", modelKey: "assistant", quantization: "Q4_K_M", status: "ready")
+        let readyRows = ModelDetailsPresentation.identityRows(for: ready, prepareDestination: nil)
+        XCTAssertEqual(readyRows.first, DetailRow("Path", "/models/assistant-ready.gguf"))
+        XCTAssertFalse(readyRows.contains { $0.label == "Source" })
+        XCTAssertEqual(readyRows.first { $0.label == "Outputs" }?.value, "/mlx/Assistant")
+        XCTAssertFalse(readyRows.contains { $0.label == "Duplicate status" })
+        XCTAssertFalse(readyRows.contains { $0.label == "Prepare destination" })
+        XCTAssertTrue(readyRows.first { $0.label == "Readiness" }?.value.hasPrefix("Ready — ") == true)
+        XCTAssertFalse(readyRows.contains { $0.label == "Signature" })
+
+        let source = makeLibraryModel(path: "/models/source.gguf", name: "Source", modelKey: "source", quantization: "Q4_K_M", status: "needs_conversion")
+        let sourceRows = ModelDetailsPresentation.identityRows(for: source, prepareDestination: "/models/source-mlx")
+        XCTAssertEqual(sourceRows.first { $0.label == "Prepare destination" }?.value, "/models/source-mlx")
+        XCTAssertFalse(sourceRows.contains { $0.label == "Outputs" })
+
+        let duplicate = makeLibraryModel(path: "/models/dup.gguf", name: "Dup", modelKey: "dup", quantization: nil, status: "duplicate")
+        let duplicateRows = ModelDetailsPresentation.identityRows(for: duplicate, prepareDestination: nil)
+        XCTAssertTrue(duplicateRows.contains { $0.label == "Duplicate status" })
     }
 
     func testFlightPathRequiresExactMeasurementIdentityAndBothServingAuthorities() {
@@ -287,19 +364,55 @@ final class LibraryViewTests: XCTestCase {
         )
     }
 
+    private func makeMultiVariantSnapshot() -> LibrarySnapshot {
+        let assistantReady = makeLibraryModel(
+            path: "/models/assistant-ready.gguf",
+            name: "Assistant",
+            modelKey: "assistant",
+            quantization: "Q4_K_M",
+            status: "ready"
+        )
+        let assistantRuntime = makeLibraryModel(
+            path: "/models/assistant-runtime.gguf",
+            name: "Assistant Runtime",
+            modelKey: "assistant",
+            quantization: "Q8_0",
+            status: "missing_runtime",
+            bytes: 4_096
+        )
+        let bravo = makeLibraryModel(
+            path: "/vault/bravo-ready.gguf",
+            name: "Bravo",
+            modelKey: "bravo",
+            quantization: nil,
+            status: "ready"
+        )
+
+        return LibrarySnapshot(
+            models: [assistantRuntime, bravo, assistantReady],
+            groups: [
+                ModelGroup(variants: [bravo], normalizedModelKey: "bravo", primaryDisplayName: "Bravo"),
+                ModelGroup(variants: [assistantRuntime, assistantReady], normalizedModelKey: "assistant", primaryDisplayName: "Assistant"),
+            ],
+            hardware: HardwareProfile(chip: "M4", model: "Mac16,1", memoryBytes: 32_000_000_000, macOSVersion: "14.0"),
+            generatedAt: Date(timeIntervalSince1970: 1_726_500_000)
+        )
+    }
+
     private func makeLibraryModel(
         path: String,
         name: String,
         modelKey: String,
         quantization: String?,
         status: String,
-        signature: String? = nil
+        signature: String? = nil,
+        bytes: Int64 = 1_024
     ) -> LibraryModel {
         LibraryModel(
             item: ModelItem(
                 path: path,
                 name: name,
-                bytes: 1_024,
+                bytes: bytes,
                 modifiedAt: 1_726_500_000,
                 shard: nil,
                 modelKey: modelKey,

@@ -83,6 +83,7 @@
 		24BBLD026 /* ModelLibraryBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF020 /* ModelLibraryBuilder.swift */; };
 		24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF021 /* ModelLibraryBuilderTests.swift */; };
 		24BBLD028 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF022 /* LibraryView.swift */; };
+		27ABCD000000000000000005 /* LibraryTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000005 /* LibraryTable.swift */; };
 		24BBLD029 /* ModelDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF023 /* ModelDetailsView.swift */; };
 		24BBLD030 /* LibraryViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF024 /* LibraryViewTests.swift */; };
 		24BBLD031 /* CatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF025 /* CatalogClient.swift */; };
@@ -215,6 +216,7 @@
 		24FREF020 /* ModelLibraryBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelLibraryBuilder.swift; path = Services/ModelLibraryBuilder.swift; sourceTree = "<group>"; };
 		24FREF021 /* ModelLibraryBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelLibraryBuilderTests.swift; path = ModelLibraryBuilderTests.swift; sourceTree = "<group>"; };
 		24FREF022 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryView.swift; path = UI/Views/LibraryView.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000005 /* LibraryTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryTable.swift; path = UI/Views/LibraryTable.swift; sourceTree = "<group>"; };
 		24FREF023 /* ModelDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelDetailsView.swift; path = UI/Views/ModelDetailsView.swift; sourceTree = "<group>"; };
 		24FREF024 /* LibraryViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryViewTests.swift; path = LibraryViewTests.swift; sourceTree = "<group>"; };
 		24FREF025 /* CatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogClient.swift; path = Services/CatalogClient.swift; sourceTree = "<group>"; };
@@ -429,6 +431,7 @@
 				24FREF00000F /* LMStudioView.swift */,
 				24FREF023 /* ModelDetailsView.swift */,
 				24FREF022 /* LibraryView.swift */,
+				27ABCD100000000000000005 /* LibraryTable.swift */,
 				27STP002 /* SetupAssistantView.swift */,
 				24FREF000012 /* QuantView.swift */,
 				24FREF000013 /* HomeView.swift */,
@@ -702,6 +705,7 @@
 				24BBLD032 /* CatalogStore.swift in Sources */,
 				24BBLD034 /* RecommendationEngine.swift in Sources */,
 				24BBLD028 /* LibraryView.swift in Sources */,
+				27ABCD000000000000000005 /* LibraryTable.swift in Sources */,
 				24BBLD029 /* ModelDetailsView.swift in Sources */,
 				24BBLD042 /* VerificationModels.swift in Sources */,
 				24BBLD043 /* ServeProbe.swift in Sources */,
