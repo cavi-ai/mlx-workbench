@@ -8,7 +8,7 @@ struct ContentView: View {
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var setup: SetupCoordinator
     /// Persisted across launches; legacy/unknown values resolve to Overview.
-    @AppStorage("mlx-workbench.selectedRoute") private var selectedRouteID = AppRoute.overview.rawValue
+    @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
     @State private var visitedRoutes: Set<AppRoute> = []
 
     init(appHost: AppHost) {
@@ -32,25 +32,13 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             AppSidebar(selectedRoute: selectedRouteBinding, badges: sidebarBadges)
-                .navigationSplitViewColumnWidth(min: 176, ideal: 208, max: 220)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
         } detail: {
-            VStack(spacing: 0) {
-                WorkspaceHeader(
-                    route: selectedRoute,
-                    selectedModelPath: appHost.selectedModelPath,
-                    endpoint: endpoint,
-                    modelWorkflow: modelWorkflow
-                )
-
-                Divider()
-                    .overlay(WorkbenchColor.hairline)
-
-                visitedDestinations
-            }
-            .background(WorkbenchColor.alloyCanvas)
+            visitedDestinations
+                .navigationTitle(selectedRoute.label)
+                .navigationSubtitle(subtitle)
+                .toolbar { contextToolbar }
         }
-        .tint(WorkbenchColor.fluxTeal)
-        .accentColor(WorkbenchColor.fluxTeal)
         .background { routeShortcutButtons }
         .onChange(of: selectedRouteID) { _, _ in
             visitedRoutes.insert(selectedRoute)
@@ -93,51 +81,55 @@ struct ContentView: View {
     private var visitedDestinations: some View {
         ZStack {
             ForEach(Self.mountedRoutes(for: visitedRoutes), id: \.self) { route in
+                let isActive = route == selectedRoute
                 routeDestination(route)
-                    .opacity(route == selectedRoute ? 1 : 0)
-                    .allowsHitTesting(route == selectedRoute)
-                    .accessibilityHidden(route != selectedRoute)
-                    .zIndex(route == selectedRoute ? 1 : 0)
+                    .environment(\.isRouteActive, isActive)
+                    .opacity(isActive ? 1 : 0)
+                    .allowsHitTesting(isActive)
+                    .accessibilityHidden(!isActive)
+                    .zIndex(isActive ? 1 : 0)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WorkbenchColor.canvas)
     }
 
-    private func routeDestination(_ route: AppRoute) -> AnyView {
+    @ViewBuilder
+    private func routeDestination(_ route: AppRoute) -> some View {
         switch route {
         case .overview:
-            return AnyView(HomeView(appHost: appHost, onRouteSelection: navigate))
+            HomeView(appHost: appHost, onRouteSelection: navigate)
         case .library:
-            return AnyView(LibraryView(appHost: appHost, onRouteSelection: navigate))
+            LibraryView(appHost: appHost, onRouteSelection: navigate)
         case .prepare:
-            return AnyView(ConvertView(appHost: appHost, onRouteSelection: navigate))
+            ConvertView(appHost: appHost, onRouteSelection: navigate)
         case .compare:
-            return AnyView(QuantView(appHost: appHost, onRouteSelection: navigate))
+            QuantView(appHost: appHost, onRouteSelection: navigate)
         case .run:
-            return AnyView(ServeView(appHost: appHost, onRouteSelection: navigate))
+            ServeView(appHost: appHost, onRouteSelection: navigate)
         case .activity:
-            return AnyView(JobsView(appHost: appHost, onRouteSelection: navigate))
+            JobsView(appHost: appHost, onRouteSelection: navigate)
         case .reclaim:
-            return AnyView(DuplicatesView(appHost: appHost))
+            DuplicatesView(appHost: appHost)
         case .clientSetup:
-            return AnyView(WireView(appHost: appHost))
+            WireView(appHost: appHost)
         case .health:
-            return AnyView(DoctorView(appHost: appHost, onRouteSelection: navigate))
+            DoctorView(appHost: appHost, onRouteSelection: navigate)
         case .discover:
-            return AnyView(ScoutView(appHost: appHost))
+            ScoutView(appHost: appHost)
         case .lmStudio:
-            return AnyView(LMStudioView(appHost: appHost, onRouteSelection: navigate))
+            LMStudioView(appHost: appHost, onRouteSelection: navigate)
         case .training:
-            return AnyView(TrainingView(appHost: appHost))
+            TrainingView(appHost: appHost)
         case .adopt:
-            return AnyView(AdoptView(appHost: appHost))
+            AdoptView(appHost: appHost)
         case .settings:
-            return AnyView(SettingsView(appHost: appHost))
+            SettingsView(appHost: appHost)
         }
     }
 
-    private func navigate(rawID: String) {
-        selectedRouteID = AppRoute(rawID: rawID).rawValue
+    private func navigate(to route: AppRoute) {
+        selectedRouteID = route.rawValue
     }
 
     private var sidebarBadges: [AppRoute: String] {
@@ -147,113 +139,55 @@ struct ContentView: View {
         }
         let alertCount = appHost.watch.activeAlerts.count
         if alertCount > 0 {
-            // Compact: the badge shares a 220pt sidebar with the route label;
-            // the count is the signal, not the word "alerts".
             badges[AppRoute.BadgeDestination.alerts.route] = "\(alertCount)"
         }
         return badges
     }
-}
 
-// MARK: - Workspace header
+    // MARK: - Window chrome
 
-private struct WorkspaceHeader: View {
-    let route: AppRoute
-    let selectedModelPath: String?
-    @ObservedObject var endpoint: EndpointSupervisor
-    @ObservedObject var modelWorkflow: ModelWorkflowCoordinator
+    /// The selected model is context for the lifecycle tabs only; elsewhere
+    /// the title stands alone.
+    private var subtitle: String {
+        guard selectedRoute.group == .lifecycle else { return "" }
+        guard let path = appHost.selectedModelPath, !path.isEmpty else { return "No model selected" }
+        return HFRepoID.forPath(path) ?? URL(fileURLWithPath: path).lastPathComponent
+    }
 
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: WorkbenchSpacing.lg) {
-                routeIdentity
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                headerValue(label: "Model", value: selectedModelName)
-                endpointContext(showSummary: true)
-                lifecycleContext
-            }
-            .frame(minWidth: 820)
-
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                routeIdentity
-
-                HStack(alignment: .center, spacing: WorkbenchSpacing.md) {
-                    headerValue(label: "Model", value: selectedModelName)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    endpointContext(showSummary: false)
-                    lifecycleContext
+    /// Lifecycle and endpoint state ride in the toolbar only while they carry
+    /// information: an idle workflow and an empty fleet show nothing.
+    @ToolbarContentBuilder
+    private var contextToolbar: some ToolbarContent {
+        if modelWorkflow.workflow.state != .idle {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    navigate(to: .activity)
+                } label: {
+                    StatusBadge(state: modelWorkflow.workflow.state.rawValue)
                 }
+                .buttonStyle(.plain)
+                .help("Conversion \(modelWorkflow.workflow.state.rawValue). Open Activity.")
+                .accessibilityLabel("Conversion status: \(modelWorkflow.workflow.state.rawValue)")
             }
         }
-        .padding(.horizontal, WorkbenchSpacing.pageInset)
-        .padding(.vertical, WorkbenchSpacing.sm)
-        .frame(minHeight: 62)
-        .background(WorkbenchColor.instrumentSurface)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(route.label). \(route.pageDescription). Model: \(selectedModelName). Endpoint: \(endpoint.state.summary). Lifecycle: \(modelWorkflow.workflow.state.rawValue)")
-    }
-
-    private var routeIdentity: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            Text(route.label)
-                .font(WorkbenchTypography.section)
-                .foregroundColor(WorkbenchColor.graphiteInk)
-            Text(route.pageDescription)
-                .font(WorkbenchTypography.body)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
-                .lineLimit(1)
-        }
-    }
-
-    private func endpointContext(showSummary: Bool) -> some View {
-        HStack(spacing: WorkbenchSpacing.xs) {
-            Text("Endpoint")
-                .font(WorkbenchTypography.navigation)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
-            StatusBadge(status: endpointBadgeStatus)
-            // The badge already says it when the summary is just the state
-            // label (e.g. "Disabled"); only add genuinely richer context.
-            if showSummary, endpoint.state.summary != endpointBadgeStatus.label {
-                Text(endpoint.state.summary)
-                    .font(WorkbenchTypography.monoUtility)
-                    .foregroundColor(WorkbenchColor.graphiteInk)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+        if !endpoint.fleet.slots.isEmpty {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    navigate(to: .run)
+                } label: {
+                    Label(endpoint.state.summary, systemImage: EndpointIcon.name(for: endpoint.state))
+                        .font(WorkbenchTypography.label)
+                        .foregroundStyle(endpointStatus.color)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .help("Endpoint: \(endpoint.state.summary). Open Run.")
+                .accessibilityLabel("Endpoint: \(endpoint.state.summary)")
             }
         }
-        .help(endpoint.state.summary)
     }
 
-    private var lifecycleContext: some View {
-        HStack(spacing: WorkbenchSpacing.xs) {
-            Text("Lifecycle")
-                .font(WorkbenchTypography.navigation)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
-            StatusBadge(state: modelWorkflow.workflow.state.rawValue)
-        }
-    }
-
-    private func headerValue(label: String, value: String) -> some View {
-        VStack(alignment: .trailing, spacing: WorkbenchSpacing.xxs) {
-            Text(label)
-                .font(WorkbenchTypography.navigation)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
-            Text(value)
-                .font(WorkbenchTypography.monoUtility)
-                .foregroundColor(WorkbenchColor.graphiteInk)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .frame(maxWidth: 180, alignment: .trailing)
-    }
-
-    private var selectedModelName: String {
-        guard let selectedModelPath, !selectedModelPath.isEmpty else { return "No model selected" }
-        return URL(fileURLWithPath: selectedModelPath).lastPathComponent
-    }
-
-    private var endpointBadgeStatus: WorkbenchStatus {
+    private var endpointStatus: WorkbenchStatus {
         switch endpoint.state {
         case .disabled: return .disabled
         case .starting, .waitingForServer: return .pending

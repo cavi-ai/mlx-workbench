@@ -45,7 +45,7 @@ struct WireView: View {
                 formSection
                 ErrorBanner(text: errorMessage)
                 if let result {
-                    Text(result).font(.caption).foregroundColor(WorkbenchColor.verifiedGreen)
+                    Text(result).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
                 }
                 if let preview {
                     VStack(alignment: .leading, spacing: 8) {
@@ -74,13 +74,13 @@ struct WireView: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionTitle(text: "Client wiring")
             Text("Point installed clients at a running local server. Each client's own config is written atomically with backup and rollback.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
 
             if runningServers.isEmpty {
                 Text("No authoritative running server. Start one in Run first.")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             } else {
                 Picker("Endpoint", selection: $selectedServerID) {
                     Text("Choose a running server…").tag(String?.none)
@@ -94,21 +94,21 @@ struct WireView: View {
 
             if wiring.installations.isEmpty {
                 Text("No supported clients detected (opencode, Continue, Zed, Aider).")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             } else {
                 ForEach(wiring.installations, id: \.clientID) { installation in
                     HStack {
-                        Text(installation.displayName).font(.callout)
+                        Text(installation.displayName).font(WorkbenchTypography.secondary)
                         Spacer()
                         if installation.advisoryOnly {
                             Text(installation.advisoryNote ?? "Advisory only")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
                         } else {
                             Text(installation.configPath ?? "")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
@@ -132,8 +132,8 @@ struct WireView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 ForEach(Array(plan.redactedDiff.enumerated()), id: \.offset) { _, line in
                                     Text(diffText(line))
-                                        .font(.system(.caption, design: .monospaced))
-                                        .foregroundColor(diffColor(line.kind))
+                                        .font(WorkbenchTypography.value)
+                                        .foregroundStyle(diffColor(line.kind))
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .textSelection(.enabled)
                                 }
@@ -141,12 +141,12 @@ struct WireView: View {
                             .padding(.top, 4)
                         } label: {
                             HStack {
-                                Text(plan.displayName).font(.headline)
+                                Text(plan.displayName).font(WorkbenchTypography.emphasis)
                                 if plan.rewritesFile {
-                                    Text("reformats file").font(.caption).foregroundColor(WorkbenchColor.thermalAmber)
+                                    Text("reformats file").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                                 }
                                 Spacer()
-                                Text(plan.summary).font(.caption).foregroundColor(.secondary)
+                                Text(plan.summary).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                             }
                         }
                     }
@@ -165,7 +165,6 @@ struct WireView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(WorkbenchColor.fluxTeal)
                     .disabled(wiring.isApplying)
                 }
                 .formSection {}
@@ -173,8 +172,8 @@ struct WireView: View {
 
             if let wiringResult {
                 Text(wiringResult)
-                    .font(.caption)
-                    .foregroundColor(wiringResultHasIssues ? WorkbenchColor.systemRed : WorkbenchColor.verifiedGreen)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(wiringResultHasIssues ? WorkbenchColor.failure : WorkbenchColor.success)
             }
         }
         .formSection {}
@@ -186,7 +185,6 @@ struct WireView: View {
             if let endpoint = selectedEndpoint { wiring.preview(endpoint: endpoint) }
         }
         .buttonStyle(.borderedProminent)
-        .tint(WorkbenchColor.fluxTeal)
         .disabled(selectedEndpoint == nil || wiring.installations.allSatisfy(\.advisoryOnly))
         if wiring.rollbackAvailable {
             Button("Roll back last wiring") { wiring.rollback() }
@@ -204,9 +202,9 @@ struct WireView: View {
 
     private func diffColor(_ kind: DiffLineKind) -> Color {
         switch kind {
-        case .context: return WorkbenchColor.graphiteInk
-        case .added: return WorkbenchColor.verifiedGreen
-        case .removed: return WorkbenchColor.systemRed
+        case .context: return WorkbenchColor.ink
+        case .added: return WorkbenchColor.success
+        case .removed: return WorkbenchColor.failure
         }
     }
 
@@ -222,7 +220,6 @@ struct WireView: View {
         .frame(maxWidth: 180, alignment: .leading)
         Button("Preview Wire") { previewWire() }
             .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
             .disabled(model.isEmpty || path.isEmpty || isPreviewing)
     }
 
@@ -248,8 +245,8 @@ struct WireView: View {
             .padding(.top, WorkbenchSpacing.xs)
         } label: {
             Text("Advanced: manual single-file wiring")
-                .font(WorkbenchTypography.navigation)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.muted)
         }
         .formSection {}
     }

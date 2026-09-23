@@ -9,7 +9,7 @@ import SwiftUI
 struct QuantView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
-    private let onRouteSelection: (String) -> Void
+    private let onRouteSelection: (AppRoute) -> Void
 
     @State private var selectedVariants: Set<String> = []
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
@@ -26,7 +26,7 @@ struct QuantView: View {
         var id: ComparisonRun.ID { run.id }
     }
 
-    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
         self.onRouteSelection = onRouteSelection
@@ -77,20 +77,20 @@ struct QuantView: View {
             SectionTitle(text: "Measured comparison")
             Text("Replay a prompt set against ready variants and measure real decode speed and first-token latency. One variant at a time.")
                 .font(WorkbenchTypography.body)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .foregroundStyle(WorkbenchColor.muted)
 
             if readyModels.isEmpty {
                 Text("No ready models in the latest Library snapshot.")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             } else {
                 ForEach(readyModels, id: \.item.path) { model in
                     Toggle(isOn: variantBinding(model.item.path)) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(model.displayName).font(WorkbenchTypography.body)
                             Text(model.item.quantization ?? model.item.path)
-                                .font(WorkbenchTypography.monoUtility)
-                                .foregroundColor(WorkbenchColor.graphiteMuted)
+                                .font(WorkbenchTypography.value)
+                                .foregroundStyle(WorkbenchColor.muted)
                                 .lineLimit(1)
                         }
                     }
@@ -131,7 +131,6 @@ struct QuantView: View {
 
         Button("Run comparison") { startRun() }
             .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
             .disabled(selectedVariants.isEmpty || comparison.activeRunID != nil)
     }
 
@@ -151,16 +150,16 @@ struct QuantView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(run.promptSetName)
                                     .font(WorkbenchTypography.body)
-                                    .foregroundColor(WorkbenchColor.graphiteInk)
+                                    .foregroundStyle(WorkbenchColor.ink)
                                 Text("\(run.results.count) variant(s) · \(run.startedAt.formatted(date: .abbreviated, time: .shortened))")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .font(WorkbenchTypography.secondary)
+                                    .foregroundStyle(WorkbenchColor.muted)
                             }
                             Spacer()
                             if let winner = run.winner, let tps = winner.aggregateTokensPerSecond {
                                 Text(String(format: "%.0f tok/s best", tps))
-                                    .font(WorkbenchTypography.monoUtility)
-                                    .foregroundColor(WorkbenchColor.fluxTeal)
+                                    .font(WorkbenchTypography.value)
+                                    .foregroundStyle(WorkbenchColor.accent)
                             }
                         }
                         .padding(.vertical, 4)
@@ -168,7 +167,7 @@ struct QuantView: View {
                         .contentShape(Rectangle())
                         .background {
                             RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous)
-                                .fill(run.id == selectedRun?.id ? WorkbenchColor.fluxTeal.opacity(0.12) : Color.clear)
+                                .fill(run.id == selectedRun?.id ? WorkbenchColor.accent.opacity(0.12) : Color.clear)
                         }
                     }
                     .buttonStyle(.plain)
@@ -189,8 +188,8 @@ struct QuantView: View {
                 Spacer()
                 if let winner = run.winner, run.state == .completed {
                     Label("Fastest: \(shortName(winner.modelPath))", systemImage: "bolt.fill")
-                        .font(.caption)
-                        .foregroundColor(WorkbenchColor.fluxTeal)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.accent)
                     Button("Promote winner") {
                         promoteContext = PromoteContext(run: run, winner: winner)
                     }
@@ -202,11 +201,11 @@ struct QuantView: View {
             if promotedWinnerPath != nil {
                 HStack(spacing: WorkbenchSpacing.sm) {
                     Label("Winner promoted.", systemImage: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundColor(WorkbenchColor.verifiedGreen)
-                    Button("Wire into clients…") { onRouteSelection(AppRoute.clientSetup.rawValue) }
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.success)
+                    Button("Wire into clients…") { onRouteSelection(.clientSetup) }
                         .controlSize(.small)
-                    Button("Reclaim losers…") { onRouteSelection(AppRoute.reclaim.rawValue) }
+                    Button("Reclaim losers…") { onRouteSelection(.reclaim) }
                         .controlSize(.small)
                 }
             }
@@ -257,8 +256,8 @@ struct QuantView: View {
         let average = decodeValues.isEmpty ? 0 : decodeValues.reduce(0, +) / Double(decodeValues.count)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Text("Speed (tok/s)")
-                .font(WorkbenchTypography.navigation)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.muted)
             Chart {
                 ForEach(points) { point in
                     BarMark(
@@ -270,12 +269,12 @@ struct QuantView: View {
                 }
                 if average > 0 {
                     RuleMark(x: .value("Decode average", average))
-                        .foregroundStyle(WorkbenchColor.graphiteMuted)
+                        .foregroundStyle(WorkbenchColor.muted)
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .annotation(position: .top, alignment: .leading) {
                             Text("avg out")
-                                .font(.caption2)
-                                .foregroundColor(WorkbenchColor.graphiteMuted)
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
                         }
                 }
             }
@@ -290,25 +289,25 @@ struct QuantView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(shortName(result.modelPath))
-                    .font(.headline)
+                    .font(WorkbenchTypography.emphasis)
                 Spacer()
                 if let tps = result.aggregateTokensPerSecond {
-                    Text(String(format: "%.1f tok/s out", tps)).font(.caption)
+                    Text(String(format: "%.1f tok/s out", tps)).font(WorkbenchTypography.secondary)
                 }
                 if let prefill = result.aggregatePrefillTokensPerSecond {
                     Text(String(format: "%.0f tok/s in (est.)", prefill))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
                 if let ttft = result.aggregateTTFTSeconds {
                     Text(String(format: "TTFT %.2fs", ttft))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
             }
 
             if let error = result.error {
-                Text(error).font(.caption).foregroundColor(WorkbenchColor.systemRed)
+                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             } else {
                 sampleStatStrip(result)
                 if let toolCalls = result.totalToolCalls {
@@ -319,34 +318,34 @@ struct QuantView: View {
                             : "\(toolCalls) tool call(s), \(valid!) with usable arguments",
                         systemImage: toolCalls > 0 && valid == toolCalls ? "checkmark.circle" : "xmark.circle"
                     )
-                    .font(.caption)
-                    .foregroundColor(toolCalls > 0 && valid == toolCalls ? WorkbenchColor.verifiedGreen : WorkbenchColor.thermalAmber)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(toolCalls > 0 && valid == toolCalls ? WorkbenchColor.success : WorkbenchColor.warning)
                 }
                 DisclosureGroup("Per-prompt outputs (\(result.samples.count))") {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(result.samples, id: \.promptID) { sample in
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
-                                    Text(sample.promptID).font(.caption).foregroundColor(.secondary)
+                                    Text(sample.promptID).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                                     Spacer()
                                     if let tps = sample.tokensPerSecond {
                                         Text(String(format: "%.1f tok/s", tps))
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
+                                            .font(WorkbenchTypography.secondary)
+                                            .foregroundStyle(WorkbenchColor.muted)
                                     }
                                     if let prefill = sample.prefillTokensPerSecond {
                                         Text(String(format: "in %.0f", prefill))
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
+                                            .font(WorkbenchTypography.secondary)
+                                            .foregroundStyle(WorkbenchColor.muted)
                                     }
                                     if let toolCalls = sample.toolCalls {
                                         Text("\(toolCalls) call(s): \((sample.toolNames ?? []).joined(separator: ", "))")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
+                                            .font(WorkbenchTypography.secondary)
+                                            .foregroundStyle(WorkbenchColor.muted)
                                     }
                                 }
                                 Text(sample.outputExcerpt)
-                                    .font(.system(.caption, design: .monospaced))
+                                    .font(WorkbenchTypography.value)
                                     .textSelection(.enabled)
                             }
                         }
@@ -364,7 +363,7 @@ struct QuantView: View {
             }
         }
         .padding(WorkbenchSpacing.sm)
-        .background(WorkbenchColor.alloyCanvas)
+        .background(WorkbenchColor.canvas)
         .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
     }
 
@@ -380,8 +379,8 @@ struct QuantView: View {
                 statChip("low", value: values.min() ?? average)
                 if let bestTTFT = ComparisonAggregation.bestTTFT(result.samples) {
                     Text(String(format: "best TTFT %.2fs", bestTTFT))
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
             }
         }
@@ -390,11 +389,11 @@ struct QuantView: View {
     private func statChip(_ label: String, value: Double) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.caption2)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
             Text(String(format: "%.1f", value))
-                .font(.system(.caption, design: .monospaced))
-                .foregroundColor(WorkbenchColor.graphiteInk)
+                .font(WorkbenchTypography.value)
+                .foregroundStyle(WorkbenchColor.ink)
         }
     }
 
@@ -418,8 +417,8 @@ struct QuantView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                                 Text(diffText(line))
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundColor(diffColor(line.kind))
+                                    .font(WorkbenchTypography.value)
+                                    .foregroundStyle(diffColor(line.kind))
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .textSelection(.enabled)
                             }
@@ -442,9 +441,9 @@ struct QuantView: View {
 
     private func diffColor(_ kind: DiffLineKind) -> Color {
         switch kind {
-        case .context: return WorkbenchColor.graphiteInk
-        case .added: return WorkbenchColor.verifiedGreen
-        case .removed: return WorkbenchColor.systemRed
+        case .context: return WorkbenchColor.ink
+        case .added: return WorkbenchColor.success
+        case .removed: return WorkbenchColor.failure
         }
     }
 
@@ -534,14 +533,14 @@ struct PromoteWinnerSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("Promote \(winnerName)")
-                .font(.headline)
+                .font(WorkbenchTypography.emphasis)
             Text(statsLine)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
 
             if let useCase = context.run.useCase {
                 Label("Set as preferred for \(useCase.title)", systemImage: "star.fill")
-                    .font(.callout)
+                    .font(WorkbenchTypography.secondary)
             }
 
             endpointSection
@@ -578,26 +577,26 @@ struct PromoteWinnerSheet: View {
         if endpointAlreadyWinner {
             Label("Already the always-on endpoint model (port \(endpoint.config.port)).",
                   systemImage: "checkmark.circle")
-                .font(.callout)
+                .font(WorkbenchTypography.secondary)
         } else {
             Toggle(isOn: $enableEndpoint) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Keep it always-on")
-                        .font(.callout)
+                        .font(WorkbenchTypography.secondary)
                     Text(endpointCaption)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
             }
             .disabled(!winnerVerified && !allowUnverified)
 
             if !winnerVerified {
                 Toggle("Enable anyway (unverified)", isOn: $allowUnverified)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
                 Text("This model has not passed the verification canary suite.")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
         }
     }

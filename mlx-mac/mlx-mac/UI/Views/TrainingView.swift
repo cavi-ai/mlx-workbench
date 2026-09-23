@@ -35,7 +35,7 @@ struct TrainingView: View {
                 }
                 ErrorBanner(text: errorMessage)
                 if let notice {
-                    Text(notice).font(.caption).foregroundColor(WorkbenchColor.verifiedGreen)
+                    Text(notice).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
                 }
                 Spacer()
             }
@@ -103,7 +103,6 @@ struct TrainingView: View {
                 Spacer()
                 Button("Confirm & Train") { confirmTraining() }
                     .buttonStyle(.borderedProminent)
-                    .tint(WorkbenchColor.fluxTeal)
                     .disabled(previewHash == nil)
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -124,11 +123,11 @@ struct TrainingView: View {
     private func planRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
                 .frame(width: 90, alignment: .trailing)
             Text(value)
-                .font(.caption)
+                .font(WorkbenchTypography.secondary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -144,7 +143,6 @@ struct TrainingView: View {
             if previewHash == nil {
                 Button("Preview Training") { previewTraining() }
                     .buttonStyle(.borderedProminent)
-                    .tint(WorkbenchColor.fluxTeal)
                     .disabled(repo.isEmpty || data.isEmpty || isPreviewing)
             } else {
                 Button("Preview Training") { previewTraining() }

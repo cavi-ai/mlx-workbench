@@ -44,7 +44,7 @@ struct ServeView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var endpoint: EndpointSupervisor
-    private let onRouteSelection: (String) -> Void
+    private let onRouteSelection: (AppRoute) -> Void
     @State private var runtime = "mlx_lm"
     @State private var portText = ""
     @State private var contextText = String(FitAdvisor.defaultContextTokens)
@@ -64,7 +64,7 @@ struct ServeView: View {
     @State private var loginItemMessage: String?
     @State private var loginItemMessageIsError = false
 
-    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
@@ -132,15 +132,15 @@ struct ServeView: View {
         if let verdict = fitVerdict {
             HStack(spacing: 8) {
                 Image(systemName: fitIcon(verdict))
-                    .foregroundColor(fitColor(verdict))
+                    .foregroundStyle(fitColor(verdict))
                 Text(verdict.summary)
-                    .font(.caption)
-                    .foregroundColor(fitColor(verdict))
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(fitColor(verdict))
                 if case .wontFit(_, let suggestion) = verdict, let suggestion {
                     Button("Use \(suggestion) instead") {
                         contextText = String(suggestion)
                     }
-                    .font(.caption)
+                    .font(WorkbenchTypography.secondary)
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
@@ -159,10 +159,10 @@ struct ServeView: View {
 
     private func fitColor(_ verdict: FitVerdict) -> Color {
         switch verdict {
-        case .fits: return WorkbenchColor.fluxTeal
-        case .tight: return WorkbenchColor.thermalAmber
-        case .wontFit: return WorkbenchColor.systemRed
-        case .unknown: return .secondary
+        case .fits: return WorkbenchColor.accent
+        case .tight: return WorkbenchColor.warning
+        case .wontFit: return WorkbenchColor.failure
+        case .unknown: return WorkbenchColor.muted
         }
     }
 
@@ -182,35 +182,35 @@ struct ServeView: View {
                 SectionTitle(text: "Endpoints")
                 Spacer()
                 Text("\(endpoint.fleet.slots.count)/\(EndpointFleetConfig.maxSlots)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
             Text("Keep models serving on stable loopback ports — one model per endpoint, across restarts and swaps. Clients wired in Wire keep working.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
 
             if let verdict = prospectiveFleetVerdict(addingModelPath: nil) {
                 HStack(spacing: 8) {
                     Image(systemName: fitIcon(verdict))
-                        .foregroundColor(fitColor(verdict))
+                        .foregroundStyle(fitColor(verdict))
                     Text("Fleet memory: \(verdict.summary)")
-                        .font(.caption)
-                        .foregroundColor(fitColor(verdict))
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(fitColor(verdict))
                 }
             }
 
             if let pending = pendingFleetAction {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Fleet memory: \(pending.summary). Enable anyway?")
-                        .font(.caption)
-                        .foregroundColor(WorkbenchColor.systemRed)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.failure)
                     HStack(spacing: 10) {
                         Button("Enable anyway") {
                             pending.confirm()
                             pendingFleetAction = nil
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(WorkbenchColor.systemRed)
+                        .tint(WorkbenchColor.failure)
                         Button("Cancel") { pendingFleetAction = nil }
                             .buttonStyle(.bordered)
                     }
@@ -220,8 +220,8 @@ struct ServeView: View {
 
             if endpoint.fleet.slots.isEmpty {
                 Text("No endpoints yet. Add one for the selected model.")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             } else {
                 ForEach(endpoint.fleet.slots) { slot in
                     slotCard(slot)
@@ -235,8 +235,8 @@ struct ServeView: View {
                     Button("Wire roles…") { showFleetRouter = true }
                         .buttonStyle(.bordered)
                     Text("Map roles onto running endpoints via mlx-agent fleet.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
                 .sheet(isPresented: $showFleetRouter) {
                     FleetRouterSheet(appHost: appHost)
@@ -249,8 +249,8 @@ struct ServeView: View {
             ErrorBanner(text: endpoint.persistenceError)
             if let loginItemMessage {
                 Text(loginItemMessage)
-                    .font(.caption)
-                    .foregroundColor(loginItemMessageIsError ? WorkbenchColor.systemRed : WorkbenchColor.verifiedGreen)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(loginItemMessageIsError ? WorkbenchColor.failure : WorkbenchColor.success)
             }
         }
         .formSection {}
@@ -262,28 +262,28 @@ struct ServeView: View {
             HStack(spacing: 8) {
                 StatusPill(state: slotStateLabel(slotState, enabled: slot.enabled))
                 Text(URL(fileURLWithPath: slot.modelPath).lastPathComponent)
-                    .font(.headline)
+                    .font(WorkbenchTypography.emphasis)
                     .lineLimit(1)
                 if let role = slot.role {
                     Text(role.title)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
                 Text(":\(slot.port)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
                 Spacer()
                 slotFitChip(slot)
                 let attempts = endpoint.slotRestartAttempts[slot.id] ?? 0
                 if attempts > 0 {
                     Text("\(attempts) restart(s)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
             }
             Text(slotState.summary)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
             HStack(spacing: 10) {
                 if case .modelMismatch = slotState {
                     Button("Swap to configured model") {
@@ -300,13 +300,13 @@ struct ServeView: View {
                 rolePicker(slot)
                 Spacer()
                 Button("Remove") { Task { await endpoint.removeSlot(id: slot.id) } }
-                    .foregroundColor(WorkbenchColor.systemRed)
+                    .foregroundStyle(WorkbenchColor.failure)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
         }
         .padding(WorkbenchSpacing.sm)
-        .background(WorkbenchColor.alloyCanvas)
+        .background(WorkbenchColor.canvas)
         .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
     }
 
@@ -325,7 +325,7 @@ struct ServeView: View {
     private func slotFitChip(_ slot: EndpointSlot) -> some View {
         if let verdict = slotFitVerdict(slot) {
             Image(systemName: fitIcon(verdict))
-                .foregroundColor(fitColor(verdict))
+                .foregroundStyle(fitColor(verdict))
                 .help(verdict.summary)
         }
     }
@@ -365,8 +365,8 @@ struct ServeView: View {
     private var addEndpointControls: some View {
         if endpoint.fleet.slots.count >= EndpointFleetConfig.maxSlots {
             Text("Endpoint cap reached (\(EndpointFleetConfig.maxSlots)). Remove one to add another.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
         } else {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: WorkbenchSpacing.xs) { addEndpointFields }
@@ -390,12 +390,11 @@ struct ServeView: View {
         .frame(width: 120)
         Button("Add endpoint for selected model") { addEndpoint(allowUnverified: false) }
             .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
             .disabled(selectedModel == nil)
         Button("Add anyway (unverified)") { addEndpoint(allowUnverified: true) }
             .buttonStyle(.bordered)
             .disabled(selectedModel == nil)
-            .foregroundColor(WorkbenchColor.thermalAmber)
+            .foregroundStyle(WorkbenchColor.warning)
     }
 
     private func addEndpoint(allowUnverified: Bool) {
@@ -501,13 +500,13 @@ struct ServeView: View {
 
     private var loginItemPreviewSheet: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Login item preview").font(.headline)
+            Text("Login item preview").font(WorkbenchTypography.emphasis)
             Text("This LaunchAgent starts the endpoint once at login (RunAtLoad). The app keeps reconciling while it runs; mlx-agent receipts remain the process authority.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
             ScrollView {
                 Text(loginItemPlistText)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(WorkbenchTypography.value)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
@@ -553,7 +552,7 @@ struct ServeView: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionTitle(text: "Selected completed model")
             if let model = selectedModel {
-                Text(model.displayName).font(.title3).fontWeight(.semibold)
+                Text(model.displayName).font(WorkbenchTypography.section).fontWeight(.semibold)
                 detailLine("Model path", model.item.path)
                 detailLine("Architecture", model.item.architecture ?? "Not reported")
                 detailLine("Parameters", model.item.parameters ?? "Not reported")
@@ -563,8 +562,8 @@ struct ServeView: View {
                 ErrorBanner(text: presentation.selectionError)
             } else {
                 Text("Select a completed, ready MLX model from Library or Activity before running it.")
-                    .font(.callout).foregroundColor(.secondary)
-                Button("Open Library") { onRouteSelection("models") }
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                Button("Open Library") { onRouteSelection(.library) }
             }
         }
         .formSection {}
@@ -575,7 +574,7 @@ struct ServeView: View {
             SectionTitle(text: "Serve intent")
             if let remediation = presentation.remediation {
                 ErrorBanner(text: "Run runtime unavailable: \(remediation). Open Settings after installing the required runtime.")
-                Button("Open Settings") { onRouteSelection("settings") }
+                Button("Open Settings") { onRouteSelection(.settings) }
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: WorkbenchSpacing.xs) { launchFields }
@@ -584,7 +583,7 @@ struct ServeView: View {
             fitVerdictLine
             detailLine("Serve state", modelWorkflow.workflow.serveState.rawValue)
             if let message = modelWorkflow.workflow.message {
-                Text(message).font(.callout).foregroundColor(.secondary)
+                Text(message).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
             ErrorBanner(text: modelWorkflow.workflow.errorMessage)
             ViewThatFits(in: .horizontal) {
@@ -605,13 +604,13 @@ struct ServeView: View {
             if let server = presentation.activeServer {
                 HStack {
                     StatusPill(state: server.state ?? "unknown")
-                    Text(server.modelIdentity.isEmpty ? "Unknown model" : server.modelIdentity).font(.headline)
+                    Text(server.modelIdentity.isEmpty ? "Unknown model" : server.modelIdentity).font(WorkbenchTypography.emphasis)
                     Spacer()
                     Button("Stop server") {
                         Task {
                             guard let modelPath = presentation.modelPath else { return }
                             await modelWorkflow.stopServer(modelPath: modelPath)
-                            if modelWorkflow.workflow.serveState == .stopped { onRouteSelection("jobs") }
+                            if modelWorkflow.workflow.serveState == .stopped { onRouteSelection(.activity) }
                         }
                     }
                     .disabled(modelWorkflow.isServeSubmissionInFlight)
@@ -622,7 +621,7 @@ struct ServeView: View {
                 detailLine("Log path", server.logPath ?? "Not reported")
                 detailLine("Started", server.startedAt ?? "Not reported")
             } else {
-                Text("No running server is reported.").font(.callout).foregroundColor(.secondary)
+                Text("No running server is reported.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
         }
         .formSection {}
@@ -630,7 +629,7 @@ struct ServeView: View {
 
     private func detailLine(_ title: String, _ value: String, accessibilityID: String? = nil) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title).foregroundColor(WorkbenchColor.graphiteMuted).frame(width: 120, alignment: .leading)
+            Text(title).foregroundStyle(WorkbenchColor.muted).frame(width: 120, alignment: .leading)
             Group {
                 if let accessibilityID {
                     Text(value).accessibilityIdentifier(accessibilityID)
@@ -638,8 +637,8 @@ struct ServeView: View {
                     Text(value)
                 }
             }
-            .font(WorkbenchTypography.monoUtility)
-            .foregroundColor(WorkbenchColor.graphiteInk)
+            .font(WorkbenchTypography.value)
+            .foregroundStyle(WorkbenchColor.ink)
             .textSelection(.enabled)
             Spacer()
         }
@@ -664,7 +663,7 @@ struct ServeView: View {
     private func confirmServeAction() {
         Task {
             await modelWorkflow.confirmServe(runtime: runtime, port: port)
-            if modelWorkflow.workflow.serveState == .running { onRouteSelection("jobs") }
+            if modelWorkflow.workflow.serveState == .running { onRouteSelection(.activity) }
         }
     }
 
@@ -678,12 +677,10 @@ struct ServeView: View {
                 .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
             Button("Confirm and run", action: confirmServeAction)
                 .buttonStyle(.borderedProminent)
-                .tint(WorkbenchColor.fluxTeal)
                 .disabled(modelWorkflow.isServeSubmissionInFlight)
         } else {
             Button("Preview serve", action: previewServeAction)
                 .buttonStyle(.borderedProminent)
-                .tint(WorkbenchColor.fluxTeal)
                 .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
             Button("Confirm and run", action: confirmServeAction)
                 .buttonStyle(.bordered)

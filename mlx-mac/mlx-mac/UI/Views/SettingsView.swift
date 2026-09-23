@@ -59,7 +59,7 @@ struct SettingsView: View {
 
             saveBar
         }
-        .background(WorkbenchColor.alloyCanvas)
+        .background(WorkbenchColor.canvas)
         .onAppear { loadFromConfig() }
     }
 
@@ -71,8 +71,8 @@ struct SettingsView: View {
                 agentStatusBadge
                 Spacer()
                 Text(appHost.configPath)
-                    .font(WorkbenchTypography.monoUtility)
-                    .foregroundColor(WorkbenchColor.graphiteMuted)
+                    .font(WorkbenchTypography.value)
+                    .foregroundStyle(WorkbenchColor.muted)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(appHost.configPath)
@@ -80,7 +80,7 @@ struct SettingsView: View {
             if !appHost.runtimeReport.ok {
                 Text(appHost.runtimeReport.install)
                     .font(WorkbenchTypography.body)
-                    .foregroundColor(WorkbenchColor.thermalAmber)
+                    .foregroundStyle(WorkbenchColor.warning)
                 RuntimeInstallView(installer: appHost.runtimeInstaller) {
                     appHost.refreshRuntimeReport()
                 }
@@ -93,16 +93,16 @@ struct SettingsView: View {
         switch appHost.agentHealth {
         case .notConfigured:
             Label("Agent not configured", systemImage: "exclamationmark.triangle.fill")
-                .foregroundColor(WorkbenchColor.thermalAmber)
+                .foregroundStyle(WorkbenchColor.warning)
         case .notUsable(_, _, let reason):
             Label("Agent not usable — \(reason)", systemImage: "xmark.circle.fill")
-                .foregroundColor(WorkbenchColor.systemRed)
+                .foregroundStyle(WorkbenchColor.failure)
         case .notFound(let path, _):
             Label("Agent missing at \(path)", systemImage: "xmark.circle.fill")
-                .foregroundColor(WorkbenchColor.systemRed)
+                .foregroundStyle(WorkbenchColor.failure)
         case .ready(let path, _):
             Label("Agent ready — \(path)", systemImage: "checkmark.circle.fill")
-                .foregroundColor(WorkbenchColor.verifiedGreen)
+                .foregroundStyle(WorkbenchColor.success)
         }
     }
 
@@ -119,8 +119,8 @@ struct SettingsView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 Text("Detect looks for a vendored or installed checkout with scripts/mlx-agent.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
         }
     }
@@ -149,8 +149,8 @@ struct SettingsView: View {
             .pickerStyle(.segmented)
             .frame(maxWidth: 360)
             Text(updater.channel.blurb)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
 
             HStack(spacing: WorkbenchSpacing.xs) {
                 Button("Check for updates") {
@@ -163,14 +163,12 @@ struct SettingsView: View {
                         Task { await updater.apply(offer: offer) }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(WorkbenchColor.fluxTeal)
                 }
                 if case .updated = updater.phase {
                     Button("Rebuild & relaunch") {
                         Task { await updater.rebuildAndRelaunch() }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(WorkbenchColor.fluxTeal)
                 }
                 if case .checking = updater.phase {
                     ProgressView().controlSize(.small)
@@ -179,21 +177,21 @@ struct SettingsView: View {
                     ProgressView().controlSize(.small)
                 }
                 Text(updater.summary)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
                 Spacer()
             }
 
             if case .available(let offer) = updater.phase, offer.dirtyFiles > 0 {
                 Text("\(offer.dirtyFiles) uncommitted change(s) in the checkout — commit or discard them before updating.")
-                    .font(.caption)
-                    .foregroundColor(WorkbenchColor.thermalAmber)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.warning)
             }
             if !updater.logTail.isEmpty {
                 DisclosureGroup("Update log") {
                     ScrollView {
                         Text(updater.logTail.joined(separator: "\n"))
-                            .font(.system(.caption2, design: .monospaced))
+                            .font(WorkbenchTypography.value)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
                     }
@@ -202,8 +200,8 @@ struct SettingsView: View {
             }
             if updater.repoRoot == nil {
                 Text("This app is not running from a repository checkout, so in-app updates are unavailable. Install updates by replacing the app with a newly built one.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
         }
     }
@@ -251,8 +249,8 @@ struct SettingsView: View {
             HStack(spacing: WorkbenchSpacing.lg) {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                     Text("Default quantization")
-                        .font(WorkbenchTypography.navigation)
-                        .foregroundColor(WorkbenchColor.graphiteMuted)
+                        .font(WorkbenchTypography.label)
+                        .foregroundStyle(WorkbenchColor.muted)
                     Picker("Default bits", selection: $qBits) {
                         Text("4-bit").tag(4)
                         Text("8-bit").tag(8)
@@ -297,8 +295,8 @@ struct SettingsView: View {
 
     private func fieldHint(_ text: String) -> some View {
         Text(text)
-            .font(.caption)
-            .foregroundColor(.secondary)
+            .font(WorkbenchTypography.secondary)
+            .foregroundStyle(WorkbenchColor.muted)
             .padding(.top, 20)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -309,18 +307,18 @@ struct SettingsView: View {
         HStack(spacing: WorkbenchSpacing.sm) {
             if let notice {
                 Label(notice, systemImage: noticeIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundColor(noticeIsError ? WorkbenchColor.systemRed : WorkbenchColor.verifiedGreen)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(noticeIsError ? WorkbenchColor.failure : WorkbenchColor.success)
                     .lineLimit(1)
                     .truncationMode(.middle)
             } else if isDirty {
                 Text("Unsaved changes")
-                    .font(.caption)
-                    .foregroundColor(WorkbenchColor.thermalAmber)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.warning)
             } else {
                 Text("All changes saved")
-                    .font(.caption)
-                    .foregroundColor(WorkbenchColor.graphiteMuted)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
 
             Spacer()
@@ -330,13 +328,12 @@ struct SettingsView: View {
                 .disabled(!isDirty || isSaving)
             Button("Save") { save() }
                 .buttonStyle(.borderedProminent)
-                .tint(WorkbenchColor.fluxTeal)
                 .disabled(!isDirty || !isValid || isSaving)
                 .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, WorkbenchSpacing.pageInset)
         .padding(.vertical, WorkbenchSpacing.sm)
-        .background(WorkbenchColor.instrumentSurface)
+        .background(WorkbenchColor.surface)
     }
 
     // MARK: - Validation
@@ -498,11 +495,11 @@ struct SettingsCard<Content: View>: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                 Text(title)
                     .font(WorkbenchTypography.section)
-                    .foregroundColor(WorkbenchColor.graphiteInk)
+                    .foregroundStyle(WorkbenchColor.ink)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -510,7 +507,7 @@ struct SettingsCard<Content: View>: View {
         }
         .padding(WorkbenchSpacing.surfaceInset)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WorkbenchColor.instrumentSurface)
+        .background(WorkbenchColor.surface)
         .overlay {
             RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous)
                 .stroke(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline)
@@ -529,14 +526,14 @@ struct SettingsField<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             Text(label)
-                .font(WorkbenchTypography.navigation)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.muted)
             content()
                 .frame(width: width, alignment: .leading)
             if let error {
                 Text(error)
-                    .font(.caption)
-                    .foregroundColor(WorkbenchColor.systemRed)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.failure)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -597,25 +594,25 @@ struct SettingsRootsEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Text(label)
-                .font(WorkbenchTypography.navigation)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.muted)
 
             if roots.isEmpty {
                 Text("No directories added.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             } else {
                 ForEach(roots, id: \.self) { root in
                     HStack(spacing: WorkbenchSpacing.xs) {
                         if !directoryExists(root) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.caption)
-                                .foregroundColor(WorkbenchColor.thermalAmber)
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.warning)
                                 .help("Directory does not exist yet.")
                         }
                         Text(root)
-                            .font(WorkbenchTypography.monoUtility)
-                            .foregroundColor(WorkbenchColor.graphiteInk)
+                            .font(WorkbenchTypography.value)
+                            .foregroundStyle(WorkbenchColor.ink)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .textSelection(.enabled)
@@ -624,7 +621,7 @@ struct SettingsRootsEditor: View {
                             roots.removeAll { $0 == root }
                         } label: {
                             Image(systemName: "minus.circle.fill")
-                                .foregroundColor(WorkbenchColor.systemRed)
+                                .foregroundStyle(WorkbenchColor.failure)
                         }
                         .buttonStyle(.plain)
                         .help("Remove \(root)")

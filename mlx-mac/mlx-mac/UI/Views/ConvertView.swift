@@ -75,11 +75,11 @@ struct PrepareWorkflowPresentation: Equatable {
 struct ConvertView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
-    private let onRouteSelection: (String) -> Void
+    private let onRouteSelection: (AppRoute) -> Void
 
     @State private var qBits: Int
 
-    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         self.onRouteSelection = onRouteSelection
@@ -108,8 +108,8 @@ struct ConvertView: View {
 
                 if let message = presentation.message, !message.isEmpty {
                     Text(message)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
             }
             .padding(WorkbenchSpacing.pageInset)
@@ -123,7 +123,7 @@ struct ConvertView: View {
                 StatusPill(state: modelWorkflow.workflow.state.rawValue)
                 Text(presentation.stateTitle)
                     .font(WorkbenchTypography.body)
-                    .foregroundColor(WorkbenchColor.graphiteInk)
+                    .foregroundStyle(WorkbenchColor.ink)
             }
         }
         .formSection {}
@@ -137,7 +137,7 @@ struct ConvertView: View {
             if !presentation.destinationPath.isEmpty {
                 Text("The destination is the coordinator-approved same-directory path. It cannot be overridden in Prepare.")
                     .font(WorkbenchTypography.body)
-                    .foregroundColor(WorkbenchColor.graphiteMuted)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
         }
         .formSection {}
@@ -180,7 +180,6 @@ struct ConvertView: View {
         if presentation.primaryAction == .preview {
             Button("Preview conversion", action: previewAction)
                 .buttonStyle(.borderedProminent)
-                .tint(WorkbenchColor.fluxTeal)
                 .disabled(!presentation.canPreview || modelWorkflow.isConversionSubmissionInFlight)
         } else {
             Button("Preview conversion", action: previewAction)
@@ -191,7 +190,6 @@ struct ConvertView: View {
         if presentation.primaryAction == .confirm {
             Button("Confirm conversion", action: confirmAction)
                 .buttonStyle(.borderedProminent)
-                .tint(WorkbenchColor.fluxTeal)
                 .disabled(!presentation.canConfirm || modelWorkflow.isConversionSubmissionInFlight)
         } else {
             Button("Confirm conversion", action: confirmAction)
@@ -203,21 +201,20 @@ struct ConvertView: View {
             Button("Run existing") {
                 modelWorkflow.useExisting(existingModel)
                 modelWorkflow.prepareServe(model: existingModel)
-                onRouteSelection("serve")
+                onRouteSelection(.run)
             }
             .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
         }
     }
 
     private func detailRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
                 .frame(width: 96, alignment: .trailing)
             Text(value)
-                .font(.caption)
+                .font(WorkbenchTypography.secondary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

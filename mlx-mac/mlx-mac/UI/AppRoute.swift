@@ -43,6 +43,10 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
 
     var id: String { rawValue }
 
+    /// UserDefaults key for the persisted selection; shared by the window
+    /// and the ⌘, command so both address the same destination.
+    static let selectionStorageKey = "mlx-workbench.selectedRoute"
+
     /// Stable zero-based position in the navigation registry.
     var order: Int {
         Self.allCases.firstIndex(of: self) ?? 0

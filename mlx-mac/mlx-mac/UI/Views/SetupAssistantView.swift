@@ -23,20 +23,20 @@ struct SetupAssistantView: View {
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: 560)
         .frame(minHeight: 380)
-        .background(WorkbenchColor.alloyCanvas)
+        .background(WorkbenchColor.canvas)
     }
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("SETUP").font(WorkbenchTypography.monoUtility)
-                    .foregroundColor(WorkbenchColor.fluxTeal)
+                Text("SETUP").font(WorkbenchTypography.value)
+                    .foregroundStyle(WorkbenchColor.accent)
                 Text(coordinator.step.title).font(WorkbenchTypography.section)
             }
             Spacer()
             Text("Step \(coordinator.step.rawValue + 1) of \(SetupCoordinator.Step.allCases.count)")
-                .font(WorkbenchTypography.monoUtility)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .font(WorkbenchTypography.value)
+                .foregroundStyle(WorkbenchColor.muted)
         }
     }
 
@@ -56,13 +56,13 @@ struct SetupAssistantView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             Text("mlx-workbench drives conversions and serving through the mlx-agent CLI. The vendored checkout that ships with the app is used by default.")
                 .font(WorkbenchTypography.body)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
             switch appHost.agentHealth {
             case .ready(let path, _):
                 StatusBadge(status: .ready)
-                Text(path).font(WorkbenchTypography.monoUtility)
-                    .foregroundColor(WorkbenchColor.graphiteMuted)
+                Text(path).font(WorkbenchTypography.value)
+                    .foregroundStyle(WorkbenchColor.muted)
                     .textSelection(.enabled)
             case .notConfigured:
                 guidance("No agent path is configured.", detail: "The vendored checkout is picked up automatically when the app runs from the repository. Otherwise set the path in Settings.")
@@ -78,7 +78,7 @@ struct SetupAssistantView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             Text("Converting and serving models needs the repo's Python runtime (Python 3.12, mlx-lm, and friends).")
                 .font(WorkbenchTypography.body)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
             if appHost.runtimeReport.ok {
                 StatusBadge(status: .ready)
@@ -96,14 +96,14 @@ struct SetupAssistantView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             Text("The library scans these folders for models. Discovered roots on this Mac:")
                 .font(WorkbenchTypography.body)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
             if appHost.discoveredRoots.isEmpty {
                 guidance("No model folders were discovered.", detail: "You can add roots later in Settings.")
             } else {
                 ForEach(appHost.discoveredRoots, id: \.self) { root in
-                    Text(root).font(WorkbenchTypography.monoUtility)
-                        .foregroundColor(WorkbenchColor.graphiteInk)
+                    Text(root).font(WorkbenchTypography.value)
+                        .foregroundStyle(WorkbenchColor.ink)
                         .textSelection(.enabled)
                 }
                 if appHost.config.ggufRoots.isEmpty {
@@ -117,7 +117,7 @@ struct SetupAssistantView: View {
                 } else {
                     Text("Roots are already configured; edit them in Settings.")
                         .font(WorkbenchTypography.body)
-                        .foregroundColor(WorkbenchColor.graphiteMuted)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
             }
         }
@@ -127,7 +127,7 @@ struct SetupAssistantView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             Text("Setup complete. Scan the library to build the model inventory, then Home will point at the next safe action.")
                 .font(WorkbenchTypography.body)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -138,7 +138,7 @@ struct SetupAssistantView: View {
         HStack {
             if !coordinator.isLast {
                 Button("Skip setup") { coordinator.dismiss() }
-                    .foregroundColor(WorkbenchColor.graphiteMuted)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
             Spacer()
             if !coordinator.isFirst && !coordinator.isLast {
@@ -150,11 +150,9 @@ struct SetupAssistantView: View {
                     appHost.requestRescan()
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(WorkbenchColor.fluxTeal)
             } else {
                 Button("Continue") { coordinator.advance() }
                     .buttonStyle(.borderedProminent)
-                    .tint(WorkbenchColor.fluxTeal)
             }
         }
         .buttonStyle(.bordered)
@@ -163,9 +161,9 @@ struct SetupAssistantView: View {
     private func guidance(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(WorkbenchTypography.body)
-                .foregroundColor(WorkbenchColor.thermalAmber)
-            Text(detail).font(WorkbenchTypography.monoUtility)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .foregroundStyle(WorkbenchColor.warning)
+            Text(detail).font(WorkbenchTypography.value)
+                .foregroundStyle(WorkbenchColor.muted)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }

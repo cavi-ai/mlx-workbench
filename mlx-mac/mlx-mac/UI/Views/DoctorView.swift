@@ -7,14 +7,14 @@ import SwiftUI
 
 struct DoctorView: View {
     @ObservedObject var appHost: AppHost
-    private let onRouteSelection: (String) -> Void
+    private let onRouteSelection: (AppRoute) -> Void
 
     @State private var isRunning = false
     @State private var findings: [DoctorFinding] = []
     @State private var pruneCount = 0
     @State private var errorMessage: String?
 
-    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         self.onRouteSelection = onRouteSelection
     }
@@ -43,8 +43,8 @@ struct DoctorView: View {
             if !appHost.runtimeReport.ok {
                 HStack(spacing: WorkbenchSpacing.sm) {
                     Text(appHost.runtimeReport.install)
-                        .font(.caption)
-                        .foregroundColor(WorkbenchColor.thermalAmber)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.warning)
                         .textSelection(.enabled)
                     Button("Copy command") {
                         let pasteboard = NSPasteboard.general
@@ -54,7 +54,7 @@ struct DoctorView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     Spacer()
-                    Button("Open Settings") { onRouteSelection(AppRoute.settings.rawValue) }
+                    Button("Open Settings") { onRouteSelection(.settings) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
@@ -90,13 +90,13 @@ struct DoctorView: View {
     private func healthRow(_ label: String, ok: Bool, message: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
             Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundColor(ok ? WorkbenchColor.verifiedGreen : WorkbenchColor.systemRed)
+                .foregroundStyle(ok ? WorkbenchColor.success : WorkbenchColor.failure)
             Text(label)
                 .font(WorkbenchTypography.body)
                 .frame(width: 130, alignment: .leading)
             Text(message)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
                 .textSelection(.enabled)
                 .lineLimit(2)
                 .truncationMode(.middle)
@@ -117,12 +117,11 @@ struct DoctorView: View {
                 }
                 Button(isRunning ? "Checking…" : "Run doctor") { runDoctor() }
                     .buttonStyle(.borderedProminent)
-                    .tint(WorkbenchColor.fluxTeal)
                     .disabled(isRunning)
             }
             Text("Checks local model files for incomplete caches, unreadable files, and other inventory issues.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
 
             if isRunning {
                 ProgressView()
@@ -135,10 +134,10 @@ struct DoctorView: View {
             if pruneCount > 0 {
                 HStack(spacing: WorkbenchSpacing.sm) {
                     Text("The doctor found \(pruneCount) prunable cache item(s).")
-                        .font(.caption)
-                        .foregroundColor(WorkbenchColor.thermalAmber)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.warning)
                     Spacer()
-                    Button("Open Reclaim") { onRouteSelection(AppRoute.reclaim.rawValue) }
+                    Button("Open Reclaim") { onRouteSelection(.reclaim) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
@@ -146,24 +145,24 @@ struct DoctorView: View {
 
             if findings.isEmpty, !isRunning, errorMessage == nil {
                 Text("No findings from the latest doctor run.")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             } else {
                 ForEach(findings) { finding in
                     HStack(alignment: .top) {
                         StatusPill(state: finding.kind ?? "issue")
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(finding.path).font(.caption)
+                            Text(finding.path).font(WorkbenchTypography.secondary)
                                 .textSelection(.enabled)
                             if let message = finding.message {
-                                Text(message).font(.caption).foregroundColor(.secondary)
+                                Text(message).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                             }
                         }
                         Spacer()
                         if let size = finding.size {
                             Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
                         }
                     }
                     .padding(.vertical, 3)

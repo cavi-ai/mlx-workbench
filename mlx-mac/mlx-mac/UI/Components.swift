@@ -3,18 +3,56 @@ import AppKit
 
 // MARK: - Shared UI helpers for the workbench views
 
+/// One inline message surface for errors, warnings, and confirmations.
+struct InlineMessage: View {
+    enum Kind {
+        case error, warning, success, info
+
+        var color: Color {
+            switch self {
+            case .error: return WorkbenchColor.failure
+            case .warning: return WorkbenchColor.warning
+            case .success: return WorkbenchColor.success
+            case .info: return WorkbenchColor.accent
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .error: return "xmark.octagon.fill"
+            case .warning: return "exclamationmark.triangle.fill"
+            case .success: return "checkmark.circle.fill"
+            case .info: return "info.circle.fill"
+            }
+        }
+    }
+
+    let kind: Kind
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text)
+                .font(WorkbenchTypography.body)
+                .foregroundStyle(WorkbenchColor.ink)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: kind.symbol)
+                .foregroundStyle(kind.color)
+        }
+        .padding(WorkbenchSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(kind.color.opacity(0.10), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+    }
+}
+
 struct ErrorBanner: View {
     let text: String?
 
     var body: some View {
         if let text, !text.isEmpty {
-            Text(text)
-                .font(WorkbenchTypography.body)
-                .foregroundColor(WorkbenchColor.systemRed)
-                .padding(WorkbenchSpacing.sm)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(WorkbenchColor.systemRed.opacity(0.10))
-                .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+            InlineMessage(kind: .error, text: text)
         }
     }
 }
@@ -135,15 +173,16 @@ struct WorkbenchStatus: Equatable {
 
     var color: Color {
         switch tone {
-        case .neutral: return WorkbenchColor.graphiteMuted
-        case .information: return WorkbenchColor.fluxTeal
-        case .success: return WorkbenchColor.verifiedGreen
-        case .warning: return WorkbenchColor.thermalAmber
-        case .failure: return WorkbenchColor.systemRed
+        case .neutral: return WorkbenchColor.muted
+        case .information: return WorkbenchColor.accent
+        case .success: return WorkbenchColor.success
+        case .warning: return WorkbenchColor.warning
+        case .failure: return WorkbenchColor.failure
         }
     }
 }
 
+/// Capsule with a tone dot and a sentence-case label.
 struct StatusBadge: View {
     let status: WorkbenchStatus
 
@@ -156,14 +195,20 @@ struct StatusBadge: View {
     }
 
     var body: some View {
-        Text(status.label)
-            .font(WorkbenchTypography.monoUtility)
-            .textCase(.uppercase)
-            .padding(.horizontal, WorkbenchSpacing.xs)
-            .padding(.vertical, WorkbenchSpacing.xxs)
-            .foregroundColor(status.color)
-            .background(status.color.opacity(0.14))
-            .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+        HStack(spacing: 5) {
+            Circle()
+                .fill(status.color)
+                .frame(width: 6, height: 6)
+            Text(status.label)
+                .font(WorkbenchTypography.label)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .foregroundStyle(status.color)
+        .background(status.color.opacity(0.12), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.label)
     }
 }
 
@@ -188,12 +233,11 @@ struct WorkbenchSurface<Content: View>: View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(WorkbenchColor.instrumentSurface)
+            .background(WorkbenchColor.surface, in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous)
                     .stroke(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline)
             }
-            .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous))
     }
 }
 
@@ -204,8 +248,8 @@ struct PreviewDictView: View {
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
             Text(text(for: value, depth: 0))
-                .font(WorkbenchTypography.monoUtility)
-                .foregroundColor(WorkbenchColor.graphiteInk)
+                .font(WorkbenchTypography.value)
+                .foregroundStyle(WorkbenchColor.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxHeight: 320)
@@ -258,8 +302,8 @@ struct RawJSONDisclosure: View {
                 .padding(.top, WorkbenchSpacing.xxs)
         } label: {
             Text(title)
-                .font(WorkbenchTypography.navigation)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.muted)
         }
     }
 }
@@ -279,31 +323,30 @@ struct RuntimeInstallView: View {
                 HStack(spacing: WorkbenchSpacing.sm) {
                     Button("Install Runtime…") { showConfirm = true }
                         .buttonStyle(.borderedProminent)
-                        .tint(WorkbenchColor.fluxTeal)
                         .disabled(!installer.canInstall)
                     if installer.state == .running {
                         ProgressView()
                             .controlSize(.small)
                         Text(installer.summary)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.muted)
                     }
                     if installer.state == .succeeded {
                         Label("Installed", systemImage: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundColor(WorkbenchColor.verifiedGreen)
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.success)
                     }
                 }
                 if case .failed(let reason) = installer.state {
                     Text(reason)
-                        .font(.caption)
-                        .foregroundColor(WorkbenchColor.systemRed)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.failure)
                 }
                 if !installer.logTail.isEmpty {
                     DisclosureGroup("Install log") {
                         ScrollView {
                             Text(installer.logTail.joined(separator: "\n"))
-                                .font(.system(.caption2, design: .monospaced))
+                                .font(WorkbenchTypography.value)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)
                         }
@@ -331,26 +374,34 @@ struct RuntimeInstallView: View {
     }
 }
 
-struct SectionTitle: View {    let text: String
+struct SectionTitle: View {
+    let text: String
 
     var body: some View {
         Text(text)
             .font(WorkbenchTypography.section)
-            .foregroundColor(WorkbenchColor.graphiteInk)
+            .foregroundStyle(WorkbenchColor.ink)
     }
 }
 
 extension View {
     func formSection<SupplementalContent: View>(@ViewBuilder content: () -> SupplementalContent) -> some View {
-        Group {
-            VStack(alignment: .leading, spacing: 8) {
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                 self
                 content()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(WorkbenchSpacing.md)
-            .background(WorkbenchColor.instrumentSurface)
-            .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous))
         }
+    }
+
+    /// `.searchable` that only attaches while the route is active, so a
+    /// mounted-but-hidden route never claims the toolbar's search field.
+    @ViewBuilder
+    func routeSearchable(text: Binding<String>, prompt: String, isActive: Bool) -> some View {
+        if isActive {
+            searchable(text: text, placement: .toolbar, prompt: prompt)
+        } else {
+            self
+        }
+    }
 }

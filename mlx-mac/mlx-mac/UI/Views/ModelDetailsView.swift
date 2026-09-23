@@ -7,9 +7,9 @@ struct ModelDetailsView: View {
 
     let model: LibraryModel
     let snapshotGeneratedAt: Date
-    let onRouteSelection: (String) -> Void
+    let onRouteSelection: (AppRoute) -> Void
 
-    init(appHost: AppHost, model: LibraryModel, snapshotGeneratedAt: Date, onRouteSelection: @escaping (String) -> Void) {
+    init(appHost: AppHost, model: LibraryModel, snapshotGeneratedAt: Date, onRouteSelection: @escaping (AppRoute) -> Void) {
         self.appHost = appHost
         _verification = ObservedObject(wrappedValue: appHost.verification)
         self.model = model
@@ -82,12 +82,12 @@ struct ModelDetailsView: View {
                     Group {
                         if evidence.isEmpty {
                             Text("Unknown")
-                                .font(.system(.caption, design: .monospaced))
+                                .font(WorkbenchTypography.value)
                         } else {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(evidence, id: \.self) { entry in
                                     Text(entry)
-                                        .font(.system(.caption, design: .monospaced))
+                                        .font(WorkbenchTypography.value)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                             }
@@ -107,19 +107,19 @@ struct ModelDetailsView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(model.displayName)
-                    .font(WorkbenchTypography.display)
+                    .font(WorkbenchTypography.title)
                 StatusBadge(state: model.readiness.rawValue)
                 Spacer()
                 if appHost.selectedModelPath == model.item.path {
                     Text("Selected")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                 }
             }
 
             Text("MODEL IDENTITY / \(identityLabel)")
-                .font(WorkbenchTypography.monoUtility)
-                .foregroundColor(WorkbenchColor.graphiteMuted)
+                .font(WorkbenchTypography.value)
+                .foregroundStyle(WorkbenchColor.muted)
         }
     }
 
@@ -159,16 +159,16 @@ struct ModelDetailsView: View {
                 Button("Prepare to run") {
                     appHost.selectedModelPath = model.item.path
                     appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
-                    onRouteSelection(AppRoute.prepare.rawValue)
+                    onRouteSelection(.prepare)
                 }
             }
 
             Button("Select for Compare") {
-                selectAndRoute(to: AppRoute.compare.rawValue)
+                selectAndRoute(to: .compare)
             }
 
             Button("Select for Try") {
-                selectAndRoute(to: AppRoute.run.rawValue)
+                selectAndRoute(to: .run)
             }
     }
 
@@ -256,11 +256,11 @@ struct ModelDetailsView: View {
                 }
             } else {
                 Text("No measured runs for this model yet.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
                 Button("Measure in Compare") {
                     appHost.selectedModelPath = model.item.path
-                    onRouteSelection(AppRoute.compare.rawValue)
+                    onRouteSelection(.compare)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -287,34 +287,34 @@ struct ModelDetailsView: View {
             }
             if lineage.events.isEmpty {
                 Text("No recorded history for this model yet.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             } else {
                 ForEach(lineage.events) { event in
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: event.kind.systemImage)
-                            .foregroundColor(event.kind == .verificationFailed ? WorkbenchColor.systemRed : WorkbenchColor.fluxTeal)
+                            .foregroundStyle(event.kind == .verificationFailed ? WorkbenchColor.failure : WorkbenchColor.accent)
                             .frame(width: 18)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
-                                Text(event.kind.title).font(.callout).fontWeight(.medium)
+                                Text(event.kind.title).font(WorkbenchTypography.secondary).fontWeight(.medium)
                                 if event.stale {
                                     Text("predates current bytes")
-                                        .font(.caption2)
-                                        .foregroundColor(WorkbenchColor.thermalAmber)
+                                        .font(WorkbenchTypography.secondary)
+                                        .foregroundStyle(WorkbenchColor.warning)
                                 }
                                 Spacer()
                                 Text(event.at, format: .dateTime.month(.abbreviated).day().hour().minute())
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                    .font(WorkbenchTypography.secondary)
+                                    .foregroundStyle(WorkbenchColor.muted)
                             }
                             Text(event.summary)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
                             ForEach(event.detail.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                                 Text("\(key): \(value)")
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .foregroundColor(.secondary)
+                                    .font(WorkbenchTypography.value)
+                                    .foregroundStyle(WorkbenchColor.muted)
                                     .textSelection(.enabled)
                             }
                         }
@@ -388,11 +388,11 @@ struct ModelDetailsView: View {
     private func detailRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
                 .frame(width: 120, alignment: .trailing)
             Text(value)
-                .font(.caption)
+                .font(WorkbenchTypography.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -413,9 +413,9 @@ struct ModelDetailsView: View {
         date.formatted(date: .abbreviated, time: .standard)
     }
 
-    private func selectAndRoute(to route: String) {
+    private func selectAndRoute(to route: AppRoute) {
         appHost.selectedModelPath = model.item.path
-        if route == "serve", model.readiness == .ready {
+        if route == .run, model.readiness == .ready {
             appHost.modelWorkflow.prepareServe(model: model)
         }
         onRouteSelection(route)

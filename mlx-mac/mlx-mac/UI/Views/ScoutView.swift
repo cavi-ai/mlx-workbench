@@ -28,7 +28,7 @@ struct ScoutView: View {
                     resultsSection
                 } else {
                     Text("Run a discovery to see candidates.")
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                         .padding(.top, 12)
                 }
                 ErrorBanner(text: errorMessage)
@@ -45,8 +45,8 @@ struct ScoutView: View {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { catalogHeader }
             }
             Text("Metadata only. Local installation truth comes from the Library scan, not this catalog cache.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
             HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 6) {
                     statusRow(label: "Status", value: appHost.catalog.statusLabel)
@@ -60,12 +60,12 @@ struct ScoutView: View {
             }
             if let message = appHost.catalog.detailMessage {
                 Text(message)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             } else if case .missing = appHost.catalog {
                 Text("Catalog metadata has not been fetched yet. Refresh Metadata to fetch it.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
             if let snapshot = appHost.catalog.snapshot, !snapshot.records.isEmpty {
                 catalogResults(snapshot)
@@ -110,7 +110,6 @@ struct ScoutView: View {
         Toggle("Fast", isOn: $fast)
         Button("Discover") { discover() }
             .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
             .disabled(isScouting)
     }
 
@@ -120,31 +119,31 @@ struct ScoutView: View {
                 SectionTitle(text: "Catalog Entries (\(snapshot.records.count))")
                 Spacer()
                 Text("Remote metadata only")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
             List(snapshot.records, id: \.self) { record in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(record.repoIdentity)
-                        .font(.body)
+                        .font(WorkbenchTypography.body)
                     HStack(spacing: 8) {
                         if let roles = record.roles, !roles.isEmpty {
                             Text(roles.map(\.title).joined(separator: ", "))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
                         }
                         if !record.formats.isEmpty {
                             Text(record.formats.joined(separator: ", "))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
                         }
                         Text(Self.timestampFormatter.string(from: record.updatedAt))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.muted)
                     }
                     Text(record.sourceURL.absoluteString)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
                         .textSelection(.enabled)
                 }
                 .padding(.vertical, 2)
@@ -163,20 +162,20 @@ struct ScoutView: View {
             List(candidates) { candidate in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(candidate.repo).font(.body)
+                        Text(candidate.repo).font(WorkbenchTypography.body)
                         HStack(spacing: 8) {
                             if let roles = candidate.roles, !roles.isEmpty {
                                 Text(roles.joined(separator: ", "))
-                                    .font(.caption).foregroundColor(.secondary)
+                                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                             }
                             if let ram = candidate.paramsText {
-                                Text(ram).font(.caption).foregroundColor(.secondary)
+                                Text(ram).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                             }
                         }
                     }
                     Spacer()
                     if let license = candidate.license {
-                        Text(license).font(.caption).foregroundColor(.secondary)
+                        Text(license).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                     }
                     Button("Copy repo id") {
                         let pasteboard = NSPasteboard.general
@@ -226,10 +225,10 @@ struct ScoutView: View {
     private func statusRow(label: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("\(label):")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
             Text(value)
-                .font(.caption)
+                .font(WorkbenchTypography.secondary)
         }
     }
 

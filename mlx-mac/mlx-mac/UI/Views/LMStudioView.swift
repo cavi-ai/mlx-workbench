@@ -5,14 +5,14 @@ import SwiftUI
 
 struct LMStudioView: View {
     @ObservedObject var appHost: AppHost
-    private let onRouteSelection: (String) -> Void
+    private let onRouteSelection: (AppRoute) -> Void
 
     @State private var sourceDir = ""
     @State private var isScanning = false
     @State private var models: [LMSModel] = []
     @State private var errorMessage: String?
 
-    init(appHost: AppHost, onRouteSelection: @escaping (String) -> Void = { _ in }) {
+    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         self.onRouteSelection = onRouteSelection
     }
@@ -43,17 +43,17 @@ struct LMStudioView: View {
                         ForEach(models) { model in
                             HStack(spacing: WorkbenchSpacing.sm) {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(model.name).font(.body)
+                                    Text(model.name).font(WorkbenchTypography.body)
                                     Text(model.path)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
+                                        .font(WorkbenchTypography.secondary)
+                                        .foregroundStyle(WorkbenchColor.muted)
                                         .lineLimit(1)
                                         .truncationMode(.middle)
                                 }
                                 Spacer()
                                 Text(ByteCountFormatter.string(fromByteCount: model.size, countStyle: .file))
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .font(WorkbenchTypography.secondary)
+                                    .foregroundStyle(WorkbenchColor.muted)
                                 Button("Prepare…") { prepare(model) }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
@@ -61,8 +61,8 @@ struct LMStudioView: View {
                             .padding(.vertical, 2)
                         }
                         Text("Prepare opens a conversion preview for the chosen GGUF.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.muted)
                     }
                     .formSection {}
                 }
@@ -78,7 +78,6 @@ struct LMStudioView: View {
             .textFieldStyle(.roundedBorder)
         Button("Scan LM Studio") { scan() }
             .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.fluxTeal)
             .disabled(isScanning)
     }
 
@@ -106,7 +105,7 @@ struct LMStudioView: View {
         )
         appHost.selectedModelPath = model.path
         appHost.modelWorkflow.inspect(source: item, snapshot: appHost.librarySnapshot)
-        onRouteSelection(AppRoute.prepare.rawValue)
+        onRouteSelection(.prepare)
     }
 
     private func scan() {
