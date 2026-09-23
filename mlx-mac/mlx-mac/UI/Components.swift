@@ -374,6 +374,45 @@ struct RuntimeInstallView: View {
     }
 }
 
+/// One label/value pair for a DetailGrid. Values are monospaced facts
+/// (paths, hashes, numbers) unless marked prose.
+struct DetailRow: Equatable {
+    let label: String
+    let value: String
+    let prose: Bool
+
+    init(_ label: String, _ value: String, prose: Bool = false) {
+        self.label = label
+        self.value = value
+        self.prose = prose
+    }
+}
+
+/// Right-aligned labels, left-aligned values, one grid so every row's label
+/// column lines up.
+struct DetailGrid: View {
+    let rows: [DetailRow]
+
+    var body: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: WorkbenchSpacing.sm, verticalSpacing: WorkbenchSpacing.xs) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                GridRow {
+                    Text(row.label)
+                        .font(WorkbenchTypography.label)
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .gridColumnAlignment(.trailing)
+                    Text(row.value)
+                        .font(row.prose ? WorkbenchTypography.body : WorkbenchTypography.value)
+                        .foregroundStyle(WorkbenchColor.ink)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+}
+
 struct SectionTitle: View {
     let text: String
 

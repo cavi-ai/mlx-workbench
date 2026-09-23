@@ -252,7 +252,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts[destinationPath].waitForExistence(timeout: 30), "Fresh Library evidence did not contain the exact completed output path.")
         capture("06-fresh-library-exact-output", note: "Fresh Library scan exposed the exact completed output before Run routing.")
 
-        let selectForTry = app.buttons["Select for Try"]
+        let selectForTry = app.buttons["Select for Run"]
         XCTAssertTrue(selectForTry.waitForExistence(timeout: 20), "Exact completed output did not expose the Run routing action.")
         selectForTry.click()
     }

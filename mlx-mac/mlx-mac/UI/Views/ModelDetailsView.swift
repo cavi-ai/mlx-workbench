@@ -1,201 +1,255 @@
 import AppKit
 import SwiftUI
 
+// MARK: - ModelActions
+
+/// The actions a Library model offers, shared by the inspector's action row
+/// and the table's context menu so both route through the same coordinator
+/// calls.
+@MainActor
+struct ModelActions {
+    let appHost: AppHost
+    let model: LibraryModel
+    let onRouteSelection: (AppRoute) -> Void
+
+    /// Ready models have nothing to prepare; offering it only renders a
+    /// "destination already exists" blocker.
+    var canPrepare: Bool { model.readiness != .ready }
+
+    func copyPath() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(model.item.path, forType: .string)
+    }
+
+    func revealInFinder() {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.item.path)])
+    }
+
+    func prepare() {
+        appHost.selectedModelPath = model.item.path
+        appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
+        onRouteSelection(.prepare)
+    }
+
+    func compare() {
+        appHost.selectedModelPath = model.item.path
+        onRouteSelection(.compare)
+    }
+
+    func run() {
+        appHost.selectedModelPath = model.item.path
+        if model.readiness == .ready {
+            appHost.modelWorkflow.prepareServe(model: model)
+        }
+        onRouteSelection(.run)
+    }
+}
+
+// MARK: - ModelDetailsPresentation
+
+/// Pure rows for the identity card: the path once, source paths only when
+/// they differ from it, and conditional rows only when they carry a fact.
+enum ModelDetailsPresentation {
+    static func identityRows(for model: LibraryModel, prepareDestination: String?) -> [DetailRow] {
+        var rows: [DetailRow] = [DetailRow("Path", model.item.path)]
+        let extraSources = model.sourcePaths.filter { $0 != model.item.path }
+        if !extraSources.isEmpty {
+            rows.append(DetailRow("Source", extraSources.joined(separator: "\n")))
+        }
+        if !model.outputPaths.isEmpty {
+            rows.append(DetailRow("Outputs", model.outputPaths.joined(separator: "\n")))
+        }
+        rows.append(DetailRow("Architecture", known(model.item.architecture)))
+        rows.append(DetailRow("Parameters", known(model.item.parameters)))
+        rows.append(DetailRow("Quantization", known(model.item.quantization)))
+        rows.append(DetailRow("Size", LibraryTablePresentation.byteCount(model.item.bytes)))
+        if let tensors = model.item.tensorCount {
+            rows.append(DetailRow("Tensors", "\(tensors)"))
+        }
+        if let shard = model.item.shard?.trimmingCharacters(in: .whitespacesAndNewlines), !shard.isEmpty {
+            rows.append(DetailRow("Shard", shard))
+        }
+        let modified = model.item.modifiedAt.map {
+            Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened)
+        }
+        rows.append(DetailRow("Modified", modified ?? "Unknown"))
+        rows.append(DetailRow("Readiness", "\(model.readiness.title) — \(readinessExplanation(for: model))", prose: true))
+        if model.readiness == .duplicate {
+            rows.append(DetailRow("Duplicate status", "Duplicate variant reported by the latest library scan. Review the raw model evidence before preparing it.", prose: true))
+        }
+        if model.readiness == .needsConversion, let prepareDestination {
+            rows.append(DetailRow("Prepare destination", prepareDestination))
+        }
+        return rows
+    }
+
+    static func readinessExplanation(for model: LibraryModel) -> String {
+        switch model.readiness {
+        case .ready:
+            if !model.outputPaths.isEmpty {
+                return "An MLX output path was detected for this local model."
+            }
+            return "The scan marked this local model ready."
+        case .needsConversion:
+            return "No local MLX output was detected, so this model still needs Prepare work."
+        case .needsRuntime:
+            return "The scan marked the runtime as missing for this model."
+        case .incompleteCache:
+            return model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "The scan reported incomplete local metadata for this model."
+        case .unsupported:
+            if model.item.readable == false {
+                return "The local file was not readable during the scan."
+            }
+            return "The scan marked this local model unsupported."
+        case .duplicate:
+            return "This local variant is redundant with another copy in the same family group."
+        case .quarantined:
+            return "This model is quarantined and should not be used for Prepare or Run."
+        }
+    }
+
+    static func known(_ value: String?) -> String {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Unknown" : trimmed
+    }
+
+    /// The identity line under the name: repo id for cache entries, otherwise
+    /// the scan's model key, followed by quantization and size.
+    static func identityLine(for model: LibraryModel) -> String {
+        let identity = HFRepoID.forPath(model.item.path) ?? known(model.item.modelKey)
+        return [identity, known(model.item.quantization), LibraryTablePresentation.byteCount(model.item.bytes)]
+            .joined(separator: " · ")
+    }
+}
+
+// MARK: - ModelDetailsView
+
 struct ModelDetailsView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var verification: VerificationCoordinator
 
     let model: LibraryModel
-    let snapshotGeneratedAt: Date
     let onRouteSelection: (AppRoute) -> Void
 
-    init(appHost: AppHost, model: LibraryModel, snapshotGeneratedAt: Date, onRouteSelection: @escaping (AppRoute) -> Void) {
+    init(appHost: AppHost, model: LibraryModel, onRouteSelection: @escaping (AppRoute) -> Void) {
         self.appHost = appHost
         _verification = ObservedObject(wrappedValue: appHost.verification)
         self.model = model
-        self.snapshotGeneratedAt = snapshotGeneratedAt
         self.onRouteSelection = onRouteSelection
+    }
+
+    private var actions: ModelActions {
+        ModelActions(appHost: appHost, model: model, onRouteSelection: onRouteSelection)
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 header
-                WorkbenchSurface { actionRow }
+                actionRow
 
                 WorkbenchSurface {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                         SectionTitle(text: "Model identity")
-                        detailRow("Path", model.item.path)
-                        detailRow("Source", sourceIdentity)
-                        detailRow("Architecture", known(model.item.architecture))
-                        detailRow("Parameters", known(model.item.parameters))
-                        detailRow("Quantization", known(model.item.quantization))
-                        detailRow("Outputs", lines(model.outputPaths))
-                        detailRow("Readiness", model.readiness.title)
-                        detailRow("Duplicate status", duplicateStatus)
-                        if model.readiness == .needsConversion {
-                            detailRow("Prepare destination", prepareDestination)
-                        }
-                        detailRow("Why", readinessExplanation)
-                        detailRow("Source paths", lines(model.sourcePaths))
-                        detailRow("Signature", known(model.item.signature))
-                        detailRow("Size", ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))
-                        if let tensors = model.item.tensorCount {
-                            detailRow("Tensors", "\(tensors)")
-                        }
-                        if let shard = model.item.shard?.trimmingCharacters(in: .whitespacesAndNewlines), !shard.isEmpty {
-                            detailRow("Shard", shard)
-                        }
+                        DetailGrid(rows: ModelDetailsPresentation.identityRows(for: model, prepareDestination: prepareDestination))
                     }
                 }
-                .textSelection(.enabled)
-
-                WorkbenchSurface {
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionTitle(text: "Evidence timestamps")
-                        detailRow("File modified", modifiedAtText)
-                        detailRow("Library scan", format(snapshotGeneratedAt))
-                    }
-                }
-                .textSelection(.enabled)
 
                 WorkbenchSurface { verificationSection }
-
                 WorkbenchSurface { performanceSection }
-
                 WorkbenchSurface { lineageSection }
 
                 if let error = model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
                     WorkbenchSurface {
-                        VStack(alignment: .leading, spacing: 10) {
-                        SectionTitle(text: "Observed issue")
-                        detailRow("Error", error)
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                            SectionTitle(text: "Observed issue")
+                            InlineMessage(kind: .warning, text: error)
                         }
                     }
-                    .textSelection(.enabled)
                 }
 
                 WorkbenchSurface {
                     DisclosureGroup("Raw model evidence") {
-                    let evidence = LibraryPresentation.userFacingEvidence(model.evidence)
-                    Group {
-                        if evidence.isEmpty {
-                            Text("Unknown")
-                                .font(WorkbenchTypography.value)
-                        } else {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(evidence, id: \.self) { entry in
-                                    Text(entry)
-                                        .font(WorkbenchTypography.value)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
+                        let evidence = LibraryPresentation.userFacingEvidence(model.evidence)
+                            + ["signature=\(ModelDetailsPresentation.known(model.item.signature))"]
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                            ForEach(evidence, id: \.self) { entry in
+                                Text(entry)
+                                    .font(WorkbenchTypography.value)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
-                    }
-                    .textSelection(.enabled)
-                    .padding(.top, 4)
+                        .textSelection(.enabled)
+                        .padding(.top, WorkbenchSpacing.xxs)
                     }
                 }
             }
-            .padding(WorkbenchSpacing.pageInset)
+            .padding(WorkbenchSpacing.md)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
                 Text(model.displayName)
                     .font(WorkbenchTypography.title)
+                    .lineLimit(2)
                 StatusBadge(state: model.readiness.rawValue)
-                Spacer()
-                if appHost.selectedModelPath == model.item.path {
-                    Text("Selected")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                }
             }
-
-            Text("MODEL IDENTITY / \(identityLabel)")
-                .font(WorkbenchTypography.value)
+            Text(ModelDetailsPresentation.identityLine(for: model))
+                .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
         }
     }
 
-    /// HF-cache models carry the snapshot revision as their scan modelKey —
-    /// a hash is not an identity. Prefer the repo id; keep the modelKey only
-    /// when it is real metadata.
-    private var identityLabel: String {
-        if let repoID = HFRepoID.forPath(model.item.path) {
-            return repoID
-        }
-        return known(model.item.modelKey)
-    }
-
+    /// Routing actions on the first row, file actions on the second, so the
+    /// row fits the inspector's width without stacking four buttons.
     private var actionRow: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) { actionButtons }
-            VStack(alignment: .leading, spacing: 8) { actionButtons }
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            HStack(spacing: WorkbenchSpacing.xs) {
+                if actions.canPrepare {
+                    Button("Prepare to run") { actions.prepare() }
+                        .buttonStyle(.borderedProminent)
+                }
+                if model.readiness == .ready {
+                    Button("Select for Run") { actions.run() }
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    Button("Select for Run") { actions.run() }
+                }
+                Button("Select for Compare") { actions.compare() }
+            }
+            HStack(spacing: WorkbenchSpacing.xs) {
+                Button("Copy Path") { actions.copyPath() }
+                Button("Reveal in Finder") { actions.revealInFinder() }
+            }
+            .controlSize(.small)
         }
     }
 
-    @ViewBuilder private var actionButtons: some View {
-            Button("Copy Path") {
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(model.item.path, forType: .string)
-            }
-
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.item.path)])
-            }
-
-            Spacer()
-
-            // Ready models have nothing to prepare; offering it just renders
-            // a "destination already exists" blocker.
-            if model.readiness != .ready {
-                Button("Prepare to run") {
-                    appHost.selectedModelPath = model.item.path
-                    appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
-                    onRouteSelection(.prepare)
-                }
-            }
-
-            Button("Select for Compare") {
-                selectAndRoute(to: .compare)
-            }
-
-            Button("Select for Try") {
-                selectAndRoute(to: .run)
-            }
+    private var prepareDestination: String? {
+        guard model.readiness == .needsConversion else { return nil }
+        switch ModelWorkflowResolver.destination(for: model.item, library: appHost.librarySnapshot) {
+        case .reuseExisting(let existing):
+            return "Existing equivalent MLX model: \(existing.item.path)"
+        case .available(let destination):
+            return destination.path
+        case .blocked(let destination, let reason):
+            return "\(destination.path)\nBlocked: \(reason)"
+        }
     }
 
-    private var sourceIdentity: String {
-        lines(model.sourcePaths)
-    }
+    // MARK: - Verification
 
     private var verificationSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Verification")
-            switch appHost.verification.status(for: model.item.path, signature: model.item.signature) {
-            case .verified(let report):
-                detailRow("Status", "Verified (canary suite v\(report.suiteVersion))")
-                verificationMetrics(report)
-            case .failed(let report):
-                detailRow("Status", "Failed — \(report.outcome.summary)")
-                verificationMetrics(report)
-            case .keptAnyway(let report):
-                detailRow("Status", "Kept despite a failed verification")
-                verificationMetrics(report)
-            case .stale(let report):
-                detailRow("Status", "Stale — the file changed since verification on \(format(report.finishedAt))")
-            case .inProgress:
-                detailRow("Status", appHost.verification.progressMessage ?? "Verification in progress…")
-            case .unverified:
-                detailRow("Status", "Not verified by the canary suite.")
-            }
+            DetailGrid(rows: verificationRows)
             if model.readiness == .ready {
                 Button("Verify now") {
                     appHost.verification.verifyNow(modelPath: model.item.path, signature: model.item.signature)
@@ -205,21 +259,38 @@ struct ModelDetailsView: View {
         }
     }
 
-    private func verificationMetrics(_ report: VerificationReport) -> some View {
-        Group {
-            if let tps = report.tokensPerSecond {
-                detailRow("Decode speed", String(format: "%.1f tok/s%@", tps, report.metricsEstimated ? " (estimated)" : ""))
-            }
-            if let ttft = report.timeToFirstTokenSeconds {
-                detailRow("First token", String(format: "%.2fs", ttft))
-            }
-            ForEach(report.canaries, id: \.id) { canary in
-                detailRow(canary.title, canary.passed ? "Passed" : "Failed: \(canary.failureReason ?? "unknown")")
-            }
+    private var verificationRows: [DetailRow] {
+        switch appHost.verification.status(for: model.item.path, signature: model.item.signature) {
+        case .verified(let report):
+            return [DetailRow("Status", "Verified (canary suite v\(report.suiteVersion))", prose: true)] + metricRows(report)
+        case .failed(let report):
+            return [DetailRow("Status", "Failed — \(report.outcome.summary)", prose: true)] + metricRows(report)
+        case .keptAnyway(let report):
+            return [DetailRow("Status", "Kept despite a failed verification", prose: true)] + metricRows(report)
+        case .stale(let report):
+            return [DetailRow("Status", "Stale — the file changed since verification on \(format(report.finishedAt))", prose: true)]
+        case .inProgress:
+            return [DetailRow("Status", appHost.verification.progressMessage ?? "Verification in progress…", prose: true)]
+        case .unverified:
+            return [DetailRow("Status", "Not verified by the canary suite.", prose: true)]
         }
     }
 
-    // MARK: - Performance profile
+    private func metricRows(_ report: VerificationReport) -> [DetailRow] {
+        var rows: [DetailRow] = []
+        if let tps = report.tokensPerSecond {
+            rows.append(DetailRow("Decode speed", String(format: "%.1f tok/s%@", tps, report.metricsEstimated ? " (estimated)" : "")))
+        }
+        if let ttft = report.timeToFirstTokenSeconds {
+            rows.append(DetailRow("First token", String(format: "%.2fs", ttft)))
+        }
+        for canary in report.canaries {
+            rows.append(DetailRow(canary.title, canary.passed ? "Passed" : "Failed: \(canary.failureReason ?? "unknown")", prose: true))
+        }
+        return rows
+    }
+
+    // MARK: - Performance
 
     /// Aggregated measured evidence across all completed comparison runs for
     /// this exact model (path + signature). Numbers only — the charts and
@@ -235,44 +306,46 @@ struct ModelDetailsView: View {
                 )
             }
             .first
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Performance")
             if let profile {
-                if let measuredAt = profile.lastMeasuredAt {
-                    detailRow("Last measured", format(measuredAt))
-                }
-                detailRow("Measured runs", "\(profile.runCount)")
-                if let average = profile.averageTokensPerSecond {
-                    detailRow("Decode speed", String(format: "avg %.1f tok/s", average))
-                }
-                if let best = profile.bestTokensPerSecond, let worst = profile.worstTokensPerSecond {
-                    detailRow("Range", String(format: "%.1f – %.1f tok/s", worst, best))
-                }
-                if let prefill = profile.averagePrefillTokensPerSecond {
-                    detailRow("Prefill speed", String(format: "avg %.0f tok/s (est.)", prefill))
-                }
-                if let ttft = profile.bestTTFTSeconds {
-                    detailRow("Best first token", String(format: "%.2fs", ttft))
-                }
+                DetailGrid(rows: performanceRows(profile))
             } else {
                 Text("No measured runs for this model yet.")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
-                Button("Measure in Compare") {
-                    appHost.selectedModelPath = model.item.path
-                    onRouteSelection(.compare)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                Button("Measure in Compare") { actions.compare() }
+                    .controlSize(.small)
             }
         }
+    }
+
+    private func performanceRows(_ profile: ModelPerformanceProfile) -> [DetailRow] {
+        var rows: [DetailRow] = []
+        if let measuredAt = profile.lastMeasuredAt {
+            rows.append(DetailRow("Last measured", format(measuredAt)))
+        }
+        rows.append(DetailRow("Measured runs", "\(profile.runCount)"))
+        if let average = profile.averageTokensPerSecond {
+            rows.append(DetailRow("Decode speed", String(format: "avg %.1f tok/s", average)))
+        }
+        if let best = profile.bestTokensPerSecond, let worst = profile.worstTokensPerSecond {
+            rows.append(DetailRow("Range", String(format: "%.1f – %.1f tok/s", worst, best)))
+        }
+        if let prefill = profile.averagePrefillTokensPerSecond {
+            rows.append(DetailRow("Prefill speed", String(format: "avg %.0f tok/s (est.)", prefill)))
+        }
+        if let ttft = profile.bestTTFTSeconds {
+            rows.append(DetailRow("Best first token", String(format: "%.2fs", ttft)))
+        }
+        return rows
     }
 
     // MARK: - Lineage
 
     private var lineageSection: some View {
         let lineage = appHost.lineage(for: model.item.path)
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             HStack {
                 SectionTitle(text: "Lineage")
                 Spacer()
@@ -291,13 +364,13 @@ struct ModelDetailsView: View {
                     .foregroundStyle(WorkbenchColor.muted)
             } else {
                 ForEach(lineage.events) { event in
-                    HStack(alignment: .top, spacing: 10) {
+                    HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
                         Image(systemName: event.kind.systemImage)
                             .foregroundStyle(event.kind == .verificationFailed ? WorkbenchColor.failure : WorkbenchColor.accent)
                             .frame(width: 18)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
-                                Text(event.kind.title).font(WorkbenchTypography.secondary).fontWeight(.medium)
+                                Text(event.kind.title).font(WorkbenchTypography.emphasis)
                                 if event.stale {
                                     Text("predates current bytes")
                                         .font(WorkbenchTypography.secondary)
@@ -337,87 +410,7 @@ struct ModelDetailsView: View {
         try? data.write(to: url, options: .atomic)
     }
 
-    private var readinessExplanation: String {
-        switch model.readiness {
-        case .ready:
-            if !model.outputPaths.isEmpty {
-                return "An MLX output path was detected for this local model."
-            }
-            return "The scan marked this local model ready."
-        case .needsConversion:
-            return "No local MLX output was detected, so this model still needs Prepare work."
-        case .needsRuntime:
-            return "The scan marked the runtime as missing for this model."
-        case .incompleteCache:
-            return model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "The scan reported incomplete local metadata for this model."
-        case .unsupported:
-            if model.item.readable == false {
-                return "The local file was not readable during the scan."
-            }
-            return "The scan marked this local model unsupported."
-        case .duplicate:
-            return "This local variant is redundant with another copy in the same family group."
-        case .quarantined:
-            return "This model is quarantined and should not be used for Prepare or Try."
-        }
-    }
-
-    private var duplicateStatus: String {
-        guard model.readiness == .duplicate else {
-            return "No duplicate status reported by the latest library scan."
-        }
-        return "Duplicate variant reported by the latest library scan. Review the raw model evidence before preparing it."
-    }
-
-    private var prepareDestination: String {
-        switch ModelWorkflowResolver.destination(for: model.item, library: appHost.librarySnapshot) {
-        case .reuseExisting(let existing):
-            return "Existing equivalent MLX model: \(existing.item.path)"
-        case .available(let destination):
-            return destination.path
-        case .blocked(let destination, let reason):
-            return "\(destination.path)\nBlocked: \(reason)"
-        }
-    }
-
-    private var modifiedAtText: String {
-        guard let modifiedAt = model.item.modifiedAt else { return "Unknown" }
-        return format(Date(timeIntervalSince1970: TimeInterval(modifiedAt)))
-    }
-
-    private func detailRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(label)
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
-                .frame(width: 120, alignment: .trailing)
-            Text(value)
-                .font(WorkbenchTypography.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func lines(_ values: [String]) -> String {
-        if values.isEmpty {
-            return "Unknown"
-        }
-        return values.joined(separator: "\n")
-    }
-
-    private func known(_ value: String?) -> String {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? "Unknown" : trimmed
-    }
-
     private func format(_ date: Date) -> String {
         date.formatted(date: .abbreviated, time: .standard)
-    }
-
-    private func selectAndRoute(to route: AppRoute) {
-        appHost.selectedModelPath = model.item.path
-        if route == .run, model.readiness == .ready {
-            appHost.modelWorkflow.prepareServe(model: model)
-        }
-        onRouteSelection(route)
     }
 }
