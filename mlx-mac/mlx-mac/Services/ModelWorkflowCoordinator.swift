@@ -5,6 +5,11 @@ private struct ServeIntent: Equatable {
     let port: Int?
 }
 
+enum ModelWorkflowAPIUnavailable: LocalizedError {
+    case repoConversion
+    var errorDescription: String? { "Repository conversion is not available in this context." }
+}
+
 struct ModelWorkflowAPI {
     let convertPreview: (String, Int, String?) async throws -> [String: Any]
     let convertStart: (String, Int, String?, String) async throws -> [String: Any]
@@ -13,9 +18,15 @@ struct ModelWorkflowAPI {
     let serveStart: (String, String, Int?, String) async throws -> [String: Any]
     let serveStatus: () async throws -> [ServerInfo]
     let serveStop: (Int) async throws -> [String: Any]
+    var convertRepoPreview: (String, String, Int, String?) async throws -> [String: Any] = { _, _, _, _ in
+        throw ModelWorkflowAPIUnavailable.repoConversion
+    }
+    var convertRepoStart: (String, String, Int, String?, String) async throws -> [String: Any] = { _, _, _, _, _ in
+        throw ModelWorkflowAPIUnavailable.repoConversion
+    }
 
     static func live(api: WorkbenchAPI) -> ModelWorkflowAPI {
-        ModelWorkflowAPI(
+        var workflowAPI = ModelWorkflowAPI(
             convertPreview: { path, qBits, output in try await api.convertPreview(ggufPath: path, qBits: qBits, out: output) },
             convertStart: { path, qBits, output, hash in try await api.convertStart(ggufPath: path, qBits: qBits, out: output, previewHash: hash) },
             convertStatus: { try await api.allJobs() },
@@ -24,6 +35,13 @@ struct ModelWorkflowAPI {
             serveStatus: { try await api.serveStatus() },
             serveStop: { port in try await api.serveStop(port: port) }
         )
+        workflowAPI.convertRepoPreview = { repo, backend, qBits, output in
+            try await api.convertRepoPreview(repo: repo, qBits: qBits, out: output, hfCache: nil, backend: backend)
+        }
+        workflowAPI.convertRepoStart = { repo, backend, qBits, output, hash in
+            try await api.convertRepoStart(repo: repo, qBits: qBits, out: output, hfCache: nil, previewHash: hash, backend: backend)
+        }
+        return workflowAPI
     }
 }
 
@@ -156,8 +174,44 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
     }
 
+    /// Starts a conversion from a Hugging Face repo the intake sheet resolved
+    /// as convertible and already downloaded into the HF cache.
+    func inspect(intake: IntakeResolution, outputDirectory: String, qBits: Int, snapshot: LibrarySnapshot?) {
+        selectedSource = nil
+        selectedSnapshot = snapshot
+        conversionPreviewQBits = nil
+        conversionPreviewOutput = nil
+        servePreviewHash = nil
+        servePreviewIntent = nil
+        let output = URL(fileURLWithPath: NSString(string: outputDirectory).expandingTildeInPath)
+            .appendingPathComponent("\(intake.repoName)-MLX-\(qBits)bit").path
+        let backend = intake.backend ?? "mlx-lm"
+        var record: ConversionWorkflow
+        if let existing = snapshot?.models.first(where: { canonicalPath($0.item.path) == canonicalPath(output) }) {
+            record = makeWorkflow(
+                sourcePath: "hf://\(intake.source.repo)", sourceModelKey: nil, sourceSignature: nil,
+                outputPath: existing.item.path, state: .existingModelFound,
+                completedModelPath: existing.item.path,
+                message: "An MLX output already exists at the destination."
+            )
+        } else {
+            record = makeWorkflow(
+                sourcePath: "hf://\(intake.source.repo)", sourceModelKey: nil, sourceSignature: nil,
+                outputPath: output, state: .inspectingSource,
+                message: "Ready to preview converting \(intake.source.repo) with \(backend)."
+            )
+        }
+        record.sourceRepo = intake.source.repo
+        record.backend = backend
+        replace(record, persist: false)
+    }
+
     func preview(qBits: Int, out: String?) async {
         guard !isConversionSubmissionInFlight else { return }
+        if let repo = workflow.sourceRepo {
+            await previewRepo(repo, backend: workflow.backend ?? "mlx-lm", qBits: qBits, out: out)
+            return
+        }
         guard !workflow.sourcePath.isEmpty else {
             fail("Select a GGUF source before previewing conversion.")
             return
@@ -208,6 +262,10 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     func confirm(qBits: Int) async {
         guard !isConversionSubmissionInFlight else { return }
+        if let repo = workflow.sourceRepo {
+            await confirmRepo(repo, backend: workflow.backend ?? "mlx-lm", qBits: qBits)
+            return
+        }
         guard let hash = workflow.previewHash, !hash.isEmpty else {
             fail("Preview conversion before confirming it.")
             return
@@ -247,19 +305,75 @@ final class ModelWorkflowCoordinator: ObservableObject {
         defer { isConversionSubmissionInFlight = false }
         do {
             let response = try await api.convertStart(workflow.sourcePath, qBits, workflow.outputPath, hash)
-            // Newer agents return the receipt as an object (no path inside);
-            // the authoritative receipt path only exists in convert status.
-            // Prefer a plain string receipt (older agents), else resolve the
-            // just-started job by output path.
-            var receipt = response.string("receipt")
-            if receipt == nil, let jobs = try? await api.convertStatus() {
-                let target = canonicalPath(workflow.outputPath)
-                receipt = jobs.first(where: {
-                    guard let out = $0.out else { return false }
-                    return canonicalPath(out) == target
-                })?.receipt
+            guard let receipt = await receipt(from: response), !receipt.isEmpty else {
+                fail("Conversion start did not include a job receipt.")
+                return
             }
-            guard let receipt, !receipt.isEmpty else {
+            conversionPreviewQBits = nil
+            conversionPreviewOutput = nil
+            update(state: .queued, jobReceipt: receipt, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: "queued", persist: true)
+        } catch {
+            fail("Conversion could not be queued: \(AppHost.render(error))")
+        }
+    }
+
+    /// Newer agents return the receipt as an object (no path inside); the
+    /// authoritative receipt path only exists in convert status. Prefer a
+    /// plain string receipt (older agents), else resolve the just-started
+    /// job by output path.
+    private func receipt(from response: [String: Any]) async -> String? {
+        var receipt = response.string("receipt")
+        if receipt == nil, let jobs = try? await api.convertStatus() {
+            let target = canonicalPath(workflow.outputPath)
+            receipt = jobs.first(where: {
+                guard let out = $0.out else { return false }
+                return canonicalPath(out) == target
+            })?.receipt
+        }
+        return receipt
+    }
+
+    private func previewRepo(_ repo: String, backend: String, qBits: Int, out: String?) async {
+        let output = safeOutputOverride(out) ?? workflow.outputPath
+        guard !fileManager.fileExists(atPath: canonicalPath(output)) else {
+            failDestination(destination: output, reason: "The destination already exists; pick another output directory.")
+            return
+        }
+        conversionPreviewQBits = qBits
+        conversionPreviewOutput = output
+        isConversionSubmissionInFlight = true
+        defer { isConversionSubmissionInFlight = false }
+        update(state: .previewingConversion, outputPath: output, message: "Preparing conversion preview.", errorMessage: .some(nil))
+        do {
+            let response = WorkbenchAPI.unwrapPlan(try await api.convertRepoPreview(repo, backend, qBits, output))
+            guard let hash = response.string("preview_hash"), !hash.isEmpty else {
+                fail("Conversion preview did not include a preview hash.")
+                return
+            }
+            update(state: .readyToConfirm, outputPath: output, previewHash: hash, message: "Preview ready for confirmation.", errorMessage: .some(nil))
+        } catch {
+            fail("Conversion preview failed: \(AppHost.render(error))")
+        }
+    }
+
+    private func confirmRepo(_ repo: String, backend: String, qBits: Int) async {
+        guard let hash = workflow.previewHash, !hash.isEmpty else {
+            fail("Preview conversion before confirming it.")
+            return
+        }
+        guard conversionPreviewQBits == qBits, conversionPreviewOutput == workflow.outputPath else {
+            fail("The conversion intent changed after preview. Preview it again before confirming.")
+            return
+        }
+        guard !fileManager.fileExists(atPath: canonicalPath(workflow.outputPath)) else {
+            failDestination(destination: workflow.outputPath, reason: "The destination became occupied after preview.")
+            return
+        }
+        isConversionSubmissionInFlight = true
+        defer { isConversionSubmissionInFlight = false }
+        do {
+            let response = try await api.convertRepoStart(repo, backend, qBits, workflow.outputPath, hash)
+            guard let receipt = await receipt(from: response), !receipt.isEmpty else {
                 fail("Conversion start did not include a job receipt.")
                 return
             }
@@ -284,6 +398,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
     }
 
     func prepareServe(model: LibraryModel, exactPath: String? = nil) {
+        guard ModelTaskPresentation.isServable(model) else {
+            let title = model.item.task?.type.title ?? "This"
+            update(serveState: .failed, message: "\(title) models are not servable by mlx-lm.", errorMessage: "\(title) models are not servable by mlx-lm.")
+            return
+        }
         let selectedPath = preferredModelPath(
             model,
             preferred: exactPath ?? workflow.completedModelPath ?? workflow.outputPath
@@ -487,7 +606,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
         for id in ids {
             guard let record = history.first(where: { $0.id == id }) else { continue }
             if let completed = completedModel(in: snapshot, for: record) {
-                if let verifier = completionVerifier {
+                let skippedType = completed.model.item.task.flatMap { $0.type.hasCanary ? nil : $0.type }
+                if let verifier = completionVerifier, skippedType == nil {
                     replace(
                         updatedRecord(
                             from: record,
@@ -512,7 +632,9 @@ final class ModelWorkflowCoordinator: ObservableObject {
                             state: .completed,
                             outputPath: completed.path,
                             completedModelPath: completed.path,
-                            message: "Conversion completed and the MLX output was confirmed by a fresh scan.",
+                            message: skippedType.map {
+                                "Conversion completed; \($0.title) models have no canary, so the output was confirmed by a fresh scan only."
+                            } ?? "Conversion completed and the MLX output was confirmed by a fresh scan.",
                             errorMessage: .some(nil)
                         ),
                         persist: true,
@@ -614,7 +736,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 replace(updatedRecord(from: record, state: .queued, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
             case "running", "active":
                 replace(updatedRecord(from: record, state: .running, message: "Conversion running.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
-            case "completed", "complete", "succeeded", "success":
+            case "done", "completed", "complete", "succeeded", "success":
                 guard record.state != .completed else { continue }
                 completionRescanRequested = true
                 pendingCompletionRecordIDs.insert(record.id)
@@ -715,12 +837,29 @@ final class ModelWorkflowCoordinator: ObservableObject {
         message: String? = nil,
         errorMessage: String? = nil
     ) -> ConversionWorkflow {
+        makeWorkflow(
+            sourcePath: source.path, sourceModelKey: source.modelKey, sourceSignature: source.signature,
+            outputPath: outputPath, state: state, completedModelPath: completedModelPath,
+            message: message, errorMessage: errorMessage
+        )
+    }
+
+    private func makeWorkflow(
+        sourcePath: String,
+        sourceModelKey: String?,
+        sourceSignature: String?,
+        outputPath: String,
+        state: ConversionWorkflowState,
+        completedModelPath: String? = nil,
+        message: String? = nil,
+        errorMessage: String? = nil
+    ) -> ConversionWorkflow {
         let timestamp = now()
         return ConversionWorkflow(
             id: UUID(),
-            sourcePath: source.path,
-            sourceModelKey: source.modelKey,
-            sourceSignature: source.signature,
+            sourcePath: sourcePath,
+            sourceModelKey: sourceModelKey,
+            sourceSignature: sourceSignature,
             outputPath: outputPath,
             previewHash: nil,
             jobReceipt: nil,
@@ -794,7 +933,9 @@ final class ModelWorkflowCoordinator: ObservableObject {
             errorMessage: nextErrorMessage,
             createdAt: base.createdAt,
             updatedAt: now(),
-            lastKnownAgentState: lastKnownAgentState ?? base.lastKnownAgentState
+            lastKnownAgentState: lastKnownAgentState ?? base.lastKnownAgentState,
+            sourceRepo: base.sourceRepo,
+            backend: base.backend
         )
     }
 

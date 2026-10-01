@@ -248,6 +248,9 @@ struct LibraryModel: Codable, Equatable, Hashable {
     }
 
     private static func makeCapabilities(from item: ModelItem) -> [UseCase] {
+        if let task = item.task {
+            return ModelTaskPresentation.capabilities(for: task)
+        }
         let searchSpace = [
             item.name,
             item.modelKey,

@@ -86,6 +86,32 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(result["out"] as? String, "/out")
     }
 
+    func testIntakeCommandsSendExpectedArgv() async throws {
+        let record = FileManager.default.temporaryDirectory.appendingPathComponent("argv-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: record) }
+        let agent = try FixtureAgent(recordingTo: record, payload: ["plan": ["preview_hash": "h"], "jobs": []])
+        defer { agent.remove() }
+        let receipts = FileManager.default.temporaryDirectory.appendingPathComponent("receipts-\(UUID().uuidString)").path
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path, receiptDirectory: receipts)
+
+        _ = try await api.backendInstallPreview(id: "mlx-audio")
+        _ = try await api.backendInstallStart(id: "mlx-audio", previewHash: "h")
+        let request = IntakeFetchRequest(source: "unsloth/Qwen3-8B-GGUF", revision: "main", file: "a.gguf", localDir: "/models/gguf/Qwen3-8B-GGUF")
+        _ = try await api.intakeFetchPreview(request)
+        _ = try await api.intakeFetchStart(request, previewHash: "h")
+        _ = try await api.intakeStatus()
+        _ = try await api.convertRepoPreview(repo: "openai/whisper-tiny", qBits: 4, out: "/out", hfCache: nil, backend: "mlx-audio")
+
+        let lines = try String(contentsOf: record, encoding: .utf8).split(separator: "\n")
+        let argv = try lines.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String]) }
+        XCTAssertEqual(argv[0], ["backend", "install", "mlx-audio", "--receipts-dir", receipts, "--json"])
+        XCTAssertEqual(argv[1], ["backend", "install", "mlx-audio", "--confirm", "--preview-hash", "h", "--receipts-dir", receipts, "--json"])
+        XCTAssertEqual(argv[2], ["intake", "fetch", "unsloth/Qwen3-8B-GGUF", "--revision", "main", "--file", "a.gguf", "--local-dir", "/models/gguf/Qwen3-8B-GGUF", "--receipts-dir", receipts, "--json"])
+        XCTAssertEqual(argv[3].suffix(5), ["--confirm", "--preview-hash", "h", "--receipts-dir", receipts, "--json"].suffix(5))
+        XCTAssertEqual(argv[4], ["intake", "status", "--receipts-dir", receipts, "--json"])
+        XCTAssertTrue(argv[5].contains("--backend") && argv[5].contains("mlx-audio"))
+    }
+
     func testConvertPreviewAcceptsFlatLegacyShape() async throws {
         let agent = try FixtureAgent(
             convertPreviewPayload: ["preview_hash": "hash-flat", "out": "/out"]
@@ -219,6 +245,23 @@ private final class FixtureAgent {
     convenience init(scanPayload: [String: Any]) throws {
         self.init()
         try write(scriptAssertion: "\"convert\" in sys.argv and \"scan\" in sys.argv", payload: scanPayload)
+    }
+
+    /// Appends each invocation's argv (JSON) to `recordPath` and returns `payload`.
+    convenience init(recordingTo recordPath: URL, payload: [String: Any]) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let body = String(data: try JSONSerialization.data(withJSONObject: payload), encoding: .utf8) ?? "{}"
+        let script = """
+        import json
+        import sys
+
+        with open(\(String(reflecting: recordPath.path)), "a") as handle:
+            handle.write(json.dumps(sys.argv[1:]) + "\\n")
+        print(json.dumps({"status": "ok", "data": \(body)}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
     }
 
     convenience init(convertPreviewPayload: [String: Any]) throws {

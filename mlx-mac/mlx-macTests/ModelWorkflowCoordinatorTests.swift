@@ -93,6 +93,22 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
+    /// mlx-agent's `convert status` reports a finished job as "done"
+    /// (convert.py status_convert); it must be treated as completed.
+    func testAgentDoneStateIsTreatedAsCompleted() async {
+        let doneJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "done")
+        let host = await makeHost(jobs: [doneJob])
+        await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
+
+        await host.modelWorkflow.reconcile(snapshot: nil, jobs: [])
+
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .running)
+            XCTAssertTrue(host.modelWorkflow.workflow.message?.contains("fresh library scan") == true)
+            XCTAssertFalse(host.modelWorkflow.workflow.message?.contains("not recognized") == true)
+        }
+    }
+
     func testTerminalStatusCompletesOnlyFromPostStatusRescan() async {
         let events = WorkflowEventLog()
         let scans = ScanSequence([

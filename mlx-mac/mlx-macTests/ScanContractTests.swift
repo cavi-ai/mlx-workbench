@@ -10,6 +10,9 @@ final class ScanContractTests: XCTestCase {
         XCTAssertEqual(result.models.map(\.bytes), [903_453_952, 29_047_084_448])
         XCTAssertEqual(result.totals.bytes, 29_950_538_400)
         XCTAssertEqual(result.outputs.count, 1)
+        XCTAssertEqual(result.models[0].task?.type, .textLLM)
+        XCTAssertEqual(result.models[0].task?.useCases, ["coding", "general_chat"])
+        XCTAssertEqual(result.outputs[0].task?.type, .speechToText)
     }
 
     func testDecodeScanRejectsMissingRequiredModelBytes() throws {

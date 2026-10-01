@@ -67,7 +67,8 @@ enum ModelLibraryBuilder {
                 status: "ready",
                 outputs: [output.path],
                 tensorCount: nil,
-                error: nil
+                error: nil,
+                task: output.task
             )
             return LibraryModel(
                 item: item,

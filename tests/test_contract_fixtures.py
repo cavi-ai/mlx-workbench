@@ -30,6 +30,11 @@ class ScanContractFixtureTests(unittest.TestCase):
         self.assertEqual(payload["totals"]["bytes"], 29950538400)
         self.assertEqual(len(payload["outputs"]), 1)
 
+    def test_scan_task_labels_survive_validation(self):
+        payload = bridge.validate_scan(_fixture("convert-scan-valid.json"))
+        self.assertEqual(payload["models"][0]["task"]["type"], "text_llm")
+        self.assertEqual(payload["outputs"][0]["task"]["use_cases"], ["transcription"])
+
     def test_missing_model_bytes_is_rejected(self):
         with self.assertRaises(bridge.BridgeError) as caught:
             bridge.validate_scan(_fixture("convert-scan-missing-bytes.json"))

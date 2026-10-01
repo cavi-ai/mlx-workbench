@@ -33,6 +33,9 @@ struct MlxWorkbenchApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command])
             }
+            CommandGroup(after: .pasteboard) {
+                IntakeMenuCommand(intake: appHost.intake)
+            }
             // Settings is a workbench destination, so one draft state exists;
             // ⌘, selects it instead of opening a second Settings window.
             CommandGroup(replacing: .appSettings) {
@@ -42,6 +45,11 @@ struct MlxWorkbenchApp: App {
                 .keyboardShortcut(",", modifiers: [.command])
             }
         }
+        Window("Add from Hugging Face", id: IntakeWindow.id) {
+            IntakeSheet(intake: appHost.intake, appHost: appHost, onRouteSelection: { selectedRouteID = $0.rawValue })
+        }
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 720, height: 640)
         MenuBarExtra("mlx-workbench", systemImage: EndpointIcon.name(forStates: appHost.endpoint.fleet.slots.filter(\.enabled).compactMap { appHost.endpoint.slotStates[$0.id] })) {
             MenuBarView(appHost: appHost)
         }

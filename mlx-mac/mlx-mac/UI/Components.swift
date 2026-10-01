@@ -98,7 +98,7 @@ struct WorkbenchStatus: Equatable {
         case "running", "started", "active": self = .running
         case "converted": self = .converted
         case "ready", "ok": self = .ready
-        case "completed": self = .completed
+        case "completed", "done": self = .completed
         case "verified": self = .verified
         case "enabled": self = .enabled
         case "disabled": self = .disabled

@@ -39,6 +39,8 @@ class AppHost: ObservableObject {
     /// Guided runtime setup (make install runner). Only actionable when the
     /// app runs from a checkout; see WorkbenchPython.repoRoot().
     let runtimeInstaller: RuntimeInstaller
+    /// Hugging Face intake sheet state (verdict, backend install, downloads).
+    let intake: IntakeCoordinator
     /// First-launch setup assistant state (persisted once completed).
     let setup: SetupCoordinator
     /// In-app updates (official tags or beta/main) for checkout-run installs.
@@ -82,7 +84,8 @@ class AppHost: ObservableObject {
         runtimeInstaller: RuntimeInstaller? = nil,
         setup: SetupCoordinator? = nil,
         updater: UpdateCoordinator? = nil,
-        preferencesStore: JSONStore<RecommendationPreferences>? = nil
+        preferencesStore: JSONStore<RecommendationPreferences>? = nil,
+        intakeAPI: IntakeAPI? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -131,6 +134,7 @@ class AppHost: ObservableObject {
         )
         self.reclaim = reclaim ?? ReclaimCoordinator()
         self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller()
+        self.intake = IntakeCoordinator(api: intakeAPI ?? .live(api: api))
         self.setup = setup ?? SetupCoordinator()
         self.updater = updater ?? UpdateCoordinator()
         let verificationCoordinator = self.verification
@@ -246,6 +250,61 @@ class AppHost: ObservableObject {
         await finishCompletionReconciliationIfNeeded()
     }
 
+    /// Where intake downloads land: already-MLX repos into the (scanned)
+    /// output directory, GGUF files into the first GGUF root; convertible
+    /// repos go to the HF cache (nil).
+    func intakeDownloadDirectory(for resolution: IntakeResolution) -> String? {
+        switch resolution.verdict {
+        case .alreadyMLX:
+            return URL(fileURLWithPath: config.outputDir).appendingPathComponent(resolution.repoName).path
+        case .gguf:
+            let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
+            let root = roots.first ?? config.outputDir
+            return URL(fileURLWithPath: root).appendingPathComponent(resolution.repoName).path
+        default:
+            return nil
+        }
+    }
+
+    /// Hands a finished download to the existing flows; returns the route to show.
+    func finishIntake(_ resolution: IntakeResolution, downloadedPath: String?, selectedFile: String?) async -> AppRoute? {
+        switch resolution.verdict {
+        case .convertible:
+            modelWorkflow.inspect(intake: resolution, outputDirectory: config.outputDir, qBits: config.qBits, snapshot: librarySnapshot)
+            return .prepare
+        case .alreadyMLX:
+            await rescan()
+            selectedModelPath = downloadedPath
+            return .library
+        case .gguf:
+            await rescan()
+            guard let downloadedPath, let selectedFile else { return .library }
+            let path = URL(fileURLWithPath: downloadedPath).appendingPathComponent(selectedFile).path
+            selectedModelPath = path
+            if let model = librarySnapshot?.models.first(where: { $0.item.path == path }) {
+                modelWorkflow.inspect(source: model.item, snapshot: librarySnapshot)
+                return .prepare
+            }
+            return .library
+        default:
+            return nil
+        }
+    }
+
+    /// MLX roots the scan reads: configured roots plus the intake output dir.
+    /// With no MLX roots configured the agent falls back to scanning the GGUF
+    /// roots, so that fallback is spelled out before the output dir is added.
+    static func scanMLXRoots(_ config: Config, ggufRoots: [String]) -> [String] {
+        let output = config.outputDir.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !output.isEmpty else { return config.mlxRoots }
+        var roots = config.mlxRoots.isEmpty ? ggufRoots : config.mlxRoots
+        let normalize = { (path: String) in URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.path }
+        if !roots.map(normalize).contains(normalize(output)) {
+            roots.append(output)
+        }
+        return roots
+    }
+
     private func rescan(limit: Int?, reconcileWorkflow: Bool) async -> LibrarySnapshot? {
         guard !isScanning else { return nil }
         isScanning = true
@@ -254,7 +313,7 @@ class AppHost: ObservableObject {
             let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
             let scan = try await scanOperation(
                 roots,
-                config.mlxRoots,
+                Self.scanMLXRoots(config, ggufRoots: roots),
                 config.signatures,
                 limit
             )

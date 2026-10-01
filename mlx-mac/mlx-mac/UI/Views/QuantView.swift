@@ -6,6 +6,13 @@ import SwiftUI
 // (premium spec 03). Key metrics stay on screen; per-prompt outputs and
 // diffs stay behind disclosures. Past runs are browsable history.
 
+enum ComparePresentation {
+    /// Measured comparisons replay chat prompts; only chat-servable types qualify.
+    static func candidates(from models: [LibraryModel]) -> [LibraryModel] {
+        models.filter { $0.readiness == .ready && ModelTaskPresentation.isServable($0) }
+    }
+}
+
 struct QuantView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
@@ -65,7 +72,7 @@ struct QuantView: View {
     // MARK: - Measured comparison setup
 
     private var readyModels: [LibraryModel] {
-        appHost.librarySnapshot?.models.filter { $0.readiness == .ready } ?? []
+        ComparePresentation.candidates(from: appHost.librarySnapshot?.models ?? [])
     }
 
     private var selectedPromptSet: PromptSet? {

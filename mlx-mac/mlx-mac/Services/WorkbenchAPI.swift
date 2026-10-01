@@ -79,10 +79,11 @@ actor WorkbenchAPI {
     }
 
     func convertRepoPreview(repo: String, qBits: Int, out: String?,
-                            hfCache: String?) throws -> [String: Any] {
+                            hfCache: String?, backend: String? = nil) throws -> [String: Any] {
         var argv = ["convert", "start", "--repo", repo, "--q-bits", String(qBits)]
         if let out { argv.append(contentsOf: ["--out", out]) }
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
+        if let backend { argv.append(contentsOf: ["--backend", backend]) }
         return Self.unwrapPlan(try raw(argv))
     }
 
@@ -100,7 +101,8 @@ actor WorkbenchAPI {
     }
 
     func convertRepoStart(repo: String, qBits: Int, out: String?,
-                          hfCache: String?, previewHash: String) throws -> [String: Any] {
+                          hfCache: String?, previewHash: String,
+                          backend: String? = nil) throws -> [String: Any] {
         var argv = [
             "convert", "start", "--repo", repo, "--q-bits", String(qBits),
             "--confirm", "--preview-hash", previewHash,
@@ -108,7 +110,65 @@ actor WorkbenchAPI {
         ]
         if let out { argv.append(contentsOf: ["--out", out]) }
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
+        if let backend { argv.append(contentsOf: ["--backend", backend]) }
         return try raw(argv)
+    }
+
+    // MARK: - Intake
+
+    static func decode<T: Decodable>(_ type: T.Type, from data: [String: Any]) throws -> T {
+        let json = try JSONSerialization.data(withJSONObject: data)
+        return try JSONDecoder().decode(T.self, from: json)
+    }
+
+    func intakeResolve(source: String) throws -> IntakeResolution {
+        try Self.decode(IntakeResolution.self, from: raw(["intake", "resolve", source], timeout: 45))
+    }
+
+    func backendList() throws -> BackendList {
+        try Self.decode(BackendList.self, from: raw(["backend", "list", "--receipts-dir", receiptDirectory]))
+    }
+
+    func backendInstallPreview(id: String) throws -> [String: Any] {
+        Self.unwrapPlan(try raw(["backend", "install", id, "--receipts-dir", receiptDirectory]))
+    }
+
+    func backendInstallStart(id: String, previewHash: String) throws -> [String: Any] {
+        try raw(["backend", "install", id, "--confirm", "--preview-hash", previewHash,
+                 "--receipts-dir", receiptDirectory])
+    }
+
+    private static func fetchArguments(_ request: IntakeFetchRequest) -> [String] {
+        var argv = ["intake", "fetch", request.source, "--revision", request.revision]
+        if let file = request.file { argv += ["--file", file] }
+        if let localDir = request.localDir { argv += ["--local-dir", localDir] }
+        return argv
+    }
+
+    func intakeFetchPreview(_ request: IntakeFetchRequest) throws -> [String: Any] {
+        Self.unwrapPlan(try raw(Self.fetchArguments(request) + ["--receipts-dir", receiptDirectory]))
+    }
+
+    func intakeFetchStart(_ request: IntakeFetchRequest, previewHash: String) throws -> [String: Any] {
+        try raw(Self.fetchArguments(request) + ["--confirm", "--preview-hash", previewHash,
+                                                "--receipts-dir", receiptDirectory])
+    }
+
+    func intakeStatus() throws -> [FetchJob] {
+        let data = try raw(["intake", "status", "--receipts-dir", receiptDirectory])
+        let jobs = (data["jobs"] as? [[String: Any]]) ?? []
+        return try jobs.map { try Self.decode(FetchJob.self, from: $0) }
+    }
+
+    func portAnalysis(source: String) throws -> PortAnalysis {
+        try Self.decode(PortAnalysis.self, from: raw(["intake", "port-analysis", source], timeout: 90))
+    }
+
+    func portPlan(source: String, endpoint: String, model: String) throws -> PortPlanResult {
+        try Self.decode(PortPlanResult.self, from: raw(
+            ["intake", "port-plan", source, "--endpoint", endpoint, "--model", model],
+            timeout: 960
+        ))
     }
 
     // MARK: - Jobs
@@ -495,7 +555,8 @@ actor WorkbenchAPI {
                 status: raw.string("status") ?? "pending",
                 outputs: raw["outputs"] as? [String] ?? [],
                 tensorCount: raw.int("tensor_count"),
-                error: raw.string("error")
+                error: raw.string("error"),
+                task: ModelTask(dictionary: raw["task"] as? [String: Any])
             )
         }
         let outputsRaw = (data["outputs"] as? [[String: Any]]) ?? []
@@ -515,7 +576,8 @@ actor WorkbenchAPI {
                 name: raw.string("name") ?? path,
                 modelKey: raw.string("model_key"),
                 quantization: info,
-                provenance: raw.string("provenance")
+                provenance: raw.string("provenance"),
+                task: ModelTask(dictionary: raw["task"] as? [String: Any])
             )
         }
         guard let totalsDict = data["totals"] as? [String: Any] else {

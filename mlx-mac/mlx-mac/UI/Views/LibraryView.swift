@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct LibraryGroupViewModel: Identifiable, Equatable, Hashable {
     let sourceGroup: ModelGroup
@@ -196,6 +198,7 @@ struct LibraryView: View {
     @State private var sortOrder = LibraryTablePresentation.defaultSortOrder
     @State private var showInspector = true
     @Environment(\.isRouteActive) private var isRouteActive
+    @Environment(\.openWindow) private var openWindow
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -366,12 +369,20 @@ struct LibraryView: View {
                 showInspector = true
             }
         }
+        .onPasteCommand(of: [.plainText, .url]) { _ in pasteIntake() }
         .copyable(selectedModel.map { [$0.item.path] } ?? [])
         .onKeyPress(.return) {
             guard selectedModel != nil else { return .ignored }
             showInspector = true
             return .handled
         }
+    }
+
+    private func pasteIntake() {
+        let text = NSPasteboard.general.string(forType: .string)
+        guard IntakeCoordinator.looksLikeHFLink(text) else { return }
+        appHost.intake.open(with: text)
+        openWindow(id: IntakeWindow.id)
     }
 
     @ViewBuilder
