@@ -98,6 +98,42 @@ final class IntakeCoordinatorTests: XCTestCase {
         XCTAssertEqual(intake.downloadedPath, "/hf/snap")
     }
 
+    func testDraftNeedsARunningServerAndUsesItsIdentity() async throws {
+        var drafted: (String, String, String)?
+        let server = ServerInfo(repo: "Qwen/Qwen3-8B-MLX", path: nil, runtime: "mlx-lm", port: 8090, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: nil)
+        let api = IntakeAPI.stub(
+            resolve: { _ in try Self.resolution(verdict: "unsupported", backend: nil) },
+            portAnalysis: { _ in try Self.analysis() },
+            portPlan: { source, endpoint, model in
+                drafted = (source, endpoint, model)
+                return PortPlanResult(schema: "port-plan/1", path: "/plans/x.md", model: model, endpoint: endpoint, analysisSha256: "s", promptChars: 1, truncated: false, bytes: 1)
+            },
+            serveStatus: { [server] }
+        )
+        let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 3)
+        intake.sourceText = "Edge0/Audio8-ASR-Infinite"
+        await intake.resolve()
+        XCTAssertEqual(intake.draftServer?.port, 8090)
+        await intake.draftPlan()
+        XCTAssertEqual(drafted?.1, "http://127.0.0.1:8090")
+        XCTAssertEqual(drafted?.2, "Qwen/Qwen3-8B-MLX")
+        XCTAssertEqual(intake.draft?.path, "/plans/x.md")
+    }
+
+    func testNoRunningServerMeansNoDraft() async throws {
+        let api = IntakeAPI.stub(
+            resolve: { _ in try Self.resolution(verdict: "unsupported", backend: nil) },
+            portAnalysis: { _ in try Self.analysis() },
+            serveStatus: { [] }
+        )
+        let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 3)
+        intake.sourceText = "Edge0/Audio8-ASR-Infinite"
+        await intake.resolve()
+        XCTAssertNil(intake.draftServer)
+        await intake.draftPlan()
+        XCTAssertNil(intake.draft)
+    }
+
     static func resolution(verdict: String, backend: String?) throws -> IntakeResolution {
         let json = """
         {"schema":"intake/1","source":{"input":"x","repo":"openai/whisper-tiny","revision":"main","file":null,"url":"u"},

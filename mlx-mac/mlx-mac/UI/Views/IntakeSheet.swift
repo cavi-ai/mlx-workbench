@@ -82,6 +82,9 @@ struct IntakeSheet: View {
                         summary(resolution)
                         componentsTable(resolution)
                         actions(resolution)
+                        if let analysis = intake.analysis {
+                            PortAnalysisPanel(intake: intake, analysis: analysis)
+                        }
                     }
                     if !intake.logTail.isEmpty {
                         Text(intake.logTail.joined(separator: "\n"))
