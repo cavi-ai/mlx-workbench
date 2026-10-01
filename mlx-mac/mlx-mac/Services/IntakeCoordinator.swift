@@ -69,7 +69,6 @@ final class IntakeCoordinator: ObservableObject {
         case failed(String)
     }
 
-    @Published var isPresented = false
     @Published var sourceText = ""
     @Published var selectedGGUF: String?
     @Published private(set) var resolution: IntakeResolution?
@@ -120,7 +119,6 @@ final class IntakeCoordinator: ObservableObject {
         downloadedPath = nil
         logTail = []
         activity = .idle
-        isPresented = true
         if Self.looksLikeHFLink(sourceText) {
             Task { await resolve() }
         }

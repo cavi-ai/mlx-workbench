@@ -14,6 +14,23 @@ final class IntakeCoordinatorTests: XCTestCase {
         }
     }
 
+    func testOpenResetsStateAndKeepsText() async throws {
+        let api = IntakeAPI.stub(resolve: { _ in try Self.resolution(verdict: "convertible", backend: "mlx-lm") })
+        let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 3)
+        intake.open(with: "  org/name  ")
+        XCTAssertEqual(intake.sourceText, "org/name")
+        XCTAssertNil(intake.resolution)
+        XCTAssertNil(intake.draft)
+        XCTAssertEqual(intake.logTail, [])
+        for _ in 0..<200 where intake.resolution == nil {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(intake.resolution?.verdict, .convertible)
+        XCTAssertEqual(intake.sourceText, "org/name")
+        XCTAssertNil(intake.draft)
+        XCTAssertEqual(intake.logTail, [])
+    }
+
     func testUnsupportedResolutionRunsAnalysis() async throws {
         var analyzed = 0
         let api = IntakeAPI.stub(

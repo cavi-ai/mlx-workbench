@@ -76,6 +76,7 @@ struct PrepareWorkflowPresentation: Equatable {
 
 struct ConvertView: View {
     @ObservedObject var appHost: AppHost
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     private let onRouteSelection: (AppRoute) -> Void
 
@@ -122,7 +123,9 @@ struct ConvertView: View {
 
     private func pasteIntake() {
         let text = NSPasteboard.general.string(forType: .string)
-        if IntakeCoordinator.looksLikeHFLink(text) { appHost.intake.open(with: text) }
+        guard IntakeCoordinator.looksLikeHFLink(text) else { return }
+        appHost.intake.open(with: text)
+        openWindow(id: IntakeWindow.id)
     }
 
     private var workflowCard: some View {

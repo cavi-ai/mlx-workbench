@@ -58,9 +58,10 @@ from `mlx-agent` at runtime.
   boundary), runs the canary suite in `Models/VerificationModels.swift`, and
   only then marks the workflow `verified`. The gate attaches in `App.swift`;
   without an attached verifier the workflow behavior is unchanged.
-- **Hugging Face Intake**: `IntakeCoordinator` + `IntakeSheet` (Prepare field, ⌘V on the
-  Library table and Prepare view, ⇧⌘V anywhere) over `mlx-agent intake resolve|fetch|status|
-  port-analysis|port-plan` and `backend list|install|remove`. Repo conversions run through
+- **Hugging Face Intake**: `IntakeCoordinator` + a single Add from Hugging Face window
+  (`IntakeSheet`; Prepare field, ⌘V on the Library table and Prepare view, ⇧⌘V anywhere) over
+  `mlx-agent intake resolve|fetch|status|port-analysis|port-plan` and
+  `backend list|install|remove`. Repo conversions run through
   `ModelWorkflowCoordinator.inspect(intake:…)` with `ConversionWorkflow.sourceRepo/backend`;
   the Quality Gate canary runs only for `ModelTaskType.hasCanary` types, and Run/Compare refuse
   non-servable types. `config.outputDir` is scanned as an MLX root. Model type and use cases come

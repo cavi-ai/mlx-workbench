@@ -1,19 +1,27 @@
 import SwiftUI
 import AppKit
 
-// MARK: - IntakePresenter
+// MARK: - IntakeWindow
 
-/// Presents the intake sheet for the whole window; observes the coordinator
-/// directly so nested published state drives the sheet.
-struct IntakePresenter: ViewModifier {
+/// The single Add from Hugging Face window; every entry point opens it by id.
+enum IntakeWindow {
+    static let id = "hf-intake"
+}
+
+// MARK: - IntakeMenuCommand
+
+/// ⇧⌘V menu item: loads the pasteboard into the shared coordinator and opens
+/// the one intake window.
+struct IntakeMenuCommand: View {
     @ObservedObject var intake: IntakeCoordinator
-    let appHost: AppHost
-    let onRouteSelection: (AppRoute) -> Void
+    @Environment(\.openWindow) private var openWindow
 
-    func body(content: Content) -> some View {
-        content.sheet(isPresented: $intake.isPresented) {
-            IntakeSheet(intake: intake, appHost: appHost, onRouteSelection: onRouteSelection)
+    var body: some View {
+        Button("Add from Hugging Face…") {
+            intake.open(with: NSPasteboard.general.string(forType: .string))
+            openWindow(id: IntakeWindow.id)
         }
+        .keyboardShortcut("v", modifiers: [.command, .shift])
     }
 }
 
@@ -21,6 +29,7 @@ struct IntakePresenter: ViewModifier {
 
 struct IntakeField: View {
     @ObservedObject var intake: IntakeCoordinator
+    @Environment(\.openWindow) private var openWindow
     @State private var text = ""
 
     var body: some View {
@@ -43,6 +52,7 @@ struct IntakeField: View {
 
     private func open() {
         intake.open(with: text)
+        openWindow(id: IntakeWindow.id)
     }
 }
 
@@ -52,6 +62,7 @@ struct IntakeSheet: View {
     @ObservedObject var intake: IntakeCoordinator
     @ObservedObject var appHost: AppHost
     let onRouteSelection: (AppRoute) -> Void
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -84,7 +95,7 @@ struct IntakeSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Close") { intake.isPresented = false }
+                Button("Close") { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
         }
@@ -188,7 +199,7 @@ struct IntakeSheet: View {
         let directory = appHost.intakeDownloadDirectory(for: resolution)
         guard let path = await intake.download(localDir: directory) else { return }
         if let route = await appHost.finishIntake(resolution, downloadedPath: path, selectedFile: intake.selectedGGUF) {
-            intake.isPresented = false
+            dismiss()
             onRouteSelection(route)
         }
     }

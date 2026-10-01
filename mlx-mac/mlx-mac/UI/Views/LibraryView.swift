@@ -198,6 +198,7 @@ struct LibraryView: View {
     @State private var sortOrder = LibraryTablePresentation.defaultSortOrder
     @State private var showInspector = true
     @Environment(\.isRouteActive) private var isRouteActive
+    @Environment(\.openWindow) private var openWindow
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -379,7 +380,9 @@ struct LibraryView: View {
 
     private func pasteIntake() {
         let text = NSPasteboard.general.string(forType: .string)
-        if IntakeCoordinator.looksLikeHFLink(text) { appHost.intake.open(with: text) }
+        guard IntakeCoordinator.looksLikeHFLink(text) else { return }
+        appHost.intake.open(with: text)
+        openWindow(id: IntakeWindow.id)
     }
 
     @ViewBuilder
