@@ -59,6 +59,11 @@ struct ConversionWorkflow: Codable, Equatable, Identifiable {
     let createdAt: Date
     let updatedAt: Date
     let lastKnownAgentState: String?
+    /// Set for conversions that start from a Hugging Face repo (intake);
+    /// `sourcePath` is then `hf://<repo>` for display only.
+    var sourceRepo: String? = nil
+    /// Optional converter backend id for repo conversions (nil = mlx-lm).
+    var backend: String? = nil
 
     var persistenceIdentifier: String {
         id.uuidString

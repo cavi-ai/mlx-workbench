@@ -246,6 +246,17 @@ class AppHost: ObservableObject {
         await finishCompletionReconciliationIfNeeded()
     }
 
+    /// MLX roots the scan reads: configured roots plus the intake output dir.
+    static func scanMLXRoots(_ config: Config) -> [String] {
+        var roots = config.mlxRoots
+        let output = config.outputDir.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalize = { (path: String) in URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.path }
+        if !output.isEmpty, !roots.map(normalize).contains(normalize(output)) {
+            roots.append(output)
+        }
+        return roots
+    }
+
     private func rescan(limit: Int?, reconcileWorkflow: Bool) async -> LibrarySnapshot? {
         guard !isScanning else { return nil }
         isScanning = true
@@ -254,7 +265,7 @@ class AppHost: ObservableObject {
             let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
             let scan = try await scanOperation(
                 roots,
-                config.mlxRoots,
+                Self.scanMLXRoots(config),
                 config.signatures,
                 limit
             )
