@@ -85,6 +85,7 @@
 		24BBLD028 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF022 /* LibraryView.swift */; };
 		27ABCD000000000000000005 /* LibraryTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000005 /* LibraryTable.swift */; };
 		27ABCD000000000000000013 /* IntakeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000013 /* IntakeSheet.swift */; };
+		27ABCD000000000000000021 /* PortAnalysisPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000021 /* PortAnalysisPanel.swift */; };
 		27ABCD000000000000000012 /* IntakeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000012 /* IntakeCoordinator.swift */; };
 		27ABCD000000000000000009 /* IntakeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000009 /* IntakeModels.swift */; };
 		27ABCD000000000000000007 /* ModelTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000007 /* ModelTask.swift */; };
@@ -158,6 +159,7 @@
 		27ABCD000000000000000003 /* AppRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000003 /* AppRouteTests.swift */; };
 		27ABCD000000000000000004 /* DesignLintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000004 /* DesignLintTests.swift */; };
 		27ABCD000000000000000011 /* IntakeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000011 /* IntakeCoordinatorTests.swift */; };
+		27ABCD000000000000000020 /* LibraryTypeGroupingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000020 /* LibraryTypeGroupingTests.swift */; };
 		27ABCD000000000000000010 /* RepoWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000010 /* RepoWorkflowTests.swift */; };
 		27ABCD000000000000000014 /* CompareLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000014 /* CompareLayoutTests.swift */; };
 		27ABCD000000000000000008 /* IntakeContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000008 /* IntakeContractTests.swift */; };
@@ -227,6 +229,7 @@
 		24FREF022 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryView.swift; path = UI/Views/LibraryView.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000005 /* LibraryTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryTable.swift; path = UI/Views/LibraryTable.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000013 /* IntakeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeSheet.swift; path = UI/Views/IntakeSheet.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000021 /* PortAnalysisPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PortAnalysisPanel.swift; path = UI/Views/PortAnalysisPanel.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000012 /* IntakeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeCoordinator.swift; path = Services/IntakeCoordinator.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000009 /* IntakeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeModels.swift; path = Models/IntakeModels.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000007 /* ModelTask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTask.swift; path = Models/ModelTask.swift; sourceTree = "<group>"; };
@@ -315,6 +318,7 @@
 		27ABCD100000000000000003 /* AppRouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppRouteTests.swift; path = AppRouteTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000004 /* DesignLintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DesignLintTests.swift; path = DesignLintTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000011 /* IntakeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeCoordinatorTests.swift; path = IntakeCoordinatorTests.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000020 /* LibraryTypeGroupingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryTypeGroupingTests.swift; path = LibraryTypeGroupingTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000010 /* RepoWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RepoWorkflowTests.swift; path = RepoWorkflowTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000014 /* CompareLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CompareLayoutTests.swift; path = CompareLayoutTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000008 /* IntakeContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeContractTests.swift; path = IntakeContractTests.swift; sourceTree = "<group>"; };
@@ -451,6 +455,7 @@
 				24FREF022 /* LibraryView.swift */,
 				27ABCD100000000000000005 /* LibraryTable.swift */,
 				27ABCD100000000000000013 /* IntakeSheet.swift */,
+				27ABCD100000000000000021 /* PortAnalysisPanel.swift */,
 				27ABCD100000000000000012 /* IntakeCoordinator.swift */,
 				27ABCD100000000000000009 /* IntakeModels.swift */,
 				27ABCD100000000000000007 /* ModelTask.swift */,
@@ -525,6 +530,7 @@
 				27ABCD100000000000000003 /* AppRouteTests.swift */,
 				27ABCD100000000000000004 /* DesignLintTests.swift */,
 				27ABCD100000000000000011 /* IntakeCoordinatorTests.swift */,
+				27ABCD100000000000000020 /* LibraryTypeGroupingTests.swift */,
 				27ABCD100000000000000010 /* RepoWorkflowTests.swift */,
 				27ABCD100000000000000014 /* CompareLayoutTests.swift */,
 				27ABCD100000000000000008 /* IntakeContractTests.swift */,
@@ -734,6 +740,7 @@
 				24BBLD028 /* LibraryView.swift in Sources */,
 				27ABCD000000000000000005 /* LibraryTable.swift in Sources */,
 				27ABCD000000000000000013 /* IntakeSheet.swift in Sources */,
+				27ABCD000000000000000021 /* PortAnalysisPanel.swift in Sources */,
 				27ABCD000000000000000012 /* IntakeCoordinator.swift in Sources */,
 				27ABCD000000000000000009 /* IntakeModels.swift in Sources */,
 				27ABCD000000000000000007 /* ModelTask.swift in Sources */,
@@ -821,6 +828,7 @@
 				27ABCD000000000000000003 /* AppRouteTests.swift in Sources */,
 				27ABCD000000000000000004 /* DesignLintTests.swift in Sources */,
 				27ABCD000000000000000011 /* IntakeCoordinatorTests.swift in Sources */,
+				27ABCD000000000000000020 /* LibraryTypeGroupingTests.swift in Sources */,
 				27ABCD000000000000000010 /* RepoWorkflowTests.swift in Sources */,
 				27ABCD000000000000000014 /* CompareLayoutTests.swift in Sources */,
 				27ABCD000000000000000008 /* IntakeContractTests.swift in Sources */,

@@ -82,6 +82,9 @@ struct IntakeSheet: View {
                         summary(resolution)
                         componentsTable(resolution)
                         actions(resolution)
+                        if let analysis = intake.analysis {
+                            PortAnalysisPanel(intake: intake, analysis: analysis)
+                        }
                     }
                     if !intake.logTail.isEmpty {
                         Text(intake.logTail.joined(separator: "\n"))
@@ -212,7 +215,9 @@ enum IntakePresentation {
         var rows = [DetailRow("Verdict", resolution.verdict.title)]
         if let task = resolution.task {
             rows.append(DetailRow("Type", task.type.title))
-            rows.append(DetailRow("Use cases", task.useCases.map(ModelTaskPresentation.useCaseTitle).joined(separator: ", ")))
+            if !task.useCases.isEmpty {
+                rows.append(DetailRow("Use cases", task.useCases.map(ModelTaskPresentation.useCaseTitle).joined(separator: ", ")))
+            }
         }
         if let backend = resolution.backend {
             rows.append(DetailRow("Backend", "\(backend)\(resolution.backendInstalled ? "" : " (not installed)")"))
