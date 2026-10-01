@@ -84,6 +84,7 @@
 		24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF021 /* ModelLibraryBuilderTests.swift */; };
 		24BBLD028 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF022 /* LibraryView.swift */; };
 		27ABCD000000000000000005 /* LibraryTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000005 /* LibraryTable.swift */; };
+		27ABCD000000000000000009 /* IntakeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000009 /* IntakeModels.swift */; };
 		27ABCD000000000000000007 /* ModelTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000007 /* ModelTask.swift */; };
 		24BBLD029 /* ModelDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF023 /* ModelDetailsView.swift */; };
 		24BBLD030 /* LibraryViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF024 /* LibraryViewTests.swift */; };
@@ -154,6 +155,7 @@
 		27ABCD000000000000000002 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000002 /* DesignSystem.swift */; };
 		27ABCD000000000000000003 /* AppRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000003 /* AppRouteTests.swift */; };
 		27ABCD000000000000000004 /* DesignLintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000004 /* DesignLintTests.swift */; };
+		27ABCD000000000000000008 /* IntakeContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000008 /* IntakeContractTests.swift */; };
 		27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000006 /* ModelTaskTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
@@ -219,6 +221,7 @@
 		24FREF021 /* ModelLibraryBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelLibraryBuilderTests.swift; path = ModelLibraryBuilderTests.swift; sourceTree = "<group>"; };
 		24FREF022 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryView.swift; path = UI/Views/LibraryView.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000005 /* LibraryTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryTable.swift; path = UI/Views/LibraryTable.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000009 /* IntakeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeModels.swift; path = Models/IntakeModels.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000007 /* ModelTask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTask.swift; path = Models/ModelTask.swift; sourceTree = "<group>"; };
 		24FREF023 /* ModelDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelDetailsView.swift; path = UI/Views/ModelDetailsView.swift; sourceTree = "<group>"; };
 		24FREF024 /* LibraryViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryViewTests.swift; path = LibraryViewTests.swift; sourceTree = "<group>"; };
@@ -304,6 +307,7 @@
 		27ABCD100000000000000002 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DesignSystem.swift; path = UI/DesignSystem.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000003 /* AppRouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppRouteTests.swift; path = AppRouteTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000004 /* DesignLintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DesignLintTests.swift; path = DesignLintTests.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000008 /* IntakeContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeContractTests.swift; path = IntakeContractTests.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000006 /* ModelTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTaskTests.swift; path = ModelTaskTests.swift; sourceTree = "<group>"; };
 		26SCREF001 /* ScanContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScanContractTests.swift; path = ScanContractTests.swift; sourceTree = "<group>"; };
 		26SCREF002 /* WorkbenchAPISubprocessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchAPISubprocessTests.swift; path = WorkbenchAPISubprocessTests.swift; sourceTree = "<group>"; };
@@ -436,6 +440,7 @@
 				24FREF023 /* ModelDetailsView.swift */,
 				24FREF022 /* LibraryView.swift */,
 				27ABCD100000000000000005 /* LibraryTable.swift */,
+				27ABCD100000000000000009 /* IntakeModels.swift */,
 				27ABCD100000000000000007 /* ModelTask.swift */,
 				27STP002 /* SetupAssistantView.swift */,
 				24FREF000012 /* QuantView.swift */,
@@ -507,6 +512,7 @@
 				27TST009 /* UpdateCoordinatorTests.swift */,
 				27ABCD100000000000000003 /* AppRouteTests.swift */,
 				27ABCD100000000000000004 /* DesignLintTests.swift */,
+				27ABCD100000000000000008 /* IntakeContractTests.swift */,
 				27ABCD100000000000000006 /* ModelTaskTests.swift */,
 			);
 			path = mlx-macTests;
@@ -712,6 +718,7 @@
 				24BBLD034 /* RecommendationEngine.swift in Sources */,
 				24BBLD028 /* LibraryView.swift in Sources */,
 				27ABCD000000000000000005 /* LibraryTable.swift in Sources */,
+				27ABCD000000000000000009 /* IntakeModels.swift in Sources */,
 				27ABCD000000000000000007 /* ModelTask.swift in Sources */,
 				24BBLD029 /* ModelDetailsView.swift in Sources */,
 				24BBLD042 /* VerificationModels.swift in Sources */,
@@ -796,6 +803,7 @@
 				26FRBL01 /* FleetRouterTests.swift in Sources */,
 				27ABCD000000000000000003 /* AppRouteTests.swift in Sources */,
 				27ABCD000000000000000004 /* DesignLintTests.swift in Sources */,
+				27ABCD000000000000000008 /* IntakeContractTests.swift in Sources */,
 				27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */,
 				27TSTB01 /* QuarantineParityTests.swift in Sources */,
 				27TSTB02 /* JSONStoreTests.swift in Sources */,
