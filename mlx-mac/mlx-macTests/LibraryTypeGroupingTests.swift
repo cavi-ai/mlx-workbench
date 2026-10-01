@@ -49,12 +49,30 @@ final class LibraryTypeGroupingTests: XCTestCase {
         XCTAssertEqual(LibraryTablePresentation.row(withID: familyID, in: rows)?.children?.count, 2)
     }
 
+    func testIntakeSummaryOmitsEmptyUseCases() throws {
+        let json = """
+        {"schema":"intake/1","source":{"input":"x","repo":"org/thing","revision":"main","file":null,"url":"u"},
+         "verdict":"unsupported","reasons":["arch_not_in_registry"],"backend":null,"backend_installed":false,
+         "model_type":"thing","components":[],"task":{"type":"other","use_cases":[],"source":"default","confidence":"likely"},
+         "custom_code":false,"gated":false,"library_name":null,"pipeline_tag":null,"transformers_version":null,
+         "bytes":0,"files":{"safetensors":1,"gguf":[],"python":[]},"warnings":[]}
+        """
+        let resolution = try JSONDecoder().decode(IntakeResolution.self, from: Data(json.utf8))
+        let rows = IntakePresentation.summaryRows(resolution, qBits: 4)
+        XCTAssertEqual(rows.first { $0.label == "Type" }?.value, "Other")
+        XCTAssertFalse(rows.contains { $0.label == "Use cases" })
+    }
+
     func testIdentityRowsShowTaskRowsOnlyWhenTheAgentClassifiedTheModel() {
         let typed = model("/m/whisper", key: "whisper", type: .speechToText, useCases: ["transcription", "diarization"])
         let rows = ModelDetailsPresentation.identityRows(for: typed, prepareDestination: nil)
         XCTAssertEqual(rows.first { $0.label == "Type" }?.value, "Speech-to-text")
         XCTAssertEqual(rows.first { $0.label == "Use cases" }?.value, "Transcription, Diarization")
         XCTAssertEqual(rows.first { $0.label == "Classified by" }?.value, "registry (confirmed)")
+
+        let noUseCases = ModelDetailsPresentation.identityRows(for: model("/m/other", key: "other", type: .other), prepareDestination: nil)
+        XCTAssertEqual(noUseCases.first { $0.label == "Type" }?.value, "Other")
+        XCTAssertFalse(noUseCases.contains { $0.label == "Use cases" })
 
         let legacy = ModelDetailsPresentation.identityRows(for: model("/m/legacy", key: "legacy", type: nil), prepareDestination: nil)
         XCTAssertFalse(legacy.contains { $0.label == "Type" || $0.label == "Use cases" || $0.label == "Classified by" })

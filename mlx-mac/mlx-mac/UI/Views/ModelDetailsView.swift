@@ -63,7 +63,9 @@ enum ModelDetailsPresentation {
         rows.append(DetailRow("Architecture", known(model.item.architecture)))
         if let task = model.item.task {
             rows.append(DetailRow("Type", task.type.title))
-            rows.append(DetailRow("Use cases", task.useCases.map(ModelTaskPresentation.useCaseTitle).joined(separator: ", ")))
+            if !task.useCases.isEmpty {
+                rows.append(DetailRow("Use cases", task.useCases.map(ModelTaskPresentation.useCaseTitle).joined(separator: ", ")))
+            }
             rows.append(DetailRow("Classified by", "\(task.source) (\(task.confidence))"))
         }
         rows.append(DetailRow("Parameters", known(model.item.parameters)))
