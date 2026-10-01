@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct LibraryGroupViewModel: Identifiable, Equatable, Hashable {
     let sourceGroup: ModelGroup
@@ -366,12 +368,18 @@ struct LibraryView: View {
                 showInspector = true
             }
         }
+        .onPasteCommand(of: [.plainText, .url]) { _ in pasteIntake() }
         .copyable(selectedModel.map { [$0.item.path] } ?? [])
         .onKeyPress(.return) {
             guard selectedModel != nil else { return .ignored }
             showInspector = true
             return .handled
         }
+    }
+
+    private func pasteIntake() {
+        let text = NSPasteboard.general.string(forType: .string)
+        if IntakeCoordinator.looksLikeHFLink(text) { appHost.intake.open(with: text) }
     }
 
     @ViewBuilder

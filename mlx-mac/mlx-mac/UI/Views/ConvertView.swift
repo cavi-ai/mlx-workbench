@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum PreparePrimaryAction: Equatable {
     case preview
@@ -98,6 +100,7 @@ struct ConvertView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                IntakeField(intake: appHost.intake)
                 workflowCard
                 sourceAndDestinationCard
                 conversionActions
@@ -113,7 +116,13 @@ struct ConvertView: View {
                 }
             }
             .padding(WorkbenchSpacing.pageInset)
+            .onPasteCommand(of: [.plainText, .url]) { _ in pasteIntake() }
         }
+    }
+
+    private func pasteIntake() {
+        let text = NSPasteboard.general.string(forType: .string)
+        if IntakeCoordinator.looksLikeHFLink(text) { appHost.intake.open(with: text) }
     }
 
     private var workflowCard: some View {

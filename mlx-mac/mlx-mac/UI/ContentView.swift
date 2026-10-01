@@ -51,6 +51,7 @@ struct ContentView: View {
             SetupAssistantView(appHost: appHost, coordinator: setup)
                 .interactiveDismissDisabled(false)
         }
+        .modifier(IntakePresenter(intake: appHost.intake, appHost: appHost, onRouteSelection: { selectedRouteID = $0.rawValue }))
     }
 
     /// ⌘1…⌘9, ⌘0 jump between the main tabs (Lab items stay click-only).

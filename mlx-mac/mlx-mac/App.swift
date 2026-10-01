@@ -33,6 +33,12 @@ struct MlxWorkbenchApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command])
             }
+            CommandGroup(after: .pasteboard) {
+                Button("Add from Hugging Face…") {
+                    appHost.intake.open(with: NSPasteboard.general.string(forType: .string))
+                }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
+            }
             // Settings is a workbench destination, so one draft state exists;
             // ⌘, selects it instead of opening a second Settings window.
             CommandGroup(replacing: .appSettings) {
