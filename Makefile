@@ -149,7 +149,7 @@ pip-audit: venv
 # no 4.x fix; drop the ignores and re-run `make pip-audit` when the pin moves.
 PIP_AUDIT_IGNORES := --ignore-vuln PYSEC-2025-217 --ignore-vuln PYSEC-2026-2290 \
 	--ignore-vuln PYSEC-2026-2288 --ignore-vuln PYSEC-2026-2289 \
-	--ignore-vuln PYSEC-2026-3929
+	--ignore-vuln PYSEC-2026-3929 --ignore-vuln PYSEC-2026-4174
 
 _audit_pkgs:
 	@if command -v uv >/dev/null 2>&1; then \
