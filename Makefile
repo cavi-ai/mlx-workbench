@@ -129,6 +129,8 @@ install-convert deps: mac-only venv
 	@$(MAKE) --no-print-directory _pkgs
 	@$(MAKE) --no-print-directory check-convert
 
+BACKEND_LOCKS := $(wildcard vendor/mlx-agent/src/mlx_agent/resources/backends/*.lock)
+
 pip-audit: venv
 	@command -v uv >/dev/null 2>&1 && echo "uv found; using uv pip install" || true
 	@if ! "$(VENV_PY)" -c "import pip_audit" 2>/dev/null; then \
@@ -137,6 +139,10 @@ pip-audit: venv
 	@"$(VENV_PY)" -m pip_audit --version
 	@"$(VENV_PY)" -m pip_audit --no-deps -r requirements.txt --progress-spinner off \
 		$(PIP_AUDIT_IGNORES)
+	@for lock in $(BACKEND_LOCKS); do \
+		echo "pip-audit $$lock"; \
+		"$(VENV_PY)" -m pip_audit --no-deps --disable-pip --require-hashes -r "$$lock" --progress-spinner off || exit 1; \
+	done
 
 # Accepted risk: the transformers 4.x pin is required by mlx-lm's GGUF→HF
 # path (transformers 5 writes incompatible rope keys). These advisories have

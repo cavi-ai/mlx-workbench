@@ -58,6 +58,13 @@ from `mlx-agent` at runtime.
   boundary), runs the canary suite in `Models/VerificationModels.swift`, and
   only then marks the workflow `verified`. The gate attaches in `App.swift`;
   without an attached verifier the workflow behavior is unchanged.
+- **Hugging Face Intake**: `IntakeCoordinator` + `IntakeSheet` (Prepare field, ⌘V on the
+  Library table and Prepare view, ⇧⌘V anywhere) over `mlx-agent intake resolve|fetch|status|
+  port-analysis|port-plan` and `backend list|install|remove`. Repo conversions run through
+  `ModelWorkflowCoordinator.inspect(intake:…)` with `ConversionWorkflow.sourceRepo/backend`;
+  the Quality Gate canary runs only for `ModelTaskType.hasCanary` types, and Run/Compare refuse
+  non-servable types. `config.outputDir` is scanned as an MLX root. Model type and use cases come
+  from the agent's `task` labels (`ModelTask`); `UseCase` stays the serving-role vocabulary.
 - Serve accepts HF repo ids or local directories (`serve start --path`,
   upstream ≥ the local-path serve change). `WorkbenchAPI.serveModelArguments`
   maps HF-cache snapshot paths to repo ids and absolute paths outside the HF
@@ -231,6 +238,9 @@ from `mlx-agent` at runtime.
   (`.github/workflows/pr.yml`). The transformers 4.x pin is required by
   mlx-lm's GGUF→HF path and is a tracked, accepted risk (known advisories
   without a 4.x fix; see `PIP_AUDIT_IGNORES` in the Makefile).
+- Optional converter backends (mlx-vlm, mlx-audio) are isolated venvs created by mlx-agent from
+  hash-locked requirement files; `make pip-audit` audits every lock. Intake never executes a
+  repository's custom code and never passes `--trust-remote-code`.
 
 ## Review/build guidance for an agent
 

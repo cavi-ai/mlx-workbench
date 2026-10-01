@@ -104,6 +104,20 @@ By default the queue is stored at `$XDG_STATE_HOME/mlx-workbench/convert-queue.j
 
 Quality is capped by the source: a Q4 GGUF converted to MLX 4-bit has been quantized twice. Prefer original fp16 weights when you have them.
 
+## Add from Hugging Face
+
+Paste a model link into Prepare (or press ⇧⌘V anywhere). Before anything downloads the app shows
+what the model is and how it converts:
+
+| Verdict | What happens |
+|---|---|
+| Convertible | Download, then the usual Prepare preview and confirm |
+| Convertible after install | One click installs the backend (mlx-vlm or mlx-audio) into its own environment |
+| Already MLX | Download into the output directory |
+| GGUF repository | Pick a quant file; it downloads into your first GGUF root and opens in Prepare |
+| No MLX converter | Shows which parts already exist in MLX and which are missing; a locally served model can draft a porting plan |
+| Blocked / Hub unreachable | Gated, private, or offline; nothing is downloaded |
+
 ## Configuration
 
 `~/.config/mlx-workbench/config.json`, editable from Settings. `MLX_WORKBENCH_CONFIG` overrides the location. `MLX_AGENT_HOME` overrides agent discovery when it points at a checkout that contains `scripts/mlx-agent`.

@@ -398,6 +398,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
     }
 
     func prepareServe(model: LibraryModel, exactPath: String? = nil) {
+        guard ModelTaskPresentation.isServable(model) else {
+            let title = model.item.task?.type.title ?? "This"
+            update(serveState: .failed, message: "\(title) models are not servable by mlx-lm.", errorMessage: "\(title) models are not servable by mlx-lm.")
+            return
+        }
         let selectedPath = preferredModelPath(
             model,
             preferred: exactPath ?? workflow.completedModelPath ?? workflow.outputPath

@@ -92,6 +92,21 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertEqual(AppHost.scanMLXRoots(config), ["/models/mlx", "/models/other"])
     }
 
+    func testPrepareServeRefusesNonServableModel() throws {
+        let workflow = coordinator()
+        let snapshot = Self.snapshot(output: "/models/mlx/asr", type: .speechToText)
+        let model = try XCTUnwrap(snapshot.models.first)
+        workflow.prepareServe(model: model)
+        XCTAssertEqual(workflow.workflow.serveState, .failed)
+        XCTAssertTrue(workflow.workflow.errorMessage?.contains("Speech-to-text") ?? false)
+    }
+
+    func testCompareCandidatesExcludeNonServable() throws {
+        let asr = try XCTUnwrap(Self.snapshot(output: "/m/asr", type: .speechToText).models.first)
+        let chat = try XCTUnwrap(Self.snapshot(output: "/m/chat", type: .textLLM).models.first)
+        XCTAssertEqual(ComparePresentation.candidates(from: [asr, chat]).map(\.item.path), ["/m/chat"])
+    }
+
     private static func record(output: String) -> ConversionWorkflow {
         ConversionWorkflow(
             id: UUID(), sourcePath: "hf://org/model", sourceModelKey: nil, sourceSignature: nil,
