@@ -278,6 +278,24 @@ final class LibraryViewTests: XCTestCase {
         XCTAssertTrue(presentation.canPreview)
     }
 
+    func testPreparePresentationDescribesRepoSourcesWithoutGGUFWording() {
+        var workflow = makeWorkflow(
+            sourcePath: "hf://openai/whisper-tiny",
+            outputPath: "/models/mlx/whisper-tiny-MLX-4bit",
+            state: .inspectingSource
+        )
+        workflow.sourceRepo = "openai/whisper-tiny"
+        let repo = PrepareWorkflowPresentation(workflow: workflow)
+        XCTAssertEqual(repo.sourceLabel, "Source repo")
+        XCTAssertEqual(repo.sourceDisplay, "openai/whisper-tiny")
+        XCTAssertFalse(repo.destinationNote.contains("same-directory"))
+
+        let gguf = PrepareWorkflowPresentation(workflow: makeWorkflow(state: .inspectingSource))
+        XCTAssertEqual(gguf.sourceLabel, "Source GGUF")
+        XCTAssertEqual(gguf.sourceDisplay, "/models/atlas.gguf")
+        XCTAssertTrue(gguf.destinationNote.contains("same-directory"))
+    }
+
     func testPreparePresentationChoosesRunExistingForEquivalentModel() {
         let presentation = PrepareWorkflowPresentation(workflow: makeWorkflow(
             outputPath: "/models/atlas-mlx",

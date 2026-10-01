@@ -16,6 +16,7 @@ struct PrepareWorkflowPresentation: Equatable {
     let message: String?
     let errorMessage: String?
     let hasPreviewHash: Bool
+    let sourceRepo: String?
 
     init(workflow: ConversionWorkflow) {
         sourcePath = workflow.sourcePath
@@ -24,6 +25,17 @@ struct PrepareWorkflowPresentation: Equatable {
         message = workflow.message
         errorMessage = workflow.errorMessage
         hasPreviewHash = !(workflow.previewHash?.isEmpty ?? true)
+        sourceRepo = workflow.sourceRepo
+    }
+
+    var sourceLabel: String { sourceRepo == nil ? "Source GGUF" : "Source repo" }
+
+    var sourceDisplay: String { sourceRepo ?? sourcePath }
+
+    var destinationNote: String {
+        sourceRepo == nil
+            ? "The destination is the coordinator-approved same-directory path. It cannot be overridden in Prepare."
+            : "The destination is the configured output directory, which the Library scans."
     }
 
     var primaryAction: PreparePrimaryAction {
@@ -144,10 +156,10 @@ struct ConvertView: View {
     private var sourceAndDestinationCard: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Source and destination")
-            detailRow("Source GGUF", presentation.sourcePath.isEmpty ? "Choose Prepare to run from a Library model." : presentation.sourcePath)
+            detailRow(presentation.sourceLabel, presentation.sourcePath.isEmpty ? "Choose Prepare to run from a Library model." : presentation.sourceDisplay)
             detailRow("Destination", presentation.destinationPath.isEmpty ? "Destination will be calculated from the selected source." : presentation.destinationPath)
             if !presentation.destinationPath.isEmpty {
-                Text("The destination is the coordinator-approved same-directory path. It cannot be overridden in Prepare.")
+                Text(presentation.destinationNote)
                     .font(WorkbenchTypography.body)
                     .foregroundStyle(WorkbenchColor.muted)
             }

@@ -736,7 +736,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 replace(updatedRecord(from: record, state: .queued, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
             case "running", "active":
                 replace(updatedRecord(from: record, state: .running, message: "Conversion running.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
-            case "completed", "complete", "succeeded", "success":
+            case "done", "completed", "complete", "succeeded", "success":
                 guard record.state != .completed else { continue }
                 completionRescanRequested = true
                 pendingCompletionRecordIDs.insert(record.id)

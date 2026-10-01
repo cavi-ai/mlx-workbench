@@ -99,6 +99,8 @@ final class WorkbenchStatusTests: XCTestCase {
         XCTAssertEqual(WorkbenchStatus(rawValue: ConversionWorkflowState.queued.rawValue).tone, .information)
         XCTAssertEqual(WorkbenchStatus(rawValue: ConversionWorkflowState.verifying.rawValue).tone, .information)
         XCTAssertEqual(WorkbenchStatus(rawValue: ConversionWorkflowState.verificationFailed.rawValue).tone, .failure)
+        // mlx-agent `convert status` reports finished jobs as "done".
+        XCTAssertEqual(WorkbenchStatus(rawValue: "done"), .completed)
     }
 
     func testExternalStateIsHumanizedInsteadOfRelabeledUnknown() {
