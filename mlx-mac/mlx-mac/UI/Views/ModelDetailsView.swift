@@ -61,6 +61,11 @@ enum ModelDetailsPresentation {
             rows.append(DetailRow("Outputs", model.outputPaths.joined(separator: "\n")))
         }
         rows.append(DetailRow("Architecture", known(model.item.architecture)))
+        if let task = model.item.task {
+            rows.append(DetailRow("Type", task.type.title))
+            rows.append(DetailRow("Use cases", task.useCases.map(ModelTaskPresentation.useCaseTitle).joined(separator: ", ")))
+            rows.append(DetailRow("Classified by", "\(task.source) (\(task.confidence))"))
+        }
         rows.append(DetailRow("Parameters", known(model.item.parameters)))
         rows.append(DetailRow("Quantization", known(model.item.quantization)))
         rows.append(DetailRow("Size", LibraryTablePresentation.byteCount(model.item.bytes)))

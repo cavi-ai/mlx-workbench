@@ -76,8 +76,9 @@ enum LibraryTablePresentation {
 
     /// The model path a table selection stands for; family rows stand for none.
     static func modelPath(forSelection id: String?) -> String? {
-        guard let id, !id.hasPrefix(LibraryRow.familyIDPrefix) else { return nil }
-        return id
+        guard let id else { return nil }
+        let bucketPrefixes = [LibraryRow.familyIDPrefix, LibraryRow.typeIDPrefix, LibraryRow.useCaseIDPrefix]
+        return bucketPrefixes.contains(where: id.hasPrefix) ? nil : id
     }
 
     /// A second line that locates the variant: the Hugging Face repo id for
@@ -91,6 +92,80 @@ enum LibraryTablePresentation {
 
     static func byteCount(_ value: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+    }
+}
+
+// MARK: - Grouping
+
+enum LibraryGroupMode: String, CaseIterable, Identifiable {
+    case family
+    case type
+
+    var id: String { rawValue }
+    var title: String { self == .family ? "Family" : "Type" }
+}
+
+extension LibraryRow {
+    static let typeIDPrefix = "type:"
+    static let useCaseIDPrefix = "usecase:"
+
+    static func bucket(id: String, name: String, detail: String, children: [LibraryRow]) -> LibraryRow {
+        LibraryRow(
+            id: id, name: name, detail: detail, readiness: nil, quantization: "",
+            bytes: children.reduce(Int64(0)) { $0 + $1.bytes },
+            modifiedAt: children.compactMap(\.modifiedAt).max(),
+            modelPath: nil, children: children
+        )
+    }
+}
+
+extension LibraryTablePresentation {
+    /// Type → primary use case → family/variant rows. Types follow
+    /// `ModelTaskType.allCases`; use cases sort by title.
+    static func typeRows(groups: [LibraryGroupViewModel], sortOrder: [KeyPathComparator<LibraryRow>]) -> [LibraryRow] {
+        var buckets: [ModelTaskType: [String: [LibraryGroupViewModel]]] = [:]
+        for group in groups {
+            let split = Dictionary(grouping: group.variants) { model in
+                "\((model.item.task?.type ?? .other).rawValue)|\(model.item.task?.primaryUseCase ?? ModelTaskPresentation.unclassifiedUseCase)"
+            }
+            for (key, variants) in split {
+                let parts = key.split(separator: "|", maxSplits: 1).map(String.init)
+                let type = ModelTaskType(rawValue: parts[0]) ?? .other
+                buckets[type, default: [:]][parts[1], default: []].append(
+                    LibraryGroupViewModel(sourceGroup: group.sourceGroup, variants: variants)
+                )
+            }
+        }
+        return ModelTaskType.allCases.compactMap { type -> LibraryRow? in
+            guard let useCases = buckets[type] else { return nil }
+            let useCaseRows = useCases.keys
+                .sorted { ModelTaskPresentation.useCaseTitle($0) < ModelTaskPresentation.useCaseTitle($1) }
+                .map { useCase -> LibraryRow in
+                    let children = rows(groups: useCases[useCase] ?? [], sortOrder: sortOrder)
+                    return .bucket(
+                        id: LibraryRow.useCaseIDPrefix + "\(type.rawValue):\(useCase)",
+                        name: ModelTaskPresentation.useCaseTitle(useCase),
+                        detail: "\(children.count) \(children.count == 1 ? "entry" : "entries")",
+                        children: children
+                    )
+                }
+            return .bucket(
+                id: LibraryRow.typeIDPrefix + type.rawValue,
+                name: type.title,
+                detail: "\(useCaseRows.count) use \(useCaseRows.count == 1 ? "case" : "cases")",
+                children: useCaseRows
+            )
+        }
+    }
+
+    static func row(withID id: String, in rows: [LibraryRow]) -> LibraryRow? {
+        for candidate in rows {
+            if candidate.id == id { return candidate }
+            if let children = candidate.children, let found = Self.row(withID: id, in: children) {
+                return found
+            }
+        }
+        return nil
     }
 }
 

@@ -197,6 +197,7 @@ struct LibraryView: View {
     @State private var selection: String?
     @State private var sortOrder = LibraryTablePresentation.defaultSortOrder
     @State private var showInspector = true
+    @AppStorage("library.groupMode") private var groupModeRaw = LibraryGroupMode.family.rawValue
     @Environment(\.isRouteActive) private var isRouteActive
     @Environment(\.openWindow) private var openWindow
 
@@ -220,7 +221,9 @@ struct LibraryView: View {
     }
 
     private var rows: [LibraryRow] {
-        LibraryTablePresentation.rows(groups: groups, sortOrder: sortOrder)
+        (LibraryGroupMode(rawValue: groupModeRaw) ?? .family) == .type
+            ? LibraryTablePresentation.typeRows(groups: groups, sortOrder: sortOrder)
+            : LibraryTablePresentation.rows(groups: groups, sortOrder: sortOrder)
     }
 
     private var visiblePaths: [String] {
@@ -233,7 +236,7 @@ struct LibraryView: View {
 
     private var selectedFamily: LibraryRow? {
         guard let selection, selection.hasPrefix(LibraryRow.familyIDPrefix) else { return nil }
-        return rows.first { $0.id == selection }
+        return LibraryTablePresentation.row(withID: selection, in: rows)
     }
 
     private var quantizationOptions: [String] {
@@ -347,17 +350,7 @@ struct LibraryView: View {
             }
             .width(min: 100, ideal: 130, max: 170)
         } rows: {
-            ForEach(rows) { row in
-                if let children = row.children {
-                    DisclosureTableRow(row) {
-                        ForEach(children) { child in
-                            TableRow(child)
-                        }
-                    }
-                } else {
-                    TableRow(row)
-                }
-            }
+            tableRows(rows)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         .contextMenu(forSelectionType: LibraryRow.ID.self) { ids in
@@ -375,6 +368,39 @@ struct LibraryView: View {
             guard selectedModel != nil else { return .ignored }
             showInspector = true
             return .handled
+        }
+    }
+
+    @TableRowBuilder<LibraryRow>
+    private func tableRows(_ rows: [LibraryRow]) -> some TableRowContent<LibraryRow> {
+        ForEach(rows) { row in
+            if let children = row.children {
+                DisclosureTableRow(row) { nestedRows(children) }
+            } else {
+                TableRow(row)
+            }
+        }
+    }
+
+    @TableRowBuilder<LibraryRow>
+    private func nestedRows(_ rows: [LibraryRow]) -> some TableRowContent<LibraryRow> {
+        ForEach(rows) { row in
+            if let children = row.children {
+                DisclosureTableRow(row) { leafRows(children) }
+            } else {
+                TableRow(row)
+            }
+        }
+    }
+
+    @TableRowBuilder<LibraryRow>
+    private func leafRows(_ rows: [LibraryRow]) -> some TableRowContent<LibraryRow> {
+        ForEach(rows) { row in
+            if let children = row.children {
+                DisclosureTableRow(row) { ForEach(children) { TableRow($0) } }
+            } else {
+                TableRow(row)
+            }
         }
     }
 
@@ -420,6 +446,15 @@ struct LibraryView: View {
                     ProgressView()
                         .controlSize(.small)
                 }
+            }
+            ToolbarItem(placement: .automatic) {
+                Picker("Group by", selection: $groupModeRaw) {
+                    ForEach(LibraryGroupMode.allCases) { mode in
+                        Text(mode.title).tag(mode.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .help("Group the Library by model family or by type and use case")
             }
             ToolbarItem(placement: .automatic) {
                 Picker("Readiness", selection: $readinessFilter) {
