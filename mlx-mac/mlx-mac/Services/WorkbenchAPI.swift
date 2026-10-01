@@ -495,7 +495,8 @@ actor WorkbenchAPI {
                 status: raw.string("status") ?? "pending",
                 outputs: raw["outputs"] as? [String] ?? [],
                 tensorCount: raw.int("tensor_count"),
-                error: raw.string("error")
+                error: raw.string("error"),
+                task: ModelTask(dictionary: raw["task"] as? [String: Any])
             )
         }
         let outputsRaw = (data["outputs"] as? [[String: Any]]) ?? []
@@ -515,7 +516,8 @@ actor WorkbenchAPI {
                 name: raw.string("name") ?? path,
                 modelKey: raw.string("model_key"),
                 quantization: info,
-                provenance: raw.string("provenance")
+                provenance: raw.string("provenance"),
+                task: ModelTask(dictionary: raw["task"] as? [String: Any])
             )
         }
         guard let totalsDict = data["totals"] as? [String: Any] else {

@@ -9,7 +9,7 @@ not a test bug.
 
 | Fixture | Contract | Consumers |
 | --- | --- | --- |
-| `convert-scan-valid.json` | Unwrapped `convert scan` data payload a UI may render | `bridge.validate_scan` (Python), `WorkbenchAPI.decodeScan` (Swift) |
+| `convert-scan-valid.json` | Unwrapped `convert scan` data payload a UI may render, including per-item `task` labels | `bridge.validate_scan` (Python), `WorkbenchAPI.decodeScan` (Swift) |
 | `convert-scan-missing-bytes.json` | Scan payload missing a required per-model byte count; both sides must reject it | same |
 | `config-premium-keys.json` | `config.json` containing keys written by the native app's premium toggles; a load/save cycle must preserve them. The config key universe is closed: keys outside `config._ALLOWED_KEYS` (known web keys + these premium keys) are rejected on load and save | `config.load`/`save` (Python), `ConfigModule` (Swift) |
 | `quarantine-ledger.jsonl` | Quarantine ledger lines (`moved_at`/`from`/`to`/`bytes`, newest last) | `quarantine.ledger` (Python), `Quarantine.ledger` (Swift) |

@@ -21,7 +21,8 @@
       "error": null,
       "tensor_count": 19,
       "status": "pending",
-      "outputs": []
+      "outputs": [],
+      "task": {"type": "text_llm", "use_cases": ["coding", "general_chat"], "source": "gguf_architecture", "confidence": "likely"}
     },
     {
       "path": "/fixtures/gguf/large.gguf",
@@ -49,7 +50,8 @@
       "name": "converted",
       "model_key": "converted",
       "quantization": {"bits": 4, "group_size": 64, "model_type": "qwen35"},
-      "provenance": null
+      "provenance": null,
+      "task": {"type": "speech_to_text", "use_cases": ["transcription"], "source": "registry", "confidence": "confirmed"}
     }
   ],
   "pending": ["/fixtures/gguf/compact.gguf", "/fixtures/gguf/large.gguf"],
