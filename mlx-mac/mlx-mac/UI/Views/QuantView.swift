@@ -43,6 +43,19 @@ enum ComparePresentation {
     static func canRun(slots: [String?], activeRunID: UUID?) -> Bool {
         !variantPaths(slots).isEmpty && activeRunID == nil
     }
+
+    /// A readable label for a model path recorded in a run: the Library's
+    /// name, else the HF repo id (snapshot folders are commit hashes), else
+    /// the folder name.
+    static func displayName(for path: String, models: [LibraryModel]) -> String {
+        if let model = models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) {
+            return model.displayName
+        }
+        if let repoID = HFRepoID.forPath(path) {
+            return repoID
+        }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
 }
 
 struct QuantView: View {
@@ -550,7 +563,7 @@ struct QuantView: View {
     }
 
     private func shortName(_ path: String) -> String {
-        URL(fileURLWithPath: path).lastPathComponent
+        ComparePresentation.displayName(for: path, models: appHost.librarySnapshot?.models ?? [])
     }
 }
 
@@ -573,7 +586,9 @@ struct PromoteWinnerSheet: View {
     @State private var errorText: String?
 
     private var winnerPath: String { context.winner.modelPath }
-    private var winnerName: String { URL(fileURLWithPath: winnerPath).lastPathComponent }
+    private var winnerName: String {
+        ComparePresentation.displayName(for: winnerPath, models: appHost.librarySnapshot?.models ?? [])
+    }
     private var endpoint: EndpointSupervisor { appHost.endpoint }
     private var winnerVerified: Bool { appHost.isModelVerified(winnerPath) }
     private var endpointAlreadyWinner: Bool {

@@ -102,4 +102,14 @@ final class CompareLayoutTests: XCTestCase {
         XCTAssertTrue(ComparePresentation.canRun(slots: ["/a", nil], activeRunID: nil))
         XCTAssertFalse(ComparePresentation.canRun(slots: ["/a", "/b"], activeRunID: UUID()))
     }
+
+    /// Run results store model paths; HF-cache snapshots end in a commit hash,
+    /// so the label must come from the Library or the repo id, not the folder.
+    func testDisplayNamePrefersLibraryThenRepoIDThenFolder() {
+        let snapshot = "/hub/models--mlx-community--Qwen3-4B-4bit/snapshots/4dcb3d101c2a062e5c1d4bb173588c54ea6c4d25"
+        let library = LibraryModel(item: model(snapshot).item, displayName: "Qwen3-4B-4bit", readiness: .ready)
+        XCTAssertEqual(ComparePresentation.displayName(for: snapshot, models: [library]), "Qwen3-4B-4bit")
+        XCTAssertEqual(ComparePresentation.displayName(for: snapshot, models: []), "mlx-community/Qwen3-4B-4bit")
+        XCTAssertEqual(ComparePresentation.displayName(for: "/models/mlx/whisper-tiny-MLX-4bit", models: []), "whisper-tiny-MLX-4bit")
+    }
 }
