@@ -100,7 +100,7 @@ Terminal launch failures remain in **Jobs** with their classified error and reme
 
 By default the queue is stored at `$XDG_STATE_HOME/mlx-workbench/convert-queue.json`, or `~/.local/state/mlx-workbench/convert-queue.json` when `XDG_STATE_HOME` is unset. An explicitly selected config profile keeps `convert-queue.json` beside that config. Invalid saved state is preserved as a numbered `convert-queue.json.N.corrupt` file and reported in **Jobs** instead of being overwritten silently.
 
-**GGUF** sources come from **Models** (single Convert or multi-select Queue selected). **HF-cache** sources use the **Convert** tab (`publisher/model` already present under the local Hugging Face cache). Convert never downloads from the Hub.
+**GGUF** sources come from **Models** (single Convert or multi-select Queue selected). **HF-cache** sources use the **Convert** tab (`publisher/model` already present under the local Hugging Face cache). Convert itself never downloads from the Hub; in the native app, **Add from Hugging Face** downloads first, as an explicit confirmed step.
 
 Quality is capped by the source: a Q4 GGUF converted to MLX 4-bit has been quantized twice. Prefer original fp16 weights when you have them.
 
