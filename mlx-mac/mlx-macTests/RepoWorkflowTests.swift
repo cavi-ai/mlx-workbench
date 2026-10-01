@@ -83,13 +83,26 @@ final class RepoWorkflowTests: XCTestCase {
 
     func testScanRootsIncludeTheOutputDirectoryOnce() {
         var config = Config.defaults()
+        let gguf = ["/models/gguf"]
         config.mlxRoots = ["/models/mlx", "/models/other"]
         config.outputDir = "/models/mlx"
-        XCTAssertEqual(AppHost.scanMLXRoots(config), ["/models/mlx", "/models/other"])
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), ["/models/mlx", "/models/other"])
         config.outputDir = "/models/converted"
-        XCTAssertEqual(AppHost.scanMLXRoots(config), ["/models/mlx", "/models/other", "/models/converted"])
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), ["/models/mlx", "/models/other", "/models/converted"])
         config.outputDir = ""
-        XCTAssertEqual(AppHost.scanMLXRoots(config), ["/models/mlx", "/models/other"])
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), ["/models/mlx", "/models/other"])
+    }
+
+    /// With no MLX roots configured the agent scans the GGUF roots for MLX
+    /// outputs; adding the output directory must not replace that default.
+    func testEmptyMLXRootsKeepTheGGUFRootsDefault() {
+        var config = Config.defaults()
+        config.mlxRoots = []
+        config.outputDir = "/models/converted"
+        let gguf = ["/models/gguf", "/cache/hub"]
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), ["/models/gguf", "/cache/hub", "/models/converted"])
+        config.outputDir = ""
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), [])
     }
 
     func testPrepareServeRefusesNonServableModel() throws {

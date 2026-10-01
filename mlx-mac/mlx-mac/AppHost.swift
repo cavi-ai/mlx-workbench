@@ -292,11 +292,14 @@ class AppHost: ObservableObject {
     }
 
     /// MLX roots the scan reads: configured roots plus the intake output dir.
-    static func scanMLXRoots(_ config: Config) -> [String] {
-        var roots = config.mlxRoots
+    /// With no MLX roots configured the agent falls back to scanning the GGUF
+    /// roots, so that fallback is spelled out before the output dir is added.
+    static func scanMLXRoots(_ config: Config, ggufRoots: [String]) -> [String] {
         let output = config.outputDir.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !output.isEmpty else { return config.mlxRoots }
+        var roots = config.mlxRoots.isEmpty ? ggufRoots : config.mlxRoots
         let normalize = { (path: String) in URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.path }
-        if !output.isEmpty, !roots.map(normalize).contains(normalize(output)) {
+        if !roots.map(normalize).contains(normalize(output)) {
             roots.append(output)
         }
         return roots
@@ -310,7 +313,7 @@ class AppHost: ObservableObject {
             let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
             let scan = try await scanOperation(
                 roots,
-                Self.scanMLXRoots(config),
+                Self.scanMLXRoots(config, ggufRoots: roots),
                 config.signatures,
                 limit
             )
