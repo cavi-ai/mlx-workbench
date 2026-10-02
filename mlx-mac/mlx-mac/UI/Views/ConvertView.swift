@@ -131,6 +131,13 @@ struct ConvertView: View {
             .padding(WorkbenchSpacing.pageInset)
             .onPasteCommand(of: [.plainText, .url]) { _ in pasteIntake() }
         }
+        .task(id: modelWorkflow.workflow.state) {
+            while !Task.isCancelled && modelWorkflow.workflow.state.isInFlight {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { return }
+                await appHost.refreshWorkflowStatus()
+            }
+        }
     }
 
     private func pasteIntake() {
