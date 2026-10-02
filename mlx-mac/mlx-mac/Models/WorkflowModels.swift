@@ -69,6 +69,8 @@ struct ConversionWorkflow: Codable, Equatable, Identifiable {
     var sourceRepo: String? = nil
     /// Optional converter backend id for repo conversions (nil = mlx-lm).
     var backend: String? = nil
+    /// Intake's converted-size estimate by bit width ("4", "8"), for progress.
+    var estimatedOutputBytes: [String: Int64]? = nil
 
     var persistenceIdentifier: String {
         id.uuidString

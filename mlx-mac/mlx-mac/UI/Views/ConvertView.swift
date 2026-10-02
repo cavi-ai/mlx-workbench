@@ -93,6 +93,8 @@ struct ConvertView: View {
     private let onRouteSelection: (AppRoute) -> Void
 
     @State private var qBits: Int
+    @State private var progress: ConversionProgressSnapshot?
+    @State private var isLogExpanded = false
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -117,6 +119,14 @@ struct ConvertView: View {
                 workflowCard
                 sourceAndDestinationCard
                 conversionActions
+                if let progress, modelWorkflow.workflow.state.isInFlight {
+                    ConversionProgressCard(snapshot: progress, startedAt: ConversionProgressReader.date(fromAgentTimestamp: currentJob?.startedAt))
+                        .formSection {}
+                }
+                if currentJob?.logPath != nil {
+                    ConversionLogAccordion(lines: progress?.logLines ?? [], isExpanded: $isLogExpanded)
+                        .formSection {}
+                }
 
                 if let error = presentation.errorMessage {
                     ErrorBanner(text: error)
@@ -134,6 +144,15 @@ struct ConvertView: View {
         .onChange(of: qBits) { _, bits in
             modelWorkflow.selectRepoBits(bits)
         }
+        .task(id: modelWorkflow.workflow.jobReceipt) {
+            await sampleProgress()
+            while !Task.isCancelled && modelWorkflow.workflow.state.isInFlight {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                await sampleProgress()
+            }
+            await sampleProgress()
+        }
         .task(id: modelWorkflow.workflow.state) {
             while !Task.isCancelled && modelWorkflow.workflow.state.isInFlight {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -141,6 +160,29 @@ struct ConvertView: View {
                 await appHost.refreshWorkflowStatus()
             }
         }
+    }
+
+    private var currentJob: Job? {
+        guard let receipt = modelWorkflow.workflow.jobReceipt else { return nil }
+        return modelWorkflow.jobs.first { $0.receipt == receipt }
+    }
+
+    /// Reads the destination size and log tail off the main thread.
+    private func sampleProgress() async {
+        guard modelWorkflow.workflow.jobReceipt != nil else {
+            progress = nil
+            return
+        }
+        let output = modelWorkflow.workflow.outputPath
+        let logPath = currentJob?.logPath
+        let estimate = ConversionProgressSnapshot.estimate(for: modelWorkflow.workflow)
+        progress = await Task.detached(priority: .utility) {
+            ConversionProgressSnapshot(
+                writtenBytes: ConversionProgressReader.writtenBytes(at: output),
+                estimatedBytes: estimate,
+                logLines: ConversionProgressReader.logTail(at: logPath)
+            )
+        }.value
     }
 
     private func pasteIntake() {

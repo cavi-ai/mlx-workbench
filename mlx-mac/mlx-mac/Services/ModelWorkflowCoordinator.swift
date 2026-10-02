@@ -70,6 +70,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
     @Published private(set) var workflow: ConversionWorkflow
     @Published private(set) var history: [ConversionWorkflow]
     @Published private(set) var servers: [ServerInfo]
+    /// The agent's conversion jobs from the latest status refresh.
+    @Published private(set) var jobs: [Job] = []
     @Published private(set) var persistenceError: String?
     @Published private(set) var isConversionSubmissionInFlight = false
     @Published private(set) var isServeSubmissionInFlight = false
@@ -184,7 +186,9 @@ final class ModelWorkflowCoordinator: ObservableObject {
         servePreviewHash = nil
         servePreviewIntent = nil
         let output = Self.repoOutputPath(directory: outputDirectory, repo: intake.source.repo, qBits: qBits)
-        replace(repoRecord(repo: intake.source.repo, backend: intake.backend ?? "mlx-lm", output: output), persist: false)
+        var record = repoRecord(repo: intake.source.repo, backend: intake.backend ?? "mlx-lm", output: output)
+        record.estimatedOutputBytes = intake.estimatedOutputBytes
+        replace(record, persist: false)
     }
 
     /// Prepare's bit-width picker for a repo source: the destination follows the
@@ -195,7 +199,9 @@ final class ModelWorkflowCoordinator: ObservableObject {
         let directory = URL(fileURLWithPath: workflow.outputPath).deletingLastPathComponent().path
         let output = Self.repoOutputPath(directory: directory, repo: repo, qBits: qBits)
         guard canonicalPath(output) != canonicalPath(workflow.outputPath) else { return }
-        replace(repoRecord(repo: repo, backend: workflow.backend ?? "mlx-lm", output: output, keeping: workflow), persist: false)
+        var record = repoRecord(repo: repo, backend: workflow.backend ?? "mlx-lm", output: output, keeping: workflow)
+        record.estimatedOutputBytes = workflow.estimatedOutputBytes
+        replace(record, persist: false)
     }
 
     /// A repo workflow at `output`: the existing model when the library already
@@ -745,6 +751,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     }
 
     private func reconcileAuthoritative(snapshot: LibrarySnapshot?, jobs: [Job]) async {
+        self.jobs = jobs
         var records = history
         if !records.contains(where: { $0.id == workflow.id }), workflow.jobReceipt != nil {
             records.append(workflow)
@@ -963,7 +970,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
             updatedAt: now(),
             lastKnownAgentState: lastKnownAgentState ?? base.lastKnownAgentState,
             sourceRepo: base.sourceRepo,
-            backend: base.backend
+            backend: base.backend,
+            estimatedOutputBytes: base.estimatedOutputBytes
         )
     }
 
