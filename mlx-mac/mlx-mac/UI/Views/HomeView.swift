@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum HomeNextActionKind: Equatable { case configure, scan, activity, prepare(String), run(String), library }
@@ -113,6 +114,7 @@ struct HomeView: View {
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var watch: WatchCoordinator
     private let onRouteSelection: (AppRoute) -> Void
+    @Environment(\.openWindow) private var openWindow
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) { self.appHost = appHost; _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow); _watch = ObservedObject(wrappedValue: appHost.watch); self.onRouteSelection = onRouteSelection }
     private var ggufRoots: [String] { if let roots = appHost.scanResult?.roots?.gguf, !roots.isEmpty { return roots }; return appHost.config.ggufRoots.isEmpty ? appHost.discoveredRoots : appHost.config.ggufRoots }
@@ -157,7 +159,51 @@ struct HomeView: View {
     private var flightPathSurface: some View { WorkbenchSurface { VStack(alignment: .leading, spacing: WorkbenchSpacing.md) { HStack { VStack(alignment: .leading, spacing: 4) { Text("MODEL FLIGHT PATH").font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.accent); Text(flightPath.modelPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Select a model from Library").font(WorkbenchTypography.section) }; Spacer(); if let path = flightPath.modelPath { Text(path).font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted).lineLimit(1).truncationMode(.middle) } }; HStack(alignment: .top, spacing: 0) { ForEach(Array(flightPath.stages.enumerated()), id: \.element.id) { index, item in flightStage(item, isLast: index == flightPath.stages.count - 1) } }.accessibilityElement(children: .contain).accessibilityLabel("Model flight path") } } }
     private func flightStage(_ item: ModelFlightStagePresentation, isLast: Bool) -> some View { HStack(alignment: .top, spacing: 6) { VStack(spacing: 6) { Image(systemName: item.stage.symbolName).font(WorkbenchTypography.body.weight(.semibold)).foregroundStyle(item.state.color).frame(width: 28, height: 28).background(item.state.color.opacity(0.12)).clipShape(Circle()); Text(item.stage.title).font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.ink).multilineTextAlignment(.center); Text(item.state.label).font(WorkbenchTypography.value).foregroundStyle(item.state.color) }.frame(maxWidth: .infinity); if !isLast { Rectangle().fill(WorkbenchColor.hairline).frame(height: 1).padding(.top, 14) } }.accessibilityElement(children: .ignore).accessibilityLabel(item.stage.title + ": " + item.state.label + ". " + item.detail) }
 
-    @ViewBuilder private var alertsSection: some View { let alerts = watch.activeAlerts; if !alerts.isEmpty { VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { SectionTitle(text: "Watch alerts"); ForEach(alerts) { alert in WorkbenchSurface(padding: WorkbenchSpacing.sm) { VStack(alignment: .leading, spacing: 6) { HStack { Text(alert.title).font(WorkbenchTypography.section); Spacer(); StatusBadge(status: .warning) }; Text(alert.body).font(WorkbenchTypography.body).foregroundStyle(WorkbenchColor.muted); HStack(spacing: 10) { Button("Open") { watch.act(on: alert.id); onRouteSelection(AppRoute(rawID: alert.route)) }.buttonStyle(.bordered).controlSize(.small); Button("Snooze 7 days") { watch.snooze(alert.id) }.controlSize(.small); Button("Mute") { watch.mute(alert.id) }.controlSize(.small).foregroundStyle(WorkbenchColor.muted) } } } } } } }
+    @ViewBuilder private var alertsSection: some View {
+        let alerts = watch.activeAlerts
+        if !alerts.isEmpty {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                SectionTitle(text: "Watch alerts")
+                ForEach(alerts) { alert in
+                    let presentation = WatchAlertPresentation(alert: alert)
+                    WorkbenchSurface(padding: WorkbenchSpacing.sm) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(presentation.title).font(WorkbenchTypography.section)
+                                Spacer()
+                                StatusBadge(status: .warning)
+                            }
+                            Text(presentation.message).font(WorkbenchTypography.body).foregroundStyle(WorkbenchColor.muted)
+                            HStack(spacing: 10) {
+                                if let primary = presentation.primary {
+                                    Button(primary.title) { perform(primary.kind, on: alert) }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                }
+                                Button("Snooze 7 days") { watch.snooze(alert.id) }.controlSize(.small)
+                                Button(presentation.muteTitle) { watch.mute(alert.id) }
+                                    .controlSize(.small)
+                                    .foregroundStyle(WorkbenchColor.muted)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func perform(_ action: WatchAlertPresentation.ActionKind, on alert: WatchAlert) {
+        switch action {
+        case .addFromHuggingFace(let repo):
+            appHost.intake.open(with: repo)
+            openWindow(id: IntakeWindow.id)
+            watch.dismiss(alert.id)
+        case .openOnHuggingFace(let repo):
+            if let url = URL(string: "https://huggingface.co/\(repo)") { NSWorkspace.shared.open(url) }
+        case .reverify:
+            watch.act(on: alert.id)
+        }
+    }
     private var statusSurface: some View { WorkbenchSurface { VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { SectionTitle(text: "Operational status"); HStack(alignment: .top, spacing: WorkbenchSpacing.xl) { instrumentValue("WORKFLOW", modelWorkflow.workflow.state.rawValue, modelWorkflow.workflow.message ?? "No active conversion message"); instrumentValue("RUNTIME", appHost.runtimeReport.ok ? "Ready" : "Needs attention", appHost.runtimeReport.ok ? "Prepare and Run checks passed" : appHost.runtimeReport.install); instrumentValue("ENDPOINT", endpointStatusLabel, appHost.endpoint.state.summary) } } } }
     private var endpointStatusLabel: String { switch appHost.endpoint.state { case .running: return "Running"; case .disabled: return "Disabled"; case .starting, .waitingForServer: return "Pending"; case .modelMismatch, .degraded: return "Attention" } }
     @ViewBuilder private var recommendationEvidence: some View { if let snapshot = appHost.librarySnapshot { VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { SectionTitle(text: "Recommendation evidence"); Text("Current Library snapshot: " + timestamp(snapshot.generatedAt)).font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted); ForEach(UseCase.allCases) { useCase in if let recommendation = appHost.recommendations(for: useCase).first, let model = appHost.model(for: recommendation) { WorkbenchSurface(padding: WorkbenchSpacing.sm) { HStack(alignment: .top) { Text(useCase.title).font(WorkbenchTypography.value).frame(width: 145, alignment: .leading); VStack(alignment: .leading, spacing: 3) { Text(model.displayName).font(WorkbenchTypography.section); Text(recommendation.reasons.first?.message ?? "Ranked from the current local snapshot.").font(WorkbenchTypography.body).foregroundStyle(WorkbenchColor.muted) }; Spacer(); StatusBadge(state: recommendation.confidence.title) } } } } } } }

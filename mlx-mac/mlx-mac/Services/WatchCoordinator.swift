@@ -198,8 +198,10 @@ final class WatchCoordinator: ObservableObject {
                     fingerprint: "upstream|\(repo)|\(detail)",
                     modelKey: repo,
                     title: "\(repo) changed upstream",
-                    body: "[\(code)] \(detail). Re-sync via Prepare when ready.",
-                    route: WatchAlertKind.upstreamChange.route
+                    body: detail,
+                    route: WatchAlertKind.upstreamChange.route,
+                    code: code,
+                    detail: detail
                 )
             }
         } catch {
@@ -278,9 +280,10 @@ final class WatchCoordinator: ObservableObject {
 
     // MARK: - Internals
 
-    private func addAlert(kind: WatchAlertKind, fingerprint: String, modelKey: String, title: String, body: String, route: String) {
+    private func addAlert(kind: WatchAlertKind, fingerprint: String, modelKey: String, title: String, body: String, route: String,
+                          code: String? = nil, detail: String? = nil) {
         guard !alerts.contains(where: { $0.fingerprint == fingerprint }) else { return }
-        let alert = WatchAlert(
+        var alert = WatchAlert(
             id: UUID(),
             kind: kind,
             fingerprint: fingerprint,
@@ -293,6 +296,9 @@ final class WatchCoordinator: ObservableObject {
             muted: false,
             dismissedAt: nil
         )
+        alert.code = code
+        alert.detail = detail
+        guard !WatchAlertPresentation.isUnknownAccess(alert) else { return }
         alerts.insert(alert, at: 0)
         persist(alert)
         notify(alert)

@@ -60,6 +60,65 @@ final class WatchCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.alerts.first?.title.contains("qwen3-8b") == true)
     }
 
+    func testUpstreamAlertsKeepTheFindingCodeAndDropUnknownAccessChanges() async {
+        let coordinator = makeCoordinator(
+            snapshot: {},
+            diff: { [
+                ["repo": "mlx-community/qwen3-8b-4bit", "detail": "new tracked repository matching an owned model", "code": "new_quant_of_owned"],
+                ["repo": "mlx-community/tts", "detail": "gated changed from public to unknown", "code": "gated_changed"],
+            ] }
+        )
+        await coordinator.checkNow()
+        await coordinator.checkNow()
+        XCTAssertEqual(coordinator.alerts.map(\.code), ["new_quant_of_owned"])
+        XCTAssertEqual(coordinator.alerts.first?.detail, "new tracked repository matching an owned model")
+        XCTAssertFalse(coordinator.alerts.first?.body.contains("Re-sync") ?? true)
+    }
+
+    /// Every upstream alert carries the action that resolves it; raw finding codes never reach the user.
+    func testAlertPresentationOffersAnActionPerFinding() {
+        func alert(_ code: String?, _ detail: String?, body: String = "b", repo: String = "org/model") -> WatchAlert {
+            var value = WatchAlert(id: UUID(), kind: .upstreamChange, fingerprint: "f", modelKey: repo, title: "t", body: body,
+                                   route: "convert", createdAt: now, snoozedUntil: nil, muted: false, dismissedAt: nil)
+            value.code = code
+            value.detail = detail
+            return value
+        }
+        let fresh = WatchAlertPresentation(alert: alert("new_quant_of_owned", "new tracked repository matching an owned model"))
+        XCTAssertEqual(fresh.title, "New upload of a model you have")
+        XCTAssertEqual(fresh.primary, WatchAlertPresentation.Action(title: "Add from Hugging Face", kind: .addFromHuggingFace(repo: "org/model")))
+
+        let updated = WatchAlertPresentation(alert: alert("updated_tracked_repo", "weight bytes changed from 1000 to 2000"))
+        XCTAssertEqual(updated.primary?.kind, .addFromHuggingFace(repo: "org/model"))
+        XCTAssertEqual(updated.primary?.title, "Get update")
+
+        let missing = WatchAlertPresentation(alert: alert("owned_missing", "previously owned via lmstudio; no longer present"))
+        XCTAssertEqual(missing.title, "org/model is no longer on this Mac")
+        XCTAssertTrue(missing.message.contains("LM Studio"))
+        XCTAssertEqual(missing.primary?.title, "Download again")
+        XCTAssertEqual(missing.muteTitle, "Stop watching")
+
+        let gated = WatchAlertPresentation(alert: alert("gated_changed", "gated changed from False to manual"))
+        XCTAssertEqual(gated.primary?.kind, .openOnHuggingFace(repo: "org/model"))
+
+        let legacy = WatchAlertPresentation(alert: alert(nil, nil, body: "[owned_missing] previously owned via lmstudio; no longer present. Re-sync via Prepare when ready."))
+        XCTAssertEqual(legacy.primary?.title, "Download again")
+        XCTAssertFalse(legacy.message.contains("["))
+
+        let drift = WatchAlert(id: UUID(), kind: .environmentDrift, fingerprint: "e", modelKey: "environment", title: "Runtime environment changed",
+                               body: "2 verified model(s) were verified under a previous macOS/MLX.", route: "models", createdAt: now,
+                               snoozedUntil: nil, muted: false, dismissedAt: nil)
+        XCTAssertEqual(WatchAlertPresentation(alert: drift).primary?.kind, .reverify)
+    }
+
+    func testLegacyUnknownAccessAlertsAreNotActive() {
+        var legacy = makeAlert()
+        legacy = WatchAlert(id: legacy.id, kind: .upstreamChange, fingerprint: "g", modelKey: "org/tts", title: "t",
+                            body: "[gated_changed] gated changed from public to unknown. Re-sync via Prepare when ready.",
+                            route: "convert", createdAt: now, snoozedUntil: nil, muted: false, dismissedAt: nil)
+        XCTAssertFalse(legacy.isActive(at: now))
+    }
+
     func testUpstreamAlertsDedupeByFingerprint() async {
         let finding = ["repo": "mlx-community/qwen3-8b", "detail": "3 files changed"]
         let coordinator = makeCoordinator(snapshot: {}, diff: { [finding] })
