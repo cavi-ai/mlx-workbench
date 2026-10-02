@@ -295,6 +295,29 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
+    /// Status refreshes keep arriving while the gate runs; a done job must not
+    /// pull the record back to "waiting for a scan" and start a second verification.
+    func testStatusRefreshDuringVerificationDoesNotRestartIt() async {
+        let completedJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "done")
+        let output = MLXOutput(path: "/Models/source", name: "source", modelKey: "source-model", quantization: nil, provenance: "signature-1")
+        let scans = ScanSequence([scanResult(outputs: []), scanResult(outputs: [output]), scanResult(outputs: [output]), scanResult(outputs: [output])])
+        let host = await makeHost(jobs: [completedJob], scanOperation: { _, _, _, _ in try await scans.next() })
+        let verifier = await MainActor.run { () -> StubCompletionVerifier in
+            let verifier = StubCompletionVerifier()
+            host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1"))
+            host.modelWorkflow.completionVerifier = verifier
+            return verifier
+        }
+        await host.rescan()
+        await host.refreshWorkflowStatus()
+        await host.refreshWorkflowStatus()
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .verifying)
+            XCTAssertEqual(verifier.calls.count, 1)
+            XCTAssertFalse(host.modelWorkflow.consumeCompletionRescanRequest())
+        }
+    }
+
     func testCompletedConversionSkipsVerificationWithoutGate() async {
         let completedJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "completed")
         let withOutput = scanResult(outputs: [

@@ -359,7 +359,10 @@ class AppHost: ObservableObject {
 
     private func finishCompletionReconciliationIfNeeded() async {
         guard modelWorkflow.consumeCompletionRescanRequest() else { return }
-        let freshSnapshot = await rescan(limit: nil, reconcileWorkflow: false)
+        guard let freshSnapshot = await rescan(limit: nil, reconcileWorkflow: false) else {
+            modelWorkflow.deferCompletionRescan()
+            return
+        }
         modelWorkflow.resolveCompletionAfterFreshScan(snapshot: freshSnapshot)
     }
 
