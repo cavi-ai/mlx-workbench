@@ -7,10 +7,12 @@ import XCTest
 final class IntakeContractTests: XCTestCase {
     func testAudio8ResolutionDecodes() throws {
         let value = try WorkbenchAPI.decode(IntakeResolution.self, from: try vendoredFixture("intake-resolve-audio8"))
-        XCTAssertEqual(value.verdict, .unsupported)
-        XCTAssertEqual(value.reasons, ["arch_not_in_registry", "custom_code"])
+        XCTAssertEqual(value.verdict, .convertibleAfterInstall)
+        XCTAssertEqual(value.backend, "mlx-audio")
+        XCTAssertEqual(value.reasons, [])
         XCTAssertEqual(value.task?.type, .speechToText)
         XCTAssertEqual(value.components.map(\.role), ["model", "audio", "text"])
+        XCTAssertEqual(value.components[0].matches.map(\.module), ["mlx_audio.stt.models.audio8_asr_infinite"])
         XCTAssertTrue(value.components[1].matches.contains { $0.module == "mlx_audio.stt.models.voxtral_realtime" })
         XCTAssertGreaterThan(value.bytes, 8_000_000_000)
     }
