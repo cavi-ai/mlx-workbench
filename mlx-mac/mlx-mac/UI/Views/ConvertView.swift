@@ -131,6 +131,9 @@ struct ConvertView: View {
             .padding(WorkbenchSpacing.pageInset)
             .onPasteCommand(of: [.plainText, .url]) { _ in pasteIntake() }
         }
+        .onChange(of: qBits) { _, bits in
+            modelWorkflow.selectRepoBits(bits)
+        }
         .task(id: modelWorkflow.workflow.state) {
             while !Task.isCancelled && modelWorkflow.workflow.state.isInFlight {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -228,7 +231,7 @@ struct ConvertView: View {
                 .disabled(!presentation.canConfirm || modelWorkflow.isConversionSubmissionInFlight)
         }
 
-        if let existingModel {
+        if let existingModel, ModelTaskPresentation.isServable(existingModel) {
             Button("Run existing") {
                 modelWorkflow.useExisting(existingModel)
                 modelWorkflow.prepareServe(model: existingModel)

@@ -68,6 +68,35 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertEqual(workflow.workflow.state, .queued)
     }
 
+    /// A 4-bit output already in the library must not block an 8-bit
+    /// conversion: the picker moves the destination, and moving back offers
+    /// the existing model again.
+    func testBitPickerOffersAnotherWidthWhenOneIsConverted() async throws {
+        let workflow = coordinator()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("intake-\(UUID().uuidString)").path
+        let existing = directory + "/whisper-tiny-MLX-4bit"
+        workflow.inspect(intake: try resolution(), outputDirectory: directory, qBits: 4, snapshot: Self.snapshot(output: existing, type: .speechToText))
+        XCTAssertEqual(workflow.workflow.state, .existingModelFound)
+        let id = workflow.workflow.id
+
+        workflow.selectRepoBits(8)
+        XCTAssertEqual(workflow.workflow.state, .inspectingSource)
+        XCTAssertEqual(workflow.workflow.outputPath, directory + "/whisper-tiny-MLX-8bit")
+        XCTAssertNil(workflow.workflow.completedModelPath)
+        XCTAssertEqual(workflow.workflow.id, id)
+        await workflow.preview(qBits: 8, out: nil)
+        XCTAssertEqual(workflow.workflow.state, .readyToConfirm)
+        XCTAssertEqual(repoCalls.first?.3, directory + "/whisper-tiny-MLX-8bit")
+
+        workflow.selectRepoBits(4)
+        XCTAssertEqual(workflow.workflow.state, .readyToConfirm, "a previewed intent is not rewritten by the picker")
+        let fresh = coordinator()
+        fresh.inspect(intake: try resolution(), outputDirectory: directory, qBits: 8, snapshot: Self.snapshot(output: existing, type: .speechToText))
+        fresh.selectRepoBits(4)
+        XCTAssertEqual(fresh.workflow.state, .existingModelFound)
+        XCTAssertEqual(fresh.workflow.completedModelPath, existing)
+    }
+
     func testRepoPreviewRefusesAnOccupiedDestination() async throws {
         let workflow = coordinator()
         let output = FileManager.default.temporaryDirectory.appendingPathComponent("intake-\(UUID().uuidString)")

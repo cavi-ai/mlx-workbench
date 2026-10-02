@@ -226,6 +226,15 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertEqual(card.actions, [.openInLibrary(model.item.path), .runModel(workflow)])
     }
 
+    /// Run refuses models it cannot serve, so Activity does not offer it for them.
+    func testActivityCompletedSpeechOutputOffersLibraryOnly() {
+        let speech = ModelTask(type: .speechToText, useCases: ["transcription"], source: "registry", confidence: "confirmed")
+        let model = makeOperationalModel(path: "/models/asr-mlx", status: "ready", task: speech)
+        let workflow = makeOperationalWorkflow(state: .completed, completedModelPath: model.item.path)
+        let card = ActivityWorkflowCardPresentation(workflow: workflow, job: nil, snapshot: makeOperationalSnapshot(models: [model]))
+        XCTAssertEqual(card.actions, [.openInLibrary(model.item.path)])
+    }
+
     func testActivityFailureOffersRetryPreview() {
         let workflow = makeOperationalWorkflow(state: .failed, errorMessage: "failed exactly")
         let source = makeOperationalModel(path: workflow.sourcePath, status: "pending").item
@@ -410,13 +419,13 @@ final class AppHostHealthTests: XCTestCase {
         )
     }
 
-    private func makeOperationalModel(path: String, status: String) -> LibraryModel {
+    private func makeOperationalModel(path: String, status: String, task: ModelTask? = nil) -> LibraryModel {
         LibraryModel(
             item: ModelItem(
                 path: path, name: "Atlas", bytes: 4_096, modifiedAt: 1_756_120_000, shard: nil,
                 modelKey: "atlas", architecture: "llama", quantization: "4-bit", parameters: "7B",
                 structure: nil, signature: "signature", companion: nil, readable: true, status: status,
-                outputs: [], tensorCount: 32, error: nil
+                outputs: [], tensorCount: 32, error: nil, task: task
             ),
             normalizedFamilyKey: "atlas",
             displayName: "Atlas"

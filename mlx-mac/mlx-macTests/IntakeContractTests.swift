@@ -17,6 +17,27 @@ final class IntakeContractTests: XCTestCase {
         XCTAssertGreaterThan(value.bytes, 8_000_000_000)
     }
 
+    /// The estimate comes from the agent's header-based sizes; without them
+    /// there is no row rather than a guess that assumes every weight quantizes.
+    func testEstimatedOutputUsesTheAgentSizes() throws {
+        let value = try WorkbenchAPI.decode(IntakeResolution.self, from: try vendoredFixture("intake-resolve-audio8"))
+        XCTAssertEqual(value.estimatedOutputBytes?["4"], 3_748_321_085)
+        let rows = IntakePresentation.summaryRows(value, qBits: 4)
+        XCTAssertEqual(rows.first { $0.label == "Estimated 4-bit output" }?.value, LibraryTablePresentation.byteCount(3_748_321_085))
+        XCTAssertEqual(IntakePresentation.summaryRows(value, qBits: 8).first { $0.label == "Estimated 8-bit output" }?.value,
+                       LibraryTablePresentation.byteCount(5_291_169_597))
+
+        let json = """
+        {"schema":"intake/1","source":{"input":"x","repo":"org/thing","revision":"main","file":null,"url":"u"},
+         "verdict":"convertible","reasons":[],"backend":"mlx-lm","backend_installed":true,
+         "model_type":"qwen2","components":[],"task":null,"custom_code":false,"gated":false,"library_name":null,
+         "pipeline_tag":null,"transformers_version":null,"bytes":1000000,"estimated_output_bytes":null,
+         "files":{"safetensors":1,"gguf":[],"python":[]},"warnings":[]}
+        """
+        let unknown = try JSONDecoder().decode(IntakeResolution.self, from: Data(json.utf8))
+        XCTAssertFalse(IntakePresentation.summaryRows(unknown, qBits: 4).contains { $0.label.hasPrefix("Estimated") })
+    }
+
     func testBackendListDecodes() throws {
         let value = try WorkbenchAPI.decode(BackendList.self, from: try vendoredFixture("backend-list"))
         XCTAssertEqual(value.backends.map(\.id), ["mlx-audio", "mlx-lm", "mlx-vlm"])
