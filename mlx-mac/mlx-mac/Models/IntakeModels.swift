@@ -87,11 +87,14 @@ struct IntakeResolution: Codable, Equatable {
     let pipelineTag: String?
     let transformersVersion: String?
     let bytes: Int64
+    /// Converted size by bit width ("4", "8") from the weight headers; nil when unknown.
+    let estimatedOutputBytes: [String: Int64]?
     let files: IntakeFiles
     let warnings: [String]
 
     enum CodingKeys: String, CodingKey {
         case schema, source, verdict, reasons, backend, components, task, gated, bytes, files, warnings
+        case estimatedOutputBytes = "estimated_output_bytes"
         case backendInstalled = "backend_installed"
         case modelType = "model_type"
         case customCode = "custom_code"

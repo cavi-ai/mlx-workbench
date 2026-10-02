@@ -184,25 +184,46 @@ final class ModelWorkflowCoordinator: ObservableObject {
         servePreviewHash = nil
         servePreviewIntent = nil
         let output = Self.repoOutputPath(directory: outputDirectory, repo: intake.source.repo, qBits: qBits)
-        let backend = intake.backend ?? "mlx-lm"
-        var record: ConversionWorkflow
-        if let existing = snapshot?.models.first(where: { canonicalPath($0.item.path) == canonicalPath(output) }) {
-            record = makeWorkflow(
-                sourcePath: "hf://\(intake.source.repo)", sourceModelKey: nil, sourceSignature: nil,
-                outputPath: existing.item.path, state: .existingModelFound,
-                completedModelPath: existing.item.path,
-                message: "An MLX output already exists at the destination."
-            )
-        } else {
-            record = makeWorkflow(
-                sourcePath: "hf://\(intake.source.repo)", sourceModelKey: nil, sourceSignature: nil,
-                outputPath: output, state: .inspectingSource,
-                message: "Ready to preview converting \(intake.source.repo) with \(backend)."
-            )
-        }
-        record.sourceRepo = intake.source.repo
-        record.backend = backend
-        replace(record, persist: false)
+        replace(repoRecord(repo: intake.source.repo, backend: intake.backend ?? "mlx-lm", output: output), persist: false)
+    }
+
+    /// Prepare's bit-width picker for a repo source: the destination follows the
+    /// width, and an output already converted at that width is offered instead.
+    func selectRepoBits(_ qBits: Int) {
+        guard let repo = workflow.sourceRepo,
+              workflow.state == .existingModelFound || workflow.state == .inspectingSource else { return }
+        let directory = URL(fileURLWithPath: workflow.outputPath).deletingLastPathComponent().path
+        let output = Self.repoOutputPath(directory: directory, repo: repo, qBits: qBits)
+        guard canonicalPath(output) != canonicalPath(workflow.outputPath) else { return }
+        replace(repoRecord(repo: repo, backend: workflow.backend ?? "mlx-lm", output: output, keeping: workflow), persist: false)
+    }
+
+    /// A repo workflow at `output`: the existing model when the library already
+    /// has it, otherwise ready to preview. `keeping` preserves the record identity.
+    private func repoRecord(repo: String, backend: String, output: String, keeping base: ConversionWorkflow? = nil) -> ConversionWorkflow {
+        let existing = selectedSnapshot?.models.first { canonicalPath($0.item.path) == canonicalPath(output) }
+        let timestamp = now()
+        return ConversionWorkflow(
+            id: base?.id ?? UUID(),
+            sourcePath: "hf://\(repo)",
+            sourceModelKey: nil,
+            sourceSignature: nil,
+            outputPath: existing?.item.path ?? output,
+            previewHash: nil,
+            jobReceipt: nil,
+            completedModelPath: existing?.item.path,
+            state: existing == nil ? .inspectingSource : .existingModelFound,
+            serveState: .idle,
+            message: existing == nil
+                ? "Ready to preview converting \(repo) with \(backend)."
+                : "An MLX output already exists at the destination.",
+            errorMessage: nil,
+            createdAt: base?.createdAt ?? timestamp,
+            updatedAt: timestamp,
+            lastKnownAgentState: nil,
+            sourceRepo: repo,
+            backend: backend
+        )
     }
 
     func preview(qBits: Int, out: String?) async {

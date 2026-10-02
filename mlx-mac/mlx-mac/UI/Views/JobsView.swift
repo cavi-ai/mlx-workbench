@@ -46,7 +46,7 @@ struct ActivityWorkflowCardPresentation: Identifiable, Equatable {
            workflow.state == .completed || workflow.state == .verified,
            let model = snapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) {
             available.append(.openInLibrary(path))
-            if model.readiness == .ready { available.append(.runModel(workflow)) }
+            if model.readiness == .ready, ModelTaskPresentation.isServable(model) { available.append(.runModel(workflow)) }
         }
         if workflow.state == .verificationFailed {
             available.append(.keepAnyway(workflow))

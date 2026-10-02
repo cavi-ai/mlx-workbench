@@ -224,8 +224,8 @@ enum IntakePresentation {
         }
         rows.append(DetailRow("Architecture", resolution.modelType ?? "Unknown"))
         rows.append(DetailRow("Download", LibraryTablePresentation.byteCount(resolution.bytes)))
-        if resolution.verdict == .convertible || resolution.verdict == .convertibleAfterInstall {
-            rows.append(DetailRow("Estimated \(qBits)-bit output", LibraryTablePresentation.byteCount(resolution.bytes * Int64(qBits) / 16)))
+        if let estimate = resolution.estimatedOutputBytes?[String(qBits)] {
+            rows.append(DetailRow("Estimated \(qBits)-bit output", LibraryTablePresentation.byteCount(estimate)))
         }
         return rows
     }

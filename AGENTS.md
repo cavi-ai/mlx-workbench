@@ -64,8 +64,9 @@ from `mlx-agent` at runtime.
   `backend list|install|remove`. Repo conversions run through
   `ModelWorkflowCoordinator.inspect(intake:…)` with `ConversionWorkflow.sourceRepo/backend`;
   the Quality Gate canary runs only for `ModelTaskType.hasCanary` types, and Run/Compare refuse
-  non-servable types. `config.outputDir` is scanned as an MLX root unless a root already contains it (by file identity).
-  Prepare refreshes conversion status while a job is in flight. Model type and use cases come
+  non-servable types, and Prepare/Activity do not offer Run for them. `config.outputDir` is scanned as an MLX root unless a root already contains it (by file identity).
+  Prepare refreshes conversion status while a job is in flight, and its bit picker re-targets repo
+  destinations. The intake window shows the agent's header-based `estimated_output_bytes`. Model type and use cases come
   from the agent's `task` labels (`ModelTask`); `UseCase` stays the serving-role vocabulary.
   Architectures no pinned backend implements can ship as mlx-agent backend ports
   (`resources/ports/<backend>/`, e.g. mlx-audio `audio8_asr_infinite`): the registry counts them
