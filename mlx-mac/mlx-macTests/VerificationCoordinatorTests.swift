@@ -47,6 +47,65 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertNotNil(verification.reports.first?.tokensPerSecond)
     }
 
+    /// Speech models skip the server and transcribe a spoken sentence instead.
+    func testSpeechModelPassesOnAnAccurateTranscript() async {
+        let workflow = makeWorkflowCoordinator()
+        let verification = makeVerification(responder: passingResponder)
+        let clips = SpeechCalls()
+        verification.taskType = { _ in .speechToText }
+        verification.speech = SpeechCanaryRunner(
+            synthesize: { phrase in await clips.record(phrase); return FileManager.default.temporaryDirectory.appendingPathComponent("canary-\(UUID().uuidString).wav") },
+            transcribe: { path, _, language in
+                await clips.record("\(path)|\(language)")
+                return TranscriptionResult(text: "The quick brown fox jumps over the lazy dog. Please call Stella and ask her to bring these things from the store.", seconds: 2, audioSeconds: 7)
+            }
+        )
+        verification.attach(to: workflow)
+        let record = makeWorkflow(state: .verifying)
+        workflow.restore(record)
+
+        verification.beginVerification(recordID: record.id, modelPath: "/Models/asr", signature: "signature-1")
+
+        let resolved = await waitFor { workflow.workflow.state == .verified }
+        XCTAssertTrue(resolved)
+        XCTAssertEqual(verification.reports.first?.canaries.map(\.id), ["speech-en"])
+        XCTAssertEqual(verification.reports.first?.outcome, .passed)
+        let calls = await clips.values
+        XCTAssertEqual(calls, [SpeechCanary.phrase, "/Models/asr|en"])
+    }
+
+    func testSpeechModelFailsOnAPoorTranscriptAndIsUnverifiableWithoutTheRunner() async {
+        let workflow = makeWorkflowCoordinator()
+        let verification = makeVerification(responder: passingResponder)
+        verification.taskType = { _ in .speechToText }
+        verification.speech = SpeechCanaryRunner(
+            synthesize: { _ in FileManager.default.temporaryDirectory.appendingPathComponent("canary.wav") },
+            transcribe: { _, _, _ in TranscriptionResult(text: "the quick brown box", seconds: nil, audioSeconds: nil) }
+        )
+        verification.attach(to: workflow)
+        let record = makeWorkflow(state: .verifying)
+        workflow.restore(record)
+        verification.beginVerification(recordID: record.id, modelPath: "/Models/asr", signature: nil)
+        let failed = await waitFor { workflow.workflow.state == .verificationFailed }
+        XCTAssertTrue(failed)
+        XCTAssertTrue(verification.reports.first?.canaries.first?.failureReason?.contains("Word error rate") == true)
+
+        let bare = makeVerification(responder: passingResponder)
+        bare.taskType = { _ in .speechToText }
+        bare.attach(to: workflow)
+        let second = makeWorkflow(state: .verifying)
+        workflow.restore(second)
+        bare.beginVerification(recordID: second.id, modelPath: "/Models/asr", signature: nil)
+        let unverified = await waitFor { workflow.workflow.state == .completed }
+        XCTAssertTrue(unverified)
+    }
+
+    func testWordErrorRateIgnoresCaseAndPunctuation() {
+        XCTAssertEqual(SpeechCanary.wordErrorRate(reference: "The quick, brown fox.", hypothesis: "the quick brown fox"), 0)
+        XCTAssertEqual(SpeechCanary.wordErrorRate(reference: "one two three four", hypothesis: "one too three"), 0.5)
+        XCTAssertEqual(SpeechCanary.wordErrorRate(reference: "one two", hypothesis: ""), 1)
+    }
+
     func testFailingCanariesResolveWorkflowToVerificationFailed() async {
         let workflow = makeWorkflowCoordinator()
         let verification = makeVerification(responder: { _ in Self.sample("   ") })
@@ -296,5 +355,13 @@ private struct StubVerificationProber: EndpointProbing {
     func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
         let id = CanarySuite.cases.first(where: { $0.prompt == prompt })?.id ?? "unknown"
         return try await responder(id)
+    }
+}
+
+private actor SpeechCalls {
+    private(set) var values: [String] = []
+
+    func record(_ value: String) {
+        values.append(value)
     }
 }

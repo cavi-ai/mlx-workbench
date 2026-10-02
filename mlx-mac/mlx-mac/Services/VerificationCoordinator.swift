@@ -34,6 +34,10 @@ final class VerificationCoordinator: ObservableObject {
     /// Environment fingerprint provider (spec 08): recorded on every report
     /// so macOS/MLX drift can mark old evidence stale. Default: none.
     var environmentFingerprint: () -> String? = { nil }
+    /// The library's model type for a path; speech-to-text models take the transcription canary.
+    var taskType: (String) -> ModelTaskType? = { _ in nil }
+    /// Speech canary dependencies; without them speech models are reported unverifiable.
+    var speech: SpeechCanaryRunner?
 
     init(probe: ServeProbe, store: VerificationStore, now: @escaping () -> Date = Date.init) {
         self.probe = probe
@@ -135,18 +139,31 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
 
     private func run(modelPath: String, signature: String?, recordID: UUID?) {
         let target = canonical(modelPath)
+        let isSpeech = taskType(modelPath) == .speechToText
+        let speech = self.speech
         activeModelPath = target
-        progressMessage = "Starting verification server."
+        progressMessage = isSpeech ? "Transcribing a spoken canary sentence." : "Starting verification server."
         lastError = nil
 
         Task { [probe, now] in
             let startedAt = now()
             do {
-                let result = try await probe.run(modelPath: modelPath)
-                let finishedAt = now()
-                let canaries = CanarySuite.cases.compactMap { kase -> CanaryResult? in
-                    result.samples[kase.id].map { CanarySuite.evaluate(kase, sample: $0) }
+                let canaries: [CanaryResult]
+                let metricsEstimated: Bool
+                if isSpeech {
+                    guard let speech else { throw SpeechCanaryError.unavailable }
+                    let clip = try await speech.synthesize(SpeechCanary.phrase)
+                    defer { try? FileManager.default.removeItem(at: clip) }
+                    canaries = [SpeechCanary.evaluate(try await speech.transcribe(modelPath, clip, SpeechCanary.language))]
+                    metricsEstimated = false
+                } else {
+                    let result = try await probe.run(modelPath: modelPath)
+                    canaries = CanarySuite.cases.compactMap { kase -> CanaryResult? in
+                        result.samples[kase.id].map { CanarySuite.evaluate(kase, sample: $0) }
+                    }
+                    metricsEstimated = result.samples.values.contains(where: \.metricsEstimated)
                 }
+                let finishedAt = now()
                 let failedIDs = canaries.filter { !$0.passed }.map(\.id)
                 let outcome: VerificationOutcome = failedIDs.isEmpty ? .passed : .failed(canaryIDs: failedIDs)
                 let report = VerificationReport(
@@ -158,7 +175,7 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                     canaries: canaries,
                     tokensPerSecond: CanarySuite.aggregateTokensPerSecond(canaries),
                     timeToFirstTokenSeconds: CanarySuite.aggregateTTFT(canaries),
-                    metricsEstimated: result.samples.values.contains(where: \.metricsEstimated),
+                    metricsEstimated: metricsEstimated,
                     startedAt: startedAt,
                     finishedAt: finishedAt,
                     outcome: outcome,
@@ -199,5 +216,54 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
             parts.append(String(format: "TTFT %.2fs", ttft))
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+// MARK: - Speech canary
+
+struct SpeechCanaryRunner: Sendable {
+    /// Speaks a sentence into an audio file.
+    let synthesize: @Sendable (String) async throws -> URL
+    /// Transcribes (model path, audio file, language).
+    let transcribe: @Sendable (String, URL, String) async throws -> TranscriptionResult
+}
+
+enum SpeechCanaryError: LocalizedError {
+    case unavailable
+    case toolFailed(String, Int32)
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable: return "Speech verification is not available in this build."
+        case let .toolFailed(tool, status): return "\(tool) exited with status \(status) while making the canary clip."
+        }
+    }
+}
+
+/// Makes the canary clip with the system voice: `say` to AIFF, `afconvert` to 16 kHz mono WAV.
+enum SpeechClipSynthesizer {
+    static func make(phrase: String, directory: URL = FileManager.default.temporaryDirectory) async throws -> URL {
+        let stem = directory.appendingPathComponent("speech-canary-\(UUID().uuidString)")
+        let aiff = stem.appendingPathExtension("aiff")
+        let wav = stem.appendingPathExtension("wav")
+        defer { try? FileManager.default.removeItem(at: aiff) }
+        try await run("/usr/bin/say", ["-o", aiff.path, phrase])
+        try await run("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", aiff.path, wav.path])
+        return wav
+    }
+
+    private static func run(_ tool: String, _ arguments: [String]) async throws {
+        try await Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: tool)
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                throw SpeechCanaryError.toolFailed(URL(fileURLWithPath: tool).lastPathComponent, process.terminationStatus)
+            }
+        }.value
     }
 }

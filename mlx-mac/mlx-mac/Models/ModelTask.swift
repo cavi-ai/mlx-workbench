@@ -34,11 +34,12 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// The Conversion Quality Gate's canaries are chat completions.
-    var hasCanary: Bool { self == .textLLM || self == .visionLanguage }
+    /// The Conversion Quality Gate has a canary: chat completions for chat
+    /// models, a spoken sentence to transcribe for speech-to-text models.
+    var hasCanary: Bool { isServable || self == .speechToText }
 
     /// Run and Compare serve through mlx-lm's chat server.
-    var isServable: Bool { hasCanary }
+    var isServable: Bool { self == .textLLM || self == .visionLanguage }
 }
 
 // MARK: - ModelTask
@@ -107,7 +108,7 @@ enum ModelTaskPresentation {
 
     /// Serving-role capabilities the RecommendationEngine ranks on.
     static func capabilities(for task: ModelTask) -> [UseCase] {
-        guard task.type.hasCanary else { return [] }
+        guard task.type.isServable else { return [] }
         return task.useCases.compactMap { UseCase(rawValue: $0) }
     }
 }

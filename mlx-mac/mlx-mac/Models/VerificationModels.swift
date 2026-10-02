@@ -187,6 +187,70 @@ enum CanaryDetectors {
 
 // MARK: - Results
 
+/// The agent's `convert transcribe` result.
+struct TranscriptionResult: Codable, Equatable, Sendable {
+    let text: String
+    let seconds: Double?
+    let audioSeconds: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case text, seconds
+        case audioSeconds = "audio_seconds"
+    }
+}
+
+/// The speech-to-text canary: a known sentence spoken by the system voice
+/// must come back within a word error rate limit.
+enum SpeechCanary {
+    static let id = "speech-en"
+    static let title = "Speech"
+    static let language = "en"
+    static let phrase = "The quick brown fox jumps over the lazy dog. Please call Stella and ask her to bring these things from the store."
+    static let maxWordErrorRate = 0.25
+
+    static func words(_ text: String) -> [String] {
+        text.lowercased()
+            .map { $0.isLetter || $0.isNumber || $0 == "'" ? $0 : " " }
+            .reduce(into: "") { $0.append($1) }
+            .split(separator: " ")
+            .map(String.init)
+    }
+
+    /// Word-level edit distance over the reference length.
+    static func wordErrorRate(reference: String, hypothesis: String) -> Double {
+        let expected = words(reference), heard = words(hypothesis)
+        guard !expected.isEmpty else { return heard.isEmpty ? 0 : 1 }
+        guard !heard.isEmpty else { return 1 }
+        var row = Array(0...heard.count)
+        for (i, word) in expected.enumerated() {
+            var previous = row[0]
+            row[0] = i + 1
+            for j in 1...heard.count {
+                let current = row[j]
+                row[j] = min(row[j] + 1, row[j - 1] + 1, previous + (word == heard[j - 1] ? 0 : 1))
+                previous = current
+            }
+        }
+        return Double(row[heard.count]) / Double(expected.count)
+    }
+
+    static func evaluate(_ result: TranscriptionResult) -> CanaryResult {
+        let rate = wordErrorRate(reference: phrase, hypothesis: result.text)
+        let passed = rate <= maxWordErrorRate
+        return CanaryResult(
+            id: id,
+            title: title,
+            passed: passed,
+            failureReason: passed ? nil : String(
+                format: "Word error rate %.0f%% is above the %.0f%% limit.", rate * 100, maxWordErrorRate * 100
+            ),
+            responseExcerpt: String(result.text.prefix(240)),
+            tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil
+        )
+    }
+}
+
 struct CanaryResult: Codable, Equatable, Sendable {
     let id: String
     let title: String

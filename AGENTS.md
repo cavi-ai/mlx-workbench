@@ -63,7 +63,7 @@ from `mlx-agent` at runtime.
   `mlx-agent intake resolve|fetch|status|port-analysis|port-plan` and
   `backend list|install|remove`. Repo conversions run through
   `ModelWorkflowCoordinator.inspect(intake:…)` with `ConversionWorkflow.sourceRepo/backend`;
-  the Quality Gate canary runs only for `ModelTaskType.hasCanary` types, and Run/Compare refuse
+  the Quality Gate canary runs only for `ModelTaskType.hasCanary` types (chat models: served canary prompts; speech-to-text: a `say`-synthesized sentence transcribed through `mlx-agent convert transcribe`, passing at ≤25% word error), and Run/Compare refuse
   non-servable types, and Prepare/Activity do not offer Run for them. `config.outputDir` is scanned as an MLX root unless a root already contains it (by file identity).
   Prepare refreshes conversion status while a job is in flight and shows a progress ring (bytes
   written against the intake estimate; indeterminate while the converter loads) with the job log in a
