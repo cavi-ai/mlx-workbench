@@ -629,6 +629,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
     }
 
+    /// A completion scan could not run (another scan was in progress); ask again on the next refresh.
+    func deferCompletionRescan() {
+        completionRescanRequested = true
+    }
+
     func consumeCompletionRescanRequest() -> Bool {
         let requested = completionRescanRequested
         completionRescanRequested = false
@@ -772,7 +777,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
             case "running", "active":
                 replace(updatedRecord(from: record, state: .running, message: "Conversion running.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
             case "done", "completed", "complete", "succeeded", "success":
-                guard record.state != .completed else { continue }
+                // Once the scan confirmed the output, later refreshes of the same done job change nothing.
+                guard ![.completed, .verifying, .verified, .verificationFailed].contains(record.state) else { continue }
                 completionRescanRequested = true
                 pendingCompletionRecordIDs.insert(record.id)
                 replace(updatedRecord(from: record, state: .running, message: "Conversion completed; waiting for a fresh library scan to confirm its MLX output.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
