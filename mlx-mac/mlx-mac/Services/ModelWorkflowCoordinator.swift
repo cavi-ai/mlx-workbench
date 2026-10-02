@@ -183,8 +183,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         conversionPreviewOutput = nil
         servePreviewHash = nil
         servePreviewIntent = nil
-        let output = URL(fileURLWithPath: NSString(string: outputDirectory).expandingTildeInPath)
-            .appendingPathComponent("\(intake.repoName)-MLX-\(qBits)bit").path
+        let output = Self.repoOutputPath(directory: outputDirectory, repo: intake.source.repo, qBits: qBits)
         let backend = intake.backend ?? "mlx-lm"
         var record: ConversionWorkflow
         if let existing = snapshot?.models.first(where: { canonicalPath($0.item.path) == canonicalPath(output) }) {
@@ -333,8 +332,16 @@ final class ModelWorkflowCoordinator: ObservableObject {
         return receipt
     }
 
+    /// `<directory>/<name>-MLX-<bits>bit` for a repo conversion.
+    static func repoOutputPath(directory: String, repo: String, qBits: Int) -> String {
+        let name = repo.split(separator: "/").last.map(String.init) ?? repo
+        return URL(fileURLWithPath: NSString(string: directory).expandingTildeInPath)
+            .appendingPathComponent("\(name)-MLX-\(qBits)bit").path
+    }
+
     private func previewRepo(_ repo: String, backend: String, qBits: Int, out: String?) async {
-        let output = safeOutputOverride(out) ?? workflow.outputPath
+        let directory = URL(fileURLWithPath: workflow.outputPath).deletingLastPathComponent().path
+        let output = safeOutputOverride(out) ?? Self.repoOutputPath(directory: directory, repo: repo, qBits: qBits)
         guard !fileManager.fileExists(atPath: canonicalPath(output)) else {
             failDestination(destination: output, reason: "The destination already exists; pick another output directory.")
             return

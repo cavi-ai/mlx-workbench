@@ -29,7 +29,7 @@ struct ActivityWorkflowCardPresentation: Identifiable, Equatable {
         case .failed: return "Failed"
         }
     }
-    var isActive: Bool { workflow.state == .queued || workflow.state == .running || workflow.state == .verifying }
+    var isActive: Bool { workflow.state.isInFlight }
 
     init(
         workflow: ConversionWorkflow,

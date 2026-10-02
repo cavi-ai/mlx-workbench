@@ -53,6 +53,21 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertEqual(workflow.workflow.sourceRepo, "openai/whisper-tiny")
     }
 
+    /// The destination opened at the configured bit width; an 8-bit preview
+    /// must name its own folder, not write 8-bit weights into "-MLX-4bit".
+    func testRepoPreviewNamesTheDestinationForTheChosenBits() async throws {
+        let workflow = coordinator()
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent("intake-\(UUID().uuidString)").path
+        workflow.inspect(intake: try resolution(), outputDirectory: output, qBits: 4, snapshot: nil)
+        await workflow.preview(qBits: 8, out: nil)
+        XCTAssertEqual(workflow.workflow.state, .readyToConfirm)
+        XCTAssertEqual(repoCalls.first?.2, 8)
+        XCTAssertEqual(repoCalls.first?.3, output + "/whisper-tiny-MLX-8bit")
+        XCTAssertEqual(workflow.workflow.outputPath, output + "/whisper-tiny-MLX-8bit")
+        await workflow.confirm(qBits: 8)
+        XCTAssertEqual(workflow.workflow.state, .queued)
+    }
+
     func testRepoPreviewRefusesAnOccupiedDestination() async throws {
         let workflow = coordinator()
         let output = FileManager.default.temporaryDirectory.appendingPathComponent("intake-\(UUID().uuidString)")
@@ -103,6 +118,43 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), ["/models/gguf", "/cache/hub", "/models/converted"])
         config.outputDir = ""
         XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: gguf), [])
+    }
+
+    /// An output directory under a scanned root is already covered; a second
+    /// root for it listed every converted model twice. Containment is by file
+    /// identity, so a case-variant spelling of the root counts as that root.
+    func testOutputInsideARootIsNotScannedTwice() {
+        var config = Config.defaults()
+        config.mlxRoots = []
+        config.outputDir = "/Users/f/models/mlx"
+        let sameDirectory = NSString(string: "inode-1")
+        let identity: (String) -> NSObject? = { ["/Users/f/Models": sameDirectory, "/Users/f/models": sameDirectory][$0] }
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: ["/Users/f/Models", "/cache/hub"], fileIdentity: identity), ["/Users/f/Models", "/cache/hub"])
+        config.outputDir = "/models/gguf/mlx"
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: ["/models/gguf"]), ["/models/gguf"])
+        config.outputDir = "/models/ggufs"
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: ["/models/gguf"]), ["/models/gguf", "/models/ggufs"])
+    }
+
+    func testFileIdentityTreatsACaseVariantAsTheSameRoot() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("scan-roots-\(UUID().uuidString)")
+        let root = base.appendingPathComponent("Models")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("mlx"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let variant = base.appendingPathComponent("models").path
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: variant), "case-sensitive volume")
+        var config = Config.defaults()
+        config.mlxRoots = []
+        config.outputDir = variant + "/mlx"
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: [root.path]), [root.path])
+    }
+
+    func testPrepareRefreshesStatusOnlyWhileAConversionIsInFlight() {
+        let inFlight = [ConversionWorkflowState.queued, .running, .verifying]
+        for state in [ConversionWorkflowState.idle, .inspectingSource, .existingModelFound, .previewingConversion, .readyToConfirm,
+                      .queued, .running, .completed, .verifying, .verified, .verificationFailed, .failed] {
+            XCTAssertEqual(state.isInFlight, inFlight.contains(state), state.rawValue)
+        }
     }
 
     func testPrepareServeRefusesNonServableModel() throws {

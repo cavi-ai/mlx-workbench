@@ -22,6 +22,11 @@ enum ConversionWorkflowState: String, Codable, Equatable {
         default: return false
         }
     }
+
+    /// A job or verification is running and only a status refresh moves it on.
+    var isInFlight: Bool {
+        self == .queued || self == .running || self == .verifying
+    }
 }
 
 /// Outcome handed back to the model workflow by the Conversion Quality Gate.
