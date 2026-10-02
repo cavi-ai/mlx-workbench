@@ -108,9 +108,13 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertTrue(repoCalls.isEmpty)
     }
 
-    func testNonTextCompletionSkipsTheCanary() throws {
+    func testCompletionRunsTheCanaryOnlyForTypesThatHaveOne() throws {
         let verifier = RecordingVerifier()
-        for (type, expected, calls) in [(ModelTaskType.speechToText, ConversionWorkflowState.completed, 0), (.textLLM, .verifying, 1)] {
+        for (type, expected, calls) in [
+            (ModelTaskType.textToSpeech, ConversionWorkflowState.completed, 0),
+            (.speechToText, .verifying, 1),
+            (.textLLM, .verifying, 1),
+        ] {
             let workflow = coordinator()
             workflow.completionVerifier = verifier
             verifier.calls = 0
@@ -119,8 +123,8 @@ final class RepoWorkflowTests: XCTestCase {
             workflow.resolveCompletionAfterFreshScan(snapshot: Self.snapshot(output: output, type: type))
             XCTAssertEqual(workflow.workflow.state, expected, type.rawValue)
             XCTAssertEqual(verifier.calls, calls, type.rawValue)
-            if type == .speechToText {
-                XCTAssertTrue(workflow.workflow.message?.contains("Speech-to-text") ?? false)
+            if type == .textToSpeech {
+                XCTAssertTrue(workflow.workflow.message?.contains("Text-to-speech") ?? false)
             }
         }
     }

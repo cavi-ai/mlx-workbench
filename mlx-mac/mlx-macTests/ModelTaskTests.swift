@@ -19,7 +19,9 @@ final class ModelTaskTests: XCTestCase {
     func testCanaryAndServability() {
         XCTAssertTrue(ModelTaskType.textLLM.hasCanary)
         XCTAssertTrue(ModelTaskType.visionLanguage.isServable)
-        XCTAssertFalse(ModelTaskType.speechToText.hasCanary)
+        XCTAssertTrue(ModelTaskType.speechToText.hasCanary)
+        XCTAssertFalse(ModelTaskType.speechToText.isServable)
+        XCTAssertFalse(ModelTaskType.textToSpeech.hasCanary)
         XCTAssertFalse(ModelTaskType.textToSpeech.isServable)
     }
 

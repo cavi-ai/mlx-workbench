@@ -121,6 +121,13 @@ actor WorkbenchAPI {
         return try JSONDecoder().decode(T.self, from: json)
     }
 
+    /// One clip through a converted speech model (`convert transcribe`, read-only).
+    func transcribe(path: String, audio: String, language: String?) throws -> TranscriptionResult {
+        var argv = ["convert", "transcribe", "--path", path, "--audio", audio]
+        if let language { argv += ["--language", language] }
+        return try Self.decode(TranscriptionResult.self, from: raw(argv, timeout: 600))
+    }
+
     func intakeResolve(source: String) throws -> IntakeResolution {
         try Self.decode(IntakeResolution.self, from: raw(["intake", "resolve", source], timeout: 45))
     }
