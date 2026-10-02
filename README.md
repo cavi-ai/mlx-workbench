@@ -118,6 +118,8 @@ what the model is and how it converts:
 | No MLX converter | Shows which parts already exist in MLX and which are missing; a locally served model can draft a porting plan |
 | Blocked / Hub unreachable | Gated, private, or offline; nothing is downloaded |
 
+mlx-agent also ships MLX ports of architectures the pinned backends lack, so their links resolve as convertible. Edge0/Audio8-ASR-Infinite (streaming English/Chinese speech recognition) converts through mlx-audio; the 4-bit output quantizes the text decoder and keeps the audio tower at bf16 (8.2 GB source, 3.5 GB output).
+
 ## Configuration
 
 `~/.config/mlx-workbench/config.json`, editable from Settings. `MLX_WORKBENCH_CONFIG` overrides the location. `MLX_AGENT_HOME` overrides agent discovery when it points at a checkout that contains `scripts/mlx-agent`.
