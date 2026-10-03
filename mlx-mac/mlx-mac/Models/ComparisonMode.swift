@@ -197,7 +197,7 @@ struct VideoResult: Codable, Equatable, Sendable {
     let width: Int?
     let height: Int?
     let frames: Int?
-    let fps: Int?
+    let fps: Double?
     let durationSeconds: Double?
     let steps: Int?
     let seed: Int?

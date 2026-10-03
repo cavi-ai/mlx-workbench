@@ -147,37 +147,54 @@ actor WorkbenchAPI {
         ], timeout: 3700))
     }
 
+    static func speakArguments(path: String, text: String, out: String) -> [String] {
+        ["convert", "speak", "--path", path, "--text=\(text)", "--out", out, "--timeout", "600"]
+    }
+
     /// One sentence spoken into a new WAV by a converted text-to-speech model (`convert speak`).
     /// The text is one `--text=` token so a sentence that starts with a dash still parses.
     func speak(path: String, text: String, out: String) throws -> SpeakResult {
-        try Self.decode(SpeakResult.self, from: raw([
-            "convert", "speak", "--path", path, "--text=\(text)", "--out", out, "--timeout", "600",
-        ], timeout: 700))
+        try Self.decode(SpeakResult.self, from: raw(Self.speakArguments(path: path, text: text, out: out), timeout: 700))
     }
 
     /// Videos shrink to this many pixels per frame: at the agent's default cap the 3B vision model mis-describes the clip.
     static let describeVideoMaxPixels = 200_704
 
-    /// One question about an image or a video answered by a converted vision-language model (`convert describe`).
-    func describe(path: String, prompt: String, image: String?, video: String?, maxTokens: Int) throws -> DescribeResult {
+    static func describeArguments(path: String, prompt: String, image: String?, video: String?, maxTokens: Int) -> [String] {
         var argv = [
             "convert", "describe", "--path", path, "--prompt=\(prompt)",
             "--max-tokens", String(maxTokens), "--timeout", "900",
         ]
         if let image { argv += ["--image", image] }
-        if let video { argv += ["--video", video, "--max-pixels", String(Self.describeVideoMaxPixels)] }
-        return try Self.decode(DescribeResult.self, from: raw(argv, timeout: 1000))
+        if let video { argv += ["--video", video, "--max-pixels", String(describeVideoMaxPixels)] }
+        return argv
     }
 
-    /// One prompt rendered into a new MP4 by a converted video model (`convert video`).
-    func video(path: String, prompt: String, out: String, parameters: MediaParameters) throws -> VideoResult {
+    /// One question about an image or a video answered by a converted vision-language model (`convert describe`).
+    func describe(path: String, prompt: String, image: String?, video: String?, maxTokens: Int) throws -> DescribeResult {
+        try Self.decode(
+            DescribeResult.self,
+            from: raw(Self.describeArguments(path: path, prompt: prompt, image: image, video: video, maxTokens: maxTokens), timeout: 1000)
+        )
+    }
+
+    static func videoArguments(path: String, prompt: String, out: String, parameters: MediaParameters) -> [String] {
         var argv = ["convert", "video", "--path", path, "--prompt=\(prompt)", "--out", out, "--timeout", "3600"]
-        if let size = parameters.size { argv += ["--width", String(size), "--height", String(size)] }
+        if let width = parameters.width ?? parameters.size { argv += ["--width", String(width)] }
+        if let height = parameters.height ?? parameters.size { argv += ["--height", String(height)] }
         if let frames = parameters.frames { argv += ["--frames", String(frames)] }
         if let fps = parameters.fps { argv += ["--fps", String(fps)] }
         if let steps = parameters.steps { argv += ["--steps", String(steps)] }
         if let seed = parameters.seed { argv += ["--seed", String(seed)] }
-        return try Self.decode(VideoResult.self, from: raw(argv, timeout: 3700))
+        return argv
+    }
+
+    /// One prompt rendered into a new MP4 by a converted video model (`convert video`).
+    func video(path: String, prompt: String, out: String, parameters: MediaParameters) throws -> VideoResult {
+        try Self.decode(
+            VideoResult.self,
+            from: raw(Self.videoArguments(path: path, prompt: prompt, out: out, parameters: parameters), timeout: 3700)
+        )
     }
 
     func intakeResolve(source: String) throws -> IntakeResolution {

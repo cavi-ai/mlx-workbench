@@ -12,14 +12,20 @@ import Foundation
 
 /// Generation settings for the image and video modes.
 struct MediaParameters: Codable, Equatable, Sendable {
+    /// Square edge for image generation.
     var size: Int?
+    /// Video generation frame size; takes precedence over `size`.
+    var width: Int?
+    var height: Int?
     var steps: Int?
     var seed: Int?
     var frames: Int?
     var fps: Int?
 
-    init(size: Int? = nil, steps: Int? = nil, seed: Int? = nil, frames: Int? = nil, fps: Int? = nil) {
+    init(size: Int? = nil, width: Int? = nil, height: Int? = nil, steps: Int? = nil, seed: Int? = nil, frames: Int? = nil, fps: Int? = nil) {
         self.size = size
+        self.width = width
+        self.height = height
         self.steps = steps
         self.seed = seed
         self.frames = frames

@@ -129,9 +129,9 @@ enum ComparisonMediaFixtures {
         mode: .imageGeneration
     )
 
-    /// The smallest clip the video engine takes. Frame counts follow the 8n+1 rule video
-    /// diffusion models share; size is a multiple of 32.
-    static let videoGenerationParameters = MediaParameters(size: 256, steps: 10, seed: 42, frames: 9, fps: 8)
+    /// A small clip (about 33 s per variant): width and height are multiples of 16, frames are 4n+1,
+    /// and fps stays unset so the model's own default applies.
+    static let videoGenerationParameters = MediaParameters(width: 416, height: 240, steps: 30, seed: 42, frames: 17)
 
     static let videoGenerationSet = PromptSet(
         id: "builtin-video-generation",
@@ -140,7 +140,7 @@ enum ComparisonMediaFixtures {
         prompts: [
             PromptEntry(
                 id: "video-ball",
-                text: "A red ball rolling across a green lawn, steady camera.",
+                text: "A red ball bouncing on a wooden floor",
                 media: videoGenerationParameters
             ),
         ],

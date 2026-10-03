@@ -137,6 +137,11 @@ final class ComparisonMediaTests: XCTestCase {
         }
         XCTAssertEqual(ComparisonMediaFixtures.imageGenerationSet.prompts.map(\.media), Array(repeating: MediaParameters(size: 512, steps: 20, seed: 42), count: 2))
         XCTAssertEqual(ComparisonMediaFixtures.videoGenerationSet.prompts.count, 1)
+        XCTAssertEqual(
+            ComparisonMediaFixtures.videoGenerationSet.prompts[0].media,
+            MediaParameters(width: 416, height: 240, steps: 30, seed: 42, frames: 17)
+        )
+        XCTAssertEqual(ComparisonMediaFixtures.videoGenerationSet.prompts[0].text, "A red ball bouncing on a wooden floor")
         let words = ComparisonMediaFixtures.textToSpeechSet.prompts[1].text.split(separator: " ").count
         XCTAssertEqual(words, 25)
         XCTAssertEqual(Set(all.map(\.id)).count, all.count)
@@ -187,6 +192,49 @@ final class ComparisonMediaTests: XCTestCase {
         let again = try JSONDecoder().decode(ComparisonRun.self, from: JSONEncoder().encode(run))
         XCTAssertEqual(again, run)
         XCTAssertEqual(again.effectiveMode, .speechToText)
+    }
+
+    // MARK: Agent arguments and results
+
+    func testAgentArgumentsKeepTextAsOneTokenAndShrinkVideoFrames() {
+        XCTAssertEqual(
+            WorkbenchAPI.speakArguments(path: "/m", text: "-dash start", out: "/o.wav"),
+            ["convert", "speak", "--path", "/m", "--text=-dash start", "--out", "/o.wav", "--timeout", "600"]
+        )
+        let image = WorkbenchAPI.describeArguments(path: "/m", prompt: "What?", image: "/i.png", video: nil, maxTokens: 96)
+        XCTAssertTrue(image.contains("--prompt=What?"))
+        XCTAssertEqual(image.firstIndex(of: "--image").map { image[$0 + 1] }, "/i.png")
+        XCTAssertFalse(image.contains("--max-pixels"))
+        let video = WorkbenchAPI.describeArguments(path: "/m", prompt: "What?", image: nil, video: "/v.mp4", maxTokens: 128)
+        XCTAssertEqual(video.firstIndex(of: "--max-pixels").map { video[$0 + 1] }, "200704")
+        XCTAssertEqual(video.firstIndex(of: "--video").map { video[$0 + 1] }, "/v.mp4")
+        XCTAssertEqual(video.firstIndex(of: "--max-tokens").map { video[$0 + 1] }, "128")
+
+        let render = WorkbenchAPI.videoArguments(
+            path: "/m", prompt: "A red ball", out: "/o.mp4", parameters: ComparisonMediaFixtures.videoGenerationParameters
+        )
+        XCTAssertEqual(
+            render,
+            ["convert", "video", "--path", "/m", "--prompt=A red ball", "--out", "/o.mp4", "--timeout", "3600",
+             "--width", "416", "--height", "240", "--frames", "17", "--steps", "30", "--seed", "42"]
+        )
+        XCTAssertFalse(render.contains("--fps"), "an unset fps leaves the model's default")
+    }
+
+    func testAgentResultsDecodeTheContractKeys() throws {
+        let speak = #"{"schema":"speak/1","path":"/o.wav","sample_rate":24000,"audio_seconds":4.5,"seconds":2.25,"load_seconds":1.5,"real_time_factor":0.5,"peak_memory_gb":1.25}"#
+        let spoken = try JSONDecoder().decode(SpeakResult.self, from: Data(speak.utf8))
+        XCTAssertEqual(spoken.realTimeFactor, 0.5)
+        XCTAssertEqual(spoken.audioSeconds, 4.5)
+        let describe = #"{"schema":"describe/1","text":"A red square.","prompt_tokens":120,"generation_tokens":9,"prompt_tps":300.5,"generation_tps":41.5,"peak_memory_gb":3.5,"seconds":2,"load_seconds":1,"input":{"kind":"video","path":"/v.mp4"}}"#
+        let described = try JSONDecoder().decode(DescribeResult.self, from: Data(describe.utf8))
+        XCTAssertEqual(described.generationTps, 41.5)
+        XCTAssertEqual(described.generationTokens, 9)
+        let video = #"{"schema":"video/1","path":"/o.mp4","width":416,"height":240,"frames":20,"fps":16.0,"duration_seconds":1.25,"steps":30,"seed":42,"seconds":33,"load_seconds":6,"seconds_per_frame":1.65,"peak_memory_gb":9,"pixel_std":52.5}"#
+        let rendered = try JSONDecoder().decode(VideoResult.self, from: Data(video.utf8))
+        XCTAssertEqual(rendered.frames, 20)
+        XCTAssertEqual(rendered.fps, 16)
+        XCTAssertEqual(rendered.secondsPerFrame, 1.65)
     }
 
     // MARK: Output store
