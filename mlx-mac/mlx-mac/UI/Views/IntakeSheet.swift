@@ -223,7 +223,7 @@ enum IntakePresentation {
             rows.append(DetailRow("Backend", "\(backend)\(resolution.backendInstalled ? "" : " (not installed)")"))
         }
         rows.append(DetailRow("Architecture", resolution.modelType ?? "Unknown"))
-        rows.append(DetailRow("Download", LibraryTablePresentation.byteCount(resolution.bytes)))
+        rows.append(DetailRow("Download", LibraryTablePresentation.byteCount(resolution.downloadBytes ?? resolution.bytes)))
         if let estimate = resolution.estimatedOutputBytes?[String(qBits)] {
             rows.append(DetailRow("Estimated \(qBits)-bit output", LibraryTablePresentation.byteCount(estimate)))
         }

@@ -34,7 +34,12 @@ struct IntakeSource: Codable, Equatable {
     let repo: String
     let revision: String
     let file: String?
+    /// A checkpoint folder inside the repository; nil for the root.
+    let subfolder: String?
     let url: String
+
+    /// The source as intake and fetch accept it: `org/name` or `org/name/folder`.
+    var reference: String { subfolder.map { "\(repo)/\($0)" } ?? repo }
 }
 
 struct IntakeMatch: Codable, Equatable, Hashable {
@@ -87,14 +92,20 @@ struct IntakeResolution: Codable, Equatable {
     let pipelineTag: String?
     let transformersVersion: String?
     let bytes: Int64
+    /// What a snapshot download takes (a port's files, or the repo less ignored formats); nil from older agents.
+    let downloadBytes: Int64?
     /// Converted size by bit width ("4", "8") from the weight headers; nil when unknown.
     let estimatedOutputBytes: [String: Int64]?
+    /// Bit widths a conversion keeps accurate (a port can allow fewer than 4 and 8); nil from older agents.
+    let qBits: [Int]?
     let files: IntakeFiles
     let warnings: [String]
 
     enum CodingKeys: String, CodingKey {
         case schema, source, verdict, reasons, backend, components, task, gated, bytes, files, warnings
         case estimatedOutputBytes = "estimated_output_bytes"
+        case downloadBytes = "download_bytes"
+        case qBits = "q_bits"
         case backendInstalled = "backend_installed"
         case modelType = "model_type"
         case customCode = "custom_code"
@@ -153,6 +164,8 @@ struct IntakeFetchRequest: Equatable {
     let revision: String
     let file: String?
     let localDir: String?
+    /// Intake's model type; a port's files narrow a snapshot download (`--model-type`).
+    var modelType: String? = nil
 }
 
 struct FetchJob: Codable, Equatable {
@@ -160,6 +173,7 @@ struct FetchJob: Codable, Equatable {
     let repo: String?
     let revision: String?
     let file: String?
+    let subfolder: String?
     let localDir: String?
     let state: String
     let path: String?
@@ -168,7 +182,7 @@ struct FetchJob: Codable, Equatable {
     let completedAt: String?
 
     enum CodingKeys: String, CodingKey {
-        case receipt, repo, revision, file, state, path
+        case receipt, repo, revision, file, subfolder, state, path
         case localDir = "local_dir"
         case logPath = "log_path"
         case startedAt = "started_at"

@@ -227,7 +227,7 @@ class AppHost: ObservableObject {
                 }
             }
         }
-        // Speech-to-text models take the transcription canary.
+        // Speech-to-text and classification models take their own canary.
         self.verification.taskType = { [weak self] path in
             self?.librarySnapshot?.models.first { $0.item.path == path || $0.outputPaths.contains(path) }?.item.task?.type
         }
@@ -235,6 +235,7 @@ class AppHost: ObservableObject {
             synthesize: { try await SpeechClipSynthesizer.make(phrase: $0) },
             transcribe: { path, clip, language in try await api.transcribe(path: path, audio: clip.path, language: language) }
         )
+        self.verification.decide = { path, request in try await api.decide(path: path, request: request.path) }
         // Record the environment fingerprint on every verification report.
         self.verification.environmentFingerprint = { [weak self] in
             self?.watch.currentFingerprintDescription

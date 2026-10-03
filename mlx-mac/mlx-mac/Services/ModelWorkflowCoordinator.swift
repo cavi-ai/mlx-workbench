@@ -18,10 +18,11 @@ struct ModelWorkflowAPI {
     let serveStart: (String, String, Int?, String) async throws -> [String: Any]
     let serveStatus: () async throws -> [ServerInfo]
     let serveStop: (Int) async throws -> [String: Any]
-    var convertRepoPreview: (String, String, Int, String?) async throws -> [String: Any] = { _, _, _, _ in
+    var convertRepoPreview: (RepoConversionRequest) async throws -> [String: Any] = { _ in
         throw ModelWorkflowAPIUnavailable.repoConversion
     }
-    var convertRepoStart: (String, String, Int, String?, String) async throws -> [String: Any] = { _, _, _, _, _ in
+    /// The request and the reviewed preview hash.
+    var convertRepoStart: (RepoConversionRequest, String) async throws -> [String: Any] = { _, _ in
         throw ModelWorkflowAPIUnavailable.repoConversion
     }
 
@@ -35,14 +36,30 @@ struct ModelWorkflowAPI {
             serveStatus: { try await api.serveStatus() },
             serveStop: { port in try await api.serveStop(port: port) }
         )
-        workflowAPI.convertRepoPreview = { repo, backend, qBits, output in
-            try await api.convertRepoPreview(repo: repo, qBits: qBits, out: output, hfCache: nil, backend: backend)
+        workflowAPI.convertRepoPreview = { request in
+            try await api.convertRepoPreview(
+                repo: request.repo, qBits: request.qBits, out: request.output, hfCache: nil,
+                backend: request.backend, modelType: request.modelType, subfolder: request.subfolder
+            )
         }
-        workflowAPI.convertRepoStart = { repo, backend, qBits, output, hash in
-            try await api.convertRepoStart(repo: repo, qBits: qBits, out: output, hfCache: nil, previewHash: hash, backend: backend)
+        workflowAPI.convertRepoStart = { request, hash in
+            try await api.convertRepoStart(
+                repo: request.repo, qBits: request.qBits, out: request.output, hfCache: nil, previewHash: hash,
+                backend: request.backend, modelType: request.modelType, subfolder: request.subfolder
+            )
         }
         return workflowAPI
     }
+}
+
+/// One repo conversion as the agent's `convert start` takes it.
+struct RepoConversionRequest: Equatable {
+    let repo: String
+    let backend: String
+    let qBits: Int
+    let output: String?
+    var modelType: String? = nil
+    var subfolder: String? = nil
 }
 
 struct ModelWorkflowPersistence {
@@ -185,9 +202,12 @@ final class ModelWorkflowCoordinator: ObservableObject {
         conversionPreviewOutput = nil
         servePreviewHash = nil
         servePreviewIntent = nil
-        let output = Self.repoOutputPath(directory: outputDirectory, repo: intake.source.repo, qBits: qBits)
-        var record = repoRecord(repo: intake.source.repo, backend: intake.backend ?? "mlx-lm", output: output)
+        let bits = Self.allowedBits(qBits, allowed: intake.qBits)
+        let output = Self.repoOutputPath(directory: outputDirectory, repo: intake.source.repo, subfolder: intake.source.subfolder, qBits: bits)
+        var record = repoRecord(repo: intake.source.repo, subfolder: intake.source.subfolder, backend: intake.backend ?? "mlx-lm", output: output)
         record.estimatedOutputBytes = intake.estimatedOutputBytes
+        record.modelType = intake.modelType
+        record.allowedBits = intake.qBits
         replace(record, persist: false)
     }
 
@@ -195,23 +215,27 @@ final class ModelWorkflowCoordinator: ObservableObject {
     /// width, and an output already converted at that width is offered instead.
     func selectRepoBits(_ qBits: Int) {
         guard let repo = workflow.sourceRepo,
-              workflow.state == .existingModelFound || workflow.state == .inspectingSource else { return }
+              workflow.state == .existingModelFound || workflow.state == .inspectingSource,
+              workflow.allowedBits?.contains(qBits) ?? true else { return }
         let directory = URL(fileURLWithPath: workflow.outputPath).deletingLastPathComponent().path
-        let output = Self.repoOutputPath(directory: directory, repo: repo, qBits: qBits)
+        let output = Self.repoOutputPath(directory: directory, repo: repo, subfolder: workflow.subfolder, qBits: qBits)
         guard canonicalPath(output) != canonicalPath(workflow.outputPath) else { return }
-        var record = repoRecord(repo: repo, backend: workflow.backend ?? "mlx-lm", output: output, keeping: workflow)
+        var record = repoRecord(repo: repo, subfolder: workflow.subfolder, backend: workflow.backend ?? "mlx-lm", output: output, keeping: workflow)
         record.estimatedOutputBytes = workflow.estimatedOutputBytes
+        record.modelType = workflow.modelType
+        record.allowedBits = workflow.allowedBits
         replace(record, persist: false)
     }
 
     /// A repo workflow at `output`: the existing model when the library already
     /// has it, otherwise ready to preview. `keeping` preserves the record identity.
-    private func repoRecord(repo: String, backend: String, output: String, keeping base: ConversionWorkflow? = nil) -> ConversionWorkflow {
+    private func repoRecord(repo: String, subfolder: String?, backend: String, output: String, keeping base: ConversionWorkflow? = nil) -> ConversionWorkflow {
+        let reference = subfolder.map { "\(repo)/\($0)" } ?? repo
         let existing = selectedSnapshot?.models.first { canonicalPath($0.item.path) == canonicalPath(output) }
         let timestamp = now()
         return ConversionWorkflow(
             id: base?.id ?? UUID(),
-            sourcePath: "hf://\(repo)",
+            sourcePath: "hf://\(reference)",
             sourceModelKey: nil,
             sourceSignature: nil,
             outputPath: existing?.item.path ?? output,
@@ -221,15 +245,22 @@ final class ModelWorkflowCoordinator: ObservableObject {
             state: existing == nil ? .inspectingSource : .existingModelFound,
             serveState: .idle,
             message: existing == nil
-                ? "Ready to preview converting \(repo) with \(backend)."
+                ? "Ready to preview converting \(reference) with \(backend)."
                 : "An MLX output already exists at the destination.",
             errorMessage: nil,
             createdAt: base?.createdAt ?? timestamp,
             updatedAt: timestamp,
             lastKnownAgentState: nil,
             sourceRepo: repo,
-            backend: backend
+            backend: backend,
+            subfolder: subfolder
         )
+    }
+
+    /// The requested width when intake allows it, else the widest it allows.
+    static func allowedBits(_ qBits: Int, allowed: [Int]?) -> Int {
+        guard let allowed, !allowed.isEmpty, !allowed.contains(qBits) else { return qBits }
+        return allowed.max() ?? qBits
     }
 
     func preview(qBits: Int, out: String?) async {
@@ -359,16 +390,17 @@ final class ModelWorkflowCoordinator: ObservableObject {
         return receipt
     }
 
-    /// `<directory>/<name>-MLX-<bits>bit` for a repo conversion.
-    static func repoOutputPath(directory: String, repo: String, qBits: Int) -> String {
-        let name = repo.split(separator: "/").last.map(String.init) ?? repo
+    /// `<directory>/<name>[-<folder>]-MLX-<bits>bit` for a repo conversion (matches the agent's default name).
+    static func repoOutputPath(directory: String, repo: String, subfolder: String? = nil, qBits: Int) -> String {
+        let base = repo.split(separator: "/").last.map(String.init) ?? repo
+        let name = subfolder.map { "\(base)-\($0.replacingOccurrences(of: "/", with: "-"))" } ?? base
         return URL(fileURLWithPath: NSString(string: directory).expandingTildeInPath)
             .appendingPathComponent("\(name)-MLX-\(qBits)bit").path
     }
 
     private func previewRepo(_ repo: String, backend: String, qBits: Int, out: String?) async {
         let directory = URL(fileURLWithPath: workflow.outputPath).deletingLastPathComponent().path
-        let output = safeOutputOverride(out) ?? Self.repoOutputPath(directory: directory, repo: repo, qBits: qBits)
+        let output = safeOutputOverride(out) ?? Self.repoOutputPath(directory: directory, repo: repo, subfolder: workflow.subfolder, qBits: qBits)
         guard !fileManager.fileExists(atPath: canonicalPath(output)) else {
             failDestination(destination: output, reason: "The destination already exists; pick another output directory.")
             return
@@ -379,7 +411,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         defer { isConversionSubmissionInFlight = false }
         update(state: .previewingConversion, outputPath: output, message: "Preparing conversion preview.", errorMessage: .some(nil))
         do {
-            let response = WorkbenchAPI.unwrapPlan(try await api.convertRepoPreview(repo, backend, qBits, output))
+            let response = WorkbenchAPI.unwrapPlan(try await api.convertRepoPreview(repoRequest(repo, backend: backend, qBits: qBits, output: output)))
             guard let hash = response.string("preview_hash"), !hash.isEmpty else {
                 fail("Conversion preview did not include a preview hash.")
                 return
@@ -388,6 +420,13 @@ final class ModelWorkflowCoordinator: ObservableObject {
         } catch {
             fail("Conversion preview failed: \(AppHost.render(error))")
         }
+    }
+
+    private func repoRequest(_ repo: String, backend: String, qBits: Int, output: String) -> RepoConversionRequest {
+        RepoConversionRequest(
+            repo: repo, backend: backend, qBits: qBits, output: output,
+            modelType: workflow.modelType, subfolder: workflow.subfolder
+        )
     }
 
     private func confirmRepo(_ repo: String, backend: String, qBits: Int) async {
@@ -406,7 +445,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         isConversionSubmissionInFlight = true
         defer { isConversionSubmissionInFlight = false }
         do {
-            let response = try await api.convertRepoStart(repo, backend, qBits, workflow.outputPath, hash)
+            let response = try await api.convertRepoStart(repoRequest(repo, backend: backend, qBits: qBits, output: workflow.outputPath), hash)
             guard let receipt = await receipt(from: response), !receipt.isEmpty else {
                 fail("Conversion start did not include a job receipt.")
                 return
@@ -977,7 +1016,10 @@ final class ModelWorkflowCoordinator: ObservableObject {
             lastKnownAgentState: lastKnownAgentState ?? base.lastKnownAgentState,
             sourceRepo: base.sourceRepo,
             backend: base.backend,
-            estimatedOutputBytes: base.estimatedOutputBytes
+            estimatedOutputBytes: base.estimatedOutputBytes,
+            modelType: base.modelType,
+            subfolder: base.subfolder,
+            allowedBits: base.allowedBits
         )
     }
 

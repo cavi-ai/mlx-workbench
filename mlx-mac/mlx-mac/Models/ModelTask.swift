@@ -12,6 +12,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
     case speechToText = "speech_to_text"
     case textToSpeech = "text_to_speech"
     case embedding = "embedding"
+    case classification = "classification"
     case imageGeneration = "image_generation"
     case other = "other"
 
@@ -29,14 +30,16 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         case .speechToText: return "Speech-to-text"
         case .textToSpeech: return "Text-to-speech"
         case .embedding: return "Embedding"
+        case .classification: return "Classification"
         case .imageGeneration: return "Image generation"
         case .other: return "Other"
         }
     }
 
     /// The Conversion Quality Gate has a canary: chat completions for chat
-    /// models, a spoken sentence to transcribe for speech-to-text models.
-    var hasCanary: Bool { isServable || self == .speechToText }
+    /// models, a spoken sentence to transcribe for speech-to-text models, a
+    /// support ticket to route for classification models.
+    var hasCanary: Bool { isServable || self == .speechToText || self == .classification }
 
     /// Run and Compare serve through mlx-lm's chat server.
     var isServable: Bool { self == .textLLM || self == .visionLanguage }
@@ -97,6 +100,9 @@ enum ModelTaskPresentation {
         case "retrieval": return "Retrieval"
         case "reranking": return "Reranking"
         case "image_generation": return "Image generation"
+        case "moderation": return "Moderation"
+        case "routing": return "Routing"
+        case "classification": return "Classification"
         case unclassifiedUseCase: return "Unclassified"
         default: return raw.replacingOccurrences(of: "_", with: " ").capitalized
         }

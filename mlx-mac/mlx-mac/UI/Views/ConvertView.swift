@@ -17,6 +17,9 @@ struct PrepareWorkflowPresentation: Equatable {
     let errorMessage: String?
     let hasPreviewHash: Bool
     let sourceRepo: String?
+    let subfolder: String?
+    /// The bit widths the source converts to; a port can allow fewer than 4 and 8.
+    let bitWidths: [Int]
 
     init(workflow: ConversionWorkflow) {
         sourcePath = workflow.sourcePath
@@ -26,11 +29,13 @@ struct PrepareWorkflowPresentation: Equatable {
         errorMessage = workflow.errorMessage
         hasPreviewHash = !(workflow.previewHash?.isEmpty ?? true)
         sourceRepo = workflow.sourceRepo
+        subfolder = workflow.subfolder
+        bitWidths = (workflow.allowedBits?.isEmpty == false ? workflow.allowedBits! : [4, 8]).sorted()
     }
 
     var sourceLabel: String { sourceRepo == nil ? "Source GGUF" : "Source repo" }
 
-    var sourceDisplay: String { sourceRepo ?? sourcePath }
+    var sourceDisplay: String { sourceRepo.map { repo in subfolder.map { "\(repo)/\($0)" } ?? repo } ?? sourcePath }
 
     var destinationNote: String {
         sourceRepo == nil
@@ -144,6 +149,9 @@ struct ConvertView: View {
         .onChange(of: qBits) { _, bits in
             modelWorkflow.selectRepoBits(bits)
         }
+        .onChange(of: presentation.bitWidths, initial: true) { _, widths in
+            if !widths.contains(qBits), let widest = widths.last { qBits = widest }
+        }
         .task(id: modelWorkflow.workflow.jobReceipt) {
             await sampleProgress()
             while !Task.isCancelled && modelWorkflow.workflow.state.isInFlight {
@@ -223,8 +231,9 @@ struct ConvertView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Conversion")
             Picker("Quantization", selection: $qBits) {
-                Text("4-bit").tag(4)
-                Text("8-bit").tag(8)
+                ForEach(presentation.bitWidths, id: \.self) { bits in
+                    Text("\(bits)-bit").tag(bits)
+                }
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 220, alignment: .leading)

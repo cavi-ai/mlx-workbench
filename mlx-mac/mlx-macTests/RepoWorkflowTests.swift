@@ -5,7 +5,8 @@ import XCTest
 
 @MainActor
 final class RepoWorkflowTests: XCTestCase {
-    private var repoCalls: [(String, String, Int, String?)] = []
+    private var repoCalls: [RepoConversionRequest] = []
+    private var repoStarts: [RepoConversionRequest] = []
 
     private func resolution(verdict: IntakeVerdict = .convertible, backend: String? = "mlx-audio") throws -> IntakeResolution {
         let json = """
@@ -28,11 +29,14 @@ final class RepoWorkflowTests: XCTestCase {
             serveStatus: { [] },
             serveStop: { _ in [:] }
         )
-        api.convertRepoPreview = { [weak self] repo, backend, bits, out in
-            self?.repoCalls.append((repo, backend, bits, out))
+        api.convertRepoPreview = { [weak self] request in
+            self?.repoCalls.append(request)
             return ["preview_hash": "repo-hash"]
         }
-        api.convertRepoStart = { _, _, _, _, _ in ["receipt": "repo-receipt"] }
+        api.convertRepoStart = { [weak self] request, _ in
+            self?.repoStarts.append(request)
+            return ["receipt": "repo-receipt"]
+        }
         return ModelWorkflowCoordinator(api: api, persistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }))
     }
 
@@ -45,24 +49,58 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertEqual(workflow.workflow.outputPath, output + "/whisper-tiny-MLX-4bit")
         await workflow.preview(qBits: 4, out: nil)
         XCTAssertEqual(workflow.workflow.state, .readyToConfirm)
-        XCTAssertEqual(repoCalls.first?.0, "openai/whisper-tiny")
-        XCTAssertEqual(repoCalls.first?.1, "mlx-audio")
+        XCTAssertEqual(repoCalls.first?.repo, "openai/whisper-tiny")
+        XCTAssertEqual(repoCalls.first?.backend, "mlx-audio")
+        XCTAssertEqual(repoCalls.first?.modelType, "whisper")
+        XCTAssertNil(repoCalls.first?.subfolder)
         await workflow.confirm(qBits: 4)
         XCTAssertEqual(workflow.workflow.state, .queued)
+        XCTAssertEqual(repoStarts.first?.modelType, "whisper")
         XCTAssertEqual(workflow.workflow.jobReceipt, "repo-receipt")
         XCTAssertEqual(workflow.workflow.sourceRepo, "openai/whisper-tiny")
     }
 
     /// The destination opened at the configured bit width; an 8-bit preview
     /// must name its own folder, not write 8-bit weights into "-MLX-4bit".
+    /// Laya's multilingual folder: the destination names the folder, the port's 8-bit-only
+    /// limit overrides a configured 4, and preview and confirm carry the folder and model type.
+    func testSubfolderSourceNamesItsDestinationAndKeepsThePortBitLimit() async throws {
+        let workflow = coordinator()
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent("intake-\(UUID().uuidString)").path
+        let json = """
+        {"schema":"intake/1","source":{"input":"convaiinnovations/laya/multilingual","repo":"convaiinnovations/laya","revision":"main","file":null,
+         "subfolder":"multilingual","url":"u"},"verdict":"convertible","reasons":[],"backend":"mlx-embeddings","backend_installed":true,
+         "model_type":"laya","components":[],"task":{"type":"classification","use_cases":["classification"],"source":"pipeline_tag","confidence":"confirmed"},
+         "custom_code":false,"gated":false,"library_name":"transformers","pipeline_tag":"text-classification","transformers_version":null,
+         "bytes":678201636,"download_bytes":678201636,"estimated_output_bytes":{"4":507061436,"8":569287868},"q_bits":[8],
+         "files":{"safetensors":1,"gguf":[],"python":[]},"warnings":[]}
+        """
+        let intake = try JSONDecoder().decode(IntakeResolution.self, from: Data(json.utf8))
+        workflow.inspect(intake: intake, outputDirectory: output, qBits: 4, snapshot: nil)
+        XCTAssertEqual(workflow.workflow.outputPath, output + "/laya-multilingual-MLX-8bit")
+        XCTAssertEqual(workflow.workflow.sourcePath, "hf://convaiinnovations/laya/multilingual")
+        XCTAssertEqual(PrepareWorkflowPresentation(workflow: workflow.workflow).bitWidths, [8])
+        XCTAssertEqual(PrepareWorkflowPresentation(workflow: workflow.workflow).sourceDisplay, "convaiinnovations/laya/multilingual")
+        workflow.selectRepoBits(4)
+        XCTAssertEqual(workflow.workflow.outputPath, output + "/laya-multilingual-MLX-8bit")
+        await workflow.preview(qBits: 8, out: nil)
+        XCTAssertEqual(repoCalls.first, RepoConversionRequest(
+            repo: "convaiinnovations/laya", backend: "mlx-embeddings", qBits: 8,
+            output: output + "/laya-multilingual-MLX-8bit", modelType: "laya", subfolder: "multilingual"
+        ))
+        await workflow.confirm(qBits: 8)
+        XCTAssertEqual(repoStarts.first?.subfolder, "multilingual")
+        XCTAssertEqual(workflow.workflow.state, .queued)
+    }
+
     func testRepoPreviewNamesTheDestinationForTheChosenBits() async throws {
         let workflow = coordinator()
         let output = FileManager.default.temporaryDirectory.appendingPathComponent("intake-\(UUID().uuidString)").path
         workflow.inspect(intake: try resolution(), outputDirectory: output, qBits: 4, snapshot: nil)
         await workflow.preview(qBits: 8, out: nil)
         XCTAssertEqual(workflow.workflow.state, .readyToConfirm)
-        XCTAssertEqual(repoCalls.first?.2, 8)
-        XCTAssertEqual(repoCalls.first?.3, output + "/whisper-tiny-MLX-8bit")
+        XCTAssertEqual(repoCalls.first?.qBits, 8)
+        XCTAssertEqual(repoCalls.first?.output, output + "/whisper-tiny-MLX-8bit")
         XCTAssertEqual(workflow.workflow.outputPath, output + "/whisper-tiny-MLX-8bit")
         await workflow.confirm(qBits: 8)
         XCTAssertEqual(workflow.workflow.state, .queued)
@@ -86,7 +124,7 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertEqual(workflow.workflow.id, id)
         await workflow.preview(qBits: 8, out: nil)
         XCTAssertEqual(workflow.workflow.state, .readyToConfirm)
-        XCTAssertEqual(repoCalls.first?.3, directory + "/whisper-tiny-MLX-8bit")
+        XCTAssertEqual(repoCalls.first?.output, directory + "/whisper-tiny-MLX-8bit")
 
         workflow.selectRepoBits(4)
         XCTAssertEqual(workflow.workflow.state, .readyToConfirm, "a previewed intent is not rewritten by the picker")
@@ -114,6 +152,7 @@ final class RepoWorkflowTests: XCTestCase {
             (ModelTaskType.textToSpeech, ConversionWorkflowState.completed, 0),
             (.speechToText, .verifying, 1),
             (.textLLM, .verifying, 1),
+            (.classification, .verifying, 1),
         ] {
             let workflow = coordinator()
             workflow.completionVerifier = verifier

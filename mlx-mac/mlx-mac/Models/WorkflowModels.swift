@@ -71,6 +71,12 @@ struct ConversionWorkflow: Codable, Equatable, Identifiable {
     var backend: String? = nil
     /// Intake's converted-size estimate by bit width ("4", "8"), for progress.
     var estimatedOutputBytes: [String: Int64]? = nil
+    /// Intake's model type; selects a backend port's own converter (`--model-type`).
+    var modelType: String? = nil
+    /// The repository folder holding the checkpoint (`--subfolder`); nil for the root.
+    var subfolder: String? = nil
+    /// Bit widths intake allows for this source; nil means 4 and 8.
+    var allowedBits: [Int]? = nil
 
     var persistenceIdentifier: String {
         id.uuidString

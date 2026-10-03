@@ -23,6 +23,14 @@ final class ModelTaskTests: XCTestCase {
         XCTAssertFalse(ModelTaskType.speechToText.isServable)
         XCTAssertFalse(ModelTaskType.textToSpeech.hasCanary)
         XCTAssertFalse(ModelTaskType.textToSpeech.isServable)
+        XCTAssertTrue(ModelTaskType.classification.hasCanary)
+        XCTAssertFalse(ModelTaskType.classification.isServable)
+        XCTAssertEqual(ModelTaskType.classification.title, "Classification")
+        let data = Data(#"{"type":"classification","use_cases":["moderation","routing","classification"],"source":"pipeline_tag","confidence":"confirmed"}"#.utf8)
+        let task = try? JSONDecoder().decode(ModelTask.self, from: data)
+        XCTAssertEqual(task?.type, .classification)
+        XCTAssertEqual(task.map { ModelTaskPresentation.capabilities(for: $0) }, [])
+        XCTAssertEqual(ModelTaskPresentation.useCaseTitle("moderation"), "Moderation")
     }
 
     func testCapabilitiesComeFromAgentTask() {

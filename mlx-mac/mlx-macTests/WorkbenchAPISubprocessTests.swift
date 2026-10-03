@@ -101,6 +101,11 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         _ = try await api.intakeFetchStart(request, previewHash: "h")
         _ = try await api.intakeStatus()
         _ = try await api.convertRepoPreview(repo: "openai/whisper-tiny", qBits: 4, out: "/out", hfCache: nil, backend: "mlx-audio")
+        _ = try await api.convertRepoPreview(repo: "convaiinnovations/laya", qBits: 8, out: "/out", hfCache: nil,
+                                             backend: "mlx-embeddings", modelType: "laya", subfolder: "multilingual")
+        _ = try? await api.decide(path: "/m/laya-MLX-4bit", request: "/tmp/request.json")
+        _ = try await api.intakeFetchPreview(IntakeFetchRequest(source: "convaiinnovations/laya", revision: "main", file: nil, localDir: nil, modelType: "laya"))
+        _ = try await api.intakeFetchPreview(IntakeFetchRequest(source: "org/x-GGUF", revision: "main", file: "a.gguf", localDir: nil, modelType: "llama"))
 
         let lines = try String(contentsOf: record, encoding: .utf8).split(separator: "\n")
         let argv = try lines.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String]) }
@@ -110,6 +115,14 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(argv[3].suffix(5), ["--confirm", "--preview-hash", "h", "--receipts-dir", receipts, "--json"].suffix(5))
         XCTAssertEqual(argv[4], ["intake", "status", "--receipts-dir", receipts, "--json"])
         XCTAssertTrue(argv[5].contains("--backend") && argv[5].contains("mlx-audio"))
+        XCTAssertFalse(argv[5].contains("--model-type"))
+        let modelType = try XCTUnwrap(argv[6].firstIndex(of: "--model-type"))
+        XCTAssertEqual(argv[6][modelType + 1], "laya")
+        let subfolder = try XCTUnwrap(argv[6].firstIndex(of: "--subfolder"))
+        XCTAssertEqual(argv[6][subfolder + 1], "multilingual")
+        XCTAssertEqual(Array(argv[7].prefix(6)), ["convert", "decide", "--path", "/m/laya-MLX-4bit", "--request", "/tmp/request.json"])
+        XCTAssertEqual(Array(argv[8].prefix(7)), ["intake", "fetch", "convaiinnovations/laya", "--revision", "main", "--model-type", "laya"])
+        XCTAssertFalse(argv[9].contains("--model-type"), "a single-file download is not narrowed by type")
     }
 
     func testConvertPreviewAcceptsFlatLegacyShape() async throws {

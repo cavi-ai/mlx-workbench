@@ -34,10 +34,12 @@ final class VerificationCoordinator: ObservableObject {
     /// Environment fingerprint provider (spec 08): recorded on every report
     /// so macOS/MLX drift can mark old evidence stale. Default: none.
     var environmentFingerprint: () -> String? = { nil }
-    /// The library's model type for a path; speech-to-text models take the transcription canary.
+    /// The library's model type for a path; speech-to-text and classification models take their own canary.
     var taskType: (String) -> ModelTaskType? = { _ in nil }
     /// Speech canary dependencies; without them speech models are reported unverifiable.
     var speech: SpeechCanaryRunner?
+    /// Answers the decision canary (model path, request file); without it classification models are unverifiable.
+    var decide: (@Sendable (String, URL) async throws -> DecisionResult)?
 
     init(probe: ServeProbe, store: VerificationStore, now: @escaping () -> Date = Date.init) {
         self.probe = probe
@@ -139,10 +141,15 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
 
     private func run(modelPath: String, signature: String?, recordID: UUID?) {
         let target = canonical(modelPath)
-        let isSpeech = taskType(modelPath) == .speechToText
+        let kind = taskType(modelPath)
         let speech = self.speech
+        let decide = self.decide
         activeModelPath = target
-        progressMessage = isSpeech ? "Transcribing a spoken canary sentence." : "Starting verification server."
+        switch kind {
+        case .speechToText: progressMessage = "Transcribing a spoken canary sentence."
+        case .classification: progressMessage = "Routing a canary support ticket."
+        default: progressMessage = "Starting verification server."
+        }
         lastError = nil
 
         Task { [probe, now] in
@@ -150,11 +157,19 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
             do {
                 let canaries: [CanaryResult]
                 let metricsEstimated: Bool
-                if isSpeech {
+                if kind == .speechToText {
                     guard let speech else { throw SpeechCanaryError.unavailable }
                     let clip = try await speech.synthesize(SpeechCanary.phrase)
                     defer { try? FileManager.default.removeItem(at: clip) }
                     canaries = [SpeechCanary.evaluate(try await speech.transcribe(modelPath, clip, SpeechCanary.language))]
+                    metricsEstimated = false
+                } else if kind == .classification {
+                    guard let decide else { throw DecisionCanaryError.unavailable }
+                    let request = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("decision-canary-\(UUID().uuidString).json")
+                    try Data(DecisionCanary.request.utf8).write(to: request)
+                    defer { try? FileManager.default.removeItem(at: request) }
+                    canaries = [DecisionCanary.evaluate(try await decide(modelPath, request))]
                     metricsEstimated = false
                 } else {
                     let result = try await probe.run(modelPath: modelPath)
@@ -238,6 +253,12 @@ enum SpeechCanaryError: LocalizedError {
         case let .toolFailed(tool, status): return "\(tool) exited with status \(status) while making the canary clip."
         }
     }
+}
+
+enum DecisionCanaryError: LocalizedError {
+    case unavailable
+
+    var errorDescription: String? { "Decision verification is not available in this build." }
 }
 
 /// Makes the canary clip with the system voice: `say` to AIFF, `afconvert` to 16 kHz mono WAV.
