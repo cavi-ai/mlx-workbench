@@ -15,7 +15,15 @@ struct HomeNextAction: Equatable {
         if workflow.state == .verificationFailed { return .init(kind: .activity, title: "Resolve verification failure", reason: workflow.errorMessage ?? "The converted output failed the canary suite; Activity has the failing evidence.", route: AppRoute.activity.rawValue) }
         if workflow.state == .failed { return .init(kind: .activity, title: "Resolve conversion failure", reason: workflow.errorMessage ?? workflow.message ?? "The current conversion needs attention in Activity.", route: AppRoute.activity.rawValue) }
         if let path = workflow.completedModelPath, !path.isEmpty {
-            guard workflow.state == .completed || workflow.state == .verified, snapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })?.readiness == .ready else { return .init(kind: .activity, title: "Reconcile completed output", reason: "The completed workflow no longer matches a ready model in the current Library snapshot.", route: AppRoute.activity.rawValue) }
+            let completed = snapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })
+            guard workflow.state == .completed || workflow.state == .verified, let completed, completed.readiness == .ready else { return .init(kind: .activity, title: "Reconcile completed output", reason: "The completed workflow no longer matches a ready model in the current Library snapshot.", route: AppRoute.activity.rawValue) }
+            if !ModelTaskPresentation.isServable(completed) {
+                let type = completed.item.task?.type ?? .other
+                let reason = type == .imageGeneration
+                    ? "Conversion completed; generate images from the model's Library inspector."
+                    : "Conversion completed; \(type.title.lowercased()) models are used from the Library inspector, not served."
+                return .init(kind: .library, title: "Open the completed model", reason: reason, route: AppRoute.library.rawValue)
+            }
             guard agentReady && serveRuntimeReady else { return .init(kind: .configure, title: "Repair the Run runtime", reason: "The model is complete, but the agent or serving runtime is unavailable.", route: AppRoute.settings.rawValue) }
             return .init(kind: .run(path), title: "Run completed model", reason: "Conversion completed and the selected MLX output is ready for a serve preview.", route: AppRoute.run.rawValue)
         }
