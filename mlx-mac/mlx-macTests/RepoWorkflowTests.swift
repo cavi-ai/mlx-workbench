@@ -153,6 +153,7 @@ final class RepoWorkflowTests: XCTestCase {
             (.speechToText, .verifying, 1),
             (.textLLM, .verifying, 1),
             (.classification, .verifying, 1),
+            (.imageGeneration, .verifying, 1),
         ] {
             let workflow = coordinator()
             workflow.completionVerifier = verifier

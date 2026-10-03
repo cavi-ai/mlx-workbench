@@ -157,6 +157,37 @@ final class VerificationCoordinatorTests: XCTestCase {
         ], seconds: 0.3)
     }
 
+    /// Image models skip the server and render the canary prompt instead.
+    func testImageModelPassesOnANonBlankRenderAndIsUnverifiableWithoutTheRenderer() async {
+        let workflow = makeWorkflowCoordinator()
+        let verification = makeVerification(responder: passingResponder)
+        let calls = SpeechCalls()
+        verification.taskType = { _ in .imageGeneration }
+        verification.render = { path, out, request in
+            try Data("png".utf8).write(to: out)
+            await calls.record("\(path)|\(request.size)|\(request.steps)")
+            return GenerationResult(path: out.path, width: 512, height: 512, steps: 20, seed: 42, seconds: 30, loadSeconds: 5, pixelStd: 80)
+        }
+        verification.attach(to: workflow)
+        let record = makeWorkflow(state: .verifying)
+        workflow.restore(record)
+        verification.beginVerification(recordID: record.id, modelPath: "/Models/qwen-image", signature: nil)
+        let resolved = await waitFor { workflow.workflow.state == .verified }
+        XCTAssertTrue(resolved)
+        XCTAssertEqual(verification.reports.first?.canaries.map(\.id), ["image-render"])
+        let seen = await calls.values
+        XCTAssertEqual(seen, ["/Models/qwen-image|512|20"])
+
+        let bare = makeVerification(responder: passingResponder)
+        bare.taskType = { _ in .imageGeneration }
+        bare.attach(to: workflow)
+        let second = makeWorkflow(state: .verifying)
+        workflow.restore(second)
+        bare.beginVerification(recordID: second.id, modelPath: "/Models/qwen-image", signature: nil)
+        let unverified = await waitFor { workflow.workflow.state == .completed }
+        XCTAssertTrue(unverified)
+    }
+
     func testWordErrorRateIgnoresCaseAndPunctuation() {
         XCTAssertEqual(SpeechCanary.wordErrorRate(reference: "The quick, brown fox.", hypothesis: "the quick brown fox"), 0)
         XCTAssertEqual(SpeechCanary.wordErrorRate(reference: "one two three four", hypothesis: "one too three"), 0.5)

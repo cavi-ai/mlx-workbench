@@ -73,5 +73,8 @@ final class ConversionProgressTests: XCTestCase {
         workflow.selectRepoBits(8)
         XCTAssertEqual(ConversionProgressSnapshot.estimate(for: workflow.workflow), 800)
         XCTAssertEqual(workflow.workflow.modelType, "qwen2")
+        XCTAssertEqual(workflow.workflow.destinationBits, 8)
+        workflow.selectRepoBits(4)
+        XCTAssertEqual(workflow.workflow.destinationBits, 4)
     }
 }

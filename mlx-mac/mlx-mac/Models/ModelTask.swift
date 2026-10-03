@@ -38,8 +38,8 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
 
     /// The Conversion Quality Gate has a canary: chat completions for chat
     /// models, a spoken sentence to transcribe for speech-to-text models, a
-    /// support ticket to route for classification models.
-    var hasCanary: Bool { isServable || self == .speechToText || self == .classification }
+    /// support ticket to route for classification models, a render for image models.
+    var hasCanary: Bool { isServable || [.speechToText, .classification, .imageGeneration].contains(self) }
 
     /// Run and Compare serve through mlx-lm's chat server.
     var isServable: Bool { self == .textLLM || self == .visionLanguage }

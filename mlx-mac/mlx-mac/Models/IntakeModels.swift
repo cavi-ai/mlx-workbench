@@ -42,6 +42,19 @@ struct IntakeSource: Codable, Equatable {
     var reference: String { subfolder.map { "\(repo)/\($0)" } ?? repo }
 }
 
+struct IntakeRecipe: Codable, Equatable {
+    let base: String
+    let baseRevision: String
+    let lora: String
+    let loraScale: Double
+
+    enum CodingKeys: String, CodingKey {
+        case base, lora
+        case baseRevision = "base_revision"
+        case loraScale = "lora_scale"
+    }
+}
+
 struct IntakeMatch: Codable, Equatable, Hashable {
     let backend: String
     let category: String
@@ -98,6 +111,8 @@ struct IntakeResolution: Codable, Equatable {
     let estimatedOutputBytes: [String: Int64]?
     /// Bit widths a conversion keeps accurate (a port can allow fewer than 4 and 8); nil from older agents.
     let qBits: [Int]?
+    /// A curated recipe: the model is a pinned base repository plus a LoRA this repository ships.
+    let recipe: IntakeRecipe?
     let files: IntakeFiles
     let warnings: [String]
 
@@ -106,6 +121,7 @@ struct IntakeResolution: Codable, Equatable {
         case estimatedOutputBytes = "estimated_output_bytes"
         case downloadBytes = "download_bytes"
         case qBits = "q_bits"
+        case recipe
         case backendInstalled = "backend_installed"
         case modelType = "model_type"
         case customCode = "custom_code"

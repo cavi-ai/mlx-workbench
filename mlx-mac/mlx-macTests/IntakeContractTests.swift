@@ -57,9 +57,29 @@ final class IntakeContractTests: XCTestCase {
         XCTAssertFalse(IntakePresentation.summaryRows(unknown, qBits: 4).contains { $0.label.hasPrefix("Estimated") })
     }
 
+    /// A recipe repository converts from its pinned base plus its LoRA; the intake window says so.
+    func testRecipeResolutionShowsWhatTheModelIsBuiltFrom() throws {
+        let json = """
+        {"schema":"intake/1","source":{"input":"abenzerps/Qwen-Image-2.1-Uncensored-GGUF","repo":"abenzerps/Qwen-Image-2.1-Uncensored-GGUF",
+         "revision":"main","file":null,"subfolder":null,"url":"u"},"verdict":"convertible","reasons":[],"backend":"mflux","backend_installed":true,
+         "model_type":"qwen_image_21","components":[],"task":{"type":"image_generation","use_cases":["image_generation"],"source":"pipeline_tag","confidence":"confirmed"},
+         "custom_code":false,"gated":false,"library_name":"gguf","pipeline_tag":"text-to-image","transformers_version":null,
+         "bytes":105184930082,"download_bytes":33168536265,"estimated_output_bytes":null,"q_bits":[4,8],
+         "recipe":{"base":"Qwen/Qwen-Image-2.1","base_revision":"d26bb61231c349cf6b7896fa83353113880e1ba3","lora":"qwen-image-2.1-uncensored-lora.safetensors","lora_scale":1.0},
+         "files":{"safetensors":10,"gguf":[],"python":[]},"warnings":[]}
+        """
+        let value = try JSONDecoder().decode(IntakeResolution.self, from: Data(json.utf8))
+        XCTAssertEqual(value.recipe?.loraScale, 1.0)
+        let rows = IntakePresentation.summaryRows(value, qBits: 8)
+        XCTAssertEqual(rows.first { $0.label == "Built from" }?.value, "Qwen/Qwen-Image-2.1 + qwen-image-2.1-uncensored-lora.safetensors")
+        XCTAssertEqual(rows.first { $0.label == "Type" }?.value, "Image generation")
+        XCTAssertEqual(rows.first { $0.label == "Download" }?.value, LibraryTablePresentation.byteCount(33_168_536_265))
+        XCTAssertFalse(rows.contains { $0.label.hasPrefix("Estimated") })
+    }
+
     func testBackendListDecodes() throws {
         let value = try WorkbenchAPI.decode(BackendList.self, from: try vendoredFixture("backend-list"))
-        XCTAssertEqual(value.backends.map(\.id), ["mlx-audio", "mlx-embeddings", "mlx-lm", "mlx-vlm"])
+        XCTAssertEqual(value.backends.map(\.id), ["mflux", "mlx-audio", "mlx-embeddings", "mlx-lm", "mlx-vlm"])
         XCTAssertTrue(value.backends.allSatisfy { $0.state == .absent })
     }
 
