@@ -22,6 +22,11 @@ final class ComparisonCoordinator: ObservableObject {
     private let runStore: JSONStore<ComparisonRun>
     private let promptSetStore: JSONStore<PromptSet>
     private let now: () -> Date
+    private let mediaRunner: ComparisonMediaRunner?
+    /// Where media runs keep their outputs. Nil disables media modes, so nothing here
+    /// ever prunes a folder the caller did not hand over.
+    let outputStore: ComparisonOutputStore?
+    private let generateInput: @Sendable (PromptEntry, URL) async throws -> URL
 
     /// Receives benchmark aggregates when a run completes. AppHost wires
     /// this into `benchmarkResults` for the RecommendationEngine.
@@ -39,12 +44,20 @@ final class ComparisonCoordinator: ObservableObject {
         probe: ServeProbe,
         runStore: JSONStore<ComparisonRun>,
         promptSetStore: JSONStore<PromptSet>,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        mediaRunner: ComparisonMediaRunner? = nil,
+        outputStore: ComparisonOutputStore? = nil,
+        generateInput: @escaping @Sendable (PromptEntry, URL) async throws -> URL = { entry, directory in
+            try await ComparisonMediaFixtures.generateInput(for: entry, into: directory)
+        }
     ) {
         self.probe = probe
         self.runStore = runStore
         self.promptSetStore = promptSetStore
         self.now = now
+        self.mediaRunner = mediaRunner
+        self.outputStore = outputStore
+        self.generateInput = generateInput
         do {
             runs = try runStore.load().sorted { $0.startedAt > $1.startedAt }
             // A run interrupted by an app quit can never resume its in-flight
@@ -60,14 +73,16 @@ final class ComparisonCoordinator: ObservableObject {
         }
         do {
             let userSets = try promptSetStore.load()
-            promptSets = BuiltinPromptSets.all + userSets.filter { user in
-                !BuiltinPromptSets.all.contains(where: { $0.id == user.id })
+            promptSets = Self.builtinSets + userSets.filter { user in
+                !Self.builtinSets.contains(where: { $0.id == user.id })
             }
         } catch {
-            promptSets = BuiltinPromptSets.all
+            promptSets = Self.builtinSets
             persistenceError = "Saved prompt sets are unavailable: \(AppHost.render(error))"
         }
     }
+
+    private static var builtinSets: [PromptSet] { BuiltinPromptSets.all + ComparisonMediaFixtures.all }
 
     /// Benchmark aggregates for every completed run — used to rehydrate
     /// recommendation evidence after an app restart.
@@ -116,8 +131,10 @@ final class ComparisonCoordinator: ObservableObject {
 
     /// Start a comparison run. One run at a time; variants are measured
     /// sequentially so memory pressure from one server never contaminates
-    /// another variant's numbers.
-    func start(variants: [(path: String, signature: String?)], promptSet: PromptSet) {
+    /// another variant's numbers. Chat replays prompts on the serve probe;
+    /// every other mode runs each prompt through the media runner and keeps
+    /// what the model produced.
+    func start(variants: [(path: String, signature: String?)], promptSet: PromptSet, mode: ComparisonMode? = nil) {
         guard activeRunID == nil else {
             lastError = "A comparison run is already in progress."
             return
@@ -125,6 +142,17 @@ final class ComparisonCoordinator: ObservableObject {
         guard !variants.isEmpty, !promptSet.prompts.isEmpty else {
             lastError = "Select at least one variant and a non-empty prompt set."
             return
+        }
+        let mode = mode ?? promptSet.effectiveMode
+        guard promptSet.effectiveMode == mode else {
+            lastError = "\(promptSet.name) is a \(promptSet.effectiveMode.title) prompt set, not \(mode.title)."
+            return
+        }
+        if mode != .chat {
+            guard mediaRunner != nil, outputStore != nil else {
+                lastError = "\(mode.title) comparisons are not available in this build."
+                return
+            }
         }
         lastError = nil
         let run = ComparisonRun(
@@ -136,14 +164,140 @@ final class ComparisonCoordinator: ObservableObject {
             results: [],
             startedAt: now(),
             finishedAt: nil,
-            state: .running
+            state: .running,
+            mode: mode == .chat ? nil : mode,
+            promptEntries: mode == .chat ? nil : promptSet.prompts
         )
         runs.insert(run, at: 0)
         activeRunID = run.id
 
-        Task { [probe, now] in
-            await execute(runID: run.id, variants: variants, promptSet: promptSet, probe: probe, now: now)
+        if mode == .chat {
+            Task { [probe, now] in
+                await execute(runID: run.id, variants: variants, promptSet: promptSet, probe: probe, now: now)
+            }
+        } else if let mediaRunner, let outputStore {
+            pruneOutputs(store: outputStore)
+            Task {
+                await executeMedia(
+                    runID: run.id, mode: mode, variants: variants, promptSet: promptSet,
+                    runner: mediaRunner, store: outputStore
+                )
+            }
         }
+    }
+
+    /// Keeps the output folders of the newest media runs; the run just added counts.
+    private func pruneOutputs(store: ComparisonOutputStore) {
+        let keep = runs.filter { $0.effectiveMode != .chat }.prefix(ComparisonOutputStore.retainedRuns).map(\.id)
+        store.prune(keeping: Set(keep))
+    }
+
+    private func executeMedia(
+        runID: UUID,
+        mode: ComparisonMode,
+        variants: [(path: String, signature: String?)],
+        promptSet: PromptSet,
+        runner: ComparisonMediaRunner,
+        store: ComparisonOutputStore
+    ) async {
+        var setupError: String?
+        do {
+            try store.createRunDirectory(runID)
+        } catch {
+            setupError = "Output folder could not be created: \(AppHost.render(error))"
+        }
+
+        // Inputs are shared by every variant: user-picked files as they are,
+        // built-in ones generated once into the run's inputs folder.
+        var inputs: [String: URL] = [:]
+        var inputErrors: [String: String] = [:]
+        if setupError == nil, mode.inputKind != nil {
+            for entry in promptSet.prompts {
+                progressMessage = "Preparing input for \(entry.id)…"
+                if let path = entry.inputPath {
+                    var isDirectory: ObjCBool = false
+                    if path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                        inputs[entry.id] = URL(fileURLWithPath: path)
+                    } else {
+                        inputErrors[entry.id] = "Input file not found: \(path)"
+                    }
+                } else if entry.builtinInput != nil {
+                    do {
+                        inputs[entry.id] = try await generateInput(entry, store.inputsDirectory(runID))
+                    } catch {
+                        inputErrors[entry.id] = "Input could not be generated: \(AppHost.render(error))"
+                    }
+                } else {
+                    inputErrors[entry.id] = ComparisonMediaError.missingInput.localizedDescription
+                }
+            }
+        }
+
+        for (variantIndex, variant) in variants.enumerated() {
+            guard let runIndex = runs.firstIndex(where: { $0.id == runID }) else { return }
+            let name = URL(fileURLWithPath: variant.path).lastPathComponent
+            var samples: [ComparisonSample] = []
+            if let setupError {
+                samples = promptSet.prompts.map { ComparisonMediaScoring.failedSample(promptID: $0.id, message: setupError) }
+            } else {
+                for (promptIndex, entry) in promptSet.prompts.enumerated() {
+                    progressMessage = "Measuring \(name) · prompt \(promptIndex + 1) of \(promptSet.prompts.count)…"
+                    if let message = inputErrors[entry.id] {
+                        samples.append(ComparisonMediaScoring.failedSample(promptID: entry.id, message: message))
+                        continue
+                    }
+                    let artifact = ComparisonOutputStore.artifactName(
+                        variantIndex: variantIndex, promptID: entry.id, kind: mode.outputKind
+                    )
+                    let artifactURL = store.artifactURL(runID: runID, artifact: artifact)
+                    let request = MediaRunRequest(
+                        mode: mode,
+                        modelPath: variant.path,
+                        entry: entry,
+                        inputURL: inputs[entry.id],
+                        outputURL: mode.outputKind == .text ? nil : artifactURL,
+                        maxTokens: min(entry.maxTokens, maxTokensCap())
+                    )
+                    do {
+                        let output = try await runner.run(request)
+                        if let url = request.outputURL, !FileManager.default.fileExists(atPath: url.path) {
+                            throw ComparisonMediaError.outputNotWritten
+                        }
+                        if mode.outputKind == .text, let artifactURL {
+                            try Data((output.text ?? "").utf8).write(to: artifactURL, options: .atomic)
+                        }
+                        samples.append(ComparisonMediaScoring.sample(mode: mode, entry: entry, output: output, artifact: artifact))
+                    } catch {
+                        samples.append(ComparisonMediaScoring.failedSample(promptID: entry.id, message: AppHost.render(error)))
+                    }
+                }
+            }
+
+            let failures = samples.compactMap(\.error)
+            let allFailed = failures.count == samples.count
+            let result = VariantResult(
+                modelPath: variant.path,
+                modelSignature: variant.signature,
+                samples: samples,
+                aggregateTokensPerSecond: nil,
+                aggregateTTFTSeconds: nil,
+                error: allFailed ? failures.first : nil,
+                environmentFingerprint: allFailed ? nil : environmentFingerprint(),
+                aggregateMetric: ComparisonMediaScoring.aggregateMetric(samples, mode: mode)
+            )
+            runs[runIndex].results.append(result)
+            persist(runs[runIndex])
+            if result.error == nil {
+                onVariantMeasured?(variant.path)
+            }
+        }
+
+        guard let finalIndex = runs.firstIndex(where: { $0.id == runID }) else { return }
+        runs[finalIndex].finishedAt = now()
+        runs[finalIndex].state = .completed
+        persist(runs[finalIndex])
+        activeRunID = nil
+        progressMessage = nil
     }
 
     private func execute(
@@ -210,7 +364,7 @@ final class ComparisonCoordinator: ObservableObject {
     }
 
     private func benchmarks(for run: ComparisonRun) -> [RecommendationBenchmarkResult] {
-        guard run.state == .completed, let measuredAt = run.finishedAt else { return [] }
+        guard run.state == .completed, run.effectiveMode == .chat, let measuredAt = run.finishedAt else { return [] }
         let useCase = run.useCase ?? .generalChat
         return run.results.compactMap { result in
             guard result.error == nil, !result.samples.isEmpty else { return nil }

@@ -54,6 +54,7 @@
 		24BBLD000011 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000011 /* x */; };
 
 		24BBLD000012 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000012 /* x */; };
+		27ABCD00000000000000002B /* CompareMediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD10000000000000002B /* CompareMediaViews.swift */; };
 
 		24BBLD000013 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000013 /* x */; };
 
@@ -119,9 +120,14 @@
 		24BBLD047 /* ServeProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF045 /* ServeProbeTests.swift */; };
 		24BBLD048 /* VerificationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF046 /* VerificationCoordinatorTests.swift */; };
 		24BBLD049 /* ComparisonModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF047 /* ComparisonModels.swift */; };
+		27ABCD000000000000000027 /* ComparisonMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000027 /* ComparisonMode.swift */; };
 		24BBLD04A /* JSONStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF048 /* JSONStore.swift */; };
 		24BBLD04B /* ComparisonCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF049 /* ComparisonCoordinator.swift */; };
+		27ABCD00000000000000002A /* ComparisonMediaFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD10000000000000002A /* ComparisonMediaFixtures.swift */; };
+		27ABCD000000000000000029 /* ComparisonOutputStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000029 /* ComparisonOutputStore.swift */; };
+		27ABCD000000000000000028 /* ComparisonMediaRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000028 /* ComparisonMediaRunner.swift */; };
 		24BBLD04C /* ComparisonCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF04A /* ComparisonCoordinatorTests.swift */; };
+		27ABCD00000000000000002C /* ComparisonMediaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD10000000000000002C /* ComparisonMediaTests.swift */; };
 		24BBLD04D /* WiringModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF04B /* WiringModels.swift */; };
 		24BBLD04E /* JSONCTolerant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF04C /* JSONCTolerant.swift */; };
 		24BBLD04F /* ClientAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF04D /* ClientAdapters.swift */; };
@@ -215,6 +221,7 @@
 		24FREF00000F /* LMStudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LMStudioView.swift; path = UI/Views/LMStudioView.swift; sourceTree = "<group>"; };
 
 		24FREF000012 /* QuantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QuantView.swift; path = UI/Views/QuantView.swift; sourceTree = "<group>"; };
+		27ABCD10000000000000002B /* CompareMediaViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CompareMediaViews.swift; path = UI/Views/CompareMediaViews.swift; sourceTree = "<group>"; };
 
 		24FREF000013 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HomeView.swift; path = UI/Views/HomeView.swift; sourceTree = "<group>"; };
 
@@ -283,9 +290,14 @@
 		24FREF045 /* ServeProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeProbeTests.swift; sourceTree = "<group>"; };
 		24FREF046 /* VerificationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationCoordinatorTests.swift; sourceTree = "<group>"; };
 		24FREF047 /* ComparisonModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonModels.swift; path = Models/ComparisonModels.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000027 /* ComparisonMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonMode.swift; path = Models/ComparisonMode.swift; sourceTree = "<group>"; };
 		24FREF048 /* JSONStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = JSONStore.swift; path = Services/JSONStore.swift; sourceTree = "<group>"; };
 		24FREF049 /* ComparisonCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonCoordinator.swift; path = Services/ComparisonCoordinator.swift; sourceTree = "<group>"; };
+		27ABCD10000000000000002A /* ComparisonMediaFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonMediaFixtures.swift; path = Services/ComparisonMediaFixtures.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000029 /* ComparisonOutputStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonOutputStore.swift; path = Services/ComparisonOutputStore.swift; sourceTree = "<group>"; };
+		27ABCD100000000000000028 /* ComparisonMediaRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonMediaRunner.swift; path = Services/ComparisonMediaRunner.swift; sourceTree = "<group>"; };
 		24FREF04A /* ComparisonCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonCoordinatorTests.swift; sourceTree = "<group>"; };
+		27ABCD10000000000000002C /* ComparisonMediaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonMediaTests.swift; sourceTree = "<group>"; };
 		24FREF04B /* WiringModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WiringModels.swift; path = Models/WiringModels.swift; sourceTree = "<group>"; };
 		24FREF04C /* JSONCTolerant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = JSONCTolerant.swift; path = Services/JSONCTolerant.swift; sourceTree = "<group>"; };
 		24FREF04D /* ClientAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ClientAdapters.swift; path = Services/ClientAdapters.swift; sourceTree = "<group>"; };
@@ -412,8 +424,12 @@
 				24FREF042 /* VerificationStore.swift */,
 				24FREF043 /* VerificationCoordinator.swift */,
 				24FREF047 /* ComparisonModels.swift */,
+				27ABCD100000000000000027 /* ComparisonMode.swift */,
 				24FREF048 /* JSONStore.swift */,
 				24FREF049 /* ComparisonCoordinator.swift */,
+				27ABCD10000000000000002A /* ComparisonMediaFixtures.swift */,
+				27ABCD100000000000000029 /* ComparisonOutputStore.swift */,
+				27ABCD100000000000000028 /* ComparisonMediaRunner.swift */,
 				24FREF04B /* WiringModels.swift */,
 				24FREF04C /* JSONCTolerant.swift */,
 				24FREF04D /* ClientAdapters.swift */,
@@ -474,6 +490,7 @@
 				27ABCD100000000000000007 /* ModelTask.swift */,
 				27STP002 /* SetupAssistantView.swift */,
 				24FREF000012 /* QuantView.swift */,
+				27ABCD10000000000000002B /* CompareMediaViews.swift */,
 				24FREF000013 /* HomeView.swift */,
 				24FREF000014 /* ScoutView.swift */,
 				24FREF000015 /* ServeView.swift */,
@@ -514,6 +531,7 @@
 				24FREF046 /* VerificationCoordinatorTests.swift */,
 				24FREF069 /* HFRepoIDTests.swift */,
 				24FREF04A /* ComparisonCoordinatorTests.swift */,
+				27ABCD10000000000000002C /* ComparisonMediaTests.swift */,
 				24FREF04F /* WiringCoordinatorTests.swift */,
 				24FREF054 /* EndpointSupervisorTests.swift */,
 				24FREF05A /* ReclaimAdvisorTests.swift */,
@@ -734,6 +752,7 @@
 				24BBLD000010 /* x */,
 				24BBLD000011 /* x */,
 				24BBLD000012 /* x */,
+				27ABCD00000000000000002B /* CompareMediaViews.swift in Sources */,
 				24BBLD000013 /* x */,
 				24BBLD000014 /* x */,
 				24BBLD000015 /* x */,
@@ -768,8 +787,12 @@
 				24BBLD044 /* VerificationStore.swift in Sources */,
 				24BBLD045 /* VerificationCoordinator.swift in Sources */,
 				24BBLD049 /* ComparisonModels.swift in Sources */,
+				27ABCD000000000000000027 /* ComparisonMode.swift in Sources */,
 				24BBLD04A /* JSONStore.swift in Sources */,
 				24BBLD04B /* ComparisonCoordinator.swift in Sources */,
+				27ABCD00000000000000002A /* ComparisonMediaFixtures.swift in Sources */,
+				27ABCD000000000000000029 /* ComparisonOutputStore.swift in Sources */,
+				27ABCD000000000000000028 /* ComparisonMediaRunner.swift in Sources */,
 				24BBLD04D /* WiringModels.swift in Sources */,
 				24BBLD04E /* JSONCTolerant.swift in Sources */,
 				24BBLD04F /* ClientAdapters.swift in Sources */,
@@ -826,6 +849,7 @@
 				24BBLD048 /* VerificationCoordinatorTests.swift in Sources */,
 				24BBLD06B /* HFRepoIDTests.swift in Sources */,
 				24BBLD04C /* ComparisonCoordinatorTests.swift in Sources */,
+				27ABCD00000000000000002C /* ComparisonMediaTests.swift in Sources */,
 				24BBLD051 /* WiringCoordinatorTests.swift in Sources */,
 				24BBLD056 /* EndpointSupervisorTests.swift in Sources */,
 				24BBLD05C /* ReclaimAdvisorTests.swift in Sources */,

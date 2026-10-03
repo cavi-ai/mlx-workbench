@@ -14,6 +14,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
     case embedding = "embedding"
     case classification = "classification"
     case imageGeneration = "image_generation"
+    case videoGeneration = "video_generation"
     case other = "other"
 
     var id: String { rawValue }
@@ -32,6 +33,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         case .embedding: return "Embedding"
         case .classification: return "Classification"
         case .imageGeneration: return "Image generation"
+        case .videoGeneration: return "Video generation"
         case .other: return "Other"
         }
     }

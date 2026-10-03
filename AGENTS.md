@@ -98,6 +98,33 @@ from `mlx-agent` at runtime.
   arguments validated against the schema's required keys). Past runs are
   browsable history with Swift Charts; `ModelPerformanceProfile` aggregates
   per-model stats into Model Details.
+  **Compare modes**: a segmented picker above the variant slots (`ComparisonMode`:
+  chat, vision, video understanding, speech to text, text to speech, image
+  generation, video generation); slots list only models whose `ModelTaskType`
+  the mode accepts (`ComparisonViewLogic.candidates(from:mode:)`). Chat keeps
+  the ServeProbe path above unchanged. Every other mode runs per variant, per
+  prompt, sequentially through an injectable `ComparisonMediaRunner` (live:
+  `convert describe|transcribe|speak|generate|video` on the `WorkbenchAPI`
+  actor, never the main actor). Prompts carry optional media input
+  (`PromptEntry.inputKind` + `inputPath`, or a `builtinInput` generated at run
+  time into `<run>/inputs/` by `ComparisonMediaFixtures`: CoreGraphics PNGs, an
+  AVAssetWriter MP4, `say`-synthesized WAVs; no binary assets in the repo) and
+  optional `expectedKeywords` (contains-all, case-insensitive; `a|b` means
+  either). Speech-to-text is scored with `SpeechCanary.wordErrorRate`. Outputs
+  are saved to `<Application Support>/mlx-workbench/comparison-outputs/<run-id>/<variant-index>-<prompt-id>.<txt|png|wav|mp4>`
+  (`ComparisonOutputStore`); `ComparisonSample` carries `artifact` and the
+  per-mode metrics, `ComparisonRun.mode` (nil = chat). When a media run starts,
+  output folders of all but the 10 newest media runs are deleted (only
+  directories directly under `comparison-outputs/` named by a run UUID; links
+  are never followed); run JSON is kept and a missing artifact renders as
+  "output pruned". A sample's `artifact` containing `/`, `..` or a leading dot
+  is refused. The coordinator only touches an output store it was handed
+  (`outputStore`, wired in `AppHost`). The results grid is one row per prompt,
+  one column per variant (text, image thumbnail with larger sheet, audio
+  play/stop, video player), with the mode's primary metric charted: tok/s,
+  real-time factor, seconds per step, seconds per frame. Output diff and
+  Promote winner stay chat-only; media runs do not feed the
+  RecommendationEngine.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, and the watch fingerprint probe. `RuntimeInstaller`

@@ -121,7 +121,9 @@ class AppHost: ObservableObject {
                 prober: OpenAIEndpointProber()
             ),
             runStore: JSONStore<ComparisonRun>(fileURL: JSONStore<ComparisonRun>.defaultFileURL("comparison-runs.json")),
-            promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json"))
+            promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json")),
+            mediaRunner: LiveComparisonMediaRunner(api: api),
+            outputStore: ComparisonOutputStore()
         )
         self.wiring = wiring ?? WiringCoordinator(
             store: JSONStore<WiringTransaction>(fileURL: JSONStore<WiringTransaction>.defaultFileURL("wiring-transactions.json"))

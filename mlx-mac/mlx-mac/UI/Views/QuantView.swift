@@ -9,7 +9,7 @@ import SwiftUI
 enum ComparePresentation {
     /// Measured comparisons replay chat prompts; only chat-servable types qualify.
     static func candidates(from models: [LibraryModel]) -> [LibraryModel] {
-        models.filter { $0.readiness == .ready && ModelTaskPresentation.isServable($0) }
+        ComparisonViewLogic.candidates(from: models, mode: .chat)
     }
 
     static let maxSlots = 4
@@ -63,6 +63,8 @@ struct QuantView: View {
     @ObservedObject private var comparison: ComparisonCoordinator
     private let onRouteSelection: (AppRoute) -> Void
 
+    @State private var mode: ComparisonMode = .chat
+    @State private var showingSetEditor = false
     @State private var variantSlots: [String?] = [nil, nil]
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
     @State private var selectedRunID: ComparisonRun.ID?
@@ -123,11 +125,15 @@ struct QuantView: View {
     // MARK: - Measured comparison setup
 
     private var readyModels: [LibraryModel] {
-        ComparePresentation.candidates(from: appHost.librarySnapshot?.models ?? [])
+        ComparisonViewLogic.candidates(from: appHost.librarySnapshot?.models ?? [], mode: mode)
+    }
+
+    private var modePromptSets: [PromptSet] {
+        ComparisonViewLogic.promptSets(comparison.promptSets, for: mode)
     }
 
     private var selectedPromptSet: PromptSet? {
-        comparison.promptSets.first { $0.id == selectedPromptSetID } ?? comparison.promptSets.first
+        modePromptSets.first { $0.id == selectedPromptSetID } ?? modePromptSets.first
     }
 
     private static let slotLetters = ["A", "B", "C", "D"]
@@ -135,12 +141,32 @@ struct QuantView: View {
     private var setupBar: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Measured comparison")
-            Text("Replay a prompt set against ready variants and measure real decode speed and first-token latency. One variant at a time.")
+            Text(mode == .chat
+                ? "Replay a prompt set against ready variants and measure real decode speed and first-token latency. One variant at a time."
+                : "Run each prompt through ready variants one at a time, keep what each produced, and measure \(mode.primaryMetric.title.lowercased()).")
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.muted)
 
+            Picker("Mode", selection: $mode) {
+                ForEach(ComparisonMode.allCases) { entry in
+                    Text(entry.title).tag(entry)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(comparison.activeRunID != nil)
+            .onChange(of: mode) { _, newMode in
+                variantSlots = ComparePresentation.preselectedSlots(
+                    selectedPath: appHost.selectedModelPath,
+                    candidates: ComparisonViewLogic.candidates(from: appHost.librarySnapshot?.models ?? [], mode: newMode)
+                )
+                selectedPromptSetID = ComparisonViewLogic.promptSets(comparison.promptSets, for: newMode).first?.id ?? ""
+            }
+
             if readyModels.isEmpty {
-                Text("No ready models in the latest Library snapshot.")
+                Text(mode == .chat
+                    ? "No ready models in the latest Library snapshot."
+                    : "No ready \(mode.acceptedTaskTypes.map { $0.title.lowercased() }.joined(separator: " or ")) models in the latest Library snapshot.")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
             }
@@ -203,19 +229,31 @@ struct QuantView: View {
     @ViewBuilder
     private var comparisonControls: some View {
         Picker("Prompt set", selection: $selectedPromptSetID) {
-            ForEach(comparison.promptSets) { set in
+            ForEach(modePromptSets) { set in
                 Text(set.name).tag(set.id)
             }
         }
         .frame(maxWidth: 260, alignment: .leading)
 
-        Button("Import my prompts") {
-            if let imported = comparison.importHistory() {
-                selectedPromptSetID = imported.id
+        if mode == .chat {
+            Button("Import my prompts") {
+                if let imported = comparison.importHistory() {
+                    selectedPromptSetID = imported.id
+                }
             }
+            .buttonStyle(.bordered)
+            .help("Read-only import of your opencode user prompts as a prompt set.")
+        } else {
+            Button("New set…") { showingSetEditor = true }
+                .buttonStyle(.bordered)
+                .help("Build a prompt set\(mode.inputKind.map { " with your own \($0.rawValue) files" } ?? "").")
+                .sheet(isPresented: $showingSetEditor) {
+                    MediaPromptSetEditor(mode: mode) { set in
+                        comparison.savePromptSet(set)
+                        selectedPromptSetID = set.id
+                    }
+                }
         }
-        .buttonStyle(.bordered)
-        .help("Read-only import of your opencode user prompts as a prompt set.")
 
         Button("Run comparison") { startRun() }
             .buttonStyle(.borderedProminent)
@@ -241,14 +279,14 @@ struct QuantView: View {
         HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
             Picker("Run", selection: $selectedRunID) {
                 ForEach(comparison.runs) { entry in
-                    Text("\(entry.promptSetName) · \(entry.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(entry.results.count) models")
+                    Text("\(entry.effectiveMode == .chat ? "" : entry.effectiveMode.title + " · ")\(entry.promptSetName) · \(entry.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(entry.results.count) models")
                         .tag(Optional(entry.id))
                 }
             }
             .pickerStyle(.menu)
             .frame(maxWidth: 420, alignment: .leading)
             Spacer()
-            if let winner = run.winner, run.state == .completed {
+            if run.effectiveMode == .chat, let winner = run.winner, run.state == .completed {
                 Label("Fastest: \(shortName(winner.modelPath))", systemImage: "bolt.fill")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.accent)
@@ -280,16 +318,24 @@ struct QuantView: View {
                 }
             }
 
-            if !successful.isEmpty {
-                speedChart(successful)
-            }
+            if run.effectiveMode == .chat {
+                if !successful.isEmpty {
+                    speedChart(successful)
+                }
 
-            ForEach(run.results) { result in
-                variantCard(result, run: run)
-            }
+                ForEach(run.results) { result in
+                    variantCard(result, run: run)
+                }
 
-            if run.state == .completed, successful.count >= 2 {
-                diffSection(run)
+                if run.state == .completed, successful.count >= 2 {
+                    diffSection(run)
+                }
+            } else {
+                MediaRunResultsView(
+                    run: run,
+                    store: comparison.outputStore ?? ComparisonOutputStore(),
+                    name: { shortName($0) }
+                )
             }
         }
         .formSection {}
@@ -555,7 +601,7 @@ struct QuantView: View {
             readyModels.first { $0.item.path == path }
                 .map { (path: $0.item.path, signature: $0.item.signature) }
         }
-        comparison.start(variants: variants, promptSet: promptSet)
+        comparison.start(variants: variants, promptSet: promptSet, mode: mode)
     }
 
     private func setPreferred(_ path: String, for useCase: UseCase) {

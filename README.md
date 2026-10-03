@@ -31,6 +31,7 @@ The default agent path is `vendor/mlx-agent` (pinned release). Override with Set
 
 - **Conversion Quality Gate**: every conversion output is served on an ephemeral loopback port and probed with a canary suite before it is marked verified.
 - **Measured Comparisons**: replay prompt sets (built-in or imported from your opencode history) across variants; measured tok/s and TTFT feed the recommendation engine.
+- **Compare modes**: besides chat, compare vision, video understanding, speech-to-text, text-to-speech, image generation and video generation models side by side. Each prompt's output is saved (image, audio, video, or text) so you can see and hear the differences next to the speed metric for that mode; the 10 newest runs keep their files.
 - **Cross-client Wiring**: point opencode, Continue, Zed, or Aider at a running local server with atomic config writes, backups, and rollback.
 - **Always-on Endpoint**: a stable loopback port with crash-loop-guarded supervision, optional login item, and a menu-bar status item.
 - **Disk Pressure Advisor**: ranked reclaim opportunities (stale, superseded, cross-root duplicates) applied as batched quarantine moves — nothing is deleted.

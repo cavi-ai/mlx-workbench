@@ -1,0 +1,532 @@
+import AVFoundation
+import Foundation
+import ImageIO
+import XCTest
+
+@testable import mlx_workbench
+
+private struct IdleProber: EndpointProbing {
+    func listModels(baseURL: URL) async -> [String] { [] }
+    func isReady(baseURL: URL) async -> Bool { true }
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+        throw StubMediaError.chatNotExpected
+    }
+}
+
+private enum StubMediaError: Error { case chatNotExpected, modelFailed }
+
+/// Stands in for the agent: records every request, writes the output file for file modes.
+private actor StubMediaRunner: ComparisonMediaRunner {
+    private(set) var requests: [MediaRunRequest] = []
+    private var failingModels: Set<String>
+    private var gate: Bool
+
+    init(failingModels: Set<String> = [], gated: Bool = false) {
+        self.failingModels = failingModels
+        self.gate = gated
+    }
+
+    func open() { gate = false }
+
+    func run(_ request: MediaRunRequest) async throws -> MediaRunOutput {
+        requests.append(request)
+        while gate { try await Task.sleep(nanoseconds: 2_000_000) }
+        if failingModels.contains(request.modelPath) { throw StubMediaError.modelFailed }
+        if let out = request.outputURL { try Data("stub".utf8).write(to: out) }
+        switch request.mode {
+        case .chat:
+            throw ComparisonMediaError.notAMediaMode
+        case .vision, .videoUnderstanding:
+            return MediaRunOutput(
+                text: "A red circle moving to the right", seconds: 2, loadSeconds: 1,
+                generationTokens: 8, generationTokensPerSecond: 40, peakMemoryGB: 3
+            )
+        case .speechToText:
+            return MediaRunOutput(text: request.entry.text, seconds: 1, audioSeconds: 4)
+        case .textToSpeech:
+            return MediaRunOutput(seconds: 3, audioSeconds: 6, realTimeFactor: 0.5)
+        case .imageGeneration:
+            return MediaRunOutput(seconds: 40, steps: 20, pixelStd: 60)
+        case .videoGeneration:
+            return MediaRunOutput(seconds: 18, frames: 9, secondsPerFrame: 2, pixelStd: 50)
+        }
+    }
+}
+
+final class ComparisonMediaTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("compare-media-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    // MARK: Modes
+
+    func testEachModeNamesTheTaskTypesItAcceptsAndItsMetric() {
+        XCTAssertEqual(ComparisonMode.chat.acceptedTaskTypes, [.textLLM, .visionLanguage])
+        XCTAssertEqual(ComparisonMode.vision.acceptedTaskTypes, [.visionLanguage])
+        XCTAssertEqual(ComparisonMode.videoUnderstanding.acceptedTaskTypes, [.visionLanguage])
+        XCTAssertEqual(ComparisonMode.speechToText.acceptedTaskTypes, [.speechToText])
+        XCTAssertEqual(ComparisonMode.textToSpeech.acceptedTaskTypes, [.textToSpeech])
+        XCTAssertEqual(ComparisonMode.imageGeneration.acceptedTaskTypes, [.imageGeneration])
+        XCTAssertEqual(ComparisonMode.videoGeneration.acceptedTaskTypes, [.videoGeneration])
+        XCTAssertEqual(ModelTaskType.videoGeneration.title, "Video generation")
+        XCTAssertFalse(ModelTaskType.videoGeneration.isServable)
+        XCTAssertFalse(ModelTaskType.videoGeneration.hasCanary)
+
+        XCTAssertEqual(ComparisonMode.chat.primaryMetric, .tokensPerSecond)
+        XCTAssertEqual(ComparisonMode.vision.primaryMetric, .generationTokensPerSecond)
+        XCTAssertEqual(ComparisonMode.videoUnderstanding.primaryMetric, .generationTokensPerSecond)
+        XCTAssertEqual(ComparisonMode.speechToText.primaryMetric, .realTimeFactor)
+        XCTAssertEqual(ComparisonMode.textToSpeech.primaryMetric, .realTimeFactor)
+        XCTAssertEqual(ComparisonMode.imageGeneration.primaryMetric, .secondsPerStep)
+        XCTAssertEqual(ComparisonMode.videoGeneration.primaryMetric, .secondsPerFrame)
+        XCTAssertEqual(ComparisonMode.vision.inputKind, .image)
+        XCTAssertEqual(ComparisonMode.videoUnderstanding.inputKind, .video)
+        XCTAssertEqual(ComparisonMode.speechToText.inputKind, .audio)
+        XCTAssertNil(ComparisonMode.imageGeneration.inputKind)
+        XCTAssertEqual(ComparisonMode.allCases.count, 7)
+    }
+
+    private func model(_ path: String, type: ModelTaskType?) -> LibraryModel {
+        let task = type.map { ModelTask(type: $0, useCases: [], source: "test", confidence: "likely") }
+        let item = ModelItem(
+            path: path, name: URL(fileURLWithPath: path).lastPathComponent, bytes: 1000,
+            modifiedAt: nil, shard: nil, modelKey: nil, architecture: nil, quantization: "Q4",
+            parameters: nil, structure: nil, signature: nil, companion: nil, readable: true,
+            status: "ready", outputs: [], tensorCount: nil, error: nil, task: task
+        )
+        return LibraryModel(item: item, readiness: .ready)
+    }
+
+    func testCandidatesFollowTheModesAcceptedTypes() {
+        let models = [
+            model("/llm", type: .textLLM), model("/vlm", type: .visionLanguage), model("/stt", type: .speechToText),
+            model("/tts", type: .textToSpeech), model("/img", type: .imageGeneration), model("/vid", type: .videoGeneration),
+            model("/unlabelled", type: nil), model("/emb", type: .embedding),
+        ]
+        func paths(_ mode: ComparisonMode) -> [String] {
+            ComparisonViewLogic.candidates(from: models, mode: mode).map(\.item.path)
+        }
+        XCTAssertEqual(paths(.chat), ["/llm", "/vlm", "/unlabelled"])
+        XCTAssertEqual(paths(.chat), ComparePresentation.candidates(from: models).map(\.item.path))
+        XCTAssertEqual(paths(.vision), ["/vlm"])
+        XCTAssertEqual(paths(.videoUnderstanding), ["/vlm"])
+        XCTAssertEqual(paths(.speechToText), ["/stt"])
+        XCTAssertEqual(paths(.textToSpeech), ["/tts"])
+        XCTAssertEqual(paths(.imageGeneration), ["/img"])
+        XCTAssertEqual(paths(.videoGeneration), ["/vid"])
+    }
+
+    func testPromptSetsAreFilteredByModeAndBuiltinMediaSetsAreWellFormed() {
+        let all = BuiltinPromptSets.all + ComparisonMediaFixtures.all
+        XCTAssertEqual(ComparisonViewLogic.promptSets(all, for: .chat).count, BuiltinPromptSets.all.count)
+        for mode in ComparisonMode.allCases where mode != .chat {
+            let sets = ComparisonViewLogic.promptSets(all, for: mode)
+            XCTAssertEqual(sets.count, 1, "\(mode)")
+            XCTAssertFalse(sets[0].prompts.isEmpty)
+            for entry in sets[0].prompts {
+                XCTAssertEqual(entry.inputKind, mode.inputKind, "\(entry.id)")
+                if mode.inputKind != nil { XCTAssertNotNil(entry.builtinInput) }
+            }
+        }
+        XCTAssertEqual(ComparisonMediaFixtures.imageGenerationSet.prompts.map(\.media), Array(repeating: MediaParameters(size: 512, steps: 20, seed: 42), count: 2))
+        XCTAssertEqual(ComparisonMediaFixtures.videoGenerationSet.prompts.count, 1)
+        let words = ComparisonMediaFixtures.textToSpeechSet.prompts[1].text.split(separator: " ").count
+        XCTAssertEqual(words, 25)
+        XCTAssertEqual(Set(all.map(\.id)).count, all.count)
+    }
+
+    // MARK: Decoding
+
+    func testLegacySampleAndRunFilesDecodeWithoutTheNewFields() throws {
+        let sample = #"{"promptID":"p","outputExcerpt":"hi","tokensPerSecond":12.5,"timeToFirstTokenSeconds":0.2}"#
+        let decoded = try JSONDecoder().decode(ComparisonSample.self, from: Data(sample.utf8))
+        XCTAssertEqual(decoded.tokensPerSecond, 12.5)
+        XCTAssertNil(decoded.fullOutput)
+        XCTAssertNil(decoded.artifact)
+        XCTAssertNil(decoded.wordErrorRate)
+
+        let run = """
+        {"id":"\(UUID().uuidString)","promptSetID":"builtin-coding","promptSetName":"Coding","variants":["/m"],
+         "results":[{"modelPath":"/m","samples":[\(sample)],"aggregateTokensPerSecond":12.5}],
+         "startedAt":780000000,"state":"completed"}
+        """
+        let legacy = try JSONDecoder().decode(ComparisonRun.self, from: Data(run.utf8))
+        XCTAssertNil(legacy.mode)
+        XCTAssertEqual(legacy.effectiveMode, .chat)
+        XCTAssertNil(legacy.results[0].aggregateMetric)
+        XCTAssertNil(legacy.promptEntries)
+
+        let entry = #"{"id":"e","text":"t","maxTokens":64}"#
+        let decodedEntry = try JSONDecoder().decode(PromptEntry.self, from: Data(entry.utf8))
+        XCTAssertNil(decodedEntry.inputKind)
+        XCTAssertNil(decodedEntry.expectedKeywords)
+        let set = try JSONDecoder().decode(PromptSet.self, from: Data(#"{"id":"s","name":"n","prompts":[],"origin":"userCreated"}"#.utf8))
+        XCTAssertEqual(set.effectiveMode, .chat)
+    }
+
+    func testNewSampleAndRunRoundTrip() throws {
+        let sample = ComparisonSample(
+            promptID: "p", outputExcerpt: "hi", tokensPerSecond: nil, timeToFirstTokenSeconds: nil, error: nil,
+            fullOutput: "hi there", artifact: "0-p.txt", seconds: 2, loadSeconds: 1, audioSeconds: 4,
+            realTimeFactor: 0.5, wordErrorRate: 0.1, keywordsMatched: true, generationTokens: 8,
+            generationTokensPerSecond: 40, peakMemoryGB: 3, secondsPerStep: 2, secondsPerFrame: 1, pixelStd: 50
+        )
+        let run = ComparisonRun(
+            id: UUID(), promptSetID: "s", promptSetName: "S", useCase: nil, variants: ["/m"],
+            results: [VariantResult(modelPath: "/m", modelSignature: nil, samples: [sample], aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, aggregateMetric: 0.5)],
+            startedAt: Date(timeIntervalSinceReferenceDate: 5), finishedAt: nil, state: .completed,
+            mode: .speechToText, promptEntries: [PromptEntry(id: "p", text: "hi", inputKind: .audio, inputPath: "/a.wav")]
+        )
+        let again = try JSONDecoder().decode(ComparisonRun.self, from: JSONEncoder().encode(run))
+        XCTAssertEqual(again, run)
+        XCTAssertEqual(again.effectiveMode, .speechToText)
+    }
+
+    // MARK: Output store
+
+    func testRetentionPrunesOnlyUUIDNamedDirectoriesAndKeepsTheKeptSet() throws {
+        let store = ComparisonOutputStore(root: root)
+        let ids = (0..<12).map { _ in UUID() }
+        for id in ids { try store.createRunDirectory(id) }
+        let stranger = root.appendingPathComponent("notes", isDirectory: true)
+        try FileManager.default.createDirectory(at: stranger, withIntermediateDirectories: true)
+        let strayFile = root.appendingPathComponent(UUID().uuidString)
+        try Data("x".utf8).write(to: strayFile)
+
+        let keep = Set(ids.prefix(ComparisonOutputStore.retainedRuns))
+        let removed = store.prune(keeping: keep)
+
+        XCTAssertEqual(Set(removed), Set(ids.suffix(2)))
+        for id in ids.prefix(10) { XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(id).path)) }
+        for id in ids.suffix(2) { XCTAssertFalse(FileManager.default.fileExists(atPath: store.runDirectory(id).path)) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stranger.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: strayFile.path), "a file named like a run is not a run directory")
+    }
+
+    func testPruneNeverFollowsASymbolicLink() throws {
+        let store = ComparisonOutputStore(root: root)
+        let outside = root.deletingLastPathComponent().appendingPathComponent("outside-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try Data("keep".utf8).write(to: outside.appendingPathComponent("precious.txt"))
+        let link = root.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+
+        XCTAssertTrue(store.prune(keeping: []).isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.appendingPathComponent("precious.txt").path))
+    }
+
+    func testArtifactNamesThatCouldEscapeTheRunDirectoryAreRefused() {
+        let store = ComparisonOutputStore(root: root)
+        let run = UUID()
+        XCTAssertEqual(store.artifactURL(runID: run, artifact: "0-p.png")?.deletingLastPathComponent().lastPathComponent, run.uuidString)
+        for bad in ["../x.png", "a/b.png", "..", "", ".hidden", "/etc/passwd", "a\\b", "x..y.png", "inputs/p.png"] {
+            XCTAssertNil(store.artifactURL(runID: run, artifact: bad), bad)
+        }
+        XCTAssertFalse(store.artifactExists(runID: run, artifact: "../x.png"))
+        XCTAssertEqual(ComparisonOutputStore.artifactName(variantIndex: 2, promptID: "../a b", kind: .image), "2-___a_b.png")
+        XCTAssertTrue(ComparisonOutputStore.isContainedName(ComparisonOutputStore.artifactName(variantIndex: 0, promptID: "../../x", kind: .video)))
+    }
+
+    // MARK: Scoring
+
+    func testKeywordsAreScoredContainsAllCaseInsensitive() {
+        XCTAssertEqual(ComparisonMediaScoring.keywordsMatched(output: "A RED square moves to the Right.", expected: ["red", "right"]), true)
+        XCTAssertEqual(ComparisonMediaScoring.keywordsMatched(output: "A red square moves left.", expected: ["red", "right"]), false)
+        XCTAssertEqual(ComparisonMediaScoring.keywordsMatched(output: "There are 3 blue squares", expected: ["three|3", "blue"]), true)
+        XCTAssertNil(ComparisonMediaScoring.keywordsMatched(output: "anything", expected: nil))
+        XCTAssertNil(ComparisonMediaScoring.keywordsMatched(output: "anything", expected: []))
+    }
+
+    func testSpeechSamplesReuseTheSpeechCanaryWordErrorRate() {
+        let entry = PromptEntry(id: "s", text: "The quick brown fox jumps over the lazy dog.", inputKind: .audio)
+        let heard = "the quick brown fox jumped over the lazy dog"
+        let sample = ComparisonMediaScoring.sample(
+            mode: .speechToText, entry: entry,
+            output: MediaRunOutput(text: heard, seconds: 2, audioSeconds: 8), artifact: "0-s.txt"
+        )
+        XCTAssertEqual(sample.wordErrorRate, SpeechCanary.wordErrorRate(reference: entry.text, hypothesis: heard))
+        XCTAssertEqual(try XCTUnwrap(sample.wordErrorRate), 1.0 / 9.0, accuracy: 1e-9)
+        XCTAssertEqual(sample.realTimeFactor, 0.25)
+        XCTAssertEqual(sample.fullOutput, heard)
+    }
+
+    func testDerivedSpeedRatios() {
+        let image = ComparisonMediaScoring.sample(
+            mode: .imageGeneration,
+            entry: PromptEntry(id: "i", text: "x", media: MediaParameters(size: 512, steps: 20, seed: 42)),
+            output: MediaRunOutput(seconds: 40), artifact: "0-i.png"
+        )
+        XCTAssertEqual(image.secondsPerStep, 2)
+        let video = ComparisonMediaScoring.sample(
+            mode: .videoGeneration, entry: PromptEntry(id: "v", text: "x"),
+            output: MediaRunOutput(seconds: 18, frames: 9), artifact: "0-v.mp4"
+        )
+        XCTAssertEqual(video.secondsPerFrame, 2)
+        let speech = ComparisonMediaScoring.sample(
+            mode: .textToSpeech, entry: PromptEntry(id: "t", text: "x"),
+            output: MediaRunOutput(seconds: 3, audioSeconds: 6), artifact: "0-t.wav"
+        )
+        XCTAssertEqual(speech.realTimeFactor, 0.5)
+        let lines = [
+            ComparisonViewLogic.metricsLine(image, mode: .imageGeneration),
+            ComparisonViewLogic.metricsLine(speech, mode: .textToSpeech),
+        ]
+        XCTAssertTrue(lines[0].hasPrefix("2.00 s/step"), lines[0])
+        XCTAssertTrue(lines[1].hasPrefix("RTF 0.50"), lines[1])
+    }
+
+    // MARK: Coordinator
+
+    @MainActor
+    private func makeCoordinator(
+        runner: ComparisonMediaRunner,
+        store: ComparisonOutputStore? = nil,
+        runsURL: URL? = nil
+    ) -> ComparisonCoordinator {
+        let probe = ServeProbe(
+            lifecycle: ServeLifecycle(preview: { _, _ in "h" }, start: { _, _, _ in }, stop: { _ in }),
+            prober: IdleProber(),
+            readyPollIntervalNanoseconds: 1_000_000,
+            pickPort: { 9997 }
+        )
+        return ComparisonCoordinator(
+            probe: probe,
+            runStore: JSONStore<ComparisonRun>(fileURL: runsURL ?? root.appendingPathComponent("runs.json")),
+            promptSetStore: JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json")),
+            mediaRunner: runner,
+            outputStore: store ?? ComparisonOutputStore(root: root.appendingPathComponent("outputs")),
+            generateInput: { entry, directory in
+                let url = directory.appendingPathComponent("\(entry.id).bin")
+                try Data("in".utf8).write(to: url)
+                return url
+            }
+        )
+    }
+
+    @MainActor
+    private func waitForRun(_ coordinator: ComparisonCoordinator) async {
+        for _ in 0..<2000 where coordinator.activeRunID != nil {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    private func promptSet(for mode: ComparisonMode) -> PromptSet {
+        var set = (ComparisonMediaFixtures.all.first { $0.effectiveMode == mode })!
+        // User-picked files so the stub run needs no generated inputs on disk.
+        if mode.inputKind != nil {
+            let input = root.appendingPathComponent("user-input.bin")
+            try? Data("in".utf8).write(to: input)
+            set.prompts = set.prompts.map { entry in
+                var copy = entry
+                copy.builtinInput = nil
+                copy.inputPath = input.path
+                return copy
+            }
+        }
+        return set
+    }
+
+    @MainActor
+    func testEveryMediaModeWritesAnArtifactAndMetricsPerVariantAndPrompt() async throws {
+        for mode in ComparisonMode.allCases where mode != .chat {
+            let store = ComparisonOutputStore(root: root.appendingPathComponent("outputs-\(mode.rawValue)"))
+            let runner = StubMediaRunner()
+            let coordinator = makeCoordinator(runner: runner, store: store, runsURL: root.appendingPathComponent("runs-\(mode.rawValue).json"))
+            let set = promptSet(for: mode)
+
+            coordinator.start(variants: [("/m/a", nil), ("/m/b", nil)], promptSet: set)
+            XCTAssertNotNil(coordinator.activeRunID)
+            await waitForRun(coordinator)
+
+            let run = try XCTUnwrap(coordinator.runs.first, "\(mode)")
+            XCTAssertEqual(run.state, .completed)
+            XCTAssertEqual(run.effectiveMode, mode)
+            XCTAssertEqual(run.results.map(\.modelPath), ["/m/a", "/m/b"])
+            for (index, result) in run.results.enumerated() {
+                XCTAssertNil(result.error, "\(mode)")
+                XCTAssertEqual(result.samples.map(\.promptID), set.prompts.map(\.id))
+                XCTAssertNotNil(result.aggregateMetric, "\(mode) aggregate")
+                for (sample, entry) in zip(result.samples, set.prompts) {
+                    XCTAssertEqual(sample.artifact, ComparisonOutputStore.artifactName(variantIndex: index, promptID: entry.id, kind: mode.outputKind))
+                    XCTAssertTrue(store.artifactExists(runID: run.id, artifact: sample.artifact), "\(mode) \(sample.artifact ?? "")")
+                    XCTAssertNotNil(mode.primaryMetric.value(of: sample), "\(mode) metric")
+                }
+            }
+            let persisted = try JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs-\(mode.rawValue).json")).load()
+            XCTAssertEqual(persisted.first?.results.count, 2)
+            XCTAssertEqual(persisted.first?.mode, mode)
+            let requests = await runner.requests
+            XCTAssertEqual(requests.count, 2 * set.prompts.count)
+            XCTAssertEqual(requests.map(\.modelPath), requests.map(\.modelPath).sorted(), "variants run one after the other")
+            if mode.outputKind == .text {
+                let text = try String(contentsOf: try XCTUnwrap(store.artifactURL(runID: run.id, artifact: run.results[0].samples[0].artifact ?? "")), encoding: .utf8)
+                XCTAssertEqual(text, run.results[0].samples[0].fullOutput)
+            } else {
+                XCTAssertTrue(requests.allSatisfy { $0.outputURL != nil })
+            }
+        }
+    }
+
+    @MainActor
+    func testVisionRunScoresKeywordsAndCarriesTheDescribeMetrics() async throws {
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        coordinator.start(variants: [("/m/vlm", nil)], promptSet: promptSet(for: .vision))
+        await waitForRun(coordinator)
+        let samples = try XCTUnwrap(coordinator.runs.first?.results.first?.samples)
+        XCTAssertEqual(samples[0].keywordsMatched, true)
+        XCTAssertEqual(samples[1].keywordsMatched, false)
+        XCTAssertEqual(samples[0].generationTokens, 8)
+        XCTAssertEqual(samples[0].generationTokensPerSecond, 40)
+        XCTAssertEqual(samples[0].peakMemoryGB, 3)
+        XCTAssertEqual(coordinator.runs.first?.results.first?.aggregateMetric, 40)
+    }
+
+    @MainActor
+    func testRunIsPersistedAfterEachVariantAndOnlyOneRunAtATime() async throws {
+        let runner = StubMediaRunner(gated: true)
+        let runsURL = root.appendingPathComponent("runs.json")
+        let coordinator = makeCoordinator(runner: runner, runsURL: runsURL)
+        let set = promptSet(for: .textToSpeech)
+
+        coordinator.start(variants: [("/m/a", nil), ("/m/b", nil)], promptSet: set)
+        let firstRun = coordinator.activeRunID
+        coordinator.start(variants: [("/m/c", nil)], promptSet: set)
+        XCTAssertEqual(coordinator.lastError, "A comparison run is already in progress.")
+        XCTAssertEqual(coordinator.activeRunID, firstRun)
+        XCTAssertEqual(coordinator.runs.count, 1)
+
+        await runner.open()
+        // After the first variant finishes the run on disk already holds it while the second is still going.
+        for _ in 0..<2000 where coordinator.runs.first?.results.isEmpty ?? true {
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let onDisk = try JSONStore<ComparisonRun>(fileURL: runsURL).load()
+        XCTAssertGreaterThanOrEqual(onDisk.first?.results.count ?? 0, 1)
+        await waitForRun(coordinator)
+        XCTAssertEqual(try JSONStore<ComparisonRun>(fileURL: runsURL).load().first?.results.count, 2)
+        XCTAssertEqual(coordinator.runs.first?.state, .completed)
+    }
+
+    @MainActor
+    func testAFailingVariantIsRecordedAndTheRunContinues() async throws {
+        let coordinator = makeCoordinator(runner: StubMediaRunner(failingModels: ["/m/bad"]))
+        coordinator.start(variants: [("/m/bad", nil), ("/m/good", nil)], promptSet: promptSet(for: .imageGeneration))
+        await waitForRun(coordinator)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        XCTAssertNotNil(run.results[0].error)
+        XCTAssertTrue(run.results[0].samples.allSatisfy { $0.error != nil })
+        XCTAssertNil(run.results[1].error)
+        XCTAssertEqual(run.state, .completed)
+    }
+
+    @MainActor
+    func testMediaRunsAreRefusedWithoutAnOutputStoreAndForTheWrongPromptSet() async throws {
+        let probe = ServeProbe(
+            lifecycle: ServeLifecycle(preview: { _, _ in "h" }, start: { _, _, _ in }, stop: { _ in }),
+            prober: IdleProber(), readyPollIntervalNanoseconds: 1_000_000, pickPort: { 9997 }
+        )
+        let bare = ComparisonCoordinator(
+            probe: probe,
+            runStore: JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("r.json")),
+            promptSetStore: JSONStore<PromptSet>(fileURL: root.appendingPathComponent("s.json"))
+        )
+        bare.start(variants: [("/m", nil)], promptSet: ComparisonMediaFixtures.imageGenerationSet)
+        XCTAssertNil(bare.activeRunID)
+        XCTAssertNotNil(bare.lastError)
+
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        coordinator.start(variants: [("/m", nil)], promptSet: ComparisonMediaFixtures.imageGenerationSet, mode: .chat)
+        XCTAssertNil(coordinator.activeRunID)
+        XCTAssertTrue(coordinator.lastError?.contains("Image generation") ?? false)
+    }
+
+    @MainActor
+    func testStartingAMediaRunPrunesOlderRunsOutputsButNotTheirMetrics() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("outputs"))
+        let runsURL = root.appendingPathComponent("runs.json")
+        let runStore = JSONStore<ComparisonRun>(fileURL: runsURL)
+        var olderIDs: [UUID] = []
+        for index in 0..<10 {
+            let id = UUID()
+            olderIDs.append(id)
+            try store.createRunDirectory(id)
+            try Data("x".utf8).write(to: store.runDirectory(id).appendingPathComponent("0-p.png"))
+            try runStore.upsert(
+                ComparisonRun(
+                    id: id, promptSetID: "s", promptSetName: "S", useCase: nil, variants: [], results: [],
+                    startedAt: Date(timeIntervalSinceReferenceDate: Double(100 + index)),
+                    finishedAt: Date(timeIntervalSinceReferenceDate: Double(101 + index)), state: .completed,
+                    mode: .imageGeneration
+                ),
+                id: \.id
+            )
+        }
+        let coordinator = makeCoordinator(runner: StubMediaRunner(), store: store, runsURL: runsURL)
+        coordinator.start(variants: [("/m", nil)], promptSet: promptSet(for: .imageGeneration))
+        await waitForRun(coordinator)
+
+        // The new run plus the nine newest older runs keep their files; the oldest run loses its folder.
+        let oldest = try XCTUnwrap(coordinator.runs.last)
+        XCTAssertEqual(oldest.id, olderIDs[0])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.runDirectory(oldest.id).path))
+        for id in olderIDs.dropFirst() { XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(id).path)) }
+        XCTAssertEqual(coordinator.runs.count, 11, "run metrics are kept")
+        XCTAssertFalse(store.artifactExists(runID: oldest.id, artifact: "0-p.png"))
+    }
+
+    // MARK: Built-in generators
+
+    func testBuiltinImagesDecodeAsPNG() async throws {
+        for (id, name) in [("vision-red-circle", "red-circle"), ("vision-blue-squares", "blue-squares"), ("vision-green-triangle", "green-triangle")] {
+            let entry = PromptEntry(id: id, text: "q", inputKind: .image, builtinInput: name)
+            let url = try await ComparisonMediaFixtures.generateInput(for: entry, into: root)
+            XCTAssertEqual(url.pathExtension, "png")
+            let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+            XCTAssertEqual(CGImageSourceGetType(source) as String?, "public.png")
+            let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+            XCTAssertEqual(image.width, ComparisonMediaFixtures.imageEdge)
+            XCTAssertEqual(image.height, ComparisonMediaFixtures.imageEdge)
+        }
+    }
+
+    func testBuiltinVideoLoadsAsAVAssetWithAThreeSecondVideoTrack() async throws {
+        let entry = PromptEntry(id: "video-red-square", text: "q", inputKind: .video, builtinInput: "red-square-right")
+        let url = try await ComparisonMediaFixtures.generateInput(for: entry, into: root)
+        XCTAssertEqual(url.pathExtension, "mp4")
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let size = try await track.load(.naturalSize)
+        XCTAssertEqual(Int(size.width), ComparisonMediaFixtures.imageEdge)
+        XCTAssertEqual(Int(size.height), ComparisonMediaFixtures.imageEdge)
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, 3, accuracy: 0.2)
+    }
+
+    func testBuiltinSpeechWritesAWAVNamedByThePrompt() async throws {
+        let entry = PromptEntry(id: "stt-fox", text: "The quick brown fox.", inputKind: .audio, builtinInput: "speech")
+        let url = try await ComparisonMediaFixtures.generateInput(for: entry, into: root)
+        XCTAssertEqual(url.lastPathComponent, "stt-fox.wav")
+        let file = try AVAudioFile(forReading: url)
+        XCTAssertGreaterThan(file.length, 0)
+        XCTAssertEqual(file.processingFormat.sampleRate, 16000)
+    }
+
+    func testUnknownBuiltinInputIsAnError() async {
+        let entry = PromptEntry(id: "x", text: "q", inputKind: .image, builtinInput: "nope")
+        do {
+            _ = try await ComparisonMediaFixtures.generateInput(for: entry, into: root)
+            XCTFail("expected an error")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Unknown built-in input nope.")
+        }
+    }
+}
