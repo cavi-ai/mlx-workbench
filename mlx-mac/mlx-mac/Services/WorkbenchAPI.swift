@@ -583,7 +583,8 @@ actor WorkbenchAPI {
                 outputs: raw["outputs"] as? [String] ?? [],
                 tensorCount: raw.int("tensor_count"),
                 error: raw.string("error"),
-                task: ModelTask(dictionary: raw["task"] as? [String: Any])
+                task: ModelTask(dictionary: raw["task"] as? [String: Any]),
+                draft: ModelDraft(dictionary: raw["draft"] as? [String: Any])
             )
         }
         let outputsRaw = (data["outputs"] as? [[String: Any]]) ?? []

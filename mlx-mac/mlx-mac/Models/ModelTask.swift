@@ -14,6 +14,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
     case embedding = "embedding"
     case classification = "classification"
     case imageGeneration = "image_generation"
+    case speculativeDraft = "speculative_draft"
     case other = "other"
 
     var id: String { rawValue }
@@ -32,6 +33,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         case .embedding: return "Embedding"
         case .classification: return "Classification"
         case .imageGeneration: return "Image generation"
+        case .speculativeDraft: return "Speculative drafter"
         case .other: return "Other"
         }
     }
@@ -39,6 +41,7 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
     /// The Conversion Quality Gate has a canary: chat completions for chat
     /// models, a spoken sentence to transcribe for speech-to-text models, a
     /// support ticket to route for classification models, a render for image models.
+    /// A speculative drafter has none: it runs only beside its target model.
     var hasCanary: Bool { isServable || [.speechToText, .classification, .imageGeneration].contains(self) }
 
     /// Run and Compare serve through mlx-lm's chat server.
@@ -78,6 +81,38 @@ struct ModelTask: Codable, Equatable, Hashable {
     var primaryUseCase: String? { useCases.first }
 }
 
+// MARK: - ModelDraft
+//
+// `convert scan`'s `draft` object for a speculative-decoding drafter GGUF:
+// the target it drafts for (it borrows that model's embeddings and head) and
+// the mlx-agent port that converts it, if any.
+
+struct ModelDraft: Codable, Equatable, Hashable {
+    let port: String?
+    let target: String?
+    let blockSize: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case port, target
+        case blockSize = "block_size"
+    }
+
+    init(port: String?, target: String?, blockSize: Int?) {
+        self.port = port
+        self.target = target
+        self.blockSize = blockSize
+    }
+
+    init?(dictionary: [String: Any]?) {
+        guard let dictionary else { return nil }
+        self.init(
+            port: dictionary["port"] as? String,
+            target: dictionary["target"] as? String,
+            blockSize: dictionary["block_size"] as? Int
+        )
+    }
+}
+
 // MARK: - ModelTaskPresentation
 
 enum ModelTaskPresentation {
@@ -103,6 +138,7 @@ enum ModelTaskPresentation {
         case "moderation": return "Moderation"
         case "routing": return "Routing"
         case "classification": return "Classification"
+        case "speculative_decoding": return "Speculative decoding"
         case unclassifiedUseCase: return "Unclassified"
         default: return raw.replacingOccurrences(of: "_", with: " ").capitalized
         }

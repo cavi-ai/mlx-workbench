@@ -71,6 +71,13 @@ enum ModelDetailsPresentation {
             }
             rows.append(DetailRow("Classified by", "\(task.source) (\(task.confidence))"))
         }
+        if let draft = model.item.draft {
+            rows.append(DetailRow(
+                "Drafter for",
+                "\(draft.target ?? "an unnamed target") — speculative decoding only; it borrows that model's embeddings and output head, so it runs beside it, never alone.",
+                prose: true
+            ))
+        }
         rows.append(DetailRow("Parameters", known(model.item.parameters)))
         rows.append(DetailRow("Quantization", known(model.item.quantization)))
         rows.append(DetailRow("Size", LibraryTablePresentation.byteCount(model.item.bytes)))

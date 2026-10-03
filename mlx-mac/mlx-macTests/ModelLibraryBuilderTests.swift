@@ -97,6 +97,43 @@ final class ModelLibraryBuilderTests: XCTestCase {
         XCTAssertEqual(modelA?.item.architecture, "qwen3")
     }
 
+    func testConvertedDrafterOutputNamesItsTarget() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("drafter-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let drafter = root.appendingPathComponent("dspark-DeepSeek-V4-Flash-0731-Q8_0-MLX-4bit")
+        let plain = root.appendingPathComponent("Qwen3-MLX-4bit")
+        for directory in [drafter, plain] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        try Data(#"{"model_type":"deepseek_v4_dspark","dspark_target_layer_ids":[40,41,42],"dspark_block_size":5,"dspark_target_name":"DeepSeek-V4-Flash-0731"}"#.utf8)
+            .write(to: drafter.appendingPathComponent("config.json"))
+        try Data(#"{"model_type":"qwen3"}"#.utf8).write(to: plain.appendingPathComponent("config.json"))
+        let draftTask = ModelTask(type: .speculativeDraft, useCases: ["speculative_decoding"], source: "config", confidence: "confirmed")
+        let snapshot = ModelLibraryBuilder.build(
+            scan: ScanResult(
+                roots: nil,
+                models: [],
+                outputs: [
+                    MLXOutput(path: drafter.path, name: drafter.lastPathComponent, modelKey: nil,
+                              quantization: QuantInfo(bits: 4, groupSize: 64, modelType: "deepseek_v4_dspark"), provenance: nil, task: draftTask),
+                    MLXOutput(path: plain.path, name: plain.lastPathComponent, modelKey: nil,
+                              quantization: QuantInfo(bits: 4, groupSize: 64, modelType: "qwen3"), provenance: nil),
+                ],
+                pending: [],
+                duplicates: [],
+                totals: ScanTotals(gguf: 0, pending: 0, converted: 2, unreadable: 0, bytes: 0, reclaimableBytes: 0)
+            ),
+            hardware: fixtureHardware,
+            now: fixtureDate
+        )
+
+        let model = try XCTUnwrap(snapshot.models.first { $0.item.path == drafter.path })
+        XCTAssertEqual(model.item.draft, ModelDraft(port: nil, target: "DeepSeek-V4-Flash-0731", blockSize: 5))
+        XCTAssertEqual(model.item.architecture, "deepseek_v4_dspark")
+        XCTAssertFalse(ModelTaskPresentation.isServable(model))
+        XCTAssertNil(snapshot.models.first { $0.item.path == plain.path }?.item.draft)
+    }
+
     /// Builds a tiny HF-cache layout: blobs + two snapshot dirs for one repo.
     private func makeHFCacheFixture() throws -> (root: URL, snapshotA: URL, snapshotB: URL) {
         let root = FileManager.default.temporaryDirectory

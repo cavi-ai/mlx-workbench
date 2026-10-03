@@ -33,10 +33,11 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
     let tensorCount: Int?
     let error: String?
     let task: ModelTask?
+    let draft: ModelDraft?
 
     enum CodingKeys: String, CodingKey {
         case path, name, bytes, shard, architecture, quantization, parameters
-        case structure, signature, companion, readable, status, outputs, error, task
+        case structure, signature, companion, readable, status, outputs, error, task, draft
         case modifiedAt = "modified_at"
         case modelKey = "model_key"
         case tensorCount = "tensor_count"
@@ -48,7 +49,7 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
          modelKey: String?, architecture: String?, quantization: String?, parameters: String?,
          structure: String?, signature: String?, companion: Bool?, readable: Bool?,
          status: String, outputs: [String], tensorCount: Int?, error: String?,
-         task: ModelTask? = nil) {
+         task: ModelTask? = nil, draft: ModelDraft? = nil) {
         self.path = path
         self.name = name
         self.bytes = bytes
@@ -67,6 +68,7 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
         self.tensorCount = tensorCount
         self.error = error
         self.task = task
+        self.draft = draft
     }
 }
 

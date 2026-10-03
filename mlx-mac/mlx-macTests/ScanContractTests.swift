@@ -15,6 +15,20 @@ final class ScanContractTests: XCTestCase {
         XCTAssertEqual(result.outputs[0].task?.type, .speechToText)
     }
 
+    func testDecodeScanCarriesDrafterFacts() throws {
+        var payload = fixture(named: "convert-scan-valid")
+        var models = try XCTUnwrap(payload["models"] as? [[String: Any]])
+        models[1]["draft"] = ["port": "deepseek_v4_dspark", "target": "DeepSeek-V4-Flash-0731", "block_size": 5]
+        models[1]["task"] = ["type": "speculative_draft", "use_cases": ["speculative_decoding"], "source": "gguf_architecture", "confidence": "confirmed"]
+        payload["models"] = models
+
+        let result = try WorkbenchAPI.decodeScan(payload)
+
+        XCTAssertNil(result.models[0].draft)
+        XCTAssertEqual(result.models[1].draft, ModelDraft(port: "deepseek_v4_dspark", target: "DeepSeek-V4-Flash-0731", blockSize: 5))
+        XCTAssertEqual(result.models[1].task?.type, .speculativeDraft)
+    }
+
     func testDecodeScanRejectsMissingRequiredModelBytes() throws {
         XCTAssertThrowsError(try WorkbenchAPI.decodeScan(fixture(named: "convert-scan-missing-bytes"))) { error in
             XCTAssertEqual(error as? ScanContractError, .invalidRequiredField("models[0].bytes"))
