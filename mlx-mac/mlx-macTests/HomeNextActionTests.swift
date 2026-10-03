@@ -36,6 +36,18 @@ final class HomeNextActionTests: XCTestCase {
         XCTAssertEqual(action.route, AppRoute.run.rawValue)
     }
 
+    /// Image, speech, and classification outputs are not served: the next action opens the Library.
+    func testCompletedNonServableOutputOpensTheLibraryInsteadOfRun() {
+        for (type, reason) in [(ModelTaskType.imageGeneration, "Conversion completed; generate images from the model's Library inspector."),
+                               (.classification, "Conversion completed; classification models are used from the Library inspector, not served.")] {
+            let model = makeModel(path: "/models/\(type.rawValue)-mlx", readiness: .ready, type: type)
+            let action = derive(workflow: workflow(state: .verified, completedModelPath: model.item.path), snapshot: snapshot(with: [model]))
+            XCTAssertEqual(action.kind, .library, type.rawValue)
+            XCTAssertEqual(action.route, AppRoute.library.rawValue)
+            XCTAssertEqual(action.reason, reason)
+        }
+    }
+
     func testCompletedOutputMissingFromSnapshotReconciles() {
         let action = derive(
             workflow: workflow(state: .completed, completedModelPath: "/models/gone"),
@@ -190,14 +202,15 @@ final class HomeNextActionTests: XCTestCase {
         )
     }
 
-    private func makeModel(path: String, readiness: ModelReadiness) -> LibraryModel {
+    private func makeModel(path: String, readiness: ModelReadiness, type: ModelTaskType? = nil) -> LibraryModel {
         let item = ModelItem(
             path: path, name: URL(fileURLWithPath: path).lastPathComponent, bytes: 1000,
             modifiedAt: nil, shard: nil,
             modelKey: "model", architecture: nil, quantization: "Q4_K_M", parameters: nil,
             structure: nil, signature: nil, companion: nil, readable: true,
             status: readiness == .ready ? "ready" : "needs_conversion",
-            outputs: [], tensorCount: nil, error: nil
+            outputs: [], tensorCount: nil, error: nil,
+            task: type.map { ModelTask(type: $0, useCases: [], source: "registry", confidence: "confirmed") }
         )
         return LibraryModel(item: item, readiness: readiness)
     }
