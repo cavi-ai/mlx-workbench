@@ -42,6 +42,23 @@ final class ModelTaskTests: XCTestCase {
         XCTAssertEqual(LibraryModel(item: item).capabilities, [])
     }
 
+    /// Run and Compare serve chat models; the inspector and context menu offer them for nothing else.
+    @MainActor
+    func testRunAndCompareAreOfferedOnlyForServableModels() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("actions-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let host = AppHost(
+            catalogStore: CatalogStore(appSupportDirectory: { root }), catalogClient: CatalogClient(),
+            config: Config.defaults(), now: { Date(timeIntervalSinceReferenceDate: 100) }
+        )
+        let cases: [(ModelTaskType, Bool)] = [(.textLLM, true), (.visionLanguage, true), (.speechToText, false), (.classification, false), (.imageGeneration, false)]
+        for (type, servable) in cases {
+            let task = ModelTask(type: type, useCases: [], source: "registry", confidence: "confirmed")
+            let item = ModelItem(path: "/m/\(type.rawValue)", name: type.rawValue, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil, architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil, task: task)
+            XCTAssertEqual(ModelActions(appHost: host, model: LibraryModel(item: item), onRouteSelection: { _ in }).canServe, servable, type.rawValue)
+        }
+    }
+
     func testUseCaseTitles() {
         XCTAssertEqual(ModelTaskPresentation.useCaseTitle("realtime_transcription"), "Realtime transcription")
         XCTAssertEqual(ModelTaskPresentation.useCaseTitle("vision"), "Image understanding")

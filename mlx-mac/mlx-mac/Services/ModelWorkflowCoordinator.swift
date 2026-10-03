@@ -258,7 +258,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     }
 
     /// The requested width when intake allows it, else the widest it allows.
-    static func allowedBits(_ qBits: Int, allowed: [Int]?) -> Int {
+    nonisolated static func allowedBits(_ qBits: Int, allowed: [Int]?) -> Int {
         guard let allowed, !allowed.isEmpty, !allowed.contains(qBits) else { return qBits }
         return allowed.max() ?? qBits
     }

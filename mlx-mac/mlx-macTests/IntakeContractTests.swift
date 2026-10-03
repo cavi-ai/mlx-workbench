@@ -31,6 +31,9 @@ final class IntakeContractTests: XCTestCase {
         let rows = IntakePresentation.summaryRows(value, qBits: 4)
         XCTAssertEqual(rows.first { $0.label == "Download" }?.value, LibraryTablePresentation.byteCount(846_195_574))
         XCTAssertEqual(rows.first { $0.label == "Type" }?.value, "Classification")
+        XCTAssertNil(rows.first { $0.label == "Estimated 4-bit output" }, "Laya converts at 8 bits only")
+        XCTAssertEqual(rows.first { $0.label == "Estimated 8-bit output" }?.value,
+                       LibraryTablePresentation.byteCount(value.estimatedOutputBytes?["8"] ?? 0))
     }
 
     /// The estimate comes from the agent's header-based sizes; without them

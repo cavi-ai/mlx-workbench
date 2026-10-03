@@ -131,7 +131,7 @@ struct IntakeSheet: View {
         WorkbenchSurface {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 HStack {
-                    Text(resolution.source.repo).font(WorkbenchTypography.section)
+                    Text(resolution.source.reference).font(WorkbenchTypography.section)
                     Spacer()
                     StatusBadge(state: resolution.verdict.rawValue)
                 }
@@ -211,7 +211,9 @@ struct IntakeSheet: View {
 // MARK: - IntakePresentation
 
 enum IntakePresentation {
-    static func summaryRows(_ resolution: IntakeResolution, qBits: Int) -> [DetailRow] {
+    /// `qBits` is the configured width; a source that converts only at other widths shows the one Prepare will use.
+    static func summaryRows(_ resolution: IntakeResolution, qBits configured: Int) -> [DetailRow] {
+        let qBits = ModelWorkflowCoordinator.allowedBits(configured, allowed: resolution.qBits)
         var rows = [DetailRow("Verdict", resolution.verdict.title)]
         if let task = resolution.task {
             rows.append(DetailRow("Type", task.type.title))

@@ -419,8 +419,10 @@ struct LibraryView: View {
         if actions.canPrepare {
             Button("Prepare to run") { actions.prepare() }
         }
-        Button("Select for Compare") { actions.compare() }
-        Button("Select for Run") { actions.run() }
+        if actions.canServe {
+            Button("Select for Compare") { actions.compare() }
+            Button("Select for Run") { actions.run() }
+        }
     }
 
     // MARK: - Inspector
