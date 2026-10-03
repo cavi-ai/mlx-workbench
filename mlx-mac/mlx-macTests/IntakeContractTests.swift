@@ -17,6 +17,25 @@ final class IntakeContractTests: XCTestCase {
         XCTAssertGreaterThan(value.bytes, 8_000_000_000)
     }
 
+    /// Laya has no root config: the agent resolves it through the port's file signature.
+    func testLayaResolvesAsAClassificationPortWithANarrowedDownload() throws {
+        let value = try WorkbenchAPI.decode(IntakeResolution.self, from: try vendoredFixture("intake-resolve-laya"))
+        XCTAssertEqual(value.verdict, .convertibleAfterInstall)
+        XCTAssertEqual(value.backend, "mlx-embeddings")
+        XCTAssertEqual(value.modelType, "laya")
+        XCTAssertEqual(value.task?.type, .classification)
+        XCTAssertEqual(value.downloadBytes, 846_195_574)
+        XCTAssertEqual(value.qBits, [8])
+        XCTAssertNil(value.source.subfolder)
+        XCTAssertEqual(value.source.reference, "convaiinnovations/laya")
+        let rows = IntakePresentation.summaryRows(value, qBits: 4)
+        XCTAssertEqual(rows.first { $0.label == "Download" }?.value, LibraryTablePresentation.byteCount(846_195_574))
+        XCTAssertEqual(rows.first { $0.label == "Type" }?.value, "Classification")
+        XCTAssertNil(rows.first { $0.label == "Estimated 4-bit output" }, "Laya converts at 8 bits only")
+        XCTAssertEqual(rows.first { $0.label == "Estimated 8-bit output" }?.value,
+                       LibraryTablePresentation.byteCount(value.estimatedOutputBytes?["8"] ?? 0))
+    }
+
     /// The estimate comes from the agent's header-based sizes; without them
     /// there is no row rather than a guess that assumes every weight quantizes.
     func testEstimatedOutputUsesTheAgentSizes() throws {
@@ -40,7 +59,7 @@ final class IntakeContractTests: XCTestCase {
 
     func testBackendListDecodes() throws {
         let value = try WorkbenchAPI.decode(BackendList.self, from: try vendoredFixture("backend-list"))
-        XCTAssertEqual(value.backends.map(\.id), ["mlx-audio", "mlx-lm", "mlx-vlm"])
+        XCTAssertEqual(value.backends.map(\.id), ["mlx-audio", "mlx-embeddings", "mlx-lm", "mlx-vlm"])
         XCTAssertTrue(value.backends.allSatisfy { $0.state == .absent })
     }
 

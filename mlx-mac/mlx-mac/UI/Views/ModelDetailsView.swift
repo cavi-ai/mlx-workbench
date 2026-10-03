@@ -16,6 +16,9 @@ struct ModelActions {
     /// "destination already exists" blocker.
     var canPrepare: Bool { model.readiness != .ready }
 
+    /// Run and Compare serve chat models only; other types are not offered them.
+    var canServe: Bool { ModelTaskPresentation.isServable(model) }
+
     func copyPath() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -223,13 +226,15 @@ struct ModelDetailsView: View {
                     Button("Prepare to run") { actions.prepare() }
                         .buttonStyle(.borderedProminent)
                 }
-                if model.readiness == .ready {
-                    Button("Select for Run") { actions.run() }
-                        .buttonStyle(.borderedProminent)
-                } else {
-                    Button("Select for Run") { actions.run() }
+                if actions.canServe {
+                    if model.readiness == .ready {
+                        Button("Select for Run") { actions.run() }
+                            .buttonStyle(.borderedProminent)
+                    } else {
+                        Button("Select for Run") { actions.run() }
+                    }
+                    Button("Select for Compare") { actions.compare() }
                 }
-                Button("Select for Compare") { actions.compare() }
             }
             HStack(spacing: WorkbenchSpacing.xs) {
                 Button("Copy Path") { actions.copyPath() }
@@ -321,8 +326,10 @@ struct ModelDetailsView: View {
                 Text("No measured runs for this model yet.")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
-                Button("Measure in Compare") { actions.compare() }
-                    .controlSize(.small)
+                if actions.canServe {
+                    Button("Measure in Compare") { actions.compare() }
+                        .controlSize(.small)
+                }
             }
         }
     }

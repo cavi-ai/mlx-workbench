@@ -179,10 +179,11 @@ final class IntakeCoordinator: ObservableObject {
     func download(localDir: String?) async -> String? {
         guard let resolution else { return nil }
         let request = IntakeFetchRequest(
-            source: resolution.source.repo,
+            source: resolution.source.reference,
             revision: resolution.source.revision,
             file: resolution.verdict == .gguf ? selectedGGUF : nil,
-            localDir: localDir
+            localDir: localDir,
+            modelType: resolution.verdict == .gguf ? nil : resolution.modelType
         )
         activity = .downloading(repo: resolution.source.repo)
         logTail = []
@@ -194,7 +195,9 @@ final class IntakeCoordinator: ObservableObject {
             }
             _ = try await api.fetchStart(request, hash)
             for _ in 0..<pollLimit {
-                let job = try await api.fetchStatus().last { $0.repo == request.source && $0.file == request.file }
+                let job = try await api.fetchStatus().last {
+                    $0.repo == resolution.source.repo && $0.file == request.file && $0.subfolder == resolution.source.subfolder
+                }
                 logTail = Self.tail(of: job?.logPath)
                 switch job?.state {
                 case "done":

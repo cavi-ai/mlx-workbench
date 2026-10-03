@@ -79,11 +79,14 @@ actor WorkbenchAPI {
     }
 
     func convertRepoPreview(repo: String, qBits: Int, out: String?,
-                            hfCache: String?, backend: String? = nil) throws -> [String: Any] {
+                            hfCache: String?, backend: String? = nil, modelType: String? = nil,
+                            subfolder: String? = nil) throws -> [String: Any] {
         var argv = ["convert", "start", "--repo", repo, "--q-bits", String(qBits)]
         if let out { argv.append(contentsOf: ["--out", out]) }
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
         if let backend { argv.append(contentsOf: ["--backend", backend]) }
+        if let modelType { argv.append(contentsOf: ["--model-type", modelType]) }
+        if let subfolder { argv.append(contentsOf: ["--subfolder", subfolder]) }
         return Self.unwrapPlan(try raw(argv))
     }
 
@@ -102,7 +105,7 @@ actor WorkbenchAPI {
 
     func convertRepoStart(repo: String, qBits: Int, out: String?,
                           hfCache: String?, previewHash: String,
-                          backend: String? = nil) throws -> [String: Any] {
+                          backend: String? = nil, modelType: String? = nil, subfolder: String? = nil) throws -> [String: Any] {
         var argv = [
             "convert", "start", "--repo", repo, "--q-bits", String(qBits),
             "--confirm", "--preview-hash", previewHash,
@@ -111,6 +114,8 @@ actor WorkbenchAPI {
         if let out { argv.append(contentsOf: ["--out", out]) }
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
         if let backend { argv.append(contentsOf: ["--backend", backend]) }
+        if let modelType { argv.append(contentsOf: ["--model-type", modelType]) }
+        if let subfolder { argv.append(contentsOf: ["--subfolder", subfolder]) }
         return try raw(argv)
     }
 
@@ -126,6 +131,11 @@ actor WorkbenchAPI {
         var argv = ["convert", "transcribe", "--path", path, "--audio", audio]
         if let language { argv += ["--language", language] }
         return try Self.decode(TranscriptionResult.self, from: raw(argv, timeout: 600))
+    }
+
+    /// Typed questions about a state answered by a converted classification model (`convert decide`, read-only).
+    func decide(path: String, request: String) throws -> DecisionResult {
+        try Self.decode(DecisionResult.self, from: raw(["convert", "decide", "--path", path, "--request", request], timeout: 600))
     }
 
     func intakeResolve(source: String) throws -> IntakeResolution {
@@ -149,6 +159,7 @@ actor WorkbenchAPI {
         var argv = ["intake", "fetch", request.source, "--revision", request.revision]
         if let file = request.file { argv += ["--file", file] }
         if let localDir = request.localDir { argv += ["--local-dir", localDir] }
+        if request.file == nil, let modelType = request.modelType { argv += ["--model-type", modelType] }
         return argv
     }
 

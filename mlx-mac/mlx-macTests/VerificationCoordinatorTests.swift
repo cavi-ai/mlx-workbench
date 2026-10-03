@@ -100,6 +100,63 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(unverified)
     }
 
+    /// Classification models skip the server and route a canary support ticket.
+    func testClassificationModelPassesTheDecisionCanary() async throws {
+        let workflow = makeWorkflowCoordinator()
+        let verification = makeVerification(responder: passingResponder)
+        let calls = SpeechCalls()
+        verification.taskType = { _ in .classification }
+        verification.decide = { path, request in
+            let body = try String(contentsOf: request, encoding: .utf8)
+            await calls.record("\(path)|\(body.contains("charged twice"))")
+            return Self.decision(department: "billing", refund: "yes")
+        }
+        verification.attach(to: workflow)
+        let record = makeWorkflow(state: .verifying)
+        workflow.restore(record)
+
+        verification.beginVerification(recordID: record.id, modelPath: "/Models/laya", signature: "signature-1")
+
+        let resolved = await waitFor { workflow.workflow.state == .verified }
+        XCTAssertTrue(resolved)
+        XCTAssertEqual(verification.reports.first?.canaries.map(\.id), ["decision-en"])
+        XCTAssertEqual(verification.reports.first?.canaries.first?.responseExcerpt, "department: billing (0.95); refund: yes (0.93)")
+        let seen = await calls.values
+        XCTAssertEqual(seen, ["/Models/laya|true"])
+        let request = try JSONSerialization.jsonObject(with: Data(DecisionCanary.request.utf8)) as? [String: Any]
+        XCTAssertEqual((request?["questions"] as? [String: Any]).map { Set($0.keys) }, ["department", "refund"])
+    }
+
+    func testDecisionCanaryFailsOnAWrongRouteAndIsUnverifiableWithoutTheRunner() async {
+        let workflow = makeWorkflowCoordinator()
+        let verification = makeVerification(responder: passingResponder)
+        verification.taskType = { _ in .classification }
+        verification.decide = { _, _ in Self.decision(department: "technical", refund: "yes") }
+        verification.attach(to: workflow)
+        let record = makeWorkflow(state: .verifying)
+        workflow.restore(record)
+        verification.beginVerification(recordID: record.id, modelPath: "/Models/laya", signature: nil)
+        let failed = await waitFor { workflow.workflow.state == .verificationFailed }
+        XCTAssertTrue(failed)
+        XCTAssertEqual(verification.reports.first?.canaries.first?.failureReason, "department answered technical, expected billing.")
+
+        let bare = makeVerification(responder: passingResponder)
+        bare.taskType = { _ in .classification }
+        bare.attach(to: workflow)
+        let second = makeWorkflow(state: .verifying)
+        workflow.restore(second)
+        bare.beginVerification(recordID: second.id, modelPath: "/Models/laya", signature: nil)
+        let unverified = await waitFor { workflow.workflow.state == .completed }
+        XCTAssertTrue(unverified)
+    }
+
+    nonisolated private static func decision(department: String, refund: String) -> DecisionResult {
+        DecisionResult(answers: [
+            "department": DecisionAnswer(type: "choice", choice: department, probabilities: [department: 0.95]),
+            "refund": DecisionAnswer(type: "choice", choice: refund, probabilities: [refund: 0.93]),
+        ], seconds: 0.3)
+    }
+
     func testWordErrorRateIgnoresCaseAndPunctuation() {
         XCTAssertEqual(SpeechCanary.wordErrorRate(reference: "The quick, brown fox.", hypothesis: "the quick brown fox"), 0)
         XCTAssertEqual(SpeechCanary.wordErrorRate(reference: "one two three four", hypothesis: "one too three"), 0.5)

@@ -251,6 +251,54 @@ enum SpeechCanary {
     }
 }
 
+/// One `convert decide` answer: the chosen option and the calibrated distribution.
+struct DecisionAnswer: Codable, Equatable, Sendable {
+    let type: String
+    let choice: String?
+    let probabilities: [String: Double]?
+}
+
+struct DecisionResult: Codable, Equatable, Sendable {
+    let answers: [String: DecisionAnswer]
+    let seconds: Double?
+}
+
+/// The classification canary: a support ticket whose team and refund intent
+/// are unambiguous must be routed to billing and read as a refund request.
+enum DecisionCanary {
+    static let id = "decision-en"
+    static let title = "Decision"
+    static let expected: [(question: String, answer: String)] = [("department", "billing"), ("refund", "yes")]
+    static let request = """
+    {"state": {"document": "I was charged twice for my subscription this month. Please refund the duplicate charge."},
+     "questions": {
+      "department": {"type": "choice", "instructions": "Which team should handle this ticket?",
+                     "criteria": {"billing": "payments, invoices, refunds", "technical": "bugs, outages, errors", "sales": "new purchases and upgrades"}},
+      "refund": {"type": "choice", "instructions": "Is the customer asking for money back?",
+                 "criteria": {"yes": "the customer asks for a refund", "no": "the customer does not ask for a refund"}}}}
+    """
+
+    static func evaluate(_ result: DecisionResult) -> CanaryResult {
+        var wrong: [String] = []
+        var excerpt: [String] = []
+        for (question, answer) in expected {
+            let got = result.answers[question]?.choice
+            let probability = got.flatMap { result.answers[question]?.probabilities?[$0] }
+            excerpt.append("\(question): \(got ?? "none")" + (probability.map { String(format: " (%.2f)", $0) } ?? ""))
+            if got != answer { wrong.append("\(question) answered \(got ?? "nothing"), expected \(answer)") }
+        }
+        return CanaryResult(
+            id: id,
+            title: title,
+            passed: wrong.isEmpty,
+            failureReason: wrong.isEmpty ? nil : wrong.joined(separator: "; ") + ".",
+            responseExcerpt: excerpt.joined(separator: "; "),
+            tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil
+        )
+    }
+}
+
 struct CanaryResult: Codable, Equatable, Sendable {
     let id: String
     let title: String

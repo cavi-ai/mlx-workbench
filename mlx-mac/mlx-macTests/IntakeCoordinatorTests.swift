@@ -87,7 +87,7 @@ final class IntakeCoordinatorTests: XCTestCase {
             fetchStart: { _, _ in [:] },
             fetchStatus: {
                 polls += 1
-                return [FetchJob(receipt: "r", repo: "openai/whisper-tiny", revision: "main", file: nil, localDir: nil, state: polls < 2 ? "running" : "done", path: "/hf/snap", logPath: nil, startedAt: nil, completedAt: nil)]
+                return [FetchJob(receipt: "r", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: nil, localDir: nil, state: polls < 2 ? "running" : "done", path: "/hf/snap", logPath: nil, startedAt: nil, completedAt: nil)]
             }
         )
         let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 5)
@@ -96,6 +96,26 @@ final class IntakeCoordinatorTests: XCTestCase {
         let path = await intake.download(localDir: nil)
         XCTAssertEqual(path, "/hf/snap")
         XCTAssertEqual(intake.downloadedPath, "/hf/snap")
+    }
+
+    /// A subfolder checkpoint downloads as org/name/folder and waits for that folder's job, not the root's.
+    func testSubfolderDownloadNamesTheFolderAndWaitsForItsJob() async throws {
+        var requested: IntakeFetchRequest?
+        let api = IntakeAPI.stub(
+            resolve: { _ in try Self.resolution(verdict: "convertible", backend: "mlx-embeddings", subfolder: "multilingual") },
+            fetchPreview: { request in requested = request; return ["preview_hash": "f"] },
+            fetchStart: { _, _ in [:] },
+            fetchStatus: {
+                [FetchJob(receipt: "root", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: nil, localDir: nil, state: "done", path: "/hf/root", logPath: nil, startedAt: nil, completedAt: nil),
+                 FetchJob(receipt: "ml", repo: "openai/whisper-tiny", revision: "main", file: nil, subfolder: "multilingual", localDir: nil, state: "done", path: "/hf/snap", logPath: nil, startedAt: nil, completedAt: nil)]
+            }
+        )
+        let intake = IntakeCoordinator(api: api, pollInterval: .milliseconds(1), pollLimit: 5)
+        intake.sourceText = "openai/whisper-tiny/multilingual"
+        await intake.resolve()
+        let path = await intake.download(localDir: nil)
+        XCTAssertEqual(requested?.source, "openai/whisper-tiny/multilingual")
+        XCTAssertEqual(path, "/hf/snap")
     }
 
     func testDraftNeedsARunningServerAndUsesItsIdentity() async throws {
@@ -134,9 +154,10 @@ final class IntakeCoordinatorTests: XCTestCase {
         XCTAssertNil(intake.draft)
     }
 
-    static func resolution(verdict: String, backend: String?) throws -> IntakeResolution {
+    static func resolution(verdict: String, backend: String?, subfolder: String? = nil) throws -> IntakeResolution {
         let json = """
-        {"schema":"intake/1","source":{"input":"x","repo":"openai/whisper-tiny","revision":"main","file":null,"url":"u"},
+        {"schema":"intake/1","source":{"input":"x","repo":"openai/whisper-tiny","revision":"main","file":null,
+         "subfolder":\(subfolder.map { "\"\($0)\"" } ?? "null"),"url":"u"},
          "verdict":"\(verdict)","reasons":[],"backend":\(backend.map { "\"\($0)\"" } ?? "null"),"backend_installed":\(verdict == "convertible"),
          "model_type":"whisper","components":[],"task":null,"custom_code":false,"gated":false,"library_name":null,"pipeline_tag":null,
          "transformers_version":null,"bytes":0,"files":{"safetensors":1,"gguf":[],"python":[]},"warnings":[]}
