@@ -77,6 +77,11 @@ from `mlx-agent` at runtime.
   recipe repos through their pinned base plus LoRA (mflux `qwen_image_21`: abenzerps/Qwen-Image-2.1-Uncensored-GGUF; the
   intake window shows "Built from"). Image-generation models get a Generate panel in the Library inspector
   (`ImageGenerationCoordinator` + `ImageGenerationPanel`: prompt, size, steps, seed → a new PNG in ~/Pictures/MLX Workbench).
+  Speculative-decoding drafters (`ModelTaskType.speculativeDraft`: llama.cpp `dflash`/`eagle3` GGUFs, configs with
+  `dspark_target_layer_ids`) borrow their target's embeddings and head, so they have no canary and are never servable;
+  `ModelItem.draft` (scan's `draft`, or a converted output's `dspark_target_name`) names the target in Model Details.
+  A DeepSeek-V4 DSpark `dflash` GGUF converts through mlx-agent's `deepseek_v4_dspark` port (`convert start --gguf`
+  adds `--port`); other drafters are refused at plan time (`unsupported_draft`).
 - Serve accepts HF repo ids or local directories (`serve start --path`,
   upstream ≥ the local-path serve change). `WorkbenchAPI.serveModelArguments`
   maps HF-cache snapshot paths to repo ids and absolute paths outside the HF

@@ -50,6 +50,7 @@ enum ModelLibraryBuilder {
             )
         }
         let outputModels = scan.outputs.map { output in
+            let config = configObject(at: output.path)
             let item = ModelItem(
                 path: output.path,
                 name: output.name,
@@ -57,7 +58,7 @@ enum ModelLibraryBuilder {
                 modifiedAt: nil,
                 shard: nil,
                 modelKey: output.modelKey,
-                architecture: configModelType(at: output.path),
+                architecture: configModelType(config),
                 quantization: output.quantization.map { "q\($0.bits)" },
                 parameters: nil,
                 structure: nil,
@@ -68,7 +69,8 @@ enum ModelLibraryBuilder {
                 outputs: [output.path],
                 tensorCount: nil,
                 error: nil,
-                task: output.task
+                task: output.task,
+                draft: configDraft(config)
             )
             return LibraryModel(
                 item: item,
@@ -278,14 +280,16 @@ enum ModelLibraryBuilder {
         return total
     }
 
-    /// Architecture from the snapshot's config.json (`model_type`), when the
-    /// scan didn't report one. Read once at build time; absence is fine.
-    private static func configModelType(at path: String) -> String? {
+    /// The output's config.json, read once at build time; absence is fine.
+    private static func configObject(at path: String) -> [String: Any]? {
         let configURL = URL(fileURLWithPath: path).appendingPathComponent("config.json")
-        guard let data = try? Data(contentsOf: configURL),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
+        guard let data = try? Data(contentsOf: configURL) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    /// Architecture from the config (`model_type`), when the scan didn't report one.
+    private static func configModelType(_ object: [String: Any]?) -> String? {
+        guard let object else { return nil }
         if let modelType = object["model_type"] as? String, !modelType.isEmpty {
             return modelType
         }
@@ -293,6 +297,16 @@ enum ModelLibraryBuilder {
             return first
         }
         return nil
+    }
+
+    /// A converted DSpark drafter's config names the model it drafts for.
+    private static func configDraft(_ object: [String: Any]?) -> ModelDraft? {
+        guard let object, object["dspark_target_layer_ids"] != nil else { return nil }
+        return ModelDraft(
+            port: nil,
+            target: object["dspark_target_name"] as? String,
+            blockSize: object["dspark_block_size"] as? Int
+        )
     }
 
     private static func cleanedFamilyStem(from rawValue: String) -> String {
