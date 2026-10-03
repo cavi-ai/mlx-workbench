@@ -104,6 +104,7 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         _ = try await api.convertRepoPreview(repo: "convaiinnovations/laya", qBits: 8, out: "/out", hfCache: nil,
                                              backend: "mlx-embeddings", modelType: "laya", subfolder: "multilingual")
         _ = try? await api.decide(path: "/m/laya-MLX-4bit", request: "/tmp/request.json")
+        _ = try? await api.generate(path: "/m/qwen", out: "/tmp/a.png", request: ImageRequest(prompt: "a; b", size: 768, steps: 12, seed: 3))
         _ = try await api.intakeFetchPreview(IntakeFetchRequest(source: "convaiinnovations/laya", revision: "main", file: nil, localDir: nil, modelType: "laya"))
         _ = try await api.intakeFetchPreview(IntakeFetchRequest(source: "org/x-GGUF", revision: "main", file: "a.gguf", localDir: nil, modelType: "llama"))
 
@@ -121,8 +122,10 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         let subfolder = try XCTUnwrap(argv[6].firstIndex(of: "--subfolder"))
         XCTAssertEqual(argv[6][subfolder + 1], "multilingual")
         XCTAssertEqual(Array(argv[7].prefix(6)), ["convert", "decide", "--path", "/m/laya-MLX-4bit", "--request", "/tmp/request.json"])
-        XCTAssertEqual(Array(argv[8].prefix(7)), ["intake", "fetch", "convaiinnovations/laya", "--revision", "main", "--model-type", "laya"])
-        XCTAssertFalse(argv[9].contains("--model-type"), "a single-file download is not narrowed by type")
+        XCTAssertEqual(Array(argv[8].prefix(16)), ["convert", "generate", "--path", "/m/qwen", "--prompt", "a; b", "--out", "/tmp/a.png",
+                                                  "--width", "768", "--height", "768", "--steps", "12", "--seed", "3"])
+        XCTAssertEqual(Array(argv[9].prefix(7)), ["intake", "fetch", "convaiinnovations/laya", "--revision", "main", "--model-type", "laya"])
+        XCTAssertFalse(argv[10].contains("--model-type"), "a single-file download is not narrowed by type")
     }
 
     func testConvertPreviewAcceptsFlatLegacyShape() async throws {

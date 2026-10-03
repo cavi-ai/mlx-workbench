@@ -225,6 +225,9 @@ enum IntakePresentation {
             rows.append(DetailRow("Backend", "\(backend)\(resolution.backendInstalled ? "" : " (not installed)")"))
         }
         rows.append(DetailRow("Architecture", resolution.modelType ?? "Unknown"))
+        if let recipe = resolution.recipe {
+            rows.append(DetailRow("Built from", "\(recipe.base) + \(recipe.lora)"))
+        }
         rows.append(DetailRow("Download", LibraryTablePresentation.byteCount(resolution.downloadBytes ?? resolution.bytes)))
         if let estimate = resolution.estimatedOutputBytes?[String(qBits)] {
             rows.append(DetailRow("Estimated \(qBits)-bit output", LibraryTablePresentation.byteCount(estimate)))

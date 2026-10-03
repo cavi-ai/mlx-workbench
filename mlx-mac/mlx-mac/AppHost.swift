@@ -41,6 +41,8 @@ class AppHost: ObservableObject {
     let runtimeInstaller: RuntimeInstaller
     /// Hugging Face intake sheet state (verdict, backend install, downloads).
     let intake: IntakeCoordinator
+    /// Prompt → PNG for converted image-generation models.
+    let imageGeneration: ImageGenerationCoordinator
     /// First-launch setup assistant state (persisted once completed).
     let setup: SetupCoordinator
     /// In-app updates (official tags or beta/main) for checkout-run installs.
@@ -135,6 +137,9 @@ class AppHost: ObservableObject {
         self.reclaim = reclaim ?? ReclaimCoordinator()
         self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller()
         self.intake = IntakeCoordinator(api: intakeAPI ?? .live(api: api))
+        self.imageGeneration = ImageGenerationCoordinator(render: { path, out, request in
+            try await api.generate(path: path, out: out.path, request: request)
+        })
         self.setup = setup ?? SetupCoordinator()
         self.updater = updater ?? UpdateCoordinator()
         let verificationCoordinator = self.verification
@@ -236,6 +241,7 @@ class AppHost: ObservableObject {
             transcribe: { path, clip, language in try await api.transcribe(path: path, audio: clip.path, language: language) }
         )
         self.verification.decide = { path, request in try await api.decide(path: path, request: request.path) }
+        self.verification.render = { path, out, request in try await api.generate(path: path, out: out.path, request: request) }
         // Record the environment fingerprint on every verification report.
         self.verification.environmentFingerprint = { [weak self] in
             self?.watch.currentFingerprintDescription

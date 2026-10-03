@@ -29,9 +29,7 @@ struct ConversionProgressSnapshot: Equatable {
 
     /// The intake estimate for the bit width the destination names (`-MLX-<bits>bit`).
     static func estimate(for workflow: ConversionWorkflow) -> Int64? {
-        guard let estimates = workflow.estimatedOutputBytes,
-              let match = workflow.outputPath.range(of: #"-MLX-(\d+)bit$"#, options: .regularExpression) else { return nil }
-        let bits = workflow.outputPath[match].dropFirst("-MLX-".count).dropLast("bit".count)
+        guard let estimates = workflow.estimatedOutputBytes, let bits = workflow.destinationBits else { return nil }
         return estimates[String(bits)]
     }
 }

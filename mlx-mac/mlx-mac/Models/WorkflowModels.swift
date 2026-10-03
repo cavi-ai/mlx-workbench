@@ -81,4 +81,10 @@ struct ConversionWorkflow: Codable, Equatable, Identifiable {
     var persistenceIdentifier: String {
         id.uuidString
     }
+
+    /// The bit width a destination named `…-MLX-<bits>bit` converts to.
+    var destinationBits: Int? {
+        guard let match = outputPath.range(of: #"-MLX-(\d+)bit$"#, options: .regularExpression) else { return nil }
+        return Int(outputPath[match].dropFirst("-MLX-".count).dropLast("bit".count))
+    }
 }

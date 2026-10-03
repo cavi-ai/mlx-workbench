@@ -159,6 +159,12 @@ struct ModelDetailsView: View {
                 header
                 actionRow
 
+                if model.item.task?.type == .imageGeneration {
+                    WorkbenchSurface {
+                        ImageGenerationPanel(coordinator: appHost.imageGeneration, modelPath: model.item.path)
+                    }
+                }
+
                 WorkbenchSurface {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                         SectionTitle(text: "Model identity")

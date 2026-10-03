@@ -24,6 +24,8 @@ final class ModelTaskTests: XCTestCase {
         XCTAssertFalse(ModelTaskType.textToSpeech.hasCanary)
         XCTAssertFalse(ModelTaskType.textToSpeech.isServable)
         XCTAssertTrue(ModelTaskType.classification.hasCanary)
+        XCTAssertTrue(ModelTaskType.imageGeneration.hasCanary)
+        XCTAssertFalse(ModelTaskType.imageGeneration.isServable)
         XCTAssertFalse(ModelTaskType.classification.isServable)
         XCTAssertEqual(ModelTaskType.classification.title, "Classification")
         let data = Data(#"{"type":"classification","use_cases":["moderation","routing","classification"],"source":"pipeline_tag","confidence":"confirmed"}"#.utf8)

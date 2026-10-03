@@ -152,6 +152,10 @@ struct ConvertView: View {
         .onChange(of: presentation.bitWidths, initial: true) { _, widths in
             if !widths.contains(qBits), let widest = widths.last { qBits = widest }
         }
+        // A new workflow (intake, Library) names its destination's width; the picker follows it.
+        .onChange(of: modelWorkflow.workflow.id, initial: true) { _, _ in
+            if let bits = modelWorkflow.workflow.destinationBits, presentation.bitWidths.contains(bits) { qBits = bits }
+        }
         .task(id: modelWorkflow.workflow.jobReceipt) {
             await sampleProgress()
             while !Task.isCancelled && modelWorkflow.workflow.state.isInFlight {

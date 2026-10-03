@@ -299,6 +299,40 @@ enum DecisionCanary {
     }
 }
 
+/// The image-generation canary: a fixed prompt rendered at 512 × 512 must
+/// produce a written image of that size that is not blank.
+enum ImageCanary {
+    static let id = "image-render"
+    static let title = "Image"
+    static let request = ImageRequest(prompt: "A red apple on a white wooden table, soft daylight, photograph", size: 512, steps: 20, seed: 42)
+    /// Standard deviation of 0–255 pixel values below which a render counts as blank.
+    static let minimumPixelSpread = 20.0
+
+    static func evaluate(_ result: GenerationResult, fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> CanaryResult {
+        var problems: [String] = []
+        if !fileExists(result.path) { problems.append("No image was written.") }
+        if result.width != request.size || result.height != request.size {
+            problems.append("Rendered \(result.width) × \(result.height), expected \(request.size) × \(request.size).")
+        }
+        let spread = result.pixelStd ?? 0
+        if spread < minimumPixelSpread {
+            problems.append(String(format: "The image is blank (pixel spread %.1f).", spread))
+        }
+        var excerpt = "\(result.width) × \(result.height)"
+        if let seconds = result.seconds { excerpt += String(format: " in %.1f s", seconds) }
+        excerpt += String(format: ", pixel spread %.1f", spread)
+        return CanaryResult(
+            id: id,
+            title: title,
+            passed: problems.isEmpty,
+            failureReason: problems.isEmpty ? nil : problems.joined(separator: " "),
+            responseExcerpt: excerpt,
+            tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil
+        )
+    }
+}
+
 struct CanaryResult: Codable, Equatable, Sendable {
     let id: String
     let title: String

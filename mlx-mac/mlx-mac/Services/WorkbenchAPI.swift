@@ -138,6 +138,15 @@ actor WorkbenchAPI {
         try Self.decode(DecisionResult.self, from: raw(["convert", "decide", "--path", path, "--request", request], timeout: 600))
     }
 
+    /// One prompt rendered to a new PNG by a converted image model (`convert generate`).
+    func generate(path: String, out: String, request: ImageRequest) throws -> GenerationResult {
+        try Self.decode(GenerationResult.self, from: raw([
+            "convert", "generate", "--path", path, "--prompt", request.prompt, "--out", out,
+            "--width", String(request.size), "--height", String(request.size),
+            "--steps", String(request.steps), "--seed", String(request.seed), "--timeout", "3600",
+        ], timeout: 3700))
+    }
+
     func intakeResolve(source: String) throws -> IntakeResolution {
         try Self.decode(IntakeResolution.self, from: raw(["intake", "resolve", source], timeout: 45))
     }

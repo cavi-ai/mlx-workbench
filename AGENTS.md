@@ -63,7 +63,7 @@ from `mlx-agent` at runtime.
   `mlx-agent intake resolve|fetch|status|port-analysis|port-plan` and
   `backend list|install|remove`. Repo conversions run through
   `ModelWorkflowCoordinator.inspect(intake:…)` with `ConversionWorkflow.sourceRepo/backend/modelType/subfolder/allowedBits` (`modelType` → `convert start --model-type`, which runs a port's own converter; `subfolder` → `--subfolder` and an `org/name/folder` fetch, for checkpoints below the repo root such as Laya's `multilingual`; `allowedBits` from intake's `q_bits` limits Prepare's bit picker, e.g. Laya is 8-bit only);
-  the Quality Gate canary runs only for `ModelTaskType.hasCanary` types (chat models: served canary prompts; speech-to-text: a `say`-synthesized sentence transcribed through `mlx-agent convert transcribe`, passing at ≤25% word error; classification: `DecisionCanary`, a billing ticket answered through `mlx-agent convert decide` that must route to billing and read as a refund request), and Run/Compare refuse
+  the Quality Gate canary runs only for `ModelTaskType.hasCanary` types (chat models: served canary prompts; speech-to-text: a `say`-synthesized sentence transcribed through `mlx-agent convert transcribe`, passing at ≤25% word error; classification: `DecisionCanary`, a billing ticket answered through `mlx-agent convert decide` that must route to billing and read as a refund request; image generation: `ImageCanary`, a fixed prompt rendered at 512² through `mlx-agent convert generate` that must write a non-blank image), and Run/Compare refuse
   non-servable types, and Prepare/Activity do not offer Run for them. `config.outputDir` is scanned as an MLX root unless a root already contains it (by file identity).
   Prepare refreshes conversion status while a job is in flight and shows a progress ring (bytes
   written against the intake estimate; indeterminate while the converter loads) with the job log in a
@@ -73,7 +73,10 @@ from `mlx-agent` at runtime.
   Architectures no pinned backend implements can ship as mlx-agent backend ports
   (`resources/ports/<backend>/`, e.g. mlx-audio `audio8_asr_infinite`, mlx-embeddings `laya`): the registry counts them
   and `convert start` copies them into the backend venv before the job; repos without a root `config.json` resolve
-  through a port's file signature (Laya).
+  through a port's file signature (Laya), diffusers repos through their `model_index.json` pipeline class, and curated
+  recipe repos through their pinned base plus LoRA (mflux `qwen_image_21`: abenzerps/Qwen-Image-2.1-Uncensored-GGUF; the
+  intake window shows "Built from"). Image-generation models get a Generate panel in the Library inspector
+  (`ImageGenerationCoordinator` + `ImageGenerationPanel`: prompt, size, steps, seed → a new PNG in ~/Pictures/MLX Workbench).
 - Serve accepts HF repo ids or local directories (`serve start --path`,
   upstream ≥ the local-path serve change). `WorkbenchAPI.serveModelArguments`
   maps HF-cache snapshot paths to repo ids and absolute paths outside the HF

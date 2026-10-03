@@ -40,6 +40,8 @@ final class VerificationCoordinator: ObservableObject {
     var speech: SpeechCanaryRunner?
     /// Answers the decision canary (model path, request file); without it classification models are unverifiable.
     var decide: (@Sendable (String, URL) async throws -> DecisionResult)?
+    /// Renders the image canary (model path, output PNG, request); without it image models are unverifiable.
+    var render: (@Sendable (String, URL, ImageRequest) async throws -> GenerationResult)?
 
     init(probe: ServeProbe, store: VerificationStore, now: @escaping () -> Date = Date.init) {
         self.probe = probe
@@ -144,10 +146,12 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
         let kind = taskType(modelPath)
         let speech = self.speech
         let decide = self.decide
+        let render = self.render
         activeModelPath = target
         switch kind {
         case .speechToText: progressMessage = "Transcribing a spoken canary sentence."
         case .classification: progressMessage = "Routing a canary support ticket."
+        case .imageGeneration: progressMessage = "Rendering a canary image."
         default: progressMessage = "Starting verification server."
         }
         lastError = nil
@@ -170,6 +174,13 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                     try Data(DecisionCanary.request.utf8).write(to: request)
                     defer { try? FileManager.default.removeItem(at: request) }
                     canaries = [DecisionCanary.evaluate(try await decide(modelPath, request))]
+                    metricsEstimated = false
+                } else if kind == .imageGeneration {
+                    guard let render else { throw ImageCanaryError.unavailable }
+                    let image = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("image-canary-\(UUID().uuidString).png")
+                    defer { try? FileManager.default.removeItem(at: image) }
+                    canaries = [ImageCanary.evaluate(try await render(modelPath, image, ImageCanary.request))]
                     metricsEstimated = false
                 } else {
                     let result = try await probe.run(modelPath: modelPath)
@@ -253,6 +264,12 @@ enum SpeechCanaryError: LocalizedError {
         case let .toolFailed(tool, status): return "\(tool) exited with status \(status) while making the canary clip."
         }
     }
+}
+
+enum ImageCanaryError: LocalizedError {
+    case unavailable
+
+    var errorDescription: String? { "Image verification is not available in this build." }
 }
 
 enum DecisionCanaryError: LocalizedError {
