@@ -258,25 +258,41 @@ struct ThumbnailView: View {
                 Text("Image unavailable").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
         }
-        .task(id: url) { image = NSImage(contentsOf: url) }
+        .task(id: url) { image = await MediaImageLoader.load(url) }
     }
 }
 
 struct ImagePreviewSheet: View {
     let url: URL
     @Environment(\.dismiss) private var dismiss
+    @State private var image: NSImage?
+    @State private var loaded = false
 
     var body: some View {
         VStack(spacing: WorkbenchSpacing.sm) {
-            if let image = NSImage(contentsOf: url) {
+            if let image {
                 Image(nsImage: image).resizable().scaledToFit().frame(minWidth: 480, minHeight: 480)
-            } else {
+            } else if loaded {
                 Text("Image unavailable").font(WorkbenchTypography.body)
+            } else {
+                ProgressView().frame(minWidth: 480, minHeight: 480)
             }
             Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
         }
         .padding(WorkbenchSpacing.pageInset)
         .frame(minWidth: 520, minHeight: 560)
+        .task(id: url) {
+            loaded = false
+            image = await MediaImageLoader.load(url)
+            loaded = true
+        }
+    }
+}
+
+/// Decodes a saved output image off the main actor; full-size PNGs from image models are large.
+enum MediaImageLoader {
+    static func load(_ url: URL) async -> NSImage? {
+        await Task.detached(priority: .userInitiated) { NSImage(contentsOf: url) }.value
     }
 }
 
@@ -466,7 +482,7 @@ struct MediaPromptSetEditor: View {
         switch kind {
         case .image: panel.allowedContentTypes = [.png, .jpeg, .webP]
         case .video: panel.allowedContentTypes = [.mpeg4Movie, .quickTimeMovie]
-        case .audio: panel.allowedContentTypes = [.wav, .mp3, .mpeg4Audio]
+        case .audio: panel.allowedContentTypes = [.wav, .mp3]
         }
         return panel.runModal() == .OK ? panel.url?.path : nil
     }

@@ -40,6 +40,46 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(receipt["status"] as? String, "applied")
     }
 
+    func testALongMediaCallDoesNotBlockOtherAgentCallsOnTheSameAPI() async throws {
+        let marks = FileManager.default.temporaryDirectory.appendingPathComponent("api-blocking-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: marks, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: marks) }
+        let started = marks.appendingPathComponent("started")
+        let release = marks.appendingPathComponent("release")
+        let agent = try FixtureAgent(blockingDescribeStarted: started, release: release)
+        defer { agent.remove() }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+
+        let description = Task {
+            try await api.describe(path: "/m/vlm", prompt: "What?", image: "/i.png", video: nil, maxTokens: 16)
+        }
+        for _ in 0..<1000 where !FileManager.default.fileExists(atPath: started.path) {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: started.path), "the describe call reached the agent")
+
+        let quickCallFinished = Flag()
+        let quickCall = Task {
+            _ = try await api.raw(["serve", "status"])
+            _ = await api.health()
+            await quickCallFinished.raise()
+        }
+        var waited = 0
+        while !(await quickCallFinished.isRaised), waited < 300 {
+            try await Task.sleep(nanoseconds: 10_000_000)
+            waited += 1
+        }
+        let finishedWhileDescribing = await quickCallFinished.isRaised
+
+        try Data().write(to: release)
+        let result = try await description.value
+        _ = try await quickCall.value
+
+        XCTAssertTrue(finishedWhileDescribing, "a quick agent call waited for the running describe call")
+        XCTAssertEqual(result.text, "A red circle.")
+        XCTAssertEqual(result.generationTokens, 4)
+    }
+
     func testConfiguredScanMatchesFilesystemBytesWhenEnabled() async throws {
 #if !MLX_WORKBENCH_LIVE_SCAN
         throw XCTSkip("run make test-swift-live-scan to validate the configured local inventory")
@@ -250,6 +290,11 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
     }
 }
 
+private actor Flag {
+    private(set) var isRaised = false
+    func raise() { isRaised = true }
+}
+
 private final class FixtureAgent {
     let root: URL
 
@@ -276,6 +321,29 @@ private final class FixtureAgent {
         with open(\(String(reflecting: recordPath.path)), "a") as handle:
             handle.write(json.dumps(sys.argv[1:]) + "\\n")
         print(json.dumps({"status": "ok", "data": \(body)}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
+
+    /// `describe` marks `started`, then waits (up to a minute) for `release` to exist; every other call answers at once.
+    convenience init(blockingDescribeStarted started: URL, release: URL) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import json
+        import os
+        import sys
+        import time
+
+        data = {}
+        if "describe" in sys.argv:
+            open(\(String(reflecting: started.path)), "w").close()
+            deadline = time.time() + 60
+            while not os.path.exists(\(String(reflecting: release.path))) and time.time() < deadline:
+                time.sleep(0.02)
+            data = {"text": "A red circle.", "generation_tokens": 4}
+        print(json.dumps({"status": "ok", "data": data}))
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
     }

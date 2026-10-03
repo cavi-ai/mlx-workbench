@@ -27,6 +27,8 @@ final class ComparisonCoordinator: ObservableObject {
     /// ever prunes a folder the caller did not hand over.
     let outputStore: ComparisonOutputStore?
     private let generateInput: @Sendable (PromptEntry, URL) async throws -> URL
+    /// True once the saved runs were read. Output pruning keeps only the runs it knows, so it never runs on a failed load.
+    private var runsLoaded = false
 
     /// Receives benchmark aggregates when a run completes. AppHost wires
     /// this into `benchmarkResults` for the RecommendationEngine.
@@ -60,6 +62,7 @@ final class ComparisonCoordinator: ObservableObject {
         self.generateInput = generateInput
         do {
             runs = try runStore.load().sorted { $0.startedAt > $1.startedAt }
+            runsLoaded = true
             // A run interrupted by an app quit can never resume its in-flight
             // probe; reconcile it to completed with its partial (real,
             // measured) results instead of leaving a phantom running run.
@@ -188,6 +191,7 @@ final class ComparisonCoordinator: ObservableObject {
 
     /// Keeps the output folders of the newest media runs; the run just added counts.
     private func pruneOutputs(store: ComparisonOutputStore) {
+        guard runsLoaded else { return }
         let keep = runs.filter { $0.effectiveMode != .chat }.prefix(ComparisonOutputStore.retainedRuns).map(\.id)
         store.prune(keeping: Set(keep))
     }

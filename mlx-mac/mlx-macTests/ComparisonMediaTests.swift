@@ -19,18 +19,22 @@ private enum StubMediaError: Error { case chatNotExpected, modelFailed }
 private actor StubMediaRunner: ComparisonMediaRunner {
     private(set) var requests: [MediaRunRequest] = []
     private var failingModels: Set<String>
-    private var gate: Bool
+    /// Nil: requests run at once. Otherwise each request waits for a permit from `release`.
+    private var permits: Int?
 
     init(failingModels: Set<String> = [], gated: Bool = false) {
         self.failingModels = failingModels
-        self.gate = gated
+        self.permits = gated ? 0 : nil
     }
 
-    func open() { gate = false }
+    func release(_ count: Int) { permits = (permits ?? 0) + count }
 
     func run(_ request: MediaRunRequest) async throws -> MediaRunOutput {
         requests.append(request)
-        while gate { try await Task.sleep(nanoseconds: 2_000_000) }
+        if permits != nil {
+            while permits == 0 { try await Task.sleep(nanoseconds: 2_000_000) }
+            permits! -= 1
+        }
         if failingModels.contains(request.modelPath) { throw StubMediaError.modelFailed }
         if let out = request.outputURL { try Data("stub".utf8).write(to: out) }
         switch request.mode {
@@ -235,6 +239,52 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(rendered.frames, 20)
         XCTAssertEqual(rendered.fps, 16)
         XCTAssertEqual(rendered.secondsPerFrame, 1.65)
+    }
+
+    func testVendoredResultFixturesDecodeThroughTheProductionPath() throws {
+        let spoken = try WorkbenchAPI.decode(SpeakResult.self, from: try vendoredFixture("convert-speak"))
+        XCTAssertEqual(spoken.path, "/tmp/mlx-agent/fox.wav")
+        XCTAssertEqual(spoken.sampleRate, 32000)
+        XCTAssertEqual(spoken.audioSeconds, 2.624)
+        XCTAssertEqual(spoken.seconds, 1.848)
+        XCTAssertEqual(spoken.loadSeconds, 2.238)
+        XCTAssertEqual(spoken.realTimeFactor, 0.7041)
+        XCTAssertEqual(spoken.peakMemoryGB, 0.24)
+
+        let described = try WorkbenchAPI.decode(DescribeResult.self, from: try vendoredFixture("convert-describe"))
+        XCTAssertEqual(described.text, "The image shows a red circle.")
+        XCTAssertEqual(described.promptTokens, 55)
+        XCTAssertEqual(described.generationTokens, 8)
+        XCTAssertEqual(described.promptTps, 46.694)
+        XCTAssertEqual(described.generationTps, 222.039)
+        XCTAssertEqual(described.peakMemoryGB, 3.244)
+        XCTAssertEqual(described.seconds, 1.253)
+        XCTAssertEqual(described.loadSeconds, 0.485)
+
+        let rendered = try WorkbenchAPI.decode(VideoResult.self, from: try vendoredFixture("convert-video"))
+        XCTAssertEqual(rendered.path, "/tmp/mlx-agent/red-ball-416.mp4")
+        XCTAssertEqual(rendered.width, 416)
+        XCTAssertEqual(rendered.height, 240)
+        XCTAssertEqual(rendered.frames, 20)
+        XCTAssertEqual(rendered.fps, 16)
+        XCTAssertEqual(rendered.durationSeconds, 1.25)
+        XCTAssertEqual(rendered.steps, 30)
+        XCTAssertEqual(rendered.seed, 42)
+        XCTAssertEqual(rendered.seconds, 27.021)
+        XCTAssertEqual(rendered.loadSeconds, 1.372)
+        XCTAssertEqual(rendered.secondsPerFrame, 1.351)
+        XCTAssertEqual(rendered.peakMemoryGB, 25.596)
+        XCTAssertEqual(rendered.pixelStd, 54.353)
+    }
+
+    private func vendoredFixture(_ name: String) throws -> [String: Any] {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // mlx-macTests
+            .deletingLastPathComponent()   // mlx-mac
+            .deletingLastPathComponent()   // repo root
+            .appendingPathComponent("vendor/mlx-agent/tests/fixtures/\(name).json")
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+        return try XCTUnwrap(object as? [String: Any])
     }
 
     // MARK: Output store
@@ -451,16 +501,45 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(coordinator.activeRunID, firstRun)
         XCTAssertEqual(coordinator.runs.count, 1)
 
-        await runner.open()
-        // After the first variant finishes the run on disk already holds it while the second is still going.
-        for _ in 0..<2000 where coordinator.runs.first?.results.isEmpty ?? true {
+        // Release only the first variant's requests: its result must reach the disk while the second variant is still gated.
+        await runner.release(set.prompts.count)
+        var onDisk: [ComparisonRun] = []
+        for _ in 0..<2000 {
+            onDisk = (try? JSONStore<ComparisonRun>(fileURL: runsURL).load()) ?? []
+            if (onDisk.first?.results.count ?? 0) >= 1 { break }
             try await Task.sleep(nanoseconds: 2_000_000)
         }
-        let onDisk = try JSONStore<ComparisonRun>(fileURL: runsURL).load()
-        XCTAssertGreaterThanOrEqual(onDisk.first?.results.count ?? 0, 1)
+        XCTAssertEqual(onDisk.first?.results.count, 1)
+        XCTAssertEqual(onDisk.first?.results.first?.modelPath, "/m/a")
+        XCTAssertEqual(onDisk.first?.state, .running)
+        XCTAssertNotNil(coordinator.activeRunID, "the second variant is still running")
+
+        await runner.release(set.prompts.count)
         await waitForRun(coordinator)
         XCTAssertEqual(try JSONStore<ComparisonRun>(fileURL: runsURL).load().first?.results.count, 2)
         XCTAssertEqual(coordinator.runs.first?.state, .completed)
+    }
+
+    @MainActor
+    func testAnUnreadableRunStoreNeverPrunesTheSavedOutputs() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("outputs"))
+        let saved = [UUID(), UUID(), UUID()]
+        for id in saved {
+            try store.createRunDirectory(id)
+            try Data("x".utf8).write(to: store.runDirectory(id).appendingPathComponent("0-p.png"))
+        }
+        let runsURL = root.appendingPathComponent("runs.json")
+        try Data("{ not json".utf8).write(to: runsURL)
+        let coordinator = makeCoordinator(runner: StubMediaRunner(), store: store, runsURL: runsURL)
+        XCTAssertNotNil(coordinator.persistenceError)
+        XCTAssertTrue(coordinator.runs.isEmpty)
+
+        coordinator.start(variants: [("/m", nil)], promptSet: promptSet(for: .imageGeneration))
+        let runID = try XCTUnwrap(coordinator.activeRunID)
+        await waitForRun(coordinator)
+
+        for id in saved { XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(id).path), "\(id)") }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(runID).path))
     }
 
     @MainActor
