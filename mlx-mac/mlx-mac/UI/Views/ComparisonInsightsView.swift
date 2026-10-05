@@ -2,6 +2,61 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// One retained model per comparable task cohort, with the evidence easy to scan.
+struct ModelReplacementChainCard: View {
+    let chain: ModelReplacementChain
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
+                Image(systemName: "checkmark.seal.fill").foregroundStyle(WorkbenchColor.success)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Text("Keep \(chain.keeper.name)").font(WorkbenchTypography.roundedHeading)
+                    Text(chain.task).font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.accent)
+                }
+                Spacer()
+                Text("\(chain.replaced.count) to review").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+            }
+            memberRow(chain.keeper, symbol: "checkmark", color: WorkbenchColor.success)
+            ForEach(chain.replaced, id: \.path) { member in
+                memberRow(member, symbol: "arrow.turn.up.right", color: WorkbenchColor.muted)
+            }
+            DisclosureGroup("Review \(ByteCountFormatter.string(fromByteCount: chain.replaced.reduce(0) { $0 + $1.diskBytes }, countStyle: .file)) · evidence and paths") {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("The keeper is no worse on reviewed quality, speed, latency, estimated memory and disk in this task. Other tasks may need the replaced models. These suggestions require review; model folders require manual cleanup.")
+                        .font(WorkbenchTypography.secondary)
+                    Text(chain.source).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
+                    ForEach([chain.keeper] + chain.replaced, id: \.path) { member in
+                        Text(member.path).font(WorkbenchTypography.value).textSelection(.enabled)
+                    }
+                }.padding(.top, WorkbenchSpacing.xs)
+            }.font(WorkbenchTypography.secondary)
+        }
+        .padding(WorkbenchSpacing.sm)
+        .background(WorkbenchColor.accent.opacity(0.05), in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface))
+        .overlay(RoundedRectangle(cornerRadius: WorkbenchRadius.surface).stroke(WorkbenchColor.accent.opacity(0.2), lineWidth: WorkbenchSpacing.hairline))
+    }
+
+    private func memberRow(_ member: ModelReplacementMember, symbol: String, color: Color) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: WorkbenchSpacing.xs) {
+                Label(member.name, systemImage: symbol).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: WorkbenchSpacing.sm)
+                Text(metrics(member)).foregroundStyle(WorkbenchColor.muted)
+            }
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                Label(member.name, systemImage: symbol)
+                Text(metrics(member)).foregroundStyle(WorkbenchColor.muted)
+            }
+        }.font(WorkbenchTypography.secondary).foregroundStyle(color)
+    }
+
+    private func metrics(_ member: ModelReplacementMember) -> String {
+        String(format: "%d/5 · %.1f tok/s · %.2f s first token · %@", member.qualityScore, member.tokensPerSecond, member.firstTokenSeconds,
+            ByteCountFormatter.string(fromByteCount: member.diskBytes, countStyle: .file))
+    }
+}
+
 struct ComparisonInsightsView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject var comparison: ComparisonCoordinator
@@ -41,7 +96,7 @@ struct ComparisonInsightsView: View {
             }
             if !replacements.isEmpty {
                 ForEach(replacements) { item in
-                    Text(item.evidence).font(WorkbenchTypography.secondary)
+                    if let chain = item.replacement { ModelReplacementChainCard(chain: chain) }
                 }
                 Button("Review space in Reclaim") { appHost.analyzeReclaim(); onReclaim() }
             }

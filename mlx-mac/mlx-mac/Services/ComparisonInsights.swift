@@ -68,7 +68,7 @@ enum ComparisonInsights {
         return AgentEvidenceExport(schemaVersion: 1, exportedAt: exportedAt, hardware: hardware, environmentFingerprint: environment,
             memoryCapturedAt: capturedAt, availableMemoryBytes: memory?.availableBytes, contextTokens: contextTokens, reserveGB: reserveGB,
             models: modelFacts, comparisons: facts, workflowReports: workflow, replacementReviews: replacements.map(\.evidence),
-            limitations: ["Compare only the same complete run or matched harness/workload/configuration/rubric cohort.", "Quality is unknown unless explicitly reviewed; no universal best model.", "Fit uses heuristic weights/KV/runtime estimates at captured available memory, not peak measurement.", "GPU utilization, disk I/O, CPU load and network attribution: unavailable.", "Task-scoped replacement reviews do not establish global redundancy."], taskTradeoffs: tradeoffs)
+            limitations: ["Compare only the same complete run or matched harness/workload/configuration/rubric cohort.", "Quality is unknown unless explicitly reviewed; no universal best model.", "Fit uses heuristic weights/KV/runtime estimates at captured available memory, not peak measurement.", "GPU utilization, disk I/O, CPU load and network attribution: unavailable.", "Task-scoped replacement reviews do not establish global redundancy."], taskTradeoffs: tradeoffs, replacementChains: replacements.compactMap(\.replacement))
     }
 
     static func supportsFitEstimate(_ model: LibraryModel) -> Bool {
@@ -212,40 +212,91 @@ enum ComparisonInsights {
                   FitAdvisor.parameterBillions(candidate.item.parameters) != nil else { return false }
             return replacement.item.bytes <= candidate.item.bytes && FitAdvisor.neededBytes(modelBytes: replacement.item.bytes, contextTokens: contextTokens, parameters: replacement.item.parameters) <= FitAdvisor.neededBytes(modelBytes: candidate.item.bytes, contextTokens: contextTokens, parameters: candidate.item.parameters)
         }
-        func add(_ candidate: LibraryModel, _ replacement: LibraryModel, task: String, source: String) {
-            guard !protected.contains(candidate.item.path), !found.contains(where: { $0.paths.contains(candidate.item.path) }) else { return }
-            found.append(ReclaimOpportunity(kind: .supersededVariant, paths: [candidate.item.path], bytes: candidate.item.bytes, evidence: "Task-scoped review: \(replacement.displayName) is no worse on reviewed quality, speed, first-token latency, estimated memory and disk for \(task) (\(source)). Other tasks may still need this model; review before reclaiming.", confidence: .review, actionable: false))
-        }
-        for run in runs where run.state == .completed && run.effectiveMode == .chat {
-            guard let prompts = run.promptEntries, !prompts.isEmpty, Set(prompts.map(\.id)).count == prompts.count else { continue }
-            for candidate in models {
-                guard let left = run.results.first(where: { valid($0, model: candidate, environment: environment) }),
-                      left.samples.count == prompts.count, Set(left.samples.map(\.promptID)) == Set(prompts.map(\.id)),
-                      let quality = run.qualityReviews?[candidate.item.path], (1...5).contains(quality.score),
-                      let speed = positive(left.aggregateTokensPerSecond), let ttft = nonnegative(left.aggregateTTFTSeconds) else { continue }
-                for replacement in models where replacement.item.path != candidate.item.path && resourcesNoWorse(replacement, candidate) {
-                    guard let right = run.results.first(where: { valid($0, model: replacement, environment: environment) }), right.samples.count == prompts.count,
-                          Set(right.samples.map(\.promptID)) == Set(prompts.map(\.id)),
-                          let otherQuality = run.qualityReviews?[replacement.item.path], otherQuality.rubricID == quality.rubricID, otherQuality.score >= quality.score,
-                          let otherSpeed = positive(right.aggregateTokensPerSecond), otherSpeed >= speed,
-                          let otherTTFT = nonnegative(right.aggregateTTFTSeconds), otherTTFT <= ttft,
-                          otherSpeed >= speed * 1.1 || otherTTFT < ttft * 0.9 || replacement.item.bytes < Int64(Double(candidate.item.bytes) * 0.9) || otherQuality.score > quality.score else { continue }
-                    add(candidate, replacement, task: run.promptSetName, source: "run \(run.id)")
-                }
+        struct Measurement {
+            let model: LibraryModel
+            let quality: Int
+            let rubric: String
+            let speed: Double
+            let ttft: Double
+            let duration: Double?
+            var member: ModelReplacementMember {
+                ModelReplacementMember(path: model.item.path, name: model.displayName, diskBytes: model.item.bytes,
+                    qualityScore: quality, tokensPerSecond: speed, firstTokenSeconds: ttft)
             }
         }
-        for left in workflow where left.environmentFingerprint == environment {
-            guard let candidate = models.first(where: { $0.item.path == left.modelPath && $0.item.signature == left.modelSignature }), let quality = left.qualityScore,
-                  let speed = positive(left.tokensPerSecond), let ttft = nonnegative(left.timeToFirstTokenSeconds),
-                  let rubric = left.rubricID, let configuration = left.configurationFingerprint, !configuration.isEmpty else { continue }
-            for right in workflow where right.modelPath != left.modelPath && right.environmentFingerprint == environment && right.workloadID == left.workloadID && right.harness == left.harness && right.rubricID == rubric && right.configurationFingerprint == configuration && right.sampleCount == left.sampleCount && right.useCase == left.useCase {
-                guard let replacement = models.first(where: { $0.item.path == right.modelPath && $0.item.signature == right.modelSignature }), resourcesNoWorse(replacement, candidate),
-                      let otherQuality = right.qualityScore, otherQuality >= quality,
-                      let otherSpeed = positive(right.tokensPerSecond), otherSpeed >= speed,
-                      let otherTTFT = nonnegative(right.timeToFirstTokenSeconds), otherTTFT <= ttft,
-                      right.totalSeconds <= left.totalSeconds,
-                      otherSpeed >= speed * 1.1 || otherTTFT < ttft * 0.9 || replacement.item.bytes < Int64(Double(candidate.item.bytes) * 0.9) || otherQuality > quality else { continue }
-                add(candidate, replacement, task: left.workloadID, source: "\(left.source), \(right.source)")
+        func dominates(_ right: Measurement, _ left: Measurement) -> Bool {
+            guard right.model.item.path != left.model.item.path, right.rubric == left.rubric,
+                  resourcesNoWorse(right.model, left.model), right.quality >= left.quality,
+                  right.speed >= left.speed, right.ttft <= left.ttft else { return false }
+            if let duration = left.duration {
+                guard let other = right.duration, other <= duration else { return false }
+            }
+            return right.speed >= left.speed * 1.1 || right.ttft < left.ttft * 0.9
+                || right.model.item.bytes < Int64(Double(left.model.item.bytes) * 0.9) || right.quality > left.quality
+        }
+        func addCohort(_ measurements: [Measurement], task: String, source: String) {
+            // A keeper has no better replacement in this same cohort. Never stitch separate tasks together.
+            let terminal = measurements.filter { candidate in !measurements.contains { dominates($0, candidate) } }.sorted {
+                if $0.quality != $1.quality { return $0.quality > $1.quality }
+                if $0.speed != $1.speed { return $0.speed > $1.speed }
+                if $0.ttft != $1.ttft { return $0.ttft < $1.ttft }
+                if $0.model.item.bytes != $1.model.item.bytes { return $0.model.item.bytes < $1.model.item.bytes }
+                return $0.model.item.path < $1.model.item.path
+            }
+            var grouped: [String: [Measurement]] = [:]
+            for candidate in measurements where !protected.contains(candidate.model.item.path) {
+                if let keeper = terminal.first(where: { dominates($0, candidate) }) {
+                    grouped[keeper.model.item.path, default: []].append(candidate)
+                }
+            }
+            for keeper in terminal {
+                guard let replaced = grouped[keeper.model.item.path]?.sorted(by: { $0.model.item.path < $1.model.item.path }) else { continue }
+                let chain = ModelReplacementChain(keeper: keeper.member, replaced: replaced.map(\.member), task: task, source: source)
+                found.append(ReclaimOpportunity(kind: .supersededVariant, paths: replaced.map { $0.model.item.path },
+                    bytes: replaced.reduce(0) { $0 + $1.model.item.bytes },
+                    evidence: "Keep \(keeper.model.displayName): no worse reviewed quality, speed, first-token latency, estimated memory and disk for \(task) (\(source)). Review other tasks before removing \(replaced.count) replaced model(s).",
+                    confidence: .review, actionable: false, replacement: chain))
+            }
+        }
+        var seenRuns = Set<String>()
+        for run in runs.sorted(by: { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }) where run.state == .completed && run.effectiveMode == .chat {
+            // Newer results for a prompt set supersede its older advice, including incomplete reviews.
+            guard seenRuns.insert(run.promptSetID).inserted else { continue }
+            let measurements = models.compactMap { model -> Measurement? in
+                guard let result = run.results.first(where: { valid($0, model: model, environment: environment) }), fullCohort(result, run: run),
+                      let quality = run.qualityReviews?[model.item.path], (1...5).contains(quality.score), !quality.rubricID.isEmpty,
+                      let speed = positive(result.aggregateTokensPerSecond), let ttft = nonnegative(result.aggregateTTFTSeconds) else { return nil }
+                return Measurement(model: model, quality: quality.score, rubric: quality.rubricID, speed: speed, ttft: ttft, duration: nil)
+            }
+            addCohort(measurements, task: run.promptSetName, source: "run \(run.id)")
+        }
+        // Structured keys prevent accidentally matching delimiter-containing workload names.
+        struct WorkflowCohort: Hashable {
+            let harness: String
+            let workload: String
+            let configuration: String
+            let rubric: String
+            let samples: Int
+            let useCase: UseCase?
+        }
+        var cohorts: [WorkflowCohort: [WorkflowEvidence]] = [:]
+        for record in workflow where record.environmentFingerprint == environment {
+            guard (try? record.validate()) != nil, let rubric = record.rubricID, let configuration = record.configurationFingerprint else { continue }
+            let key = WorkflowCohort(harness: record.harness, workload: record.workloadID, configuration: configuration,
+                rubric: rubric, samples: record.sampleCount, useCase: record.useCase)
+            cohorts[key, default: []].append(record)
+        }
+        for records in cohorts.values.sorted(by: { ($0.map(\.measuredAt).max() ?? .distantPast) > ($1.map(\.measuredAt).max() ?? .distantPast) }) {
+            var seenPaths = Set<String>()
+            let current = records.sorted { $0.measuredAt > $1.measuredAt }.filter { seenPaths.insert($0.modelPath).inserted }
+            let measurements = current.compactMap { record -> Measurement? in
+                guard let model = models.first(where: { $0.item.path == record.modelPath && $0.item.signature == record.modelSignature }),
+                      let quality = record.qualityScore, let rubric = record.rubricID,
+                      let speed = positive(record.tokensPerSecond), let ttft = nonnegative(record.timeToFirstTokenSeconds) else { return nil }
+                return Measurement(model: model, quality: quality, rubric: rubric, speed: speed, ttft: ttft, duration: record.totalSeconds)
+            }
+            if let first = current.first {
+                addCohort(measurements, task: "\(first.harness) · \(first.workloadID)", source: current.map(\.source).sorted().joined(separator: ", "))
             }
         }
         return found

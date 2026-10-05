@@ -89,6 +89,7 @@ struct AgentEvidenceExport: Codable {
     let replacementReviews: [String]
     let limitations: [String]
     var taskTradeoffs: [String] = []
+    var replacementChains: [ModelReplacementChain] = []
 }
 struct AgentModelFact: Codable {
     let path: String

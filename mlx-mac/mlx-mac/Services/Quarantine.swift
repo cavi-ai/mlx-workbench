@@ -15,6 +15,9 @@ enum QuarantineError: LocalizedError {
     case moveFailed(String)
     case restoreBlocked(String)
     case symlinkRefused(String)
+    case notInQuarantine(String)
+    case changedSincePreview
+    case trashFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -32,6 +35,12 @@ enum QuarantineError: LocalizedError {
             return "Cannot put \(path) back: a file already exists at the original location. Resolve it yourself first."
         case .symlinkRefused(let path):
             return "\(path) is a symbolic link; refusing to move or write through it."
+        case .notInQuarantine(let path):
+            return "\(path) is not a recorded regular GGUF file in the configured quarantine directory."
+        case .changedSincePreview:
+            return "The quarantined file changed after preview. Review it again before moving it to Trash."
+        case .trashFailed(let detail):
+            return "Could not move the file to Trash: \(detail). Refresh quarantine before retrying."
         }
     }
 }
@@ -41,11 +50,27 @@ struct QuarantineRecord: Codable, Equatable, Sendable {
     let from: String
     let to: String
     let bytes: Int64
+    var deletedAt: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case from, to, bytes
         case movedAt = "moved_at"
+        case deletedAt = "deleted_at"
     }
+}
+
+struct QuarantineFileSnapshot: Equatable, Sendable {
+    let path: String
+    let bytes: Int64
+    let device: UInt64
+    let inode: UInt64
+    let modifiedAt: Date
+    let createdAt: Date
+}
+
+struct QuarantineTrashResult: Sendable {
+    let bytes: Int64
+    let ledgerWarning: String?
 }
 
 enum Quarantine {
@@ -131,12 +156,96 @@ enum Quarantine {
     /// Recent quarantine records, newest first.
     static func ledger(quarantineDir: String, limit: Int = 200, fileManager: FileManager = .default) -> [QuarantineRecord] {
         let ledgerURL = URL(fileURLWithPath: resolve(quarantineDir)).appendingPathComponent(ledgerName)
-        guard let data = try? Data(contentsOf: ledgerURL),
+        guard !quarantineDir.isEmpty, limit > 0,
+              (try? fileManager.destinationOfSymbolicLink(atPath: NSString(string: quarantineDir).expandingTildeInPath)) == nil,
+              (try? fileManager.destinationOfSymbolicLink(atPath: ledgerURL.path)) == nil,
+              let size = try? fileManager.attributesOfItem(atPath: ledgerURL.path)[.size] as? Int64, size <= maxLedgerBytes,
+              let data = try? Data(contentsOf: ledgerURL),
               let text = String(data: data, encoding: .utf8) else { return [] }
         let decoder = JSONDecoder()
         return text.split(separator: "\n").suffix(limit).compactMap { line in
             try? decoder.decode(QuarantineRecord.self, from: Data(line.utf8))
         }.reversed()
+    }
+
+    /// Files offered for Trash must still belong to this quarantine and its ledger.
+    static func trashSnapshot(_ record: QuarantineRecord, quarantineDir: String, fileManager: FileManager = .default) throws -> QuarantineFileSnapshot {
+        let path = try guardQuarantinedPath(record.to, quarantineDir: quarantineDir, fileManager: fileManager)
+        let attributes = try fileManager.attributesOfItem(atPath: path)
+        guard record.deletedAt == nil,
+              let bytes = attributes[.size] as? Int64,
+              let device = attributes[.systemNumber] as? UInt64,
+              let inode = attributes[.systemFileNumber] as? UInt64,
+              let modified = attributes[.modificationDate] as? Date,
+              let created = attributes[.creationDate] as? Date,
+              ledger(quarantineDir: quarantineDir, limit: 10000, fileManager: fileManager).contains(record) else {
+            throw QuarantineError.notInQuarantine(record.to)
+        }
+        return QuarantineFileSnapshot(path: path, bytes: bytes, device: device, inode: inode, modifiedAt: modified, createdAt: created)
+    }
+
+    static func guardQuarantinedPath(_ path: String, quarantineDir: String, fileManager: FileManager = .default) throws -> String {
+        let expandedRoot = NSString(string: quarantineDir).expandingTildeInPath
+        guard expandedRoot.hasPrefix("/"), resolve(expandedRoot) != "/", path.hasPrefix("/") else {
+            throw QuarantineError.notInQuarantine(path)
+        }
+        if (try? fileManager.destinationOfSymbolicLink(atPath: expandedRoot)) != nil {
+            throw QuarantineError.symlinkRefused(expandedRoot)
+        }
+        let root = resolve(expandedRoot)
+        let target = URL(fileURLWithPath: path).standardizedFileURL
+        guard target.lastPathComponent != ledgerName, target.path.lowercased().hasSuffix(".gguf"),
+              target.path != root, isWithin(target.path, parent: root) else {
+            throw QuarantineError.notInQuarantine(path)
+        }
+        var component = target
+        while component.path != root {
+            if (try? fileManager.destinationOfSymbolicLink(atPath: component.path)) != nil {
+                throw QuarantineError.symlinkRefused(component.path)
+            }
+            component.deleteLastPathComponent()
+        }
+        let attributes = try fileManager.attributesOfItem(atPath: target.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            throw QuarantineError.notInQuarantine(path)
+        }
+        return target.path
+    }
+
+    /// Native macOS Trash only. Never fall back to unlinking a file.
+    static func trash(_ record: QuarantineRecord, quarantineDir: String, expected: QuarantineFileSnapshot,
+                      now: Date = Date(), fileManager: FileManager = .default,
+                      trashFile: ((URL) throws -> Void)? = nil) throws -> QuarantineTrashResult {
+        let quarantineRoot = resolve(quarantineDir)
+        let current = try trashSnapshot(record, quarantineDir: quarantineDir, fileManager: fileManager)
+        guard current == expected else { throw QuarantineError.changedSincePreview }
+        do {
+            let url = URL(fileURLWithPath: current.path)
+            if let trashFile { try trashFile(url) }
+            else { try fileManager.trashItem(at: url, resultingItemURL: nil) }
+        } catch { throw QuarantineError.trashFailed(error.localizedDescription) }
+        // Preserve unknown fields and history, matching the web's deleted_at contract.
+        do {
+            try refuseRootDrift(quarantineDir, expected: quarantineRoot, fileManager: fileManager)
+            let ledgerURL = URL(fileURLWithPath: quarantineRoot).appendingPathComponent(ledgerName)
+            try JSONStore<QuarantineRecord>.refuseSymlink(ledgerURL, fileManager: fileManager)
+            let data = try Data(contentsOf: ledgerURL)
+            guard data.count <= maxLedgerBytes, let text = String(data: data, encoding: .utf8) else {
+                throw QuarantineError.notInQuarantine(ledgerURL.path)
+            }
+            let lines = try text.split(separator: "\n").map { line -> String in
+                guard var json = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                      json["to"] as? String == record.to, json["moved_at"] as? String == record.movedAt else { return String(line) }
+                json["deleted_at"] = isoFormatter.string(from: now)
+                return String(decoding: try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]), as: UTF8.self)
+            }
+            try refuseRootDrift(quarantineDir, expected: quarantineRoot, fileManager: fileManager)
+            try JSONStore<QuarantineRecord>.refuseSymlink(ledgerURL, fileManager: fileManager)
+            try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: ledgerURL, options: .atomic)
+            return QuarantineTrashResult(bytes: current.bytes, ledgerWarning: nil)
+        } catch {
+            return QuarantineTrashResult(bytes: current.bytes, ledgerWarning: "Moved to Trash, but could not update quarantine history: \(error.localizedDescription)")
+        }
     }
 
     /// Put a quarantined file back where it came from. Extends the Python
@@ -169,6 +278,14 @@ enum Quarantine {
 
     // MARK: - Internals
 
+    private static func refuseRootDrift(_ directory: String, expected: String, fileManager: FileManager) throws {
+        let expanded = NSString(string: directory).expandingTildeInPath
+        if (try? fileManager.destinationOfSymbolicLink(atPath: expanded)) != nil {
+            throw QuarantineError.symlinkRefused(expanded)
+        }
+        guard resolve(expanded) == expected else { throw QuarantineError.changedSincePreview }
+    }
+
     static func resolve(_ path: String) -> String {
         URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
             .standardizedFileURL
@@ -192,6 +309,7 @@ enum Quarantine {
 
     private static func appendLedger(_ record: QuarantineRecord, quarantineDir: String, fileManager: FileManager) {
         let ledgerURL = URL(fileURLWithPath: quarantineDir).appendingPathComponent(ledgerName)
+        guard (try? fileManager.destinationOfSymbolicLink(atPath: ledgerURL.path)) == nil else { return }
         if let size = try? fileManager.attributesOfItem(atPath: ledgerURL.path)[.size] as? Int64,
            size > maxLedgerBytes {
             return

@@ -26,6 +26,12 @@ struct ReclaimMoveResult: Equatable, Sendable {
     let error: String?
 }
 
+struct QuarantineTrashPlan: Equatable, Sendable {
+    let record: QuarantineRecord
+    let snapshot: QuarantineFileSnapshot
+    let quarantineDir: String
+}
+
 enum ReclaimError: LocalizedError {
     case nothingSelected
     case previewHashMismatch
@@ -49,6 +55,8 @@ final class ReclaimCoordinator: ObservableObject {
     /// whose quarantined file no longer exists (restored, or removed by the
     /// user) drop out of the view.
     @Published private(set) var quarantined: [QuarantineRecord] = []
+    @Published private(set) var trashPlan: QuarantineTrashPlan?
+    @Published private(set) var trashNote: String?
     /// Incomplete HF-cache findings from the last cache check, with the
     /// prune preview hash when one has been previewed.
     @Published private(set) var cacheFindings: [DoctorFinding] = []
@@ -78,7 +86,7 @@ final class ReclaimCoordinator: ObservableObject {
     }
 
     var totalReclaimableBytes: Int64 {
-        opportunities.reduce(0) { $0 + $1.bytes }
+        opportunities.filter(\.actionable).reduce(0) { $0 + $1.bytes }
     }
 
     /// Badge text for the sidebar when reclaimable bytes exceed the
@@ -121,19 +129,59 @@ final class ReclaimCoordinator: ObservableObject {
     /// simply leaves the directory).
     func refreshQuarantined() {
         let dir = quarantineDir()
-        quarantined = Quarantine.ledger(quarantineDir: dir).filter { record in
-            FileManager.default.fileExists(atPath: Quarantine.resolve(record.to))
+        quarantined = Quarantine.ledger(quarantineDir: dir, limit: 10000, fileManager: fileManager).filter { record in
+            record.deletedAt == nil && (try? Quarantine.guardQuarantinedPath(record.to, quarantineDir: dir, fileManager: fileManager)) != nil
         }
     }
 
     /// Put a quarantined file back where it came from, then refresh.
     func restore(_ record: QuarantineRecord) {
+        guard !isApplying else { return }
         do {
+            _ = try Quarantine.trashSnapshot(record, quarantineDir: quarantineDir(), fileManager: fileManager)
             try Quarantine.restore(record, fileManager: fileManager)
             lastError = nil
         } catch {
             lastError = AppHost.render(error)
         }
+        refreshQuarantined()
+    }
+
+    func previewTrash(_ record: QuarantineRecord) {
+        guard !isApplying else { return }
+        lastError = nil
+        trashNote = nil
+        do {
+            let dir = quarantineDir()
+            trashPlan = QuarantineTrashPlan(record: record, snapshot: try Quarantine.trashSnapshot(record, quarantineDir: dir, fileManager: fileManager), quarantineDir: dir)
+        } catch {
+            trashPlan = nil
+            lastError = AppHost.render(error)
+            refreshQuarantined()
+        }
+    }
+
+    func cancelTrash() { if !isApplying { trashPlan = nil } }
+
+    func confirmTrash() async {
+        guard !isApplying, let preview = trashPlan else { return }
+        guard quarantineDir() == preview.quarantineDir else {
+            lastError = QuarantineError.changedSincePreview.errorDescription
+            trashPlan = nil
+            return
+        }
+        isApplying = true
+        let fileManager = fileManager
+        let timestamp = now()
+        do {
+            let result = try await Task.detached(priority: .userInitiated) {
+                try Quarantine.trash(preview.record, quarantineDir: preview.quarantineDir, expected: preview.snapshot, now: timestamp, fileManager: fileManager)
+            }.value
+            trashNote = "Moved \(URL(fileURLWithPath: preview.record.from).lastPathComponent) to Trash. Empty Trash in Finder to free disk space."
+            lastError = result.ledgerWarning
+        } catch { lastError = AppHost.render(error) }
+        isApplying = false
+        trashPlan = nil
         refreshQuarantined()
     }
 
@@ -162,6 +210,7 @@ final class ReclaimCoordinator: ObservableObject {
     /// sequentially. Returns per-item results.
     @discardableResult
     func confirm(previewHash hash: String) -> [ReclaimMoveResult]? {
+        guard !isApplying else { return nil }
         guard let plan, plan.previewHash == hash else {
             lastError = ReclaimError.previewHashMismatch.errorDescription
             return nil

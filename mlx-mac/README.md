@@ -195,6 +195,24 @@ advantage. They remain review-only because a model may still serve another
 task. Active, endpoint-configured, and preferred models are protected;
 existing file moves retain their preview/confirm flow.
 
+Replacement chains group reviewed alternatives under a terminal keeper from
+one complete comparison or a matching harness/workload/configuration/rubric
+cohort. They never bridge separate tasks, and the newest evidence for a task
+supersedes older advice. The cards show quality, speed, first-token latency and
+disk size; agent exports include structured `replacementChains`. A retained
+keeper is excluded from generic stale-file advice. Exact duplicate advice
+requires a named keeper and authoritative redundant paths; variant groups
+remain informational.
+
+Quarantine lists current files with **Put back** and **Move to Trash** actions,
+including older entries via **Show all files**. Trash confirmation previews
+the selected file and its current size, then rechecks file identity, timestamps,
+ledger membership and the quarantine directory before using native macOS
+Trash. Symlinks, directories, the ledger and files outside quarantine are
+refused; there is no permanent-delete fallback. The ledger retains the record
+with `deleted_at`, matching the web contract. Space is freed when Trash is
+emptied in Finder, not when a file enters quarantine.
+
 ## Design rules
 
 - Everything mutating is previewed, hashed, and confirmed; intent drift
