@@ -10,18 +10,69 @@ import Foundation
 
 // MARK: Prompt sets
 
+/// Generation settings for the image and video modes.
+struct MediaParameters: Codable, Equatable, Sendable {
+    /// Square edge for image generation.
+    var size: Int?
+    /// Video generation frame size; takes precedence over `size`.
+    var width: Int?
+    var height: Int?
+    var steps: Int?
+    var seed: Int?
+    var frames: Int?
+    var fps: Int?
+
+    init(size: Int? = nil, width: Int? = nil, height: Int? = nil, steps: Int? = nil, seed: Int? = nil, frames: Int? = nil, fps: Int? = nil) {
+        self.size = size
+        self.width = width
+        self.height = height
+        self.steps = steps
+        self.seed = seed
+        self.frames = frames
+        self.fps = fps
+    }
+}
+
 struct PromptEntry: Codable, Equatable, Identifiable, Sendable {
     let id: String
+    /// Chat: the prompt. Vision and video understanding: the question.
+    /// Speech to text: the reference sentence the audio says (scored by word
+    /// error rate). Text to speech: the sentence to speak. Image and video
+    /// generation: the prompt.
     var text: String
     var maxTokens: Int
     /// When set, the probe offers this tool and records what the model calls.
     var tool: PromptToolSpec?
+    /// The kind of input file this prompt carries; nil for text-only prompts.
+    var inputKind: ComparisonMediaKind?
+    /// Absolute path of a user-picked input file.
+    var inputPath: String?
+    /// Id of a built-in input generated at run time into the run's folder.
+    var builtinInput: String?
+    /// Words an answer must all contain (case-insensitive) to count as correct.
+    var expectedKeywords: [String]?
+    var media: MediaParameters?
 
-    init(id: String, text: String, maxTokens: Int = 256, tool: PromptToolSpec? = nil) {
+    init(
+        id: String,
+        text: String,
+        maxTokens: Int = 256,
+        tool: PromptToolSpec? = nil,
+        inputKind: ComparisonMediaKind? = nil,
+        inputPath: String? = nil,
+        builtinInput: String? = nil,
+        expectedKeywords: [String]? = nil,
+        media: MediaParameters? = nil
+    ) {
         self.id = id
         self.text = text
         self.maxTokens = maxTokens
         self.tool = tool
+        self.inputKind = inputKind
+        self.inputPath = inputPath
+        self.builtinInput = builtinInput
+        self.expectedKeywords = expectedKeywords
+        self.media = media
     }
 }
 
@@ -37,6 +88,10 @@ struct PromptSet: Codable, Equatable, Identifiable, Sendable {
     var useCase: UseCase?
     var prompts: [PromptEntry]
     var origin: PromptSetOrigin
+    /// The comparison mode this set is for; nil decodes as chat.
+    var mode: ComparisonMode? = nil
+
+    var effectiveMode: ComparisonMode { mode ?? .chat }
 }
 
 /// Small built-in starter sets per use case. Versioned content: changing a
@@ -159,6 +214,24 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     /// Of the emitted calls, how many carried usable arguments (parse as a
     /// JSON object containing the offered tool's required keys).
     let toolCallsValid: Int?
+    /// Media modes: the full text output (`outputExcerpt` keeps the first 280 characters).
+    let fullOutput: String?
+    /// Media modes: file name of the saved output inside the run's output folder.
+    let artifact: String?
+    let seconds: Double?
+    let loadSeconds: Double?
+    let audioSeconds: Double?
+    /// Seconds spent per second of audio (speech modes); below 1 is faster than real time.
+    let realTimeFactor: Double?
+    let wordErrorRate: Double?
+    /// Whether the output contained every expected keyword; nil when none were expected.
+    let keywordsMatched: Bool?
+    let generationTokens: Int?
+    let generationTokensPerSecond: Double?
+    let peakMemoryGB: Double?
+    let secondsPerStep: Double?
+    let secondsPerFrame: Double?
+    let pixelStd: Double?
 
     init(
         promptID: String,
@@ -170,7 +243,21 @@ struct ComparisonSample: Codable, Equatable, Sendable {
         prefillTokensPerSecond: Double? = nil,
         toolCalls: Int? = nil,
         toolNames: [String]? = nil,
-        toolCallsValid: Int? = nil
+        toolCallsValid: Int? = nil,
+        fullOutput: String? = nil,
+        artifact: String? = nil,
+        seconds: Double? = nil,
+        loadSeconds: Double? = nil,
+        audioSeconds: Double? = nil,
+        realTimeFactor: Double? = nil,
+        wordErrorRate: Double? = nil,
+        keywordsMatched: Bool? = nil,
+        generationTokens: Int? = nil,
+        generationTokensPerSecond: Double? = nil,
+        peakMemoryGB: Double? = nil,
+        secondsPerStep: Double? = nil,
+        secondsPerFrame: Double? = nil,
+        pixelStd: Double? = nil
     ) {
         self.promptID = promptID
         self.outputExcerpt = outputExcerpt
@@ -182,6 +269,20 @@ struct ComparisonSample: Codable, Equatable, Sendable {
         self.toolCalls = toolCalls
         self.toolNames = toolNames
         self.toolCallsValid = toolCallsValid
+        self.fullOutput = fullOutput
+        self.artifact = artifact
+        self.seconds = seconds
+        self.loadSeconds = loadSeconds
+        self.audioSeconds = audioSeconds
+        self.realTimeFactor = realTimeFactor
+        self.wordErrorRate = wordErrorRate
+        self.keywordsMatched = keywordsMatched
+        self.generationTokens = generationTokens
+        self.generationTokensPerSecond = generationTokensPerSecond
+        self.peakMemoryGB = peakMemoryGB
+        self.secondsPerStep = secondsPerStep
+        self.secondsPerFrame = secondsPerFrame
+        self.pixelStd = pixelStd
     }
 }
 
@@ -195,6 +296,8 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
     /// Environment fingerprint at measurement time; mismatch with the
     /// current environment marks the benchmark stale in the engine.
     let environmentFingerprint: String?
+    /// Median of the run mode's primary metric across samples (media modes).
+    let aggregateMetric: Double?
 
     var id: String { modelPath }
 
@@ -224,7 +327,8 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
         aggregateTokensPerSecond: Double?,
         aggregateTTFTSeconds: Double?,
         error: String?,
-        environmentFingerprint: String? = nil
+        environmentFingerprint: String? = nil,
+        aggregateMetric: Double? = nil
     ) {
         self.modelPath = modelPath
         self.modelSignature = modelSignature
@@ -233,6 +337,7 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
         self.aggregateTTFTSeconds = aggregateTTFTSeconds
         self.error = error
         self.environmentFingerprint = environmentFingerprint
+        self.aggregateMetric = aggregateMetric
     }
 }
 
@@ -251,6 +356,15 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     let startedAt: Date
     var finishedAt: Date?
     var state: ComparisonRunState
+    /// The comparison mode; nil (a run saved before modes existed) is chat.
+    var mode: ComparisonMode? = nil
+    /// The prompts this run replayed, kept so the results grid still shows
+    /// them after the prompt set is edited. All new runs snapshot their cohort.
+    var promptEntries: [PromptEntry]? = nil
+    /// Explicit human task-outcome review, independent of speed and canary checks.
+    var qualityReviews: [String: ComparisonQualityReview]? = nil
+
+    var effectiveMode: ComparisonMode { mode ?? .chat }
 
     /// Fastest measured variant, for the "promote winner" affordance.
     var winner: VariantResult? {
@@ -262,6 +376,14 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
             }
             .first
     }
+}
+
+struct ComparisonQualityReview: Codable, Equatable, Sendable {
+    let score: Int
+    let rubricID: String
+    let reviewedAt: Date
+    static let taskOutcomeRubric = "task-outcome-v1"
+    static let rubric = "1 unusable · 2 major corrections · 3 usable with corrections · 4 minor corrections · 5 meets task without corrections"
 }
 
 // MARK: - Output diffs (phase 2)
@@ -308,7 +430,7 @@ struct ModelPerformanceProfile: Equatable {
         runs: [ComparisonRun]
     ) -> ModelPerformanceProfile? {
         let matches: [(measuredAt: Date, result: VariantResult)] = runs
-            .filter { $0.state == .completed }
+            .filter { $0.state == .completed && $0.effectiveMode == .chat }
             .compactMap { run in
                 guard let result = run.results.first(where: {
                     $0.modelPath == modelPath

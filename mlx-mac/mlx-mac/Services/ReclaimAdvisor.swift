@@ -17,7 +17,8 @@ enum ReclaimAdvisor {
         isVerified: (String) -> Bool,
         occupiedPaths: Set<String>,
         staleDays: Int = defaultStaleDays,
-        now: Date = Date()
+        now: Date = Date(),
+        measuredSuperseded: [ReclaimOpportunity] = []
     ) -> [ReclaimOpportunity] {
         var found: [ReclaimOpportunity] = []
         found.append(contentsOf: crossRootDuplicates(duplicates))
@@ -28,12 +29,14 @@ enum ReclaimAdvisor {
             staleDays: staleDays,
             now: now
         ))
-        found.append(contentsOf: supersededVariants(
-            snapshot: snapshot,
-            isVerified: isVerified,
-            occupiedPaths: occupiedPaths
-        ))
-        return found.sorted { $0.bytes > $1.bytes }
+        found.insert(contentsOf: measuredSuperseded, at: 0)
+        var seen = Set<String>()
+        // A path contributes once. Keep task-specific review evidence ahead of generic age advice.
+        return found.filter { opportunity in
+            guard opportunity.paths.allSatisfy({ !occupiedPaths.contains($0) && !seen.contains($0) }) else { return false }
+            seen.formUnion(opportunity.paths)
+            return true
+        }.sorted { $0.bytes > $1.bytes }
     }
 
     // MARK: - Cross-root duplicates (scan-computed)
@@ -97,42 +100,16 @@ enum ReclaimAdvisor {
 
     // MARK: - Superseded variants
 
-    /// A variant is superseded when a sibling with the same model key is
-    /// verified at equal or higher quant bits. Verified winners never
-    /// supersede; unknown quant parses as 0 bits (most conservative).
+    /// Compatibility helper: quantization and verification alone cannot
+    /// establish task quality. Evidence-backed replacement reviews come
+    /// from ComparisonInsights and are supplied to opportunities explicitly.
     static func supersededVariants(
         snapshot: LibrarySnapshot?,
         isVerified: (String) -> Bool,
         occupiedPaths: Set<String>
     ) -> [ReclaimOpportunity] {
-        let models = (snapshot?.models ?? []).filter {
-            $0.item.modelKey != nil && $0.readiness == .ready
-        }
-        var byKey: [String: [LibraryModel]] = [:]
-        for model in models { byKey[model.item.modelKey ?? "", default: []].append(model) }
-
-        var found: [ReclaimOpportunity] = []
-        for (_, group) in byKey where group.count > 1 {
-            let verified = group.filter { isVerified($0.item.path) }
-            guard let best = verified.max(by: { quantBits($0.item.quantization) < quantBits($1.item.quantization) }) else { continue }
-            let bestBits = quantBits(best.item.quantization)
-            for candidate in group {
-                let path = candidate.item.path
-                guard path != best.item.path,
-                      !isVerified(path),
-                      !occupiedPaths.contains(path),
-                      quantBits(candidate.item.quantization) <= bestBits else { continue }
-                found.append(ReclaimOpportunity(
-                    kind: .supersededVariant,
-                    paths: [path],
-                    bytes: candidate.item.bytes,
-                    evidence: "Superseded by verified sibling \(best.displayName) (\(best.item.quantization ?? "unknown quant")).",
-                    confidence: .review,
-                    actionable: path.lowercased().hasSuffix(".gguf")
-                ))
-            }
-        }
-        return found
+        // Verification and quantization alone are not evidence of task quality.
+        return []
     }
 
     /// First digit run in a quant string: "Q4_K_M" → 4, "8-bit" → 8,

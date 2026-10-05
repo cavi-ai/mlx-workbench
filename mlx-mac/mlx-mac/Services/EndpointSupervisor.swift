@@ -49,8 +49,12 @@ final class EndpointSupervisor: ObservableObject {
     /// Verification gate: returns true when the model passed the canary
     /// suite. Wired by AppHost; nil means "no gate attached" (allow).
     var isVerified: ((String) -> Bool)?
+    /// Successful explicit user choice of a serving model. Timer reconciliation
+    /// and automatic restarts never emit this intentional-usage evidence.
+    var onUserServeStarted: ((String) -> Void)?
 
     private var slotAttemptTimestamps: [UUID: [Date]] = [:]
+    private var pendingUserServeBySlot: [UUID: (modelPath: String, port: Int)] = [:]
     private var monitorTask: Task<Void, Never>?
 
     init(
@@ -98,6 +102,7 @@ final class EndpointSupervisor: ObservableObject {
 
     func enable(modelPath: String, port: Int, allowUnverified: Bool = false) async {
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
+        if let id = fleet.slots.first?.id { pendingUserServeBySlot.removeValue(forKey: id) }
         mutateSlot0 { slot in
             slot.enabled = true
             slot.port = port
@@ -108,10 +113,11 @@ final class EndpointSupervisor: ObservableObject {
         }
         lastError = nil
         persist()
-        await reconcile()
+        await reconcile(userRequestedSlotID: fleet.slots.first?.id)
     }
 
     func disable() async {
+        if let id = fleet.slots.first?.id { pendingUserServeBySlot.removeValue(forKey: id) }
         mutateSlot0 { $0.enabled = false }
         persist()
         await stopServing(on: config.port)
@@ -130,10 +136,11 @@ final class EndpointSupervisor: ObservableObject {
             return
         }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "swap") else { return }
+        if let id = fleet.slots.first?.id { pendingUserServeBySlot.removeValue(forKey: id) }
         await stopServing(on: config.port)
         mutateSlot0 { $0.modelPath = modelPath }
         persist()
-        await reconcile()
+        await reconcile(userRequestedSlotID: fleet.slots.first?.id)
     }
 
     // MARK: - Fleet actions (spec 09; P2 UI consumes these)
@@ -147,7 +154,7 @@ final class EndpointSupervisor: ObservableObject {
         fleet.slots.append(candidate)
         lastError = nil
         persist()
-        await reconcile()
+        await reconcile(userRequestedSlotID: candidate.id)
     }
 
     /// Change a slot's model/port/role without toggling its enabled flag.
@@ -157,23 +164,26 @@ final class EndpointSupervisor: ObservableObject {
         candidate.modelPath = modelPath
         candidate.port = port
         candidate.role = role
+        let servingSelectionChanged = candidate.enabled && (candidate.modelPath != fleet.slots[index].modelPath || candidate.port != fleet.slots[index].port)
         guard validate(candidate, isNew: false) else { return }
+        if servingSelectionChanged { pendingUserServeBySlot.removeValue(forKey: id) }
         if candidate.enabled, candidate.modelPath != fleet.slots[index].modelPath {
             await stopServing(on: fleet.slots[index].port)
         }
         fleet.slots[index] = candidate
         lastError = nil
         persist()
-        await reconcile()
+        await reconcile(userRequestedSlotID: servingSelectionChanged ? id : nil)
     }
 
     func setSlotEnabled(id: UUID, _ enabled: Bool) async {
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }) else { return }
+        pendingUserServeBySlot.removeValue(forKey: id)
         fleet.slots[index].enabled = enabled
         persist()
         if enabled {
             slotAttemptTimestamps[id] = []
-            await reconcile()
+            await reconcile(userRequestedSlotID: id)
         } else {
             await stopServing(on: fleet.slots[index].port)
             slotStates[id] = .disabled
@@ -186,17 +196,19 @@ final class EndpointSupervisor: ObservableObject {
     func swapSlot(id: UUID, to modelPath: String, allowUnverified: Bool = false) async {
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }) else { return }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "swap") else { return }
+        pendingUserServeBySlot.removeValue(forKey: id)
         if fleet.slots[index].enabled {
             await stopServing(on: fleet.slots[index].port)
         }
         fleet.slots[index].modelPath = modelPath
         persist()
-        await reconcile()
+        await reconcile(userRequestedSlotID: fleet.slots[index].enabled ? id : nil)
     }
 
     /// Remove a slot entirely, stopping its server first when it is ours.
     func removeSlot(id: UUID) async {
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }) else { return }
+        pendingUserServeBySlot.removeValue(forKey: id)
         let slot = fleet.slots[index]
         if slot.enabled {
             await stopServing(on: slot.port)
@@ -215,6 +227,14 @@ final class EndpointSupervisor: ObservableObject {
     /// repeatedly; only acts when reality diverges from desired. One status
     /// fetch per pass, then each enabled slot reconciles independently.
     func reconcile() async {
+        await reconcile(userRequestedSlotID: nil)
+    }
+
+    private func reconcile(userRequestedSlotID: UUID?) async {
+        if let id = userRequestedSlotID,
+           let slot = fleet.slots.first(where: { $0.id == id && $0.enabled && !$0.modelPath.isEmpty }) {
+            pendingUserServeBySlot[id] = (slot.modelPath, slot.port)
+        }
         let enabledSlots = fleet.slots.filter { $0.enabled && !$0.modelPath.isEmpty }
         guard !enabledSlots.isEmpty else {
             for slot in fleet.slots { slotStates[slot.id] = .disabled }
@@ -230,6 +250,7 @@ final class EndpointSupervisor: ObservableObject {
             // last known state instead of guessing (mirrors the workflow
             // coordinator's rule).
             lastError = "Serve status unavailable: \(AppHost.render(error))"
+            pendingUserServeBySlot.removeAll()
             return
         }
 
@@ -244,7 +265,9 @@ final class EndpointSupervisor: ObservableObject {
         if let ours = running.first(where: { $0.port == slot.port }) {
             if HFRepoID.serveIdentity(for: ours.modelIdentity) == HFRepoID.serveIdentity(for: slot.modelPath) {
                 slotStates[slot.id] = .running(modelPath: slot.modelPath, port: slot.port)
+                recordIntentionalServe(slot)
             } else {
+                pendingUserServeBySlot.removeValue(forKey: slot.id)
                 slotStates[slot.id] = .modelMismatch(
                     servedModel: ours.modelIdentity.isEmpty
                         ? "unknown"
@@ -259,6 +282,7 @@ final class EndpointSupervisor: ObservableObject {
         let cutoff = now().addingTimeInterval(-restartWindow)
         var attempts = (slotAttemptTimestamps[slot.id] ?? []).filter { $0 > cutoff }
         guard attempts.count < maxRestarts else {
+            pendingUserServeBySlot.removeValue(forKey: slot.id)
             slotAttemptTimestamps[slot.id] = attempts
             slotStates[slot.id] = .degraded(reason: "server failed to stay up (\(maxRestarts) restarts in \(Int(restartWindow / 60)) min)")
             return
@@ -274,8 +298,16 @@ final class EndpointSupervisor: ObservableObject {
             try await lifecycle.start(slot.modelPath, slot.port, hash)
             slotStates[slot.id] = .waitingForServer
         } catch {
+            pendingUserServeBySlot.removeValue(forKey: slot.id)
             slotStates[slot.id] = .degraded(reason: AppHost.render(error))
         }
+    }
+
+    private func recordIntentionalServe(_ slot: EndpointSlot) {
+        guard let intent = pendingUserServeBySlot[slot.id], intent.modelPath == slot.modelPath, intent.port == slot.port,
+              fleet.slots.contains(where: { $0.id == slot.id && $0.enabled && $0.modelPath == slot.modelPath && $0.port == slot.port }) else { return }
+        pendingUserServeBySlot.removeValue(forKey: slot.id)
+        onUserServeStarted?(slot.modelPath)
     }
 
     // MARK: - Monitoring

@@ -34,6 +34,16 @@ actor WorkbenchAPI {
         return try cli.run(agentPath: agentPath, argv: argv, isScout: isScout, timeout: timeout)
     }
 
+    /// Runs one agent call off this actor. Minutes-to-hours media runs on `raw` would hold the actor
+    /// and queue every other agent call (serve status, scan, endpoint reconcile) behind them.
+    private func runDetached<T: Decodable & Sendable>(_ type: T.Type, _ argv: [String], timeout: TimeInterval) async throws -> T {
+        let cli = self.cli
+        let agentPath = self.agentPath
+        return try await Task.detached {
+            try Self.decode(type, from: cli.run(agentPath: agentPath, argv: argv, timeout: timeout))
+        }.value
+    }
+
     func health() -> (ok: Bool, path: String, cli: String, message: String) {
         return cli.agentHealth(agentPath: agentPath)
     }
@@ -127,24 +137,76 @@ actor WorkbenchAPI {
     }
 
     /// One clip through a converted speech model (`convert transcribe`, read-only).
-    func transcribe(path: String, audio: String, language: String?) throws -> TranscriptionResult {
+    func transcribe(path: String, audio: String, language: String?) async throws -> TranscriptionResult {
         var argv = ["convert", "transcribe", "--path", path, "--audio", audio]
         if let language { argv += ["--language", language] }
-        return try Self.decode(TranscriptionResult.self, from: raw(argv, timeout: 600))
+        return try await runDetached(TranscriptionResult.self, argv, timeout: 600)
     }
 
     /// Typed questions about a state answered by a converted classification model (`convert decide`, read-only).
-    func decide(path: String, request: String) throws -> DecisionResult {
-        try Self.decode(DecisionResult.self, from: raw(["convert", "decide", "--path", path, "--request", request], timeout: 600))
+    func decide(path: String, request: String) async throws -> DecisionResult {
+        try await runDetached(DecisionResult.self, ["convert", "decide", "--path", path, "--request", request], timeout: 600)
     }
 
     /// One prompt rendered to a new PNG by a converted image model (`convert generate`).
-    func generate(path: String, out: String, request: ImageRequest) throws -> GenerationResult {
-        try Self.decode(GenerationResult.self, from: raw([
+    func generate(path: String, out: String, request: ImageRequest) async throws -> GenerationResult {
+        try await runDetached(GenerationResult.self, [
             "convert", "generate", "--path", path, "--prompt", request.prompt, "--out", out,
             "--width", String(request.size), "--height", String(request.size),
             "--steps", String(request.steps), "--seed", String(request.seed), "--timeout", "3600",
-        ], timeout: 3700))
+        ], timeout: 3700)
+    }
+
+    static func speakArguments(path: String, text: String, out: String) -> [String] {
+        ["convert", "speak", "--path", path, "--text=\(text)", "--out", out, "--timeout", "600"]
+    }
+
+    /// One sentence spoken into a new WAV by a converted text-to-speech model (`convert speak`).
+    /// The text is one `--text=` token so a sentence that starts with a dash still parses.
+    func speak(path: String, text: String, out: String) async throws -> SpeakResult {
+        try await runDetached(SpeakResult.self, Self.speakArguments(path: path, text: text, out: out), timeout: 700)
+    }
+
+    /// Videos shrink to this many pixels per frame: at the agent's default cap the 3B vision model mis-describes the clip.
+    static let describeVideoMaxPixels = 200_704
+
+    static func describeArguments(path: String, prompt: String, image: String?, video: String?, maxTokens: Int) -> [String] {
+        var argv = [
+            "convert", "describe", "--path", path, "--prompt=\(prompt)",
+            "--max-tokens", String(maxTokens), "--timeout", "900",
+        ]
+        if let image { argv += ["--image", image] }
+        if let video { argv += ["--video", video, "--max-pixels", String(describeVideoMaxPixels)] }
+        return argv
+    }
+
+    /// One question about an image or a video answered by a converted vision-language model (`convert describe`).
+    func describe(path: String, prompt: String, image: String?, video: String?, maxTokens: Int) async throws -> DescribeResult {
+        try await runDetached(
+            DescribeResult.self,
+            Self.describeArguments(path: path, prompt: prompt, image: image, video: video, maxTokens: maxTokens),
+            timeout: 1000
+        )
+    }
+
+    static func videoArguments(path: String, prompt: String, out: String, parameters: MediaParameters) -> [String] {
+        var argv = ["convert", "video", "--path", path, "--prompt=\(prompt)", "--out", out, "--timeout", "3600"]
+        if let width = parameters.width ?? parameters.size { argv += ["--width", String(width)] }
+        if let height = parameters.height ?? parameters.size { argv += ["--height", String(height)] }
+        if let frames = parameters.frames { argv += ["--frames", String(frames)] }
+        if let fps = parameters.fps { argv += ["--fps", String(fps)] }
+        if let steps = parameters.steps { argv += ["--steps", String(steps)] }
+        if let seed = parameters.seed { argv += ["--seed", String(seed)] }
+        return argv
+    }
+
+    /// One prompt rendered into a new MP4 by a converted video model (`convert video`).
+    func video(path: String, prompt: String, out: String, parameters: MediaParameters) async throws -> VideoResult {
+        try await runDetached(
+            VideoResult.self,
+            Self.videoArguments(path: path, prompt: prompt, out: out, parameters: parameters),
+            timeout: 3700
+        )
     }
 
     func intakeResolve(source: String) throws -> IntakeResolution {

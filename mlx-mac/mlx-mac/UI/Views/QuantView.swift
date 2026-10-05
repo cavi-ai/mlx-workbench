@@ -9,10 +9,129 @@ import SwiftUI
 enum ComparePresentation {
     /// Measured comparisons replay chat prompts; only chat-servable types qualify.
     static func candidates(from models: [LibraryModel]) -> [LibraryModel] {
-        models.filter { $0.readiness == .ready && ModelTaskPresentation.isServable($0) }
+        ComparisonViewLogic.candidates(from: models, mode: .chat)
     }
 
     static let maxSlots = 4
+
+    enum ParameterSize: String, CaseIterable, Identifiable {
+        case all, under3, from3To8, from8To20, over20, unknown
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .all: return "All sizes"
+            case .under3: return "Under 3B"
+            case .from3To8: return "3–<8B"
+            case .from8To20: return "8–<20B"
+            case .over20: return "20B+"
+            case .unknown: return "Unknown size"
+            }
+        }
+        static func bucket(_ model: LibraryModel) -> Self {
+            guard let size = FitAdvisor.parameterBillions(model.item.parameters), size.isFinite else { return .unknown }
+            if size < 3 { return .under3 }
+            if size < 8 { return .from3To8 }
+            if size < 20 { return .from8To20 }
+            return .over20
+        }
+    }
+
+    /// Disk footprint is available even when the scan has no parameter count.
+    enum SizeFilter: String, CaseIterable, Identifiable {
+        case all, under2, from2To5, from5To10, over10, unknown
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .all: return "All sizes"
+            case .under2: return "Under 2 GB"
+            case .from2To5: return "2–<5 GB"
+            case .from5To10: return "5–<10 GB"
+            case .over10: return "10 GB+"
+            case .unknown: return "Unknown disk size"
+            }
+        }
+        static func bucket(_ model: LibraryModel) -> Self {
+            let bytes = model.item.bytes
+            if bytes <= 0 { return .unknown }
+            if bytes < 2_000_000_000 { return .under2 }
+            if bytes < 5_000_000_000 { return .from2To5 }
+            if bytes < 10_000_000_000 { return .from5To10 }
+            return .over10
+        }
+    }
+
+    /// A name-based series label for browsing, never an architecture claim.
+    /// Snapshot hashes from older scan results are not useful menu labels.
+    static func familyLabel(_ model: LibraryModel) -> String {
+        let identity = HFRepoID.forPath(model.item.path) ?? model.displayName
+        let name = identity.split(separator: "/").last.map(String.init) ?? identity
+        var stem = name
+        if let size = stem.range(of: #"(?i)[-_\s]+e?\d+(?:\.\d+)?[bm](?=[-_\s]|$)"#, options: .regularExpression) {
+            stem = String(stem[..<size.lowerBound])
+        }
+        stem = stem.replacingOccurrences(of: #"(?i)(?:[-_\s]+(?:mlx|gguf|instruct|chat|\d+bit))+$"#, with: "", options: .regularExpression)
+        stem = stem.trimmingCharacters(in: .whitespacesAndNewlines)
+        if stem.isEmpty || stem.range(of: #"^[a-fA-F0-9]{40,64}$"#, options: .regularExpression) != nil {
+            return "Unknown family"
+        }
+        return stem
+    }
+
+    enum Grouping: String, CaseIterable, Identifiable {
+        case family, parameters, disk, none
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .family: return "Family"
+            case .parameters: return "Parameter size"
+            case .disk: return "Disk size"
+            case .none: return "Name"
+            }
+        }
+    }
+
+    struct OptionGroup: Identifiable {
+        let title: String
+        let models: [LibraryModel]
+        var id: String { title }
+    }
+
+    static func filtered(_ models: [LibraryModel], family: String?, size: SizeFilter, query: String) -> [LibraryModel] {
+        let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return models.filter {
+            (family == nil || familyLabel($0) == family) && (size == .all || SizeFilter.bucket($0) == size)
+                && (search.isEmpty || $0.displayName.localizedCaseInsensitiveContains(search) || familyLabel($0).localizedCaseInsensitiveContains(search))
+        }
+    }
+
+    static func groups(_ models: [LibraryModel], by grouping: Grouping) -> [OptionGroup] {
+        func key(_ model: LibraryModel) -> String {
+            switch grouping {
+            case .family: return familyLabel(model)
+            case .parameters: return ParameterSize.bucket(model).title
+            case .disk: return SizeFilter.bucket(model).title
+            case .none: return "Models"
+            }
+        }
+        let grouped = Dictionary(grouping: models, by: key)
+        let order: [String]
+        switch grouping {
+        case .parameters: order = ParameterSize.allCases.filter { $0 != .all }.map(\.title)
+        case .disk: order = SizeFilter.allCases.filter { $0 != .all }.map(\.title)
+        default: order = grouped.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        }
+        return order.compactMap { title in
+            grouped[title].map { OptionGroup(title: title, models: $0.sorted {
+                let comparison = $0.displayName.localizedStandardCompare($1.displayName)
+                return comparison == .orderedSame ? $0.item.path < $1.item.path : comparison == .orderedAscending
+            }) }
+        }
+    }
+
+    static func selectedOutsideFilter(forSlot index: Int, slots: [String?], candidates: [LibraryModel], filtered: [LibraryModel]) -> LibraryModel? {
+        guard slots.indices.contains(index), let path = slots[index], !filtered.contains(where: { $0.item.path == path }) else { return nil }
+        return candidates.first { $0.item.path == path }
+    }
 
     /// Chosen paths in slot order, without empty slots or repeats.
     static func variantPaths(_ slots: [String?]) -> [String] {
@@ -63,6 +182,8 @@ struct QuantView: View {
     @ObservedObject private var comparison: ComparisonCoordinator
     private let onRouteSelection: (AppRoute) -> Void
 
+    @State private var mode: ComparisonMode = .chat
+    @State private var showingSetEditor = false
     @State private var variantSlots: [String?] = [nil, nil]
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
     @State private var selectedRunID: ComparisonRun.ID?
@@ -70,6 +191,13 @@ struct QuantView: View {
     @State private var diffRightPath: String?
     @State private var promoteContext: PromoteContext?
     @State private var promotedWinnerPath: String?
+    @State private var initializedSuggestions = false
+    @State private var manuallySelectedModels = false
+    @State private var selectionReason = "Waiting for eligible Library models."
+    @State private var familyFilter: String?
+    @State private var sizeFilter: ComparePresentation.SizeFilter = .all
+    @State private var modelSearch = ""
+    @State private var modelGrouping: ComparePresentation.Grouping = .family
 
     /// A completed run plus its fastest variant, presented for promotion.
     struct PromoteContext: Identifiable {
@@ -87,8 +215,25 @@ struct QuantView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                setupBar
                 resultsArea
+                setupBar
+                DisclosureGroup("Model fit and workflow evidence") {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                        Text(selectionReason)
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.muted)
+                        Button("Reset suggested models") { initializedSuggestions = false; manuallySelectedModels = false; applySuggestions() }
+                            .disabled(comparison.activeRunID != nil || readyModels.isEmpty)
+                        ComparisonInsightsView(appHost: appHost, comparison: comparison, workflow: appHost.workflowEvidence,
+                            models: ComparePresentation.variantPaths(variantSlots).compactMap { path in
+                                readyModels.first { $0.item.path == path }
+                            },
+                            promptSetID: selectedPromptSet?.id ?? "", mode: mode, onReclaim: { onRouteSelection(.reclaim) })
+                    }
+                    .padding(.top, WorkbenchSpacing.sm)
+                }
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
             }
             .frame(maxWidth: 1100, alignment: .leading)
             .frame(maxWidth: .infinity)
@@ -98,15 +243,25 @@ struct QuantView: View {
             if let newValue { selectedRunID = newValue }
         }
         .onAppear {
-            if variantSlots.allSatisfy({ $0 == nil }) {
-                variantSlots = ComparePresentation.preselectedSlots(
-                    selectedPath: appHost.selectedModelPath,
-                    candidates: readyModels
-                )
+            if !initializedSuggestions, let recent = comparison.runs.first(where: { run in run.effectiveMode == mode && modePromptSets.contains(where: { $0.id == run.promptSetID }) }), modePromptSets.contains(where: { $0.id == recent.promptSetID }) {
+                selectedPromptSetID = recent.promptSetID
             }
+            applySuggestions()
             if selectedRunID == nil {
                 selectedRunID = comparison.runs.first?.id
             }
+        }
+        .onChange(of: selectedPromptSetID) { _, _ in
+            guard !manuallySelectedModels else { return }
+            initializedSuggestions = false
+            applySuggestions()
+        }
+        .onChange(of: readyModels.map { $0.item.path }) { _, _ in
+            guard comparison.activeRunID == nil else { return }
+            if let familyFilter, !readyModels.contains(where: { ComparePresentation.familyLabel($0) == familyFilter }) { self.familyFilter = nil }
+            let reconciled = ComparisonInsights.reconcile(slots: variantSlots, available: Set(readyModels.map { $0.item.path }))
+            if reconciled != variantSlots { variantSlots = reconciled; selectionReason = "Unavailable models were cleared; your remaining selections were kept." }
+            applySuggestions()
         }
     }
 
@@ -123,66 +278,153 @@ struct QuantView: View {
     // MARK: - Measured comparison setup
 
     private var readyModels: [LibraryModel] {
-        ComparePresentation.candidates(from: appHost.librarySnapshot?.models ?? [])
+        ComparisonViewLogic.candidates(from: appHost.librarySnapshot?.models ?? [], mode: mode)
+    }
+
+    private var filteredModels: [LibraryModel] {
+        ComparePresentation.filtered(readyModels, family: familyFilter, size: sizeFilter, query: modelSearch)
+    }
+
+    private var modePromptSets: [PromptSet] {
+        ComparisonViewLogic.promptSets(comparison.promptSets, for: mode)
     }
 
     private var selectedPromptSet: PromptSet? {
-        comparison.promptSets.first { $0.id == selectedPromptSetID } ?? comparison.promptSets.first
+        modePromptSets.first { $0.id == selectedPromptSetID } ?? modePromptSets.first
     }
 
     private static let slotLetters = ["A", "B", "C", "D"]
 
     private var setupBar: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            SectionTitle(text: "Measured comparison")
-            Text("Replay a prompt set against ready variants and measure real decode speed and first-token latency. One variant at a time.")
-                .font(WorkbenchTypography.body)
-                .foregroundStyle(WorkbenchColor.muted)
+            HStack(spacing: WorkbenchSpacing.xs) {
+                Image(systemName: "slider.horizontal.3")
+                    .foregroundStyle(WorkbenchColor.accent)
+                Text("Compare models")
+                    .font(WorkbenchTypography.roundedHeading)
+            }
+
+            Picker("Mode", selection: $mode) {
+                ForEach(ComparisonMode.allCases) { entry in
+                    Text(entry.title).tag(entry)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(comparison.activeRunID != nil)
+            .onChange(of: mode) { _, newMode in
+                familyFilter = nil
+                sizeFilter = .all
+                modelSearch = ""
+                initializedSuggestions = false
+                manuallySelectedModels = false
+                applySuggestions()
+                selectedPromptSetID = ComparisonViewLogic.promptSets(comparison.promptSets, for: newMode).first?.id ?? ""
+            }
 
             if readyModels.isEmpty {
-                Text("No ready models in the latest Library snapshot.")
+                Text(mode == .chat
+                    ? "No ready models in the latest Library snapshot."
+                    : "No ready \(mode.acceptedTaskTypes.map { $0.title.lowercased() }.joined(separator: " or ")) models in the latest Library snapshot.")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
             }
 
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { setupControls }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { setupControls }
+            if !readyModels.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.sm) { modelFilters }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { modelFilters }
+                }
+                if filteredModels.isEmpty {
+                    Text("No models match these filters. Your selected models are kept.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 280), alignment: .leading)],
+                    alignment: .leading,
+                    spacing: WorkbenchSpacing.xs
+                ) {
+                    slotControls
+                }
             }
-
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.xs) { comparisonControls }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { comparisonControls }
+            }
+            .padding(.top, WorkbenchSpacing.sm)
+            .overlay(alignment: .top) {
+                Rectangle().fill(WorkbenchColor.accent.opacity(0.18)).frame(height: 1)
+            }
             if comparison.activeRunID != nil {
                 ProgressView(comparison.progressMessage ?? "Measuring…")
             }
             ErrorBanner(text: comparison.lastError)
             ErrorBanner(text: comparison.persistenceError)
         }
-        .formSection {}
+        .padding(WorkbenchSpacing.surfaceInset)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WorkbenchColor.accent.opacity(0.035), in: RoundedRectangle(cornerRadius: WorkbenchRadius.page))
+        .overlay {
+            RoundedRectangle(cornerRadius: WorkbenchRadius.page)
+                .strokeBorder(WorkbenchColor.accent.opacity(0.25), lineWidth: 1)
+        }
     }
 
-    @ViewBuilder
-    private var setupControls: some View {
-        if !readyModels.isEmpty {
-            slotControls
+    @ViewBuilder private var modelFilters: some View {
+        TextField("Find a model…", text: $modelSearch)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 160)
+            .accessibilityLabel("Find a comparison model")
+        Picker("Family", selection: $familyFilter) {
+            Text("All families").tag(String?.none)
+            ForEach(Array(Set(readyModels.map { ComparePresentation.familyLabel($0) })).sorted(), id: \.self) { family in
+                Text(family).tag(Optional(family))
+            }
+        }.frame(maxWidth: 230).help("Families are grouped by model name; they are not architecture classifications.")
+        Picker("Disk size", selection: $sizeFilter) {
+            ForEach(ComparePresentation.SizeFilter.allCases) { size in Text(size.title).tag(size) }
+        }.fixedSize().help("Model files on disk, in decimal GB. This is not runtime memory usage.")
+        Picker("Group by", selection: $modelGrouping) {
+            ForEach(ComparePresentation.Grouping.allCases) { grouping in Text(grouping.title).tag(grouping) }
+        }.fixedSize()
+        Text("\(filteredModels.count)/\(readyModels.count)")
+            .font(WorkbenchTypography.secondary).monospacedDigit().foregroundStyle(WorkbenchColor.muted)
+            .help("Matching models / ready models. Existing selections stay available outside filters.")
+        if familyFilter != nil || sizeFilter != .all || !modelSearch.isEmpty {
+            Button("Clear") { familyFilter = nil; sizeFilter = .all; modelSearch = "" }
+                .buttonStyle(.borderless)
         }
-        comparisonControls
     }
 
     @ViewBuilder
     private var slotControls: some View {
         ForEach(Array(variantSlots.indices), id: \.self) { index in
-            HStack(spacing: WorkbenchSpacing.xxs) {
+            HStack(spacing: WorkbenchSpacing.xs) {
+                Text(Self.slotLetters[min(index, Self.slotLetters.count - 1)])
+                    .font(WorkbenchTypography.roundedLabel)
+                    .foregroundStyle(WorkbenchColor.accent)
+                    .frame(width: 24, height: 24)
+                    .background(WorkbenchColor.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                    .accessibilityHidden(true)
                 Picker("Model \(Self.slotLetters[min(index, Self.slotLetters.count - 1)])", selection: slotBinding(index)) {
                     Text("None").tag(String?.none)
-                    ForEach(
-                        ComparePresentation.options(forSlot: index, slots: variantSlots, candidates: readyModels),
-                        id: \.item.path
-                    ) { model in
-                        Text("\(model.displayName) · \(model.item.quantization ?? "?")")
-                            .tag(Optional(model.item.path))
+                    if let selected = ComparePresentation.selectedOutsideFilter(forSlot: index, slots: variantSlots, candidates: readyModels, filtered: filteredModels) {
+                        Section("Selected outside filters") {
+                            Text(modelOptionLabel(selected)).tag(Optional(selected.item.path))
+                        }
+                    }
+                    ForEach(ComparePresentation.groups(ComparePresentation.options(forSlot: index, slots: variantSlots, candidates: filteredModels), by: modelGrouping)) { group in
+                        Section(group.title) {
+                            ForEach(group.models, id: \.item.path) { model in
+                                Text(modelOptionLabel(model)).tag(Optional(model.item.path))
+                            }
+                        }
                     }
                 }
                 .pickerStyle(.menu)
-                .frame(maxWidth: 260, alignment: .leading)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help(variantSlots[index].map { shortName($0) } ?? "Choose a model")
 
                 if index >= 2 {
                     Button { removeSlot(index) } label: { Image(systemName: "minus") }
@@ -191,34 +433,62 @@ struct QuantView: View {
                         .accessibilityLabel("Remove model \(Self.slotLetters[min(index, Self.slotLetters.count - 1)])")
                 }
             }
+            .padding(WorkbenchSpacing.xs)
+            .background(WorkbenchColor.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+            .overlay {
+                RoundedRectangle(cornerRadius: WorkbenchRadius.control)
+                    .strokeBorder(WorkbenchColor.hairline.opacity(0.5), lineWidth: 1)
+            }
         }
 
-        Button { variantSlots.append(nil) } label: { Image(systemName: "plus") }
-            .buttonStyle(.bordered)
-            .help("Add a model")
-            .accessibilityLabel("Add a model")
-            .disabled(variantSlots.count >= ComparePresentation.maxSlots)
+        if variantSlots.count < ComparePresentation.maxSlots {
+            Button { variantSlots.append(nil) } label: { Label("Add model", systemImage: "plus") }
+                .buttonStyle(.borderless)
+                .foregroundStyle(WorkbenchColor.accent)
+                .help("Add a model")
+                .accessibilityLabel("Add a model")
+        }
+    }
+
+    private func modelOptionLabel(_ model: LibraryModel) -> String {
+        let size = modelGrouping == .disk ? (model.item.bytes > 0 ? ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file) : "Disk unknown") : model.item.parameters
+        return [model.displayName, model.item.quantization, size].compactMap { $0 }.joined(separator: " · ")
     }
 
     @ViewBuilder
     private var comparisonControls: some View {
         Picker("Prompt set", selection: $selectedPromptSetID) {
-            ForEach(comparison.promptSets) { set in
+            ForEach(modePromptSets) { set in
                 Text(set.name).tag(set.id)
             }
         }
+        .font(WorkbenchTypography.emphasis)
         .frame(maxWidth: 260, alignment: .leading)
 
-        Button("Import my prompts") {
-            if let imported = comparison.importHistory() {
-                selectedPromptSetID = imported.id
+        if mode == .chat {
+            Button("Import OpenCode prompts") {
+                if let imported = comparison.importHistory() {
+                    selectedPromptSetID = imported.id
+                }
             }
+            .buttonStyle(.bordered)
+            .help("Read-only import of your opencode user prompts as a prompt set.")
         }
-        .buttonStyle(.bordered)
-        .help("Read-only import of your opencode user prompts as a prompt set.")
+            Button("New set…") { showingSetEditor = true }
+                .buttonStyle(.bordered)
+                .help("Build a prompt set\(mode.inputKind.map { " with your own \($0.rawValue) files" } ?? "").")
+                .sheet(isPresented: $showingSetEditor) {
+                    MediaPromptSetEditor(mode: mode) { set in
+                        comparison.savePromptSet(set)
+                        selectedPromptSetID = set.id
+                    }
+                }
 
-        Button("Run comparison") { startRun() }
+        Button { startRun() } label: { Label("Run comparison", systemImage: "play.fill") }
             .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.accent)
+            .font(WorkbenchTypography.emphasis)
+            .controlSize(.large)
             .disabled(!ComparePresentation.canRun(slots: variantSlots, activeRunID: comparison.activeRunID))
     }
 
@@ -229,6 +499,7 @@ struct QuantView: View {
         if let run = selectedRun {
             runDetail(run)
         } else {
+            HStack { Spacer(); championsMenu }
             Text("Pick models above and run a comparison to see results here.")
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.muted)
@@ -241,24 +512,76 @@ struct QuantView: View {
         HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
             Picker("Run", selection: $selectedRunID) {
                 ForEach(comparison.runs) { entry in
-                    Text("\(entry.promptSetName) · \(entry.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(entry.results.count) models")
+                    Text("\(entry.effectiveMode == .chat ? "" : entry.effectiveMode.title + " · ")\(entry.promptSetName) · \(entry.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(entry.results.count) models")
                         .tag(Optional(entry.id))
                 }
             }
             .pickerStyle(.menu)
             .frame(maxWidth: 420, alignment: .leading)
+            championsMenu
             Spacer()
-            if let winner = run.winner, run.state == .completed {
+            if run.effectiveMode == .chat, let winner = run.winner, run.state == .completed {
                 Label("Fastest: \(shortName(winner.modelPath))", systemImage: "bolt.fill")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.accent)
-                Button("Promote winner") {
+                Button("Use fastest…") {
                     promoteContext = PromoteContext(run: run, winner: winner)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
             }
         }
+    }
+
+    private var championsMenu: some View {
+        let champions = ComparisonInsights.champions(models: appHost.librarySnapshot?.models ?? [], runs: comparison.runs,
+            environment: appHost.watch.currentFingerprintDescription)
+        return Menu {
+            if champions.isEmpty {
+                Text("No current task champions")
+                Text("Complete a comparison on this Mac to establish them.")
+            }
+            ForEach(champions) { champion in
+                Section {
+                    ForEach(champion.performance) { result in
+                        if let value = champion.run.effectiveMode == .chat ? result.aggregateTokensPerSecond : result.aggregateMetric {
+                            Button {
+                                selectedRunID = champion.run.id
+                            } label: {
+                                Label("\(champion.run.effectiveMode.primaryMetric.title): \(shortName(result.modelPath)) · \(champion.run.effectiveMode.primaryMetric.format(value))\(champion.performance.count > 1 ? " (tie)" : "")", systemImage: "trophy.fill")
+                            }
+                        }
+                    }
+                    ForEach(champion.quality) { result in
+                        if let score = champion.run.qualityReviews?[result.modelPath]?.score {
+                            Button {
+                                selectedRunID = champion.run.id
+                            } label: {
+                                Label("Task quality: \(shortName(result.modelPath)) · \(score)/5\(champion.quality.count > 1 ? " (tie)" : "")", systemImage: "trophy.fill")
+                            }
+                        }
+                    }
+                    if champion.quality.isEmpty { Text("Task quality: not established") }
+                    ForEach(champion.latency) { result in
+                        if let value = result.aggregateTTFTSeconds {
+                            Button("First token: \(shortName(result.modelPath)) · \(String(format: "%.2f s", value))\(champion.latency.count > 1 ? " (tie)" : "")") {
+                                selectedRunID = champion.run.id
+                            }
+                        }
+                    }
+                    Text("Measured \((champion.run.finishedAt ?? champion.run.startedAt).formatted(date: .abbreviated, time: .shortened))")
+                } header: {
+                    Text("\(champion.run.promptSetName) · \(champion.run.effectiveMode.title)")
+                }
+            }
+        } label: {
+            Label("Champions", systemImage: "trophy.fill")
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.warning)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Current task champions on this Mac. Select an award to view its measured run; ties are shared.")
     }
 
     // MARK: - Selected run detail
@@ -270,26 +593,38 @@ struct QuantView: View {
 
             if promotedWinnerPath != nil {
                 HStack(spacing: WorkbenchSpacing.sm) {
-                    Label("Winner promoted.", systemImage: "checkmark.circle.fill")
+                    Label("Fastest model selected.", systemImage: "checkmark.circle.fill")
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(WorkbenchColor.success)
                     Button("Wire into clients…") { onRouteSelection(.clientSetup) }
                         .controlSize(.small)
-                    Button("Reclaim losers…") { onRouteSelection(.reclaim) }
+                    Button("Review reclaim…") { onRouteSelection(.reclaim) }
                         .controlSize(.small)
                 }
             }
 
-            if !successful.isEmpty {
-                speedChart(successful)
-            }
+            if run.effectiveMode == .chat {
+                if !successful.isEmpty {
+                    speedChart(successful)
+                }
 
-            ForEach(run.results) { result in
-                variantCard(result, run: run)
-            }
-
-            if run.state == .completed, successful.count >= 2 {
-                diffSection(run)
+                DisclosureGroup("Outputs and per-model results") {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                        ForEach(run.results) { result in
+                            variantCard(result, run: run)
+                        }
+                        if run.state == .completed, successful.count >= 2 {
+                            diffSection(run)
+                        }
+                    }
+                    .padding(.top, WorkbenchSpacing.sm)
+                }
+            } else {
+                MediaRunResultsView(
+                    run: run,
+                    store: comparison.outputStore ?? ComparisonOutputStore(),
+                    name: { shortName($0) }
+                )
             }
         }
         .formSection {}
@@ -325,9 +660,20 @@ struct QuantView: View {
         let decodeValues = points.filter { $0.metric == "Decode (out)" }.map(\.value)
         let average = decodeValues.isEmpty ? 0 : decodeValues.reduce(0, +) / Double(decodeValues.count)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            Text("Speed (tok/s)")
-                .font(WorkbenchTypography.label)
-                .foregroundStyle(WorkbenchColor.muted)
+            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
+                Text("Speed")
+                    .font(WorkbenchTypography.roundedTitle)
+                Text("TOKENS / SECOND")
+                    .font(WorkbenchTypography.label)
+                    .tracking(1)
+                    .foregroundStyle(WorkbenchColor.muted)
+                Spacer()
+                if average > 0 {
+                    Text(String(format: "Avg decode %.1f tok/s", average))
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
+                }
+            }
             Chart {
                 ForEach(points) { point in
                     BarMark(
@@ -341,18 +687,13 @@ struct QuantView: View {
                     RuleMark(x: .value("Decode average", average))
                         .foregroundStyle(WorkbenchColor.muted)
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                        .annotation(position: .top, alignment: .leading) {
-                            Text("avg out")
-                                .font(WorkbenchTypography.secondary)
-                                .foregroundStyle(WorkbenchColor.muted)
-                        }
                 }
             }
             .chartXAxis {
                 AxisMarks(position: .bottom)
             }
             .frame(height: CGFloat(max(results.count, 1)) * 44 + 40)
-        }
+        }.monospacedDigit()
     }
 
     private func variantCard(_ result: VariantResult, run: ComparisonRun) -> some View {
@@ -540,8 +881,16 @@ struct QuantView: View {
     private func slotBinding(_ index: Int) -> Binding<String?> {
         Binding(
             get: { index < variantSlots.count ? variantSlots[index] : nil },
-            set: { if index < variantSlots.count { variantSlots[index] = $0 } }
+            set: { if index < variantSlots.count { initializedSuggestions = true; manuallySelectedModels = true; selectionReason = "Your model selection."; variantSlots[index] = $0 } }
         )
+    }
+
+    private func applySuggestions() {
+        guard !initializedSuggestions, comparison.activeRunID == nil, !readyModels.isEmpty else { return }
+        let suggestion = ComparisonInsights.suggestion(candidates: readyModels, lastServed: appHost.usage.lastServedByPath, selectedPath: appHost.selectedModelPath, runs: comparison.runs, mode: mode, environment: appHost.watch.currentFingerprintDescription, promptSetID: selectedPromptSet?.id)
+        variantSlots = suggestion.paths
+        selectionReason = suggestion.reason
+        initializedSuggestions = true
     }
 
     private func removeSlot(_ index: Int) {
@@ -555,7 +904,7 @@ struct QuantView: View {
             readyModels.first { $0.item.path == path }
                 .map { (path: $0.item.path, signature: $0.item.signature) }
         }
-        comparison.start(variants: variants, promptSet: promptSet)
+        comparison.start(variants: variants, promptSet: promptSet, mode: mode)
     }
 
     private func setPreferred(_ path: String, for useCase: UseCase) {

@@ -96,11 +96,104 @@ created. It does not delete or quarantine model data.
 | **Discover** | Hub candidates by role via the agent's scout |
 | **Prepare** | Preview/confirm conversion; completed outputs pass through the **Conversion Quality Gate** (canary suite on an ephemeral loopback server) before they are marked verified |
 | **Run** | Preview/confirm serving with a live **memory-fit verdict** (fits/tight/won't-fit + suggested context); hosts the **Always-on Endpoint** card |
-| **Compare** | **Measured comparisons**: replay built-in or imported prompt sets across variants; per-prompt output diffs; measured tok/s/TTFT feed recommendations; **Promote winner** marks the fastest variant preferred (persisted), optionally makes it the always-on endpoint, and links onward to wiring and loser reclaim |
+| **Compare** | Start with the last served model and nearby alternatives; compare task outcomes, speed, latency, disk size, and estimated memory fit. Replay built-in or personal prompt sets, review outputs, import local workflow reports, and export agent-readable evidence. Using the fastest variant remains a reviewed preference/endpoint action; speed alone does not establish quality or justify reclaim. |
 | **Activity** | Conversion receipts, log tails, server table |
 | **Duplicates** | Duplicate groups plus the **Disk Pressure Advisor** (stale / superseded / cross-root reclaim via batched quarantine; HF-cache prune via doctor) |
 | **Wire** | mlx-agent wiring plus **cross-client wiring** (opencode, Continue, Zed, Aider — atomic writes with backup and rollback; LM Studio/Ollama advisory) |
 | **Menu bar** | Endpoint state and start/stop at a glance |
+
+## Compare decisions and workflow evidence
+
+Charts lead the Compare tab; outputs and machine/workflow details start collapsed.
+The compact **Champions** trophy menu links to task-specific speed, reviewed-quality,
+and first-token winners from the latest complete comparison cohort. Every entrant
+must still be available with its measured model signature and this Mac's environment;
+ties share the award, and incomplete quality reviews do not establish a quality champion.
+
+Search and the Family/Disk size filters narrow the model menus. Family uses
+readable name-based series labels (not architecture classifications); disk size
+uses the scanned file footprint in decimal GB, not runtime memory. Group by can
+organize choices by family, reported parameter size,
+disk footprint (decimal GB), or name. Unknown sizes stay explicit. Selections
+outside the filters remain available in their own menu section; Clear restores
+all choices, and changing comparison mode resets the filters.
+
+Compare starts with the most recently **intentionally served** compatible
+model. Verification and benchmark runs do not change that default. When
+that model is unavailable, Compare uses the Library selection, a previous
+comparison model, or a deterministic available model. Alternatives with
+comparable local measurements are suggested first; family and disk-size
+fallbacks are labeled unmeasured. Manual choices survive inventory updates.
+Changing modes selects models eligible for the new mode. The workload picker
+starts from an available recent comparison set; benchmark proximity refers
+to the selected workload.
+
+The decision panel separates measured speed and latency from human task
+reviews and estimated memory fit. Choose a context size and refresh the
+memory capture to evaluate current headroom with the configured safety
+reserve. The chat-serving estimator does not model image, speech, or video
+pipelines; their fit stays unknown, with recorded peak memory shown as dated
+evidence when available. Unified-memory fit is an estimate, not a measurement
+of GPU load or a guarantee against swapping. A task review uses this explicit rubric:
+1 unusable, 2 major corrections, 3 usable with corrections, 4 minor
+corrections, 5 meets the task without corrections. Unreviewed stays unknown;
+tool-call argument validation is a limited check, not general answer quality.
+
+Use **Workflow evidence** to save a report template, explicitly import a
+local report, or export agent evidence. The interchange supports reports
+produced for Claude, OpenClaw, OpenCode, and custom workflows; it does not
+automatically inspect those clients' session logs. **Import OpenCode prompts**
+remains a separate read-only import for replaying your actual prompts.
+
+Workflow JSON uses an object with `schemaVersion: 1` and a `records` array.
+Each record requires:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | UUID identifying the observation; repeating an identical record is harmless, conflicting reuse is rejected |
+| `harness` | `claude`, `openclaw`, `opencode`, or `custom` |
+| `workloadID` | Stable identity of the task being measured |
+| `modelPath`, `modelSignature` | Absolute model path and exact recorded model signature |
+| `environmentFingerprint` | Environment recorded when the measurement happened |
+| `measuredAt` | ISO-8601 timestamp |
+| `sampleCount` | Positive number of observations represented |
+| `totalSeconds` | Positive total elapsed duration in seconds |
+| `source` | Receipt or session identifier establishing provenance; omit secrets and transcripts |
+
+Optional fields are `useCase` (`coding`, `general_chat`, `reasoning`, or
+`vision`), `inferenceSeconds`, `toolSeconds`, `queueSeconds`,
+`timeToFirstTokenSeconds`, `tokensPerSecond`, `qualityScore` (1–5),
+`rubricID`, `configurationFingerprint`, `peakMemoryBytes`, and
+`availableMemoryBytes`. Quality requires a rubric shared by the compared
+records. A configuration fingerprint identifies the exact workload and
+settings, including prompts, tools, context, and generation parameters;
+records without matching configuration fingerprints cannot establish
+supersession. All durations are seconds and memory quantities are bytes.
+Inference, tool, and queue durations must be disjoint additive components
+whose sum does not exceed the total. When all three are supplied, the
+remainder is labeled unattributed time; it does not identify a GPU, disk,
+or client bottleneck. Missing fields remain unknown.
+
+Imports are bounded to 4 MiB and the saved store to 2,000 records. Invalid
+metrics or conflicting observation IDs reject the import without replacing
+the saved evidence. Timestamps may include fractional seconds.
+
+Copy identity and environment values from an evidence export only for new
+measurements performed against that exact model and environment. Never
+replace an old observation's fingerprint with the current one. The saved
+template contains no measurements. Imports stay local in a separate
+`workflow-evidence.json` store beside the other native evidence stores;
+they do not modify shared `config.json` or client configurations.
+
+Agent exports provide local model identity, machine and memory context,
+recorded comparison/workflow evidence, task reviews, and advisory reclaim
+reasons. An agent must treat missing or stale evidence as a reason to
+measure or review, rather than infer a quality winner. Task-scoped reclaim
+suggestions require matching evidence with no worse reviewed quality,
+speed, latency, estimated memory, or disk requirements and a concrete
+advantage. They remain review-only because a model may still serve another
+task. Active, endpoint-configured, and preferred models are protected;
+existing file moves retain their preview/confirm flow.
 
 ## Design rules
 

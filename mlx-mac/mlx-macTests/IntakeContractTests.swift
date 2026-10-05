@@ -79,7 +79,7 @@ final class IntakeContractTests: XCTestCase {
 
     func testBackendListDecodes() throws {
         let value = try WorkbenchAPI.decode(BackendList.self, from: try vendoredFixture("backend-list"))
-        XCTAssertEqual(value.backends.map(\.id), ["mflux", "mlx-audio", "mlx-embeddings", "mlx-lm", "mlx-vlm"])
+        XCTAssertEqual(value.backends.map(\.id), ["mflux", "mlx-audio", "mlx-embeddings", "mlx-lm", "mlx-video", "mlx-vlm"])
         XCTAssertTrue(value.backends.allSatisfy { $0.state == .absent })
     }
 

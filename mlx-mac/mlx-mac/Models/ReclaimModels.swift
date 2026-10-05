@@ -17,7 +17,7 @@ enum ReclaimKind: String, Codable, Sendable {
     var title: String {
         switch self {
         case .stale: return "Stale"
-        case .supersededVariant: return "Superseded"
+        case .supersededVariant: return "Task-scoped replacement"
         case .crossRootDuplicate: return "Duplicate across roots"
         }
     }

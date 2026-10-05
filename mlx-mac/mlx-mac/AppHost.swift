@@ -32,6 +32,7 @@ class AppHost: ObservableObject {
     let endpoint: EndpointSupervisor
     /// Usage evidence per model path (premium spec 04).
     let usage: UsageTracker
+    let workflowEvidence: WorkflowEvidenceStore
     /// Disk Pressure Advisor apply surface (premium spec 04).
     let reclaim: ReclaimCoordinator
     /// Watch & regression alerts (premium spec 08).
@@ -81,6 +82,7 @@ class AppHost: ObservableObject {
         wiring: WiringCoordinator? = nil,
         endpoint: EndpointSupervisor? = nil,
         usage: UsageTracker? = nil,
+        workflowEvidence: WorkflowEvidenceStore? = nil,
         reclaim: ReclaimCoordinator? = nil,
         watch: WatchCoordinator? = nil,
         runtimeInstaller: RuntimeInstaller? = nil,
@@ -121,7 +123,9 @@ class AppHost: ObservableObject {
                 prober: OpenAIEndpointProber()
             ),
             runStore: JSONStore<ComparisonRun>(fileURL: JSONStore<ComparisonRun>.defaultFileURL("comparison-runs.json")),
-            promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json"))
+            promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json")),
+            mediaRunner: LiveComparisonMediaRunner(api: api),
+            outputStore: ComparisonOutputStore()
         )
         self.wiring = wiring ?? WiringCoordinator(
             store: JSONStore<WiringTransaction>(fileURL: JSONStore<WiringTransaction>.defaultFileURL("wiring-transactions.json"))
@@ -134,6 +138,7 @@ class AppHost: ObservableObject {
         self.usage = usage ?? UsageTracker(
             store: JSONStore<UsageStamp>(fileURL: JSONStore<UsageStamp>.defaultFileURL("usage-stamps.json"))
         )
+        self.workflowEvidence = workflowEvidence ?? WorkflowEvidenceStore(store: JSONStore<WorkflowEvidence>(fileURL: JSONStore<WorkflowEvidence>.defaultFileURL("workflow-evidence.json")))
         self.reclaim = reclaim ?? ReclaimCoordinator()
         self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller()
         self.intake = IntakeCoordinator(api: intakeAPI ?? .live(api: api))
@@ -208,7 +213,8 @@ class AppHost: ObservableObject {
         }
         // Usage evidence: serve, verify, and measure all count as "used" for
         // the Disk Pressure Advisor's staleness detector.
-        self.modelWorkflow.onServeStarted = { [weak self] path in self?.usage.record(path) }
+        self.modelWorkflow.onServeStarted = { [weak self] path in self?.usage.recordServed(path) }
+        self.endpoint.onUserServeStarted = { [weak self] path in self?.usage.recordServed(path) }
         self.modelWorkflow.onTerminalState = { record in AlertNotifier.post(workflowOutcome: record) }
         self.verification.onReport = { [weak self] report in self?.usage.record(report.modelPath) }
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
@@ -634,12 +640,19 @@ class AppHost: ObservableObject {
     /// Paths that must never be reclaimed: running servers and the active
     /// conversion's source/output.
     var occupiedModelPaths: Set<String> {
-        var occupied = Set(modelWorkflow.servers.compactMap {
-            $0.state?.lowercased() == "running" ? $0.repo : nil
-        })
+        var occupied = Set(modelWorkflow.servers.filter { $0.state?.lowercased() == "running" }.flatMap { [$0.repo, $0.path].compactMap { $0 } })
+        occupied.formUnion(endpoint.fleet.slots.filter(\.enabled).map(\.modelPath))
+        occupied.formUnion(recommendationPreferences.preferredModelIDs.values)
         if modelWorkflow.workflow.state == .queued || modelWorkflow.workflow.state == .running {
             occupied.insert(modelWorkflow.workflow.outputPath)
             occupied.insert(modelWorkflow.workflow.sourcePath)
+        }
+        // Canonicalize local paths and protect every cache snapshot sharing an active repo identity.
+        let canonical = Set(occupied.filter { $0.hasPrefix("/") }.map { Quarantine.resolve($0) })
+        for model in librarySnapshot?.models ?? [] {
+            if canonical.contains(Quarantine.resolve(model.item.path)) || HFRepoID.forPath(model.item.path).map({ occupied.contains($0) }) == true {
+                occupied.insert(model.item.path)
+            }
         }
         return occupied
     }
@@ -672,7 +685,8 @@ class AppHost: ObservableObject {
             lastUsedByPath: usage.lastUsedByPath,
             isVerified: { [weak self] path in self?.isModelVerified(path) ?? false },
             occupiedPaths: occupiedModelPaths,
-            staleDays: config.reclaimStaleDays
+            staleDays: config.reclaimStaleDays,
+            measuredSuperseded: ComparisonInsights.superseded(models: librarySnapshot?.models ?? [], runs: comparison.runs, workflow: workflowEvidence.records, environment: watch.currentFingerprintDescription, protected: occupiedModelPaths)
         )
     }
 
