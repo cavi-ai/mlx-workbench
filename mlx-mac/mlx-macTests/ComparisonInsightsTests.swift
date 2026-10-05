@@ -70,6 +70,38 @@ final class ComparisonInsightsTests: XCTestCase {
         }
         XCTAssertTrue(advice([left, model("/b", bytes: 3_000_000_000, task: .imageGeneration)], measured).isEmpty)
     }
+    func testReplacementChainGroupsUnderTerminalKeeperRegardlessOfInventoryOrder() {
+        let measured = run([result("/a", speed: 20), result("/b", speed: 30), result("/c", speed: 40)], scores: ["/a": 5, "/b": 5, "/c": 5])
+        for models in [[model("/a"), model("/b"), model("/c")], [model("/c"), model("/b"), model("/a")]] {
+            let advice = ComparisonInsights.superseded(models: models, runs: [measured], workflow: [], environment: environment, protected: [])
+            XCTAssertEqual(advice.count, 1, "One keeper should collect the entire task-scoped chain")
+            XCTAssertEqual(advice.first?.paths.sorted(), ["/a", "/b"])
+            XCTAssertEqual(advice.first?.bytes, 8_000_000_000)
+            XCTAssertTrue(advice.first?.evidence.contains("/c") == true)
+            XCTAssertEqual(advice.first?.replacement?.keeper.path, "/c")
+        }
+    }
+
+    func testNewerTaskResultSuppressesOlderReplacementAdvice() {
+        let old = run([result("/a"), result("/b", speed: 40)], scores: ["/a": 5, "/b": 5])
+        var current = run([result("/a", speed: 40), result("/b", speed: 20)], scores: ["/a": 5, "/b": 5])
+        current.finishedAt = Date(timeIntervalSince1970: 2000)
+        let advice = ComparisonInsights.superseded(models: [model("/a"), model("/b")], runs: [old, current], workflow: [], environment: environment, protected: [])
+        XCTAssertEqual(advice.map(\.paths), [["/b"]])
+        XCTAssertEqual(advice.first?.replacement?.keeper.path, "/a")
+        current.qualityReviews = nil
+        XCTAssertTrue(ComparisonInsights.superseded(models: [model("/a"), model("/b")], runs: [old, current], workflow: [], environment: environment, protected: []).isEmpty)
+    }
+
+    func testReplacementChainsDoNotBridgeSeparatePromptSets() {
+        let first = run([result("/a", speed: 20), result("/b", speed: 30)], scores: ["/a": 5, "/b": 5], set: "coding")
+        let second = run([result("/b", speed: 30), result("/c", speed: 40)], scores: ["/b": 5, "/c": 5], set: "writing")
+        let advice = ComparisonInsights.superseded(models: [model("/a"), model("/b"), model("/c")], runs: [first, second], workflow: [], environment: environment, protected: [])
+        XCTAssertEqual(advice.map(\.paths), [["/a"], ["/b"]])
+        XCTAssertTrue(advice[0].evidence.contains("/b"))
+        XCTAssertFalse(advice[0].evidence.contains("/c"))
+    }
+
     func testExportPreservesHistoricalFactsAndMissingQuality() throws {
         let measured = run([result("/a", environment: nil), result("/b")])
         let data = ComparisonInsights.agentEvidence(models: [model("/a"), model("/b")], runs: [measured], workflow: [], environment: environment,

@@ -219,12 +219,101 @@ final class QuarantineParityTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: record.to))
     }
 
+    func testTrashMovesOnlyPreviewedFileAndMarksLedgerWithoutLosingHistory() throws {
+        let root = try makeRoot()
+        let hold = try makeRoot()
+        let trash = try makeRoot()
+        let file = root.appendingPathComponent("trash-me.gguf")
+        try Data("weights".utf8).write(to: file)
+        let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: hold.path)
+        let preview = try Quarantine.trashSnapshot(record, quarantineDir: hold.path)
+        let result = try Quarantine.trash(record, quarantineDir: hold.path, expected: preview, trashFile: { url in
+            try FileManager.default.moveItem(at: url, to: trash.appendingPathComponent(url.lastPathComponent))
+        })
+        XCTAssertEqual(result.bytes, 7)
+        XCTAssertNil(result.ledgerWarning)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: record.to))
+        XCTAssertEqual(try Data(contentsOf: trash.appendingPathComponent(URL(fileURLWithPath: record.to).lastPathComponent)), Data("weights".utf8))
+        let history = try XCTUnwrap(Quarantine.ledger(quarantineDir: hold.path).first)
+        XCTAssertEqual(history.from, file.path)
+        XCTAssertNotNil(history.deletedAt)
+    }
+
+    func testTrashRefusesChangedFileAfterPreview() throws {
+        let root = try makeRoot()
+        let hold = try makeRoot()
+        let file = root.appendingPathComponent("changed.gguf")
+        try Data("weights".utf8).write(to: file)
+        let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: hold.path)
+        let preview = try Quarantine.trashSnapshot(record, quarantineDir: hold.path)
+        try Data("replacement weights".utf8).write(to: URL(fileURLWithPath: record.to))
+        XCTAssertThrowsError(try Quarantine.trash(record, quarantineDir: hold.path, expected: preview, trashFile: { _ in XCTFail("Changed file reached Trash") }))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: record.to))
+        XCTAssertNil(Quarantine.ledger(quarantineDir: hold.path).first?.deletedAt)
+    }
+
+    func testTrashRefusesOutsideLedgerDirectoriesAndSymlinks() throws {
+        let hold = try makeRoot()
+        let outside = try makeRoot().appendingPathComponent("outside.gguf")
+        try Data("untouched".utf8).write(to: outside)
+        let ledger = hold.appendingPathComponent(Quarantine.ledgerName)
+        try Data("history".utf8).write(to: ledger)
+        let directory = hold.appendingPathComponent("directory.gguf")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let link = hold.appendingPathComponent("link.gguf")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        for path in [outside.path, ledger.path, directory.path, link.path, hold.appendingPathComponent("missing.gguf").path] {
+            let record = QuarantineRecord(movedAt: "now", from: "/original.gguf", to: path, bytes: 9)
+            XCTAssertThrowsError(try Quarantine.trashSnapshot(record, quarantineDir: hold.path))
+        }
+        XCTAssertEqual(try Data(contentsOf: outside), Data("untouched".utf8))
+        XCTAssertEqual(try Data(contentsOf: ledger), Data("history".utf8))
+    }
+
+    func testTrashFailureKeepsFileAndLedgerRestorable() throws {
+        let root = try makeRoot()
+        let hold = try makeRoot()
+        let file = root.appendingPathComponent("wanted.gguf")
+        try Data("weights".utf8).write(to: file)
+        let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: hold.path)
+        let preview = try Quarantine.trashSnapshot(record, quarantineDir: hold.path)
+        XCTAssertThrowsError(try Quarantine.trash(record, quarantineDir: hold.path, expected: preview, trashFile: { _ in
+            throw CocoaError(.fileWriteNoPermission)
+        }))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: record.to))
+        XCTAssertEqual(Quarantine.ledger(quarantineDir: hold.path), [record])
+        try Quarantine.restore(record)
+        XCTAssertEqual(try Data(contentsOf: file), Data("weights".utf8))
+    }
+
+    func testTrashLedgerUpdateRefusesDirectoryRedirectedDuringMove() throws {
+        let root = try makeRoot()
+        let hold = try makeRoot()
+        let outside = try makeRoot()
+        let preserved = try makeRoot().appendingPathComponent("old-quarantine")
+        let file = root.appendingPathComponent("wanted.gguf")
+        try Data("weights".utf8).write(to: file)
+        let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: hold.path)
+        let preview = try Quarantine.trashSnapshot(record, quarantineDir: hold.path)
+        let outsideLedger = outside.appendingPathComponent(Quarantine.ledgerName)
+        let original = try Data(contentsOf: hold.appendingPathComponent(Quarantine.ledgerName))
+        try original.write(to: outsideLedger)
+        let result = try Quarantine.trash(record, quarantineDir: hold.path, expected: preview, trashFile: { url in
+            try FileManager.default.moveItem(at: url, to: outside.appendingPathComponent(url.lastPathComponent))
+            try FileManager.default.moveItem(at: hold, to: preserved)
+            try FileManager.default.createSymbolicLink(at: hold, withDestinationURL: outside)
+        })
+        XCTAssertNotNil(result.ledgerWarning)
+        XCTAssertEqual(try Data(contentsOf: outsideLedger), original, "A late root redirect must not write outside quarantine")
+    }
+
     // MARK: - Helpers
 
     private func makeRoot() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-quarantine-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return url
     }
 }

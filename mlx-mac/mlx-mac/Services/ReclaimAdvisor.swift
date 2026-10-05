@@ -30,10 +30,16 @@ enum ReclaimAdvisor {
             now: now
         ))
         found.insert(contentsOf: measuredSuperseded, at: 0)
-        var seen = Set<String>()
-        // A path contributes once. Keep task-specific review evidence ahead of generic age advice.
+        let keepers = Set(measuredSuperseded.compactMap { $0.replacement?.keeper.path })
+            .union(duplicates.filter { $0.kind == "exact" }.compactMap(\.keep))
+        var seen = Set(measuredSuperseded.flatMap(\.paths))
+        // Preserve distinct task reviews, and never offer their retained models as stale files.
         return found.filter { opportunity in
+            if opportunity.replacement != nil {
+                return opportunity.paths.allSatisfy { !occupiedPaths.contains($0) }
+            }
             guard opportunity.paths.allSatisfy({ !occupiedPaths.contains($0) && !seen.contains($0) }) else { return false }
+            guard opportunity.paths.allSatisfy({ !keepers.contains($0) }) else { return false }
             seen.formUnion(opportunity.paths)
             return true
         }.sorted { $0.bytes > $1.bytes }
@@ -43,13 +49,15 @@ enum ReclaimAdvisor {
 
     static func crossRootDuplicates(_ duplicates: [DuplicateGroup]) -> [ReclaimOpportunity] {
         duplicates.compactMap { group in
-            let redundant = group.redundant ?? group.paths.filter { $0 != group.keep }
-            guard !redundant.isEmpty else { return nil }
+            guard group.kind == "exact", let keep = group.keep, !keep.isEmpty,
+                  let redundant = group.redundant, !redundant.isEmpty,
+                  !redundant.contains(keep), Set(redundant).count == redundant.count,
+                  let bytes = group.reclaimableBytes, bytes > 0 else { return nil }
             return ReclaimOpportunity(
                 kind: .crossRootDuplicate,
                 paths: redundant,
-                bytes: group.reclaimableBytes ?? 0,
-                evidence: "Scan found \(redundant.count) redundant copie(s) of \(group.modelKey ?? "this model"); keep: \(group.keep ?? "unspecified")",
+                bytes: bytes,
+                evidence: "Scan found \(redundant.count) redundant copies of \(group.modelKey ?? "this model"); keep: \(keep)",
                 confidence: .high,
                 actionable: redundant.allSatisfy { $0.lowercased().hasSuffix(".gguf") }
             )

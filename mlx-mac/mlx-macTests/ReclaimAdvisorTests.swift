@@ -224,7 +224,51 @@ final class ReclaimAdvisorTests: XCTestCase {
         XCTAssertEqual(opportunities.first?.confidence, .high)
     }
 
+    func testVariantGroupsAndUnspecifiedKeepersAreNeverRemovalAdvice() {
+        for (kind, keep, redundant) in [("variants", "/a/qwen.gguf", ["/b/qwen.gguf"]), ("exact", nil, ["/b/qwen.gguf"]), ("exact", "/a/qwen.gguf", nil)] as [(String, String?, [String]?)] {
+            let group = DuplicateGroup(kind: kind, modelKey: "qwen", quantization: "Q4", quantizations: nil, reclaimableBytes: 100,
+                keep: keep, redundant: redundant, members: nil, count: nil, groupId: "g")
+            XCTAssertTrue(ReclaimAdvisor.crossRootDuplicates([group]).isEmpty)
+        }
+    }
+
     // MARK: - Coordinator
+
+    func testRetainedDuplicateKeeperCannotAlsoBeReclaimedAsStale() {
+        let group = DuplicateGroup(kind: "exact", modelKey: "qwen", quantization: "Q4", quantizations: nil, reclaimableBytes: 100,
+            keep: "/a/keeper.gguf", redundant: ["/b/copy.gguf"], members: nil, count: nil, groupId: "g")
+        let advice = ReclaimAdvisor.opportunities(snapshot: snapshot(with: [makeModel(path: "/a/keeper.gguf", modifiedDaysAgo: 200)]), duplicates: [group],
+            lastUsedByPath: [:], isVerified: { _ in false }, occupiedPaths: [], now: now)
+        XCTAssertEqual(advice.map(\.paths), [["/b/copy.gguf"]])
+    }
+
+    func testReviewOnlyModelFoldersDoNotInflateActionableReclaimBadge() {
+        let coordinator = ReclaimCoordinator()
+        coordinator.setOpportunitiesForTesting([ReclaimOpportunity(kind: .supersededVariant, paths: ["/models/folder"], bytes: 100_000_000_000, evidence: "task review", confidence: .review, actionable: false)])
+        XCTAssertEqual(coordinator.totalReclaimableBytes, 0)
+        XCTAssertNil(coordinator.badgeText)
+    }
+
+    func testTrashPreviewCancelAndConfigurationDriftLeaveFileUntouched() async throws {
+        let root = try makeRoot()
+        let quarantine = try makeRoot()
+        let other = try makeRoot()
+        let file = root.appendingPathComponent("wanted.gguf")
+        try Data("weights".utf8).write(to: file)
+        let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: quarantine.path)
+        let coordinator = ReclaimCoordinator()
+        coordinator.quarantineDir = { quarantine.path }
+        coordinator.previewTrash(record)
+        XCTAssertEqual(coordinator.trashPlan?.snapshot.bytes, 7)
+        coordinator.cancelTrash()
+        XCTAssertNil(coordinator.trashPlan)
+        coordinator.previewTrash(record)
+        coordinator.quarantineDir = { other.path }
+        await coordinator.confirmTrash()
+        XCTAssertNotNil(coordinator.lastError)
+        XCTAssertNil(coordinator.trashPlan)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: record.to))
+    }
 
     func testPreviewConfirmMovesFilesAndDropsOpportunity() throws {
         let root = try makeRoot()
@@ -417,6 +461,7 @@ final class ReclaimAdvisorTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-reclaim-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return url
     }
 

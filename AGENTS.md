@@ -178,7 +178,14 @@ from `mlx-agent` at runtime.
   by comparable reviewed task evidence, cross-root duplicates) and `ReclaimCoordinator`
   applies them as batched quarantine moves via `Services/Quarantine.swift`
   (a Swift port of `mlx_workbench/quarantine.py` — same guard: `.gguf` only,
-  inside configured roots, never deletes).
+  inside configured roots, never deletes). Task-scoped replacement chains
+  select a terminal keeper within one reviewed comparison or matched workflow
+  cohort; they remain advisory and protect their keepers from stale-file advice.
+  Quarantine offers native macOS Trash after preview; confirm rechecks file
+  identity, size, timestamps, ledger membership and the configured quarantine
+  fence. It refuses links and never falls back to permanent deletion. Successful
+  Trash moves preserve ledger history with the web-compatible `deleted_at`
+  field. Quarantine and Trash retain disk usage until Trash is emptied.
 - Compare defaults distinguish intentional serving (`UsageStamp.lastServedAt`)
   from verification/benchmark activity. New comparison runs snapshot prompts
   and can persist explicit human task-outcome reviews. Current recommendations

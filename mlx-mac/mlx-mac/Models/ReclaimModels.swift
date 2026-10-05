@@ -8,8 +8,7 @@ import Foundation
 enum ReclaimKind: String, Codable, Sendable {
     /// Not served/verified/measured within the staleness window.
     case stale
-    /// A verified sibling variant of the same model exists at equal or
-    /// higher quality.
+    /// A retained model dominates on comparable reviewed task evidence.
     case supersededVariant
     /// Same weights in more than one root (scan-computed duplicates).
     case crossRootDuplicate
@@ -39,16 +38,35 @@ struct ReclaimOpportunity: Equatable, Identifiable, Sendable {
     /// False when a path is not a `.gguf` file — quarantine only moves those;
     /// anything else is review-only ("move it yourself, deliberately").
     let actionable: Bool
+    let replacement: ModelReplacementChain?
 
-    init(kind: ReclaimKind, paths: [String], bytes: Int64, evidence: String, confidence: ReclaimConfidence, actionable: Bool) {
-        self.id = "\(kind.rawValue)::\(paths.sorted().joined(separator: "|"))"
+    init(kind: ReclaimKind, paths: [String], bytes: Int64, evidence: String, confidence: ReclaimConfidence, actionable: Bool, replacement: ModelReplacementChain? = nil) {
+        self.id = "\(kind.rawValue)::\(paths.sorted().joined(separator: "|"))\(replacement.map { "::\($0.source)::\($0.keeper.path)" } ?? "")"
         self.kind = kind
         self.paths = paths
         self.bytes = bytes
         self.evidence = evidence
         self.confidence = confidence
         self.actionable = actionable
+        self.replacement = replacement
     }
+}
+
+/// All members belong to one evidence cohort; chains never cross tasks or configurations.
+struct ModelReplacementChain: Codable, Equatable, Sendable {
+    let keeper: ModelReplacementMember
+    let replaced: [ModelReplacementMember]
+    let task: String
+    let source: String
+}
+
+struct ModelReplacementMember: Codable, Equatable, Sendable {
+    let path: String
+    let name: String
+    let diskBytes: Int64
+    let qualityScore: Int
+    let tokensPerSecond: Double
+    let firstTokenSeconds: Double
 }
 
 /// Live disk-free probe for the Home next-action escalation.

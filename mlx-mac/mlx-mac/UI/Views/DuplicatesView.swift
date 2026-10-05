@@ -8,6 +8,7 @@ struct DuplicatesView: View {
     @ObservedObject private var reclaim: ReclaimCoordinator
 
     @State private var selectedOpportunities: Set<String> = []
+    @State private var showAllQuarantined = false
 
     init(appHost: AppHost) {
         self.appHost = appHost
@@ -55,6 +56,26 @@ struct DuplicatesView: View {
                 appHost.requestRescan()
             }
         }
+        .sheet(isPresented: Binding(get: { reclaim.trashPlan != nil }, set: { if !$0 { reclaim.cancelTrash() } })) {
+            if let plan = reclaim.trashPlan {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    Label("Move to Trash", systemImage: "trash").font(WorkbenchTypography.roundedTitle)
+                    Text(URL(fileURLWithPath: plan.record.from).lastPathComponent).font(WorkbenchTypography.emphasis)
+                    Text(ByteCountFormatter.string(fromByteCount: plan.snapshot.bytes, countStyle: .file)).font(WorkbenchTypography.value)
+                    Text("The file will leave quarantine. You can recover it from Trash in Finder; Put back here will no longer be available. Empty Trash in Finder to free disk space.")
+                        .font(WorkbenchTypography.secondary)
+                    Text(plan.snapshot.path).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
+                    HStack {
+                        Button("Cancel") { reclaim.cancelTrash() }.keyboardShortcut(.cancelAction)
+                        Spacer()
+                        if reclaim.isApplying { ProgressView().controlSize(.small) }
+                        Button("Move to Trash") { Task { await reclaim.confirmTrash() } }.buttonStyle(.borderedProminent)
+                    }.disabled(reclaim.isApplying)
+                }
+                .padding(WorkbenchSpacing.lg).frame(width: 460)
+                .interactiveDismissDisabled(reclaim.isApplying)
+            }
+        }
     }
 
     // MARK: - Reclaim (Disk Pressure Advisor)
@@ -65,7 +86,7 @@ struct DuplicatesView: View {
                 HStack(spacing: WorkbenchSpacing.xs) { reclaimHeader }
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { reclaimHeader }
             }
-            Text("Ranked opportunities with evidence. Confirming moves `.gguf` files to quarantine — nothing is ever deleted.")
+            Text("Review replacements by task. Preview selected GGUF files before moving them to quarantine, then use Trash when you are ready to remove them.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
 
@@ -75,6 +96,9 @@ struct DuplicatesView: View {
                     .foregroundStyle(WorkbenchColor.muted)
             } else {
                 ForEach(reclaim.opportunities) { opportunity in
+                    if let chain = opportunity.replacement {
+                        ModelReplacementChainCard(chain: chain)
+                    } else {
                     HStack(alignment: .top, spacing: 10) {
                         Toggle(isOn: opportunityBinding(opportunity.id)) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -104,6 +128,7 @@ struct DuplicatesView: View {
                         }
                         .toggleStyle(.checkbox)
                         .disabled(!opportunity.actionable)
+                    }
                     }
                 }
 
@@ -137,7 +162,7 @@ struct DuplicatesView: View {
     private var reclaimHeader: some View {
         SectionTitle(text: "Reclaim")
         if reclaim.totalReclaimableBytes > 0 {
-            Text("\(ByteCountFormatter.string(fromByteCount: reclaim.totalReclaimableBytes, countStyle: .file)) reclaimable")
+            Text("\(ByteCountFormatter.string(fromByteCount: reclaim.totalReclaimableBytes, countStyle: .file)) available to quarantine")
                 .font(WorkbenchTypography.value)
                 .foregroundStyle(WorkbenchColor.warning)
         }
@@ -157,7 +182,7 @@ struct DuplicatesView: View {
                 .disabled(selectedOpportunities.isEmpty)
         }
         if let plan = reclaim.plan {
-            Text("Move \(plan.items.count) file(s), reclaim \(ByteCountFormatter.string(fromByteCount: plan.totalBytes, countStyle: .file))")
+            Text("Quarantine \(plan.items.count) file(s) · \(ByteCountFormatter.string(fromByteCount: plan.totalBytes, countStyle: .file))")
                 .font(WorkbenchTypography.value)
             Button("Confirm quarantine") {
                 reclaim.confirm(previewHash: plan.previewHash)
@@ -198,8 +223,12 @@ struct DuplicatesView: View {
 
     private var quarantinedSection: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            SectionTitle(text: "Recently quarantined")
-            Text("Everything this Mac has moved aside, newest first. Nothing is ever deleted — put a file back with one click if it was wanted.")
+            HStack {
+                SectionTitle(text: "Quarantine")
+                Spacer()
+                Text("\(reclaim.quarantined.count) \(reclaim.quarantined.count == 1 ? "file" : "files")").font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted)
+            }
+            Text("Put files back, or move them to macOS Trash after review. Quarantine keeps the files on disk; empty Trash in Finder to free space.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
             if reclaim.quarantined.isEmpty {
@@ -207,7 +236,7 @@ struct DuplicatesView: View {
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
             } else {
-                let visible = reclaim.quarantined.prefix(8)
+                let visible = reclaim.quarantined.prefix(showAllQuarantined ? reclaim.quarantined.count : 8)
                 ForEach(Array(visible.enumerated()), id: \.element.to) { _, record in
                     HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -221,18 +250,22 @@ struct DuplicatesView: View {
                                 .textSelection(.enabled)
                         }
                         Spacer()
+                        Text(ByteCountFormatter.string(fromByteCount: record.bytes, countStyle: .file))
+                            .font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted)
                         Button("Put back") { reclaim.restore(record) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                            .disabled(reclaim.isApplying)
+                        Button { reclaim.previewTrash(record) } label: { Label("Move to Trash", systemImage: "trash") }
+                            .buttonStyle(.bordered).controlSize(.small).disabled(reclaim.isApplying)
                     }
                     .padding(.vertical, 2)
                 }
-                if reclaim.quarantined.count > visible.count {
-                    Text("Showing the \(visible.count) most recent of \(reclaim.quarantined.count) records.")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
+                if reclaim.quarantined.count > 8 {
+                    Button(showAllQuarantined ? "Show recent files" : "Show all \(reclaim.quarantined.count) files") { showAllQuarantined.toggle() }
                 }
             }
+            if let note = reclaim.trashNote { Text(note).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
             ErrorBanner(text: reclaim.lastError)
         }
         .formSection {}
