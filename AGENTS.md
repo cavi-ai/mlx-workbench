@@ -177,8 +177,15 @@ from `mlx-agent` at runtime.
   ranks reclaim opportunities (stale per `UsageTracker` evidence, superseded
   by comparable reviewed task evidence, cross-root duplicates) and `ReclaimCoordinator`
   applies them as batched quarantine moves via `Services/Quarantine.swift`
-  (a Swift port of `mlx_workbench/quarantine.py` — same guard: `.gguf` only,
-  inside configured roots, never deletes). Task-scoped replacement chains
+  (GGUF parity with `mlx_workbench/quarantine.py`, plus explicitly reviewed
+  local MLX directories in the native app). Folder previews run off the main
+  actor and freeze file identity, metadata, total bytes and a tree fingerprint.
+  Confirm rechecks configured MLX roots, active/preferred paths and chain
+  keepers. Folders require recognized MLX config/weights, no symlinks,
+  hard-linked/shared files or HF cache layout, and same-volume quarantine.
+  Configured roots themselves cannot move. Folder ledger records carry optional
+  `kind: "mlxDirectory"`; legacy GGUF records omit it. The web keeps folder
+  records visible but delegates restore/Trash to the native app. Task-scoped replacement chains
   select a terminal keeper within one reviewed comparison or matched workflow
   cohort; they remain advisory and protect their keepers from stale-file advice.
   Quarantine offers native macOS Trash after preview; confirm rechecks file
@@ -258,8 +265,9 @@ from `mlx-agent` at runtime.
 
 - UI binds loopback only; non-loopback hosts are rejected.
 - Job arguments are argv tokens (no shell string execution).
-- Quarantine operations are constrained to configured model roots and `.gguf`
-  files. The web UI can also purge quarantined files to the macOS Trash
+- Quarantine operations are constrained to configured model roots: `.gguf`
+  files in both interfaces, explicitly previewed independent MLX folders in
+  the native app. The web UI can also purge quarantined GGUF files to the macOS Trash
   (`quarantine.purge`: fenced to existing files inside the quarantine dir,
   ledger entries marked `deleted_at`, never the ledger itself, symlink
   refused, audited as `quarantine.delete`).

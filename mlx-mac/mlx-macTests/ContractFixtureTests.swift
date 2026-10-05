@@ -40,9 +40,12 @@ final class ContractFixtureTests: XCTestCase {
             "quarantine-ledger", ext: "jsonl", as: Quarantine.ledgerName
         ).deletingLastPathComponent()
 
-        let records = Quarantine.ledger(quarantineDir: dir.path)
+        var records = Quarantine.ledger(quarantineDir: dir.path)
 
-        XCTAssertEqual(records.count, 2)
+        XCTAssertEqual(records.count, 3)
+        XCTAssertEqual(records[0].kind, .mlxDirectory)
+        XCTAssertEqual(records[0].bytes, 4096)
+        records.removeFirst()
         XCTAssertEqual(records[0].from, "/fixtures/gguf/newer.gguf")
         XCTAssertEqual(records[0].bytes, 2048)
         XCTAssertEqual(records[0].movedAt, "2026-08-02T11:00:00+00:00")

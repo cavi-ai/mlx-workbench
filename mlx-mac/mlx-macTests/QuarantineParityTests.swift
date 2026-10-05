@@ -8,6 +8,87 @@ import XCTest
 final class QuarantineParityTests: XCTestCase {
     private let now = Date(timeIntervalSinceReferenceDate: 1_000_000_000)
 
+    private func modelFolder(in root: URL) throws -> URL {
+        let model = root.appendingPathComponent("local-model")
+        try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+        try Data("{\"quantization\":{\"bits\":4}}".utf8).write(to: model.appendingPathComponent("config.json"))
+        try Data("weights".utf8).write(to: model.appendingPathComponent("model.safetensors"))
+        return model
+    }
+
+    func testModelFolderMoveRestoreAndTrashPreserveTypedLedger() throws {
+        let root = try makeRoot()
+        let model = try modelFolder(in: root)
+        let quarantine = root.appendingPathComponent("quarantine").path
+        let preview = try Quarantine.folderSnapshot(target: model.path, roots: [root.path], protected: [])
+        XCTAssertEqual(preview.bytes, 34)
+        let record = try Quarantine.moveFolder(expected: preview, roots: [root.path], protected: [], quarantineDir: quarantine)
+        XCTAssertEqual(record.kind, .mlxDirectory)
+        XCTAssertEqual(Quarantine.ledger(quarantineDir: quarantine).first, record)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: model.path))
+        try Quarantine.restore(record)
+        XCTAssertEqual(try Data(contentsOf: model.appendingPathComponent("model.safetensors")), Data("weights".utf8))
+        let second = try Quarantine.moveFolder(expected: Quarantine.folderSnapshot(target: model.path, roots: [root.path], protected: []), roots: [root.path], protected: [], quarantineDir: quarantine)
+        let snapshot = try Quarantine.trashSnapshot(second, quarantineDir: quarantine)
+        let trash = root.appendingPathComponent("test-trash")
+        let result = try Quarantine.trash(second, quarantineDir: quarantine, expected: snapshot, trashFile: { try FileManager.default.moveItem(at: $0, to: trash) })
+        XCTAssertNil(result.ledgerWarning)
+        XCTAssertEqual(result.bytes, preview.bytes)
+        XCTAssertNotNil(Quarantine.ledger(quarantineDir: quarantine).first?.deletedAt)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trash.appendingPathComponent("model.safetensors").path))
+    }
+
+    func testModelFolderRefusesRootsActiveDescendantsCacheLinksAndArbitraryDirectories() throws {
+        let root = try makeRoot()
+        let model = try modelFolder(in: root)
+        XCTAssertThrowsError(try Quarantine.folderSnapshot(target: model.path, roots: [model.path], protected: []))
+        XCTAssertThrowsError(try Quarantine.folderSnapshot(target: model.path, roots: [root.path], protected: [model.appendingPathComponent("model.safetensors").path]))
+        XCTAssertThrowsError(try Quarantine.folderSnapshot(target: model.path, roots: [root.path], protected: [root.path]))
+        let arbitrary = root.appendingPathComponent("documents")
+        try FileManager.default.createDirectory(at: arbitrary, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try Quarantine.folderSnapshot(target: arbitrary.path, roots: [root.path], protected: []))
+        let cache = root.appendingPathComponent("models--org--name/snapshots/revision")
+        try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: model, to: cache)
+        XCTAssertThrowsError(try Quarantine.folderSnapshot(target: cache.path, roots: [root.path], protected: []))
+        let link = model.appendingPathComponent("shared")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: arbitrary)
+        XCTAssertThrowsError(try Quarantine.folderSnapshot(target: model.path, roots: [root.path], protected: []))
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.linkItem(at: model.appendingPathComponent("model.safetensors"), to: root.appendingPathComponent("shared-weights"))
+        XCTAssertThrowsError(try Quarantine.folderSnapshot(target: model.path, roots: [root.path], protected: []))
+    }
+
+    func testModelFolderConfirmRefusesContentAndProtectionDrift() throws {
+        let root = try makeRoot()
+        let model = try modelFolder(in: root)
+        let preview = try Quarantine.folderSnapshot(target: model.path, roots: [root.path], protected: [])
+        let quarantine = root.appendingPathComponent("quarantine").path
+        XCTAssertThrowsError(try Quarantine.moveFolder(expected: preview, roots: [root.path], protected: [model.path], quarantineDir: quarantine))
+        try Data("new".utf8).write(to: model.appendingPathComponent("new-file"))
+        XCTAssertThrowsError(try Quarantine.moveFolder(expected: preview, roots: [root.path], protected: [], quarantineDir: quarantine))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
+    }
+
+    func testModelFolderTrashRejectsChangedContentsAndUnrecordedDirectories() throws {
+        let root = try makeRoot()
+        let model = try modelFolder(in: root)
+        let quarantine = root.appendingPathComponent("quarantine").path
+        let preview = try Quarantine.folderSnapshot(target: model.path, roots: [root.path], protected: [])
+        let record = try Quarantine.moveFolder(expected: preview, roots: [root.path], protected: [], quarantineDir: quarantine)
+        let snapshot = try Quarantine.trashSnapshot(record, quarantineDir: quarantine)
+        let weight = URL(fileURLWithPath: record.to).appendingPathComponent("model.safetensors")
+        let date = try FileManager.default.attributesOfItem(atPath: weight.path)[.modificationDate]
+        try Data("changed".utf8).write(to: weight)
+        try FileManager.default.setAttributes([.modificationDate: try XCTUnwrap(date)], ofItemAtPath: weight.path)
+        var attemptedTrash = false
+        XCTAssertThrowsError(try Quarantine.trash(record, quarantineDir: quarantine, expected: snapshot, trashFile: { _ in attemptedTrash = true }))
+        XCTAssertFalse(attemptedTrash)
+        let forged = QuarantineRecord(movedAt: "unrecorded", from: record.from, to: record.to, bytes: record.bytes, kind: .mlxDirectory)
+        XCTAssertThrowsError(try Quarantine.trashSnapshot(forged, quarantineDir: quarantine))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: record.to))
+    }
+
     // MARK: - Guard parity
 
     func testRejectsTraversalOutOfARoot() throws {
@@ -312,6 +393,7 @@ final class QuarantineParityTests: XCTestCase {
     private func makeRoot() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-quarantine-\(UUID().uuidString)", isDirectory: true)
+            .resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return url

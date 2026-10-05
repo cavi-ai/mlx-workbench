@@ -156,10 +156,14 @@ async function renderQuarantined() {
     row.appendChild(element('span', 'hint', record.moved_at));
     row.appendChild(element('span', 'path', record.to));
     row.appendChild(element('span', 'hint', bytes(record.bytes)));
-    const del = element('button', 'secondary', 'Delete…');
-    del.type = 'button';
-    del.addEventListener('click', function () { purgeQuarantined(record, del); });
-    row.appendChild(del);
+    if (record.kind === 'mlxDirectory') {
+      row.appendChild(element('span', 'hint', 'Model folder · restore or move to Trash in the native app'));
+    } else {
+      const del = element('button', 'secondary', 'Delete…');
+      del.type = 'button';
+      del.addEventListener('click', function () { purgeQuarantined(record, del); });
+      row.appendChild(del);
+    }
     container.appendChild(row);
   });
   if (gone.length) {

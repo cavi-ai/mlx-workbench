@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - DuplicatesView
 // Exact vs variant duplicate groups from convert scan; quarantine keepers.
@@ -62,7 +63,7 @@ struct DuplicatesView: View {
                     Label("Move to Trash", systemImage: "trash").font(WorkbenchTypography.roundedTitle)
                     Text(URL(fileURLWithPath: plan.record.from).lastPathComponent).font(WorkbenchTypography.emphasis)
                     Text(ByteCountFormatter.string(fromByteCount: plan.snapshot.bytes, countStyle: .file)).font(WorkbenchTypography.value)
-                    Text("The file will leave quarantine. You can recover it from Trash in Finder; Put back here will no longer be available. Empty Trash in Finder to free disk space.")
+                    Text("This item will leave quarantine. You can recover it from Trash in Finder; Put back here will no longer be available. Empty Trash in Finder to free disk space.")
                         .font(WorkbenchTypography.secondary)
                     Text(plan.snapshot.path).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
                     HStack {
@@ -76,6 +77,27 @@ struct DuplicatesView: View {
                 .interactiveDismissDisabled(reclaim.isApplying)
             }
         }
+        .sheet(isPresented: Binding(get: { reclaim.folderPlan != nil }, set: { if !$0 { reclaim.cancelFolder() } })) {
+            if let plan = reclaim.folderPlan {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    Label("Quarantine model folder", systemImage: "folder.badge.minus").font(WorkbenchTypography.roundedTitle)
+                    Text(URL(fileURLWithPath: plan.snapshot.path).lastPathComponent).font(WorkbenchTypography.emphasis)
+                    Text("\(plan.snapshot.fileCount ?? 0) files · \(ByteCountFormatter.string(fromByteCount: plan.snapshot.bytes, countStyle: .file))").font(WorkbenchTypography.value)
+                    Text("Review whether other tasks still need this model. The entire folder will move to quarantine; Put back restores it. Quarantine keeps it on disk until you move it to Trash and empty Trash in Finder.").font(WorkbenchTypography.secondary)
+                    Text(plan.snapshot.path).font(WorkbenchTypography.value).textSelection(.enabled)
+                    Text("Destination: \(plan.quarantineDir)").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
+                    HStack {
+                        Button("Cancel") { reclaim.cancelFolder() }.keyboardShortcut(.cancelAction)
+                        Spacer()
+                        if reclaim.isApplying { ProgressView().controlSize(.small) }
+                        Button("Quarantine folder") { Task {
+                            await reclaim.confirmFolder()
+                            if reclaim.lastError == nil { appHost.requestRescan() }
+                        } }.buttonStyle(.borderedProminent)
+                    }.disabled(reclaim.isApplying)
+                }.padding(WorkbenchSpacing.lg).frame(width: 480).interactiveDismissDisabled(reclaim.isApplying)
+            }
+        }
     }
 
     // MARK: - Reclaim (Disk Pressure Advisor)
@@ -86,7 +108,7 @@ struct DuplicatesView: View {
                 HStack(spacing: WorkbenchSpacing.xs) { reclaimHeader }
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { reclaimHeader }
             }
-            Text("Review replacements by task. Preview selected GGUF files before moving them to quarantine, then use Trash when you are ready to remove them.")
+            Text("Review replacements by task. Preview GGUF files or local MLX folders before quarantining them, then use Trash when you are ready to remove them.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
 
@@ -97,7 +119,7 @@ struct DuplicatesView: View {
             } else {
                 ForEach(reclaim.opportunities) { opportunity in
                     if let chain = opportunity.replacement {
-                        ModelReplacementChainCard(chain: chain)
+                        ModelReplacementChainCard(chain: chain, onReviewFolder: { path in Task { await reclaim.previewFolder(path) } })
                     } else {
                     HStack(alignment: .top, spacing: 10) {
                         Toggle(isOn: opportunityBinding(opportunity.id)) {
@@ -168,6 +190,18 @@ struct DuplicatesView: View {
         }
         Button("Analyze") { appHost.analyzeReclaim() }
             .buttonStyle(.bordered)
+        Button("Review model folder…") {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.prompt = "Review folder"
+            panel.message = "Choose a local MLX model folder inside your configured scan roots. Shared Hugging Face cache snapshots are protected."
+            panel.begin { response in
+                guard response == .OK, let path = panel.url?.path else { return }
+                Task { await reclaim.previewFolder(path) }
+            }
+        }.disabled(reclaim.isApplying)
     }
 
     @ViewBuilder
@@ -252,11 +286,11 @@ struct DuplicatesView: View {
                         Spacer()
                         Text(ByteCountFormatter.string(fromByteCount: record.bytes, countStyle: .file))
                             .font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted)
-                        Button("Put back") { reclaim.restore(record) }
+                        Button("Put back") { Task { await reclaim.restore(record); if reclaim.lastError == nil { appHost.requestRescan() } } }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                             .disabled(reclaim.isApplying)
-                        Button { reclaim.previewTrash(record) } label: { Label("Move to Trash", systemImage: "trash") }
+                        Button { Task { await reclaim.previewTrash(record) } } label: { Label("Move to Trash", systemImage: "trash") }
                             .buttonStyle(.bordered).controlSize(.small).disabled(reclaim.isApplying)
                     }
                     .padding(.vertical, 2)

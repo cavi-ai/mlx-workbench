@@ -32,6 +32,12 @@ struct QuarantineTrashPlan: Equatable, Sendable {
     let quarantineDir: String
 }
 
+struct ModelFolderReclaimPlan: Equatable, Sendable {
+    let snapshot: QuarantineFileSnapshot
+    let roots: [String]
+    let quarantineDir: String
+}
+
 enum ReclaimError: LocalizedError {
     case nothingSelected
     case previewHashMismatch
@@ -57,6 +63,7 @@ final class ReclaimCoordinator: ObservableObject {
     @Published private(set) var quarantined: [QuarantineRecord] = []
     @Published private(set) var trashPlan: QuarantineTrashPlan?
     @Published private(set) var trashNote: String?
+    @Published private(set) var folderPlan: ModelFolderReclaimPlan?
     /// Incomplete HF-cache findings from the last cache check, with the
     /// prune preview hash when one has been previewed.
     @Published private(set) var cacheFindings: [DoctorFinding] = []
@@ -76,6 +83,51 @@ final class ReclaimCoordinator: ObservableObject {
     /// coordinator always reads the current values.
     var quarantineDir: () -> String = { "" }
     var ggufRoots: () -> [String] = { [] }
+    var mlxRoots: () -> [String] = { [] }
+    var protectedPaths: () -> [String] = { [] }
+
+    private var protectedFolderPaths: [String] {
+        protectedPaths() + opportunities.compactMap { $0.replacement?.keeper.path }
+    }
+
+    func previewFolder(_ path: String) async {
+        guard !isApplying else { return }
+        isApplying = true
+        defer { isApplying = false }
+        folderPlan = nil
+        lastError = nil
+        let roots = mlxRoots(), protected = protectedFolderPaths, dir = quarantineDir(), manager = fileManager
+        do {
+            let snapshot = try await Task.detached(priority: .userInitiated) {
+                try Quarantine.folderSnapshot(target: path, roots: roots, protected: protected, fileManager: manager)
+            }.value
+            guard roots == mlxRoots(), dir == quarantineDir() else { throw QuarantineError.changedSincePreview }
+            folderPlan = ModelFolderReclaimPlan(snapshot: snapshot, roots: roots, quarantineDir: dir)
+        } catch { lastError = AppHost.render(error) }
+    }
+
+    func cancelFolder() { if !isApplying { folderPlan = nil } }
+
+    func confirmFolder() async {
+        guard !isApplying, let preview = folderPlan else { return }
+        guard preview.roots == mlxRoots(), preview.quarantineDir == quarantineDir() else {
+            folderPlan = nil
+            lastError = QuarantineError.changedSincePreview.errorDescription
+            return
+        }
+        isApplying = true
+        let protected = protectedFolderPaths, manager = fileManager, timestamp = now()
+        do {
+            let record = try await Task.detached(priority: .userInitiated) {
+                try Quarantine.moveFolder(expected: preview.snapshot, roots: preview.roots, protected: protected, quarantineDir: preview.quarantineDir, now: timestamp, fileManager: manager)
+            }.value
+            lastMoves = [ReclaimMoveResult(path: record.from, destination: record.to, error: nil)]
+            lastError = nil
+        } catch { lastError = AppHost.render(error) }
+        folderPlan = nil
+        isApplying = false
+        refreshQuarantined()
+    }
 
     init(
         now: @escaping () -> Date = Date.init,
@@ -130,30 +182,39 @@ final class ReclaimCoordinator: ObservableObject {
     func refreshQuarantined() {
         let dir = quarantineDir()
         quarantined = Quarantine.ledger(quarantineDir: dir, limit: 10000, fileManager: fileManager).filter { record in
-            record.deletedAt == nil && (try? Quarantine.guardQuarantinedPath(record.to, quarantineDir: dir, fileManager: fileManager)) != nil
+            record.deletedAt == nil && (try? Quarantine.guardQuarantinedPath(record.to, quarantineDir: dir, kind: record.kind, fileManager: fileManager)) != nil
         }
     }
 
     /// Put a quarantined file back where it came from, then refresh.
-    func restore(_ record: QuarantineRecord) {
+    func restore(_ record: QuarantineRecord) async {
         guard !isApplying else { return }
+        isApplying = true
+        let dir = quarantineDir(), manager = fileManager
         do {
-            _ = try Quarantine.trashSnapshot(record, quarantineDir: quarantineDir(), fileManager: fileManager)
-            try Quarantine.restore(record, fileManager: fileManager)
+            try await Task.detached(priority: .userInitiated) {
+                _ = try Quarantine.trashSnapshot(record, quarantineDir: dir, fileManager: manager)
+                try Quarantine.restore(record, fileManager: manager)
+            }.value
             lastError = nil
         } catch {
             lastError = AppHost.render(error)
         }
+        isApplying = false
         refreshQuarantined()
     }
 
-    func previewTrash(_ record: QuarantineRecord) {
+    func previewTrash(_ record: QuarantineRecord) async {
         guard !isApplying else { return }
+        isApplying = true
+        defer { isApplying = false }
         lastError = nil
         trashNote = nil
         do {
-            let dir = quarantineDir()
-            trashPlan = QuarantineTrashPlan(record: record, snapshot: try Quarantine.trashSnapshot(record, quarantineDir: dir, fileManager: fileManager), quarantineDir: dir)
+            let dir = quarantineDir(), manager = fileManager
+            let snapshot = try await Task.detached(priority: .userInitiated) { try Quarantine.trashSnapshot(record, quarantineDir: dir, fileManager: manager) }.value
+            guard dir == quarantineDir() else { throw QuarantineError.changedSincePreview }
+            trashPlan = QuarantineTrashPlan(record: record, snapshot: snapshot, quarantineDir: dir)
         } catch {
             trashPlan = nil
             lastError = AppHost.render(error)
