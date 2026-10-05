@@ -79,7 +79,10 @@ class QuarantineLedgerFixtureTests(unittest.TestCase):
 
     def test_ledger_reads_newest_first_with_expected_fields(self):
         records = quarantine.ledger(self.directory.name)
-        self.assertEqual(len(records), 2)
+        self.assertEqual(len(records), 3)
+        self.assertEqual(records[0]["kind"], "mlxDirectory")
+        self.assertEqual(records[0]["bytes"], 4096)
+        records = records[1:]
         self.assertEqual(records[0]["from"], "/fixtures/gguf/newer.gguf")
         self.assertEqual(records[0]["bytes"], 2048)
         self.assertEqual(records[0]["moved_at"], "2026-08-02T11:00:00+00:00")

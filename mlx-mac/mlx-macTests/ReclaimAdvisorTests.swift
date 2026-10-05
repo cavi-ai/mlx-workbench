@@ -258,16 +258,51 @@ final class ReclaimAdvisorTests: XCTestCase {
         let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: quarantine.path)
         let coordinator = ReclaimCoordinator()
         coordinator.quarantineDir = { quarantine.path }
-        coordinator.previewTrash(record)
+        await coordinator.previewTrash(record)
         XCTAssertEqual(coordinator.trashPlan?.snapshot.bytes, 7)
         coordinator.cancelTrash()
         XCTAssertNil(coordinator.trashPlan)
-        coordinator.previewTrash(record)
+        await coordinator.previewTrash(record)
         coordinator.quarantineDir = { other.path }
         await coordinator.confirmTrash()
         XCTAssertNotNil(coordinator.lastError)
         XCTAssertNil(coordinator.trashPlan)
         XCTAssertTrue(FileManager.default.fileExists(atPath: record.to))
+    }
+
+    func testFolderPreviewRechecksActiveModelsAndRootsBeforeConfirm() async throws {
+        let root = try makeRoot()
+        let model = root.appendingPathComponent("mlx-output")
+        try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+        try Data("{\"quantization\":{\"bits\":4}}".utf8).write(to: model.appendingPathComponent("config.json"))
+        try Data("weights".utf8).write(to: model.appendingPathComponent("model.safetensors"))
+        let coordinator = ReclaimCoordinator()
+        coordinator.mlxRoots = { [root.path] }
+        coordinator.quarantineDir = { root.appendingPathComponent("quarantine").path }
+        await coordinator.previewFolder(model.path)
+        XCTAssertEqual(coordinator.folderPlan?.snapshot.fileCount, 2)
+        coordinator.protectedPaths = { [model.path] }
+        await coordinator.confirmFolder()
+        XCTAssertNotNil(coordinator.lastError)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
+        coordinator.protectedPaths = { [] }
+        await coordinator.previewFolder(model.path)
+        coordinator.mlxRoots = { [] }
+        await coordinator.confirmFolder()
+        XCTAssertNotNil(coordinator.lastError)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
+        coordinator.mlxRoots = { [root.path] }
+        await coordinator.previewFolder(model.path)
+        await coordinator.confirmFolder()
+        XCTAssertNil(coordinator.lastError)
+        XCTAssertEqual(coordinator.quarantined.first?.kind, .mlxDirectory)
+        let record = try XCTUnwrap(coordinator.quarantined.first)
+        await coordinator.previewTrash(record)
+        XCTAssertEqual(coordinator.trashPlan?.snapshot.fileCount, 2)
+        coordinator.cancelTrash()
+        await coordinator.restore(record)
+        XCTAssertNil(coordinator.lastError)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
     }
 
     func testPreviewConfirmMovesFilesAndDropsOpportunity() throws {
@@ -353,7 +388,7 @@ final class ReclaimAdvisorTests: XCTestCase {
 
     // MARK: - Quarantine ledger (review + put back)
 
-    func testConfirmMovesAppearInTheLedgerAndRestorePutsBack() throws {
+    func testConfirmMovesAppearInTheLedgerAndRestorePutsBack() async throws {
         let root = try makeRoot()
         let quarantine = try makeRoot()
         let file = root.appendingPathComponent("stale.gguf")
@@ -377,13 +412,13 @@ final class ReclaimAdvisorTests: XCTestCase {
         XCTAssertEqual(coordinator.quarantined.count, 1)
         XCTAssertEqual(coordinator.quarantined.first?.from, Quarantine.resolve(file.path))
 
-        coordinator.restore(coordinator.quarantined[0])
+        await coordinator.restore(coordinator.quarantined[0])
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         XCTAssertTrue(coordinator.quarantined.isEmpty, "the ledger still lists a file that left quarantine")
         XCTAssertNil(coordinator.lastError)
     }
 
-    func testRestoreFailureSurfacesAnError() throws {
+    func testRestoreFailureSurfacesAnError() async throws {
         let root = try makeRoot()
         let quarantine = try makeRoot()
         let file = root.appendingPathComponent("wanted.gguf")
@@ -397,7 +432,7 @@ final class ReclaimAdvisorTests: XCTestCase {
         try Data("re-downloaded".utf8).write(to: file) // original taken again
 
         coordinator.refreshQuarantined()
-        coordinator.restore(record)
+        await coordinator.restore(record)
 
         XCTAssertNotNil(coordinator.lastError)
         XCTAssertTrue(coordinator.lastError?.contains("already exists") == true)

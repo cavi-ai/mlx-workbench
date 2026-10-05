@@ -220,6 +220,12 @@ class AppHost: ObservableObject {
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
         self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }
         self.reclaim.ggufRoots = { [weak self] in self?.config.ggufRoots ?? [] }
+        self.reclaim.mlxRoots = { [weak self] in
+            guard let self else { return [] }
+            let roots = self.config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : self.config.ggufRoots
+            return Self.scanMLXRoots(self.config, ggufRoots: roots)
+        }
+        self.reclaim.protectedPaths = { [weak self] in Array(self?.occupiedModelPaths ?? []) }
         self.comparison.maxTokensCap = { [weak self] in self?.config.comparisonMaxTokens ?? 512 }
         // HF-cache reclaim rides the authoritative doctor prune flow.
         self.reclaim.doctorScan = { try await api.doctor(wiredRoots: [], hfCache: nil) }
@@ -643,6 +649,11 @@ class AppHost: ObservableObject {
         var occupied = Set(modelWorkflow.servers.filter { $0.state?.lowercased() == "running" }.flatMap { [$0.repo, $0.path].compactMap { $0 } })
         occupied.formUnion(endpoint.fleet.slots.filter(\.enabled).map(\.modelPath))
         occupied.formUnion(recommendationPreferences.preferredModelIDs.values)
+        if let path = verification.activeModelPath { occupied.insert(path) }
+        if case .generating(let path, _) = imageGeneration.state { occupied.insert(path) }
+        if let id = comparison.activeRunID, let run = comparison.runs.first(where: { $0.id == id }) {
+            occupied.formUnion(run.variants)
+        }
         if modelWorkflow.workflow.state == .queued || modelWorkflow.workflow.state == .running {
             occupied.insert(modelWorkflow.workflow.outputPath)
             occupied.insert(modelWorkflow.workflow.sourcePath)

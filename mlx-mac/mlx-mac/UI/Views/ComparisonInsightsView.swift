@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// One retained model per comparable task cohort, with the evidence easy to scan.
 struct ModelReplacementChainCard: View {
     let chain: ModelReplacementChain
+    var onReviewFolder: ((String) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -23,11 +24,14 @@ struct ModelReplacementChainCard: View {
             }
             DisclosureGroup("Review \(ByteCountFormatter.string(fromByteCount: chain.replaced.reduce(0) { $0 + $1.diskBytes }, countStyle: .file)) · evidence and paths") {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    Text("The keeper is no worse on reviewed quality, speed, latency, estimated memory and disk in this task. Other tasks may need the replaced models. These suggestions require review; model folders require manual cleanup.")
+                    Text("The keeper is no worse on reviewed quality, speed, latency, estimated memory and disk in this task. Other tasks may need the replaced models. Review those uses before quarantining a model folder in Reclaim.")
                         .font(WorkbenchTypography.secondary)
                     Text(chain.source).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
                     ForEach([chain.keeper] + chain.replaced, id: \.path) { member in
                         Text(member.path).font(WorkbenchTypography.value).textSelection(.enabled)
+                        if member.path != chain.keeper.path, member.path.hasPrefix("/"), !member.path.lowercased().hasSuffix(".gguf"), let onReviewFolder {
+                            Button("Review folder cleanup…") { onReviewFolder(member.path) }.buttonStyle(.bordered)
+                        }
                     }
                 }.padding(.top, WorkbenchSpacing.xs)
             }.font(WorkbenchTypography.secondary)
