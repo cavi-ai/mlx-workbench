@@ -301,7 +301,7 @@ struct QuantView: View {
                 Image(systemName: "slider.horizontal.3")
                     .foregroundStyle(WorkbenchColor.accent)
                 Text("Compare models")
-                    .font(.system(.headline, design: .rounded).weight(.semibold))
+                    .font(WorkbenchTypography.roundedHeading)
             }
 
             Picker("Mode", selection: $mode) {
@@ -401,7 +401,7 @@ struct QuantView: View {
         ForEach(Array(variantSlots.indices), id: \.self) { index in
             HStack(spacing: WorkbenchSpacing.xs) {
                 Text(Self.slotLetters[min(index, Self.slotLetters.count - 1)])
-                    .font(.system(.callout, design: .rounded).weight(.bold))
+                    .font(WorkbenchTypography.roundedLabel)
                     .foregroundStyle(WorkbenchColor.accent)
                     .frame(width: 24, height: 24)
                     .background(WorkbenchColor.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
@@ -662,7 +662,7 @@ struct QuantView: View {
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
                 Text("Speed")
-                    .font(.system(.title2, design: .rounded).weight(.semibold))
+                    .font(WorkbenchTypography.roundedTitle)
                 Text("TOKENS / SECOND")
                     .font(WorkbenchTypography.label)
                     .tracking(1)

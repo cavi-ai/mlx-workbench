@@ -21,6 +21,9 @@ enum WorkbenchColor {
 /// monospaced body size; nothing user-facing renders below 11 points.
 enum WorkbenchTypography {
     static let title = Font.title2.weight(.semibold)
+    static let roundedTitle = Font.system(.title2, design: .rounded).weight(.semibold)
+    static let roundedHeading = Font.system(.headline, design: .rounded).weight(.semibold)
+    static let roundedLabel = Font.system(.callout, design: .rounded).weight(.bold)
     static let section = Font.title3.weight(.semibold)
     static let emphasis = Font.body.weight(.semibold)
     static let body = Font.body
