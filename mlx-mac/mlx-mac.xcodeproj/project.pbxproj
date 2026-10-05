@@ -178,6 +178,12 @@
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
+		A6C0100000000000000000B01 /* ComparisonInsights.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F01; };
+		A6C0100000000000000000B02 /* WorkflowEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F02; };
+		A6C0100000000000000000B03 /* WorkflowEvidenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F03; };
+		A6C0100000000000000000B04 /* ComparisonInsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F04; };
+		A6C0100000000000000000B05 /* ComparisonInsightsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F05; };
+		A6C0100000000000000000B06 /* WorkflowEvidenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F06; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -363,6 +369,12 @@
 		24PROD01 /* mlx-workbench.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = mlx-workbench.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		24PROD02 /* mlx-workbenchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = mlx-workbenchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 
+		A6C0100000000000000000F01 /* ComparisonInsights.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonInsights.swift; path = Services/ComparisonInsights.swift; sourceTree = "<group>"; };
+		A6C0100000000000000000F02 /* WorkflowEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkflowEvidence.swift; path = Models/WorkflowEvidence.swift; sourceTree = "<group>"; };
+		A6C0100000000000000000F03 /* WorkflowEvidenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkflowEvidenceStore.swift; path = Services/WorkflowEvidenceStore.swift; sourceTree = "<group>"; };
+		A6C0100000000000000000F04 /* ComparisonInsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonInsightsView.swift; path = UI/Views/ComparisonInsightsView.swift; sourceTree = "<group>"; };
+		A6C0100000000000000000F05 /* ComparisonInsightsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonInsightsTests.swift; path = ComparisonInsightsTests.swift; sourceTree = "<group>"; };
+		A6C0100000000000000000F06 /* WorkflowEvidenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkflowEvidenceTests.swift; path = WorkflowEvidenceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -440,6 +452,10 @@
 				24FREF053 /* MenuBarView.swift */,
 				24FREF055 /* ReclaimModels.swift */,
 				24FREF056 /* Quarantine.swift */,
+				A6C0100000000000000000F01 /* ComparisonInsights.swift */,
+				A6C0100000000000000000F02 /* WorkflowEvidence.swift */,
+				A6C0100000000000000000F03 /* WorkflowEvidenceStore.swift */,
+				A6C0100000000000000000F04 /* ComparisonInsightsView.swift */,
 				24FREF057 /* UsageTracker.swift */,
 				24FREF058 /* ReclaimAdvisor.swift */,
 				24FREF059 /* ReclaimCoordinator.swift */,
@@ -565,6 +581,8 @@
 				27ABCD100000000000000023 /* ConversionProgressTests.swift */,
 				27ABCD100000000000000026 /* ImageGenerationTests.swift */,
 				27ABCD100000000000000010 /* RepoWorkflowTests.swift */,
+				A6C0100000000000000000F05 /* ComparisonInsightsTests.swift */,
+				A6C0100000000000000000F06 /* WorkflowEvidenceTests.swift */,
 				27ABCD100000000000000014 /* CompareLayoutTests.swift */,
 				27ABCD100000000000000008 /* IntakeContractTests.swift */,
 				27ABCD100000000000000006 /* ModelTaskTests.swift */,
@@ -803,6 +821,10 @@
 				24BBLD055 /* MenuBarView.swift in Sources */,
 				24BBLD057 /* ReclaimModels.swift in Sources */,
 				24BBLD058 /* Quarantine.swift in Sources */,
+				A6C0100000000000000000B01 /* ComparisonInsights.swift in Sources */,
+				A6C0100000000000000000B02 /* WorkflowEvidence.swift in Sources */,
+				A6C0100000000000000000B03 /* WorkflowEvidenceStore.swift in Sources */,
+				A6C0100000000000000000B04 /* ComparisonInsightsView.swift in Sources */,
 				24BBLD059 /* UsageTracker.swift in Sources */,
 				24BBLD05A /* ReclaimAdvisor.swift in Sources */,
 				24BBLD05B /* ReclaimCoordinator.swift in Sources */,
@@ -874,6 +896,8 @@
 				27ABCD000000000000000023 /* ConversionProgressTests.swift in Sources */,
 				27ABCD000000000000000026 /* ImageGenerationTests.swift in Sources */,
 				27ABCD000000000000000010 /* RepoWorkflowTests.swift in Sources */,
+				A6C0100000000000000000B05 /* ComparisonInsightsTests.swift in Sources */,
+				A6C0100000000000000000B06 /* WorkflowEvidenceTests.swift in Sources */,
 				27ABCD000000000000000014 /* CompareLayoutTests.swift in Sources */,
 				27ABCD000000000000000008 /* IntakeContractTests.swift in Sources */,
 				27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */,

@@ -170,10 +170,24 @@ from `mlx-agent` at runtime.
   KeepAlive — the app's supervisor reconciles; receipts stay authoritative).
 - The Duplicates tab hosts the **Disk Pressure Advisor**: `ReclaimAdvisor`
   ranks reclaim opportunities (stale per `UsageTracker` evidence, superseded
-  by verified siblings, cross-root duplicates) and `ReclaimCoordinator`
+  by comparable reviewed task evidence, cross-root duplicates) and `ReclaimCoordinator`
   applies them as batched quarantine moves via `Services/Quarantine.swift`
   (a Swift port of `mlx_workbench/quarantine.py` — same guard: `.gguf` only,
   inside configured roots, never deletes).
+- Compare defaults distinguish intentional serving (`UsageStamp.lastServedAt`)
+  from verification/benchmark activity. New comparison runs snapshot prompts
+  and can persist explicit human task-outcome reviews. Current recommendations
+  require matching model signatures and environment fingerprints; task-scoped
+  supersession additionally needs comparable reviewed quality and no adverse
+  speed, latency, estimated-memory or disk trade-off. Quantization bits alone
+  never establish supersession, and task-scoped suggestions are review-only.
+- Workflow evidence is an explicit local JSON interchange (`WorkflowReport`,
+  schema 1), persisted separately in `workflow-evidence.json`. It is not an
+  automatic Claude/OpenClaw/OpenCode log reader. Preserve producer provenance,
+  timestamps, model/environment/configuration identity, seconds/bytes units,
+  and unknown metrics. Never stamp imported observations as current or attribute
+  unattributed time to GPU/disk without measurements. Resource captures run
+  outside view evaluation; exports preserve their capture time and context.
 - `ModelDetailsView` hosts the **Model Lineage**: `LineageIndexer` assembles
   a read-only provenance timeline per model (source, converted, verified,
   benchmarked, served, wired, quarantined) from the stores the app already

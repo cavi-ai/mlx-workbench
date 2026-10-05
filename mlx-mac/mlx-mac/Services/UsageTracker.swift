@@ -9,11 +9,13 @@ import Foundation
 struct UsageStamp: Codable, Equatable, Sendable {
     let path: String
     var lastUsedAt: Date
+    var lastServedAt: Date? = nil
 }
 
 @MainActor
 final class UsageTracker: ObservableObject {
     @Published private(set) var lastUsedByPath: [String: Date] = [:]
+    @Published private(set) var lastServedByPath: [String: Date] = [:]
     @Published private(set) var persistenceError: String?
 
     private let store: JSONStore<UsageStamp>
@@ -23,9 +25,10 @@ final class UsageTracker: ObservableObject {
         self.store = store
         self.now = now
         do {
-            lastUsedByPath = Dictionary(
-                uniqueKeysWithValues: try store.load().map { ($0.path, $0.lastUsedAt) }
-            )
+            for stamp in try store.load() {
+                lastUsedByPath[stamp.path] = stamp.lastUsedAt
+                lastServedByPath[stamp.path] = stamp.lastServedAt
+            }
         } catch {
             persistenceError = "Saved usage evidence is unavailable: \(AppHost.render(error))"
         }
@@ -33,8 +36,19 @@ final class UsageTracker: ObservableObject {
 
     func record(_ path: String) {
         guard !path.isEmpty else { return }
-        let stamp = UsageStamp(path: path, lastUsedAt: now())
+        persist(path, served: false)
+    }
+
+    func recordServed(_ path: String) {
+        guard !path.isEmpty else { return }
+        persist(path, served: true)
+    }
+
+    private func persist(_ path: String, served: Bool) {
+        let date = now()
+        let stamp = UsageStamp(path: path, lastUsedAt: date, lastServedAt: served ? date : lastServedByPath[path])
         lastUsedByPath[path] = stamp.lastUsedAt
+        lastServedByPath[path] = stamp.lastServedAt
         do {
             try store.upsert(stamp, id: \.path)
         } catch {

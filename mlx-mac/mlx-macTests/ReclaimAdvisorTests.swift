@@ -175,7 +175,7 @@ final class ReclaimAdvisorTests: XCTestCase {
         )
 
         let superseded = opportunities.filter { $0.kind == .supersededVariant }
-        XCTAssertEqual(superseded.map(\.paths), [["/m/q4"]])
+        XCTAssertTrue(superseded.isEmpty, "Quantization and verification alone do not establish task quality")
         // fp16 (16 bits > 8) is not superseded by the verified 8-bit sibling.
         XCTAssertFalse(superseded.contains { $0.paths == ["/m/fp16"] })
     }

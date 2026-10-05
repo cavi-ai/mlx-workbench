@@ -359,8 +359,10 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     /// The comparison mode; nil (a run saved before modes existed) is chat.
     var mode: ComparisonMode? = nil
     /// The prompts this run replayed, kept so the results grid still shows
-    /// them after the prompt set is edited. Media modes only.
+    /// them after the prompt set is edited. All new runs snapshot their cohort.
     var promptEntries: [PromptEntry]? = nil
+    /// Explicit human task-outcome review, independent of speed and canary checks.
+    var qualityReviews: [String: ComparisonQualityReview]? = nil
 
     var effectiveMode: ComparisonMode { mode ?? .chat }
 
@@ -374,6 +376,14 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
             }
             .first
     }
+}
+
+struct ComparisonQualityReview: Codable, Equatable, Sendable {
+    let score: Int
+    let rubricID: String
+    let reviewedAt: Date
+    static let taskOutcomeRubric = "task-outcome-v1"
+    static let rubric = "1 unusable · 2 major corrections · 3 usable with corrections · 4 minor corrections · 5 meets task without corrections"
 }
 
 // MARK: - Output diffs (phase 2)

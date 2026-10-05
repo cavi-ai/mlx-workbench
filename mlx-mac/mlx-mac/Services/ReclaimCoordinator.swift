@@ -94,7 +94,8 @@ final class ReclaimCoordinator: ObservableObject {
         lastUsedByPath: [String: Date],
         isVerified: (String) -> Bool,
         occupiedPaths: Set<String>,
-        staleDays: Int = ReclaimAdvisor.defaultStaleDays
+        staleDays: Int = ReclaimAdvisor.defaultStaleDays,
+        measuredSuperseded: [ReclaimOpportunity] = []
     ) {
         opportunities = ReclaimAdvisor.opportunities(
             snapshot: snapshot,
@@ -102,7 +103,8 @@ final class ReclaimCoordinator: ObservableObject {
             lastUsedByPath: lastUsedByPath,
             isVerified: isVerified,
             occupiedPaths: occupiedPaths,
-            staleDays: staleDays
+            staleDays: staleDays,
+            measuredSuperseded: measuredSuperseded
         )
         plan = nil
         lastMoves = []
@@ -138,9 +140,9 @@ final class ReclaimCoordinator: ObservableObject {
     /// Freeze the selected actionable paths into a hashed plan.
     func preview(selected: Set<String>) {
         lastError = nil
-        let actionable = opportunities
+        let actionable = Set(opportunities
             .filter { $0.actionable && selected.contains($0.id) }
-            .flatMap { $0.paths }
+            .flatMap { $0.paths })
             .sorted()
         guard !actionable.isEmpty else {
             plan = nil

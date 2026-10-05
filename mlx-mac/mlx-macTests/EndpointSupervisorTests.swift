@@ -5,6 +5,140 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testIntentionalEnableSwapAndAddRecordServedButAutomaticRestartsDoNot() async throws {
+        let (supervisor, world) = makeSupervisor()
+        let tracker = UsageTracker(store: JSONStore<UsageStamp>(fileURL: temporaryURL("usage.json")))
+        var served: [String] = []
+        supervisor.onUserServeStarted = { path in served.append(path); tracker.recordServed(path) }
+
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        await supervisor.reconcile()
+        await supervisor.swap(to: "/Models/b")
+        await supervisor.reconcile()
+        await supervisor.addSlot(modelPath: "/Models/c", port: 8767)
+        await supervisor.reconcile()
+        XCTAssertEqual(served, ["/Models/a", "/Models/b", "/Models/c"])
+        XCTAssertNotNil(tracker.lastServedByPath["/Models/c"])
+        let stamps = tracker.lastServedByPath
+
+        world.kill(port: 8766)
+        await supervisor.reconcile()
+        await supervisor.reconcile()
+        XCTAssertEqual(served, ["/Models/a", "/Models/b", "/Models/c"])
+        XCTAssertEqual(tracker.lastServedByPath, stamps)
+    }
+
+    func testUserEnableExistingMatchingServerRecordsIntentionalSelection() async {
+        let (supervisor, world) = makeSupervisor()
+        world.preload(repo: "/Models/a", port: 8766)
+        var served: [String] = []
+        supervisor.onUserServeStarted = { served.append($0) }
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        XCTAssertEqual(served, ["/Models/a"])
+        await supervisor.reconcile()
+        XCTAssertEqual(served, ["/Models/a"])
+    }
+
+    func testDisabledSlotEditsAndRoleOnlyChangesDoNotRecordServing() async throws {
+        let (supervisor, _) = makeSupervisor()
+        var served: [String] = []
+        supervisor.onUserServeStarted = { served.append($0) }
+        await supervisor.addSlot(modelPath: "/Models/a", port: 8766)
+        await supervisor.reconcile()
+        let id = try XCTUnwrap(supervisor.fleet.slots.first?.id)
+        served = []
+        await supervisor.updateSlot(id: id, modelPath: "/Models/a", port: 8766, role: .coding)
+        XCTAssertTrue(served.isEmpty)
+        await supervisor.setSlotEnabled(id: id, false)
+        await supervisor.swapSlot(id: id, to: "/Models/b")
+        await supervisor.updateSlot(id: id, modelPath: "/Models/c", port: 8766, role: .coding)
+        XCTAssertTrue(served.isEmpty)
+        await supervisor.setSlotEnabled(id: id, true)
+        await supervisor.reconcile()
+        XCTAssertEqual(served, ["/Models/c"])
+        await supervisor.swapSlot(id: id, to: "/Models/d")
+        await supervisor.reconcile()
+        XCTAssertEqual(served, ["/Models/c", "/Models/d"])
+        await supervisor.updateSlot(id: id, modelPath: "/Models/e", port: 8766, role: .coding)
+        await supervisor.reconcile()
+        XCTAssertEqual(served, ["/Models/c", "/Models/d", "/Models/e"])
+    }
+
+    func testFailedStartAndRejectedUserOperationsDoNotRecordServing() async {
+        let failing = EndpointSupervisor(lifecycle: ServeLifecycle(preview: { _, _ in "hash" }, start: { _, _, _ in throw StubError.offline }, stop: { _ in }), statusProvider: { [] }, store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        var served: [String] = []
+        failing.onUserServeStarted = { served.append($0) }
+        await failing.enable(modelPath: "/Models/a", port: 8766)
+        await failing.swap(to: "/Models/b")
+        await failing.addSlot(modelPath: "/Models/c", port: 8767)
+        XCTAssertTrue(served.isEmpty)
+
+        let (supervisor, world) = makeSupervisor()
+        supervisor.onUserServeStarted = { served.append($0) }
+        supervisor.isVerified = { _ in false }
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        XCTAssertTrue(served.isEmpty)
+        supervisor.isVerified = nil
+        world.statusError = StubError.offline
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        XCTAssertTrue(served.isEmpty)
+        world.statusError = nil
+        world.preload(repo: "/Models/other", port: 8766)
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        XCTAssertTrue(served.isEmpty)
+    }
+
+    func testUnrelatedAutomaticFleetRestartDuringUserAddDoesNotRecordOldModel() async {
+        let (supervisor, world) = makeSupervisor()
+        var served: [String] = []
+        supervisor.onUserServeStarted = { served.append($0) }
+        await supervisor.addSlot(modelPath: "/Models/a", port: 8766)
+        await supervisor.reconcile()
+        served = []
+        world.kill(port: 8766)
+        await supervisor.addSlot(modelPath: "/Models/b", port: 8767)
+        await supervisor.reconcile()
+        XCTAssertEqual(served, ["/Models/b"])
+    }
+
+    func testAcceptedStartWaitsForAuthoritativeRunningAndRecordsOnce() async {
+        let (supervisor, world) = makeSupervisor()
+        world.survives = false
+        var served: [String] = []
+        supervisor.onUserServeStarted = { served.append($0) }
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        XCTAssertEqual(supervisor.state, .waitingForServer)
+        XCTAssertTrue(served.isEmpty)
+        await supervisor.reconcile()
+        XCTAssertTrue(served.isEmpty)
+        world.preload(repo: "/Models/a", port: 8766)
+        await supervisor.reconcile()
+        XCTAssertEqual(served, ["/Models/a"])
+        await supervisor.reconcile()
+        XCTAssertEqual(served, ["/Models/a"])
+    }
+
+    func testPendingIntentClearsAfterStatusFailureOrDisable() async {
+        let (supervisor, world) = makeSupervisor()
+        world.survives = false
+        var served: [String] = []
+        supervisor.onUserServeStarted = { served.append($0) }
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        world.statusError = StubError.offline
+        await supervisor.reconcile()
+        world.statusError = nil
+        world.preload(repo: "/Models/a", port: 8766)
+        await supervisor.reconcile()
+        XCTAssertTrue(served.isEmpty)
+
+        world.kill(port: 8766)
+        await supervisor.enable(modelPath: "/Models/b", port: 8766)
+        await supervisor.disable()
+        world.preload(repo: "/Models/b", port: 8766)
+        await supervisor.reconcile()
+        XCTAssertTrue(served.isEmpty)
+    }
+
     // MARK: - Reconcile matrix
 
     func testDisabledConfigStaysDisabledAndNeverStarts() async {

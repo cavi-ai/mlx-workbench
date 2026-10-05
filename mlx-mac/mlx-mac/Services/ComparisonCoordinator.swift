@@ -107,6 +107,20 @@ final class ComparisonCoordinator: ObservableObject {
         }
     }
 
+    func reviewQuality(runID: UUID, modelPath: String, score: Int?) {
+        guard activeRunID != runID, let index = runs.firstIndex(where: { $0.id == runID && $0.state == .completed }),
+              runs[index].results.contains(where: { $0.modelPath == modelPath }),
+              score == nil || (1...5).contains(score!) else { return }
+        var updated = runs[index]
+        var reviews = updated.qualityReviews ?? [:]
+        reviews[modelPath] = score.map { ComparisonQualityReview(score: $0, rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: now()) }
+        updated.qualityReviews = reviews
+        do {
+            try runStore.upsert(updated, id: \.id)
+            runs[index] = updated
+        } catch { persistenceError = "Task review could not be saved: \(AppHost.render(error))" }
+    }
+
     /// Opt-in: import the user's real opencode prompts as a comparison
     /// prompt set. Returns the created set, or nil when no history exists.
     /// The button press is the consent; import only happens here.
@@ -169,7 +183,7 @@ final class ComparisonCoordinator: ObservableObject {
             finishedAt: nil,
             state: .running,
             mode: mode == .chat ? nil : mode,
-            promptEntries: mode == .chat ? nil : promptSet.prompts
+            promptEntries: promptSet.prompts
         )
         runs.insert(run, at: 0)
         activeRunID = run.id
