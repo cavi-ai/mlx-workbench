@@ -27,6 +27,11 @@ final class ModelTaskTests: XCTestCase {
         XCTAssertTrue(ModelTaskType.imageGeneration.hasCanary)
         XCTAssertFalse(ModelTaskType.imageGeneration.isServable)
         XCTAssertFalse(ModelTaskType.classification.isServable)
+        XCTAssertFalse(ModelTaskType.speculativeDraft.hasCanary)
+        XCTAssertFalse(ModelTaskType.speculativeDraft.isServable)
+        XCTAssertEqual(ModelTaskType.speculativeDraft.title, "Speculative drafter")
+        XCTAssertEqual(ModelTaskPresentation.useCaseTitle("speculative_decoding"), "Speculative decoding")
+        XCTAssertEqual(ModelTaskPresentation.capabilities(for: ModelTask(type: .speculativeDraft, useCases: ["speculative_decoding"], source: "gguf_architecture", confidence: "confirmed")), [])
         XCTAssertEqual(ModelTaskType.classification.title, "Classification")
         let data = Data(#"{"type":"classification","use_cases":["moderation","routing","classification"],"source":"pipeline_tag","confidence":"confirmed"}"#.utf8)
         let task = try? JSONDecoder().decode(ModelTask.self, from: data)
@@ -53,7 +58,7 @@ final class ModelTaskTests: XCTestCase {
             catalogStore: CatalogStore(appSupportDirectory: { root }), catalogClient: CatalogClient(),
             config: Config.defaults(), now: { Date(timeIntervalSinceReferenceDate: 100) }
         )
-        let cases: [(ModelTaskType, Bool)] = [(.textLLM, true), (.visionLanguage, true), (.speechToText, false), (.classification, false), (.imageGeneration, false)]
+        let cases: [(ModelTaskType, Bool)] = [(.textLLM, true), (.visionLanguage, true), (.speechToText, false), (.classification, false), (.imageGeneration, false), (.speculativeDraft, false)]
         for (type, servable) in cases {
             let task = ModelTask(type: type, useCases: [], source: "registry", confidence: "confirmed")
             let item = ModelItem(path: "/m/\(type.rawValue)", name: type.rawValue, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil, architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil, task: task)

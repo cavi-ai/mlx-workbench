@@ -63,6 +63,18 @@ final class LibraryTypeGroupingTests: XCTestCase {
         XCTAssertFalse(rows.contains { $0.label == "Use cases" })
     }
 
+    func testIdentityRowsNameTheModelADrafterRunsBeside() {
+        let task = ModelTask(type: .speculativeDraft, useCases: ["speculative_decoding"], source: "gguf_architecture", confidence: "confirmed")
+        let item = ModelItem(path: "/m/dspark-Q8_0.gguf", name: "dspark-Q8_0.gguf", bytes: 10, modifiedAt: nil, shard: nil, modelKey: "deepseek-v4-flash-0731-draft", architecture: "dflash", quantization: "Q8_0", parameters: nil, structure: nil, signature: nil, companion: false, readable: true, status: "pending", outputs: [], tensorCount: 81, error: nil, task: task, draft: ModelDraft(port: "deepseek_v4_dspark", target: "DeepSeek-V4-Flash-0731", blockSize: 5))
+        let rows = ModelDetailsPresentation.identityRows(for: LibraryModel(item: item), prepareDestination: nil)
+        XCTAssertEqual(rows.first { $0.label == "Type" }?.value, "Speculative drafter")
+        XCTAssertEqual(rows.first { $0.label == "Use cases" }?.value, "Speculative decoding")
+        let drafter = rows.first { $0.label == "Drafter for" }?.value ?? ""
+        XCTAssertTrue(drafter.hasPrefix("DeepSeek-V4-Flash-0731 — "), drafter)
+        XCTAssertFalse(ModelDetailsPresentation.identityRows(for: model("/m/qwen", key: "qwen", type: .textLLM), prepareDestination: nil)
+            .contains { $0.label == "Drafter for" })
+    }
+
     func testIdentityRowsShowTaskRowsOnlyWhenTheAgentClassifiedTheModel() {
         let typed = model("/m/whisper", key: "whisper", type: .speechToText, useCases: ["transcription", "diarization"])
         let rows = ModelDetailsPresentation.identityRows(for: typed, prepareDestination: nil)

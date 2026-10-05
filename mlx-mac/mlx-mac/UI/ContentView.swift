@@ -37,7 +37,19 @@ struct ContentView: View {
             visitedDestinations
                 .navigationTitle(selectedRoute.label)
                 .navigationSubtitle(subtitle)
-                .toolbar { contextToolbar }
+                .toolbar {
+#if compiler(>=6.2)
+                    if #available(macOS 26.0, *) {
+                        // The status badge already supplies its own capsule.
+                        // Avoid nesting it inside the system toolbar glass.
+                        contextToolbar.sharedBackgroundVisibility(.hidden)
+                    } else {
+                        contextToolbar
+                    }
+#else
+                    contextToolbar
+#endif
+                }
         }
         .background { routeShortcutButtons }
         .onChange(of: selectedRouteID) { _, _ in
@@ -164,6 +176,7 @@ struct ContentView: View {
                     navigate(to: .activity)
                 } label: {
                     StatusBadge(state: modelWorkflow.workflow.state.rawValue)
+                        .fixedSize()
                 }
                 .buttonStyle(.plain)
                 .help("Conversion \(modelWorkflow.workflow.state.rawValue). Open Activity.")
