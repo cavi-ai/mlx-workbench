@@ -179,6 +179,8 @@
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
 
 		A6C0100000000000000000B01 /* ComparisonInsights.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F01; };
+		A6C0100000000000000000B21 /* WorkflowIntake.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F21; };
+		A6C0100000000000000000B22 /* WorkflowIntakeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F22; };
 		A6C0100000000000000000B02 /* WorkflowEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F02; };
 		A6C0100000000000000000B03 /* WorkflowEvidenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F03; };
 		A6C0100000000000000000B04 /* ComparisonInsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F04; };
@@ -370,6 +372,8 @@
 		24PROD02 /* mlx-workbenchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = mlx-workbenchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 
 		A6C0100000000000000000F01 /* ComparisonInsights.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonInsights.swift; path = Services/ComparisonInsights.swift; sourceTree = "<group>"; };
+		A6C0100000000000000000F21 /* WorkflowIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkflowIntake.swift; path = Models/WorkflowIntake.swift; sourceTree = "<group>"; };
+		A6C0100000000000000000F22 /* WorkflowIntakeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkflowIntakeViews.swift; path = UI/Views/WorkflowIntakeViews.swift; sourceTree = "<group>"; };
 		A6C0100000000000000000F02 /* WorkflowEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkflowEvidence.swift; path = Models/WorkflowEvidence.swift; sourceTree = "<group>"; };
 		A6C0100000000000000000F03 /* WorkflowEvidenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkflowEvidenceStore.swift; path = Services/WorkflowEvidenceStore.swift; sourceTree = "<group>"; };
 		A6C0100000000000000000F04 /* ComparisonInsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonInsightsView.swift; path = UI/Views/ComparisonInsightsView.swift; sourceTree = "<group>"; };
@@ -453,6 +457,8 @@
 				24FREF055 /* ReclaimModels.swift */,
 				24FREF056 /* Quarantine.swift */,
 				A6C0100000000000000000F01 /* ComparisonInsights.swift */,
+				A6C0100000000000000000F21 /* WorkflowIntake.swift */,
+				A6C0100000000000000000F22 /* WorkflowIntakeViews.swift */,
 				A6C0100000000000000000F02 /* WorkflowEvidence.swift */,
 				A6C0100000000000000000F03 /* WorkflowEvidenceStore.swift */,
 				A6C0100000000000000000F04 /* ComparisonInsightsView.swift */,
@@ -822,6 +828,8 @@
 				24BBLD057 /* ReclaimModels.swift in Sources */,
 				24BBLD058 /* Quarantine.swift in Sources */,
 				A6C0100000000000000000B01 /* ComparisonInsights.swift in Sources */,
+				A6C0100000000000000000B21 /* WorkflowIntake.swift in Sources */,
+				A6C0100000000000000000B22 /* WorkflowIntakeViews.swift in Sources */,
 				A6C0100000000000000000B02 /* WorkflowEvidence.swift in Sources */,
 				A6C0100000000000000000B03 /* WorkflowEvidenceStore.swift in Sources */,
 				A6C0100000000000000000B04 /* ComparisonInsightsView.swift in Sources */,

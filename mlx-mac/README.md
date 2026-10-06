@@ -139,8 +139,24 @@ of GPU load or a guarantee against swapping. A task review uses this explicit ru
 corrections, 5 meets the task without corrections. Unreviewed stays unknown;
 tool-call argument validation is a limited check, not general answer quality.
 
-Use **Workflow evidence** to save a report template, explicitly import a
-local report, or export agent evidence. The interchange supports reports
+Use **Workflow reports and agent evidence** to get a capture request,
+explicitly import a local report, or export agent evidence. Choose Claude,
+OpenClaw, OpenCode or Custom and a ready local model, then copy or save the
+request for your agent. Requests contain known model and environment identities
+at capture time; unavailable identities and required measurements remain null. The producer
+must establish that the task used those exact identities, fill `reportDraft`
+from its measured receipts, establish unknown identities from the actual run,
+and save that object as the report JSON. Unconfirmed identity remains explicit
+at import and cannot establish current replacement advice. The
+request itself is not importable evidence, and its context must never be used
+to relabel an older run. Missing metrics remain unknown.
+
+Import reads and validates the report off the main actor, then previews new
+records, identical duplicates, dates, timings, source and model/environment
+identity status before saving. Historical or unmatched observations can be
+saved for reference; they cannot establish current replacement advice. A
+conflicting record ID or changed saved evidence blocks the import. Cancel
+leaves the evidence store untouched. The interchange supports reports
 produced for Claude, OpenClaw, OpenCode, and custom workflows; it does not
 automatically inspect those clients' session logs. **Import OpenCode prompts**
 remains a separate read-only import for replaying your actual prompts.
