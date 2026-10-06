@@ -48,6 +48,7 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         let release = marks.appendingPathComponent("release")
         let agent = try FixtureAgent(blockingDescribeStarted: started, release: release)
         defer { agent.remove() }
+        defer { try? Data().write(to: release) }
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
 
         let description = Task {
@@ -58,25 +59,19 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: started.path), "the describe call reached the agent")
 
-        let quickCallFinished = Flag()
         let quickCall = Task {
             _ = try await api.raw(["serve", "status"])
-            _ = await api.health()
-            await quickCallFinished.raise()
+            let health = await api.health()
+            // The media fixture can finish successfully only after both calls return.
+            // Its timeout bounds a serialized-actor regression, not subprocess speed.
+            try Data().write(to: release)
+            return health.ok
         }
-        var waited = 0
-        while !(await quickCallFinished.isRaised), waited < 300 {
-            try await Task.sleep(nanoseconds: 10_000_000)
-            waited += 1
-        }
-        let finishedWhileDescribing = await quickCallFinished.isRaised
-
-        try Data().write(to: release)
+        let healthy = try await quickCall.value
         let result = try await description.value
-        _ = try await quickCall.value
 
-        XCTAssertTrue(finishedWhileDescribing, "a quick agent call waited for the running describe call")
-        XCTAssertEqual(result.text, "A red circle.")
+        XCTAssertTrue(healthy)
+        XCTAssertEqual(result.text, "A red circle.", "the media call timed out before the quick call and health check released it")
         XCTAssertEqual(result.generationTokens, 4)
     }
 
@@ -290,11 +285,6 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
     }
 }
 
-private actor Flag {
-    private(set) var isRaised = false
-    func raise() { isRaised = true }
-}
-
 private final class FixtureAgent {
     let root: URL
 
@@ -342,7 +332,8 @@ private final class FixtureAgent {
             deadline = time.time() + 60
             while not os.path.exists(\(String(reflecting: release.path))) and time.time() < deadline:
                 time.sleep(0.02)
-            data = {"text": "A red circle.", "generation_tokens": 4}
+            released = os.path.exists(\(String(reflecting: release.path)))
+            data = {"text": "A red circle." if released else "Timed out before quick calls completed.", "generation_tokens": 4}
         print(json.dumps({"status": "ok", "data": data}))
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
