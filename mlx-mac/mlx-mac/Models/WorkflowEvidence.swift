@@ -90,6 +90,54 @@ struct AgentEvidenceExport: Codable {
     let limitations: [String]
     var taskTradeoffs: [String] = []
     var replacementChains: [ModelReplacementChain] = []
+    /// Additive schema-1 guidance; nil when decoding an older export.
+    var taskGuidance: [AgentTaskGuidance]? = nil
+}
+
+struct AgentTaskGuidance: Codable, Identifiable {
+    let id: String
+    let source: String
+    let workloadID: String
+    let title: String
+    let useCase: UseCase?
+    let mode: String?
+    let harness: String?
+    let configurationFingerprint: String?
+    let rubricID: String?
+    let measuredAt: Date
+    let performanceMetric: String
+    let higherIsBetter: Bool
+    let candidates: [AgentTaskCandidate]
+    let qualityLeaders: [String]
+    let performanceLeaders: [String]
+    let latencyLeaders: [String]
+    /// Highest reviewed outcome among estimated fits, with every comparable entrant reviewed.
+    let qualityFirstFitPaths: [String]
+    let unmeasuredModelPaths: [String]
+    let needsEvidence: [String]
+}
+
+struct AgentTaskCandidate: Codable, Identifiable {
+    let modelPath: String
+    let name: String
+    let evidenceID: String
+    let measuredAt: Date
+    let comparable: Bool
+    let exclusionReasons: [String]
+    let qualityScore: Int?
+    let performanceValue: Double?
+    let firstTokenSeconds: Double?
+    let fitStatus: String
+    let fitSummary: String
+    let estimatedRequiredBytes: Int64?
+    let headroomGB: Double?
+    let diskBytes: Int64?
+    let sampleCount: Int
+    var totalSeconds: Double? = nil
+    var inferenceSeconds: Double? = nil
+    var toolSeconds: Double? = nil
+    var queueSeconds: Double? = nil
+    var id: String { modelPath }
 }
 struct AgentModelFact: Codable {
     let path: String

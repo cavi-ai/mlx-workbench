@@ -214,6 +214,15 @@ from `mlx-agent` at runtime.
   and unknown metrics. Never stamp imported observations as current or attribute
   unattributed time to GPU/disk without measurements. Resource captures run
   outside view evaluation; exports preserve their capture time and context.
+  `AgentTaskAdvisor` adds optional structured `taskGuidance` to schema-1
+  agent exports (old exports decode without it). It ranks only within the
+  newest complete comparison run or matched harness/workload/configuration/
+  sample-count workflow cohort, with shared rubrics required for quality.
+  Quality, performance, latency and estimated fit stay separate and ties stay
+  shared. A newer unreviewed or mismatched observation never falls back to an
+  older winner. Quality-first fit choices exclude tight/unknown fits; the
+  native guidance sheet and export refresh headroom outside view evaluation.
+  Guidance is read-only, with no serving, wiring or reclaim authority.
 - `ModelDetailsView` hosts the **Model Lineage**: `LineageIndexer` assembles
   a read-only provenance timeline per model (source, converted, verified,
   benchmarked, served, wired, quarantined) from the stores the app already

@@ -126,3 +126,77 @@ struct WorkflowImportPreviewView: View {
 
     private func seconds(_ value: Double?) -> String { value.map { String(format: "%.2f s", $0) } ?? "unknown" }
 }
+
+struct AgentModelGuidanceView: View {
+    let evidence: AgentEvidenceExport
+    let onSave: (AgentEvidenceExport) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var note: String?
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Label("Model guidance for your agent", systemImage: "list.bullet.clipboard").font(WorkbenchTypography.roundedTitle)
+            Text("Task-specific choices from local evidence. Quality, speed and fit stay separate; this snapshot does not change models, endpoints or files.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            Text("\(evidence.contextTokens) tokens · headroom captured \(evidence.memoryCapturedAt?.formatted() ?? "unknown")")
+                .font(WorkbenchTypography.value)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    if (evidence.taskGuidance ?? []).isEmpty {
+                        Text("No measured task cohorts yet. Run a comparison or import workflow reports to establish choices.").font(WorkbenchTypography.secondary)
+                    }
+                    ForEach(evidence.taskGuidance ?? []) { task in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            Text(task.title).font(WorkbenchTypography.roundedHeading)
+                            Text("\(task.harness ?? task.mode ?? task.source) · \(task.measuredAt.formatted())")
+                                .font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+                            Text("Quality first among estimated fits: \(names(task.qualityFirstFitPaths))").font(WorkbenchTypography.emphasis)
+                            Text("Best reviewed outcome: \(names(task.qualityLeaders))")
+                            Text("Best measured \(metricTitle(task.performanceMetric)): \(names(task.performanceLeaders))")
+                            if !task.latencyLeaders.isEmpty { Text("Lowest first-token latency: \(names(task.latencyLeaders))") }
+                            ForEach(task.needsEvidence, id: \.self) { Text($0).foregroundStyle(WorkbenchColor.warning) }
+                            DisclosureGroup("Models and evidence") {
+                                ForEach(task.candidates) { candidate in
+                                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                                        Text(candidate.name).font(WorkbenchTypography.emphasis)
+                                        Text(candidate.fitSummary)
+                                        Text("Disk: \(candidate.diskBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown")")
+                                        ForEach(candidate.exclusionReasons, id: \.self) { Text($0).foregroundStyle(WorkbenchColor.warning) }
+                                        Text("Evidence: \(candidate.evidenceID)").font(WorkbenchTypography.value).textSelection(.enabled)
+                                    }.padding(.vertical, WorkbenchSpacing.xxs)
+                                }
+                                if !task.unmeasuredModelPaths.isEmpty { Text("\(task.unmeasuredModelPaths.count) ready models have no observation in this cohort.").foregroundStyle(WorkbenchColor.muted) }
+                            }
+                        }.font(WorkbenchTypography.secondary).padding(WorkbenchSpacing.sm)
+                            .background(WorkbenchColor.accent.opacity(0.05), in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface))
+                    }
+                }
+            }.frame(maxHeight: 420)
+            Text("Fit is an estimate at captured headroom; recheck before serving. GPU, disk and network bottlenecks are unmeasured. Reclaim suggestions still require their own review.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            if let note { Text(note).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
+            ErrorBanner(text: error)
+            HStack {
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Save JSON…") { onSave(evidence) }
+                Button("Copy for agent") {
+                    do {
+                        let text = String(decoding: try WorkflowEvidenceStore.encode(evidence), as: UTF8.self)
+                        NSPasteboard.general.clearContents()
+                        guard NSPasteboard.general.setString(text, forType: .string) else { throw WorkflowEvidenceError.invalid("could not copy guidance") }
+                        note = "Copied task guidance and its source evidence."; error = nil
+                    } catch { self.error = AppHost.render(error) }
+                }.buttonStyle(.borderedProminent)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 640)
+    }
+
+    private func names(_ paths: [String]) -> String {
+        paths.isEmpty ? "Needs evidence" : paths.map { path in evidence.models.first { $0.path == path }?.name ?? path }.joined(separator: ", ")
+    }
+    private func metricTitle(_ raw: String) -> String {
+        raw == "totalSeconds" ? "workflow duration (same sample count)" : (ComparisonMetric(rawValue: raw)?.title ?? raw)
+    }
+}

@@ -161,6 +161,17 @@ produced for Claude, OpenClaw, OpenCode, and custom workflows; it does not
 automatically inspect those clients' session logs. **Import OpenCode prompts**
 remains a separate read-only import for replaying your actual prompts.
 
+**Model guidance** reviews task-specific choices and can copy or save the
+agent evidence JSON. It separates reviewed quality, measured performance and
+first-token leaders, preserving ties. Quality-first choices include only
+estimated fits at captured headroom, require shared reviews for every
+comparable entrant, and exclude tight or unknown fits. Workflow duration
+comparisons require the same harness, workload, configuration and sample
+count; quality additionally requires the same rubric. Newer observations
+replace older guidance within a cohort, including missing reviews and changed
+identities. Missing evidence and excluded models remain explicit. Guidance
+does not serve, rewire or reclaim models; recheck headroom before acting.
+
 Workflow JSON uses an object with `schemaVersion: 1` and a `records` array.
 Each record requires:
 
