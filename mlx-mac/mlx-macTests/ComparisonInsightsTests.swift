@@ -4,11 +4,11 @@ import XCTest
 final class ComparisonInsightsTests: XCTestCase {
     private let environment = "macOS|M4|1.0"
     private let prompt = PromptEntry(id: "p", text: "task")
-    private func model(_ path: String, bytes: Int64 = 4_000_000_000, signature: String? = "s", key: String = "family", readiness: ModelReadiness = .ready, task: ModelTaskType? = nil) -> LibraryModel {
+    private func model(_ path: String, bytes: Int64 = 4_000_000_000, signature: String? = "s", key: String = "family", readiness: ModelReadiness = .ready, task: ModelTaskType? = nil, capabilities: [UseCase]? = nil) -> LibraryModel {
         LibraryModel(item: ModelItem(path: path, name: path, bytes: bytes, modifiedAt: nil, shard: nil, modelKey: key,
             architecture: nil, quantization: "Q4", parameters: "8B", structure: nil, signature: signature,
             companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
-            task: task.map { ModelTask(type: $0, useCases: [], source: "test", confidence: "test") }), readiness: readiness)
+            task: task.map { ModelTask(type: $0, useCases: [], source: "test", confidence: "test") }), readiness: readiness, capabilities: capabilities)
     }
     private func result(_ path: String, speed: Double = 20, ttft: Double = 0.2, environment: String? = "macOS|M4|1.0", prompts: [String] = ["p"], metric: Double? = nil) -> VariantResult {
         VariantResult(modelPath: path, modelSignature: "s", samples: prompts.map {
@@ -128,6 +128,110 @@ final class ComparisonInsightsTests: XCTestCase {
         XCTAssertNil(decoded.promptEntries)
         XCTAssertNil(decoded.qualityReviews)
         XCTAssertFalse(ComparisonInsights.fullCohort(decoded.results[0], run: decoded))
+    }
+
+    private func guidance(_ models: [LibraryModel], _ runs: [ComparisonRun], workflow: [WorkflowEvidence] = [], available: Int64? = 12_000_000_000) throws -> [[String: Any]] {
+        let evidence = ComparisonInsights.agentEvidence(models: models, runs: runs, workflow: workflow, environment: environment,
+            hardware: HardwareProfile(chip: "M4", memoryBytes: 32_000_000_000), memory: available.map { MemorySnapshot(totalBytes: 32_000_000_000, availableBytes: $0) },
+            capturedAt: Date(timeIntervalSince1970: 42), contextTokens: 2048, reserveGB: 4, protected: [])
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: WorkflowEvidenceStore.encode(evidence)) as? [String: Any])
+        return try XCTUnwrap(json["taskGuidance"] as? [[String: Any]])
+    }
+
+    func testAgentGuidanceSeparatesQualitySpeedAndFitWithoutBreakingTies() throws {
+        let measured = run([result("/a", speed: 20), result("/b", speed: 40), result("/c", speed: 40)], scores: ["/a": 5, "/b": 4, "/c": 4])
+        let task = try XCTUnwrap(try guidance([model("/a", bytes: 20_000_000_000), model("/b"), model("/c")], [measured]).first)
+        XCTAssertEqual(task["qualityLeaders"] as? [String], ["/a"])
+        XCTAssertEqual(task["performanceLeaders"] as? [String], ["/b", "/c"])
+        XCTAssertEqual(task["qualityFirstFitPaths"] as? [String], ["/b", "/c"])
+        let candidates = try XCTUnwrap(task["candidates"] as? [[String: Any]])
+        XCTAssertEqual(candidates[0]["fitStatus"] as? String, "wontFit")
+        XCTAssertEqual(candidates[0]["evidenceID"] as? String, measured.id.uuidString)
+    }
+
+    func testNewerIncompleteOrUnreviewedGuidanceDoesNotFallBackToOlderWinner() throws {
+        let old = run([result("/a"), result("/b", speed: 40)], scores: ["/a": 5, "/b": 5])
+        var latest = run([result("/a"), result("/b")])
+        latest.finishedAt = Date(timeIntervalSince1970: 2000)
+        latest.promptEntries = [prompt, PromptEntry(id: "missing", text: "missing")]
+        let incomplete = try XCTUnwrap(try guidance([model("/a"), model("/b")], [old, latest]).first)
+        XCTAssertEqual(incomplete["performanceLeaders"] as? [String], [])
+        latest.promptEntries = [prompt]
+        let unreviewed = try XCTUnwrap(try guidance([model("/a"), model("/b")], [old, latest]).first)
+        XCTAssertEqual(unreviewed["qualityFirstFitPaths"] as? [String], [])
+        XCTAssertEqual(unreviewed["qualityLeaders"] as? [String], [])
+        XCTAssertEqual(unreviewed["performanceLeaders"] as? [String], ["/a", "/b"])
+    }
+
+    func testWorkflowGuidanceNeverCombinesDifferentConfigurationsOrHistoricalIdentity() throws {
+        func report(_ path: String, config: String, date: Double = 1000, signature: String = "s") -> WorkflowEvidence {
+            var record = WorkflowEvidence(id: UUID(), harness: "opencode", workloadID: "task", useCase: .coding,
+                modelPath: path, modelSignature: signature, environmentFingerprint: environment,
+                measuredAt: Date(timeIntervalSince1970: date), sampleCount: 3, totalSeconds: 10, source: "receipt:\(path)")
+            record.configurationFingerprint = config; record.tokensPerSecond = 20; record.qualityScore = 5; record.rubricID = "shared"
+            return record
+        }
+        let models = [model("/a"), model("/b")]
+        let split = try guidance(models, [], workflow: [report("/a", config: "one"), report("/b", config: "two")])
+        XCTAssertEqual(split.count, 2)
+        XCTAssertTrue(split.allSatisfy { ($0["qualityFirstFitPaths"] as? [String]) == [] })
+        let history = try guidance(models, [], workflow: [report("/a", config: "one"), report("/b", config: "one"), report("/a", config: "one", date: 2000, signature: "old")])
+        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history[0]["qualityFirstFitPaths"] as? [String], [])
+        let candidates = try XCTUnwrap(history[0]["candidates"] as? [[String: Any]])
+        XCTAssertFalse(try XCTUnwrap(candidates.first { $0["modelPath"] as? String == "/a" })["comparable"] as? Bool ?? true)
+    }
+
+    func testGuidanceRefusesUnknownOrTightFitsAndHonorsMediaMetricDirection() throws {
+        let models = [model("/a"), model("/b")]
+        let measured = run([result("/a"), result("/b")], scores: ["/a": 5, "/b": 5])
+        let unknown = try XCTUnwrap(try guidance(models, [measured], available: nil).first)
+        XCTAssertEqual(unknown["qualityFirstFitPaths"] as? [String], [])
+        let required = FitAdvisor.neededBytes(modelBytes: 4_000_000_000, contextTokens: 2048, parameters: "8B")
+        let tight = try XCTUnwrap(try guidance(models, [measured], available: required + 4_000_000_000).first)
+        XCTAssertEqual(tight["qualityFirstFitPaths"] as? [String], [])
+        XCTAssertEqual((tight["candidates"] as? [[String: Any]])?.first?["fitStatus"] as? String, "tight")
+        let media = run([result("/a", metric: 2), result("/b", metric: 1)], mode: .imageGeneration)
+        let task = try XCTUnwrap(try guidance([model("/a", task: .imageGeneration), model("/b", task: .imageGeneration)], [media]).first)
+        XCTAssertEqual(task["performanceLeaders"] as? [String], ["/b"])
+        XCTAssertEqual(task["higherIsBetter"] as? Bool, false)
+        XCTAssertEqual(task["qualityFirstFitPaths"] as? [String], [])
+        XCTAssertEqual((task["candidates"] as? [[String: Any]])?.first?["fitStatus"] as? String, "unknown")
+    }
+
+    func testWorkflowGuidanceUsesWholeTaskDurationAndNewestReviewOnly() throws {
+        func report(_ path: String, duration: Double, date: Double) -> WorkflowEvidence {
+            var value = WorkflowEvidence(id: UUID(), harness: "opencode", workloadID: "same", useCase: .coding,
+                modelPath: path, modelSignature: "s", environmentFingerprint: environment, measuredAt: Date(timeIntervalSince1970: date),
+                sampleCount: 3, totalSeconds: duration, source: "session")
+            value.configurationFingerprint = "config"; value.rubricID = "shared"; value.qualityScore = 5
+            value.inferenceSeconds = 2; value.toolSeconds = 3; value.queueSeconds = 0
+            return value
+        }
+        let a = report("/a", duration: 10, date: 1000), b = report("/b", duration: 8, date: 1001)
+        let models = [model("/a"), model("/b"), model("/unmeasured", capabilities: [.coding])]
+        let task = try XCTUnwrap(try guidance(models, [], workflow: [a, b]).first)
+        XCTAssertEqual(task["performanceLeaders"] as? [String], ["/b"])
+        XCTAssertEqual(task["qualityFirstFitPaths"] as? [String], ["/a", "/b"])
+        XCTAssertEqual(task["unmeasuredModelPaths"] as? [String], ["/unmeasured"])
+        XCTAssertEqual((task["candidates"] as? [[String: Any]])?.first?["toolSeconds"] as? Double, 3)
+        var newest = report("/a", duration: 9, date: 2000)
+        newest.qualityScore = nil; newest.rubricID = nil
+        let unreviewed = try guidance(models, [], workflow: [a, b, newest])
+        XCTAssertEqual(unreviewed.count, 1)
+        XCTAssertEqual(unreviewed[0]["qualityFirstFitPaths"] as? [String], [])
+        newest.qualityScore = 5; newest.rubricID = "different-rubric"
+        XCTAssertEqual(try guidance(models, [], workflow: [b, newest])[0]["qualityLeaders"] as? [String], [])
+    }
+
+    func testAgentExportBackwardDecodeKeepsMissingGuidanceUnknown() throws {
+        let exported = ComparisonInsights.agentEvidence(models: [], runs: [], workflow: [], environment: nil,
+            hardware: HardwareProfile(chip: "M4", memoryBytes: nil), memory: nil, capturedAt: nil, contextTokens: 2048, reserveGB: 4, protected: [])
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(exported)) as? [String: Any])
+        object.removeValue(forKey: "taskGuidance")
+        let decoded = try JSONDecoder().decode(AgentEvidenceExport.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(decoded.taskGuidance)
+        XCTAssertEqual(exported.taskGuidance?.count, 0)
     }
 
     func testMediaPipelinesNeverReceiveChatFitEstimates() {

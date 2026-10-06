@@ -77,6 +77,8 @@ struct ComparisonInsightsView: View {
     @State private var showCaptureRequest = false
     @State private var importPreview: WorkflowImportPreview?
     @State private var isReadingReport = false
+    @State private var guidanceEvidence: AgentEvidenceExport?
+    @State private var isPreparingGuidance = false
 
     private var environment: String? { appHost.watch.currentFingerprintDescription }
     private var replacements: [ReclaimOpportunity] {
@@ -138,6 +140,11 @@ struct ComparisonInsightsView: View {
                     onCancel: { self.importPreview = nil }, onConfirm: confirmImport)
             }
         }
+        .sheet(isPresented: Binding(get: { guidanceEvidence != nil }, set: { if !$0 { guidanceEvidence = nil } })) {
+            if let guidanceEvidence {
+                AgentModelGuidanceView(evidence: guidanceEvidence, onSave: { save($0, name: "mlx-workbench-agent-evidence.json") })
+            }
+        }
     }
 
     @ViewBuilder private var memoryControls: some View {
@@ -194,6 +201,14 @@ struct ComparisonInsightsView: View {
             .disabled(isReadingReport)
         if isReadingReport { ProgressView().controlSize(.small) }
         Button("Get capture request…") { showCaptureRequest = true }
+        Button("Model guidance…") {
+            Task { @MainActor in
+                isPreparingGuidance = true
+                defer { isPreparingGuidance = false }
+                await refreshMemory()
+                guidanceEvidence = makeEvidence()
+            }
+        }.disabled(isPreparingGuidance)
         Button("Export agent evidence…", action: exportEvidence)
     }
 
@@ -251,13 +266,20 @@ struct ComparisonInsightsView: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = name
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try JSONStore<WorkflowEvidence>.refuseSymlink(url, fileManager: .default); try WorkflowEvidenceStore.encode(value).write(to: url, options: .atomic); message = "Saved \(url.lastPathComponent)."; error = nil }
-        catch { self.error = AppHost.render(error) }
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do { try JSONStore<WorkflowEvidence>.refuseSymlink(url, fileManager: .default); try WorkflowEvidenceStore.encode(value).write(to: url, options: .atomic); message = "Saved \(url.lastPathComponent)."; error = nil }
+            catch { self.error = AppHost.render(error) }
+        }
     }
 
+    private func makeEvidence() -> AgentEvidenceExport {
+        ComparisonInsights.agentEvidence(models: modelsForEvidence, runs: comparison.runs, workflow: workflow.records, environment: environment, hardware: appHost.hardwareProfile, memory: memory, capturedAt: capturedAt, contextTokens: contextTokens, reserveGB: appHost.config.fitReserveGB, protected: appHost.occupiedModelPaths)
+    }
     private func exportEvidence() {
-        let evidence = ComparisonInsights.agentEvidence(models: modelsForEvidence, runs: comparison.runs, workflow: workflow.records, environment: environment, hardware: appHost.hardwareProfile, memory: memory, capturedAt: capturedAt, contextTokens: contextTokens, reserveGB: appHost.config.fitReserveGB, protected: appHost.occupiedModelPaths)
-        save(evidence, name: "mlx-workbench-agent-evidence.json")
+        Task { @MainActor in
+            await refreshMemory()
+            save(makeEvidence(), name: "mlx-workbench-agent-evidence.json")
+        }
     }
 }
