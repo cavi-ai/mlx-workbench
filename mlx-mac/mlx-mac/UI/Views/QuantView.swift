@@ -216,6 +216,8 @@ struct QuantView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 resultsArea
+                WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
+                    environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile)
                 setupBar
                 DisclosureGroup("Model fit and workflow evidence") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {

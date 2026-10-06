@@ -224,6 +224,57 @@ final class ComparisonInsightsTests: XCTestCase {
         XCTAssertEqual(try guidance(models, [], workflow: [b, newest])[0]["qualityLeaders"] as? [String], [])
     }
 
+    func testWorkflowChartsPreserveMeasuredZerosAndUnattributedTime() throws {
+        var record = WorkflowEvidence(id: UUID(), harness: "opencode", workloadID: "task", useCase: .coding,
+            modelPath: "/a", modelSignature: "s", environmentFingerprint: environment,
+            measuredAt: Date(timeIntervalSince1970: 1000), sampleCount: 3, totalSeconds: 10, source: "session")
+        record.configurationFingerprint = "config"
+        record.inferenceSeconds = 6; record.toolSeconds = 0; record.queueSeconds = 1
+        let task = try XCTUnwrap(AgentTaskAdvisor.guidance(models: [model("/a")], runs: [], workflow: [record], environment: environment,
+            hardware: HardwareProfile(chip: "M4", memoryBytes: nil), memory: nil, contextTokens: 2048, reserveGB: 4).first)
+        let candidate = try XCTUnwrap(WorkflowCharts.chartCandidates(task).first)
+        let segments = WorkflowCharts.segments(candidate)
+        XCTAssertEqual(segments.map(\.seconds), [6, 0, 1, 3])
+        XCTAssertEqual(segments.map(\.timing), [.inference, .tools, .queue, .unattributed])
+        XCTAssertEqual(segments.reduce(0) { $0 + $1.seconds }, record.totalSeconds)
+        XCTAssertTrue(WorkflowCharts.missingTimings(candidate).isEmpty)
+    }
+
+    func testWorkflowChartsKeepPartialBreakdownsUnknown() throws {
+        var record = WorkflowEvidence(id: UUID(), harness: "claude", workloadID: "task", useCase: .coding,
+            modelPath: "/a", modelSignature: "s", environmentFingerprint: environment,
+            measuredAt: Date(timeIntervalSince1970: 1000), sampleCount: 3, totalSeconds: 10, source: "session")
+        record.configurationFingerprint = "config"; record.inferenceSeconds = 6
+        let task = try XCTUnwrap(AgentTaskAdvisor.guidance(models: [model("/a")], runs: [], workflow: [record], environment: environment,
+            hardware: HardwareProfile(chip: "M4", memoryBytes: nil), memory: nil, contextTokens: 2048, reserveGB: 4).first)
+        let candidate = try XCTUnwrap(WorkflowCharts.chartCandidates(task).first)
+        XCTAssertEqual(WorkflowCharts.segments(candidate).map(\.timing), [.unknown])
+        XCTAssertEqual(WorkflowCharts.segments(candidate).first?.seconds, 10)
+        XCTAssertEqual(WorkflowCharts.missingTimings(candidate), ["Tools", "Queue"])
+    }
+
+    func testWorkflowChartsSeparateCohortsAndExcludeNewestStaleEvidence() throws {
+        func report(_ path: String, config: String?, samples: Int = 3, harness: String = "opencode", date: Double = 1000, signature: String = "s") -> WorkflowEvidence {
+            var record = WorkflowEvidence(id: UUID(), harness: harness, workloadID: "task", useCase: .coding,
+                modelPath: path, modelSignature: signature, environmentFingerprint: environment,
+                measuredAt: Date(timeIntervalSince1970: date), sampleCount: samples, totalSeconds: 10, source: "session")
+            record.configurationFingerprint = config
+            return record
+        }
+        let reports = [report("/a", config: "one"), report("/b", config: "two"), report("/b", config: "one", samples: 4),
+            report("/b", config: "one", harness: "claude"), report("/b", config: nil),
+            report("/a", config: "one", date: 2000, signature: "changed")]
+        let tasks = AgentTaskAdvisor.guidance(models: [model("/a"), model("/b")], runs: [], workflow: reports, environment: environment,
+            hardware: HardwareProfile(chip: "M4", memoryBytes: nil), memory: nil, contextTokens: 2048, reserveGB: 4)
+        XCTAssertEqual(tasks.count, 5)
+        XCTAssertEqual(tasks.flatMap { WorkflowCharts.chartCandidates($0) }.count, 3)
+        XCTAssertFalse(tasks.flatMap { WorkflowCharts.chartCandidates($0) }.contains { $0.modelPath == "/a" })
+        XCTAssertTrue(tasks.filter { $0.configurationFingerprint == nil }.allSatisfy { WorkflowCharts.chartCandidates($0).isEmpty })
+        let changedEnvironment = AgentTaskAdvisor.guidance(models: [model("/a"), model("/b")], runs: [], workflow: reports, environment: "different",
+            hardware: HardwareProfile(chip: "M4", memoryBytes: nil), memory: nil, contextTokens: 2048, reserveGB: 4)
+        XCTAssertTrue(changedEnvironment.allSatisfy { WorkflowCharts.chartCandidates($0).isEmpty })
+    }
+
     func testAgentExportBackwardDecodeKeepsMissingGuidanceUnknown() throws {
         let exported = ComparisonInsights.agentEvidence(models: [], runs: [], workflow: [], environment: nil,
             hardware: HardwareProfile(chip: "M4", memoryBytes: nil), memory: nil, capturedAt: nil, contextTokens: 2048, reserveGB: 4, protected: [])

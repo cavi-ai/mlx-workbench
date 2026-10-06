@@ -151,6 +151,16 @@ at import and cannot establish current replacement advice. The
 request itself is not importable evidence, and its context must never be used
 to relabel an older run. Missing metrics remain unknown.
 
+**Workflow performance** charts appear on the opening Compare tab. Select a
+harness/task cohort, then switch between total runtime and the inference,
+tool, queue and unattributed timing breakdown. Cohorts keep configurations,
+sample counts and task roles separate, using the newest observation per model
+and matching current model/environment identities. A missing configuration
+or changed identity stays visible in collapsed source evidence but is not
+charted. Incomplete timing components show a total-duration **Breakdown unknown**
+bar; measured zero durations remain zero. These charts do not establish quality,
+current memory fit, or GPU/disk/network bottlenecks.
+
 Import reads and validates the report off the main actor, then previews new
 records, identical duplicates, dates, timings, source and model/environment
 identity status before saving. Historical or unmatched observations can be

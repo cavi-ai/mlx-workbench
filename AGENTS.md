@@ -216,6 +216,11 @@ from `mlx-agent` at runtime.
   and unknown metrics. Never stamp imported observations as current or attribute
   unattributed time to GPU/disk without measurements. Resource captures run
   outside view evaluation; exports preserve their capture time and context.
+  Native Compare shows workflow runtime and timing-breakdown charts above setup,
+  using `AgentTaskAdvisor` identity/cohort checks. The latest observation per model
+  is charted only when comparable; missing components render a total-duration
+  "Breakdown unknown" bar, never inferred GPU/disk time. Zero measured durations
+  remain zero; unattributed time is derived only from complete additive timings.
   `AgentTaskAdvisor` adds optional structured `taskGuidance` to schema-1
   agent exports (old exports decode without it). It ranks only within the
   newest complete comparison run or matched harness/workload/configuration/
