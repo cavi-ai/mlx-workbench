@@ -202,7 +202,14 @@ from `mlx-agent` at runtime.
   never establish supersession, and task-scoped suggestions are review-only.
 - Workflow evidence is an explicit local JSON interchange (`WorkflowReport`,
   schema 1), persisted separately in `workflow-evidence.json`. It is not an
-  automatic Claude/OpenClaw/OpenCode log reader. Preserve producer provenance,
+  automatic Claude/OpenClaw/OpenCode log reader. Native Compare can copy/save
+  a `WorkflowCaptureRequest` for a selected harness and ready local model;
+  it captures identity context only, with null required run measurements in
+  `reportDraft`. A request cannot import as evidence. Report files are read and
+  decoded off the main actor; imports preview exact new/duplicate observations
+  and model/environment status before confirmation. Confirmation refuses
+  changed saved evidence and preserves historical observations without
+  relabeling them. Preserve producer provenance,
   timestamps, model/environment/configuration identity, seconds/bytes units,
   and unknown metrics. Never stamp imported observations as current or attribute
   unattributed time to GPU/disk without measurements. Resource captures run

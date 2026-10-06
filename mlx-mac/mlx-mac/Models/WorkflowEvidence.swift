@@ -1,7 +1,7 @@
 import Foundation
 
 /// Interchange contract: seconds, bytes and ISO-8601 dates. No prompts or transcripts.
-struct WorkflowReport: Codable, Equatable {
+struct WorkflowReport: Codable, Equatable, Sendable {
     let schemaVersion: Int
     let records: [WorkflowEvidence]
     var guidance: String? = nil
@@ -9,7 +9,7 @@ struct WorkflowReport: Codable, Equatable {
     static let template = WorkflowReport(schemaVersion: 1, records: [], guidance: "No measurements in this template. Each record requires UUID id, harness (claude/openclaw/opencode/custom), workloadID, absolute modelPath, modelSignature, environmentFingerprint, ISO8601 measuredAt, positive sampleCount, totalSeconds and source (receipt/session identifier, no secrets). Optional configurationFingerprint (producer hash of prompts/tools/context/generation settings; required for replacement advice), useCase, inferenceSeconds, toolSeconds, queueSeconds, timeToFirstTokenSeconds, tokensPerSecond, qualityScore (1...5), rubricID, peakMemoryBytes, availableMemoryBytes. Timings are seconds; memory is bytes. Quality requires a shared rubricID. Components must be additive disjoint durations and sum to at most totalSeconds. Missing fields remain unknown. Copy exact identity/fingerprint from Export agent evidence; never replace an older fingerprint with a current one.")
 }
 
-struct WorkflowEvidence: Codable, Equatable, Identifiable {
+struct WorkflowEvidence: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let harness: String
     let workloadID: String

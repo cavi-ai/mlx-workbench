@@ -74,6 +74,9 @@ struct ComparisonInsightsView: View {
     @State private var capturedAt: Date?
     @State private var message: String?
     @State private var error: String?
+    @State private var showCaptureRequest = false
+    @State private var importPreview: WorkflowImportPreview?
+    @State private var isReadingReport = false
 
     private var environment: String? { appHost.watch.currentFingerprintDescription }
     private var replacements: [ReclaimOpportunity] {
@@ -113,7 +116,7 @@ struct ComparisonInsightsView: View {
                         VStack(alignment: .leading) { reportControls }
                     }
                     if workflow.records.isEmpty {
-                        Text("No workflow measurements imported. Save the empty template for the report contract; export the available local evidence for an agent to analyze.")
+                        Text("No workflow measurements imported. Get a capture request for your agent, then review and import its report.")
                             .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                     }
                     ForEach(workflow.records.sorted { $0.measuredAt > $1.measuredAt }) { record in
@@ -126,6 +129,15 @@ struct ComparisonInsightsView: View {
         }
         .formSection {}
         .task { await refreshMemory() }
+        .sheet(isPresented: $showCaptureRequest) {
+            WorkflowCaptureRequestView(models: captureModels, initialModelPath: models.first?.item.path, environment: environment)
+        }
+        .sheet(isPresented: Binding(get: { importPreview != nil }, set: { if !$0 { importPreview = nil } })) {
+            if let importPreview {
+                WorkflowImportPreviewView(preview: importPreview, models: identityModels, environment: environment,
+                    onCancel: { self.importPreview = nil }, onConfirm: confirmImport)
+            }
+        }
     }
 
     @ViewBuilder private var memoryControls: some View {
@@ -179,7 +191,9 @@ struct ComparisonInsightsView: View {
 
     @ViewBuilder private var reportControls: some View {
         Button("Import workflow report…", action: importReport)
-        Button("Save report template…") { save(WorkflowReport.template, name: "workflow-report-template.json") }
+            .disabled(isReadingReport)
+        if isReadingReport { ProgressView().controlSize(.small) }
+        Button("Get capture request…") { showCaptureRequest = true }
         Button("Export agent evidence…", action: exportEvidence)
     }
 
@@ -187,6 +201,8 @@ struct ComparisonInsightsView: View {
         ComparisonInsights.knownEnvironment(environment) && environment == record.environmentFingerprint && modelsForEvidence.contains { $0.item.path == record.modelPath && $0.item.signature == record.modelSignature }
     }
     private var modelsForEvidence: [LibraryModel] { appHost.librarySnapshot?.models ?? [] }
+    private var identityModels: [WorkflowCaptureModel] { modelsForEvidence.map { WorkflowCaptureModel(path: $0.item.path, name: $0.displayName, signature: $0.item.signature) } }
+    private var captureModels: [WorkflowCaptureModel] { modelsForEvidence.filter { $0.readiness == .ready }.map { WorkflowCaptureModel(path: $0.item.path, name: $0.displayName, signature: $0.item.signature) } }
 
     private func workflowRow(_ record: WorkflowEvidence) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
@@ -210,9 +226,25 @@ struct ComparisonInsightsView: View {
         panel.allowedContentTypes = [.json]
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { let count = try workflow.importFile(url); message = "Imported \(count) new report records."; error = nil }
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                isReadingReport = true
+                defer { isReadingReport = false }
+                do {
+                    let report = try await Task.detached(priority: .userInitiated) { try WorkflowEvidenceStore.readReport(url) }.value
+                    importPreview = try workflow.previewReport(report)
+                    error = nil
+                } catch { self.error = AppHost.render(error) }
+            }
+        }
+    }
+
+    private func confirmImport() {
+        guard let importPreview else { return }
+        do { let count = try workflow.confirmImport(importPreview); message = "Imported \(count) new report records."; error = nil; appHost.analyzeReclaim() }
         catch { self.error = AppHost.render(error) }
+        self.importPreview = nil
     }
 
     private func save<Value: Encodable>(_ value: Value, name: String) {

@@ -30,6 +30,70 @@ final class WorkflowEvidenceTests: XCTestCase {
         XCTAssertThrowsError(try restart.importReport(WorkflowEvidenceStore.encode(WorkflowReport(schemaVersion: 1, records: [conflict]))))
         XCTAssertEqual(restart.records, evidence.records)
     }
+
+    func testImportPreviewDoesNotWriteAndConfirmDetectsStoreDrift() throws {
+        let disk = try store()
+        let evidence = WorkflowEvidenceStore(store: disk)
+        let fact = record()
+        let data = try WorkflowEvidenceStore.encode(WorkflowReport(schemaVersion: 1, records: [fact]))
+        let preview = try evidence.previewReport(data)
+        XCTAssertEqual(preview.newRecords.count, 1)
+        XCTAssertEqual(preview.duplicateCount, 0)
+        XCTAssertTrue(evidence.records.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: disk.url.path))
+        XCTAssertEqual(try evidence.confirmImport(preview), 1)
+        let repeated = try evidence.previewReport(data)
+        XCTAssertTrue(repeated.newRecords.isEmpty)
+        XCTAssertEqual(repeated.duplicateCount, 1)
+        try disk.replaceAll([record()])
+        XCTAssertThrowsError(try evidence.confirmImport(repeated))
+        XCTAssertNotEqual(try disk.load(), evidence.records, "External changes must be preserved")
+    }
+
+    func testPreviewShowsExactIdentityMismatchWithoutRewritingTheReport() throws {
+        let fact = record()
+        XCTAssertEqual(WorkflowImportIdentity.status(fact, models: [WorkflowCaptureModel(path: fact.modelPath, name: "A", signature: fact.modelSignature)], environment: fact.environmentFingerprint), .matching)
+        XCTAssertEqual(WorkflowImportIdentity.status(fact, models: [], environment: fact.environmentFingerprint), .missingModel)
+        XCTAssertEqual(WorkflowImportIdentity.status(fact, models: [WorkflowCaptureModel(path: fact.modelPath, name: "A", signature: "changed")], environment: fact.environmentFingerprint), .changedModel)
+        XCTAssertEqual(WorkflowImportIdentity.status(fact, models: [WorkflowCaptureModel(path: fact.modelPath, name: "A", signature: fact.modelSignature)], environment: "changed"), .changedEnvironment)
+        XCTAssertEqual(WorkflowImportIdentity.status(fact, models: [WorkflowCaptureModel(path: fact.modelPath, name: "A", signature: nil)], environment: fact.environmentFingerprint), .unknownModel)
+        XCTAssertEqual(WorkflowImportIdentity.status(fact, models: [WorkflowCaptureModel(path: fact.modelPath, name: "A", signature: fact.modelSignature)], environment: "mac|unknown|1"), .unknownEnvironment)
+        XCTAssertEqual(fact.measuredAt, Date(timeIntervalSince1970: 1_700_000_000.123))
+    }
+
+    func testCaptureRequestContainsContextButNoInventedMeasurements() throws {
+        let model = WorkflowCaptureModel(path: "/models/a", name: "A", signature: "weights")
+        let kit = try WorkflowCaptureRequest.make(harness: .openCode, model: model, environment: "mac|chip|1", now: Date(timeIntervalSince1970: 42))
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: WorkflowEvidenceStore.encode(kit)) as? [String: Any])
+        let report = try XCTUnwrap(json["reportDraft"] as? [String: Any])
+        let records = try XCTUnwrap(report["records"] as? [[String: Any]])
+        XCTAssertEqual(records[0]["harness"] as? String, "opencode")
+        XCTAssertEqual(records[0]["modelSignature"] as? String, "weights")
+        XCTAssertTrue(records[0]["measuredAt"] is NSNull)
+        XCTAssertTrue(records[0]["totalSeconds"] is NSNull)
+        XCTAssertTrue(records[0]["sampleCount"] is NSNull)
+        XCTAssertTrue(kit.instructions.contains("Never reuse this context for an older run"))
+        XCTAssertThrowsError(try WorkflowEvidenceStore.decode(WorkflowEvidenceStore.encode(kit)))
+        let unknown = try WorkflowCaptureRequest.make(harness: .claude, model: WorkflowCaptureModel(path: "/a", name: "A", signature: nil), environment: "mac|unknown|1")
+        let unknownJSON = try XCTUnwrap(try JSONSerialization.jsonObject(with: WorkflowEvidenceStore.encode(unknown)) as? [String: Any])
+        let unknownDraft = try XCTUnwrap(unknownJSON["reportDraft"] as? [String: Any])
+        let unknownRecords = try XCTUnwrap(unknownDraft["records"] as? [[String: Any]])
+        XCTAssertTrue(unknownRecords[0]["modelSignature"] is NSNull)
+        XCTAssertTrue(unknownRecords[0]["environmentFingerprint"] is NSNull)
+        XCTAssertThrowsError(try WorkflowCaptureRequest.make(harness: .openClaw, model: WorkflowCaptureModel(path: "relative", name: "A", signature: nil), environment: nil))
+    }
+
+    func testImportConfirmsFrozenReportAfterOriginalFileChanges() throws {
+        let disk = try store()
+        let evidence = WorkflowEvidenceStore(store: disk)
+        let file = disk.url.appendingPathExtension("input.json")
+        let fact = record()
+        try WorkflowEvidenceStore.encode(WorkflowReport(schemaVersion: 1, records: [fact])).write(to: file)
+        let preview = try evidence.previewReport(WorkflowEvidenceStore.readReport(file))
+        try Data("changed after preview".utf8).write(to: file)
+        XCTAssertEqual(try evidence.confirmImport(preview), 1)
+        XCTAssertEqual(try disk.load(), [fact], "Confirm saves exactly the observations reviewed, not changed file contents")
+    }
     func testImporterRejectsBadMetricsAndQuality() throws {
         var fact = record()
         fact.inferenceSeconds = 8
