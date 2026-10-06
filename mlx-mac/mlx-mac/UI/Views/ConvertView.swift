@@ -95,15 +95,18 @@ struct ConvertView: View {
     @ObservedObject var appHost: AppHost
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
+    @ObservedObject private var reclaim: ReclaimCoordinator
     private let onRouteSelection: (AppRoute) -> Void
 
     @State private var qBits: Int
     @State private var progress: ConversionProgressSnapshot?
     @State private var isLogExpanded = false
+    @State private var reclaimSource = true
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
+        _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
         self.onRouteSelection = onRouteSelection
         _qBits = State(initialValue: appHost.config.qBits)
     }
@@ -124,6 +127,9 @@ struct ConvertView: View {
                 workflowCard
                 sourceAndDestinationCard
                 conversionActions
+                if modelWorkflow.workflow.state == .verified {
+                    sourceCleanupActions
+                }
                 if let progress, modelWorkflow.workflow.state.isInFlight {
                     ConversionProgressCard(snapshot: progress, startedAt: ConversionProgressReader.date(fromAgentTimestamp: currentJob?.startedAt))
                         .formSection {}
@@ -234,6 +240,11 @@ struct ConvertView: View {
     private var conversionActions: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Conversion")
+            if presentation.canPreview || presentation.canConfirm {
+                Toggle("Move original source to Trash after verification", isOn: $reclaimSource)
+                Text("Keeps failed or unverified sources, active models, other cache revisions and shared weights.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
             Picker("Quantization", selection: $qBits) {
                 ForEach(presentation.bitWidths, id: \.self) { bits in
                     Text("\(bits)-bit").tag(bits)
@@ -260,7 +271,30 @@ struct ConvertView: View {
     }
 
     private func confirmAction() {
-        Task { await modelWorkflow.confirm(qBits: qBits) }
+        Task { await modelWorkflow.confirm(qBits: qBits, reclaimSourceAfterVerification: reclaimSource) }
+    }
+
+    private var sourceCleanupActions: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SectionTitle(text: "Original source")
+            if let plan = reclaim.sourcePlan, plan.workflow.id == modelWorkflow.workflow.id {
+                Text("\(plan.paths.count) source items · \(LibraryTablePresentation.byteCount(plan.bytes)) to Trash")
+                DisclosureGroup("Review source paths") {
+                    ForEach(plan.paths, id: \.self) { Text($0).font(WorkbenchTypography.secondary).textSelection(.enabled) }
+                }
+                HStack {
+                    Button("Move originals to Trash") {
+                        Task { await reclaim.confirmSource(modelWorkflow.workflow); await appHost.rescan() }
+                    }.buttonStyle(.borderedProminent)
+                    Button("Cancel") { reclaim.cancelSource() }
+                }.disabled(reclaim.isApplying)
+            } else {
+                Button("Preview source cleanup") { Task { await reclaim.previewSource(modelWorkflow.workflow) } }
+                    .disabled(reclaim.isApplying)
+            }
+            if let note = reclaim.sourceCleanupNote { Text(note).font(WorkbenchTypography.secondary) }
+            if let error = reclaim.lastError { ErrorBanner(text: error) }
+        }.formSection {}
     }
 
     @ViewBuilder

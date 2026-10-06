@@ -2,12 +2,9 @@ import Foundation
 
 // MARK: - HFRepoID
 //
-// The pinned mlx-agent's `serve start` accepts Hugging Face repo ids
-// (org/name) present in the local HF cache, and refuses filesystem paths
-// (model_not_local). Library models that live inside the HF cache layout
-// (…/hub/models--org--name/snapshots/<rev>/…) therefore must be served by
-// repo id. This mapper is the single place that translation happens;
-// paths outside the HF layout pass through unchanged.
+// Repo identities are for display, wiring and compatibility with older serve
+// receipts. Launches preserve exact local paths through --path, including
+// Hugging Face snapshots; they must not resolve that repo again for execution.
 
 enum HFRepoID {
     /// The repo id for a path inside the Hugging Face cache layout, else nil.
@@ -24,6 +21,17 @@ enum HFRepoID {
     /// path is in the HF cache, else the path itself. Use when comparing a
     /// library model path against `ServerInfo.repo`.
     static func serveIdentity(for path: String) -> String {
-        forPath(path) ?? path
+        if path.hasPrefix("/") || path.hasPrefix("~") {
+            return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.resolvingSymlinksInPath().path
+        }
+        return path
+    }
+
+    /// Current path receipts distinguish revisions. Older repo-only receipts
+    /// remain compatible without collapsing two explicit filesystem paths.
+    static func matches(_ lhs: String, _ rhs: String) -> Bool {
+        let a = serveIdentity(for: lhs), b = serveIdentity(for: rhs)
+        if a.hasPrefix("/"), b.hasPrefix("/") { return a == b }
+        return (forPath(lhs) ?? a) == (forPath(rhs) ?? b)
     }
 }

@@ -199,6 +199,11 @@ struct IntakeSheet: View {
     }
 
     private func finish(_ resolution: IntakeResolution) async {
+        if let route = await appHost.reuseIntake(resolution) {
+            dismiss()
+            onRouteSelection(route)
+            return
+        }
         let directory = appHost.intakeDownloadDirectory(for: resolution)
         guard let path = await intake.download(localDir: directory) else { return }
         if let route = await appHost.finishIntake(resolution, downloadedPath: path, selectedFile: intake.selectedGGUF) {

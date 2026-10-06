@@ -215,7 +215,17 @@ class AppHost: ObservableObject {
         // the Disk Pressure Advisor's staleness detector.
         self.modelWorkflow.onServeStarted = { [weak self] path in self?.usage.recordServed(path) }
         self.endpoint.onUserServeStarted = { [weak self] path in self?.usage.recordServed(path) }
-        self.modelWorkflow.onTerminalState = { record in AlertNotifier.post(workflowOutcome: record) }
+        self.modelWorkflow.onTerminalState = { [weak self] record in
+            AlertNotifier.post(workflowOutcome: record)
+            guard record.state == .verified, record.reclaimSourceAfterVerification == true else { return }
+            Task { [weak self] in
+                guard let self else { return }
+                await self.reclaim.previewSource(record)
+                guard let current = self.modelWorkflow.history.first(where: { $0.id == record.id }), current == record else { return }
+                await self.reclaim.confirmSource(current)
+                await self.rescan()
+            }
+        }
         self.verification.onReport = { [weak self] report in self?.usage.record(report.modelPath) }
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
         self.reclaim.quarantineDir = { [weak self] in self?.config.quarantineDir ?? "" }
@@ -294,10 +304,24 @@ class AppHost: ObservableObject {
     }
 
     /// Hands a finished download to the existing flows; returns the route to show.
+    func reuseIntake(_ resolution: IntakeResolution) async -> AppRoute? {
+        await rescan()
+        let ready = Set((librarySnapshot?.models ?? []).filter { $0.readiness == .ready }.map { $0.item.path })
+        guard let path = IntakeCoordinator.existingModelPath(resolution, qBits: config.qBits, history: modelWorkflow.history, readyPaths: ready) else { return nil }
+        selectedModelPath = path
+        if resolution.verdict == .convertible {
+            modelWorkflow.inspect(intake: resolution, outputDirectory: URL(fileURLWithPath: path).deletingLastPathComponent().path,
+                                  qBits: config.qBits, snapshot: librarySnapshot)
+            return .prepare
+        }
+        return .library
+    }
+
     func finishIntake(_ resolution: IntakeResolution, downloadedPath: String?, selectedFile: String?) async -> AppRoute? {
         switch resolution.verdict {
         case .convertible:
-            modelWorkflow.inspect(intake: resolution, outputDirectory: config.outputDir, qBits: config.qBits, snapshot: librarySnapshot)
+            let source = downloadedPath.map { path in resolution.source.subfolder.map { URL(fileURLWithPath: path).appendingPathComponent($0).path } ?? path }
+            modelWorkflow.inspect(intake: resolution, outputDirectory: config.outputDir, qBits: config.qBits, snapshot: librarySnapshot, downloadedPath: source)
             return .prepare
         case .alreadyMLX:
             await rescan()

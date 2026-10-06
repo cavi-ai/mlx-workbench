@@ -97,6 +97,22 @@ final class IntakeCoordinator: ObservableObject {
         }
     }
 
+    static func existingModelPath(_ resolution: IntakeResolution, qBits: Int, history: [ConversionWorkflow], readyPaths: Set<String>) -> String? {
+        if resolution.verdict == .alreadyMLX {
+            return readyPaths.sorted().first { path in
+                HFRepoID.forPath(path) == resolution.source.repo &&
+                (resolution.source.revision == "main" || path.contains("/snapshots/\(resolution.source.revision)/") || path.hasSuffix("/snapshots/\(resolution.source.revision)"))
+            }
+        }
+        guard resolution.verdict == .convertible else { return nil }
+        let bits = ModelWorkflowCoordinator.allowedBits(qBits, allowed: resolution.qBits)
+        return history.sorted { $0.updatedAt > $1.updatedAt }.first { record in
+            record.sourcePath == "hf://\(resolution.source.reference)" && record.destinationBits == bits &&
+            (record.state == .verified || record.state == .completed || record.state == .existingModelFound) &&
+            readyPaths.contains(record.completedModelPath ?? record.outputPath)
+        }.map { $0.completedModelPath ?? $0.outputPath }
+    }
+
     static func looksLikeHFLink(_ text: String?) -> Bool {
         guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmed.isEmpty, trimmed.count <= 2048 else { return false }

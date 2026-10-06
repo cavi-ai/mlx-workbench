@@ -95,13 +95,14 @@ actor WorkbenchAPI {
 
     func convertRepoPreview(repo: String, qBits: Int, out: String?,
                             hfCache: String?, backend: String? = nil, modelType: String? = nil,
-                            subfolder: String? = nil) throws -> [String: Any] {
+                            subfolder: String? = nil, sourcePath: String? = nil) throws -> [String: Any] {
         var argv = ["convert", "start", "--repo", repo, "--q-bits", String(qBits)]
         if let out { argv.append(contentsOf: ["--out", out]) }
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
         if let backend { argv.append(contentsOf: ["--backend", backend]) }
         if let modelType { argv.append(contentsOf: ["--model-type", modelType]) }
         if let subfolder { argv.append(contentsOf: ["--subfolder", subfolder]) }
+        if let sourcePath { argv.append(contentsOf: ["--source-path", sourcePath]) }
         return Self.unwrapPlan(try raw(argv))
     }
 
@@ -120,7 +121,7 @@ actor WorkbenchAPI {
 
     func convertRepoStart(repo: String, qBits: Int, out: String?,
                           hfCache: String?, previewHash: String,
-                          backend: String? = nil, modelType: String? = nil, subfolder: String? = nil) throws -> [String: Any] {
+                          backend: String? = nil, modelType: String? = nil, subfolder: String? = nil, sourcePath: String? = nil) throws -> [String: Any] {
         var argv = [
             "convert", "start", "--repo", repo, "--q-bits", String(qBits),
             "--confirm", "--preview-hash", previewHash,
@@ -131,6 +132,7 @@ actor WorkbenchAPI {
         if let backend { argv.append(contentsOf: ["--backend", backend]) }
         if let modelType { argv.append(contentsOf: ["--model-type", modelType]) }
         if let subfolder { argv.append(contentsOf: ["--subfolder", subfolder]) }
+        if let sourcePath { argv.append(contentsOf: ["--source-path", sourcePath]) }
         return try raw(argv)
     }
 
@@ -432,13 +434,10 @@ actor WorkbenchAPI {
 
     // MARK: - Serve
 
-    /// The agent's serve accepts HF repo ids for cache-resident models and
-    /// `--path` for local directories (converted outputs outside the cache).
-    /// HF-cache library models are translated to their repo id here; absolute
-    /// paths outside the HF layout go through `--path`; anything else is
-    /// passed as a repo id unchanged.
+    /// Preserve the selected local directory, including its cache and revision.
+    /// Replacing a snapshot with a repo id can resolve a different revision or
+    /// cache and cause the runtime to fetch a second copy.
     static func serveModelArguments(for model: String) -> [String] {
-        if let repoID = HFRepoID.forPath(model) { return ["--repo", repoID] }
         if model.hasPrefix("/") || model.hasPrefix("~") { return ["--path", model] }
         return ["--repo", model]
     }

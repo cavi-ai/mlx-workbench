@@ -84,9 +84,18 @@ from `mlx-agent` at runtime.
   adds `--port`); other drafters are refused at plan time (`unsupported_draft`).
 - Serve accepts HF repo ids or local directories (`serve start --path`,
   upstream ≥ the local-path serve change). `WorkbenchAPI.serveModelArguments`
-  maps HF-cache snapshot paths to repo ids and absolute paths outside the HF
-  layout to `--path`; status comparisons normalize through
+  preserves every local directory, including HF-cache snapshots, through
+  `--path`; status comparisons normalize through
   `ServerInfo.modelIdentity` (repo id or path, whichever the agent reports).
+  Intake checks current ready inventory and matching conversion history before
+  fetching. Downloaded conversion directories are passed through `--source-path`
+  and persisted as `ConversionWorkflow.localSourcePath`; converter workers run
+  offline. Confirm conversion captures the visible source-cleanup choice.
+  After verification, `ConvertedSourceCleanup` reclaims receipt-owned GGUF files
+  or single-revision cache repositories to macOS Trash. It protects changed
+  outputs, active/preferred paths, other revisions and surviving shared-blob
+  references across configured roots. Recovery locations live in
+  `source-cleanup.json`; old workflows require an explicit cleanup preview.
 - The Compare tab runs **Measured Comparisons**: `ComparisonCoordinator`
   replays a prompt set against selected ready variants (one at a time, via
   the shared `ServeProbe` harness), persists runs, and feeds measured

@@ -6,6 +6,93 @@ import XCTest
 /// Parity cases mirroring tests/test_quarantine.py plus ledger ordering —
 /// the Swift port must refuse and record exactly like the Python original.
 final class QuarantineParityTests: XCTestCase {
+    func testConvertedSourceCleanupPreservesSharedBlobs() throws {
+        let fixture = try cleanupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let plan = try ConvertedSourceCleanup.preview(workflow: fixture.workflow, roots: [fixture.root.path], protected: [])
+        XCTAssertTrue(plan.paths.contains(fixture.repo.path))
+        XCTAssertTrue(plan.paths.contains(fixture.blob.path))
+        let other = fixture.root.appendingPathComponent("hub/models--other--model/snapshots/abc")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: other.appendingPathComponent("model.safetensors"), withDestinationURL: fixture.blob)
+        let shared = try ConvertedSourceCleanup.preview(workflow: fixture.workflow, roots: [fixture.root.path], protected: [])
+        XCTAssertFalse(shared.paths.contains(fixture.blob.path))
+        XCTAssertTrue(shared.paths.contains(fixture.repo.path))
+    }
+
+    func testConvertedSourceCleanupRefusesActiveSourcesAndAdditionalRevisions() throws {
+        let fixture = try cleanupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        XCTAssertThrowsError(try ConvertedSourceCleanup.preview(workflow: fixture.workflow, roots: [fixture.root.path], protected: [fixture.repo.path]))
+        try FileManager.default.createDirectory(at: fixture.repo.appendingPathComponent("snapshots/another"), withIntermediateDirectories: true)
+        XCTAssertThrowsError(try ConvertedSourceCleanup.preview(workflow: fixture.workflow, roots: [fixture.root.path], protected: []))
+    }
+
+    func testConvertedSourceCleanupRechecksBeforeTrashAndRecordsRecoveryLocations() throws {
+        let fixture = try cleanupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let roots = [fixture.root.path]
+        let plan = try ConvertedSourceCleanup.preview(workflow: fixture.workflow, roots: roots, protected: [])
+        let journal = fixture.root.appendingPathComponent("journal.json")
+        XCTAssertThrowsError(try ConvertedSourceCleanup.apply(plan, workflow: fixture.workflow, roots: roots, protected: [fixture.repo.path], journalURL: journal))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.blob.path))
+        let trashRoot = fixture.root.appendingPathComponent("trash")
+        try FileManager.default.createDirectory(at: trashRoot, withIntermediateDirectories: true)
+        let moves = try ConvertedSourceCleanup.apply(plan, workflow: fixture.workflow, roots: roots, protected: [], journalURL: journal) { source in
+            let destination = trashRoot.appendingPathComponent(source.lastPathComponent)
+            try FileManager.default.moveItem(at: source, to: destination)
+            return destination
+        }
+        XCTAssertEqual(moves.count, 2)
+        XCTAssertTrue(moves.allSatisfy { $0.to != nil })
+        XCTAssertEqual(try JSONStore<ConvertedSourceMove>(fileURL: journal).load().count, 2)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.repo.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workflow.outputPath + "/model.safetensors"))
+    }
+
+    func testConvertedSourceCleanupRefusesOutputChangedAfterVerification() throws {
+        let fixture = try cleanupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try FileManager.default.setAttributes([.modificationDate: fixture.workflow.updatedAt.addingTimeInterval(1)], ofItemAtPath: fixture.workflow.outputPath + "/model.safetensors")
+        XCTAssertThrowsError(try ConvertedSourceCleanup.preview(workflow: fixture.workflow, roots: [fixture.root.path], protected: []))
+    }
+
+    func testConvertedSourceCleanupSupportsOnlyTheConfiguredCacheAlias() throws {
+        let fixture = try cleanupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let alias = fixture.root.appendingPathComponent("cache-alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: fixture.repo.deletingLastPathComponent())
+        let receipt = URL(fileURLWithPath: fixture.workflow.jobReceipt!)
+        var payload = try JSONSerialization.jsonObject(with: Data(contentsOf: receipt)) as! [String: Any]
+        payload["argv"] = ["convert", "--hf-path", alias.path + "/models--org--source/snapshots/abc", "--mlx-path", fixture.workflow.outputPath]
+        try JSONSerialization.data(withJSONObject: payload).write(to: receipt)
+        XCTAssertThrowsError(try ConvertedSourceCleanup.preview(workflow: fixture.workflow, roots: [fixture.root.path], protected: []))
+        let plan = try ConvertedSourceCleanup.preview(workflow: fixture.workflow, roots: [fixture.root.path, alias.path], protected: [])
+        XCTAssertTrue(plan.paths.contains(fixture.repo.path))
+        XCTAssertFalse(plan.paths.contains(alias.path))
+    }
+
+    private func cleanupFixture() throws -> (root: URL, repo: URL, blob: URL, workflow: ConversionWorkflow) {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let repo = root.appendingPathComponent("hub/models--org--source")
+        let source = repo.appendingPathComponent("snapshots/abc")
+        let blob = root.appendingPathComponent("hub/blobs/ab/abcdef")
+        let output = root.appendingPathComponent("output/model-MLX-4bit")
+        for url in [source, blob.deletingLastPathComponent(), output] { try fm.createDirectory(at: url, withIntermediateDirectories: true) }
+        try Data("source weights".utf8).write(to: blob)
+        try fm.createSymbolicLink(at: source.appendingPathComponent("model.safetensors"), withDestinationURL: blob)
+        try Data("{\"quantization\":{\"bits\":4}}".utf8).write(to: output.appendingPathComponent("config.json"))
+        try Data("converted weights".utf8).write(to: output.appendingPathComponent("model.safetensors"))
+        let receipt = root.appendingPathComponent("receipt.json")
+        let payload: [String: Any] = ["exit_status":"done", "out":output.path, "argv":["convert", "--hf-path", source.path, "--mlx-path", output.path]]
+        try JSONSerialization.data(withJSONObject: payload).write(to: receipt)
+        let timestamp = Date().addingTimeInterval(1)
+        let workflow = ConversionWorkflow(id: UUID(), sourcePath: "hf://org/source", sourceModelKey: nil, sourceSignature: nil,
+            outputPath: output.path, previewHash: "hash", jobReceipt: receipt.path, completedModelPath: output.path,
+            state: .verified, serveState: .idle, message: nil, errorMessage: nil, createdAt: timestamp, updatedAt: timestamp, lastKnownAgentState: "done")
+        return (root, repo, blob, workflow)
+    }
     private let now = Date(timeIntervalSinceReferenceDate: 1_000_000_000)
 
     private func modelFolder(in root: URL) throws -> URL {

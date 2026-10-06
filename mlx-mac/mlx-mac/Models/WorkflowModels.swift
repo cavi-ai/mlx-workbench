@@ -76,6 +76,9 @@ struct ConversionWorkflow: Codable, Equatable, Identifiable {
     /// The repository folder holding the checkpoint (`--subfolder`); nil for the root.
     var subfolder: String? = nil
     /// Bit widths intake allows for this source; nil means 4 and 8.
+    var localSourcePath: String? = nil
+    /// Consent captured by Confirm conversion; old records retain their source.
+    var reclaimSourceAfterVerification: Bool? = nil
     var allowedBits: [Int]? = nil
 
     var persistenceIdentifier: String {
