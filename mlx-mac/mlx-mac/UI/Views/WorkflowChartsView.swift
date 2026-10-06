@@ -6,8 +6,13 @@ struct WorkflowChartsView: View {
     let models: [LibraryModel]
     let environment: String?
     let hardware: HardwareProfile
+    let mode: ComparisonMode
+    let activeRunID: UUID?
+    let onCompare: (String) -> WorkflowCharts.ComparisonSelection
     @State private var selectedTaskID: String?
     @State private var showBreakdown = false
+    @State private var selectionNote: String?
+    @State private var selectionError: String?
 
     private var tasks: [AgentTaskGuidance] {
         AgentTaskAdvisor.guidance(models: models, runs: [], workflow: workflow.records, environment: environment,
@@ -22,12 +27,22 @@ struct WorkflowChartsView: View {
                 Label("Workflow performance", systemImage: "chart.bar.xaxis")
                     .font(WorkbenchTypography.roundedHeading)
                 Spacer()
-                Text("WORKFLOW REPORTS").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+                if let selected { compareButton(selected) }
             }
             if let selected {
                 ViewThatFits(in: .horizontal) {
                     HStack { controls(available, selected: selected) }
                     VStack(alignment: .leading) { controls(available, selected: selected) }
+                }
+                let selection = WorkflowCharts.comparisonSelection(selected, models: models, mode: mode, activeRunID: activeRunID)
+                if selection.slots == nil {
+                    Text(selection.reason).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+                if let selectionNote {
+                    Text(selectionNote).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
+                }
+                if let selectionError {
+                    Text(selectionError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                 }
                 let candidates = WorkflowCharts.chartCandidates(selected)
                 if candidates.isEmpty {
@@ -77,6 +92,23 @@ struct WorkflowChartsView: View {
         .padding(WorkbenchSpacing.md)
         .background(WorkbenchColor.accent.opacity(0.04), in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface))
         .overlay(RoundedRectangle(cornerRadius: WorkbenchRadius.surface).stroke(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline))
+        .onChange(of: selectedTaskID) { _, _ in selectionNote = nil; selectionError = nil }
+    }
+
+    private func compareButton(_ task: AgentTaskGuidance) -> some View {
+        let selection = WorkflowCharts.comparisonSelection(task, models: models, mode: mode, activeRunID: activeRunID)
+        return Button("Compare these models") {
+            let applied = onCompare(task.id)
+            if let slots = applied.slots {
+                selectionNote = "\(ComparePresentation.variantPaths(slots).count) models loaded. Choose prompts for the new local comparison."
+                selectionError = nil
+            } else {
+                selectionNote = nil; selectionError = applied.reason
+            }
+        }
+        .buttonStyle(.bordered)
+        .disabled(selection.slots == nil)
+        .help(selection.reason + " Loads slots only; does not replay the harness or start a run.")
     }
 
     @ViewBuilder private func controls(_ tasks: [AgentTaskGuidance], selected: AgentTaskGuidance) -> some View {

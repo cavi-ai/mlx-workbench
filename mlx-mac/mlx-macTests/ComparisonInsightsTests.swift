@@ -275,6 +275,59 @@ final class ComparisonInsightsTests: XCTestCase {
         XCTAssertTrue(changedEnvironment.allSatisfy { WorkflowCharts.chartCandidates($0).isEmpty })
     }
 
+    private func workflowTasks(_ reports: [WorkflowEvidence], models: [LibraryModel]) -> [AgentTaskGuidance] {
+        AgentTaskAdvisor.guidance(models: models, runs: [], workflow: reports, environment: environment,
+            hardware: HardwareProfile(chip: "M4", memoryBytes: nil), memory: nil, contextTokens: 2048, reserveGB: 4)
+    }
+
+    private func selectionReport(_ path: String, duration: Double = 10, signature: String = "s") -> WorkflowEvidence {
+        var report = WorkflowEvidence(id: UUID(), harness: "opencode", workloadID: "task", useCase: .coding,
+            modelPath: path, modelSignature: signature, environmentFingerprint: environment,
+            measuredAt: Date(timeIntervalSince1970: 1000), sampleCount: 3, totalSeconds: duration, source: "session")
+        report.configurationFingerprint = "config"
+        return report
+    }
+
+    func testWorkflowSelectionLoadsMeasuredModelsWithoutAddingUnmeasuredAlternatives() throws {
+        let models = [model("/a"), model("/b"), model("/unmeasured")]
+        let task = try XCTUnwrap(workflowTasks([selectionReport("/a", duration: 20), selectionReport("/b")], models: models).first)
+        let selection = WorkflowCharts.comparisonSelection(task, models: models, mode: .chat, activeRunID: nil)
+        XCTAssertEqual(selection.slots, ["/b", "/a"])
+        let single = try XCTUnwrap(workflowTasks([selectionReport("/a")], models: models).first)
+        XCTAssertEqual(WorkflowCharts.comparisonSelection(single, models: models, mode: .chat, activeRunID: nil).slots, ["/a", nil])
+    }
+
+    func testWorkflowSelectionRejectsActiveRunsAndDoesNotSilentlyTruncateCohorts() throws {
+        let models = [model("/a"), model("/b"), model("/c"), model("/d"), model("/e")]
+        let task = try XCTUnwrap(workflowTasks(models.map { selectionReport($0.item.path) }, models: models).first)
+        let oversized = WorkflowCharts.comparisonSelection(task, models: models, mode: .chat, activeRunID: nil)
+        XCTAssertNil(oversized.slots)
+        XCTAssertTrue(oversized.reason.contains("5"))
+        XCTAssertTrue(oversized.reason.contains("4"))
+        let small = try XCTUnwrap(workflowTasks([selectionReport("/a")], models: models).first)
+        XCTAssertNil(WorkflowCharts.comparisonSelection(small, models: models, mode: .chat, activeRunID: UUID()).slots)
+    }
+
+    func testWorkflowSelectionRechecksReadinessAndMode() throws {
+        let models = [model("/a"), model("/b")]
+        let task = try XCTUnwrap(workflowTasks([selectionReport("/a"), selectionReport("/b")], models: models).first)
+        let unavailable = [model("/a", readiness: .needsConversion)]
+        XCTAssertNil(WorkflowCharts.comparisonSelection(task, models: unavailable, mode: .chat, activeRunID: nil).slots)
+        let media = [model("/image", task: .imageGeneration)]
+        let mediaTask = try XCTUnwrap(workflowTasks([selectionReport("/image")], models: media).first)
+        XCTAssertNil(WorkflowCharts.comparisonSelection(mediaTask, models: media, mode: .chat, activeRunID: nil).slots)
+        XCTAssertEqual(WorkflowCharts.comparisonSelection(mediaTask, models: media, mode: .imageGeneration, activeRunID: nil).slots, ["/image", nil])
+    }
+
+    func testWorkflowSelectionExcludesStaleAndMissingConfigurationEvidence() throws {
+        let models = [model("/a"), model("/b")]
+        let task = try XCTUnwrap(workflowTasks([selectionReport("/a", signature: "old"), selectionReport("/b")], models: models).first)
+        XCTAssertEqual(WorkflowCharts.comparisonSelection(task, models: models, mode: .chat, activeRunID: nil).slots, ["/b", nil])
+        var unconfigured = selectionReport("/a"); unconfigured.configurationFingerprint = nil
+        let unknown = try XCTUnwrap(workflowTasks([unconfigured], models: models).first)
+        XCTAssertNil(WorkflowCharts.comparisonSelection(unknown, models: models, mode: .chat, activeRunID: nil).slots)
+    }
+
     func testAgentExportBackwardDecodeKeepsMissingGuidanceUnknown() throws {
         let exported = ComparisonInsights.agentEvidence(models: [], runs: [], workflow: [], environment: nil,
             hardware: HardwareProfile(chip: "M4", memoryBytes: nil), memory: nil, capturedAt: nil, contextTokens: 2048, reserveGB: 4, protected: [])

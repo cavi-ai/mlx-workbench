@@ -161,6 +161,14 @@ charted. Incomplete timing components show a total-duration **Breakdown unknown*
 bar; measured zero durations remain zero. These charts do not establish quality,
 current memory fit, or GPU/disk/network bottlenecks.
 
+Use **Compare these models** to load a workflow cohort's current, ready models
+into the selected comparison mode. Your prompt set stays selected; choose
+appropriate prompts and start the local comparison yourself. This does not
+replay the external harness. Changed evidence is re-checked when clicked,
+and stale, unavailable or incompatible models are excluded. The action is
+disabled during a run or when more than four models qualify; select a subset
+manually in the model slots for larger cohorts.
+
 Import reads and validates the report off the main actor, then previews new
 records, identical duplicates, dates, timings, source and model/environment
 identity status before saving. Historical or unmatched observations can be
