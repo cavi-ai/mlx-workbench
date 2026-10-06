@@ -223,6 +223,11 @@ from `mlx-agent` at runtime.
   is charted only when comparable; missing components render a total-duration
   "Breakdown unknown" bar, never inferred GPU/disk time. Zero measured durations
   remain zero; unattributed time is derived only from complete additive timings.
+  "Compare these models" re-checks the cohort against current identities and
+  inventory at click time, loads only ready models for the selected mode, and
+  keeps the prompt set. It never starts a run or replays the external harness.
+  Active comparisons and cohorts above the existing four-slot limit block the
+  action; there is no silent truncation or unmeasured model fallback.
   `AgentTaskAdvisor` adds optional structured `taskGuidance` to schema-1
   agent exports (old exports decode without it). It ranks only within the
   newest complete comparison run or matched harness/workload/configuration/

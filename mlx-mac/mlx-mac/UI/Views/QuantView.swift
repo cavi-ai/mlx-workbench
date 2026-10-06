@@ -217,7 +217,8 @@ struct QuantView: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                 resultsArea
                 WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
-                    environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile)
+                    environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile,
+                    mode: mode, activeRunID: comparison.activeRunID, onCompare: loadWorkflowComparison)
                 setupBar
                 DisclosureGroup("Model fit and workflow evidence") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -893,6 +894,26 @@ struct QuantView: View {
         variantSlots = suggestion.paths
         selectionReason = suggestion.reason
         initializedSuggestions = true
+    }
+
+    private func loadWorkflowComparison(_ taskID: String) -> WorkflowCharts.ComparisonSelection {
+        // Rebuild from current identities at click time; never apply the view's
+        // older snapshot after inventory, evidence, environment or run state changes.
+        let models = appHost.librarySnapshot?.models ?? []
+        let tasks = AgentTaskAdvisor.guidance(models: models, runs: [], workflow: appHost.workflowEvidence.records,
+            environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile,
+            memory: nil, contextTokens: 8192, reserveGB: 0)
+        guard let task = tasks.first(where: { $0.id == taskID }) else {
+            return WorkflowCharts.ComparisonSelection(slots: nil, reason: "Workflow evidence changed. Select the cohort again.")
+        }
+        let selection = WorkflowCharts.comparisonSelection(task, models: models, mode: mode, activeRunID: comparison.activeRunID)
+        if let slots = selection.slots {
+            variantSlots = slots
+            initializedSuggestions = true
+            manuallySelectedModels = true
+            selectionReason = selection.reason
+        }
+        return selection
     }
 
     private func removeSlot(_ index: Int) {
