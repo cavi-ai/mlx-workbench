@@ -110,13 +110,16 @@ struct CLIProcess {
         var stdoutCapture: (data: Data, tooLarge: Bool)?
         var stderrCapture: (data: Data, tooLarge: Bool)?
 
+        // Pipe reads block until output or EOF. Give each stream its own
+        // thread so a waiting CLI call cannot starve its readers on the
+        // shared dispatch/cooperative pool, especially on small CI hosts.
         drained.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
+        Thread.detachNewThread {
             stdoutCapture = Self.collect(handle: stdout.fileHandleForReading, cap: Self.maxOutputBytes)
             drained.leave()
         }
         drained.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
+        Thread.detachNewThread {
             stderrCapture = Self.collect(handle: stderr.fileHandleForReading, cap: Self.maxOutputBytes)
             drained.leave()
         }
