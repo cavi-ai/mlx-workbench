@@ -263,7 +263,7 @@ final class EndpointSupervisor: ObservableObject {
 
     private func reconcileSlot(_ slot: EndpointSlot, running: [ServerInfo]) async {
         if let ours = running.first(where: { $0.port == slot.port }) {
-            if HFRepoID.serveIdentity(for: ours.modelIdentity) == HFRepoID.serveIdentity(for: slot.modelPath) {
+            if HFRepoID.matches(ours.modelIdentity, slot.modelPath) {
                 slotStates[slot.id] = .running(modelPath: slot.modelPath, port: slot.port)
                 recordIntentionalServe(slot)
             } else {

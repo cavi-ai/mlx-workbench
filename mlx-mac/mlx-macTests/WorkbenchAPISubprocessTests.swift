@@ -275,9 +275,9 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(previewHash, "serve-hash")
     }
 
-    func testHFCachePathServesViaRepoFlag() async throws {
+    func testHFCachePathServesExactSnapshotWithoutResolvingRepo() async throws {
         let cachePath = "/Users/x/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/abc123"
-        let agent = try FixtureAgent(expectedModelFlag: "--repo", expectedModelValue: "mlx-community/Qwen3-0.6B-4bit")
+        let agent = try FixtureAgent(expectedModelFlag: "--path", expectedModelValue: cachePath)
         defer { agent.remove() }
 
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)

@@ -39,13 +39,13 @@ struct ModelWorkflowAPI {
         workflowAPI.convertRepoPreview = { request in
             try await api.convertRepoPreview(
                 repo: request.repo, qBits: request.qBits, out: request.output, hfCache: nil,
-                backend: request.backend, modelType: request.modelType, subfolder: request.subfolder
+                backend: request.backend, modelType: request.modelType, subfolder: request.subfolder, sourcePath: request.sourcePath
             )
         }
         workflowAPI.convertRepoStart = { request, hash in
             try await api.convertRepoStart(
                 repo: request.repo, qBits: request.qBits, out: request.output, hfCache: nil, previewHash: hash,
-                backend: request.backend, modelType: request.modelType, subfolder: request.subfolder
+                backend: request.backend, modelType: request.modelType, subfolder: request.subfolder, sourcePath: request.sourcePath
             )
         }
         return workflowAPI
@@ -60,6 +60,7 @@ struct RepoConversionRequest: Equatable {
     let output: String?
     var modelType: String? = nil
     var subfolder: String? = nil
+    var sourcePath: String? = nil
 }
 
 struct ModelWorkflowPersistence {
@@ -195,7 +196,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     /// Starts a conversion from a Hugging Face repo the intake sheet resolved
     /// as convertible and already downloaded into the HF cache.
-    func inspect(intake: IntakeResolution, outputDirectory: String, qBits: Int, snapshot: LibrarySnapshot?) {
+    func inspect(intake: IntakeResolution, outputDirectory: String, qBits: Int, snapshot: LibrarySnapshot?, downloadedPath: String? = nil) {
         selectedSource = nil
         selectedSnapshot = snapshot
         conversionPreviewQBits = nil
@@ -208,6 +209,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         record.estimatedOutputBytes = intake.estimatedOutputBytes
         record.modelType = intake.modelType
         record.allowedBits = intake.qBits
+        record.localSourcePath = downloadedPath
         replace(record, persist: false)
     }
 
@@ -224,6 +226,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         record.estimatedOutputBytes = workflow.estimatedOutputBytes
         record.modelType = workflow.modelType
         record.allowedBits = workflow.allowedBits
+        record.localSourcePath = workflow.localSourcePath
         replace(record, persist: false)
     }
 
@@ -317,8 +320,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
     }
 
-    func confirm(qBits: Int) async {
+    func confirm(qBits: Int, reclaimSourceAfterVerification: Bool = false) async {
         guard !isConversionSubmissionInFlight else { return }
+        var record = workflow
+        record.reclaimSourceAfterVerification = reclaimSourceAfterVerification
+        replace(record, persist: false)
         if let repo = workflow.sourceRepo {
             await confirmRepo(repo, backend: workflow.backend ?? "mlx-lm", qBits: qBits)
             return
@@ -425,7 +431,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     private func repoRequest(_ repo: String, backend: String, qBits: Int, output: String) -> RepoConversionRequest {
         RepoConversionRequest(
             repo: repo, backend: backend, qBits: qBits, output: output,
-            modelType: workflow.modelType, subfolder: workflow.subfolder
+            modelType: workflow.modelType, subfolder: workflow.subfolder, sourcePath: workflow.localSourcePath
         )
     }
 
@@ -906,7 +912,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     /// serve identity before comparing.
     private func serverRunsModel(_ server: ServerInfo, _ modelPath: String) -> Bool {
         guard server.state?.lowercased() == "running" else { return false }
-        return HFRepoID.serveIdentity(for: server.modelIdentity) == HFRepoID.serveIdentity(for: modelPath)
+        return HFRepoID.matches(server.modelIdentity, modelPath)
     }
 
     private func makeWorkflow(
@@ -1019,6 +1025,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
             estimatedOutputBytes: base.estimatedOutputBytes,
             modelType: base.modelType,
             subfolder: base.subfolder,
+            localSourcePath: base.localSourcePath,
+            reclaimSourceAfterVerification: base.reclaimSourceAfterVerification,
             allowedBits: base.allowedBits
         )
     }

@@ -23,7 +23,7 @@ struct RunPresentation: Equatable {
         guard let modelPath else { return nil }
         return servers.first(where: {
             $0.state?.lowercased() == "running"
-                && HFRepoID.serveIdentity(for: $0.modelIdentity) == HFRepoID.serveIdentity(for: modelPath)
+                && HFRepoID.matches($0.modelIdentity, modelPath)
         })
     }
     var canPreview: Bool {

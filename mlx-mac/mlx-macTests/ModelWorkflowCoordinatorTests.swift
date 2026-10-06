@@ -18,11 +18,12 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let host = await makeHost(preview: ["preview_hash": "hash-1"], confirmReceipt: "receipt-1")
         await MainActor.run { host.modelWorkflow.inspect(source: ggufSource, snapshot: nil) }
         await host.modelWorkflow.preview(qBits: 4, out: nil)
-        await host.modelWorkflow.confirm(qBits: 4)
+        await host.modelWorkflow.confirm(qBits: 4, reclaimSourceAfterVerification: true)
 
         await MainActor.run {
             XCTAssertEqual(host.modelWorkflow.workflow.state, .queued)
             XCTAssertEqual(host.modelWorkflow.workflow.jobReceipt, "receipt-1")
+            XCTAssertEqual(host.modelWorkflow.workflow.reclaimSourceAfterVerification, true)
         }
     }
 

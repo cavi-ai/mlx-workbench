@@ -102,10 +102,9 @@ struct ModelFlightPathPresentation: Equatable {
             verificationDetail = "The canary suite is running."
         }
         let measured = completedRuns.contains { run in run.state == .completed && run.results.contains { result in result.modelPath == path && result.modelSignature == signature && result.error == nil && !result.samples.isEmpty } }
-        let identity = HFRepoID.serveIdentity(for: path)
-        let serverConfirms = servers.contains { $0.state?.lowercased() == "running" && HFRepoID.serveIdentity(for: $0.modelIdentity) == identity }
+        let serverConfirms = servers.contains { $0.state?.lowercased() == "running" && HFRepoID.matches($0.modelIdentity, path) }
         let stateConfirms: Bool
-        if case .running(let servedPath, _) = endpointState { stateConfirms = HFRepoID.serveIdentity(for: servedPath) == identity } else { stateConfirms = false }
+        if case .running(let servedPath, _) = endpointState { stateConfirms = HFRepoID.matches(servedPath, path) } else { stateConfirms = false }
         let serving = serverConfirms && stateConfirms
         return .init(modelPath: path, stages: [
             .init(stage: .discovered, state: .complete, detail: "Present in the latest Library snapshot."),

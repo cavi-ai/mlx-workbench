@@ -470,3 +470,194 @@ enum Quarantine {
         }
     }
 }
+
+struct ConvertedSourcePlan: Equatable {
+    let workflow: ConversionWorkflow
+    let roots: [String]
+    let paths: [String]
+    let bytes: Int64
+    let fingerprint: String
+}
+
+struct ConvertedSourceMove: Codable {
+    let id: String
+    let from: String
+    var to: String?
+}
+
+/// Reclaim only sources identified by a successful conversion receipt, after
+/// verification. Cache links are references, never independently owned weights.
+enum ConvertedSourceCleanup {
+    static func preview(workflow: ConversionWorkflow, roots: [String], protected: [String], fileManager fm: FileManager = .default) throws -> ConvertedSourcePlan {
+        guard workflow.state == .verified, let receiptPath = workflow.jobReceipt,
+              let output = workflow.completedModelPath else { throw refused("the conversion must pass verification first.") }
+        try noParentLinks(receiptPath, fm: fm)
+        let data = try Data(contentsOf: URL(fileURLWithPath: receiptPath))
+        guard data.count <= 1024 * 1024,
+              let receipt = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              receipt["exit_status"] as? String == "done", let out = receipt["out"] as? String,
+              Quarantine.resolve(out) == Quarantine.resolve(output),
+              let argv = receipt["argv"] as? [String] else { throw refused("no matching successful conversion receipt.") }
+        let outputSnapshot = try Quarantine.folderSnapshot(target: output, roots: roots, protected: [], fileManager: fm)
+        let outputEntries = try entries(outputSnapshot.path, fm: fm)
+        for path in outputEntries where path.hasSuffix(".safetensors") || path.hasSuffix(".json") {
+            if let modified = try fm.attributesOfItem(atPath: path)[.modificationDate] as? Date, modified > workflow.updatedAt {
+                throw refused("the converted output changed after verification; verify it again.")
+            }
+        }
+        var sourcePaths = [String]()
+        for flag in ["--hf-path", "--lora", "--gguf"] {
+            if let index = argv.firstIndex(of: flag), argv.indices.contains(index + 1) { sourcePaths.append(argv[index + 1]) }
+        }
+        // Older receipts used a repo id; resolve only its existing refs/main.
+        if sourcePaths.allSatisfy({ !$0.hasPrefix("/") }) {
+            for root in roots {
+                let repo = (receipt["repo"] as? String) ?? String(workflow.sourcePath.dropFirst("hf://".count))
+                let entry = NSString(string: root).expandingTildeInPath + "/models--" + repo.replacingOccurrences(of: "/", with: "--")
+                if let revision = try? String(contentsOfFile: entry + "/refs/main", encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+                   !revision.isEmpty, !revision.contains("/"), revision != ".", revision != ".." {
+                    sourcePaths = [entry + "/snapshots/" + revision]
+                    break
+                }
+            }
+        }
+        guard !sourcePaths.isEmpty, sourcePaths.allSatisfy({ $0.hasPrefix("/") }) else { throw refused("the receipt does not identify a local source.") }
+        let allowed = roots.map(Quarantine.resolve)
+        var targets = Set<String>(), cacheRoots = Set<String>(), candidates = Set<String>()
+        for source in sourcePaths {
+            let components = URL(fileURLWithPath: source).standardizedFileURL.pathComponents
+            if let index = components.firstIndex(where: { $0.hasPrefix("models--") }), components.count > index + 2, components[index + 1] == "snapshots" {
+                let spelling = NSString.path(withComponents: Array(components.prefix(index + 1)))
+                if (try? fm.destinationOfSymbolicLink(atPath: spelling)) != nil { throw QuarantineError.symlinkRefused(spelling) }
+                let cacheSpelling = URL(fileURLWithPath: spelling).deletingLastPathComponent().path
+                let repo: String
+                if roots.contains(where: { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath).standardizedFileURL.path == cacheSpelling }) {
+                    // A configured cache alias is supported only through its
+                    // physical root; model directories themselves remain fenced.
+                    repo = Quarantine.resolve(cacheSpelling) + "/" + components[index]
+                } else { repo = spelling }
+                try noParentLinks(repo, fm: fm)
+                let snapshots = try fm.contentsOfDirectory(atPath: repo + "/snapshots")
+                guard snapshots == [components[index + 2]] else { throw refused("the source cache contains other revisions; keep them or review the cache separately.") }
+                targets.insert(repo)
+                cacheRoots.insert(URL(fileURLWithPath: repo).deletingLastPathComponent().path)
+            } else if source.lowercased().hasSuffix(".gguf") {
+                try noParentLinks(source, fm: fm)
+                targets.insert(try Quarantine.guardPath(source, roots: roots, fileManager: fm))
+            } else { throw refused("only receipt-owned GGUF files or single-revision HF sources can be reclaimed.") }
+        }
+        for target in targets {
+            guard allowed.contains(where: { target != $0 && Quarantine.isWithin(target, parent: $0) }),
+                  !allowed.contains(where: { Quarantine.isWithin($0, parent: target) }),
+                  !Quarantine.isWithin(outputSnapshot.path, parent: target),
+                  !Quarantine.isWithin(target, parent: outputSnapshot.path),
+                  !isProtected(target, protected: protected) else { throw refused("a source is outside the configured roots or still in use.") }
+            for item in try entries(target, fm: fm) {
+                if let _ = try? fm.destinationOfSymbolicLink(atPath: item) {
+                    let resolved = Quarantine.resolve(item)
+                    guard let cache = cacheRoots.first(where: { Quarantine.isWithin(resolved, parent: $0) }) else { throw refused("a source links outside its owned cache.") }
+                    if Quarantine.isWithin(resolved, parent: cache + "/blobs") { candidates.insert(resolved) }
+                }
+            }
+        }
+        // Walk every configured model root and the entire cache, without
+        // following links. A surviving reference protects a shared blob.
+        var references = [String]()
+        var visited = Set<String>()
+        for root in Set(allowed).union(cacheRoots) where fm.fileExists(atPath: root) {
+            for item in try entries(root, excluding: targets, fm: fm) where visited.insert(item).inserted {
+                if let destination = try? fm.destinationOfSymbolicLink(atPath: item) {
+                    candidates.remove(Quarantine.resolve(item))
+                    references.append(item + "|" + destination)
+                }
+            }
+        }
+        for blob in candidates {
+            try noParentLinks(blob, fm: fm)
+            let attrs = try fm.attributesOfItem(atPath: blob)
+            if attrs[.type] as? FileAttributeType == .typeRegular, (attrs[.referenceCount] as? Int ?? 1) == 1, !isProtected(blob, protected: protected) { targets.insert(blob) }
+        }
+        let paths = targets.sorted { lhs, rhs in
+            // Remove cache references before moving their unshared payloads.
+            let ld = (try? fm.attributesOfItem(atPath: lhs)[.type] as? FileAttributeType) == .typeDirectory
+            let rd = (try? fm.attributesOfItem(atPath: rhs)[.type] as? FileAttributeType) == .typeDirectory
+            return ld == rd ? lhs < rhs : ld
+        }
+        var states = references + [outputSnapshot.treeFingerprint ?? "", outputSnapshot.path]
+        var bytes: Int64 = 0
+        for target in paths {
+            for item in try entries(target, fm: fm) {
+                let attrs = try fm.attributesOfItem(atPath: item)
+                let link = (try? fm.destinationOfSymbolicLink(atPath: item)) ?? ""
+                let size = attrs[.size] as? Int64 ?? 0
+                var status = stat()
+                guard lstat(item, &status) == 0 else { throw QuarantineError.changedSincePreview }
+                states.append("\(item)|\(status.st_dev)|\(status.st_ino)|\(size)|\(status.st_mtimespec)|\(status.st_ctimespec)|\(link)")
+                if attrs[.type] as? FileAttributeType == .typeRegular { bytes += size }
+            }
+        }
+        let fingerprint = SHA256.hash(data: Data(states.sorted().joined(separator: "\n").utf8)).map { String(format: "%02x", $0) }.joined()
+        return ConvertedSourcePlan(workflow: workflow, roots: roots, paths: paths, bytes: bytes, fingerprint: fingerprint)
+    }
+
+    static func apply(_ plan: ConvertedSourcePlan, workflow: ConversionWorkflow, roots: [String], protected: [String],
+                      fileManager fm: FileManager = .default, journalURL: URL = JSONStore<ConvertedSourceMove>.defaultFileURL("source-cleanup.json"),
+                      trash: ((URL) throws -> URL)? = nil) throws -> [ConvertedSourceMove] {
+        guard workflow == plan.workflow, roots == plan.roots,
+              try preview(workflow: workflow, roots: roots, protected: protected, fileManager: fm).fingerprint == plan.fingerprint else { throw QuarantineError.changedSincePreview }
+        let store = JSONStore<ConvertedSourceMove>(fileURL: journalURL, fileManager: fm)
+        var moves = [ConvertedSourceMove]()
+        for path in plan.paths {
+            var move = ConvertedSourceMove(id: UUID().uuidString, from: path, to: nil)
+            try store.upsert(move, id: \.id)
+            let destination: URL
+            if let trash { destination = try trash(URL(fileURLWithPath: path)) }
+            else {
+                var url: NSURL?
+                try fm.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: &url)
+                guard let url else { throw refused("Trash did not return a recovery location; inspect Finder before retrying.") }
+                destination = url as URL
+            }
+            move.to = destination.path
+            moves.append(move)
+            do { try store.upsert(move, id: \.id) }
+            catch { throw refused("moved \(path) to \(destination.path), but could not update recovery history: \(error.localizedDescription)") }
+        }
+        return moves
+    }
+
+    private static func entries(_ root: String, excluding: Set<String> = [], fm: FileManager) throws -> [String] {
+        var result = [String](), pending = [root]
+        while let path = pending.popLast() {
+            if excluding.contains(path) { continue }
+            let attrs = try fm.attributesOfItem(atPath: path)
+            result.append(path)
+            guard result.count < 100000 else { throw refused("the reference scan is too large; review this source manually.") }
+            if attrs[.type] as? FileAttributeType == .typeDirectory {
+                pending.append(contentsOf: try fm.contentsOfDirectory(atPath: path).map { path + "/" + $0 })
+            }
+        }
+        return result
+    }
+
+    private static func noParentLinks(_ path: String, fm: FileManager) throws {
+        var url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL
+        while url.path != "/" {
+            if ["/var", "/tmp", "/etc"].contains(url.path), (try? fm.destinationOfSymbolicLink(atPath: url.path)) == "private" + url.path { break }
+            if (try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil { throw QuarantineError.symlinkRefused(url.path) }
+            url.deleteLastPathComponent()
+        }
+    }
+
+    private static func isProtected(_ path: String, protected: [String]) -> Bool {
+        protected.contains { item in
+            if item.hasPrefix("/") {
+                let canonical = Quarantine.resolve(item)
+                return Quarantine.isWithin(path, parent: canonical) || Quarantine.isWithin(canonical, parent: path)
+            }
+            return HFRepoID.forPath(path) == item
+        }
+    }
+
+    private static func refused(_ reason: String) -> QuarantineError { .unsafeFolder(reason) }
+}

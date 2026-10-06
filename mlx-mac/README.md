@@ -102,6 +102,23 @@ created. It does not delete or quarantine model data.
 | **Wire** | mlx-agent wiring plus **cross-client wiring** (opencode, Continue, Zed, Aider — atomic writes with backup and rollback; LM Studio/Ollama advisory) |
 | **Menu bar** | Endpoint state and start/stop at a glance |
 
+## Local model reuse and source cleanup
+
+Run and Compare serve the selected local directory, including its exact Hugging
+Face cache revision. Intake reuses ready cached models or matching completed
+conversions before fetching. Conversion receives the downloaded checkpoint path
+and runs offline, so it cannot silently download a second source copy.
+
+Prepare enables **Move original source to Trash after verification** for new
+conversions. Confirm conversion captures that choice. A failed, unavailable or
+skipped verification keeps the source. Cleanup also keeps active/preferred
+sources, other cache revisions, shared blobs and outputs changed since
+verification. If cleanup cannot safely proceed, the source remains and Prepare
+shows the reason. For older verified conversions, use **Preview source cleanup**
+and review the paths before moving originals to Trash. Recovery locations are
+recorded in `source-cleanup.json` in Application Support. Disk space is released
+when you empty Trash.
+
 ## Compare decisions and workflow evidence
 
 Charts lead the Compare tab; outputs and machine/workflow details start collapsed.

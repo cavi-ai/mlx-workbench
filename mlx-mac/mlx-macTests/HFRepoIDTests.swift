@@ -7,12 +7,21 @@ final class HFRepoIDTests: XCTestCase {
     func testSnapshotPathMapsToRepoID() {
         let path = "/Users/x/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/abc123"
         XCTAssertEqual(HFRepoID.forPath(path), "mlx-community/Qwen3-0.6B-4bit")
-        XCTAssertEqual(HFRepoID.serveIdentity(for: path), "mlx-community/Qwen3-0.6B-4bit")
+        XCTAssertEqual(HFRepoID.serveIdentity(for: path), path)
     }
 
     func testBlobPathMapsToRepoID() {
         let path = "/Users/x/.cache/huggingface/hub/models--beshkenadze--moondream3-preview-mlx-4bit/blobs/sha"
         XCTAssertEqual(HFRepoID.forPath(path), "beshkenadze/moondream3-preview-mlx-4bit")
+    }
+
+    func testServingIdentityDistinguishesLocalCacheRevisionsAndAcceptsLegacyRepoReceipts() {
+        let a = "/cache/models--org--model/snapshots/first"
+        let b = "/cache/models--org--model/snapshots/second"
+        XCTAssertFalse(HFRepoID.matches(a, b))
+        XCTAssertTrue(HFRepoID.matches(a, a))
+        XCTAssertTrue(HFRepoID.matches("org/model", a))
+        XCTAssertFalse(HFRepoID.matches("other/model", a))
     }
 
     func testPathOutsideCachePassesThrough() {
@@ -32,11 +41,11 @@ final class HFRepoIDTests: XCTestCase {
 
     // MARK: - Serve argv selection (WorkbenchAPI boundary)
 
-    func testHFCachePathServesByRepoID() {
+    func testHFCachePathServesExactLocalSnapshot() {
         let path = "/Users/x/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/abc123"
         XCTAssertEqual(
             WorkbenchAPI.serveModelArguments(for: path),
-            ["--repo", "mlx-community/Qwen3-0.6B-4bit"]
+            ["--path", path]
         )
     }
 

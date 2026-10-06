@@ -64,6 +64,8 @@ final class ReclaimCoordinator: ObservableObject {
     @Published private(set) var trashPlan: QuarantineTrashPlan?
     @Published private(set) var trashNote: String?
     @Published private(set) var folderPlan: ModelFolderReclaimPlan?
+    @Published private(set) var sourcePlan: ConvertedSourcePlan?
+    @Published private(set) var sourceCleanupNote: String?
     /// Incomplete HF-cache findings from the last cache check, with the
     /// prune preview hash when one has been previewed.
     @Published private(set) var cacheFindings: [DoctorFinding] = []
@@ -89,6 +91,35 @@ final class ReclaimCoordinator: ObservableObject {
     private var protectedFolderPaths: [String] {
         protectedPaths() + opportunities.compactMap { $0.replacement?.keeper.path }
     }
+
+    func previewSource(_ workflow: ConversionWorkflow) async {
+        guard !isApplying else { return }
+        isApplying = true
+        defer { isApplying = false }
+        sourcePlan = nil; sourceCleanupNote = nil; lastError = nil
+        let roots = Array(Set(ggufRoots() + mlxRoots())).sorted(), protected = protectedPaths(), manager = fileManager
+        do {
+            sourcePlan = try await Task.detached(priority: .userInitiated) {
+                try ConvertedSourceCleanup.preview(workflow: workflow, roots: roots, protected: protected, fileManager: manager)
+            }.value
+        } catch { lastError = AppHost.render(error) }
+    }
+
+    func confirmSource(_ workflow: ConversionWorkflow) async {
+        guard !isApplying, let plan = sourcePlan else { return }
+        isApplying = true
+        defer { isApplying = false; sourcePlan = nil }
+        let roots = Array(Set(ggufRoots() + mlxRoots())).sorted(), protected = protectedPaths(), manager = fileManager
+        do {
+            let moves = try await Task.detached(priority: .userInitiated) {
+                try ConvertedSourceCleanup.apply(plan, workflow: workflow, roots: roots, protected: protected, fileManager: manager)
+            }.value
+            sourceCleanupNote = "Moved \(moves.count) source items to Trash. Empty Trash when you want to release their disk space."
+            lastError = nil
+        } catch { lastError = AppHost.render(error) }
+    }
+
+    func cancelSource() { if !isApplying { sourcePlan = nil } }
 
     func previewFolder(_ path: String) async {
         guard !isApplying else { return }

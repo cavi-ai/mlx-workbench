@@ -5,6 +5,26 @@ import XCTest
 
 @MainActor
 final class IntakeCoordinatorTests: XCTestCase {
+    func testExistingMLXIntakeUsesTheReadySnapshotOnly() throws {
+        let result = try Self.resolution(verdict: "already_mlx", backend: "mlx-lm")
+        let path = "/cache/models--openai--whisper-tiny/snapshots/abc"
+        XCTAssertEqual(IntakeCoordinator.existingModelPath(result, qBits: 4, history: [], readyPaths: [path]), path)
+        XCTAssertNil(IntakeCoordinator.existingModelPath(result, qBits: 4, history: [], readyPaths: []))
+        XCTAssertNil(IntakeCoordinator.existingModelPath(result, qBits: 4, history: [], readyPaths: ["/cache/models--other--model/snapshots/abc"]))
+    }
+
+    func testConvertibleIntakeReusesOnlyMatchingCurrentOutputAndWidth() throws {
+        let resolution = try Self.resolution(verdict: "convertible", backend: "mlx-lm")
+        let path = "/models/whisper-tiny-MLX-4bit"
+        let record = ConversionWorkflow(id: UUID(), sourcePath: "hf://openai/whisper-tiny", sourceModelKey: nil, sourceSignature: nil,
+            outputPath: path, previewHash: nil, jobReceipt: nil, completedModelPath: path,
+            state: .verified, serveState: .idle, message: nil, errorMessage: nil, createdAt: Date(), updatedAt: Date(), lastKnownAgentState: nil)
+        XCTAssertEqual(IntakeCoordinator.existingModelPath(resolution, qBits: 4, history: [record], readyPaths: [path]), path)
+        XCTAssertNil(IntakeCoordinator.existingModelPath(resolution, qBits: 8, history: [record], readyPaths: [path]))
+        XCTAssertNil(IntakeCoordinator.existingModelPath(resolution, qBits: 4, history: [record], readyPaths: []))
+        let other = try Self.resolution(verdict: "convertible", backend: "mlx-lm", subfolder: "different")
+        XCTAssertNil(IntakeCoordinator.existingModelPath(other, qBits: 4, history: [record], readyPaths: [path]))
+    }
     func testLinkSniffing() {
         for text in ["https://huggingface.co/org/name", "hf.co/org/name", "  org/name  ", "https://www.huggingface.co/org/name/tree/main"] {
             XCTAssertTrue(IntakeCoordinator.looksLikeHFLink(text), text)
