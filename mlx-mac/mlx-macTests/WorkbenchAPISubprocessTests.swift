@@ -104,6 +104,19 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
 #endif
     }
 
+    func testMediaWorkerPreservesAgentFailure() async throws {
+        let agent = try FixtureAgent(failingMedia: ())
+        defer { agent.remove() }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+        do {
+            _ = try await api.describe(path: "/m/vlm", prompt: "What?", image: "/i.png", video: nil, maxTokens: 16)
+            XCTFail("Expected the agent failure to propagate")
+        } catch let error as BridgeError {
+            XCTAssertEqual(error.code, "fixture_media_failure")
+            XCTAssertEqual(error.message, "Media failed")
+        }
+    }
+
     func testConvertPreviewUnwrapsPlanEnvelope() async throws {
         // mlx-agent ≥ 0.5.x wraps previews in {plan, requires_confirmation}.
         let agent = try FixtureAgent(
@@ -335,6 +348,17 @@ private final class FixtureAgent {
             released = os.path.exists(\(String(reflecting: release.path)))
             data = {"text": "A red circle." if released else "Timed out before quick calls completed.", "generation_tokens": 4}
         print(json.dumps({"status": "ok", "data": data}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
+
+    convenience init(failingMedia: Void) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import json
+        print(json.dumps({"status": "error", "error": {"code": "fixture_media_failure", "message": "Media failed"}}))
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
     }

@@ -110,7 +110,9 @@ from `mlx-agent` at runtime.
   the ServeProbe path above unchanged. Every other mode runs per variant, per
   prompt, sequentially through an injectable `ComparisonMediaRunner` (live:
   `convert describe|transcribe|speak|generate|video` on the `WorkbenchAPI`
-  actor, never the main actor). Prompts carry optional media input
+  actor, never the main actor). Blocking CLI execution runs on a dispatch
+  worker through a throwing continuation, so long media jobs hold neither
+  the API actor nor a Swift cooperative worker. Prompts carry optional media input
   (`PromptEntry.inputKind` + `inputPath`, or a `builtinInput` generated at run
   time into `<run>/inputs/` by `ComparisonMediaFixtures`: CoreGraphics PNGs, an
   AVAssetWriter MP4, `say`-synthesized WAVs; no binary assets in the repo) and
