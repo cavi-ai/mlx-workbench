@@ -46,7 +46,9 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: marks) }
         let started = marks.appendingPathComponent("started")
         let release = marks.appendingPathComponent("release")
-        let agent = try FixtureAgent(blockingDescribeStarted: started, release: release)
+        let progress = marks.appendingPathComponent("progress")
+        let commandStarted = marks.appendingPathComponent("command-started")
+        let agent = try FixtureAgent(blockingDescribeStarted: started, release: release, commandStarted: commandStarted, progress: progress)
         defer { agent.remove() }
         defer { try? Data().write(to: release) }
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
@@ -60,18 +62,21 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: started.path), "the describe call reached the agent")
 
         let quickCall = Task {
+            try Data("Awaiting serve status".utf8).write(to: progress)
             _ = try await api.raw(["serve", "status"])
+            try Data("Serve status returned; awaiting health".utf8).write(to: progress)
             let health = await api.health()
             // The media fixture can finish successfully only after both calls return.
             // Its timeout bounds a serialized-actor regression, not subprocess speed.
             try Data().write(to: release)
+            try Data("Quick calls returned and released media".utf8).write(to: progress)
             return health.ok
         }
         let healthy = try await quickCall.value
         let result = try await description.value
 
         XCTAssertTrue(healthy)
-        XCTAssertEqual(result.text, "A red circle.", "the media call timed out before the quick call and health check released it")
+        XCTAssertEqual(result.text, "A red circle.", "the fixture captures the quick call's stage at timeout")
         XCTAssertEqual(result.generationTokens, 4)
     }
 
@@ -329,7 +334,7 @@ private final class FixtureAgent {
     }
 
     /// `describe` marks `started`, then waits (up to a minute) for `release` to exist; every other call answers at once.
-    convenience init(blockingDescribeStarted started: URL, release: URL) throws {
+    convenience init(blockingDescribeStarted started: URL, release: URL, commandStarted: URL, progress: URL) throws {
         self.init()
         let scripts = root.appendingPathComponent("scripts", isDirectory: true)
         try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
@@ -346,7 +351,18 @@ private final class FixtureAgent {
             while not os.path.exists(\(String(reflecting: release.path))) and time.time() < deadline:
                 time.sleep(0.02)
             released = os.path.exists(\(String(reflecting: release.path)))
-            data = {"text": "A red circle." if released else "Timed out before quick calls completed.", "generation_tokens": 4}
+            text = "A red circle."
+            if not released:
+                try:
+                    with open(\(String(reflecting: progress.path))) as handle:
+                        stage = handle.read()
+                except FileNotFoundError:
+                    stage = "quick task not started"
+                reached = os.path.exists(\(String(reflecting: commandStarted.path)))
+                text = "Media gate timed out: " + stage + "; serve status reached agent: " + str(reached)
+            data = {"text": text, "generation_tokens": 4}
+        else:
+            open(\(String(reflecting: commandStarted.path)), "w").close()
         print(json.dumps({"status": "ok", "data": data}))
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))

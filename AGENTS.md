@@ -136,6 +136,8 @@ from `mlx-agent` at runtime.
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, and the watch fingerprint probe. `RuntimeInstaller`
   runs `make install` in-app when the runtime is missing.
+  `CLIProcess` drains stdout/stderr on dedicated threads: blocking pipe reads
+  must not depend on shared dispatch workers while a CLI caller waits for EOF.
 - **Never spawn a process synchronously inside view evaluation.** A
   `Process.waitUntilExit` reached from a view body/layout crashes the app
   (AttributeGraph precondition via re-entrant layout). The watch
