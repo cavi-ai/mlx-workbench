@@ -1,4 +1,6 @@
 import XCTest
+import AppKit
+import SwiftUI
 @testable import mlx_workbench
 
 @MainActor
@@ -81,6 +83,117 @@ final class WorkflowEvidenceTests: XCTestCase {
         XCTAssertTrue(unknownRecords[0]["modelSignature"] is NSNull)
         XCTAssertTrue(unknownRecords[0]["environmentFingerprint"] is NSNull)
         XCTAssertThrowsError(try WorkflowCaptureRequest.make(harness: .openClaw, model: WorkflowCaptureModel(path: "relative", name: "A", signature: nil), environment: nil))
+    }
+
+    private func wiredTransaction(server: ServerInfo, clients: [String] = ["opencode"]) -> WiringTransaction {
+        WiringTransaction(id: UUID(), previewHash: "reviewed", endpointBaseURL: "http://127.0.0.1:8766/v1",
+            modelName: server.modelIdentity, appliedAt: Date(timeIntervalSince1970: 42),
+            receipts: clients.map { ClientEditReceipt(clientID: $0, configPath: "/test/\($0)", backupPath: nil, appliedAt: Date(timeIntervalSince1970: 42)) }, failures: [])
+    }
+
+    func testWiredCaptureExportsSuccessfulClientAndExactEndpointWithoutMeasurements() throws {
+        let server = ServerInfo(path: "/models/a", runtime: "mlx_lm", port: 8766, pid: 7, state: "running")
+        var transaction = wiredTransaction(server: server)
+        transaction.failures = ["Zed: config drift"]
+        let capture = try WiredWorkflowCapture.make(reviewedServer: server, currentServers: [server], transaction: transaction,
+            models: [WorkflowCaptureModel(path: "/models/a", name: "A", signature: "weights")])
+        let request = try WorkflowCaptureRequest.make(harness: capture.harness, model: capture.model, environment: "mac|chip|1", endpoint: capture.endpoint)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: WorkflowEvidenceStore.encode(request)) as? [String: Any])
+        let endpoint = try XCTUnwrap(json["endpoint"] as? [String: Any])
+        XCTAssertEqual(endpoint["baseURL"] as? String, "http://127.0.0.1:8766/v1")
+        XCTAssertEqual(endpoint["modelIdentity"] as? String, "/models/a")
+        XCTAssertEqual(endpoint["clientIDs"] as? [String], ["opencode"])
+        let draft = try XCTUnwrap(json["reportDraft"] as? [String: Any])
+        let record = try XCTUnwrap((draft["records"] as? [[String: Any]])?.first)
+        XCTAssertEqual(record["harness"] as? String, "opencode")
+        XCTAssertTrue(record["configurationFingerprint"] is NSNull)
+        XCTAssertTrue(record["totalSeconds"] is NSNull)
+        XCTAssertTrue(record["measuredAt"] is NSNull)
+        XCTAssertThrowsError(try WorkflowEvidenceStore.decode(WorkflowEvidenceStore.encode(request)))
+    }
+
+    func testWiredCaptureRefusesChangedStoppedRolledBackOrUnwrittenEndpoint() throws {
+        let server = ServerInfo(path: "/models/a", port: 8766, pid: 7, state: "running")
+        let model = WorkflowCaptureModel(path: "/models/a", name: "A", signature: "weights")
+        let transaction = wiredTransaction(server: server)
+        for current in [[], [ServerInfo(path: "/models/a", port: 8766, pid: 8, state: "running")],
+                        [ServerInfo(path: "/models/a", port: 8766, pid: 7, state: "stopped")], [server, server]] {
+            XCTAssertThrowsError(try WiredWorkflowCapture.make(reviewedServer: server, currentServers: current, transaction: transaction, models: [model]))
+        }
+        var rolledBack = transaction
+        rolledBack.rolledBackAt = Date()
+        XCTAssertThrowsError(try WiredWorkflowCapture.make(reviewedServer: server, currentServers: [server], transaction: rolledBack, models: [model]))
+        XCTAssertThrowsError(try WiredWorkflowCapture.make(reviewedServer: server, currentServers: [server], transaction: wiredTransaction(server: server, clients: []), models: [model]))
+        XCTAssertThrowsError(try WiredWorkflowCapture.make(reviewedServer: server, currentServers: [server], transaction: transaction, models: []))
+    }
+
+    func testWiredRepoCaptureRefusesAmbiguousLocalRevisionsAndDoesNotInventHarness() throws {
+        let server = ServerInfo(repo: "org/model", port: 8766, pid: 7, state: "running")
+        let models = [WorkflowCaptureModel(path: "/cache/models--org--model/snapshots/a", name: "A", signature: "a"),
+                      WorkflowCaptureModel(path: "/cache/models--org--model/snapshots/b", name: "B", signature: "b")]
+        let transaction = wiredTransaction(server: server, clients: ["zed"])
+        XCTAssertThrowsError(try WiredWorkflowCapture.make(reviewedServer: server, currentServers: [server], transaction: transaction, models: models))
+        let capture = try WiredWorkflowCapture.make(reviewedServer: server, currentServers: [server], transaction: transaction, models: [models[0]])
+        XCTAssertEqual(capture.harness, .custom)
+        let otherModel = WorkflowCaptureModel(path: "/models/other", name: "Other", signature: "other")
+        XCTAssertThrowsError(try WorkflowCaptureRequest.make(harness: .custom, model: otherModel, environment: nil, endpoint: capture.endpoint))
+        let remote = WorkflowCaptureEndpoint(baseURL: "http://example.com:8766/v1", modelIdentity: "org/model", clientIDs: ["zed"],
+            wiringTransactionID: transaction.id, wiredAt: transaction.appliedAt)
+        XCTAssertThrowsError(try WorkflowCaptureRequest.make(harness: .custom, model: models[0], environment: nil, endpoint: remote))
+    }
+
+    func testWiredCaptureAndProducedReportRenderWithoutAutomaticallySavingEvidence() async throws {
+        let server = ServerInfo(path: "/models/Qwen-converted-4bit", port: 8766, pid: 7, state: "running")
+        let model = WorkflowCaptureModel(path: "/models/Qwen-converted-4bit", name: "Qwen converted 4-bit", signature: "weights")
+        let capture = try WiredWorkflowCapture.make(reviewedServer: server, currentServers: [server],
+            transaction: wiredTransaction(server: server), models: [model])
+        try await attachView(WorkflowCaptureRequestView(models: [model], initialModelPath: model.path, environment: "mac|chip|1",
+            endpoint: capture.endpoint, initialHarness: capture.harness, onImport: {}), name: "Wired workflow capture request", height: 540)
+
+        // A producer fills the run fields; wiring context alone is not importable.
+        let request = try WorkflowCaptureRequest.make(harness: capture.harness, model: model, environment: "mac|chip|1", endpoint: capture.endpoint)
+        let encoded = try XCTUnwrap(try JSONSerialization.jsonObject(with: WorkflowEvidenceStore.encode(request)) as? [String: Any])
+        var draft = try XCTUnwrap(encoded["reportDraft"] as? [String: Any])
+        var records = try XCTUnwrap(draft["records"] as? [[String: Any]])
+        records[0]["workloadID"] = "coding-task"
+        records[0]["measuredAt"] = "2026-01-01T12:00:00Z"
+        records[0]["sampleCount"] = 3
+        records[0]["totalSeconds"] = 24.0
+        records[0]["source"] = "session:local-fixture"
+        records[0].removeValue(forKey: "configurationFingerprint")
+        draft["records"] = records
+        let disk = try store()
+        let evidence = WorkflowEvidenceStore(store: disk)
+        let preview = try evidence.previewReport(JSONSerialization.data(withJSONObject: draft))
+        XCTAssertTrue(evidence.records.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: disk.url.path))
+        XCTAssertEqual(preview.newRecords.first?.modelPath, "/models/Qwen-converted-4bit")
+        XCTAssertEqual(preview.newRecords.first?.totalSeconds, 24)
+        XCTAssertNil(preview.newRecords.first?.qualityScore)
+        XCTAssertNil(preview.newRecords.first?.inferenceSeconds)
+        XCTAssertNil(preview.newRecords.first?.peakMemoryBytes)
+        try await attachView(WorkflowImportPreviewView(preview: preview, models: [model], environment: "mac|chip|1",
+            onCancel: {}, onConfirm: {}), name: "Produced workflow report review", height: 460)
+        XCTAssertEqual(try evidence.confirmImport(preview), 1)
+        XCTAssertEqual(try disk.load().first?.source, "session:local-fixture")
+    }
+
+    private func attachView<V: View>(_ root: V, name: String, height: CGFloat) async throws {
+        let view = NSHostingView(rootView: root.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: height), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = view
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(200))
+        view.layoutSubtreeIfNeeded()
+        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: image)
+        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     func testImportConfirmsFrozenReportAfterOriginalFileChanges() throws {

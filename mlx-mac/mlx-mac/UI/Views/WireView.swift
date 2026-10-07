@@ -7,6 +7,7 @@ struct WireView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var wiring: WiringCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
+    private let onRouteSelection: (AppRoute) -> Void
 
     @State private var model = ""
     @State private var path = ""
@@ -22,9 +23,16 @@ struct WireView: View {
     @State private var wiringResultHasIssues = false
     @State private var isRefreshingServer = false
     @State private var serverMessage: String?
+    @State private var wiredServer: ServerInfo?
+    @State private var wiredTransactionID: UUID?
+    @State private var capture: WiredWorkflowCapture?
+    @State private var importAfterCapture = false
+    @State private var isPreparingCapture = false
+    @State private var captureError: String?
 
-    init(appHost: AppHost) {
+    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
+        self.onRouteSelection = onRouteSelection
         _wiring = ObservedObject(wrappedValue: appHost.wiring)
     }
 
@@ -36,6 +44,9 @@ struct WireView: View {
         runningServers.first { $0.id == selectedServerID }
     }
     private var selectedEndpoint: WireEndpoint? { selectedServer.flatMap { WireEndpoint(server: $0) } }
+    private var wiredTransaction: WiringTransaction? {
+        wiring.transactions.first { $0.id == wiredTransactionID && $0.rolledBackAt == nil && !$0.receipts.isEmpty }
+    }
 
     var body: some View {
         ScrollView {
@@ -68,6 +79,13 @@ struct WireView: View {
             guard isRouteActive else { return }
             wiring.detect()
             await refreshServers()
+        }
+        .sheet(item: $capture, onDismiss: {
+            if importAfterCapture { importAfterCapture = false; reviewReport() }
+        }) { capture in
+            WorkflowCaptureRequestView(models: [capture.model], initialModelPath: capture.model.path,
+                environment: appHost.watch.currentFingerprintDescription, endpoint: capture.endpoint,
+                initialHarness: capture.harness, onImport: { importAfterCapture = true; self.capture = nil })
         }
     }
 
@@ -171,6 +189,9 @@ struct WireView: View {
                                     return appHost.modelWorkflow.servers
                                 })
                                 if let transaction {
+                                    wiredServer = server
+                                    wiredTransactionID = transaction.id
+                                    captureError = nil
                                     wiringResultHasIssues = !transaction.failures.isEmpty
                                     wiringResult = transaction.failures.isEmpty
                                         ? "Wired \(transaction.receipts.count) client(s) to \(transaction.modelName)."
@@ -193,8 +214,45 @@ struct WireView: View {
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(wiringResultHasIssues ? WorkbenchColor.failure : WorkbenchColor.success)
             }
+            if wiredTransaction != nil {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.xs) { measurementActions }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { measurementActions }
+                }
+                ErrorBanner(text: captureError)
+            }
         }
         .formSection {}
+    }
+
+    @ViewBuilder private var measurementActions: some View {
+        Button(isPreparingCapture ? "Checking endpoint…" : "Measure this workflow…") {
+            Task { await prepareCapture() }
+        }.buttonStyle(.borderedProminent)
+            .disabled(isPreparingCapture || isRefreshingServer || wiring.isApplying || wiring.isCheckingServer)
+        Button("Review report in Compare…", action: reviewReport).buttonStyle(.bordered)
+    }
+
+    private func prepareCapture() async {
+        guard !isPreparingCapture, let wiredServer, let transaction = wiredTransaction else { return }
+        isPreparingCapture = true
+        defer { isPreparingCapture = false }
+        do {
+            guard await appHost.modelWorkflow.refreshServingStatus() else {
+                throw WorkflowEvidenceError.invalid("Server status unavailable. Refresh before measuring this workflow.")
+            }
+            guard isRouteActive, let currentTransaction = wiredTransaction, currentTransaction.id == transaction.id else { return }
+            let models = (appHost.librarySnapshot?.models ?? []).filter { $0.readiness == .ready }
+                .map { WorkflowCaptureModel(path: $0.item.path, name: $0.displayName, signature: $0.item.signature) }
+            capture = try WiredWorkflowCapture.make(reviewedServer: wiredServer, currentServers: appHost.modelWorkflow.servers,
+                transaction: currentTransaction, models: models)
+            captureError = nil
+        } catch { captureError = AppHost.render(error) }
+    }
+
+    private func reviewReport() {
+        appHost.workflowReportImportRequested = true
+        onRouteSelection(.compare)
     }
 
     @ViewBuilder

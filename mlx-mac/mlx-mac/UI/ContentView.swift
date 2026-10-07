@@ -124,7 +124,7 @@ struct ContentView: View {
         case .reclaim:
             DuplicatesView(appHost: appHost)
         case .clientSetup:
-            WireView(appHost: appHost)
+            WireView(appHost: appHost, onRouteSelection: navigate)
         case .health:
             DoctorView(appHost: appHost, onRouteSelection: navigate)
         case .discover:
