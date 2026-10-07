@@ -153,6 +153,12 @@ from `mlx-agent` at runtime.
   runs `make install` in-app when the runtime is missing.
   `CLIProcess` drains stdout/stderr on dedicated threads: blocking pipe reads
   must not depend on shared dispatch workers while a CLI caller waits for EOF.
+  Each agent child leads its own process group (media backends stay in it);
+  on timeout and on `NSApplication.willTerminateNotification`
+  (`CLIProcessRegistry` tracks live children) the whole group gets SIGTERM,
+  then SIGKILL after a 2 s grace, matching `bridge._kill_process_group`.
+  Agent-detached work (`convert start` jobs, `serve`) uses its own session and
+  is not stopped.
 - **Never spawn a process synchronously inside view evaluation.** A
   `Process.waitUntilExit` reached from a view body/layout crashes the app
   (AttributeGraph precondition via re-entrant layout). The watch
