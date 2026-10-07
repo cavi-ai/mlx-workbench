@@ -1,4 +1,97 @@
+import AppKit
 import Foundation
+
+// MARK: - AgentProcessGroup
+//
+// One launched mlx-agent child. Foundation launches it as the leader of its
+// own process group, and the backend Python it runs for media work stays in
+// that group, so signalling the group reaches both. A child that does not
+// lead a group is signalled alone, like `_kill_process_group` in
+// mlx_workbench/bridge.py.
+
+struct AgentProcessGroup: Hashable {
+    let pid: pid_t
+    let leadsGroup: Bool
+
+    init(pid: pid_t) {
+        self.pid = pid
+        leadsGroup = getpgid(pid) == pid
+    }
+
+    var isAlive: Bool {
+        (leadsGroup ? killpg(pid, 0) : kill(pid, 0)) == 0
+    }
+
+    func signal(_ number: Int32) {
+        _ = leadsGroup ? killpg(pid, number) : kill(pid, number)
+    }
+
+    /// SIGTERM every group, then SIGKILL whatever is still alive after `grace`.
+    static func stop(_ groups: [AgentProcessGroup], grace: TimeInterval) {
+        groups.forEach { $0.signal(SIGTERM) }
+        let deadline = Date().addingTimeInterval(grace)
+        var living = groups.filter(\.isAlive)
+        while !living.isEmpty && Date() < deadline {
+            usleep(20_000)
+            living = living.filter(\.isAlive)
+        }
+        living.forEach { $0.signal(SIGKILL) }
+    }
+}
+
+// MARK: - CLIProcessRegistry
+//
+// Live mlx-agent children. App termination stops every live group so no
+// agent or backend keeps running (and writing outputs) after quit.
+
+final class CLIProcessRegistry: @unchecked Sendable {
+    static let shared = CLIProcessRegistry(notificationCenter: .default)
+
+    private let lock = NSLock()
+    private var groups: [pid_t: AgentProcessGroup] = [:]
+    private var terminating = false
+    private let notificationCenter: NotificationCenter
+    private var observer: NSObjectProtocol?
+
+    init(notificationCenter: NotificationCenter, terminationGrace: TimeInterval = CLIProcess.terminationGrace) {
+        self.notificationCenter = notificationCenter
+        // Delivered synchronously on the posting (main) thread, so the
+        // groups are stopped before the app exits.
+        observer = notificationCenter.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            self?.terminateAll(grace: terminationGrace)
+        }
+    }
+
+    deinit {
+        if let observer { notificationCenter.removeObserver(observer) }
+    }
+
+    /// Tracks a launched child. Returns false once termination has begun;
+    /// the caller then stops the child itself.
+    func register(_ group: AgentProcessGroup) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !terminating else { return false }
+        groups[group.pid] = group
+        return true
+    }
+
+    func unregister(_ group: AgentProcessGroup) {
+        lock.lock()
+        groups.removeValue(forKey: group.pid)
+        lock.unlock()
+    }
+
+    func terminateAll(grace: TimeInterval) {
+        lock.lock()
+        terminating = true
+        let live = Array(groups.values)
+        lock.unlock()
+        AgentProcessGroup.stop(live, grace: grace)
+    }
+}
 
 // MARK: - CLIProcess
 //
@@ -11,6 +104,16 @@ struct CLIProcess {
     private let defaultTimeout: TimeInterval = 300
     private let scoutTimeout: TimeInterval = 600
     static let maxOutputBytes = 8 * 1024 * 1024
+    /// Wait between SIGTERM and SIGKILL when stopping an agent's group.
+    static let terminationGrace: TimeInterval = 2
+
+    private let registry: CLIProcessRegistry
+    private let terminationGrace: TimeInterval
+
+    init(registry: CLIProcessRegistry = .shared, terminationGrace: TimeInterval = CLIProcess.terminationGrace) {
+        self.registry = registry
+        self.terminationGrace = terminationGrace
+    }
 
     /// Absolute path to the interpreter (env override → repo .venv → PATH).
     /// Process.executableURL requires an absolute path; a bare "python3"
@@ -137,9 +240,15 @@ struct CLIProcess {
             exited.signal()
         }
 
+        let group = launchError == nil ? AgentProcessGroup(pid: process.processIdentifier) : nil
+        if let group, !registry.register(group) {
+            AgentProcessGroup.stop([group], grace: terminationGrace)
+        }
+        defer { if let group { registry.unregister(group) } }
+
         let result = exited.wait(timeout: .now() + time)
         if result == .timedOut {
-            process.terminate()
+            if let group { AgentProcessGroup.stop([group], grace: terminationGrace) }
             _ = exited.wait(timeout: .now() + 5)
             _ = drained.wait(timeout: .now() + 5)
             throw BridgeError.skillTimeout
