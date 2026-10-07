@@ -163,6 +163,13 @@ from `mlx-agent` at runtime.
   advisory-only) and previews/confirms atomic writes to each client's own
   config with per-file backups, drift re-checks, and rollback. Client write
   targets are a fixed allowlist of well-known config paths.
+  Model guidance's **Wire into clients** hands off a one-shot model/port
+  request. Clients preselects only a matching running endpoint, supports repo
+  and local-path identities, and preserves the complete served identity in
+  generated client configs. Preview binds server identity; confirmation reads
+  fresh authoritative status before any file write and refuses stopped,
+  replaced or ambiguous servers. Existing config drift and rollback guards
+  remain unchanged. Server refreshes run asynchronously on route activation.
 - The Run tab hosts the **Always-on Endpoint**: `EndpointSupervisor` keeps a
   chosen verified model serving on a stable loopback port by reconciling
   desired state against authoritative serve status (crash-loop guarded;

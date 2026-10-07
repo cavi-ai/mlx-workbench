@@ -17,6 +17,30 @@ struct WireEndpoint: Equatable, Sendable {
         self.baseURL = baseURL
         self.modelName = modelName
     }
+
+    init?(server: ServerInfo) {
+        guard server.state?.lowercased() == "running", let port = server.port, (1...65535).contains(port),
+              !server.modelIdentity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        self.init(baseURL: "http://127.0.0.1:\(port)/v1", modelName: server.modelIdentity)
+    }
+}
+
+struct ClientWiringRequest: Equatable {
+    let modelPath: String
+    let preferredPort: Int?
+}
+
+enum ClientWiringSelection {
+    static func matchingServers(request: ClientWiringRequest, servers: [ServerInfo]) -> [ServerInfo] {
+        servers.filter { WireEndpoint(server: $0) != nil && HFRepoID.matches($0.modelIdentity, request.modelPath)
+            && (request.preferredPort == nil || $0.port == request.preferredPort) }
+    }
+
+    static func sameServer(_ before: ServerInfo, _ current: ServerInfo) -> Bool {
+        WireEndpoint(server: current) != nil && before.modelIdentity == current.modelIdentity && before.port == current.port
+            && before.pid == current.pid && before.runtime == current.runtime
+            && before.startedAt == current.startedAt && before.receipt == current.receipt
+    }
 }
 
 struct ClientInstallation: Equatable, Sendable {
