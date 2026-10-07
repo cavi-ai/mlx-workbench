@@ -350,20 +350,26 @@ struct AudioClipButton: View {
 }
 
 /// A video file with transport controls; it never starts on its own.
-struct ClipVideoView: View {
+/// AppKit's player view, not SwiftUI's `VideoPlayer`: referencing `AVPlayerView` links AVKit,
+/// and without AVKit loaded the `VideoPlayer` overlay aborts while building its type metadata.
+struct ClipVideoView: NSViewRepresentable {
     let url: URL
-    @State private var player: AVPlayer?
 
-    var body: some View {
-        Group {
-            if let player {
-                VideoPlayer(player: player)
-            } else {
-                Color.clear
-            }
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .inline
+        view.player = AVPlayer(url: url)
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if (view.player?.currentItem?.asset as? AVURLAsset)?.url != url {
+            view.player = AVPlayer(url: url)
         }
-        .onAppear { if player == nil { player = AVPlayer(url: url) } }
-        .onDisappear { player?.pause() }
+    }
+
+    static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) {
+        view.player?.pause()
     }
 }
 

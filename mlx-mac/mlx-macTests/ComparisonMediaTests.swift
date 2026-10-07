@@ -1,6 +1,8 @@
+import AppKit
 import AVFoundation
 import Foundation
 import ImageIO
+import SwiftUI
 import XCTest
 
 @testable import mlx_workbench
@@ -655,5 +657,32 @@ final class ComparisonMediaTests: XCTestCase {
         } catch {
             XCTAssertEqual(error.localizedDescription, "Unknown built-in input nope.")
         }
+    }
+
+    /// The clip view hosts AppKit's player with the file loaded and paused. The player view is looked
+    /// up by name so this test does not link AVKit itself: the app has to.
+    @MainActor
+    func testClipVideoViewHostsAPausedPlayerForTheFile() throws {
+        let url = root.appendingPathComponent("clip.mp4")
+        let host = NSHostingView(rootView: ClipVideoView(url: url).frame(width: 320, height: 180))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 180), styleMask: .borderless, backing: .buffered, defer: true
+        )
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+
+        let playerViewClass: AnyClass = try XCTUnwrap(NSClassFromString("AVPlayerView"), "AVKit is not loaded")
+        let playerView = try XCTUnwrap(Self.firstDescendant(of: host) { $0.isKind(of: playerViewClass) })
+        let player = try XCTUnwrap(playerView.value(forKey: "player") as? AVPlayer)
+        XCTAssertEqual((player.currentItem?.asset as? AVURLAsset)?.url, url)
+        XCTAssertEqual(player.rate, 0)
+    }
+
+    private static func firstDescendant(of view: NSView, where matches: (NSView) -> Bool) -> NSView? {
+        for child in view.subviews {
+            if matches(child) { return child }
+            if let found = firstDescendant(of: child, where: matches) { return found }
+        }
+        return nil
     }
 }
