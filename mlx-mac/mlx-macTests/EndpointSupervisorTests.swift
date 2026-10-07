@@ -5,6 +5,78 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testUnloadStandaloneServerAndPreservesOtherPorts() async throws {
+        let world = FakeServeWorld()
+        let fleetURL = temporaryURL("fleet.json")
+        try FileManager.default.createDirectory(at: fleetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let damaged = Data("damaged fleet".utf8)
+        try damaged.write(to: fleetURL)
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL),
+            fleetStore: JSONStore<EndpointFleetConfig>(fileURL: fleetURL))
+        world.preload(repo: "/Models/a", port: 8766)
+        world.preload(repo: "/Models/b", port: 8767)
+        let server = try XCTUnwrap(try world.status().first)
+        let unloaded = await supervisor.unloadServer(server)
+        XCTAssertTrue(unloaded)
+        XCTAssertEqual(try world.status().map(\.port), [8767])
+        XCTAssertEqual(try Data(contentsOf: fleetURL), damaged)
+        XCTAssertNotNil(supervisor.persistenceError)
+    }
+
+    func testUnloadSaveFailureDoesNotStopOrDisableServer() async throws {
+        let world = FakeServeWorld()
+        let fleetURL = temporaryURL("fleet.json")
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL),
+            fleetStore: JSONStore<EndpointFleetConfig>(fileURL: fleetURL, replaceItem: { _, _ in throw StubError.offline }))
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        let server = try XCTUnwrap(try world.status().first)
+        let unloaded = await supervisor.unloadServer(server)
+        XCTAssertFalse(unloaded)
+        XCTAssertTrue(supervisor.config.enabled)
+        XCTAssertEqual(try world.status(), [server])
+        XCTAssertNotNil(supervisor.lastError)
+    }
+
+    func testUnloadStopFailureLeavesRestartDisabledAndReportsRunningServer() async throws {
+        let world = FakeServeWorld()
+        let live = world.lifecycle
+        let supervisor = EndpointSupervisor(lifecycle: ServeLifecycle(preview: live.preview, start: live.start,
+            stop: { _ in throw StubError.offline }), statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        let server = try XCTUnwrap(try world.status().first)
+        let unloaded = await supervisor.unloadServer(server)
+        XCTAssertFalse(unloaded)
+        XCTAssertFalse(supervisor.config.enabled)
+        XCTAssertEqual(try world.status(), [server])
+        XCTAssertNotNil(supervisor.lastError)
+    }
+
+    func testUnloadRefusesChangedServerIdentityAndDoesNotDisableEndpoint() async throws {
+        let (supervisor, world) = makeSupervisor()
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        let server = try XCTUnwrap(try world.status().first)
+        world.kill(port: 8766)
+        world.preload(repo: "/Models/b", port: 8766)
+        let unloaded = await supervisor.unloadServer(server)
+        XCTAssertFalse(unloaded)
+        XCTAssertTrue(supervisor.config.enabled)
+        XCTAssertEqual(try world.status().first?.modelIdentity, "/Models/b")
+    }
+
+    func testUnloadDisablesDesiredEndpointAndDoesNotRestartIt() async throws {
+        let (supervisor, world) = makeSupervisor()
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        let server = try XCTUnwrap(try world.status().first)
+        let unloaded = await supervisor.unloadServer(server)
+        XCTAssertTrue(unloaded)
+        XCTAssertFalse(supervisor.config.enabled)
+        await supervisor.reconcile()
+        XCTAssertFalse(try world.status().contains { $0.state == "running" })
+    }
+
     func testIntentionalEnableSwapAndAddRecordServedButAutomaticRestartsDoNot() async throws {
         let (supervisor, world) = makeSupervisor()
         let tracker = UsageTracker(store: JSONStore<UsageStamp>(fileURL: temporaryURL("usage.json")))

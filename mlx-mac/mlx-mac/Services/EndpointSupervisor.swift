@@ -23,6 +23,9 @@ final class EndpointSupervisor: ObservableObject {
     @Published private(set) var restartAttempts = 0
     @Published private(set) var lastError: String?
     @Published private(set) var persistenceError: String?
+    @Published private(set) var isUnloading = false
+    private var isReconciling = false
+    private var activeUserOperations = 0
     /// Per-slot live state and restart counters (fleet surface; P2 UI).
     @Published private(set) var slotStates: [UUID: EndpointState] = [:]
     @Published private(set) var slotRestartAttempts: [UUID: Int] = [:]
@@ -101,6 +104,9 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     func enable(modelPath: String, port: Int, allowUnverified: Bool = false) async {
+        guard !isUnloading else { return }
+        activeUserOperations += 1
+        defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
         if let id = fleet.slots.first?.id { pendingUserServeBySlot.removeValue(forKey: id) }
         mutateSlot0 { slot in
@@ -117,6 +123,9 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     func disable() async {
+        guard !isUnloading else { return }
+        activeUserOperations += 1
+        defer { activeUserOperations -= 1 }
         if let id = fleet.slots.first?.id { pendingUserServeBySlot.removeValue(forKey: id) }
         mutateSlot0 { $0.enabled = false }
         persist()
@@ -131,6 +140,9 @@ final class EndpointSupervisor: ObservableObject {
     /// model, and let reconcile start the new one on the same port — clients
     /// never reconfigure.
     func swap(to modelPath: String, allowUnverified: Bool = false) async {
+        guard !isUnloading else { return }
+        activeUserOperations += 1
+        defer { activeUserOperations -= 1 }
         guard config.enabled else {
             await enable(modelPath: modelPath, port: config.port, allowUnverified: allowUnverified)
             return
@@ -148,6 +160,9 @@ final class EndpointSupervisor: ObservableObject {
     /// Add an enabled slot. Refused (with `lastError`) at the slot cap, on a
     /// duplicate port or role, or when the model fails the verified gate.
     func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false) async {
+        guard !isUnloading else { return }
+        activeUserOperations += 1
+        defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
         let candidate = EndpointSlot(enabled: true, port: port, modelPath: modelPath, role: role)
         guard validate(candidate, isNew: true) else { return }
@@ -159,6 +174,9 @@ final class EndpointSupervisor: ObservableObject {
 
     /// Change a slot's model/port/role without toggling its enabled flag.
     func updateSlot(id: UUID, modelPath: String, port: Int, role: UseCase?) async {
+        guard !isUnloading else { return }
+        activeUserOperations += 1
+        defer { activeUserOperations -= 1 }
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }) else { return }
         var candidate = fleet.slots[index]
         candidate.modelPath = modelPath
@@ -177,6 +195,9 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     func setSlotEnabled(id: UUID, _ enabled: Bool) async {
+        guard !isUnloading else { return }
+        activeUserOperations += 1
+        defer { activeUserOperations -= 1 }
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
         fleet.slots[index].enabled = enabled
@@ -194,6 +215,9 @@ final class EndpointSupervisor: ObservableObject {
     /// Swap one slot's model on its stable port (same discipline as the
     /// single-slot swap).
     func swapSlot(id: UUID, to modelPath: String, allowUnverified: Bool = false) async {
+        guard !isUnloading else { return }
+        activeUserOperations += 1
+        defer { activeUserOperations -= 1 }
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }) else { return }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "swap") else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
@@ -207,6 +231,9 @@ final class EndpointSupervisor: ObservableObject {
 
     /// Remove a slot entirely, stopping its server first when it is ours.
     func removeSlot(id: UUID) async {
+        guard !isUnloading else { return }
+        activeUserOperations += 1
+        defer { activeUserOperations -= 1 }
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
         let slot = fleet.slots[index]
@@ -223,6 +250,55 @@ final class EndpointSupervisor: ObservableObject {
 
     // MARK: - Reconciliation
 
+    /// Release the selected serving process. Persist disabled desired state
+    /// first, so timer reconciliation and the next launch cannot reload it.
+    /// The agent's receipt/PID fence remains the authority for stopping it.
+    func unloadServer(_ expected: ServerInfo) async -> Bool {
+        guard !isUnloading, !isReconciling, activeUserOperations == 0 else {
+            lastError = "Serving is changing. Wait for it to finish, then retry unload."
+            return false
+        }
+        guard let port = expected.port, expected.state?.lowercased() == "running" else {
+            lastError = "This server is not running. Refresh serving status."
+            return false
+        }
+        isUnloading = true
+        defer { isUnloading = false }
+        do {
+            let current = try await statusProvider()
+            guard current.contains(expected) else {
+                lastError = "The serving process changed. Refresh before unloading."
+                return false
+            }
+            var disabled = fleet
+            for index in disabled.slots.indices where disabled.slots[index].port == port {
+                disabled.slots[index].enabled = false
+            }
+            // A failed save must leave the process and desired state intact.
+            if disabled != fleet {
+                try fleetStore.save(disabled)
+                fleet = disabled
+                persistenceError = nil
+            }
+            for slot in disabled.slots where slot.port == port {
+                pendingUserServeBySlot.removeValue(forKey: slot.id)
+                slotStates[slot.id] = .disabled
+            }
+            syncShim()
+            try await lifecycle.stop(port)
+            let after = try await statusProvider()
+            guard !after.contains(where: { $0.port == port && $0.state?.lowercased() == "running" }) else {
+                lastError = "The server is still running. Automatic restart is disabled; retry unload."
+                return false
+            }
+            lastError = nil
+            return true
+        } catch {
+            lastError = "Could not unload the serving model: \(AppHost.render(error))"
+            return false
+        }
+    }
+
     /// Diff desired state against authoritative serve status. Safe to call
     /// repeatedly; only acts when reality diverges from desired. One status
     /// fetch per pass, then each enabled slot reconciles independently.
@@ -235,6 +311,9 @@ final class EndpointSupervisor: ObservableObject {
            let slot = fleet.slots.first(where: { $0.id == id && $0.enabled && !$0.modelPath.isEmpty }) {
             pendingUserServeBySlot[id] = (slot.modelPath, slot.port)
         }
+        guard !isUnloading, !isReconciling else { return }
+        isReconciling = true
+        defer { isReconciling = false }
         let enabledSlots = fleet.slots.filter { $0.enabled && !$0.modelPath.isEmpty }
         guard !enabledSlots.isEmpty else {
             for slot in fleet.slots { slotStates[slot.id] = .disabled }
@@ -256,6 +335,7 @@ final class EndpointSupervisor: ObservableObject {
 
         let running = servers.filter { $0.state?.lowercased() == "running" }
         for slot in enabledSlots {
+            guard fleet.slots.contains(slot) else { continue }
             await reconcileSlot(slot, running: running)
         }
         syncShim()
@@ -295,6 +375,7 @@ final class EndpointSupervisor: ObservableObject {
         do {
             let hash = try await lifecycle.preview(slot.modelPath, slot.port)
             guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+            guard fleet.slots.contains(slot) else { return }
             try await lifecycle.start(slot.modelPath, slot.port, hash)
             slotStates[slot.id] = .waitingForServer
         } catch {

@@ -14,6 +14,7 @@ struct MlxWorkbenchApp: App {
                     // enabled, start endpoint + watch monitoring per config.
                     appHost.applyFeatureToggles()
                     appHost.endpoint.startMonitoring()
+                    appHost.resources.startMonitoring()
                 }
         }
         .windowToolbarStyle(.unified)

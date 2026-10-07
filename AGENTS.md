@@ -312,6 +312,15 @@ from `mlx-agent` at runtime.
   available memory (`MemorySnapshot` via Mach probes), yielding
   fits/tight/won't-fit with a suggested max context. Verdicts are derived,
   never persisted.
+- The native toolbar shares `SystemResourceMonitor`: Mach memory estimates
+  refresh off-main every five seconds; unavailable readings remain unknown.
+  Its popover fetches authoritative serving status while open and exposes
+  Unload through `EndpointSupervisor.unloadServer`. Unload refuses changed
+  process identity or an in-flight serving transition, persists disabled
+  desired state before stopping, and confirms status afterward. Failed saves
+  preserve the running server; failed stops remain visible and never count as
+  unloaded. Comparison/verification models are protected. The popover's
+  context selector feeds workflow model-fit reviews, not server configuration.
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 

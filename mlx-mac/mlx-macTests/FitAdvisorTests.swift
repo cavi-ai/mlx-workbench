@@ -1,10 +1,74 @@
 import Foundation
 import XCTest
+import AppKit
+import SwiftUI
 
 @testable import mlx_workbench
 
 final class FitAdvisorTests: XCTestCase {
     private let gb: Int64 = 1_000_000_000
+
+    @MainActor
+    func testResourceHeaderAndServingControlsRender() async throws {
+        let world = FakeServeWorld()
+        world.preload(repo: "/Models/Qwen3-8B-4bit", port: 8766)
+        let monitor = SystemResourceMonitor(probe: { MemorySnapshot(totalBytes: 32_000_000_000, availableBytes: 12_000_000_000) },
+            statusProvider: { try world.status() })
+        await monitor.refreshMemory()
+        await monitor.refreshServers()
+        let store = JSONStore<EndpointConfig>(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("endpoint.json"))
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() }, store: store)
+        let header = SystemResourceHeader(resources: monitor, endpoint: supervisor, onUnload: { await supervisor.unloadServer($0) })
+        let root = VStack(spacing: 20) {
+            HStack { Text("Compare").font(.headline); Spacer(); header }.padding(16)
+            header.panel
+            Spacer()
+        }.frame(width: 670, height: 520).background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        let view = NSHostingView(rootView: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 670, height: 520), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = view; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(200))
+        view.layoutSubtreeIfNeeded()
+        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: image)
+        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        attachment.name = "Memory header and serving controls"; attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    func testHeaderRefusesInvalidMemoryAndClearsFailedServerReading() async {
+        let invalid = SystemResourceMonitor(probe: { MemorySnapshot(totalBytes: 32, availableBytes: 33) })
+        await invalid.refreshMemory()
+        XCTAssertNil(invalid.memory)
+        XCTAssertNil(invalid.capturedAt)
+        let world = FakeServeWorld()
+        world.preload(repo: "/Models/a", port: 8766)
+        let monitor = SystemResourceMonitor(statusProvider: { try world.status() })
+        await monitor.refreshServers()
+        XCTAssertEqual(monitor.servers?.count, 1)
+        world.statusError = NSError(domain: "test", code: 1)
+        await monitor.refreshServers()
+        XCTAssertNil(monitor.servers)
+        XCTAssertNotNil(monitor.serverError)
+    }
+
+    @MainActor
+    func testHeaderMemoryCaptureKeepsUnknownValuesAndCaptureTime() async {
+        let date = Date(timeIntervalSince1970: 1234)
+        let monitor = SystemResourceMonitor(probe: { MemorySnapshot(totalBytes: 32_000_000_000, availableBytes: 12_000_000_000) }, now: { date })
+        await monitor.refreshMemory()
+        XCTAssertEqual(monitor.memory?.availableBytes, 12_000_000_000)
+        XCTAssertEqual(monitor.capturedAt, date)
+        XCTAssertEqual(monitor.memory?.unavailableBytes, 20_000_000_000)
+        let missing = SystemResourceMonitor(probe: { nil }, now: { date })
+        await missing.refreshMemory()
+        XCTAssertNil(missing.memory)
+        XCTAssertNil(missing.capturedAt)
+    }
 
     // MARK: - Parameter parsing
 
