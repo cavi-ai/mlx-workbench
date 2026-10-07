@@ -7,6 +7,8 @@ struct ContentView: View {
     @ObservedObject private var endpoint: EndpointSupervisor
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var setup: SetupCoordinator
+    @ObservedObject private var comparison: ComparisonCoordinator
+    @ObservedObject private var verification: VerificationCoordinator
     /// Persisted across launches; legacy/unknown values resolve to Overview.
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
     @State private var visitedRoutes: Set<AppRoute> = []
@@ -16,6 +18,8 @@ struct ContentView: View {
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _setup = ObservedObject(wrappedValue: appHost.setup)
+        _comparison = ObservedObject(wrappedValue: appHost.comparison)
+        _verification = ObservedObject(wrappedValue: appHost.verification)
     }
 
     private var selectedRoute: AppRoute {
@@ -170,6 +174,12 @@ struct ContentView: View {
     /// information: an idle workflow and an empty fleet show nothing.
     @ToolbarContentBuilder
     private var contextToolbar: some ToolbarContent {
+        ToolbarItem(placement: .automatic) {
+            SystemResourceHeader(resources: appHost.resources, endpoint: endpoint, protectedModels: protectedServingModels, onUnload: { server in
+                guard !protectedServingModels.contains(where: { HFRepoID.matches($0, server.modelIdentity) }) else { return false }
+                return await endpoint.unloadServer(server)
+            })
+        }
         if modelWorkflow.workflow.state != .idle {
             ToolbarItem(placement: .automatic) {
                 Button {
@@ -198,6 +208,16 @@ struct ContentView: View {
                 .accessibilityLabel("Endpoint: \(endpoint.state.summary)")
             }
         }
+    }
+
+    private var protectedServingModels: Set<String> {
+        var paths = Set<String>()
+        if let path = appHost.verification.activeModelPath { paths.insert(path) }
+        if let id = appHost.comparison.activeRunID,
+           let run = appHost.comparison.runs.first(where: { $0.id == id }) {
+            paths.formUnion(run.variants)
+        }
+        return paths
     }
 
     private var endpointStatus: WorkbenchStatus {

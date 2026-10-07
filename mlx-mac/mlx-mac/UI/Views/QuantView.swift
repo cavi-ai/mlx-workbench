@@ -212,7 +212,8 @@ struct QuantView: View {
     private func reviewWorkflowModel(_ task: AgentTaskGuidance, path: String) async throws -> ModelGuidanceReview {
         var evidence = ComparisonInsights.agentEvidence(models: appHost.librarySnapshot?.models ?? [], runs: [],
             workflow: appHost.workflowEvidence.records, environment: appHost.watch.currentFingerprintDescription,
-            hardware: appHost.hardwareProfile, memory: nil, capturedAt: nil, contextTokens: 8192,
+            hardware: appHost.hardwareProfile, memory: appHost.resources.memory,
+            capturedAt: appHost.resources.capturedAt, contextTokens: appHost.resources.contextTokens,
             reserveGB: appHost.config.fitReserveGB, protected: appHost.occupiedModelPaths)
         // Preserve the displayed cohort for the existing fresh-evidence recheck.
         evidence.taskGuidance = [task]

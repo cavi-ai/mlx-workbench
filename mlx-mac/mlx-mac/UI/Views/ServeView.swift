@@ -50,6 +50,7 @@ struct ServeView: View {
     @State private var contextText = String(FitAdvisor.defaultContextTokens)
     @State private var endpointPortText = ""
     @State private var newSlotRole: UseCase?
+    @State private var newSlotLoadOnRequest = true
     @State private var pendingFleetAction: PendingFleetAction?
     @State private var showFleetRouter = false
     @State private var showLoginItemPreview = false
@@ -284,6 +285,9 @@ struct ServeView: View {
             Text(slotState.summary)
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
+            if let residency = endpoint.slotResidencies[slot.id] {
+                Text(residency).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
             HStack(spacing: 10) {
                 if case .modelMismatch = slotState {
                     Button("Swap to configured model") {
@@ -298,6 +302,12 @@ struct ServeView: View {
                     }
                 }
                 rolePicker(slot)
+                Toggle("Load on request", isOn: Binding(
+                    get: { slot.usesJIT },
+                    set: { value in Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) } }))
+                    .toggleStyle(.checkbox)
+                    .help("Keep the endpoint reachable without resident weights. Changing load mode restarts this endpoint.")
+                    .disabled(endpoint.isUnloading)
                 Spacer()
                 Button("Remove") { Task { await endpoint.removeSlot(id: slot.id) } }
                     .foregroundStyle(WorkbenchColor.failure)
@@ -388,6 +398,9 @@ struct ServeView: View {
         }
         .labelsHidden()
         .frame(width: 120)
+        Toggle("Load on request", isOn: $newSlotLoadOnRequest)
+            .toggleStyle(.checkbox)
+            .help("Start a reachable endpoint now; load the selected local model on the first inference request.")
         Button("Add endpoint for selected model") { addEndpoint(allowUnverified: false) }
             .buttonStyle(.borderedProminent)
             .disabled(selectedModel == nil)
@@ -401,13 +414,15 @@ struct ServeView: View {
         guard let model = selectedModel else { return }
         let port = Int(endpointPortText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? suggestedPort
         let role = newSlotRole
+        let loadOnRequest = newSlotLoadOnRequest
         let action = {
             _ = Task {
                 await endpoint.addSlot(
                     modelPath: model.item.path,
                     port: port,
                     role: role,
-                    allowUnverified: allowUnverified
+                    allowUnverified: allowUnverified,
+                    loadOnRequest: loadOnRequest
                 )
             }
         }

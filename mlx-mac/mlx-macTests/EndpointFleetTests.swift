@@ -22,6 +22,7 @@ final class EndpointFleetTests: XCTestCase {
         XCTAssertEqual(loaded.config.slots[0].port, 8767)
         XCTAssertEqual(loaded.config.slots[0].modelPath, "/Models/q4")
         XCTAssertNil(loaded.config.slots[0].role)
+        XCTAssertFalse(loaded.config.slots[0].usesJIT)
         XCTAssertTrue(loaded.config.installedAtLogin)
         // Migration persists once...
         XCTAssertTrue(FileManager.default.fileExists(atPath: urls.fleet.path))

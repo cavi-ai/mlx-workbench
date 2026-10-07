@@ -15,10 +15,21 @@ final class FakeServeWorld: @unchecked Sendable {
     var survives = true
     var statusError: Error?
 
-    func preload(repo: String, port: Int) {
+    func preload(repo: String, port: Int, jit: Bool = false, modelState: String? = nil) {
         lock.lock()
-        servers.append(ServerInfo(repo: repo, runtime: "mlx", port: port, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "r"))
+        servers.append(ServerInfo(repo: repo, runtime: "mlx", port: port, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "r", jit: jit, modelState: modelState))
         lock.unlock()
+    }
+
+    func unloadModel(port: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let index = servers.firstIndex(where: { $0.port == port }) {
+            let old = servers[index]
+            servers[index] = ServerInfo(repo: old.repo, path: old.path, runtime: old.runtime, port: old.port,
+                pid: old.pid, state: old.state, logPath: old.logPath, startedAt: old.startedAt, receipt: old.receipt,
+                jit: true, modelState: "unloaded")
+        }
     }
 
     /// Remove a server without a lifecycle event (an out-of-band crash).

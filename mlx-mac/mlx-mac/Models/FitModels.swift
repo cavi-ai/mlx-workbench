@@ -35,8 +35,11 @@ enum FitVerdict: Equatable, Sendable {
 /// Live unified-memory snapshot via Mach probes.
 struct MemorySnapshot: Equatable, Sendable {
     let totalBytes: Int64
-    /// Free + reclaimable-ish (inactive + purgeable) memory, right now.
+    /// Free (including speculative) + reclaimable inactive memory, right now.
     let availableBytes: Int64
+
+    /// Derived system-wide estimate, not a per-process or GPU allocation.
+    var unavailableBytes: Int64 { max(0, totalBytes - availableBytes) }
 
     static func probe() -> MemorySnapshot? {
         var total: UInt64 = 0
@@ -54,7 +57,10 @@ struct MemorySnapshot: Equatable, Sendable {
 
         var pageSize: vm_size_t = 0
         guard host_page_size(mach_host_self(), &pageSize) == KERN_SUCCESS else { return nil }
-        let pages = UInt64(stats.free_count + stats.inactive_count + stats.purgeable_count)
-        return MemorySnapshot(totalBytes: Int64(total), availableBytes: Int64(pages * UInt64(pageSize)))
+        // Free already includes speculative pages. Purgeable pages overlap
+        // other categories, so use free + inactive as a headroom estimate.
+        // https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/mach/vm_statistics.h
+        let pages = UInt64(stats.free_count) + UInt64(stats.inactive_count)
+        return MemorySnapshot(totalBytes: Int64(total), availableBytes: min(Int64(total), Int64(pages * UInt64(pageSize))))
     }
 }

@@ -34,6 +34,7 @@ class AppHost: ObservableObject {
     let wiring: WiringCoordinator
     /// Always-on endpoint supervisor (premium spec 06).
     let endpoint: EndpointSupervisor
+    let resources: SystemResourceMonitor
     /// Usage evidence per model path (premium spec 04).
     let usage: UsageTracker
     let workflowEvidence: WorkflowEvidenceStore
@@ -110,6 +111,7 @@ class AppHost: ObservableObject {
         self.config = loadedConfig
         let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
         self.api = api
+        self.resources = SystemResourceMonitor(statusProvider: { try await api.serveStatus() })
         self.modelWorkflow = ModelWorkflowCoordinator(
             api: modelWorkflowAPI ?? .live(api: api),
             persistence: modelWorkflowPersistence ?? .live(store: ModelWorkflowStore(fileURL: ModelWorkflowStore.defaultFileURL()))

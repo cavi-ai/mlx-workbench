@@ -32,13 +32,17 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var port: Int
     var modelPath: String
     var role: UseCase?
+    /// Absent in legacy fleets: preserve their eager-serving behavior.
+    var loadOnRequest: Bool?
+    var usesJIT: Bool { loadOnRequest == true }
 
-    init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: UseCase? = nil) {
+    init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: UseCase? = nil, loadOnRequest: Bool? = nil) {
         self.id = id
         self.enabled = enabled
         self.port = port
         self.modelPath = modelPath
         self.role = role
+        self.loadOnRequest = loadOnRequest
     }
 }
 

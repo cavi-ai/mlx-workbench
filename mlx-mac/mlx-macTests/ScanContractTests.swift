@@ -4,6 +4,17 @@ import XCTest
 @testable import mlx_workbench
 
 final class ScanContractTests: XCTestCase {
+    func testServeStatusDerivesOwnedProcessStateAndKeepsResidencySeparate() throws {
+        let servers = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [
+            ["path": "/Models/a", "port": 8766, "pid": 42, "alive": true, "argv_match": true,
+             "jit": true, "model_state": "unloaded", "active_requests": 0],
+            ["path": "/Models/b", "port": 8767, "alive": true, "argv_match": false],
+        ]]))
+        XCTAssertEqual(servers[0].state, "running")
+        XCTAssertEqual(servers[0].modelState, "unloaded")
+        XCTAssertNil(servers[0].workerPid)
+        XCTAssertEqual(servers[1].state, "mismatch")
+    }
     func testDecodeScanPreservesLargeModelAndTotalByteCounts() throws {
         let result = try WorkbenchAPI.decodeScan(fixture(named: "convert-scan-valid"))
 
