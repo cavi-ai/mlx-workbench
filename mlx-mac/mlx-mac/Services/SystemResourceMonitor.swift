@@ -53,6 +53,8 @@ final class SystemResourceMonitor: ObservableObject {
         }
     }
 
+    var isMonitoring: Bool { monitoring != nil }
+
     func startMonitoring() {
         guard monitoring == nil else { return }
         monitoring = Task { [weak self] in

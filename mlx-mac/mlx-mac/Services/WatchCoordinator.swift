@@ -267,6 +267,8 @@ final class WatchCoordinator: ObservableObject {
 
     // MARK: - Scheduling
 
+    var isMonitoring: Bool { monitorTask != nil }
+
     /// Check on launch when stale (>24h or never), then daily. Idempotent.
     func startMonitoring(intervalNanoseconds: UInt64 = 86_400_000_000_000) {
         guard monitorTask == nil else { return }

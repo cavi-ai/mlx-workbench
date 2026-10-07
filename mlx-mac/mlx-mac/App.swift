@@ -10,11 +10,7 @@ struct MlxWorkbenchApp: App {
         WindowGroup {
             ContentView(appHost: appHost)
                 .onAppear {
-                    // Premium feature toggles: attach the quality gate when
-                    // enabled, start endpoint + watch monitoring per config.
-                    appHost.applyFeatureToggles()
-                    appHost.endpoint.startMonitoring()
-                    appHost.resources.startMonitoring()
+                    appHost.startLiveServices()
                 }
         }
         .windowToolbarStyle(.unified)
