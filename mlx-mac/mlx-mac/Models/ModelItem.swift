@@ -212,9 +212,17 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let logPath: String?
     let startedAt: String?
     let receipt: String?
+    let jit: Bool?
+    let modelState: String?
+    let workerPid: Int?
+    let activeRequests: Int?
 
     enum CodingKeys: String, CodingKey {
         case repo, path, runtime, port, pid, state, receipt
+        case jit
+        case modelState = "model_state"
+        case workerPid = "worker_pid"
+        case activeRequests = "active_requests"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -228,7 +236,11 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         state: String? = nil,
         logPath: String? = nil,
         startedAt: String? = nil,
-        receipt: String? = nil
+        receipt: String? = nil,
+        jit: Bool? = nil,
+        modelState: String? = nil,
+        workerPid: Int? = nil,
+        activeRequests: Int? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -239,6 +251,10 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.logPath = logPath
         self.startedAt = startedAt
         self.receipt = receipt
+        self.jit = jit
+        self.modelState = modelState
+        self.workerPid = workerPid
+        self.activeRequests = activeRequests
     }
 
     /// The identity serve reports for this server's model: the repo id for
@@ -247,6 +263,23 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     var modelIdentity: String { repo ?? path ?? "" }
 
     var id: String { "\(modelIdentity)-\(port.map(String.init) ?? "")" }
+
+    func sameProcess(as other: ServerInfo) -> Bool {
+        modelIdentity == other.modelIdentity && port == other.port && pid == other.pid &&
+        runtime == other.runtime && receipt == other.receipt && startedAt == other.startedAt
+    }
+
+    var residencySummary: String {
+        guard jit == true else { return "Serving process" }
+        switch modelState {
+        case "loaded": return "JIT · loaded"
+        case "unloaded": return "JIT · loads on request"
+        case "loading": return "JIT · loading…"
+        case "unloading": return "JIT · unloading…"
+        case "failed": return "JIT · load failed"
+        default: return "JIT · residency unknown"
+        }
+    }
 }
 
 // MARK: - DiscoverResult

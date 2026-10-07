@@ -315,12 +315,26 @@ from `mlx-agent` at runtime.
 - The native toolbar shares `SystemResourceMonitor`: Mach memory estimates
   refresh off-main every five seconds; unavailable readings remain unknown.
   Its popover fetches authoritative serving status while open and exposes
-  Unload through `EndpointSupervisor.unloadServer`. Unload refuses changed
-  process identity or an in-flight serving transition, persists disabled
-  desired state before stopping, and confirms status afterward. Failed saves
-  preserve the running server; failed stops remain visible and never count as
-  unloaded. Comparison/verification models are protected. The popover's
-  context selector feeds workflow model-fit reviews, not server configuration.
+  Unload through `EndpointSupervisor.unloadServer`. JIT unload checks fresh
+  process identity, refuses active requests, releases the owned worker, and
+  confirms the same gateway remains running with an unloaded model. Desired
+  endpoint state stays enabled. Eager Stop server persists disabled desired
+  state before stopping; save/stop failures remain visible. Comparison and
+  verification models are protected. The context selector feeds workflow
+  model-fit reviews, not server configuration.
+- **Load on request**: new native endpoint slots default to JIT; old slots
+  lacking `loadOnRequest` retain eager behavior. Changing mode explicitly
+  restarts the endpoint. The vendored agent's `serve start --jit` launches a
+  loopback gateway with an authenticated control channel and one owned worker.
+  `/v1/models` stays reachable while unloaded; inference starts the worker
+  against the confirmed absolute local model path with offline HF settings.
+  File identity is checked before and after loading; changed files require a
+  fresh plan. Concurrent cold requests share one load; streamed responses hold
+  an active lease that blocks unload. `serve unload --expected-pid` retains
+  the gateway, while `serve stop` terminates its owned process group. Status
+  exposes model residency separately from gateway liveness. JIT with direct
+  `--launchd` is refused; native supervision owns the lifecycle. Comparison
+  and verification continue to use eager serving.
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 

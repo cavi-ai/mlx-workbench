@@ -442,16 +442,17 @@ actor WorkbenchAPI {
         return ["--repo", model]
     }
 
-    func servePreview(repo: String, runtime: String, port: Int?) throws -> [String: Any] {
+    func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false) throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + ["--runtime", runtime, "--receipts-dir", receiptDirectory]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
+        if jit { argv.append("--jit") }
         return Self.unwrapPlan(try raw(argv))
     }
 
     func serveStart(repo: String, runtime: String, port: Int?,
-                    previewHash: String) throws -> [String: Any] {
+                    previewHash: String, jit: Bool = false) throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + [
@@ -460,6 +461,7 @@ actor WorkbenchAPI {
                 "--receipts-dir", receiptDirectory,
             ]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
+        if jit { argv.append("--jit") }
         return try raw(argv)
     }
 
@@ -468,6 +470,11 @@ actor WorkbenchAPI {
             "serve", "stop", "--port", String(port),
             "--receipts-dir", receiptDirectory,
         ])
+    }
+
+    func serveUnload(port: Int, expectedPID: Int) throws -> [String: Any] {
+        try raw(["serve", "unload", "--port", String(port), "--expected-pid", String(expectedPID),
+                 "--receipts-dir", receiptDirectory])
     }
 
     // MARK: - LoRA / Fuse
@@ -542,12 +549,25 @@ actor WorkbenchAPI {
                 runtime: r.string("runtime"),
                 port: r.int("port"),
                 pid: r.int("pid"),
-                state: r.string("state"),
+                state: Self.serveProcessState(r),
                 logPath: r.string("log_path"),
                 startedAt: r.string("started_at"),
-                receipt: r.string("receipt")
+                receipt: r.string("receipt"),
+                jit: r["jit"] as? Bool,
+                modelState: r.string("model_state"),
+                workerPid: r.int("worker_pid"),
+                activeRequests: r.int("active_requests")
             )
         }
+    }
+
+    private static func serveProcessState(_ row: [String: Any]) -> String? {
+        if let alive = row["alive"] as? Bool {
+            if !alive { return "stopped" }
+            if let matches = row["argv_match"] as? Bool { return matches ? "running" : "mismatch" }
+            return nil
+        }
+        return row.string("state")
     }
 
     static func candidates(from data: [String: Any], key: String = "candidates") -> [DiscoverCandidate]? {

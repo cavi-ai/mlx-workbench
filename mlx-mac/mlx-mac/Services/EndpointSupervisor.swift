@@ -29,6 +29,7 @@ final class EndpointSupervisor: ObservableObject {
     /// Per-slot live state and restart counters (fleet surface; P2 UI).
     @Published private(set) var slotStates: [UUID: EndpointState] = [:]
     @Published private(set) var slotRestartAttempts: [UUID: Int] = [:]
+    @Published private(set) var slotResidencies: [UUID: String] = [:]
 
     /// Legacy single-slot view: the first slot plus the login-item flag.
     /// Removed when the transition shim is dropped (spec 09 rollout).
@@ -90,29 +91,31 @@ final class EndpointSupervisor: ObservableObject {
     /// Enable from raw UI text: an empty field means the default port; a
     /// non-numeric or out-of-range value is refused with an error instead of
     /// being silently coerced onto the default port.
-    func enable(modelPath: String, portText: String, allowUnverified: Bool = false) async {
+    func enable(modelPath: String, portText: String, allowUnverified: Bool = false, loadOnRequest: Bool? = nil) async {
         let trimmed = portText.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            await enable(modelPath: modelPath, port: EndpointConfig.defaultPort, allowUnverified: allowUnverified)
+            await enable(modelPath: modelPath, port: EndpointConfig.defaultPort, allowUnverified: allowUnverified, loadOnRequest: loadOnRequest)
             return
         }
         guard let port = Int(trimmed), (1...65535).contains(port) else {
             lastError = "Port must be a number between 1 and 65535."
             return
         }
-        await enable(modelPath: modelPath, port: port, allowUnverified: allowUnverified)
+        await enable(modelPath: modelPath, port: port, allowUnverified: allowUnverified, loadOnRequest: loadOnRequest)
     }
 
-    func enable(modelPath: String, port: Int, allowUnverified: Bool = false) async {
+    func enable(modelPath: String, port: Int, allowUnverified: Bool = false, loadOnRequest: Bool? = nil) async {
         guard !isUnloading else { return }
         activeUserOperations += 1
         defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
+        let initialLoadMode = loadOnRequest ?? (fleet.slots.isEmpty ? lifecycle.jitPreview != nil : nil)
         if let id = fleet.slots.first?.id { pendingUserServeBySlot.removeValue(forKey: id) }
         mutateSlot0 { slot in
             slot.enabled = true
             slot.port = port
             slot.modelPath = modelPath
+            if let initialLoadMode { slot.loadOnRequest = initialLoadMode }
         }
         if let id = fleet.slots.first?.id {
             slotAttemptTimestamps[id] = []
@@ -159,12 +162,13 @@ final class EndpointSupervisor: ObservableObject {
 
     /// Add an enabled slot. Refused (with `lastError`) at the slot cap, on a
     /// duplicate port or role, or when the model fails the verified gate.
-    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false) async {
+    func addSlot(modelPath: String, port: Int, role: UseCase? = nil, allowUnverified: Bool = false, loadOnRequest: Bool? = nil) async {
         guard !isUnloading else { return }
         activeUserOperations += 1
         defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
-        let candidate = EndpointSlot(enabled: true, port: port, modelPath: modelPath, role: role)
+        let candidate = EndpointSlot(enabled: true, port: port, modelPath: modelPath, role: role,
+                                     loadOnRequest: loadOnRequest ?? (lifecycle.jitPreview != nil))
         guard validate(candidate, isNew: true) else { return }
         fleet.slots.append(candidate)
         lastError = nil
@@ -250,8 +254,52 @@ final class EndpointSupervisor: ObservableObject {
 
     // MARK: - Reconciliation
 
-    /// Release the selected serving process. Persist disabled desired state
-    /// first, so timer reconciliation and the next launch cannot reload it.
+    /// Persist the selected mode before restarting this endpoint. Existing
+    /// fleets stay eager until the user changes their mode.
+    func setSlotLoadOnRequest(id: UUID, _ enabled: Bool) async {
+        guard !isUnloading, !isReconciling, activeUserOperations == 0 else {
+            lastError = "Serving is changing. Wait before changing load mode."
+            return
+        }
+        guard let index = fleet.slots.firstIndex(where: { $0.id == id }),
+              fleet.slots[index].usesJIT != enabled else { return }
+        isUnloading = true
+        defer { isUnloading = false }
+        do {
+            let slot = fleet.slots[index]
+            let current = try await statusProvider().first { $0.port == slot.port && $0.state?.lowercased() == "running" }
+            if let current {
+                guard HFRepoID.matches(current.modelIdentity, slot.modelPath) else {
+                    lastError = "A different model is serving on this port. Refresh before changing load mode."
+                    return
+                }
+                guard (current.activeRequests ?? 0) == 0 else {
+                    lastError = "Finish active requests before changing load mode."
+                    return
+                }
+            }
+            var candidate = fleet
+            candidate.slots[index].loadOnRequest = enabled
+            try fleetStore.save(candidate)
+            fleet = candidate
+            persistenceError = nil
+            if let current, (current.jit == true) != enabled {
+                try await lifecycle.stop(slot.port)
+                let after = try await statusProvider()
+                guard !after.contains(where: { $0.port == slot.port && $0.state?.lowercased() == "running" }) else {
+                    lastError = "Endpoint is still running in its previous mode. Disable and enable it to retry."
+                    return
+                }
+            }
+            isUnloading = false
+            await reconcile()
+        } catch {
+            lastError = "Could not change endpoint load mode: \(AppHost.render(error))"
+        }
+    }
+
+    /// Release a JIT worker while retaining its enabled gateway. Eager
+    /// endpoints persist disabled desired state before their server stops.
     /// The agent's receipt/PID fence remains the authority for stopping it.
     func unloadServer(_ expected: ServerInfo) async -> Bool {
         guard !isUnloading, !isReconciling, activeUserOperations == 0 else {
@@ -266,9 +314,28 @@ final class EndpointSupervisor: ObservableObject {
         defer { isUnloading = false }
         do {
             let current = try await statusProvider()
-            guard current.contains(expected) else {
+            guard let selected = current.first(where: { $0.sameProcess(as: expected) && $0.state?.lowercased() == "running" }) else {
                 lastError = "The serving process changed. Refresh before unloading."
                 return false
+            }
+            if selected.jit == true {
+                guard let pid = selected.pid, let unload = lifecycle.unload else {
+                    lastError = "JIT unload is unavailable for this runtime."
+                    return false
+                }
+                guard (selected.activeRequests ?? 0) == 0 else {
+                    lastError = "Finish active requests before unloading this model."
+                    return false
+                }
+                try await unload(port, pid)
+                let after = try await statusProvider()
+                guard let alive = after.first(where: { $0.sameProcess(as: selected) }),
+                      alive.state?.lowercased() == "running", alive.modelState == "unloaded" else {
+                    lastError = "Model unload could not be confirmed; refresh serving status."
+                    return false
+                }
+                lastError = nil
+                return true
             }
             var disabled = fleet
             for index in disabled.slots.indices where disabled.slots[index].port == port {
@@ -344,6 +411,11 @@ final class EndpointSupervisor: ObservableObject {
     private func reconcileSlot(_ slot: EndpointSlot, running: [ServerInfo]) async {
         if let ours = running.first(where: { $0.port == slot.port }) {
             if HFRepoID.matches(ours.modelIdentity, slot.modelPath) {
+                slotResidencies[slot.id] = ours.residencySummary
+                guard (ours.jit == true) == slot.usesJIT else {
+                    slotStates[slot.id] = .degraded(reason: "Endpoint load mode differs. Disable and enable it to apply the selected mode.")
+                    return
+                }
                 slotStates[slot.id] = .running(modelPath: slot.modelPath, port: slot.port)
                 recordIntentionalServe(slot)
             } else {
@@ -369,14 +441,27 @@ final class EndpointSupervisor: ObservableObject {
         }
 
         slotStates[slot.id] = .starting
+        slotResidencies.removeValue(forKey: slot.id)
         attempts.append(now())
         slotAttemptTimestamps[slot.id] = attempts
         slotRestartAttempts[slot.id] = attempts.count
         do {
-            let hash = try await lifecycle.preview(slot.modelPath, slot.port)
+            let preview: @Sendable (String, Int) async throws -> String
+            let start: @Sendable (String, Int, String) async throws -> Void
+            if slot.usesJIT {
+                guard let jitPreview = lifecycle.jitPreview, let jitStart = lifecycle.jitStart else {
+                    throw WorkflowEvidenceError.invalid("JIT serving is unavailable in this runtime.")
+                }
+                preview = jitPreview
+                start = jitStart
+            } else {
+                preview = lifecycle.preview
+                start = lifecycle.start
+            }
+            let hash = try await preview(slot.modelPath, slot.port)
             guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
             guard fleet.slots.contains(slot) else { return }
-            try await lifecycle.start(slot.modelPath, slot.port, hash)
+            try await start(slot.modelPath, slot.port, hash)
             slotStates[slot.id] = .waitingForServer
         } catch {
             pendingUserServeBySlot.removeValue(forKey: slot.id)

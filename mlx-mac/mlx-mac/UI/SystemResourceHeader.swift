@@ -86,9 +86,11 @@ struct SystemResourceHeader: View {
                                 .help(server.modelIdentity)
                             Text("Port \(server.port.map(String.init) ?? "unknown") · PID \(server.pid.map(String.init) ?? "unknown")")
                                 .font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
+                            Text(server.residencySummary + ((server.activeRequests ?? 0) > 0 ? " · \(server.activeRequests ?? 0) active" : ""))
+                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                         }
                         Spacer()
-                        Button("Unload") {
+                        Button(server.jit == true ? "Unload" : "Stop server") {
                             Task {
                                 unloadError = nil
                                 if !(await onUnload(server)) { unloadError = endpoint.lastError ?? "Unload failed." }
@@ -97,8 +99,13 @@ struct SystemResourceHeader: View {
                             }
                         }
                         .controlSize(.small)
-                        .disabled(endpoint.isUnloading || resources.refreshingServers || server.port == nil || protectedModels.contains(where: { HFRepoID.matches($0, server.modelIdentity) }))
-                        .help("Stop this model server and disable its automatic restart. Model files stay on disk. Start again from Run.")
+                        .disabled(endpoint.isUnloading || resources.refreshingServers || server.port == nil ||
+                                  server.modelState == "unloaded" || server.modelState == "loading" || server.modelState == "unloading" ||
+                                  (server.activeRequests ?? 0) > 0 ||
+                                  protectedModels.contains(where: { HFRepoID.matches($0, server.modelIdentity) }))
+                        .help(server.jit == true
+                              ? "Release model weights while keeping this endpoint reachable. The next request loads the same local files."
+                              : "Stop this server and disable automatic restart. Enable Load on request in Run for JIT unload.")
                     }
                 }
             } else {

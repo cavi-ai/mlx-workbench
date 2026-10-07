@@ -5,6 +5,60 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testNewEndpointDefaultsToJITWithoutEagerStart() async throws {
+        let world = FakeServeWorld()
+        let recorder = LifecycleRecorder()
+        world.recorder = recorder
+        var lifecycle = world.lifecycle
+        lifecycle.jitPreview = { _, _ in "jit-hash" }
+        lifecycle.jitStart = { model, port, hash in
+            XCTAssertEqual(hash, "jit-hash")
+            world.preload(repo: model, port: port, jit: true, modelState: "unloaded")
+        }
+        let supervisor = EndpointSupervisor(lifecycle: lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        await supervisor.reconcile()
+        XCTAssertTrue(try XCTUnwrap(supervisor.fleet.slots.first).usesJIT)
+        XCTAssertEqual(try world.status().first?.modelState, "unloaded")
+        XCTAssertTrue(recorder.events.isEmpty)
+    }
+
+    func testJITUnloadKeepsDesiredEndpointAndDoesNotStartWorkerAgain() async throws {
+        let world = FakeServeWorld()
+        world.preload(repo: "/Models/a", port: 8766, jit: true, modelState: "loaded")
+        var lifecycle = world.lifecycle
+        lifecycle.unload = { port, _ in world.unloadModel(port: port) }
+        let supervisor = EndpointSupervisor(lifecycle: lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        await supervisor.enable(modelPath: "/Models/a", port: 8766, loadOnRequest: true)
+        let before = try XCTUnwrap(try world.status().first)
+        let unloaded = await supervisor.unloadServer(before)
+        XCTAssertTrue(unloaded)
+        XCTAssertTrue(supervisor.config.enabled)
+        await supervisor.reconcile()
+        let after = try XCTUnwrap(try world.status().first)
+        XCTAssertEqual(after.pid, before.pid)
+        XCTAssertEqual(after.state, "running")
+        XCTAssertEqual(after.modelState, "unloaded")
+    }
+
+    func testFailedJITUnloadKeepsDesiredStateAndReportsLoadedModel() async throws {
+        let world = FakeServeWorld()
+        world.preload(repo: "/Models/a", port: 8766, jit: true, modelState: "loaded")
+        var lifecycle = world.lifecycle
+        lifecycle.unload = { _, _ in throw StubError.offline }
+        let supervisor = EndpointSupervisor(lifecycle: lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        await supervisor.enable(modelPath: "/Models/a", port: 8766, loadOnRequest: true)
+        let server = try XCTUnwrap(try world.status().first)
+        let unloaded = await supervisor.unloadServer(server)
+        XCTAssertFalse(unloaded)
+        XCTAssertTrue(supervisor.config.enabled)
+        XCTAssertEqual(try world.status().first?.modelState, "loaded")
+        XCTAssertNotNil(supervisor.lastError)
+    }
+
     func testUnloadStandaloneServerAndPreservesOtherPorts() async throws {
         let world = FakeServeWorld()
         let fleetURL = temporaryURL("fleet.json")

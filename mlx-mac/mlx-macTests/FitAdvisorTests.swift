@@ -11,7 +11,8 @@ final class FitAdvisorTests: XCTestCase {
     @MainActor
     func testResourceHeaderAndServingControlsRender() async throws {
         let world = FakeServeWorld()
-        world.preload(repo: "/Models/Qwen3-8B-4bit", port: 8766)
+        world.preload(repo: "/Models/Qwen3-8B-4bit", port: 8766, jit: true, modelState: "loaded")
+        world.preload(repo: "/Models/Qwen3-4B-4bit", port: 8767, jit: true, modelState: "unloaded")
         let monitor = SystemResourceMonitor(probe: { MemorySnapshot(totalBytes: 32_000_000_000, availableBytes: 12_000_000_000) },
             statusProvider: { try world.status() })
         await monitor.refreshMemory()
@@ -23,9 +24,9 @@ final class FitAdvisorTests: XCTestCase {
             HStack { Text("Compare").font(.headline); Spacer(); header }.padding(16)
             header.panel
             Spacer()
-        }.frame(width: 670, height: 520).background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        }.frame(width: 670, height: 580).background(WorkbenchColor.canvas).preferredColorScheme(.dark)
         let view = NSHostingView(rootView: root)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 670, height: 520), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 670, height: 580), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = view; window.orderFront(nil)

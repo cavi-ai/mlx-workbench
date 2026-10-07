@@ -39,7 +39,7 @@ The default agent path is `vendor/mlx-agent` (pinned release). Override with Set
 - **Model Lineage**: a per-model provenance timeline (source → converted → verified → benchmarked → served → wired), exportable as Markdown or JSON.
 - **Watch & Regression Alerts**: upstream Hugging Face digests and macOS/MLX environment-drift re-verification prompts.
 - **Memory-fit Advisor**: fits/tight/won't-fit verdict with a suggested max context before serving.
-- **Live memory header**: system-wide estimated RAM usage and available headroom stay visible across native tabs. Open it for serving-process status, safe Unload controls, and the context used for model-fit reviews. Unload stops the selected server and disables its Always-on restart; model files remain on disk. Start it again from Run. Active comparison and verification models are protected.
+- **Live memory header**: system-wide estimated RAM usage and available headroom stay visible across native tabs. Open it for serving-process status, safe Unload controls, and the context used for model-fit reviews. New native endpoints default to **Load on request**: the port stays reachable, and the first inference request loads the selected existing local weights. **Unload** releases a JIT model while keeping that endpoint enabled; the next request loads it again. Existing endpoints retain their previous mode until changed in Run. **Stop server** stops an eager endpoint and disables its restart; model files remain on disk. Active comparison and verification models are protected.
 
 Build and run:
 

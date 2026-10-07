@@ -157,6 +157,9 @@ struct ServeLifecycle: Sendable {
     var preview: @Sendable (_ modelPath: String, _ port: Int) async throws -> String
     var start: @Sendable (_ modelPath: String, _ port: Int, _ previewHash: String) async throws -> Void
     var stop: @Sendable (_ port: Int) async throws -> Void
+    var jitPreview: (@Sendable (_ modelPath: String, _ port: Int) async throws -> String)? = nil
+    var jitStart: (@Sendable (_ modelPath: String, _ port: Int, _ previewHash: String) async throws -> Void)? = nil
+    var unload: (@Sendable (_ port: Int, _ expectedPID: Int) async throws -> Void)? = nil
 }
 
 extension ServeLifecycle {
@@ -172,6 +175,16 @@ extension ServeLifecycle {
             },
             stop: { port in
                 _ = try await api.serveStop(port: port)
+            },
+            jitPreview: { modelPath, port in
+                let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, jit: true)
+                return response.string("preview_hash") ?? ""
+            },
+            jitStart: { modelPath, port, hash in
+                _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: hash, jit: true)
+            },
+            unload: { port, pid in
+                _ = try await api.serveUnload(port: port, expectedPID: pid)
             }
         )
     }
