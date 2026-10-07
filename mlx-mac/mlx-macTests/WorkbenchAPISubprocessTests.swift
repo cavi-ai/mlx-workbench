@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 
@@ -288,6 +289,92 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(previewHash, "serve-hash")
     }
 
+    func testTimeoutStopsTheAgentProcessGroupIncludingItsBackend() throws {
+        let pids = FileManager.default.temporaryDirectory.appendingPathComponent("agent-pids-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: pids) }
+        let agent = try FixtureAgent(spawningBackendRecordingPIDsTo: pids)
+        defer { agent.remove() }
+        let registry = CLIProcessRegistry(notificationCenter: NotificationCenter(), terminationGrace: 0.5)
+        let cli = CLIProcess(registry: registry, terminationGrace: 0.5)
+
+        XCTAssertThrowsError(try cli.run(agentPath: agent.root.path, argv: ["convert", "video"], timeout: 4)) { error in
+            XCTAssertEqual((error as? BridgeError)?.code, "skill_timeout")
+        }
+
+        let spawned = try XCTUnwrap(SpawnedAgent(contentsOf: pids), "the agent started its backend before the timeout")
+        XCTAssertEqual(spawned.agentGroup, spawned.agent, "the agent leads its own process group")
+        XCTAssertEqual(spawned.backendGroup, spawned.agent, "the backend stays in the agent's group")
+        XCTAssertNotEqual(spawned.agentGroup, getpgrp(), "the agent is outside the app's group")
+        XCTAssertTrue(processIsGone(spawned.agent), "the timed-out agent \(spawned.agent) is stopped")
+        XCTAssertTrue(processIsGone(spawned.backend), "the SIGTERM-ignoring backend \(spawned.backend) is killed after the grace")
+    }
+
+    func testAppTerminationStopsLiveAgentProcessGroups() throws {
+        let pids = FileManager.default.temporaryDirectory.appendingPathComponent("agent-pids-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: pids) }
+        let agent = try FixtureAgent(spawningBackendRecordingPIDsTo: pids)
+        defer { agent.remove() }
+        let center = NotificationCenter()
+        let registry = CLIProcessRegistry(notificationCenter: center, terminationGrace: 0.5)
+        let cli = CLIProcess(registry: registry, terminationGrace: 0.5)
+        let path = agent.root.path
+        let finished = DispatchSemaphore(value: 0)
+        var failure: Error?
+        Thread.detachNewThread {
+            do {
+                _ = try cli.run(agentPath: path, argv: ["convert", "video"], timeout: 120)
+            } catch {
+                failure = error
+            }
+            finished.signal()
+        }
+
+        var spawned: SpawnedAgent?
+        for _ in 0..<500 where spawned == nil {
+            spawned = SpawnedAgent(contentsOf: pids)
+            if spawned == nil { usleep(20_000) }
+        }
+        let live = try XCTUnwrap(spawned, "the agent started its backend")
+        XCTAssertEqual(kill(live.agent, 0), 0, "the agent is running before quit")
+        XCTAssertEqual(kill(live.backend, 0), 0, "the backend is running before quit")
+
+        center.post(name: NSApplication.willTerminateNotification, object: nil)
+
+        XCTAssertTrue(processIsGone(live.agent), "quit stops the agent \(live.agent)")
+        XCTAssertTrue(processIsGone(live.backend), "quit kills the SIGTERM-ignoring backend \(live.backend)")
+        XCTAssertEqual(finished.wait(timeout: .now() + 10), .success, "the in-flight call returns once its group is stopped")
+        XCTAssertNotNil(failure, "a stopped agent call reports a failure")
+    }
+
+    func testAgentLaunchedAfterAppTerminationBeganIsStoppedAtOnce() throws {
+        let pids = FileManager.default.temporaryDirectory.appendingPathComponent("agent-pids-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: pids) }
+        let agent = try FixtureAgent(spawningBackendRecordingPIDsTo: pids)
+        defer { agent.remove() }
+        let center = NotificationCenter()
+        let registry = CLIProcessRegistry(notificationCenter: center, terminationGrace: 0.5)
+        let cli = CLIProcess(registry: registry, terminationGrace: 0.5)
+        center.post(name: NSApplication.willTerminateNotification, object: nil)
+
+        let started = Date()
+        XCTAssertThrowsError(try cli.run(agentPath: agent.root.path, argv: ["convert", "video"], timeout: 60))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 30, "the call ends with its stopped group, not at the timeout")
+        if let spawned = SpawnedAgent(contentsOf: pids) {
+            XCTAssertTrue(processIsGone(spawned.agent), "agent \(spawned.agent) is stopped")
+            XCTAssertTrue(processIsGone(spawned.backend), "backend \(spawned.backend) is stopped")
+        }
+    }
+
+    /// True once `pid` no longer exists (exited and reaped), polling up to `seconds`.
+    private func processIsGone(_ pid: pid_t, within seconds: TimeInterval = 5) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        repeat {
+            if kill(pid, 0) != 0 && errno == ESRCH { return true }
+            usleep(20_000)
+        } while Date() < deadline
+        return false
+    }
+
     private func fixture(named name: String) throws -> [String: Any] {
         // Shared contract fixtures live at the repo root so the Python
         // suite consumes the same files; see tests/fixtures/README.md.
@@ -300,6 +387,27 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         let url = directory.appendingPathComponent(name).appendingPathExtension("json")
         let data = try Data(contentsOf: url)
         return try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    }
+}
+
+/// Process identities the backend-spawning fixture agent records.
+private struct SpawnedAgent {
+    let agent: pid_t
+    let agentGroup: pid_t
+    let backend: pid_t
+    let backendGroup: pid_t
+
+    init?(contentsOf url: URL) {
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Int],
+              let agent = object["agent"], let agentGroup = object["agent_group"],
+              let backend = object["backend"], let backendGroup = object["backend_group"] else {
+            return nil
+        }
+        self.agent = pid_t(agent)
+        self.agentGroup = pid_t(agentGroup)
+        self.backend = pid_t(backend)
+        self.backendGroup = pid_t(backendGroup)
     }
 }
 
@@ -364,6 +472,35 @@ private final class FixtureAgent {
         else:
             open(\(String(reflecting: commandStarted.path)), "w").close()
         print(json.dumps({"status": "ok", "data": data}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
+
+    /// Starts a backend stand-in that ignores SIGTERM and sleeps (as a media
+    /// call's backend Python would run), records both pids and process groups
+    /// to `pidsPath`, then sleeps without answering.
+    convenience init(spawningBackendRecordingPIDsTo pidsPath: URL) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import json
+        import os
+        import subprocess
+        import time
+
+        backend = subprocess.Popen(["/bin/sh", "-c", "trap '' TERM; exec sleep 600"])
+        pids = {
+            "agent": os.getpid(),
+            "agent_group": os.getpgid(0),
+            "backend": backend.pid,
+            "backend_group": os.getpgid(backend.pid),
+        }
+        staging = \(String(reflecting: pidsPath.path)) + ".tmp"
+        with open(staging, "w") as handle:
+            json.dump(pids, handle)
+        os.replace(staging, \(String(reflecting: pidsPath.path)))
+        time.sleep(600)
         """
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
     }
