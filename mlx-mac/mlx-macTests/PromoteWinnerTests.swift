@@ -52,6 +52,22 @@ final class PromoteWinnerTests: XCTestCase {
         XCTAssertEqual(host.recommendationPreferences, .defaults)
     }
 
+    func testFailedPreferenceSaveKeepsPreviouslySavedChoice() throws {
+        let url = try temporaryStoreURL()
+        let durable = JSONStore<RecommendationPreferences>(fileURL: url)
+        try durable.replaceAll([.defaults])
+        let failing = JSONStore<RecommendationPreferences>(fileURL: url, replaceItem: { _, _ in
+            throw CocoaError(.fileWriteNoPermission)
+        })
+        let host = AppHost(config: Config.defaults(), preferencesStore: failing)
+
+        host.setPreferredModel("/models/unsaved", for: .coding)
+
+        XCTAssertEqual(host.recommendationPreferences, .defaults)
+        XCTAssertEqual(try durable.load(), [.defaults])
+        XCTAssertNotNil(host.lastError)
+    }
+
     private func temporaryStoreURL() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

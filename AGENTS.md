@@ -251,7 +251,15 @@ from `mlx-agent` at runtime.
   shared. A newer unreviewed or mismatched observation never falls back to an
   older winner. Quality-first fit choices exclude tight/unknown fits; the
   native guidance sheet and export refresh headroom outside view evaluation.
-  Guidance is read-only, with no serving, wiring or reclaim authority.
+  Exports remain advisory. The native **Use model** action reviews a serving
+  model's role preference and optional slot-0 endpoint change, refreshing
+  inventory, environment and headroom at review and confirm. Changed model
+  identity or cohort evidence blocks the action; ties remain explicit choices.
+  Preferences persist before in-memory publication. Endpoint changes require
+  verification and an estimated fit, retain the reviewed port, and reuse the
+  supervisor's serve boundary. Context is an estimate only; wiring and reclaim
+  remain separate actions. Endpoint errors after a saved preference are
+  reported as partial outcomes.
 - `ModelDetailsView` hosts the **Model Lineage**: `LineageIndexer` assembles
   a read-only provenance timeline per model (source, converted, verified,
   benchmarked, served, wired, quarantined) from the stores the app already

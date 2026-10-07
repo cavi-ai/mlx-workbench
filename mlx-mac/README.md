@@ -209,8 +209,19 @@ comparable entrant, and exclude tight or unknown fits. Workflow duration
 comparisons require the same harness, workload, configuration and sample
 count; quality additionally requires the same rubric. Newer observations
 replace older guidance within a cohort, including missing reviews and changed
-identities. Missing evidence and excluded models remain explicit. Guidance
-does not serve, rewire or reclaim models; recheck headroom before acting.
+identities. Missing evidence and excluded models remain explicit.
+
+**Use model…** beside a serving model's task leaders opens a compact review
+of the selected model, preferred role, current memory fit and optional
+always-on endpoint. Tied leaders remain explicit choices. Review and confirm
+both refresh Library, environment and headroom; changed identities or task
+evidence require a new review. Saving the preference does not require a fit
+or verification. The optional endpoint action requires a verified model and
+an estimated fit, preserves its reviewed port, and uses the existing serve
+preview/confirm boundary. The context token count is an estimate, not an
+endpoint setting. A preference is reported saved only after its durable write
+succeeds; any subsequent endpoint problem is reported separately. JSON exports
+remain advisory, and client wiring and reclaim keep their own reviews.
 
 Workflow JSON uses an object with `schemaVersion: 1` and a `records` array.
 Each record requires:

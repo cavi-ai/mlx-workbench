@@ -656,15 +656,66 @@ class AppHost: ObservableObject {
     /// and the per-variant affordance share this one write path). Persisted
     /// so a promoted winner survives relaunch.
     func setPreferredModel(_ path: String, for useCase: UseCase) {
+        do { try savePreferredModel(path, for: useCase) }
+        catch { lastError = Self.render(error) }
+    }
+
+    func savePreferredModel(_ path: String, for useCase: UseCase) throws {
         var preferred = recommendationPreferences.preferredModelIDs
         preferred[useCase] = path
-        recommendationPreferences = RecommendationPreferences(
+        let updated = RecommendationPreferences(
             speedWeight: recommendationPreferences.speedWeight,
             qualityWeight: recommendationPreferences.qualityWeight,
             hiddenModelIDs: recommendationPreferences.hiddenModelIDs,
             preferredModelIDs: preferred
         )
-        try? preferencesStore.replaceAll([recommendationPreferences])
+        try preferencesStore.replaceAll([updated])
+        recommendationPreferences = updated
+    }
+
+    /// Explicit actions refresh inventory and resource probes outside view evaluation.
+    func reviewModelGuidance(evidence: AgentEvidenceExport, taskID: String, path: String) async throws -> ModelGuidanceReview {
+        await WatchCoordinator.refreshEnvironmentProbe()
+        guard let snapshot = await rescan(limit: nil, reconcileWorkflow: false) else {
+            throw WorkflowEvidenceError.invalid(lastError ?? "Library scan is already running; try again when it finishes.")
+        }
+        let capture = await Task.detached(priority: .utility) { (MemorySnapshot.probe(), Date()) }.value
+        let fresh = ComparisonInsights.agentEvidence(models: snapshot.models, runs: comparison.runs,
+            workflow: workflowEvidence.records, environment: watch.currentFingerprintDescription,
+            hardware: hardwareProfile, memory: capture.0, capturedAt: capture.1, contextTokens: evidence.contextTokens,
+            reserveGB: config.fitReserveGB, protected: occupiedModelPaths)
+        let candidate = try ModelGuidanceAction.validate(original: evidence, fresh: fresh, taskID: taskID, path: path)
+        guard let model = snapshot.models.first(where: { $0.item.path == path }),
+              ModelTaskPresentation.isServable(model), !model.capabilities.isEmpty else {
+            throw WorkflowEvidenceError.invalid("This model has no supported serving role. Use its task-specific panel instead.")
+        }
+        return ModelGuidanceReview(evidence: fresh, taskID: taskID, candidate: candidate,
+            roles: UseCase.allCases.filter { model.capabilities.contains($0) },
+            endpoint: endpoint.config, verified: isModelVerified(path))
+    }
+
+    func applyModelGuidance(_ review: ModelGuidanceReview, role: UseCase, enableEndpoint: Bool) async throws -> String {
+        let fresh = try await reviewModelGuidance(evidence: review.evidence, taskID: review.taskID, path: review.candidate.modelPath)
+        try ModelGuidanceAction.validateApplication(review: review, fresh: fresh, role: role,
+            enableEndpoint: enableEndpoint, comparisonActive: comparison.activeRunID != nil)
+        try savePreferredModel(fresh.candidate.modelPath, for: role)
+        let saved = "Saved \(fresh.candidate.name) as preferred for \(role.title)."
+        guard enableEndpoint else { return saved }
+        if fresh.endpoint.enabled && fresh.endpoint.modelPath == fresh.candidate.modelPath {
+            return "\(saved) Endpoint already configured for this model; check Run for its current status."
+        }
+        if fresh.endpoint.enabled { await endpoint.swap(to: fresh.candidate.modelPath) }
+        else { await endpoint.enable(modelPath: fresh.candidate.modelPath, port: fresh.endpoint.port) }
+        if let problem = endpoint.persistenceError ?? endpoint.lastError {
+            throw WorkflowEvidenceError.invalid("\(saved) Endpoint needs attention: \(problem)")
+        }
+        if case .degraded(let reason) = endpoint.state {
+            throw WorkflowEvidenceError.invalid("\(saved) Endpoint needs attention: \(reason)")
+        }
+        if case .running(let path, let port) = endpoint.state, path == fresh.candidate.modelPath {
+            return "\(saved) Endpoint running on port \(port)."
+        }
+        return "\(saved) Endpoint requested; check Run for its current status."
     }
 
     /// Paths that must never be reclaimed: running servers and the active

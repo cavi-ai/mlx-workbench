@@ -129,15 +129,24 @@ struct WorkflowImportPreviewView: View {
 
 struct AgentModelGuidanceView: View {
     let evidence: AgentEvidenceExport
+    let onReview: (String, String) async throws -> ModelGuidanceReview
+    let onApply: (ModelGuidanceReview, UseCase, Bool) async throws -> String
     let onSave: (AgentEvidenceExport) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var note: String?
     @State private var error: String?
+    @State private var review: ModelGuidanceReview?
+    @State private var isPreparing = false
 
     var body: some View {
+        if let review {
+            ModelGuidanceReviewView(review: review, onApply: onApply, onBack: { self.review = nil }, onApplied: {
+                note = $0; error = nil; self.review = nil
+            })
+        } else {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Label("Model guidance for your agent", systemImage: "list.bullet.clipboard").font(WorkbenchTypography.roundedTitle)
-            Text("Task-specific choices from local evidence. Quality, speed and fit stay separate; this snapshot does not change models, endpoints or files.")
+            Text("Task-specific choices from local evidence. Quality, speed and fit stay separate. Use model reviews a role preference and an optional endpoint switch.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             Text("\(evidence.contextTokens) tokens · headroom captured \(evidence.memoryCapturedAt?.formatted() ?? "unknown")")
                 .font(WorkbenchTypography.value)
@@ -155,6 +164,14 @@ struct AgentModelGuidanceView: View {
                             Text("Best reviewed outcome: \(names(task.qualityLeaders))")
                             Text("Best measured \(metricTitle(task.performanceMetric)): \(names(task.performanceLeaders))")
                             if !task.latencyLeaders.isEmpty { Text("Lowest first-token latency: \(names(task.latencyLeaders))") }
+                            ForEach(choices(task)) { candidate in
+                                HStack {
+                                    Text(candidate.name).font(WorkbenchTypography.label).lineLimit(1)
+                                    Spacer()
+                                    Button("Use model…") { prepare(taskID: task.id, path: candidate.modelPath) }
+                                        .disabled(isPreparing)
+                                }
+                            }
                             ForEach(task.needsEvidence, id: \.self) { Text($0).foregroundStyle(WorkbenchColor.warning) }
                             DisclosureGroup("Models and evidence") {
                                 ForEach(task.candidates) { candidate in
@@ -177,6 +194,7 @@ struct AgentModelGuidanceView: View {
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             if let note { Text(note).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
             ErrorBanner(text: error)
+            if isPreparing { ProgressView("Checking model, evidence and headroom…").font(WorkbenchTypography.secondary) }
             HStack {
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
@@ -190,7 +208,26 @@ struct AgentModelGuidanceView: View {
                     } catch { self.error = AppHost.render(error) }
                 }.buttonStyle(.borderedProminent)
             }
-        }.padding(WorkbenchSpacing.lg).frame(width: 640)
+        }.padding(WorkbenchSpacing.lg).frame(width: 640).disabled(isPreparing)
+            .interactiveDismissDisabled(isPreparing)
+        }
+    }
+
+    private func choices(_ task: AgentTaskGuidance) -> [AgentTaskCandidate] {
+        let leaders = Set(task.qualityFirstFitPaths + task.qualityLeaders + task.performanceLeaders + task.latencyLeaders)
+        return task.candidates.filter { candidate in
+            candidate.comparable && leaders.contains(candidate.modelPath) &&
+                evidence.models.contains { $0.path == candidate.modelPath && !$0.tasks.isEmpty }
+        }
+    }
+
+    private func prepare(taskID: String, path: String) {
+        isPreparing = true; error = nil
+        Task { @MainActor in
+            defer { isPreparing = false }
+            do { review = try await onReview(taskID, path) }
+            catch { self.error = AppHost.render(error) }
+        }
     }
 
     private func names(_ paths: [String]) -> String {
@@ -198,5 +235,70 @@ struct AgentModelGuidanceView: View {
     }
     private func metricTitle(_ raw: String) -> String {
         raw == "totalSeconds" ? "workflow duration (same sample count)" : (ComparisonMetric(rawValue: raw)?.title ?? raw)
+    }
+}
+
+struct ModelGuidanceReviewView: View {
+    let review: ModelGuidanceReview
+    let onApply: (ModelGuidanceReview, UseCase, Bool) async throws -> String
+    let onBack: () -> Void
+    let onApplied: (String) -> Void
+    @State private var role: UseCase
+    @State private var enableEndpoint = false
+    @State private var isApplying = false
+    @State private var error: String?
+
+    init(review: ModelGuidanceReview, onApply: @escaping (ModelGuidanceReview, UseCase, Bool) async throws -> String,
+         onBack: @escaping () -> Void, onApplied: @escaping (String) -> Void) {
+        self.review = review; self.onApply = onApply; self.onBack = onBack; self.onApplied = onApplied
+        let taskRole = review.evidence.taskGuidance?.first { $0.id == review.taskID }?.useCase
+        _role = State(initialValue: taskRole.flatMap { review.roles.contains($0) ? $0 : nil } ?? review.roles.first ?? .generalChat)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Label("Use \(review.candidate.name)", systemImage: "star.circle.fill").font(WorkbenchTypography.roundedTitle)
+            Text(review.candidate.modelPath).font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
+            Picker("Preferred role", selection: $role) {
+                ForEach(review.roles) { Text($0.title).tag($0) }
+            }
+            Text("This saves a role preference across workflows. Client wiring and reclaim have separate reviews.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                Label(review.candidate.fitSummary, systemImage: "memorychip").font(WorkbenchTypography.emphasis)
+                Text("Estimate at \(review.evidence.contextTokens) tokens · \(review.evidence.reserveGB.formatted()) GB reserve")
+                    .font(WorkbenchTypography.secondary)
+                Text("Headroom checked \(review.evidence.memoryCapturedAt?.formatted() ?? "unknown"). Context here is an estimate, not an endpoint setting.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }.padding(WorkbenchSpacing.sm)
+                .background(WorkbenchColor.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface))
+            Toggle("Also use on the always-on endpoint", isOn: $enableEndpoint)
+                .font(WorkbenchTypography.emphasis).disabled(!review.verified || review.candidate.fitStatus != "fits")
+            Text(review.endpoint.enabled
+                ? "Replace \(URL(fileURLWithPath: review.endpoint.modelPath).lastPathComponent) on port \(review.endpoint.port)."
+                : "Enable on loopback port \(review.endpoint.port).")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            if !review.verified || review.candidate.fitStatus != "fits" {
+                Text(!review.verified ? "Endpoint requires a verified model. You can save the preference now." : "Endpoint requires an estimated fit at current headroom. You can save the preference now.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+            }
+            ErrorBanner(text: error)
+            HStack {
+                Button("Back", action: onBack).keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(isApplying ? "Checking and applying…" : "Use model") { apply() }
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 560).disabled(isApplying)
+            .interactiveDismissDisabled(isApplying)
+    }
+
+    private func apply() {
+        isApplying = true; error = nil
+        Task { @MainActor in
+            defer { isApplying = false }
+            do { onApplied(try await onApply(review, role, enableEndpoint)) }
+            catch { self.error = AppHost.render(error) }
+        }
     }
 }

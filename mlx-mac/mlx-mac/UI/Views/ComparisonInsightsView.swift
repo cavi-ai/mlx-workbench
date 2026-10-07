@@ -142,7 +142,10 @@ struct ComparisonInsightsView: View {
         }
         .sheet(isPresented: Binding(get: { guidanceEvidence != nil }, set: { if !$0 { guidanceEvidence = nil } })) {
             if let guidanceEvidence {
-                AgentModelGuidanceView(evidence: guidanceEvidence, onSave: { save($0, name: "mlx-workbench-agent-evidence.json") })
+                AgentModelGuidanceView(evidence: guidanceEvidence,
+                    onReview: { task, path in try await appHost.reviewModelGuidance(evidence: guidanceEvidence, taskID: task, path: path) },
+                    onApply: { review, role, endpoint in try await appHost.applyModelGuidance(review, role: role, enableEndpoint: endpoint) },
+                    onSave: { save($0, name: "mlx-workbench-agent-evidence.json") })
             }
         }
     }
