@@ -247,11 +247,16 @@ from `mlx-agent` at runtime.
   and unknown metrics. Never stamp imported observations as current or attribute
   unattributed time to GPU/disk without measurements. Resource captures run
   outside view evaluation; exports preserve their capture time and context.
-  Native Compare shows workflow runtime and timing-breakdown charts above setup,
+  Native Compare shows workflow runtime, timing-breakdown, task-quality and
+  recorded peak-memory charts above setup through a compact metric menu,
   using `AgentTaskAdvisor` identity/cohort checks. The latest observation per model
   is charted only when comparable; missing components render a total-duration
   "Breakdown unknown" bar, never inferred GPU/disk time. Zero measured durations
   remain zero; unattributed time is derived only from complete additive timings.
+  Quality requires a shared cohort rubric. Metric values bind to the exact
+  selected report ID and context; unknown scores/memory are labeled rather than
+  charted as zero. Peak memory uses recorded bytes in decimal GB and shows the
+  report's capture date, never live fit estimates or an older-report fallback.
   "Compare these models" re-checks the cohort against current identities and
   inventory at click time, loads only ready models for the selected mode, and
   keeps the prompt set. It never starts a run or replays the external harness.

@@ -349,6 +349,108 @@ final class ComparisonInsightsTests: XCTestCase {
         XCTAssertEqual(WorkflowCharts.missingTimings(candidate), ["Tools", "Queue"])
     }
 
+    func testWorkflowQualityChartRequiresSharedRubricAndKeepsMissingScoresUnknown() throws {
+        var a = selectionReport("/a"); a.qualityScore = 5; a.rubricID = "task-rubric"
+        var b = selectionReport("/b"); b.qualityScore = 3; b.rubricID = "task-rubric"
+        let models = [model("/a"), model("/b")]
+        func series(_ reports: [WorkflowEvidence]) throws -> WorkflowCharts.Series {
+            let task = try XCTUnwrap(workflowTasks(reports, models: models).first)
+            return WorkflowCharts.series(task, records: reports, metric: .quality)
+        }
+        let shared = try series([a, b])
+        XCTAssertEqual(shared.points.map(\.value), [5, 3])
+        XCTAssertNil(shared.unavailableReason)
+        b.qualityScore = nil
+        let partial = try series([a, b])
+        XCTAssertEqual(partial.points.map(\.value), [5])
+        XCTAssertEqual(partial.missing.map(\.modelPath), ["/b"])
+        b.qualityScore = 3; b.rubricID = "different-rubric"
+        let mixed = try series([a, b])
+        XCTAssertTrue(mixed.points.isEmpty)
+        XCTAssertNotNil(mixed.unavailableReason)
+        b.rubricID = nil; b.qualityScore = nil
+        XCTAssertTrue(try series([a, b]).points.isEmpty)
+    }
+
+    func testWorkflowPeakMemoryUsesRecordedBytesDatesAndTrueZeroWithoutFitFallback() throws {
+        var a = selectionReport("/a"); a.peakMemoryBytes = 6_000_000_000
+        let b = selectionReport("/b")
+        var c = selectionReport("/c"); c.peakMemoryBytes = 0
+        let older = WorkflowEvidence(id: UUID(), harness: "opencode", workloadID: "task", useCase: .coding,
+            modelPath: "/a", modelSignature: "s", environmentFingerprint: environment, measuredAt: Date(timeIntervalSince1970: 1),
+            sampleCount: 3, totalSeconds: 9, source: "older-session", peakMemoryBytes: 9_000_000_000, configurationFingerprint: "config")
+        let reports = [older, a, b, c]
+        let task = try XCTUnwrap(workflowTasks(reports, models: [model("/a"), model("/b"), model("/c")]).first)
+        let memory = WorkflowCharts.series(task, records: reports, metric: .peakMemory)
+        XCTAssertEqual(memory.points.map { $0.candidate.modelPath }, ["/c", "/a"])
+        XCTAssertEqual(memory.points.map(\.value), [0, 6])
+        XCTAssertEqual(memory.points.last?.candidate.measuredAt, a.measuredAt)
+        XCTAssertEqual(memory.points.last?.candidate.evidenceID, a.id.uuidString)
+        XCTAssertEqual(memory.missing.map(\.modelPath), ["/b"])
+        XCTAssertNotNil(task.candidates.first?.estimatedRequiredBytes, "Live fit estimates exist but must not fill missing measured memory")
+    }
+
+    func testWorkflowMetricChartsRefuseStaleEvidenceAndMismatchedReportIdentity() throws {
+        var a = selectionReport("/a"); a.qualityScore = 5; a.rubricID = "task-rubric"; a.peakMemoryBytes = 6_000_000_000
+        var b = selectionReport("/b", signature: "old"); b.qualityScore = 3; b.rubricID = "task-rubric"; b.peakMemoryBytes = 1_000_000_000
+        let task = try XCTUnwrap(workflowTasks([a, b], models: [model("/a"), model("/b")]).first)
+        for metric in WorkflowCharts.Metric.allCases {
+            XCTAssertEqual(WorkflowCharts.series(task, records: [a, b], metric: metric).points.map { $0.candidate.modelPath }, ["/a"])
+        }
+        var changed = a; changed.configurationFingerprint = "different-settings"
+        XCTAssertTrue(WorkflowCharts.series(task, records: [changed, b], metric: .peakMemory).points.isEmpty)
+        XCTAssertTrue(WorkflowCharts.series(task, records: [a, a, b], metric: .peakMemory).points.isEmpty)
+        XCTAssertTrue(WorkflowCharts.series(task, records: [], metric: .quality).points.isEmpty)
+    }
+
+    @MainActor
+    func testWorkflowMetricChartsRenderWithRecordedDatesAndUnknownValues() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("workflow-chart-fixture-\(UUID())")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let models = [("/a", "Qwen 3 · 4-bit"), ("/b", "Qwen Coder · 8-bit"), ("/c", "LFM · 4-bit")].map { path, name in
+            LibraryModel(item: model(path).item, displayName: name, readiness: .ready)
+        }
+        var reports: [WorkflowEvidence] = []
+        for index in models.indices {
+            var report = WorkflowEvidence(id: UUID(), harness: "opencode", workloadID: "coding-task", useCase: .coding,
+                modelPath: models[index].item.path, modelSignature: "s", environmentFingerprint: environment,
+                measuredAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(index) * 86_400), sampleCount: 3,
+                totalSeconds: Double(20 + index * 10), source: "session:chart-fixture-\(index)")
+            report.configurationFingerprint = "same-prompts-tools-context"
+            report.rubricID = "coding-outcome-v1"
+            report.qualityScore = index == 2 ? nil : 5 - index
+            report.peakMemoryBytes = index == 2 ? nil : Int64(6 - index * 2) * 1_000_000_000
+            if index < 2 { report.inferenceSeconds = Double(12 + index * 10); report.toolSeconds = 5; report.queueSeconds = 1 }
+            reports.append(report)
+        }
+        let store = WorkflowEvidenceStore(store: JSONStore<WorkflowEvidence>(fileURL: home.appendingPathComponent("evidence.json")))
+        try store.importReport(WorkflowEvidenceStore.encode(WorkflowReport(schemaVersion: 1, records: reports)))
+        let task = try XCTUnwrap(workflowTasks(reports, models: models).first)
+        XCTAssertEqual(WorkflowCharts.series(task, records: store.records, metric: .quality).missing.map(\.name), ["LFM · 4-bit"])
+        XCTAssertEqual(WorkflowCharts.series(task, records: store.records, metric: .peakMemory).missing.map(\.name), ["LFM · 4-bit"])
+        for metric in WorkflowCharts.Metric.allCases {
+            let root = VStack(alignment: .leading) {
+                WorkflowChartsView(workflow: store, models: models, environment: environment,
+                    hardware: HardwareProfile(chip: "M4", memoryBytes: 32_000_000_000), mode: .chat, activeRunID: nil,
+                    onCompare: { _ in WorkflowCharts.ComparisonSelection(slots: nil, reason: "") }, metric: .constant(metric))
+                Spacer(minLength: 0)
+            }.padding(20).frame(width: 960, height: 620).background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let view = NSHostingView(rootView: root)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 620), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: .darkAqua)
+            window.contentView = view; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(200))
+            view.layoutSubtreeIfNeeded()
+            let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: image)
+            let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+            attachment.name = "Workflow chart - \(metric.title)"; attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+
     func testWorkflowChartsSeparateCohortsAndExcludeNewestStaleEvidence() throws {
         func report(_ path: String, config: String?, samples: Int = 3, harness: String = "opencode", date: Double = 1000, signature: String = "s") -> WorkflowEvidence {
             var record = WorkflowEvidence(id: UUID(), harness: harness, workloadID: "task", useCase: .coding,
