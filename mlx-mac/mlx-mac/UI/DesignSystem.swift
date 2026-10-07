@@ -30,6 +30,8 @@ enum WorkbenchTypography {
     static let secondary = Font.callout
     static let label = Font.subheadline.weight(.medium)
     static let value = Font.body.monospaced()
+    static let metadata = Font.caption
+    static let compactValue = Font.caption.monospaced()
 }
 
 enum WorkbenchSpacing {

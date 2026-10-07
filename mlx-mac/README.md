@@ -116,8 +116,13 @@ sources, other cache revisions, shared blobs and outputs changed since
 verification. If cleanup cannot safely proceed, the source remains and Prepare
 shows the reason. For older verified conversions, use **Preview source cleanup**
 and review the paths before moving originals to Trash. Recovery locations are
-recorded in `source-cleanup.json` in Application Support. Disk space is released
-when you empty Trash.
+recorded in `source-cleanup.json` in Application Support. Duplicates also offers
+**Check originals** for verified conversions and a compact cleanup history with
+**Reveal in Trash** and **Review restore**. Restore previews the exact paths,
+refuses existing destinations and changed Trash items, and restores cache blobs
+before their references. Older history is labeled without invented dates or
+file identities; its preview describes the current Trash item. Disk space is
+released when you empty Trash.
 
 ## Compare decisions and workflow evidence
 

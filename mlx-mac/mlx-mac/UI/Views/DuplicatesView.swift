@@ -25,6 +25,7 @@ struct DuplicatesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                SourceCleanupSection(reclaim: reclaim, modelWorkflow: appHost.modelWorkflow, rescan: { appHost.requestRescan() })
                 reclaimSection
                 quarantinedSection
                 HStack(spacing: 10) {
