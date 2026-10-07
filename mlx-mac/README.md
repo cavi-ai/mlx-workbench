@@ -223,6 +223,15 @@ endpoint setting. A preference is reported saved only after its durable write
 succeeds; any subsequent endpoint problem is reported separately. JSON exports
 remain advisory, and client wiring and reclaim keep their own reviews.
 
+After a successful **Use model** action, **Wire into clients…** opens Clients
+with the chosen running endpoint selected. A matching always-on endpoint keeps
+its port; otherwise multiple matches require an explicit choice. Local model
+directories are supported and client configs retain the full served model
+identity, including an absolute path when serving locally. Clients refreshes
+status on entry and before preview, then rechecks the server's model, port and
+process identity before confirmation. Stopped/replaced servers or unavailable
+status block writes; file drift checks, backups and rollback remain in place.
+
 Workflow JSON uses an object with `schemaVersion: 1` and a `records` array.
 Each record requires:
 

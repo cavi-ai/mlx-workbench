@@ -231,7 +231,13 @@ struct QuantView: View {
                             models: ComparePresentation.variantPaths(variantSlots).compactMap { path in
                                 readyModels.first { $0.item.path == path }
                             },
-                            promptSetID: selectedPromptSet?.id ?? "", mode: mode, onReclaim: { onRouteSelection(.reclaim) })
+                            promptSetID: selectedPromptSet?.id ?? "", mode: mode, onReclaim: { onRouteSelection(.reclaim) },
+                            onWire: { path in
+                                let endpoint = appHost.endpoint.config
+                                let port = endpoint.enabled && HFRepoID.matches(endpoint.modelPath, path) ? endpoint.port : nil
+                                appHost.clientWiringRequest = ClientWiringRequest(modelPath: path, preferredPort: port)
+                                onRouteSelection(.clientSetup)
+                            })
                     }
                     .padding(.top, WorkbenchSpacing.sm)
                 }

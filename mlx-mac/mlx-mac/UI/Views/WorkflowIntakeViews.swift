@@ -131,17 +131,19 @@ struct AgentModelGuidanceView: View {
     let evidence: AgentEvidenceExport
     let onReview: (String, String) async throws -> ModelGuidanceReview
     let onApply: (ModelGuidanceReview, UseCase, Bool) async throws -> String
+    let onWire: (String) -> Void
     let onSave: (AgentEvidenceExport) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var note: String?
     @State private var error: String?
     @State private var review: ModelGuidanceReview?
     @State private var isPreparing = false
+    @State private var appliedModelPath: String?
 
     var body: some View {
         if let review {
             ModelGuidanceReviewView(review: review, onApply: onApply, onBack: { self.review = nil }, onApplied: {
-                note = $0; error = nil; self.review = nil
+                note = $0; appliedModelPath = review.candidate.modelPath; error = nil; self.review = nil
             })
         } else {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -193,6 +195,10 @@ struct AgentModelGuidanceView: View {
             Text("Fit is an estimate at captured headroom; recheck before serving. GPU, disk and network bottlenecks are unmeasured. Reclaim suggestions still require their own review.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             if let note { Text(note).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
+            if let appliedModelPath {
+                Button("Wire into clients…") { onWire(appliedModelPath) }
+                    .font(WorkbenchTypography.label)
+            }
             ErrorBanner(text: error)
             if isPreparing { ProgressView("Checking model, evidence and headroom…").font(WorkbenchTypography.secondary) }
             HStack {

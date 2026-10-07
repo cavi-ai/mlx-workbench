@@ -644,7 +644,11 @@ final class ModelWorkflowCoordinator: ObservableObject {
         } catch {
             preserveLastKnownState(message: "Conversion status unavailable: \(AppHost.render(error))")
         }
+        return await refreshServingStatus()
+    }
 
+    @discardableResult
+    func refreshServingStatus() async -> Bool {
         do {
             servers = try await api.serveStatus()
             return true

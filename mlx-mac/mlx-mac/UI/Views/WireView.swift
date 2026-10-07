@@ -6,6 +6,7 @@ import SwiftUI
 struct WireView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var wiring: WiringCoordinator
+    @Environment(\.isRouteActive) private var isRouteActive
 
     @State private var model = ""
     @State private var path = ""
@@ -19,6 +20,8 @@ struct WireView: View {
     @State private var selectedServerID: String?
     @State private var wiringResult: String?
     @State private var wiringResultHasIssues = false
+    @State private var isRefreshingServer = false
+    @State private var serverMessage: String?
 
     init(appHost: AppHost) {
         self.appHost = appHost
@@ -29,14 +32,10 @@ struct WireView: View {
         appHost.modelWorkflow.servers.filter { $0.state?.lowercased() == "running" }
     }
 
-    private var selectedEndpoint: WireEndpoint? {
-        guard let server = runningServers.first(where: { $0.id == selectedServerID }),
-              let port = server.port, let repo = server.repo else { return nil }
-        return WireEndpoint(
-            baseURL: "http://127.0.0.1:\(port)/v1",
-            modelName: URL(fileURLWithPath: repo).deletingPathExtension().lastPathComponent
-        )
+    private var selectedServer: ServerInfo? {
+        runningServers.first { $0.id == selectedServerID }
     }
+    private var selectedEndpoint: WireEndpoint? { selectedServer.flatMap { WireEndpoint(server: $0) } }
 
     var body: some View {
         ScrollView {
@@ -65,7 +64,11 @@ struct WireView: View {
             }
             .padding(WorkbenchSpacing.pageInset)
         }
-        .onAppear { wiring.detect() }
+        .task(id: isRouteActive) {
+            guard isRouteActive else { return }
+            wiring.detect()
+            await refreshServers()
+        }
     }
 
     // MARK: - Cross-client wiring
@@ -76,6 +79,10 @@ struct WireView: View {
             Text("Point installed clients at a running local server. Each client's own config is written atomically with backup and rollback.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
+            if let serverMessage { Text(serverMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
+            Button(isRefreshingServer ? "Refreshing servers…" : "Refresh servers") {
+                Task { await refreshServers() }
+            }.disabled(isRefreshingServer || wiring.isCheckingServer || wiring.isApplying)
 
             if runningServers.isEmpty {
                 Text("No authoritative running server. Start one in Run first.")
@@ -85,11 +92,15 @@ struct WireView: View {
                 Picker("Endpoint", selection: $selectedServerID) {
                     Text("Choose a running server…").tag(String?.none)
                     ForEach(runningServers) { server in
-                        Text("\(server.repo.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "server") :\(server.port.map(String.init) ?? "?")")
+                        Text("\(URL(fileURLWithPath: server.modelIdentity).lastPathComponent) :\(server.port.map(String.init) ?? "?")")
                             .tag(String?.some(server.id))
                     }
                 }
                 .frame(width: 340)
+                .disabled(isRefreshingServer || wiring.isCheckingServer || wiring.isApplying)
+            }
+            if let selectedEndpoint {
+                Text(selectedEndpoint.modelName).font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
             }
 
             if wiring.installations.isEmpty {
@@ -151,21 +162,28 @@ struct WireView: View {
                         }
                     }
                     Button("Confirm client wiring") {
-                        if let endpoint = selectedEndpoint {
-                            let transaction = wiring.confirm(endpoint: endpoint, previewHash: hash)
-                            if let transaction {
-                                wiringResultHasIssues = !transaction.failures.isEmpty
-                                wiringResult = transaction.failures.isEmpty
-                                    ? "Wired \(transaction.receipts.count) client(s) to \(transaction.modelName)."
-                                    : "Wired with issues: \(transaction.failures.joined(separator: "; "))"
-                            } else {
-                                wiringResult = nil
-                                wiringResultHasIssues = false
+                        if let server = selectedServer {
+                            Task { @MainActor in
+                                let transaction = await wiring.confirm(server: server, previewHash: hash, currentServers: {
+                                    guard await appHost.modelWorkflow.refreshServingStatus() else {
+                                        throw WorkflowEvidenceError.invalid("Could not establish current server status.")
+                                    }
+                                    return appHost.modelWorkflow.servers
+                                })
+                                if let transaction {
+                                    wiringResultHasIssues = !transaction.failures.isEmpty
+                                    wiringResult = transaction.failures.isEmpty
+                                        ? "Wired \(transaction.receipts.count) client(s) to \(transaction.modelName)."
+                                        : "Wired with issues: \(transaction.failures.joined(separator: "; "))"
+                                } else {
+                                    wiringResult = nil
+                                    wiringResultHasIssues = false
+                                }
                             }
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(wiring.isApplying)
+                    .disabled(wiring.isApplying || wiring.isCheckingServer || isRefreshingServer || selectedServer == nil)
                 }
                 .formSection {}
             }
@@ -182,14 +200,41 @@ struct WireView: View {
     @ViewBuilder
     private var wiringActions: some View {
         Button("Preview client wiring") {
-            if let endpoint = selectedEndpoint { wiring.preview(endpoint: endpoint) }
+            Task { @MainActor in
+                let chosen = selectedServer
+                await refreshServers()
+                guard let chosen, let current = selectedServer, ClientWiringSelection.sameServer(chosen, current) else {
+                    serverMessage = "Selected server stopped or changed. Choose a running server and preview again."
+                    return
+                }
+                wiring.preview(server: current)
+            }
         }
         .buttonStyle(.borderedProminent)
-        .disabled(selectedEndpoint == nil || wiring.installations.allSatisfy(\.advisoryOnly))
+        .disabled(selectedEndpoint == nil || isRefreshingServer || wiring.isCheckingServer || wiring.isApplying || wiring.installations.allSatisfy(\.advisoryOnly))
         if wiring.rollbackAvailable {
             Button("Roll back last wiring") { wiring.rollback() }
-                .buttonStyle(.bordered)
+                .buttonStyle(.bordered).disabled(wiring.isApplying || wiring.isCheckingServer || isRefreshingServer)
         }
+    }
+
+    private func refreshServers() async {
+        guard !isRefreshingServer else { return }
+        isRefreshingServer = true
+        defer { isRefreshingServer = false }
+        guard await appHost.modelWorkflow.refreshServingStatus() else {
+            selectedServerID = nil; serverMessage = "Server status unavailable. Refresh before previewing client wiring."
+            return
+        }
+        guard isRouteActive else { return }
+        serverMessage = nil
+        if let request = appHost.clientWiringRequest {
+            let matching = ClientWiringSelection.matchingServers(request: request, servers: runningServers)
+            selectedServerID = matching.count == 1 ? matching[0].id : nil
+            if matching.isEmpty { serverMessage = "The chosen model is not running. Start it in Run, then refresh here." }
+            else if matching.count > 1 { serverMessage = "The chosen model has multiple running endpoints. Choose the port to wire." }
+            appHost.clientWiringRequest = nil
+        } else if !runningServers.contains(where: { $0.id == selectedServerID }) { selectedServerID = nil }
     }
 
     private func diffText(_ line: DiffLine) -> String {

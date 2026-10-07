@@ -69,6 +69,7 @@ struct ComparisonInsightsView: View {
     let promptSetID: String
     let mode: ComparisonMode
     let onReclaim: () -> Void
+    let onWire: (String) -> Void
     @State private var contextTokens = 8192
     @State private var memory: MemorySnapshot?
     @State private var capturedAt: Date?
@@ -145,6 +146,7 @@ struct ComparisonInsightsView: View {
                 AgentModelGuidanceView(evidence: guidanceEvidence,
                     onReview: { task, path in try await appHost.reviewModelGuidance(evidence: guidanceEvidence, taskID: task, path: path) },
                     onApply: { review, role, endpoint in try await appHost.applyModelGuidance(review, role: role, enableEndpoint: endpoint) },
+                    onWire: { path in self.guidanceEvidence = nil; onWire(path) },
                     onSave: { save($0, name: "mlx-workbench-agent-evidence.json") })
             }
         }

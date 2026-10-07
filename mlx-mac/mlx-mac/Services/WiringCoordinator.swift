@@ -15,6 +15,7 @@ enum WiringError: LocalizedError {
     case postWriteValidationFailed(client: String)
     case noTransactionToRollback
     case symlinkRefused(client: String)
+    case serverChanged
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +25,7 @@ enum WiringError: LocalizedError {
         case .postWriteValidationFailed(let client): return "\(client): the written config did not validate; the previous file was restored."
         case .noTransactionToRollback: return "There is no wiring transaction to roll back."
         case .symlinkRefused(let client): return "\(client): the config path or its backup target is a symbolic link; refusing to write through it."
+        case .serverChanged: return "The selected server stopped or changed. Refresh and preview client wiring again."
         }
     }
 }
@@ -35,6 +37,7 @@ final class WiringCoordinator: ObservableObject {
     @Published private(set) var previewHash: String?
     @Published private(set) var transactions: [WiringTransaction] = []
     @Published private(set) var isApplying = false
+    @Published private(set) var isCheckingServer = false
     @Published private(set) var lastError: String?
     @Published private(set) var persistenceError: String?
 
@@ -47,6 +50,7 @@ final class WiringCoordinator: ObservableObject {
     /// Plans frozen at preview time; confirm applies exactly these.
     private var previewedPlans: [ClientEditPlan] = []
     private var previewedEndpoint: WireEndpoint?
+    private var previewedServer: ServerInfo?
 
     init(
         adapters: [ClientAdapter] = ClientAdapters.all,
@@ -76,6 +80,8 @@ final class WiringCoordinator: ObservableObject {
     /// Compute edit plans for every detected writable client and freeze them
     /// under a preview hash.
     func preview(endpoint: WireEndpoint) {
+        guard !isCheckingServer, !isApplying else { return }
+        previewedServer = nil
         detect()
         lastError = nil
         var built: [ClientEditPlan] = []
@@ -105,11 +111,57 @@ final class WiringCoordinator: ObservableObject {
         previewHash = Self.hash(plans: built, endpoint: endpoint)
     }
 
+    func preview(server: ServerInfo) {
+        guard !isCheckingServer, !isApplying else { return }
+        guard let endpoint = WireEndpoint(server: server) else {
+            invalidateServerPreview(); lastError = WiringError.serverChanged.errorDescription; return
+        }
+        preview(endpoint: endpoint)
+        previewedServer = server
+    }
+
+    /// Read authoritative status immediately before the existing config-write boundary.
+    func confirm(server: ServerInfo, previewHash hash: String,
+                 currentServers: () async throws -> [ServerInfo]) async -> WiringTransaction? {
+        guard !isCheckingServer, !isApplying else { return nil }
+        guard let reviewed = previewedServer, ClientWiringSelection.sameServer(reviewed, server),
+              let endpoint = WireEndpoint(server: server), previewHash == hash else {
+            lastError = WiringError.previewHashMismatch.errorDescription; return nil
+        }
+        isCheckingServer = true
+        defer { isCheckingServer = false }
+        do {
+            let servers = try await currentServers()
+            let matches = servers.filter { $0.port == reviewed.port && $0.state?.lowercased() == "running" }
+            guard matches.count == 1, ClientWiringSelection.sameServer(reviewed, matches[0]),
+                  previewedServer == reviewed, previewHash == hash else {
+                invalidateServerPreview(); lastError = WiringError.serverChanged.errorDescription; return nil
+            }
+            return applyPreview(endpoint: endpoint, previewHash: hash)
+        } catch {
+            invalidateServerPreview()
+            lastError = "Server status unavailable; no client files changed: \(AppHost.render(error))"
+            return nil
+        }
+    }
+
+    private func invalidateServerPreview() {
+        previewedServer = nil; previewedEndpoint = nil; previewedPlans = []; plans = []; previewHash = nil
+    }
+
     /// Apply the frozen plans. Per-client drift (file changed since preview)
     /// skips that client instead of guessing. Per-client failures do not
     /// roll back prior successes — backups make every write reversible.
     @discardableResult
     func confirm(endpoint: WireEndpoint, previewHash hash: String) -> WiringTransaction? {
+        guard !isCheckingServer, previewedServer == nil else {
+            lastError = "Confirm this preview with a fresh server status check."
+            return nil
+        }
+        return applyPreview(endpoint: endpoint, previewHash: hash)
+    }
+
+    private func applyPreview(endpoint: WireEndpoint, previewHash hash: String) -> WiringTransaction? {
         guard !previewedPlans.isEmpty else {
             lastError = WiringError.noPlansPreviewed.errorDescription
             return nil
@@ -144,6 +196,7 @@ final class WiringCoordinator: ObservableObject {
         transactions.insert(transaction, at: 0)
         persist(transaction)
         previewedPlans = []
+        previewedServer = nil
         previewedEndpoint = nil
         previewHash = nil
         plans = []

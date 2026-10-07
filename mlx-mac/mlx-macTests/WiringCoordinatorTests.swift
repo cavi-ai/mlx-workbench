@@ -1,5 +1,7 @@
 import Foundation
 import XCTest
+import AppKit
+import SwiftUI
 
 @testable import mlx_workbench
 
@@ -94,6 +96,141 @@ final class WiringCoordinatorTests: XCTestCase {
     }
 
     // MARK: - Coordinator flow
+
+    func testLocalDirectoryServerCanBeWiredAndRolledBack() async throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = "{\"theme\":\"dark\"}"
+        try original.write(to: config, atomically: true, encoding: .utf8)
+        let server = ServerInfo(path: "/models/qwen-converted", runtime: "mlx_lm", port: 8766, pid: 123, state: "running")
+        let endpoint = try XCTUnwrap(WireEndpoint(server: server))
+        XCTAssertEqual(endpoint.baseURL, "http://127.0.0.1:8766/v1")
+        XCTAssertEqual(endpoint.modelName, "/models/qwen-converted")
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(server: server)
+        let hash = try XCTUnwrap(coordinator.previewHash)
+        let transaction = await coordinator.confirm(server: server, previewHash: hash, currentServers: { [server] })
+        XCTAssertEqual(transaction?.receipts.count, 1)
+        XCTAssertEqual(try JSONCTolerant.parse(String(contentsOf: config))["model"] as? String, "mlx-local//models/qwen-converted")
+        coordinator.rollback()
+        XCTAssertEqual(try String(contentsOf: config), original)
+    }
+
+    func testStoppedOrReplacedServerCannotWriteClientConfig() async throws {
+        let home = try makeHome()
+        let directory = home.appendingPathComponent(".config/zed")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let config = directory.appendingPathComponent("settings.json")
+        let coordinator = makeCoordinator(home: home)
+        let server = ServerInfo(path: "/models/chosen", runtime: "mlx_lm", port: 8766, pid: 123, state: "running")
+        let invalid: [[ServerInfo]] = [[],
+            [ServerInfo(path: "/models/chosen", runtime: "mlx_lm", port: 8766, pid: 123, state: "stopped")],
+            [ServerInfo(path: "/models/other", runtime: "mlx_lm", port: 8766, pid: 123, state: "running")],
+            [ServerInfo(path: "/models/chosen", runtime: "mlx_lm", port: 8766, pid: 456, state: "running")]]
+        for servers in invalid {
+            coordinator.preview(server: server)
+            let hash = try XCTUnwrap(coordinator.previewHash)
+            let transaction = await coordinator.confirm(server: server, previewHash: hash, currentServers: { servers })
+            XCTAssertNil(transaction)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: config.path))
+            XCTAssertNotNil(coordinator.lastError)
+        }
+    }
+
+    func testServerStatusFailureAndUncheckedConfirmCannotWrite() async throws {
+        let home = try makeHome()
+        let directory = home.appendingPathComponent(".config/zed")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let coordinator = makeCoordinator(home: home)
+        let server = ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8766, pid: 123, state: "running")
+        coordinator.preview(server: server)
+        let hash = try XCTUnwrap(coordinator.previewHash)
+        XCTAssertNil(coordinator.confirm(endpoint: try XCTUnwrap(WireEndpoint(server: server)), previewHash: hash))
+        let transaction = await coordinator.confirm(server: server, previewHash: hash, currentServers: { throw CocoaError(.fileReadUnknown) })
+        XCTAssertNil(transaction)
+        XCTAssertNil(coordinator.previewHash)
+        XCTAssertTrue(coordinator.transactions.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("settings.json").path))
+    }
+
+    func testStatusCheckPrecedesWriteAndPreservesConfigDrift() async throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = "{\"theme\":\"dark\"}"
+        try original.write(to: config, atomically: true, encoding: .utf8)
+        let coordinator = makeCoordinator(home: home)
+        let server = ServerInfo(path: "/models/chosen", port: 8766, pid: 123, state: "running")
+        coordinator.preview(server: server)
+        let hash = try XCTUnwrap(coordinator.previewHash)
+        let edited = "{\"theme\":\"light\"}"
+        let transaction = await coordinator.confirm(server: server, previewHash: hash, currentServers: {
+            XCTAssertEqual(try String(contentsOf: config), original)
+            try edited.write(to: config, atomically: true, encoding: .utf8)
+            return [server]
+        })
+        XCTAssertEqual(transaction?.receipts.count, 0)
+        XCTAssertEqual(transaction?.failures.count, 1)
+        XCTAssertEqual(try String(contentsOf: config), edited)
+    }
+
+    func testHandoffMatchesChosenModelAndPortWithoutCollapsingRevisions() {
+        let path = "/cache/models--org--model/snapshots/revision-a"
+        let local = ServerInfo(path: path, port: 8766, pid: 1, state: "running")
+        let otherRevision = ServerInfo(path: "/cache/models--org--model/snapshots/revision-b", port: 8767, pid: 2, state: "running")
+        let legacy = ServerInfo(repo: "org/model", port: 8768, pid: 3, state: "running")
+        let request = ClientWiringRequest(modelPath: path, preferredPort: nil)
+        XCTAssertEqual(ClientWiringSelection.matchingServers(request: request, servers: [local, otherRevision, legacy]).map(\.port), [8766, 8768])
+        let exact = ClientWiringRequest(modelPath: path, preferredPort: 8766)
+        XCTAssertEqual(ClientWiringSelection.matchingServers(request: exact, servers: [local, legacy]), [local])
+        XCTAssertTrue(ClientWiringSelection.matchingServers(request: exact, servers: [legacy]).isEmpty)
+    }
+
+    func testEndpointUsesFullRepositoryIdentityAndRejectsInvalidStatus() {
+        let server = ServerInfo(repo: "org/model", port: 8766, pid: 1, state: "running")
+        XCTAssertEqual(WireEndpoint(server: server)?.modelName, "org/model")
+        for invalid in [ServerInfo(path: "/models/a", port: 0, state: "running"),
+                        ServerInfo(path: "/models/a", port: 70000, state: "running"),
+                        ServerInfo(port: 8766, state: "running"),
+                        ServerInfo(path: "/models/a", port: 8766, state: "stopped")] {
+            XCTAssertNil(WireEndpoint(server: invalid))
+        }
+    }
+
+    func testClientHandoffRendersAndConsumesTheRequestOnEntry() async throws {
+        let home = try makeHome()
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".config/opencode"), withIntermediateDirectories: true)
+        let coordinator = makeCoordinator(home: home)
+        let server = ServerInfo(path: "/models/Qwen-converted-4bit", runtime: "mlx_lm", port: 8766, pid: 123, state: "running")
+        let api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] }, convertStatus: { [] },
+            servePreview: { _, _, _ in [:] }, serveStart: { _, _, _, _ in [:] }, serveStatus: { [server] }, serveStop: { _ in [:] })
+        let host = AppHost(config: Config.defaults(), modelWorkflowAPI: api,
+            modelWorkflowPersistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }), wiring: coordinator,
+            preferencesStore: JSONStore<RecommendationPreferences>(fileURL: home.appendingPathComponent("preferences.json")))
+        host.clientWiringRequest = ClientWiringRequest(modelPath: server.path!, preferredPort: 8766)
+        let view = NSHostingView(rootView: WireView(appHost: host).environment(\.isRouteActive, true)
+            .frame(width: 720, height: 720).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 720), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = view
+        defer { window.close() }
+        view.layoutSubtreeIfNeeded()
+        for _ in 0..<10 {
+            if host.clientWiringRequest == nil { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertNil(host.clientWiringRequest)
+        XCTAssertEqual(host.modelWorkflow.servers, [server])
+        XCTAssertTrue(coordinator.transactions.isEmpty)
+        view.layoutSubtreeIfNeeded()
+        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: image)
+        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        attachment.name = "Chosen local model in Clients"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 
     func testPreviewConfirmApplyAndRollbackRoundTrip() throws {
         let home = try makeHome()

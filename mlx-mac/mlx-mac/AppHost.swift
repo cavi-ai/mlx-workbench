@@ -16,6 +16,8 @@ class AppHost: ObservableObject {
     @Published var catalog: CatalogState
     @Published var isRefreshingCatalog = false
     @Published var selectedModelPath: String?
+    /// One-shot navigation intent; client configuration still requires its own preview.
+    @Published var clientWiringRequest: ClientWiringRequest?
     @Published var benchmarkResults: [RecommendationBenchmarkResult] = []
     @Published var recommendationPreferences: RecommendationPreferences = .defaults
     @Published var hardwareProfile: HardwareProfile
