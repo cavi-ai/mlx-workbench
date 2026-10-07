@@ -6,11 +6,11 @@ the authority for discovery, conversion, serving, and job receipts.
 | Tab | Purpose |
 | --- | --- |
 | **Models** | Scan configured roots for GGUF and MLX weights and select conversion inputs. |
-| **Convert** | Preview a local GGUF or Hugging Face cache conversion before confirming it. |
-| **Duplicates** | Compare exact and variant groups and move a selected GGUF into quarantine. |
+| **Convert** | Preview a local GGUF or Hugging Face cache conversion before confirming it, then follow its progress. |
+| **Duplicates** | Compare exact and variant groups, move a selected GGUF into quarantine, and move a quarantined file to the macOS Trash. |
 | **Scout** | Discover Hugging Face Hub candidates for a role. |
 | **Doctor** | Inspect model health and incomplete cache state. |
-| **Serve** | Preview, start, inspect, and stop loopback MLX servers. |
+| **Serve** | Preview, start, inspect, and stop loopback MLX servers; save and load named serve presets. |
 | **Training Studio** | Preview and run LoRA training or fuse work. |
 | **Compare Conversions** | Preview quantization plans for a local GGUF across target formats. |
 | **Model Arch** | Show the scan-reported architecture metadata for one local GGUF. |

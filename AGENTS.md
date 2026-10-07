@@ -214,8 +214,8 @@ from `mlx-agent` at runtime.
   explicit inline override.
   The **role router** (spec 09 P4): "Wire roles…" in the Endpoints section
   maps roles onto running slots via `mlx-agent fleet render/apply` with
-  `--port-map` (requires an mlx-agent that includes the port-map change;
-  the vendored pin tracks the upstream PR branch until the next release).
+  `--port-map` (mlx-agent ≥ the port-map change, cavi-ai/mlx-agent#41;
+  the vendored pin includes it).
   Only running slots with HF-cache repo ids are assigned — everything else
   is reported skipped, never pointed at a dead port. The router config is
   written exclusively through `fleet apply` (preview/confirm + receipt), so

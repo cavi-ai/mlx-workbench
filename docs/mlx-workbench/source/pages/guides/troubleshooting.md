@@ -34,6 +34,12 @@ If conversion still fails, confirm that `mlx_lm.convert` resolves to the
 project `.venv` (`make run` logs the environment). A separately installed
 mlx-lm earlier on `PATH` (for example a uv tool) can shadow the project copy.
 
+## A GGUF conversion is refused as unsupported
+
+Confirm reads the GGUF header's `general.architecture` before launch and
+refuses an architecture the installed `transformers` cannot load with
+`architecture_unsupported` (HTTP 422), naming the architecture.
+
 ## A queue file is invalid
 
 Invalid persisted queue state is preserved rather than overwritten. Open
@@ -43,7 +49,9 @@ recovered from MLX Agent receipts, not guessed from queue state.
 
 ## A quarantined weight is needed again
 
-Quarantine moves files; it never deletes them. Read
+Quarantine moves files; it never deletes them. **Delete permanently** in the
+Quarantine Area moves a quarantined file to the macOS Trash and marks its
+ledger entry `deleted_at`. Read
 `quarantine-ledger.jsonl` in the configured quarantine directory, find the
 recorded `from` and `to` paths, stop active jobs using the file, and move it
 back deliberately. Rescan Models afterward.

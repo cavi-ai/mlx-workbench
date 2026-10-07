@@ -15,5 +15,9 @@ The UI server accepts loopback connections only. Commands such as Scout
 discovery, Doctor, and other Hub-backed operations may contact the Hugging
 Face Hub; loopback binding is not a promise of network isolation.
 
+These pages cover the browser interface. The native macOS app in `mlx-mac/`
+crosses the same agent boundary and is documented in the repository
+`README.md` and `mlx-mac/README.md`.
+
 This documentation was generated for release {{RELEASE_TAG}} from commit
 `{{RELEASE_COMMIT}}`.
