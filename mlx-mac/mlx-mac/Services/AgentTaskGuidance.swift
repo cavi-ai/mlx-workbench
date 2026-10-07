@@ -1,5 +1,66 @@
 import Foundation
 
+struct ModelGuidanceReview {
+    let evidence: AgentEvidenceExport
+    let taskID: String
+    let candidate: AgentTaskCandidate
+    let roles: [UseCase]
+    let endpoint: EndpointConfig
+    let verified: Bool
+}
+
+enum ModelGuidanceAction {
+    /// Fit and its capture time are intentionally refreshed; evidence and identity must match.
+    static func validate(original: AgentEvidenceExport, fresh: AgentEvidenceExport, taskID: String, path: String) throws -> AgentTaskCandidate {
+        guard let before = original.models.first(where: { $0.path == path }),
+              let current = fresh.models.first(where: { $0.path == path }),
+              let signature = before.signature, !signature.isEmpty, current.signature == signature,
+              current.readiness == ModelReadiness.ready.rawValue,
+              ComparisonInsights.knownEnvironment(fresh.environmentFingerprint),
+              fresh.environmentFingerprint == original.environmentFingerprint else {
+            throw WorkflowEvidenceError.invalid("Model availability or environment changed. Refresh Model guidance before choosing again.")
+        }
+        guard let task = original.taskGuidance?.first(where: { $0.id == taskID }),
+              let updated = fresh.taskGuidance?.first(where: { $0.id == taskID }),
+              try evidenceIdentity(task) == evidenceIdentity(updated),
+              let candidate = updated.candidates.first(where: { $0.modelPath == path }), candidate.comparable else {
+            throw WorkflowEvidenceError.invalid("Task evidence changed or is no longer comparable. Refresh Model guidance before choosing again.")
+        }
+        return candidate
+    }
+
+    static func validateApplication(review: ModelGuidanceReview, fresh: ModelGuidanceReview, role: UseCase,
+                                    enableEndpoint: Bool, comparisonActive: Bool) throws {
+        guard fresh.roles.contains(role) else { throw WorkflowEvidenceError.invalid("Model no longer supports the selected role.") }
+        guard enableEndpoint else { return }
+        guard fresh.endpoint == review.endpoint, fresh.evidence.reserveGB == review.evidence.reserveGB else {
+            throw WorkflowEvidenceError.invalid("Endpoint or memory reserve changed. Review the action again.")
+        }
+        guard !comparisonActive else { throw WorkflowEvidenceError.invalid("Wait for the active comparison before switching its endpoint.") }
+        guard fresh.verified else { throw WorkflowEvidenceError.invalid("Verify this model before enabling the endpoint.") }
+        guard fresh.candidate.fitStatus == "fits" else {
+            throw WorkflowEvidenceError.invalid("Current headroom no longer provides an estimated fit. Review again or save the preference only.")
+        }
+    }
+
+    private static func evidenceIdentity(_ task: AgentTaskGuidance) throws -> Data {
+        let encoder = JSONEncoder()
+        let encoded = try encoder.encode(task)
+        guard var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any],
+              var candidates = object["candidates"] as? [[String: Any]] else {
+            throw WorkflowEvidenceError.invalid("Task evidence cannot be checked.")
+        }
+        for key in ["qualityFirstFitPaths", "unmeasuredModelPaths", "needsEvidence"] { object.removeValue(forKey: key) }
+        for index in candidates.indices {
+            for key in ["fitStatus", "fitSummary", "estimatedRequiredBytes", "headroomGB", "diskBytes"] {
+                candidates[index].removeValue(forKey: key)
+            }
+        }
+        object["candidates"] = candidates
+        return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+}
+
 /// Read-only decisions within one measured task cohort. Never joins workloads,
 /// invents a combined score, or turns task evidence into removal authority.
 enum AgentTaskAdvisor {

@@ -1,7 +1,103 @@
 import XCTest
+import AppKit
+import SwiftUI
 @testable import mlx_workbench
 
 final class ComparisonInsightsTests: XCTestCase {
+    private func actionEvidence(models: [LibraryModel]? = nil, runs: [ComparisonRun], reports: [WorkflowEvidence] = [],
+                                available: Int64 = 24_000_000_000, environment: String? = "macOS|M4|1.0") -> AgentEvidenceExport {
+        ComparisonInsights.agentEvidence(models: models ?? [model("/a"), model("/b")], runs: runs, workflow: reports,
+            environment: environment, hardware: HardwareProfile(chip: "M4", memoryBytes: 32_000_000_000),
+            memory: MemorySnapshot(totalBytes: 32_000_000_000, availableBytes: available), capturedAt: Date(),
+            contextTokens: 2048, reserveGB: 4, protected: [])
+    }
+
+    func testGuidanceActionKeepsTiesAndRefreshesFitWithoutChangingEvidence() throws {
+        let measured = run([result("/a"), result("/b")], scores: ["/a": 5, "/b": 5])
+        let original = actionEvidence(runs: [measured])
+        let task = try XCTUnwrap(original.taskGuidance?.first)
+        XCTAssertEqual(task.qualityFirstFitPaths, ["/a", "/b"])
+        let fresh = actionEvidence(runs: [measured], available: 4_000_000_000)
+        for path in task.qualityLeaders {
+            let checked = try ModelGuidanceAction.validate(original: original, fresh: fresh, taskID: task.id, path: path)
+            XCTAssertEqual(checked.fitStatus, "wontFit")
+        }
+    }
+
+    func testGuidanceActionRefusesChangedIdentityEvidenceAndOlderFallback() throws {
+        let measured = run([result("/a"), result("/b")], scores: ["/a": 5, "/b": 4])
+        let original = actionEvidence(runs: [measured])
+        let taskID = try XCTUnwrap(original.taskGuidance?.first?.id)
+        var changedReview = measured
+        changedReview.qualityReviews?["/b"] = ComparisonQualityReview(score: 5, rubricID: "task-outcome-v1", reviewedAt: Date())
+        var newer = run([result("/a"), result("/b")])
+        newer.finishedAt = Date(timeIntervalSince1970: 2000)
+        let invalid = [
+            actionEvidence(runs: [measured], environment: "different"),
+            actionEvidence(models: [model("/a", signature: "changed"), model("/b")], runs: [measured]),
+            actionEvidence(models: [model("/a", readiness: .needsConversion), model("/b")], runs: [measured]),
+            actionEvidence(models: [model("/b")], runs: [measured]),
+            actionEvidence(runs: [changedReview]),
+            actionEvidence(runs: [measured, newer])
+        ]
+        for fresh in invalid {
+            XCTAssertThrowsError(try ModelGuidanceAction.validate(original: original, fresh: fresh, taskID: taskID, path: "/a"))
+        }
+    }
+
+    func testGuidanceActionBindsWorkflowConfigurationAndPeerObservations() throws {
+        let reports = [selectionReport("/a"), selectionReport("/b")]
+        let original = actionEvidence(runs: [], reports: reports)
+        let taskID = try XCTUnwrap(original.taskGuidance?.first?.id)
+        XCTAssertNoThrow(try ModelGuidanceAction.validate(original: original, fresh: original, taskID: taskID, path: "/a"))
+        var changed = reports
+        changed[1].configurationFingerprint = "other-settings"
+        XCTAssertThrowsError(try ModelGuidanceAction.validate(original: original,
+            fresh: actionEvidence(runs: [], reports: changed), taskID: taskID, path: "/a"))
+    }
+
+    func testGuidanceEndpointGuardsDoNotBlockPreferenceOnlyChoice() throws {
+        let measured = run([result("/a"), result("/b")], scores: ["/a": 5, "/b": 4])
+        func review(available: Int64 = 24_000_000_000, verified: Bool = true, port: Int = 8766, roles: [UseCase] = [.coding]) throws -> ModelGuidanceReview {
+            let evidence = actionEvidence(runs: [measured], available: available)
+            let task = try XCTUnwrap(evidence.taskGuidance?.first)
+            return ModelGuidanceReview(evidence: evidence, taskID: task.id, candidate: try XCTUnwrap(task.candidates.first), roles: roles,
+                endpoint: EndpointConfig(enabled: false, port: port, modelPath: "", installedAtLogin: false), verified: verified)
+        }
+        let original = try review()
+        XCTAssertNoThrow(try ModelGuidanceAction.validateApplication(review: original, fresh: original, role: .coding, enableEndpoint: true, comparisonActive: false))
+        for fresh in [try review(available: 4_000_000_000), try review(verified: false), try review(port: 9000)] {
+            XCTAssertThrowsError(try ModelGuidanceAction.validateApplication(review: original, fresh: fresh, role: .coding, enableEndpoint: true, comparisonActive: false))
+            XCTAssertNoThrow(try ModelGuidanceAction.validateApplication(review: original, fresh: fresh, role: .coding, enableEndpoint: false, comparisonActive: true))
+        }
+        XCTAssertThrowsError(try ModelGuidanceAction.validateApplication(review: original, fresh: original, role: .coding, enableEndpoint: true, comparisonActive: true))
+        XCTAssertThrowsError(try ModelGuidanceAction.validateApplication(review: original, fresh: original, role: .vision, enableEndpoint: false, comparisonActive: false))
+    }
+
+    @MainActor
+    func testGuidanceReviewRendersWithExplicitRoleAndOptionalEndpoint() throws {
+        let evidence = actionEvidence(runs: [run([result("/a"), result("/b")], scores: ["/a": 5, "/b": 4])])
+        let task = try XCTUnwrap(evidence.taskGuidance?.first)
+        let review = ModelGuidanceReview(evidence: evidence, taskID: task.id, candidate: try XCTUnwrap(task.candidates.first),
+            roles: [.coding, .generalChat], endpoint: .disabled, verified: true)
+        let view = NSHostingView(rootView: ModelGuidanceReviewView(review: review, onApply: { _, _, _ in "Saved" }, onBack: {}, onApplied: { _ in })
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = view
+        defer { window.close() }
+        view.setFrameSize(NSSize(width: 560, height: view.fittingSize.height))
+        view.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(view.bounds.height, 280)
+        XCTAssertLessThan(view.bounds.height, 700)
+        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: image)
+        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        attachment.name = "Reviewed model guidance action"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
     private let environment = "macOS|M4|1.0"
     private let prompt = PromptEntry(id: "p", text: "task")
     private func model(_ path: String, bytes: Int64 = 4_000_000_000, signature: String? = "s", key: String = "family", readiness: ModelReadiness = .ready, task: ModelTaskType? = nil, capabilities: [UseCase]? = nil) -> LibraryModel {

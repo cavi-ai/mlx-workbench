@@ -109,6 +109,13 @@ final class WatchCoordinator: ObservableObject {
         prewarmEnvironmentProbe()
     }
 
+    nonisolated static func refreshEnvironmentProbe() async {
+        await Task.detached(priority: .utility) {
+            versionProbe.reset()
+            _ = probeMLXLVersion()
+        }.value
+    }
+
     nonisolated private static let versionProbe = VersionProbeCache()
 
     nonisolated private static func runVersionProbe() -> String? {

@@ -1051,7 +1051,8 @@ struct PromoteWinnerSheet: View {
         errorText = nil
 
         if let useCase = context.run.useCase {
-            appHost.setPreferredModel(winnerPath, for: useCase)
+            do { try appHost.savePreferredModel(winnerPath, for: useCase) }
+            catch { errorText = AppHost.render(error); return }
         }
 
         if enableEndpoint, !endpointAlreadyWinner {
