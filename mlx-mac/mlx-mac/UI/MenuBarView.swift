@@ -40,9 +40,9 @@ struct MenuBarView: View {
                     .foregroundStyle(WorkbenchColor.muted)
             }
             Divider()
-            Button("Open mlx-workbench") { openApp() }
+            Button("Open MLX Workbench") { openApp() }
             Divider()
-            Button("Quit mlx-workbench") { NSApp.terminate(nil) }
+            Button("Quit MLX Workbench") { NSApp.terminate(nil) }
         }
         .padding(8)
     }

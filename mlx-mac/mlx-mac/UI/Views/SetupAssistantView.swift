@@ -54,7 +54,7 @@ struct SetupAssistantView: View {
 
     private var agentStep: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text("mlx-workbench drives conversions and serving through the mlx-agent CLI. The vendored checkout that ships with the app is used by default.")
+            Text("MLX Workbench drives conversions and serving through the mlx-agent CLI. The vendored checkout that ships with the app is used by default.")
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)

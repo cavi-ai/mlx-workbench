@@ -1,5 +1,6 @@
 """App icon + DMG packaging contract tests. Skips gracefully off macOS."""
 
+import plistlib
 import re
 import subprocess
 import unittest
@@ -9,6 +10,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ICONSET = ROOT / "mlx-mac" / "mlx-mac" / "Assets.xcassets" / "AppIcon.appiconset"
 MAKEFILE = (ROOT / "Makefile").read_text(encoding="utf-8")
+INFO_PLIST = ROOT / "mlx-mac" / "mlx-mac" / "Info.plist"
+SWIFT_SOURCES = ROOT / "mlx-mac" / "mlx-mac"
+DISPLAY_NAME = "MLX Workbench"
 
 REQUIRED_SIZES = {
     "icon_16x16.png": 16,
@@ -82,6 +86,40 @@ class DmgTargetTests(unittest.TestCase):
     def test_dmg_output_is_gitignored(self):
         entries = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
         self.assertIn("/.release/", entries)
+
+    def test_dmg_ships_the_app_under_the_display_name(self):
+        self.assertRegex(MAKEFILE, r"(?m)^DMG_VOLUME\s*:=\s*MLX Workbench\s*$")
+        self.assertRegex(MAKEFILE, r"(?m)^DMG_APP\s*:=\s*MLX Workbench\.app\s*$")
+        self.assertIn('"$(DMG_DIR)/stage/$(DMG_APP)"', MAKEFILE)
+        self.assertNotIn("stage/mlx-workbench.app", MAKEFILE)
+
+
+class AppNameTests(unittest.TestCase):
+    def test_bundle_names_are_the_display_name(self):
+        with INFO_PLIST.open("rb") as handle:
+            info = plistlib.load(handle)
+        self.assertEqual(info["CFBundleName"], DISPLAY_NAME)
+        self.assertEqual(info["CFBundleDisplayName"], DISPLAY_NAME)
+        # Executable and bundle id stay put: defaults, login items and the
+        # updater's relaunch of Bundle.main.bundleURL depend on them.
+        self.assertEqual(info["CFBundleExecutable"], "mlx-workbench")
+        self.assertEqual(info["CFBundleIdentifier"], "com.cavi.mlxworkbench")
+
+    def test_ui_labels_use_the_display_name(self):
+        label = re.compile(
+            r'(?:Button|Text|Label|MenuBarExtra|Window|WindowGroup)\(\s*"([^"]*)"'
+            r'|messageText\s*=\s*"([^"]*)"'
+        )
+        offenders = []
+        for path in sorted(SWIFT_SOURCES.rglob("*.swift")):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for number, line in enumerate(lines, 1):
+                for match in label.finditer(line):
+                    text = match.group(1) or match.group(2) or ""
+                    # "the mlx-workbench checkout" names the repository.
+                    if "mlx-workbench" in text.replace("mlx-workbench checkout", ""):
+                        offenders.append(f"{path.relative_to(ROOT)}:{number}: {text}")
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":

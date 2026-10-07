@@ -319,20 +319,21 @@ build-swift:
 # CODESIGN_IDENTITY="Developer ID Application: …" to sign for distribution
 # (then notarize separately with notarytool).
 DMG_DIR       := .release
-DMG_VOLUME    := mlx-workbench
+DMG_VOLUME    := MLX Workbench
+DMG_APP       := MLX Workbench.app
 DMG_OUTPUT    := $(DMG_DIR)/mlx-workbench-$(shell $(PYTHON) -c 'from mlx_workbench import __version__; print(__version__)').dmg
 CODESIGN_IDENTITY ?= -
 
 dmg: build-swift
 	@mkdir -p $(DMG_DIR)
 	@rm -rf "$(DMG_DIR)/stage" && mkdir -p "$(DMG_DIR)/stage"
-	@cp -R "$(MLX_SWIFT_APP)" "$(DMG_DIR)/stage/"
+	@cp -R "$(MLX_SWIFT_APP)" "$(DMG_DIR)/stage/$(DMG_APP)"
 	@ln -s /Applications "$(DMG_DIR)/stage/Applications"
 	@if [ "$(CODESIGN_IDENTITY)" != "-" ]; then \
 		codesign --force --deep --options runtime \
-			--sign "$(CODESIGN_IDENTITY)" "$(DMG_DIR)/stage/mlx-workbench.app"; \
+			--sign "$(CODESIGN_IDENTITY)" "$(DMG_DIR)/stage/$(DMG_APP)"; \
 	else \
-		codesign --force --deep --sign - "$(DMG_DIR)/stage/mlx-workbench.app"; \
+		codesign --force --deep --sign - "$(DMG_DIR)/stage/$(DMG_APP)"; \
 	fi
 	@hdiutil create -volname "$(DMG_VOLUME)" \
 		-srcfolder "$(DMG_DIR)/stage" \
