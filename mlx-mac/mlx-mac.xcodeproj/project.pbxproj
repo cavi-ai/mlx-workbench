@@ -140,6 +140,8 @@
 		24BBLD056 /* EndpointSupervisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF054 /* EndpointSupervisorTests.swift */; };
 		24BBLD057 /* ReclaimModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF055 /* ReclaimModels.swift */; };
 		24BBLD058 /* Quarantine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF056 /* Quarantine.swift */; };
+		28SRBL001 /* ConvertedSourceRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28SRREF001 /* ConvertedSourceRecovery.swift */; };
+		28SRBL002 /* SourceCleanupSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28SRREF002 /* SourceCleanupSection.swift */; };
 		24BBLD059 /* UsageTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF057 /* UsageTracker.swift */; };
 		24BBLD05A /* ReclaimAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF058 /* ReclaimAdvisor.swift */; };
 		24BBLD05B /* ReclaimCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF059 /* ReclaimCoordinator.swift */; };
@@ -321,6 +323,8 @@
 		24FREF054 /* EndpointSupervisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointSupervisorTests.swift; sourceTree = "<group>"; };
 		24FREF055 /* ReclaimModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimModels.swift; path = Models/ReclaimModels.swift; sourceTree = "<group>"; };
 		24FREF056 /* Quarantine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Quarantine.swift; path = Services/Quarantine.swift; sourceTree = "<group>"; };
+		28SRREF001 /* ConvertedSourceRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ConvertedSourceRecovery.swift; path = Services/ConvertedSourceRecovery.swift; sourceTree = "<group>"; };
+		28SRREF002 /* SourceCleanupSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SourceCleanupSection.swift; path = UI/Views/SourceCleanupSection.swift; sourceTree = "<group>"; };
 		24FREF057 /* UsageTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = UsageTracker.swift; path = Services/UsageTracker.swift; sourceTree = "<group>"; };
 		24FREF058 /* ReclaimAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimAdvisor.swift; path = Services/ReclaimAdvisor.swift; sourceTree = "<group>"; };
 		24FREF059 /* ReclaimCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimCoordinator.swift; path = Services/ReclaimCoordinator.swift; sourceTree = "<group>"; };
@@ -462,6 +466,8 @@
 				24FREF053 /* MenuBarView.swift */,
 				24FREF055 /* ReclaimModels.swift */,
 				24FREF056 /* Quarantine.swift */,
+				28SRREF001 /* ConvertedSourceRecovery.swift */,
+				28SRREF002 /* SourceCleanupSection.swift */,
 				A6C0100000000000000000F01 /* ComparisonInsights.swift */,
 				A6C0100000000000000000F23 /* AgentTaskGuidance.swift */,
 				A6C0100000000000000000F24 /* WorkflowCharts.swift */,
@@ -836,6 +842,8 @@
 				24BBLD055 /* MenuBarView.swift in Sources */,
 				24BBLD057 /* ReclaimModels.swift in Sources */,
 				24BBLD058 /* Quarantine.swift in Sources */,
+				28SRBL001 /* ConvertedSourceRecovery.swift in Sources */,
+				28SRBL002 /* SourceCleanupSection.swift in Sources */,
 				A6C0100000000000000000B01 /* ComparisonInsights.swift in Sources */,
 				A6C0100000000000000000B23 /* AgentTaskGuidance.swift in Sources */,
 				A6C0100000000000000000B24 /* WorkflowCharts.swift in Sources */,

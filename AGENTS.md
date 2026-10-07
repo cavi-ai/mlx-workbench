@@ -96,6 +96,12 @@ from `mlx-agent` at runtime.
   outputs, active/preferred paths, other revisions and surviving shared-blob
   references across configured roots. Recovery locations live in
   `source-cleanup.json`; old workflows require an explicit cleanup preview.
+  Duplicates lists eligible originals from verified receipts and journal-backed
+  cleanup history. New moves record batch, workflow, bytes, time and Trash
+  metadata identity. Restore previews exact original destinations, rechecks
+  native Trash and configured-root fences, refuses conflicts and drift, restores
+  blobs before cache folders, and records each result. Legacy history has no
+  historical identity; its explicit restore preview binds the current Trash item.
 - The Compare tab runs **Measured Comparisons**: `ComparisonCoordinator`
   replays a prompt set against selected ready variants (one at a time, via
   the shared `ServeProbe` harness), persists runs, and feeds measured

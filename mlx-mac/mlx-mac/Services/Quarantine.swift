@@ -479,10 +479,17 @@ struct ConvertedSourcePlan: Equatable {
     let fingerprint: String
 }
 
-struct ConvertedSourceMove: Codable {
+struct ConvertedSourceMove: Codable, Equatable, Identifiable {
     let id: String
     let from: String
     var to: String?
+    var batchID: String? = nil
+    var workflowID: String? = nil
+    var outputPath: String? = nil
+    var movedAt: Date? = nil
+    var bytes: Int64? = nil
+    var trashFingerprint: String? = nil
+    var restoredAt: Date? = nil
 }
 
 /// Reclaim only sources identified by a successful conversion receipt, after
@@ -606,9 +613,13 @@ enum ConvertedSourceCleanup {
         guard workflow == plan.workflow, roots == plan.roots,
               try preview(workflow: workflow, roots: roots, protected: protected, fileManager: fm).fingerprint == plan.fingerprint else { throw QuarantineError.changedSincePreview }
         let store = JSONStore<ConvertedSourceMove>(fileURL: journalURL, fileManager: fm)
+        let batchID = UUID().uuidString
         var moves = [ConvertedSourceMove]()
         for path in plan.paths {
             var move = ConvertedSourceMove(id: UUID().uuidString, from: path, to: nil)
+            move.batchID = batchID
+            move.workflowID = workflow.id.uuidString
+            move.outputPath = workflow.completedModelPath
             try store.upsert(move, id: \.id)
             let destination: URL
             if let trash { destination = try trash(URL(fileURLWithPath: path)) }
@@ -619,9 +630,17 @@ enum ConvertedSourceCleanup {
                 destination = url as URL
             }
             move.to = destination.path
+            move.movedAt = Date()
             moves.append(move)
             do { try store.upsert(move, id: \.id) }
             catch { throw refused("moved \(path) to \(destination.path), but could not update recovery history: \(error.localizedDescription)") }
+            // Persist the native recovery URL before inspecting the moved tree,
+            // so even an interrupted identity capture leaves a Finder location.
+            let snapshot = try ConvertedSourceRecovery.snapshot(destination.path, fileManager: fm)
+            move.bytes = snapshot.bytes
+            move.trashFingerprint = snapshot.fingerprint
+            try store.upsert(move, id: \.id)
+            moves[moves.count - 1] = move
         }
         return moves
     }

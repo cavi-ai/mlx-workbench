@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 import XCTest
 
 @testable import mlx_workbench
@@ -46,6 +48,12 @@ final class QuarantineParityTests: XCTestCase {
         XCTAssertEqual(moves.count, 2)
         XCTAssertTrue(moves.allSatisfy { $0.to != nil })
         XCTAssertEqual(try JSONStore<ConvertedSourceMove>(fileURL: journal).load().count, 2)
+        let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: journal)) as! [[String: Any]]
+        XCTAssertEqual(saved.compactMap { $0["bytes"] as? Int64 }.reduce(0, +), 14)
+        XCTAssertEqual(Set(saved.compactMap { $0["batchID"] as? String }).count, 1)
+        XCTAssertEqual(saved.first?["workflowID"] as? String, fixture.workflow.id.uuidString)
+        XCTAssertNotNil(saved.first?["movedAt"])
+        XCTAssertEqual(saved.compactMap { $0["trashFingerprint"] as? String }.count, 2)
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.repo.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.workflow.outputPath + "/model.safetensors"))
     }
@@ -92,6 +100,168 @@ final class QuarantineParityTests: XCTestCase {
             outputPath: output.path, previewHash: "hash", jobReceipt: receipt.path, completedModelPath: output.path,
             state: .verified, serveState: .idle, message: nil, errorMessage: nil, createdAt: timestamp, updatedAt: timestamp, lastKnownAgentState: "done")
         return (root, repo, blob, workflow)
+    }
+
+    func testSourceRecoveryRestoresBatchAndRecordsHistory() throws {
+        let fixture = try cleanupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let fm = FileManager.default
+        let roots = [fixture.root.path], journal = fixture.root.appendingPathComponent("journal.json")
+        let trash = fixture.root.appendingPathComponent("trash")
+        try fm.createDirectory(at: trash, withIntermediateDirectories: true)
+        let plan = try ConvertedSourceCleanup.preview(workflow: fixture.workflow, roots: roots, protected: [])
+        let moves = try ConvertedSourceCleanup.apply(plan, workflow: fixture.workflow, roots: roots, protected: [], journalURL: journal) { source in
+            let destination = trash.appendingPathComponent(source.lastPathComponent)
+            try fm.moveItem(at: source, to: destination)
+            return destination
+        }
+        let restore = try ConvertedSourceRecovery.preview(ids: moves.map(\.id), roots: roots, journalURL: journal, trashRoots: [trash.path])
+        XCTAssertEqual(restore.bytes, 14)
+        try ConvertedSourceRecovery.restore(restore, roots: roots, journalURL: journal, trashRoots: [trash.path])
+        XCTAssertEqual(try Data(contentsOf: fixture.blob), Data("source weights".utf8))
+        XCTAssertEqual(try Data(contentsOf: fixture.repo.appendingPathComponent("snapshots/abc/model.safetensors")), Data("source weights".utf8))
+        XCTAssertTrue(try JSONStore<ConvertedSourceMove>(fileURL: journal).load().allSatisfy { $0.restoredAt != nil })
+        XCTAssertTrue(fm.fileExists(atPath: fixture.workflow.outputPath + "/model.safetensors"))
+    }
+
+    func testSourceRecoveryRefusesConflictsChangedTrashAndChangedRoots() throws {
+        let fixture = try cleanupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let fm = FileManager.default, journal = fixture.root.appendingPathComponent("journal.json")
+        let original = fixture.root.appendingPathComponent("old.gguf"), trash = fixture.root.appendingPathComponent("trash")
+        try fm.createDirectory(at: trash, withIntermediateDirectories: true)
+        let payload = trash.appendingPathComponent("old.gguf")
+        try Data("weights".utf8).write(to: payload)
+        let move = ConvertedSourceMove(id: "legacy", from: original.path, to: payload.path)
+        try JSONStore<ConvertedSourceMove>(fileURL: journal).upsert(move, id: \.id)
+        let roots = [fixture.root.path]
+        let plan = try ConvertedSourceRecovery.preview(ids: [move.id], roots: roots, journalURL: journal, trashRoots: [trash.path])
+        try fm.createSymbolicLink(atPath: original.path, withDestinationPath: "/missing")
+        XCTAssertThrowsError(try ConvertedSourceRecovery.restore(plan, roots: roots, journalURL: journal, trashRoots: [trash.path]))
+        try fm.removeItem(at: original)
+        XCTAssertThrowsError(try ConvertedSourceRecovery.restore(plan, roots: [], journalURL: journal, trashRoots: [trash.path]))
+        try Data("changed".utf8).write(to: payload)
+        XCTAssertThrowsError(try ConvertedSourceRecovery.restore(plan, roots: roots, journalURL: journal, trashRoots: [trash.path]))
+        XCTAssertTrue(fm.fileExists(atPath: payload.path))
+        XCTAssertFalse(fm.fileExists(atPath: original.path))
+    }
+
+    func testSourceRecoveryFencesJournalAndTrashPaths() throws {
+        let fixture = try cleanupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let journal = fixture.root.appendingPathComponent("journal.json"), fakeTrash = fixture.root.appendingPathComponent("trash")
+        try FileManager.default.createDirectory(at: fakeTrash, withIntermediateDirectories: true)
+        let move = ConvertedSourceMove(id: "bad", from: fixture.root.appendingPathComponent("old.gguf").path, to: fixture.blob.path)
+        try JSONStore<ConvertedSourceMove>(fileURL: journal).upsert(move, id: \.id)
+        XCTAssertThrowsError(try ConvertedSourceRecovery.preview(ids: [move.id], roots: [fixture.root.path], journalURL: journal, trashRoots: [fakeTrash.path]))
+        XCTAssertThrowsError(try ConvertedSourceRecovery.preview(ids: [move.id], roots: [], journalURL: journal, trashRoots: [fixture.root.path]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.blob.path))
+    }
+
+    func testSourceHistoryKeepsLegacyMissingAndRestoredStatesDistinct() throws {
+        let root = try makeRoot(), fm = FileManager.default
+        let journal = root.appendingPathComponent("journal.json"), trash = root.appendingPathComponent("trash")
+        try fm.createDirectory(at: trash, withIntermediateDirectories: true)
+        let present = trash.appendingPathComponent("present.gguf")
+        try Data("weights".utf8).write(to: present)
+        var restored = ConvertedSourceMove(id: "restored", from: root.appendingPathComponent("restored.gguf").path, to: trash.appendingPathComponent("gone.gguf").path)
+        restored.restoredAt = now
+        let records = [
+            ConvertedSourceMove(id: "legacy", from: root.appendingPathComponent("present.gguf").path, to: present.path),
+            ConvertedSourceMove(id: "missing", from: root.appendingPathComponent("missing.gguf").path, to: trash.appendingPathComponent("missing.gguf").path),
+            ConvertedSourceMove(id: "interrupted", from: root.appendingPathComponent("interrupted.gguf").path, to: nil), restored
+        ]
+        try JSONStore<ConvertedSourceMove>(fileURL: journal).replaceAll(records)
+        let history = try ConvertedSourceRecovery.history(roots: [root.path], journalURL: journal, trashRoots: [trash.path])
+        let states = Dictionary(uniqueKeysWithValues: history.flatMap(\.items).map { ($0.id, $0.state) })
+        XCTAssertEqual(states["legacy"], .inTrash)
+        XCTAssertEqual(states["missing"], .unavailable)
+        XCTAssertEqual(states["interrupted"], .incomplete)
+        XCTAssertEqual(states["restored"], .restored)
+        XCTAssertTrue(history.allSatisfy { $0.movedAt == nil && $0.bytes == nil })
+        let preview = try ConvertedSourceRecovery.preview(ids: ["legacy"], roots: [root.path], journalURL: journal, trashRoots: [trash.path])
+        XCTAssertTrue(preview.includesLegacyRecords)
+        XCTAssertEqual(preview.bytes, 7)
+    }
+
+    func testSourceRecoveryRefusesRecordedIdentityDriftAndSymlinkedParents() throws {
+        let root = try makeRoot(), fm = FileManager.default
+        let journal = root.appendingPathComponent("journal.json"), trash = root.appendingPathComponent("trash")
+        try fm.createDirectory(at: trash, withIntermediateDirectories: true)
+        let payload = trash.appendingPathComponent("old.gguf"), destination = root.appendingPathComponent("models/old.gguf")
+        try Data("weights".utf8).write(to: payload)
+        var move = ConvertedSourceMove(id: "recorded", from: destination.path, to: payload.path)
+        move.trashFingerprint = try ConvertedSourceRecovery.snapshot(payload.path).fingerprint
+        try JSONStore<ConvertedSourceMove>(fileURL: journal).upsert(move, id: \.id)
+        let roots = [root.path]
+        let plan = try ConvertedSourceRecovery.preview(ids: [move.id], roots: roots, journalURL: journal, trashRoots: [trash.path])
+        let elsewhere = root.appendingPathComponent("elsewhere")
+        try fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: destination.deletingLastPathComponent(), withDestinationURL: elsewhere)
+        XCTAssertThrowsError(try ConvertedSourceRecovery.restore(plan, roots: roots, journalURL: journal, trashRoots: [trash.path]))
+        try fm.removeItem(at: destination.deletingLastPathComponent())
+        try Data("changed".utf8).write(to: payload)
+        XCTAssertThrowsError(try ConvertedSourceRecovery.preview(ids: [move.id], roots: roots, journalURL: journal, trashRoots: [trash.path]))
+        XCTAssertTrue(fm.fileExists(atPath: payload.path))
+        XCTAssertFalse(fm.fileExists(atPath: destination.path))
+    }
+
+    @MainActor
+    func testSourceCleanupDiscoveryAndRestoreCancelLeaveFilesUntouched() async throws {
+        let fixture = try cleanupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let fm = FileManager.default, journal = fixture.root.appendingPathComponent("journal.json")
+        let trash = fixture.root.appendingPathComponent("trash")
+        try fm.createDirectory(at: trash, withIntermediateDirectories: true)
+        let reclaim = ReclaimCoordinator(sourceJournalURL: journal, sourceTrashRoots: [trash.path])
+        reclaim.mlxRoots = { [fixture.root.path] }
+        await reclaim.checkSources(workflows: [fixture.workflow])
+        XCTAssertEqual(reclaim.sourceCandidates.count, 1)
+        XCTAssertEqual(reclaim.sourceCandidates.first?.bytes, 14)
+        reclaim.protectedPaths = { [fixture.repo.path] }
+        await reclaim.checkSources(workflows: [fixture.workflow])
+        XCTAssertNil(reclaim.sourceCandidates.first?.bytes)
+        XCTAssertNotNil(reclaim.sourceCandidates.first?.reason)
+        let payload = trash.appendingPathComponent("legacy.gguf")
+        try Data("weights".utf8).write(to: payload)
+        let move = ConvertedSourceMove(id: "cancel", from: fixture.root.appendingPathComponent("legacy.gguf").path, to: payload.path)
+        try JSONStore<ConvertedSourceMove>(fileURL: journal).upsert(move, id: \.id)
+        await reclaim.previewSourceRestore(ids: [move.id])
+        XCTAssertNotNil(reclaim.sourceRestorePlan)
+        reclaim.cancelSourceRestore()
+        await reclaim.confirmSourceRestore()
+        XCTAssertTrue(fm.fileExists(atPath: payload.path))
+        XCTAssertFalse(fm.fileExists(atPath: move.from))
+        XCTAssertNil(try JSONStore<ConvertedSourceMove>(fileURL: journal).load().first?.restoredAt)
+    }
+
+    @MainActor
+    func testSourceCleanupSectionRendersDiscoveryAndHistory() async throws {
+        let fixture = try cleanupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let journal = fixture.root.appendingPathComponent("journal.json"), trash = fixture.root.appendingPathComponent("trash")
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let payload = trash.appendingPathComponent("earlier.gguf")
+        try Data("weights".utf8).write(to: payload)
+        let record = ConvertedSourceMove(id: "earlier", from: fixture.root.appendingPathComponent("earlier.gguf").path, to: payload.path)
+        try JSONStore<ConvertedSourceMove>(fileURL: journal).upsert(record, id: \.id)
+        let reclaim = ReclaimCoordinator(sourceJournalURL: journal, sourceTrashRoots: [trash.path])
+        reclaim.mlxRoots = { [fixture.root.path] }
+        await reclaim.checkSources(workflows: [fixture.workflow])
+        let api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] }, convertStatus: { [] },
+            servePreview: { _, _, _ in [:] }, serveStart: { _, _, _, _ in [:] }, serveStatus: { [] }, serveStop: { _ in [:] })
+        let workflows = ModelWorkflowCoordinator(api: api, persistence: ModelWorkflowPersistence(load: { [fixture.workflow] }, upsert: { _ in }))
+        let view = NSHostingView(rootView: SourceCleanupSection(reclaim: reclaim, modelWorkflow: workflows, rescan: {}).padding(24).frame(width: 680).preferredColorScheme(.dark))
+        view.setFrameSize(NSSize(width: 680, height: view.fittingSize.height))
+        view.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(view.bounds.height, 200)
+        XCTAssertLessThan(view.bounds.height, 850)
+        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: image)
+        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        attachment.name = "Source cleanup discovery and legacy history"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
     private let now = Date(timeIntervalSinceReferenceDate: 1_000_000_000)
 

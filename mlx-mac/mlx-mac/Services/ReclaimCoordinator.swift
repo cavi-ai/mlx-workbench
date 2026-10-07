@@ -38,6 +38,14 @@ struct ModelFolderReclaimPlan: Equatable, Sendable {
     let quarantineDir: String
 }
 
+struct SourceCleanupCandidate: Identifiable {
+    let workflow: ConversionWorkflow
+    let bytes: Int64?
+    let reason: String?
+    var id: UUID { workflow.id }
+    var title: String { URL(fileURLWithPath: workflow.completedModelPath ?? workflow.outputPath).lastPathComponent }
+}
+
 enum ReclaimError: LocalizedError {
     case nothingSelected
     case previewHashMismatch
@@ -66,6 +74,12 @@ final class ReclaimCoordinator: ObservableObject {
     @Published private(set) var folderPlan: ModelFolderReclaimPlan?
     @Published private(set) var sourcePlan: ConvertedSourcePlan?
     @Published private(set) var sourceCleanupNote: String?
+    @Published private(set) var sourceCandidates: [SourceCleanupCandidate] = []
+    @Published private(set) var sourceHistory: [SourceCleanupBatch] = []
+    @Published private(set) var sourceHistoryError: String?
+    @Published private(set) var sourceRestorePlan: SourceRestorePlan?
+    @Published private(set) var isCheckingSources = false
+    @Published private(set) var sourcesChecked = false
     /// Incomplete HF-cache findings from the last cache check, with the
     /// prune preview hash when one has been previewed.
     @Published private(set) var cacheFindings: [DoctorFinding] = []
@@ -80,6 +94,85 @@ final class ReclaimCoordinator: ObservableObject {
 
     private let now: () -> Date
     private let fileManager: FileManager
+    private let sourceJournalURL: URL
+    private let sourceTrashRoots: [String]?
+    private var sourceHistoryGeneration = 0
+
+    private var sourceRoots: [String] { Array(Set(ggufRoots() + mlxRoots())).sorted() }
+
+    func checkSources(workflows: [ConversionWorkflow]) async {
+        guard !isApplying, !isCheckingSources else { return }
+        isCheckingSources = true
+        defer { isCheckingSources = false }
+        let roots = sourceRoots, protected = protectedPaths(), manager = fileManager
+        let candidates = await Task.detached(priority: .userInitiated) {
+            workflows.filter { $0.state == .verified }.map { workflow in
+                do {
+                    let plan = try ConvertedSourceCleanup.preview(workflow: workflow, roots: roots, protected: protected, fileManager: manager)
+                    return SourceCleanupCandidate(workflow: workflow, bytes: plan.bytes, reason: nil)
+                } catch {
+                    return SourceCleanupCandidate(workflow: workflow, bytes: nil, reason: error.localizedDescription)
+                }
+            }.sorted { ($0.bytes ?? -1) > ($1.bytes ?? -1) }
+        }.value
+        guard roots == sourceRoots, protected == protectedPaths() else {
+            sourceCandidates = []; sourcesChecked = false
+            lastError = QuarantineError.changedSincePreview.errorDescription
+            return
+        }
+        sourceCandidates = candidates
+        sourcesChecked = true
+        await refreshSourceHistory()
+    }
+
+    func refreshSourceHistory() async {
+        sourceHistoryGeneration += 1
+        let generation = sourceHistoryGeneration
+        let roots = sourceRoots, url = sourceJournalURL, trash = sourceTrashRoots, manager = fileManager
+        do {
+            let history = try await Task.detached(priority: .utility) {
+                try ConvertedSourceRecovery.history(roots: roots, journalURL: url, trashRoots: trash, fileManager: manager)
+            }.value
+            guard roots == sourceRoots, generation == sourceHistoryGeneration else { return }
+            sourceHistory = history
+            sourceHistoryError = nil
+        } catch {
+            guard generation == sourceHistoryGeneration else { return }
+            sourceHistory = []
+            sourceHistoryError = AppHost.render(error)
+        }
+    }
+
+    func previewSourceRestore(ids: [String]) async {
+        guard !isApplying else { return }
+        isApplying = true
+        defer { isApplying = false }
+        sourceRestorePlan = nil; lastError = nil; sourceCleanupNote = nil
+        let roots = sourceRoots, url = sourceJournalURL, trash = sourceTrashRoots, manager = fileManager
+        do {
+            sourceRestorePlan = try await Task.detached(priority: .userInitiated) {
+                try ConvertedSourceRecovery.preview(ids: ids, roots: roots, journalURL: url, trashRoots: trash, fileManager: manager)
+            }.value
+        } catch { lastError = AppHost.render(error) }
+    }
+
+    func confirmSourceRestore() async {
+        guard !isApplying, let plan = sourceRestorePlan else { return }
+        isApplying = true
+        defer { isApplying = false; sourceRestorePlan = nil }
+        let roots = sourceRoots, url = sourceJournalURL, trash = sourceTrashRoots, manager = fileManager
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try ConvertedSourceRecovery.restore(plan, roots: roots, journalURL: url, trashRoots: trash, fileManager: manager)
+            }.value
+            sourceCleanupNote = "Restored \(plan.items.count) source items to their original locations."
+            lastError = nil
+            sourceCandidates = []; sourcesChecked = false
+        } catch { lastError = AppHost.render(error) }
+        await refreshSourceHistory()
+    }
+
+    func cancelSourceRestore() { if !isApplying { sourceRestorePlan = nil } }
 
     /// Set post-init (AppHost wires these to live config); closures so the
     /// coordinator always reads the current values.
@@ -111,12 +204,15 @@ final class ReclaimCoordinator: ObservableObject {
         defer { isApplying = false; sourcePlan = nil }
         let roots = Array(Set(ggufRoots() + mlxRoots())).sorted(), protected = protectedPaths(), manager = fileManager
         do {
+            let url = sourceJournalURL
             let moves = try await Task.detached(priority: .userInitiated) {
-                try ConvertedSourceCleanup.apply(plan, workflow: workflow, roots: roots, protected: protected, fileManager: manager)
+                try ConvertedSourceCleanup.apply(plan, workflow: workflow, roots: roots, protected: protected, fileManager: manager, journalURL: url)
             }.value
             sourceCleanupNote = "Moved \(moves.count) source items to Trash. Empty Trash when you want to release their disk space."
             lastError = nil
+            sourceCandidates = []; sourcesChecked = false
         } catch { lastError = AppHost.render(error) }
+        await refreshSourceHistory()
     }
 
     func cancelSource() { if !isApplying { sourcePlan = nil } }
@@ -162,10 +258,14 @@ final class ReclaimCoordinator: ObservableObject {
 
     init(
         now: @escaping () -> Date = Date.init,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        sourceJournalURL: URL = ConvertedSourceRecovery.journalURL,
+        sourceTrashRoots: [String]? = nil
     ) {
         self.now = now
         self.fileManager = fileManager
+        self.sourceJournalURL = sourceJournalURL
+        self.sourceTrashRoots = sourceTrashRoots
     }
 
     var totalReclaimableBytes: Int64 {
