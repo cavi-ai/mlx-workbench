@@ -6,6 +6,9 @@ struct WorkflowCaptureRequestView: View {
     let models: [WorkflowCaptureModel]
     let initialModelPath: String?
     let environment: String?
+    var endpoint: WorkflowCaptureEndpoint? = nil
+    var initialHarness: WorkflowHarness = .openCode
+    var onImport: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var harness: WorkflowHarness = .openCode
     @State private var selectedPath = ""
@@ -17,7 +20,16 @@ struct WorkflowCaptureRequestView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Label("Capture a workflow", systemImage: "arrow.down.doc").font(WorkbenchTypography.roundedTitle)
-            Text("Give your agent this request, run the task using the selected local model, then import its measured report.").font(WorkbenchTypography.secondary)
+            Text("Copy the request, run your task, then review its measured report.").font(WorkbenchTypography.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let endpoint {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Label("Wired endpoint", systemImage: "network").font(WorkbenchTypography.roundedHeading)
+                    Text(endpoint.baseURL).font(WorkbenchTypography.value).textSelection(.enabled)
+                    Text("Clients: \(endpoint.clientIDs.joined(separator: ", ")) · verify the task uses this endpoint")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
             Picker("Harness", selection: $harness) {
                 ForEach(WorkflowHarness.allCases) { Text($0.title).tag($0) }
             }
@@ -25,17 +37,22 @@ struct WorkflowCaptureRequestView: View {
                 Text("Choose a model").tag("")
                 ForEach(models) { Text($0.name).tag($0.path) }
             }
+            .disabled(endpoint != nil)
             if let selectedModel {
                 Text(selectedModel.path).font(WorkbenchTypography.value).textSelection(.enabled)
             }
-            Text("The request includes known model and environment identities. Unknown fields stay blank for the producer to establish from the run. Older runs must keep their original identities and dates.")
+            Text("Includes model and environment identities. Establish missing fields from the run; preserve historical identities and dates.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             if models.isEmpty { Text("No ready local models available. Rescan Library first.").font(WorkbenchTypography.secondary) }
             if selectedModel?.signature == nil || !ComparisonInsights.knownEnvironment(environment) {
                 Text("Some identity context is unavailable. Imported observations stay unconfirmed until Library and this Mac can match them.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
             }
             if let note { Text(note).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
             ErrorBanner(text: error)
+            if let onImport {
+                Button("Review report in Compare…", action: onImport).buttonStyle(.bordered)
+            }
             HStack {
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
@@ -48,13 +65,16 @@ struct WorkflowCaptureRequestView: View {
                 } }.buttonStyle(.borderedProminent).disabled(selectedModel == nil)
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 520)
-        .onAppear { selectedPath = models.contains(where: { $0.path == initialModelPath }) ? (initialModelPath ?? "") : (models.first?.path ?? "") }
+        .onAppear {
+            selectedPath = models.contains(where: { $0.path == initialModelPath }) ? (initialModelPath ?? "") : (models.first?.path ?? "")
+            harness = initialHarness
+        }
     }
 
     private func makeRequest(_ consume: (WorkflowCaptureRequest) throws -> Void) {
         guard let selectedModel else { return }
         do {
-            try consume(WorkflowCaptureRequest.make(harness: harness, model: selectedModel, environment: environment))
+            try consume(WorkflowCaptureRequest.make(harness: harness, model: selectedModel, environment: environment, endpoint: endpoint))
             error = nil
         } catch { self.error = AppHost.render(error) }
     }

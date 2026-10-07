@@ -232,6 +232,21 @@ status on entry and before preview, then rechecks the server's model, port and
 process identity before confirmation. Stopped/replaced servers or unavailable
 status block writes; file drift checks, backups and rollback remain in place.
 
+After client wiring, **Measure this workflow…** opens a capture request for
+the wired model and loopback endpoint. It rechecks the server first and includes
+only clients whose config writes succeeded. OpenCode wiring prefills OpenCode;
+other clients start as Custom, with the harness still selectable. A repository
+server must match one ready local revision; ambiguous revisions require serving
+the chosen local directory. Rolled-back wiring cannot start this handoff.
+
+Copy or save the request, run the task in that client, then use **Review report
+in Compare…** to select the producer's measured report. Compare shows the
+existing import review directly, keeping its charts first. Config writes do
+not prove which endpoint a task used: the producer must establish that from the
+run. Wiring timestamps and transaction IDs never become run measurements or
+source receipts. Unknown metrics stay unknown, and quality still requires a
+human review.
+
 Workflow JSON uses an object with `schemaVersion: 1` and a `records` array.
 Each record requires:
 

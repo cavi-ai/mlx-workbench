@@ -231,7 +231,14 @@ from `mlx-agent` at runtime.
   automatic Claude/OpenClaw/OpenCode log reader. Native Compare can copy/save
   a `WorkflowCaptureRequest` for a selected harness and ready local model;
   it captures identity context only, with null required run measurements in
-  `reportDraft`. A request cannot import as evidence. Report files are read and
+  `reportDraft`. After successful client wiring, `WiredWorkflowCapture` rechecks
+  the reviewed server and matches one ready local model before prefilling the
+  request with loopback endpoint and successful client IDs. Rolled-back or
+  unwritten transactions and ambiguous local revisions are refused. This is
+  config-write context, never proof a task used the endpoint; wiring time/ID
+  never substitute for measurement time/run source. The Clients handoff opens
+  Compare's shared import review through a one-shot route intent consumed only
+  when Compare is active. A request cannot import as evidence. Report files are read and
   decoded off the main actor; imports preview exact new/duplicate observations
   and model/environment status before confirmation. Confirmation refuses
   changed saved evidence and preserves historical observations without

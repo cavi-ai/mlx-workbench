@@ -1,5 +1,7 @@
 import Charts
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - QuantView
 // Compare tab: measured comparison of ready variants via prompt-set replay
@@ -181,6 +183,7 @@ struct QuantView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
     private let onRouteSelection: (AppRoute) -> Void
+    @Environment(\.isRouteActive) private var isRouteActive
 
     @State private var mode: ComparisonMode = .chat
     @State private var showingSetEditor = false
@@ -198,6 +201,11 @@ struct QuantView: View {
     @State private var sizeFilter: ComparePresentation.SizeFilter = .all
     @State private var modelSearch = ""
     @State private var modelGrouping: ComparePresentation.Grouping = .family
+    @State private var importPreview: WorkflowImportPreview?
+    @State private var isReadingReport = false
+    @State private var isChoosingReport = false
+    @State private var importMessage: String?
+    @State private var importError: String?
 
     /// A completed run plus its fastest variant, presented for promotion.
     struct PromoteContext: Identifiable {
@@ -219,6 +227,8 @@ struct QuantView: View {
                 WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
                     environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile,
                     mode: mode, activeRunID: comparison.activeRunID, onCompare: loadWorkflowComparison)
+                if let importMessage { Text(importMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
+                ErrorBanner(text: importError)
                 setupBar
                 DisclosureGroup("Model fit and workflow evidence") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -237,7 +247,7 @@ struct QuantView: View {
                                 let port = endpoint.enabled && HFRepoID.matches(endpoint.modelPath, path) ? endpoint.port : nil
                                 appHost.clientWiringRequest = ClientWiringRequest(modelPath: path, preferredPort: port)
                                 onRouteSelection(.clientSetup)
-                            })
+                            }, onImport: importReport, isReadingReport: isReadingReport || isChoosingReport)
                     }
                     .padding(.top, WorkbenchSpacing.sm)
                 }
@@ -248,6 +258,16 @@ struct QuantView: View {
             .frame(maxWidth: .infinity)
             .padding(WorkbenchSpacing.pageInset)
         }
+        .sheet(isPresented: Binding(get: { importPreview != nil }, set: { if !$0 { importPreview = nil } })) {
+            if let importPreview {
+                WorkflowImportPreviewView(preview: importPreview,
+                    models: (appHost.librarySnapshot?.models ?? []).map { WorkflowCaptureModel(path: $0.item.path, name: $0.displayName, signature: $0.item.signature) },
+                    environment: appHost.watch.currentFingerprintDescription,
+                    onCancel: { self.importPreview = nil }, onConfirm: confirmImport)
+            }
+        }
+        .task(id: isRouteActive) { consumeImportRequest() }
+        .onChange(of: appHost.workflowReportImportRequested) { _, _ in consumeImportRequest() }
         .onChange(of: comparison.activeRunID) { _, newValue in
             if let newValue { selectedRunID = newValue }
         }
@@ -272,6 +292,46 @@ struct QuantView: View {
             if reconciled != variantSlots { variantSlots = reconciled; selectionReason = "Unavailable models were cleared; your remaining selections were kept." }
             applySuggestions()
         }
+    }
+
+    private func consumeImportRequest() {
+        guard isRouteActive, appHost.workflowReportImportRequested else { return }
+        appHost.workflowReportImportRequested = false
+        importReport()
+    }
+
+    private func importReport() {
+        guard !isReadingReport, !isChoosingReport, importPreview == nil else { return }
+        isChoosingReport = true
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            isChoosingReport = false
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                isReadingReport = true
+                defer { isReadingReport = false }
+                do {
+                    let report = try await Task.detached(priority: .userInitiated) { try WorkflowEvidenceStore.readReport(url) }.value
+                    importPreview = try appHost.workflowEvidence.previewReport(report)
+                    importError = nil
+                    importMessage = nil
+                } catch { importError = AppHost.render(error); importMessage = nil }
+            }
+        }
+    }
+
+    private func confirmImport() {
+        guard let importPreview else { return }
+        do {
+            let count = try appHost.workflowEvidence.confirmImport(importPreview)
+            importMessage = "Imported \(count) new workflow records. Matching reports appear in Workflow performance."
+            importError = nil
+            appHost.analyzeReclaim()
+        } catch { importError = AppHost.render(error); importMessage = nil }
+        self.importPreview = nil
     }
 
     // MARK: - Selection
