@@ -188,6 +188,13 @@ uses recorded bytes (decimal GB), with each report's capture date alongside its
 bar. These observations do not establish current memory fit, quality for other
 tasks, or GPU/disk/network bottlenecks.
 
+**Quality vs runtime** plots paired task scores and total seconds from the same
+report and shared rubric. Upper-left points combine higher recorded quality with
+shorter runtime. Click a point or choose **Inspect model** (including overlapping
+points) to see its recorded peak memory and capture date. **Use model…** opens
+the existing role-preference review and optional endpoint switch after refreshing
+model identity, task evidence and live headroom. Selecting a point applies nothing.
+
 Use **Compare these models** to load a workflow cohort's current, ready models
 into the selected comparison mode. Your prompt set stays selected; choose
 appropriate prompts and start the local comparison yourself. This does not
