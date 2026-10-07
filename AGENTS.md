@@ -257,6 +257,10 @@ from `mlx-agent` at runtime.
   selected report ID and context; unknown scores/memory are labeled rather than
   charted as zero. Peak memory uses recorded bytes in decimal GB and shows the
   report's capture date, never live fit estimates or an older-report fallback.
+  The Quality vs runtime scatter plot pairs score and total runtime from that
+  same report and rubric. Point selection (or the model menu for overlapping
+  points) shows recorded memory/date. Use model opens the existing role/endpoint
+  review with fresh identity, evidence and headroom checks; selection never applies it.
   "Compare these models" re-checks the cohort against current identities and
   inventory at click time, loads only ready models for the selected mode, and
   keeps the prompt set. It never starts a run or replays the external harness.

@@ -9,10 +9,15 @@ struct WorkflowChartsView: View {
     let mode: ComparisonMode
     let activeRunID: UUID?
     let onCompare: (String) -> WorkflowCharts.ComparisonSelection
+    let onReview: (AgentTaskGuidance, String) async throws -> ModelGuidanceReview
+    let onApply: (ModelGuidanceReview, UseCase, Bool) async throws -> String
     @Binding var metric: WorkflowCharts.Metric
+    @Binding var inspectedModelPath: String?
     @State private var selectedTaskID: String?
     @State private var selectionNote: String?
     @State private var selectionError: String?
+    @State private var review: ModelGuidanceReview?
+    @State private var isPreparingReview = false
 
     private var tasks: [AgentTaskGuidance] {
         AgentTaskAdvisor.guidance(models: models, runs: [], workflow: workflow.records, environment: environment,
@@ -49,8 +54,13 @@ struct WorkflowChartsView: View {
                     Text(series.unavailableReason ?? "No current comparable \(metric.title.lowercased()) measurements in this cohort. Review the evidence below.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                 } else {
-                    ScrollView(.vertical) { chart(series.points) }
-                        .frame(height: min(chartHeight(series.points.count), 360))
+                    if metric == .qualityRuntime {
+                        tradeoffChart(series.points)
+                        tradeoffSelection(series.points, task: selected)
+                    } else {
+                        ScrollView(.vertical) { chart(series.points) }
+                            .frame(height: min(chartHeight(series.points.count), 360))
+                    }
                     Text(caption(selected))
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -100,6 +110,15 @@ struct WorkflowChartsView: View {
         .background(WorkbenchColor.accent.opacity(0.04), in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface))
         .overlay(RoundedRectangle(cornerRadius: WorkbenchRadius.surface).stroke(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline))
         .onChange(of: selectedTaskID) { _, _ in selectionNote = nil; selectionError = nil }
+        .onChange(of: selected?.id) { _, _ in inspectedModelPath = nil }
+        .onChange(of: metric) { _, _ in inspectedModelPath = nil }
+        .sheet(isPresented: Binding(get: { review != nil }, set: { if !$0 { review = nil } })) {
+            if let review {
+                ModelGuidanceReviewView(review: review, onApply: onApply, onBack: { self.review = nil }, onApplied: {
+                    selectionNote = $0; selectionError = nil; self.review = nil
+                })
+            }
+        }
     }
 
     private func compareButton(_ task: AgentTaskGuidance) -> some View {
@@ -141,7 +160,82 @@ struct WorkflowChartsView: View {
             return "Recorded scores · higher is better within rubric \(task.rubricID ?? "unknown"). Quality for other tasks is not established."
         case .peakMemory:
             return "Recorded peak memory at each capture date. Current headroom and estimated memory fit are separate."
+        case .qualityRuntime:
+            return "Upper left: higher recorded quality, lower runtime for the same sample count. Shared rubric: \(task.rubricID ?? "unknown"). Select a model to inspect its capture."
         }
+    }
+
+    private func tradeoffChart(_ points: [WorkflowCharts.Point]) -> some View {
+        Chart(points) { point in
+            if let seconds = point.candidate.totalSeconds {
+                PointMark(x: .value("Total runtime", seconds), y: .value("Recorded score", point.value))
+                    .foregroundStyle(point.id == inspectedModelPath ? WorkbenchColor.success : WorkbenchColor.accent)
+                    .symbolSize(point.id == inspectedModelPath ? 140 : 90)
+                    .accessibilityLabel(point.candidate.name)
+                    .accessibilityValue("\(point.value.formatted()) out of 5, \(seconds.formatted()) seconds")
+            }
+        }
+        .chartXScale(domain: 0...max((points.compactMap { $0.candidate.totalSeconds }.max() ?? 0) * 1.1, 0.1), range: .plotDimension(padding: 12))
+        .chartYScale(domain: 0.5...5.5)
+        .chartYAxis { AxisMarks(values: [1, 2, 3, 4, 5]) }
+        .chartXAxisLabel("Total runtime (seconds) · lower is faster")
+        .chartYAxisLabel("Recorded quality (1–5)")
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                if let frame = proxy.plotFrame {
+                    Rectangle().fill(.clear).contentShape(Rectangle())
+                        .onTapGesture { location in
+                            let origin = geometry[frame].origin
+                            let distances = points.compactMap { point -> (String, CGFloat)? in
+                                guard let seconds = point.candidate.totalSeconds,
+                                      let x = proxy.position(forX: seconds), let y = proxy.position(forY: point.value) else { return nil }
+                                return (point.id, hypot(location.x - origin.x - x, location.y - origin.y - y))
+                            }
+                            inspectedModelPath = distances.min { $0.1 < $1.1 }.flatMap { $0.1 <= 24 ? $0.0 : nil }
+                        }
+                }
+            }
+        }
+        .frame(height: 260)
+    }
+
+    @ViewBuilder private func tradeoffSelection(_ points: [WorkflowCharts.Point], task: AgentTaskGuidance) -> some View {
+        Picker("Inspect model", selection: Binding(get: {
+            points.contains { $0.id == inspectedModelPath } ? inspectedModelPath : nil
+        }, set: { inspectedModelPath = $0 })) {
+            Text("Choose a point or model").tag(String?.none)
+            ForEach(points) { Text($0.candidate.name).tag(Optional($0.id)) }
+        }.pickerStyle(.menu).frame(maxWidth: 420)
+        if let point = points.first(where: { $0.id == inspectedModelPath }) {
+            let canUse = models.contains { $0.item.path == point.id && ModelTaskPresentation.isServable($0) && !$0.capabilities.isEmpty }
+            ViewThatFits(in: .horizontal) {
+                HStack { selectedCapture(point); Spacer(); useButton(task, path: point.id, canUse: canUse) }
+                VStack(alignment: .leading) { selectedCapture(point); useButton(task, path: point.id, canUse: canUse) }
+            }
+        }
+    }
+
+    private func selectedCapture(_ point: WorkflowCharts.Point) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text(point.candidate.name).font(WorkbenchTypography.emphasis)
+            Text("\(WorkflowCharts.Metric.quality.formattedValue(point.value)) · \(point.candidate.totalSeconds.map { WorkflowCharts.Metric.runtime.formattedValue($0) } ?? "unknown") · recorded peak \(point.peakMemoryBytes.map { WorkflowCharts.Metric.peakMemory.formattedValue(Double($0) / 1_000_000_000) } ?? "unknown")")
+                .font(WorkbenchTypography.value)
+            Text("Captured \(point.candidate.measuredAt.formatted()). Current memory fit is checked in Use model.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+        }
+    }
+
+    private func useButton(_ task: AgentTaskGuidance, path: String, canUse: Bool) -> some View {
+        Button(isPreparingReview ? "Checking…" : "Use model…") {
+            isPreparingReview = true; selectionError = nil; selectionNote = nil
+            Task { @MainActor in
+                defer { isPreparingReview = false }
+                do { review = try await onReview(task, path) }
+                catch { selectionError = AppHost.render(error) }
+            }
+        }.buttonStyle(.bordered).disabled(isPreparingReview || !canUse)
+            .accessibilityIdentifier("workflow-use-model")
+            .help(canUse ? "Review role preference and current fit; endpoint changes remain optional." : "This model has no supported serving role. Use its task-specific panel.")
     }
 
     private func chart(_ points: [WorkflowCharts.Point]) -> some View {

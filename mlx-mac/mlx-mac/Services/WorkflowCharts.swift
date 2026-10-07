@@ -4,7 +4,7 @@ import Foundation
 /// Recorded measurements stay distinct from current memory-fit estimates.
 enum WorkflowCharts {
     enum Metric: String, CaseIterable, Identifiable {
-        case runtime, breakdown, quality, peakMemory
+        case runtime, breakdown, quality, peakMemory, qualityRuntime
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -12,11 +12,12 @@ enum WorkflowCharts {
             case .breakdown: return "Time breakdown"
             case .quality: return "Task quality"
             case .peakMemory: return "Peak memory"
+            case .qualityRuntime: return "Quality vs runtime"
             }
         }
         var axisLabel: String {
             switch self {
-            case .runtime, .breakdown: return "Seconds"
+            case .runtime, .breakdown, .qualityRuntime: return "Seconds"
             case .quality: return "Recorded score (1–5)"
             case .peakMemory: return "Recorded peak memory (GB)"
             }
@@ -24,7 +25,7 @@ enum WorkflowCharts {
         func formattedValue(_ value: Double) -> String {
             switch self {
             case .runtime, .breakdown: return String(format: "%.2f s", value)
-            case .quality: return String(format: "%.0f/5", value)
+            case .quality, .qualityRuntime: return String(format: "%.0f/5", value)
             case .peakMemory: return String(format: "%.2f GB", value)
             }
         }
@@ -33,6 +34,7 @@ enum WorkflowCharts {
     struct Point: Identifiable {
         let candidate: AgentTaskCandidate
         let value: Double
+        let peakMemoryBytes: Int64?
         var id: String { candidate.modelPath }
     }
     struct Series {
@@ -43,7 +45,7 @@ enum WorkflowCharts {
 
     static func series(_ task: AgentTaskGuidance, records: [WorkflowEvidence], metric: Metric) -> Series {
         let candidates = task.candidates.filter(\.comparable)
-        if metric == .quality, task.rubricID == nil {
+        if (metric == .quality || metric == .qualityRuntime), task.rubricID == nil {
             return Series(points: [], missing: candidates.filter { $0.qualityScore == nil },
                 unavailableReason: "No shared quality rubric. Missing or different rubrics prevent a quality comparison.")
         }
@@ -62,17 +64,17 @@ enum WorkflowCharts {
             let value: Double?
             switch metric {
             case .runtime, .breakdown: value = record.totalSeconds
-            case .quality:
+            case .quality, .qualityRuntime:
                 value = record.rubricID == task.rubricID ? record.qualityScore.map(Double.init) : nil
             case .peakMemory:
                 value = record.peakMemoryBytes.map { Double($0) / 1_000_000_000 }
             }
-            if let value { points.append(Point(candidate: candidate, value: value)) }
+            if let value { points.append(Point(candidate: candidate, value: value, peakMemoryBytes: record.peakMemoryBytes)) }
             else { missing.append(candidate) }
         }
         points.sort {
             if $0.value == $1.value { return $0.id < $1.id }
-            return metric == .quality ? $0.value > $1.value : $0.value < $1.value
+            return metric == .quality || metric == .qualityRuntime ? $0.value > $1.value : $0.value < $1.value
         }
         return Series(points: points, missing: missing.sorted { $0.modelPath < $1.modelPath }, unavailableReason: nil)
     }

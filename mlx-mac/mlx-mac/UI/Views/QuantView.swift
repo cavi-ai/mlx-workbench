@@ -207,6 +207,17 @@ struct QuantView: View {
     @State private var importMessage: String?
     @State private var importError: String?
     @State private var workflowChartMetric: WorkflowCharts.Metric = .runtime
+    @State private var inspectedWorkflowModelPath: String?
+
+    private func reviewWorkflowModel(_ task: AgentTaskGuidance, path: String) async throws -> ModelGuidanceReview {
+        var evidence = ComparisonInsights.agentEvidence(models: appHost.librarySnapshot?.models ?? [], runs: [],
+            workflow: appHost.workflowEvidence.records, environment: appHost.watch.currentFingerprintDescription,
+            hardware: appHost.hardwareProfile, memory: nil, capturedAt: nil, contextTokens: 8192,
+            reserveGB: appHost.config.fitReserveGB, protected: appHost.occupiedModelPaths)
+        // Preserve the displayed cohort for the existing fresh-evidence recheck.
+        evidence.taskGuidance = [task]
+        return try await appHost.reviewModelGuidance(evidence: evidence, taskID: task.id, path: path)
+    }
 
     /// A completed run plus its fastest variant, presented for promotion.
     struct PromoteContext: Identifiable {
@@ -227,7 +238,10 @@ struct QuantView: View {
                 resultsArea
                 WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
                     environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile,
-                    mode: mode, activeRunID: comparison.activeRunID, onCompare: loadWorkflowComparison, metric: $workflowChartMetric)
+                    mode: mode, activeRunID: comparison.activeRunID, onCompare: loadWorkflowComparison,
+                    onReview: reviewWorkflowModel,
+                    onApply: { review, role, endpoint in try await appHost.applyModelGuidance(review, role: role, enableEndpoint: endpoint) },
+                    metric: $workflowChartMetric, inspectedModelPath: $inspectedWorkflowModelPath)
                 if let importMessage { Text(importMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
                 ErrorBanner(text: importError)
                 setupBar
