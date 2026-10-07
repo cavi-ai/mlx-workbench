@@ -9,8 +9,8 @@ struct WorkflowChartsView: View {
     let mode: ComparisonMode
     let activeRunID: UUID?
     let onCompare: (String) -> WorkflowCharts.ComparisonSelection
+    @Binding var metric: WorkflowCharts.Metric
     @State private var selectedTaskID: String?
-    @State private var showBreakdown = false
     @State private var selectionNote: String?
     @State private var selectionError: String?
 
@@ -44,21 +44,26 @@ struct WorkflowChartsView: View {
                 if let selectionError {
                     Text(selectionError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                 }
-                let candidates = WorkflowCharts.chartCandidates(selected)
-                if candidates.isEmpty {
-                    Text("No current comparable timings in this cohort. Review the evidence below.")
+                let series = WorkflowCharts.series(selected, records: workflow.records, metric: metric)
+                if series.points.isEmpty {
+                    Text(series.unavailableReason ?? "No current comparable \(metric.title.lowercased()) measurements in this cohort. Review the evidence below.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                 } else {
-                    ScrollView(.vertical) { chart(candidates) }
-                        .frame(height: min(CGFloat(candidates.count) * 40 + (showBreakdown ? 80 : 48), 360))
-                    Text("Seconds for \(candidates[0].sampleCount) samples · lower total runtime is faster. Latest report per model; capture dates appear in evidence.")
+                    ScrollView(.vertical) { chart(series.points) }
+                        .frame(height: min(chartHeight(series.points.count), 360))
+                    Text(caption(selected))
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                    if showBreakdown {
-                        ForEach(candidates.filter { !WorkflowCharts.missingTimings($0).isEmpty }) { candidate in
+                        .fixedSize(horizontal: false, vertical: true)
+                    if metric == .breakdown {
+                        ForEach(series.points.map(\.candidate).filter { !WorkflowCharts.missingTimings($0).isEmpty }) { candidate in
                             Text("\(candidate.name): \(WorkflowCharts.missingTimings(candidate).joined(separator: ", ")) unknown.")
                                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         }
                     }
+                }
+                ForEach(series.missing) { candidate in
+                    Text("\(candidate.name): \(metric.title.lowercased()) unknown.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
                 DisclosureGroup("Configuration and source evidence") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -73,6 +78,8 @@ struct WorkflowChartsView: View {
                                     .textSelection(.enabled)
                                 if let record = workflow.records.first(where: { $0.id.uuidString == candidate.evidenceID }) {
                                     Text("Source: \(record.source)").textSelection(.enabled)
+                                    Text("Quality: \(record.qualityScore.map { "\($0)/5" } ?? "unknown") · rubric: \(record.rubricID ?? "unknown")")
+                                    Text("Recorded peak memory: \(record.peakMemoryBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown")")
                                 }
                                 ForEach(candidate.exclusionReasons, id: \.self) { Text($0).foregroundStyle(WorkbenchColor.warning) }
                                 if candidate.comparable {
@@ -117,16 +124,32 @@ struct WorkflowChartsView: View {
                 Text("\(task.harness ?? "workflow") · \(task.title) · \(task.candidates.first?.sampleCount ?? 0) samples · \(task.configurationFingerprint.map { String($0.prefix(8)) } ?? "unknown config") · \(task.useCase?.title ?? "no role")").tag(task.id)
             }
         }.frame(maxWidth: 560)
-        Picker("Chart", selection: $showBreakdown) {
-            Text("Total runtime").tag(false)
-            Text("Time breakdown").tag(true)
-        }.pickerStyle(.segmented).frame(width: 270)
+        Picker("Chart", selection: $metric) {
+            ForEach(WorkflowCharts.Metric.allCases) { Text($0.title).tag($0) }
+        }.pickerStyle(.menu).frame(width: 220)
     }
 
-    private func chart(_ candidates: [AgentTaskCandidate]) -> some View {
-        Chart {
-            ForEach(candidates) { candidate in
-                if showBreakdown {
+    private func chartHeight(_ count: Int) -> CGFloat {
+        CGFloat(max(count, 1)) * (metric == .peakMemory ? 52 : 40) + (metric == .breakdown ? 80 : 48)
+    }
+
+    private func caption(_ task: AgentTaskGuidance) -> String {
+        switch metric {
+        case .runtime, .breakdown:
+            return "Seconds for \(task.candidates.first?.sampleCount ?? 0) samples · lower total runtime is faster. Latest report per model; capture dates appear in evidence."
+        case .quality:
+            return "Recorded scores · higher is better within rubric \(task.rubricID ?? "unknown"). Quality for other tasks is not established."
+        case .peakMemory:
+            return "Recorded peak memory at each capture date. Current headroom and estimated memory fit are separate."
+        }
+    }
+
+    private func chart(_ points: [WorkflowCharts.Point]) -> some View {
+        let candidates = points.map(\.candidate)
+        return Chart {
+            ForEach(points) { point in
+                let candidate = point.candidate
+                if metric == .breakdown {
                     ForEach(WorkflowCharts.segments(candidate)) { segment in
                         BarMark(x: .value("Seconds", segment.seconds), y: .value("Model", candidate.modelPath))
                             .foregroundStyle(by: .value("Timing", segment.timing.rawValue))
@@ -134,16 +157,26 @@ struct WorkflowChartsView: View {
                             .accessibilityValue(String(format: "%.2f seconds", segment.seconds))
                     }
                 } else {
-                    BarMark(x: .value("Seconds", candidate.totalSeconds ?? 0), y: .value("Model", candidate.modelPath))
-                        .foregroundStyle(WorkbenchColor.accent).cornerRadius(3)
-                        .annotation(position: .trailing) {
-                            Text(String(format: "%.2f s", candidate.totalSeconds ?? 0)).font(WorkbenchTypography.value)
+                    BarMark(x: .value(metric.axisLabel, point.value), y: .value("Model", candidate.modelPath))
+                        .foregroundStyle(metric == .quality ? WorkbenchColor.success : WorkbenchColor.accent).cornerRadius(3)
+                        .annotation(position: .trailing, overflowResolution: .init(x: .fit(to: .plot))) {
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                                Text(metric.formattedValue(point.value)).font(WorkbenchTypography.value)
+                                if metric == .peakMemory {
+                                    Text("Captured \(candidate.measuredAt.formatted(date: .abbreviated, time: .omitted))")
+                                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                                }
+                            }
+                            .fixedSize()
+                            .padding(WorkbenchSpacing.xxs)
+                            .background(WorkbenchColor.canvas, in: RoundedRectangle(cornerRadius: 3))
                         }
                         .accessibilityLabel(candidate.name)
-                        .accessibilityValue(String(format: "%.2f seconds total", candidate.totalSeconds ?? 0))
+                        .accessibilityValue("\(metric.formattedValue(point.value)), recorded \(candidate.measuredAt.formatted())")
                 }
             }
         }
+        .chartXScale(domain: 0...(metric == .quality ? 5 : max((points.map(\.value).max() ?? 0) * 1.15, 0.1)))
         .chartYScale(domain: candidates.map(\.modelPath))
         .chartYAxis {
             AxisMarks { value in
@@ -156,9 +189,9 @@ struct WorkflowChartsView: View {
         }
         .chartForegroundStyleScale(domain: WorkflowCharts.Timing.allCases.map(\.rawValue),
             range: [WorkbenchColor.accent, WorkbenchColor.warning, WorkbenchColor.success, WorkbenchColor.muted, WorkbenchColor.hairline])
-        .chartLegend(showBreakdown ? .visible : .hidden)
-        .chartXAxisLabel("Seconds")
-        .frame(height: CGFloat(max(candidates.count, 1)) * 40 + (showBreakdown ? 80 : 48))
+        .chartLegend(metric == .breakdown ? .visible : .hidden)
+        .chartXAxisLabel(metric.axisLabel)
+        .frame(height: chartHeight(candidates.count))
     }
 
     private func timings(_ candidate: AgentTaskCandidate) -> String {

@@ -174,14 +174,19 @@ request itself is not importable evidence, and its context must never be used
 to relabel an older run. Missing metrics remain unknown.
 
 **Workflow performance** charts appear on the opening Compare tab. Select a
-harness/task cohort, then switch between total runtime and the inference,
-tool, queue and unattributed timing breakdown. Cohorts keep configurations,
+harness/task cohort, then use the compact **Chart** menu for total runtime,
+the inference/tool/queue timing breakdown, recorded task quality or measured
+peak memory. Cohorts keep configurations,
 sample counts and task roles separate, using the newest observation per model
 and matching current model/environment identities. A missing configuration
 or changed identity stays visible in collapsed source evidence but is not
 charted. Incomplete timing components show a total-duration **Breakdown unknown**
-bar; measured zero durations remain zero. These charts do not establish quality,
-current memory fit, or GPU/disk/network bottlenecks.
+bar; measured zero durations remain zero. Quality charts require a shared rubric;
+missing or different rubrics block the comparison. Missing scores and memory
+measurements appear as **unknown**, never zero or an estimated value. Peak memory
+uses recorded bytes (decimal GB), with each report's capture date alongside its
+bar. These observations do not establish current memory fit, quality for other
+tasks, or GPU/disk/network bottlenecks.
 
 Use **Compare these models** to load a workflow cohort's current, ready models
 into the selected comparison mode. Your prompt set stays selected; choose

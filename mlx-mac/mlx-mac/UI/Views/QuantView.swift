@@ -206,6 +206,7 @@ struct QuantView: View {
     @State private var isChoosingReport = false
     @State private var importMessage: String?
     @State private var importError: String?
+    @State private var workflowChartMetric: WorkflowCharts.Metric = .runtime
 
     /// A completed run plus its fastest variant, presented for promotion.
     struct PromoteContext: Identifiable {
@@ -226,7 +227,7 @@ struct QuantView: View {
                 resultsArea
                 WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
                     environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile,
-                    mode: mode, activeRunID: comparison.activeRunID, onCompare: loadWorkflowComparison)
+                    mode: mode, activeRunID: comparison.activeRunID, onCompare: loadWorkflowComparison, metric: $workflowChartMetric)
                 if let importMessage { Text(importMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
                 ErrorBanner(text: importError)
                 setupBar
