@@ -478,6 +478,8 @@ final class EndpointSupervisor: ObservableObject {
 
     // MARK: - Monitoring
 
+    var isMonitoring: Bool { monitorTask != nil }
+
     /// Poll authoritative status on a slow timer. Idempotent.
     func startMonitoring(intervalNanoseconds: UInt64 = 30_000_000_000) {
         guard monitorTask == nil else { return }

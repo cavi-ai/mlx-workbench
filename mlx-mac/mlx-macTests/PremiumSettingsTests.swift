@@ -63,24 +63,7 @@ final class PremiumSettingsTests: XCTestCase {
     // MARK: - Toggle application
 
     func testTogglingVerificationDetachesTheGate() async {
-        let storeURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mlx-workbench-settings-\(UUID().uuidString)")
-            .appendingPathComponent("workflows.json")
-        let api = ModelWorkflowAPI(
-            convertPreview: { _, _, _ in [:] },
-            convertStart: { _, _, _, _ in [:] },
-            convertStatus: { [] },
-            servePreview: { _, _, _ in [:] },
-            serveStart: { _, _, _, _ in [:] },
-            serveStatus: { [] },
-            serveStop: { _ in [:] }
-        )
-        let host = AppHost(
-            configModule: ConfigModule(pathOverride: temporaryConfigURL().path),
-            config: Config.defaults(),
-            modelWorkflowAPI: api,
-            modelWorkflowPersistence: .live(store: ModelWorkflowStore(fileURL: storeURL))
-        )
+        let host = makeHost()
 
         host.applyFeatureToggles()
         XCTAssertNotNil(host.modelWorkflow.completionVerifier)
@@ -90,6 +73,82 @@ final class PremiumSettingsTests: XCTestCase {
         _ = host.saveConfig(off)
 
         XCTAssertNil(host.modelWorkflow.completionVerifier)
+        host.watch.stopMonitoring()
+    }
+
+    // MARK: - Launch services
+
+    func testHostedSuiteIsDetectedAsUnitTestHost() {
+        XCTAssertTrue(AppHost.isHostedUnitTest())
+        XCTAssertFalse(AppHost.isHostedUnitTest([:]))
+    }
+
+    func testUnitTestHostSkipsLiveServices() async {
+        let scanned = expectation(description: "launch scan")
+        scanned.isInverted = true
+        let host = makeHost(scanned: scanned)
+
+        host.startLiveServices(environment: ["XCTestConfigurationFilePath": "/tmp/session.xctestconfiguration"])
+        await fulfillment(of: [scanned], timeout: 0.5)
+
+        XCTAssertNil(host.modelWorkflow.completionVerifier)
+        XCTAssertFalse(host.watch.isMonitoring)
+        XCTAssertFalse(host.endpoint.isMonitoring)
+        XCTAssertFalse(host.resources.isMonitoring)
+    }
+
+    func testNormalLaunchStartsLiveServices() async {
+        let scanned = expectation(description: "launch scan")
+        let host = makeHost(scanned: scanned)
+
+        host.startLiveServices(environment: [:])
+        await fulfillment(of: [scanned], timeout: 5)
+
+        XCTAssertNotNil(host.modelWorkflow.completionVerifier)
+        XCTAssertTrue(host.watch.isMonitoring)
+        XCTAssertTrue(host.endpoint.isMonitoring)
+        XCTAssertTrue(host.resources.isMonitoring)
+        host.watch.stopMonitoring()
+        host.endpoint.stopMonitoring()
+    }
+
+    /// Every live service is a fake or a temp-file store, so starting them
+    /// never touches the user's endpoints, watch state, or model roots.
+    private func makeHost(scanned: XCTestExpectation? = nil) -> AppHost {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-workbench-settings-\(UUID().uuidString)", isDirectory: true)
+        let api = ModelWorkflowAPI(
+            convertPreview: { _, _, _ in [:] },
+            convertStart: { _, _, _, _ in [:] },
+            convertStatus: { [] },
+            servePreview: { _, _, _ in [:] },
+            serveStart: { _, _, _, _ in [:] },
+            serveStatus: { [] },
+            serveStop: { _ in [:] }
+        )
+        return AppHost(
+            configModule: ConfigModule(pathOverride: temporaryConfigURL().path),
+            config: Config.defaults(),
+            scanOperation: { _, _, _, _ in
+                scanned?.fulfill()
+                throw CancellationError()
+            },
+            modelWorkflowAPI: api,
+            modelWorkflowPersistence: .live(store: ModelWorkflowStore(fileURL: root.appendingPathComponent("workflows.json"))),
+            endpoint: EndpointSupervisor(
+                lifecycle: FakeServeWorld().lifecycle,
+                statusProvider: { [] },
+                store: JSONStore<EndpointConfig>(fileURL: root.appendingPathComponent("endpoint-config.json"))
+            ),
+            watch: WatchCoordinator(
+                watchDiff: { [] },
+                watchSnapshot: {},
+                fingerprint: { EnvironmentFingerprint(macOSVersion: "26.5", chip: "M4", mlxLMVersion: "0.24.0") },
+                verifiedReports: { [] },
+                alertStore: JSONStore<WatchAlert>(fileURL: root.appendingPathComponent("watch-alerts.json")),
+                stateStore: JSONStore<WatchState>(fileURL: root.appendingPathComponent("watch-state.json"))
+            )
+        )
     }
 
     private func temporaryConfigURL() -> URL {

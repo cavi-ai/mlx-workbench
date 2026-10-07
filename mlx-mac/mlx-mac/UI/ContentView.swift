@@ -61,7 +61,6 @@ struct ContentView: View {
         }
         .onAppear {
             visitedRoutes.insert(selectedRoute)
-            Task { await appHost.rescan() }
         }
         .sheet(isPresented: $setup.isPresented) {
             SetupAssistantView(appHost: appHost, coordinator: setup)
