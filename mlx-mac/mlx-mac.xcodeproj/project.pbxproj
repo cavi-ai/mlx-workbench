@@ -99,6 +99,7 @@
 		27ABCD000000000000000007 /* ModelTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000007 /* ModelTask.swift */; };
 		24BBLD029 /* ModelDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF023 /* ModelDetailsView.swift */; };
 		24BBLD030 /* LibraryViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF024 /* LibraryViewTests.swift */; };
+		24BBLD0LR /* LibraryRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF0LR /* LibraryRemodelTests.swift */; };
 		24BBLD031 /* CatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF025 /* CatalogClient.swift */; };
 		24BBLD032 /* CatalogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF026 /* CatalogStore.swift */; };
 		24BBLD033 /* CatalogStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF027 /* CatalogStoreTests.swift */; };
@@ -273,6 +274,7 @@
 		27ABCD100000000000000007 /* ModelTask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTask.swift; path = Models/ModelTask.swift; sourceTree = "<group>"; };
 		24FREF023 /* ModelDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelDetailsView.swift; path = UI/Views/ModelDetailsView.swift; sourceTree = "<group>"; };
 		24FREF024 /* LibraryViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryViewTests.swift; path = LibraryViewTests.swift; sourceTree = "<group>"; };
+		24FREF0LR /* LibraryRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryRemodelTests.swift; path = LibraryRemodelTests.swift; sourceTree = "<group>"; };
 		24FREF025 /* CatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogClient.swift; path = Services/CatalogClient.swift; sourceTree = "<group>"; };
 		24FREF026 /* CatalogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogStore.swift; path = Services/CatalogStore.swift; sourceTree = "<group>"; };
 		24FREF027 /* CatalogStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogStoreTests.swift; path = CatalogStoreTests.swift; sourceTree = "<group>"; };
@@ -575,6 +577,7 @@
 				24FREF027 /* CatalogStoreTests.swift */,
 				24FREF01F /* LibraryDomainTests.swift */,
 				24FREF024 /* LibraryViewTests.swift */,
+				24FREF0LR /* LibraryRemodelTests.swift */,
 				24FREF021 /* ModelLibraryBuilderTests.swift */,
 				24FREF029 /* RecommendationEngineTests.swift */,
 				24FREF031 /* ModelWorkflowResolverTests.swift */,
@@ -912,6 +915,7 @@
 				24BBLD033 /* CatalogStoreTests.swift in Sources */,
 				24BBLD025 /* LibraryDomainTests.swift in Sources */,
 				24BBLD030 /* LibraryViewTests.swift in Sources */,
+				24BBLD0LR /* LibraryRemodelTests.swift in Sources */,
 				24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */,
 				24BBLD035 /* RecommendationEngineTests.swift in Sources */,
 				24BBLD037 /* ModelWorkflowResolverTests.swift in Sources */,
