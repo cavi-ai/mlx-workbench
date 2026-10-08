@@ -12,6 +12,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>MLXWorkbenchCommit</key>
+	<string>$(MLX_WORKBENCH_COMMIT)</string>
+	<key>MLXWorkbenchChannel</key>
+	<string>$(MLX_WORKBENCH_CHANNEL)</string>
 	<key>CFBundleExecutable</key>
 	<string>mlx-workbench</string>
 	<key>CFBundleIconFile</key>

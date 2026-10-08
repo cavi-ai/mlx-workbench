@@ -319,24 +319,35 @@ build-swift:
 # installed app finds its checkout through the configured agent path.
 MLX_DIST_DD ?= $(MLX_SWIFT_DD)-dist
 MLX_DIST_APP = $(MLX_DIST_DD)/Build/Products/Release/mlx-workbench.app
+# Build identity the in-app updater compares against releases (Info.plist).
+DIST_COMMIT   ?= $(shell git rev-parse --short=12 HEAD)
+DMG_CHANNEL   ?= release
+DIST_IDENTITY  = MLX_WORKBENCH_COMMIT=$(DIST_COMMIT) MLX_WORKBENCH_CHANNEL=$(DMG_CHANNEL)
 
 build-swift-dist:
 	@echo "Building mlx-workbench (Swift, distribution)..."
 	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Release -arch arm64 \
-		-derivedDataPath $(MLX_DIST_DD) \
+		-derivedDataPath $(MLX_DIST_DD) $(DIST_IDENTITY) \
 		OTHER_SWIFT_FLAGS='$$(inherited) -DMLX_WORKBENCH_DISTRIBUTION' build
 
 # Developer ID build for the DMG: Xcode archives the distribution build,
 # exports it with the team's Developer ID certificate (cloud-managed or local),
 # notarizes it through the signed-in Xcode account, and staples the ticket.
+# CI passes an App Store Connect API key (ASC_KEY_PATH/ID, ASC_ISSUER_ID)
+# instead of a signed-in account.
 DEVELOPER_TEAM ?=
 NOTARY_ATTEMPTS ?= 40
 MLX_DIST_ARCHIVE   = $(MLX_DIST_DD)/mlx-workbench.xcarchive
 MLX_DIST_NOTARIZED = $(MLX_DIST_DD)/notarized/mlx-workbench.app
+ASC_KEY_PATH  ?=
+ASC_KEY_ID    ?=
+ASC_ISSUER_ID ?=
+XCODE_AUTH = $(if $(ASC_KEY_PATH),-authenticationKeyPath "$(ASC_KEY_PATH)" -authenticationKeyID "$(ASC_KEY_ID)" -authenticationKeyIssuerID "$(ASC_ISSUER_ID)")
 
 build-swift-devid:
 	@if [ -z "$(DEVELOPER_TEAM)" ]; then echo "DEVELOPER_TEAM is required" >&2; exit 2; fi
+	@case "$(DMG_CHANNEL)" in release|nightly) ;; *) echo "DMG_CHANNEL must be release or nightly" >&2; exit 2 ;; esac
 	@rm -rf "$(MLX_DIST_ARCHIVE)" "$(MLX_DIST_DD)/upload" "$(MLX_DIST_DD)/notarized"
 	@mkdir -p "$(MLX_DIST_DD)"
 	@plutil -create xml1 "$(MLX_DIST_DD)/ExportOptions.plist"
@@ -348,15 +359,15 @@ build-swift-devid:
 	@xcodebuild archive -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Release -destination 'generic/platform=macOS' ARCHS=arm64 \
 		-archivePath "$(MLX_DIST_ARCHIVE)" -derivedDataPath $(MLX_DIST_DD) \
-		DEVELOPMENT_TEAM=$(DEVELOPER_TEAM) CODE_SIGN_STYLE=Automatic \
+		DEVELOPMENT_TEAM=$(DEVELOPER_TEAM) CODE_SIGN_STYLE=Automatic $(DIST_IDENTITY) \
 		OTHER_SWIFT_FLAGS='$$(inherited) -DMLX_WORKBENCH_DISTRIBUTION' \
-		-allowProvisioningUpdates
+		-allowProvisioningUpdates $(XCODE_AUTH)
 	@xcodebuild -exportArchive -archivePath "$(MLX_DIST_ARCHIVE)" \
 		-exportOptionsPlist "$(MLX_DIST_DD)/ExportOptions.plist" \
-		-exportPath "$(MLX_DIST_DD)/upload" -allowProvisioningUpdates
+		-exportPath "$(MLX_DIST_DD)/upload" -allowProvisioningUpdates $(XCODE_AUTH)
 	@for i in $$(seq 1 $(NOTARY_ATTEMPTS)); do \
 		if xcodebuild -exportNotarizedApp -archivePath "$(MLX_DIST_ARCHIVE)" \
-			-exportPath "$(MLX_DIST_DD)/notarized" > /dev/null 2>&1; then \
+			-exportPath "$(MLX_DIST_DD)/notarized" $(XCODE_AUTH) > /dev/null 2>&1; then \
 			xcrun stapler validate "$(MLX_DIST_NOTARIZED)" && exit 0; \
 			exit 1; \
 		fi; \
@@ -370,7 +381,8 @@ build-swift-devid:
 DMG_DIR       := .release
 DMG_VOLUME    := MLX Workbench
 DMG_APP       := MLX Workbench.app
-DMG_OUTPUT    := $(DMG_DIR)/mlx-workbench-$(shell $(PYTHON) -c 'from mlx_workbench import __version__; print(__version__)').dmg
+DMG_RELEASE_NAME := mlx-workbench-$(shell $(PYTHON) -c 'from mlx_workbench import __version__; print(__version__)')
+DMG_OUTPUT     = $(DMG_DIR)/$(if $(filter nightly,$(DMG_CHANNEL)),mlx-workbench-nightly-$(DIST_COMMIT),$(DMG_RELEASE_NAME)).dmg
 
 dmg: $(if $(DEVELOPER_TEAM),build-swift-devid,build-swift-dist)
 	@mkdir -p $(DMG_DIR)

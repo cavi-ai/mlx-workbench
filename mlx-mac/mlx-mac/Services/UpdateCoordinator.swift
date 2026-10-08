@@ -16,6 +16,10 @@ import Foundation
 // updating refuses a dirty working tree, streams git output into a log tail,
 // and never runs a shell — every git invocation is argv tokens through an
 // injectable runner so tests never touch the real repository.
+//
+// An installed build (no checkout) updates from GitHub releases instead; see
+// ReleaseUpdater.swift. The channels map to the latest release and the
+// nightly prerelease built from main.
 
 @MainActor
 final class UpdateCoordinator: ObservableObject {
@@ -27,8 +31,8 @@ final class UpdateCoordinator: ObservableObject {
 
         var title: String {
             switch self {
-            case .official: return "Official releases"
-            case .beta: return "Beta (live repo)"
+            case .official: return "Releases"
+            case .beta: return "Nightly (main)"
             }
         }
 
@@ -37,6 +41,28 @@ final class UpdateCoordinator: ObservableObject {
             case .official: return "Track tagged releases. Most stable; the app checks out the release tag exactly as published."
             case .beta: return "Track main as it lands. Newest fixes first; expect occasional rough edges."
             }
+        }
+
+        var releaseBlurb: String {
+            switch self {
+            case .official: return "Install the latest published release: notarized, Developer ID signed."
+            case .beta: return "Install the nightly build of main. Newest fixes first; expect occasional rough edges."
+            }
+        }
+    }
+
+    /// The running app bundle and how to replace it from a release.
+    struct InstalledApp {
+        let bundle: URL
+        let build: InstalledBuild
+        let installer: ReleaseInstalling
+
+        static func running() -> InstalledApp {
+            InstalledApp(
+                bundle: Bundle.main.bundleURL,
+                build: .from(infoDictionary: Bundle.main.infoDictionary ?? [:]),
+                installer: DMGReleaseInstaller()
+            )
         }
     }
 
@@ -68,6 +94,9 @@ final class UpdateCoordinator: ObservableObject {
     private let defaults: UserDefaults
     /// The checkout the updater operates on.
     let repoRoot: URL?
+    /// The installed bundle, when there is no checkout to update.
+    let installed: InstalledApp?
+    private var releaseOffer: ReleaseOffer?
     /// Injected git runner: argv in, stdout out; throws on non-zero exit.
     private let runGit: @Sendable ([String]) throws -> String
 
@@ -79,17 +108,22 @@ final class UpdateCoordinator: ObservableObject {
 
     init(
         repoRoot: URL? = WorkbenchPython.buildCheckoutRoot(),
+        installed: InstalledApp? = nil,
         defaults: UserDefaults = .standard,
         runGit: @escaping @Sendable ([String]) throws -> String = UpdateCoordinator.defaultGit
     ) {
         self.repoRoot = repoRoot
+        self.installed = repoRoot == nil ? installed : nil
         self.defaults = defaults
         self.runGit = runGit
         self.channel = Channel(rawValue: defaults.string(forKey: Self.channelKey) ?? "") ?? .official
     }
 
+    /// True when updates come from GitHub releases instead of a checkout.
+    var installsReleases: Bool { installed != nil }
+
     var canUpdate: Bool {
-        repoRoot != nil && phase != .checking && phase != .applying
+        (repoRoot != nil || installed != nil) && phase != .checking && phase != .applying
     }
 
     var summary: String {
@@ -99,7 +133,10 @@ final class UpdateCoordinator: ObservableObject {
         case .upToDate(let current): return "Up to date at \(current)."
         case .available(let offer): return "\(offer.target) is available (current: \(offer.current))."
         case .applying: return "Updating…"
-        case .updated(let target): return "Updated to \(target). Rebuild and relaunch to run it."
+        case .updated(let target):
+            return installsReleases
+                ? "Installed \(target). Relaunch to run it."
+                : "Updated to \(target). Rebuild and relaunch to run it."
         case .failed(let reason): return "Update failed: \(reason)"
         }
     }
@@ -108,8 +145,12 @@ final class UpdateCoordinator: ObservableObject {
 
     /// Read-only check of the selected channel. Never mutates the checkout.
     func check() async {
+        if let installed {
+            await checkRelease(installed)
+            return
+        }
         guard let repoRoot else {
-            phase = .failed("The app is not running from a repository checkout, so it cannot update itself.")
+            phase = .failed("The app is neither running from a repository checkout nor installed from a release, so it cannot update itself.")
             return
         }
         phase = .checking
@@ -134,6 +175,10 @@ final class UpdateCoordinator: ObservableObject {
     /// Apply the checked offer: refuses a dirty tree, checks out the target,
     /// syncs submodules, and re-checks. Streaming git output lands in logTail.
     func apply(offer: Offer) async {
+        if let installed {
+            await applyRelease(offer: offer, installed: installed)
+            return
+        }
         guard let repoRoot, case .available = phase else { return }
         do {
             let dirty = try Self.dirtyFileCount(repoRoot: repoRoot, runGit: runGit)
@@ -165,6 +210,49 @@ final class UpdateCoordinator: ObservableObject {
             }
             let current = try Self.currentLabel(repoRoot: repoRoot, runGit: runGit)
             phase = .updated(target: current)
+        } catch {
+            phase = .failed(AppHost.render(error))
+        }
+    }
+
+    // MARK: - Installed builds (GitHub releases)
+
+    private func checkRelease(_ installed: InstalledApp) async {
+        releaseOffer = nil
+        if let refusal = ReleaseFeed.installRefusal(bundle: installed.bundle) {
+            phase = .failed(refusal)
+            return
+        }
+        phase = .checking
+        do {
+            let release = try await installed.installer.fetchRelease(ReleaseFeed.endpoint(for: channel))
+            switch ReleaseFeed.decide(channel: channel, release: release, installed: installed.build) {
+            case .current:
+                phase = .upToDate(current: installed.build.label)
+            case .available(let offer):
+                releaseOffer = offer
+                phase = .available(Offer(target: offer.target, current: installed.build.label, dirtyFiles: 0))
+            case .unavailable(let reason):
+                phase = .failed(reason)
+            }
+        } catch {
+            phase = .failed(AppHost.render(error))
+        }
+    }
+
+    private func applyRelease(offer: Offer, installed: InstalledApp) async {
+        guard case .available = phase, let releaseOffer, releaseOffer.target == offer.target else { return }
+        phase = .applying
+        logTail = []
+        do {
+            let build = try await installed.installer.install(
+                releaseOffer, replacing: installed.bundle,
+                log: { [weak self] line in
+                    Task { @MainActor in self?.logTail.append(line) }
+                }
+            )
+            self.releaseOffer = nil
+            phase = .updated(target: build.label)
         } catch {
             phase = .failed(AppHost.render(error))
         }
@@ -303,6 +391,10 @@ final class UpdateCoordinator: ObservableObject {
     /// with the repo's own `make build-swift` (streamed into the log tail),
     /// reopen this bundle, and exit so launchd/menu state resets cleanly.
     func rebuildAndRelaunch() async {
+        if let installed {
+            installed.installer.relaunch(installed.bundle)
+            return
+        }
         guard let repoRoot else { return }
         phase = .applying
         do {

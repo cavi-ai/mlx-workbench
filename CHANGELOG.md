@@ -11,6 +11,19 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
+### Added
+
+- Native app installed from the DMG updates itself from **Settings →
+  Updates**: Releases installs the latest published release, Nightly (main)
+  installs the nightly build. A download must match its GitHub sha256 digest
+  and be a notarized Developer ID build of MLX Workbench (team `Y76GMV87GM`)
+  before it replaces the app; the previous app goes to the Trash.
+- Distribution builds record their commit and channel in Info.plist
+  (`MLXWorkbenchCommit`, `MLXWorkbenchChannel`); `make dmg DMG_CHANNEL=nightly`
+  names the image `mlx-workbench-nightly-<commit>.dmg`.
+- CI workflow `signed-dmg.yml` attaches a signed, notarized DMG to each
+  published release and publishes a rolling `nightly` prerelease from `main`,
+  signing with an App Store Connect API key.
 
 ## [0.4.0] - 2026-10-08
 ### Added

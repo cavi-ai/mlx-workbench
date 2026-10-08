@@ -140,7 +140,12 @@ struct SettingsView: View {
     // MARK: - Updates
 
     private var updateCard: some View {
-        SettingsCard(title: "Updates", subtitle: "Keep this app in step with its own repository.") {
+        SettingsCard(
+            title: "Updates",
+            subtitle: updater.installsReleases
+                ? "Install new releases or nightly builds from GitHub."
+                : "Keep this app in step with its own repository."
+        ) {
             Picker("Channel", selection: $updater.channel) {
                 ForEach(UpdateCoordinator.Channel.allCases) { channel in
                     Text(channel.title).tag(channel)
@@ -148,7 +153,7 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 360)
-            Text(updater.channel.blurb)
+            Text(updater.installsReleases ? updater.channel.releaseBlurb : updater.channel.blurb)
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
 
@@ -165,7 +170,7 @@ struct SettingsView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 if case .updated = updater.phase {
-                    Button("Rebuild & relaunch") {
+                    Button(updater.installsReleases ? "Relaunch" : "Rebuild & relaunch") {
                         Task { await updater.rebuildAndRelaunch() }
                     }
                     .buttonStyle(.borderedProminent)
@@ -198,7 +203,7 @@ struct SettingsView: View {
                     .frame(maxHeight: 160)
                 }
             }
-            if updater.repoRoot == nil {
+            if updater.repoRoot == nil && !updater.installsReleases {
                 Text("This app is not running from a repository checkout, so in-app updates are unavailable. Install updates by replacing the app with a newly built one.")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)

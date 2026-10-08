@@ -152,7 +152,7 @@ class AppHost: ObservableObject {
             try await api.generate(path: path, out: out.path, request: request)
         })
         self.setup = setup ?? SetupCoordinator()
-        self.updater = updater ?? UpdateCoordinator()
+        self.updater = updater ?? UpdateCoordinator(installed: .running())
         let verificationCoordinator = self.verification
         let watchStateDir = JSONStore<WatchState>.defaultFileURL("placeholder")
             .deletingLastPathComponent()

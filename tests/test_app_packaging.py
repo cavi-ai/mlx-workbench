@@ -97,6 +97,51 @@ class DmgTargetTests(unittest.TestCase):
         # Re-signing would invalidate the notarization ticket.
         self.assertNotIn("codesign", notarized_branch)
 
+    def test_distribution_builds_stamp_the_identity_the_updater_compares(self):
+        with INFO_PLIST.open("rb") as handle:
+            info = plistlib.load(handle)
+        self.assertEqual(info["MLXWorkbenchCommit"], "$(MLX_WORKBENCH_COMMIT)")
+        self.assertEqual(info["MLXWorkbenchChannel"], "$(MLX_WORKBENCH_CHANNEL)")
+        self.assertIn(
+            "DIST_IDENTITY  = MLX_WORKBENCH_COMMIT=$(DIST_COMMIT) MLX_WORKBENCH_CHANNEL=$(DMG_CHANNEL)",
+            MAKEFILE,
+        )
+        for name in ("build-swift-dist", "build-swift-devid"):
+            target = MAKEFILE.split(f"\n{name}:", 1)[1].split("\n\n", 1)[0]
+            self.assertIn("$(DIST_IDENTITY)", target)
+        # The updater matches nightly assets by name and commit.
+        self.assertIn("mlx-workbench-nightly-$(DIST_COMMIT)", MAKEFILE)
+
+    def test_ci_signs_with_an_api_key_on_every_xcodebuild_step(self):
+        target = MAKEFILE.split("\nbuild-swift-devid:", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(target.count("$(XCODE_AUTH)"), 3)
+        self.assertIn('-authenticationKeyPath "$(ASC_KEY_PATH)"', MAKEFILE)
+
+    def test_signed_dmg_workflow_publishes_what_the_updater_reads(self):
+        workflow = (ROOT / ".github" / "workflows" / "signed-dmg.yml").read_text(encoding="utf-8")
+        for phrase in (
+            "types: [published]",
+            "schedule:",
+            "workflow_dispatch:",
+            "permissions: {}",
+            "secrets.ASC_KEY_P8",
+            "secrets.ASC_KEY_ID",
+            "secrets.ASC_ISSUER_ID",
+            'make dmg DEVELOPER_TEAM="$DEVELOPER_TEAM" DMG_CHANNEL="$CHANNEL"',
+            'certificate leaf[subject.OU] = "\'"$DEVELOPER_TEAM"\'" and notarized',
+            'xcrun stapler validate "$app"',
+            "gh release create nightly",
+            "--prerelease",
+            'gh release upload "$TAG" "$DMG" --clobber',
+            "mlx-workbench-nightly-$commit.dmg",
+        ):
+            self.assertIn(phrase, workflow)
+        # The key file never outlives the job.
+        cleanup = workflow.split("- name: Remove the API key", 1)[1]
+        self.assertIn("if: always()", cleanup)
+        self.assertIn('rm -f "$RUNNER_TEMP/AuthKey.p8"', cleanup)
+        self.assertIn("DEVELOPER_TEAM: Y76GMV87GM", workflow)
+
     def test_source_path_literal_is_compiled_out_of_distribution_builds(self):
         hits = []
         for path in sorted(SWIFT_SOURCES.rglob("*.swift")):

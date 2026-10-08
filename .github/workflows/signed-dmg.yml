@@ -1,0 +1,133 @@
+name: Signed DMG
+
+# Developer ID signed, notarized DMGs for the in-app updater: published
+# releases get mlx-workbench-<version>.dmg; the rolling `nightly` prerelease
+# gets mlx-workbench-nightly-<commit>.dmg built from main. Signing and
+# notarization use an App Store Connect API key (cloud-managed certificate).
+
+on:
+  release:
+    types: [published]
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Build a nightly from main, or attach a DMG to the latest release
+        required: true
+        default: nightly
+        type: choice
+        options: [nightly, release]
+
+permissions: {}
+
+concurrency:
+  group: signed-dmg-${{ github.event_name == 'release' && github.event.release.tag_name || 'nightly' }}
+  cancel-in-progress: false
+
+jobs:
+  dmg:
+    if: github.event_name != 'release' || github.event.release.tag_name != 'nightly'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      CHANNEL: ${{ github.event_name == 'release' && 'release' || inputs.channel || 'nightly' }}
+      DEVELOPER_TEAM: Y76GMV87GM
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Resolve the build target
+        id: target
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHANNEL" == "release" ]]; then
+            tag="${RELEASE_TAG:-$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)}"
+            echo "ref=refs/tags/$tag" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=refs/heads/main" >> "$GITHUB_OUTPUT"
+            echo "tag=nightly" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ steps.target.outputs.ref }}
+          fetch-depth: 0
+          submodules: true
+          persist-credentials: false
+
+      - name: Skip a nightly whose commit is already published
+        id: skip
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse --short=12 HEAD)"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          published="$(gh release view nightly --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+          if [[ "$CHANNEL" == "nightly" && "$published" == *"mlx-workbench-nightly-$commit.dmg"* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write the App Store Connect API key
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ASC_KEY_P8" ]]; then
+            echo "::error::Repository secrets ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 are required"
+            exit 1
+          fi
+          umask 077
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+
+      - name: Build, sign and notarize
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          make dmg DEVELOPER_TEAM="$DEVELOPER_TEAM" DMG_CHANNEL="$CHANNEL" \
+            MLX_SWIFT_DD="$RUNNER_TEMP/mlx-build" \
+            ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8" ASC_KEY_ID="$ASC_KEY_ID" ASC_ISSUER_ID="$ASC_ISSUER_ID"
+
+      - name: Verify the disk image
+        if: steps.skip.outputs.skip != 'true'
+        id: verify
+        run: |
+          set -euo pipefail
+          dmg="$(ls .release/*.dmg)"
+          mount="$RUNNER_TEMP/dmg-mount"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
+          app="$mount/MLX Workbench.app"
+          requirement='identifier "com.cavi.mlxworkbench" and anchor apple generic and certificate leaf[subject.OU] = "'"$DEVELOPER_TEAM"'" and notarized'
+          codesign --verify --deep --strict -R "=$requirement" "$app"
+          xcrun stapler validate "$app"
+          test "$(plutil -extract MLXWorkbenchChannel raw "$app/Contents/Info.plist")" = "$CHANNEL"
+          hdiutil detach "$mount"
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          DMG: ${{ steps.verify.outputs.dmg }}
+          TAG: ${{ steps.target.outputs.tag }}
+          COMMIT: ${{ steps.skip.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHANNEL" == "release" ]]; then
+            gh release upload "$TAG" "$DMG" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release delete nightly --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+            gh release create nightly "$DMG" --prerelease --target "$(git rev-parse HEAD)" \
+              --title "Nightly $COMMIT" --notes "Built from main at $COMMIT." --repo "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Remove the API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
