@@ -17,6 +17,17 @@ private struct IdleProber: EndpointProbing {
 
 private enum StubMediaError: Error { case chatNotExpected, modelFailed }
 
+@MainActor
+private final class StubAudioPlayback: AudioClipPlayback {
+    var currentTime: TimeInterval = 0
+    let duration: TimeInterval
+    private(set) var isPlaying = false
+    init(duration: TimeInterval = 5) { self.duration = duration }
+    func play() -> Bool { isPlaying = true; return true }
+    func pause() { isPlaying = false }
+    func stop() { isPlaying = false; currentTime = 0 }
+}
+
 /// Stands in for the agent: records every request, writes the output file for file modes.
 private actor StubMediaRunner: ComparisonMediaRunner {
     private(set) var requests: [MediaRunRequest] = []
@@ -467,6 +478,172 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     // MARK: Coordinator
+
+    private func silentClip(_ name: String, seconds: Double = 5) throws -> URL {
+        let url = root.appendingPathComponent(name).appendingPathExtension("wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1))
+        let frames = AVAudioFrameCount(seconds * 8000)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+        buffer.frameLength = frames
+        buffer.floatChannelData![0].initialize(repeating: 0, count: Int(frames))
+        try AVAudioFile(forWriting: url, settings: format.settings).write(from: buffer)
+        return url
+    }
+
+    @MainActor
+    func testSelectingAnotherClipKeepsPlaybackActiveInsteadOfStopping() throws {
+        let a = StubAudioPlayback(), b = StubAudioPlayback()
+        let first = root.appendingPathComponent("a.wav"), second = root.appendingPathComponent("b.wav")
+        let player = AudioClipPlayer { $0 == first ? a : b }
+        defer { player.stop() }
+        player.toggle(first)
+        XCTAssertTrue(player.isPlaying)
+        player.toggle(second)
+        XCTAssertTrue(player.isPlaying, "selecting B must replace A rather than just stopping A")
+        XCTAssertFalse(a.isPlaying, "A and B must never play together")
+        XCTAssertTrue(b.isPlaying)
+        XCTAssertEqual(player.activeURL, second)
+    }
+
+    @MainActor
+    func testPauseResumeScrubSwitchAndStopKeepOneTransport() throws {
+        let a = StubAudioPlayback(), b = StubAudioPlayback(duration: 3)
+        let first = root.appendingPathComponent("a.wav"), second = root.appendingPathComponent("b.wav")
+        let player = AudioClipPlayer { $0 == first ? a : b }
+        defer { player.stop() }
+        player.toggle(first)
+        player.seek(to: 2)
+        player.toggle(first)
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(player.position, 2)
+        player.select(second, preservingPosition: true, autoplay: false)
+        XCTAssertEqual(b.currentTime, 2)
+        XCTAssertFalse(player.isPlaying)
+        player.toggle(second)
+        XCTAssertTrue(player.isPlaying)
+        player.seek(to: 99)
+        XCTAssertEqual(player.position, 3)
+        XCTAssertFalse(player.isPlaying)
+        player.seek(to: .nan)
+        XCTAssertEqual(player.position, 3)
+        player.toggle(second)
+        XCTAssertEqual(b.currentTime, 0, "playing an ended clip restarts it")
+        player.stop()
+        XCTAssertNil(player.activeURL)
+        XCTAssertEqual(player.duration, 0)
+        XCTAssertFalse(b.isPlaying)
+    }
+
+    @MainActor
+    func testRealWAVDecodingSeeksAndClampsWhenSwitchingToShorterAudio() throws {
+        var decoded: [AVAudioPlayer] = []
+        let player = AudioClipPlayer { url in
+            let native = try AVAudioPlayer(contentsOf: url)
+            decoded.append(native)
+            return native
+        }
+        defer { player.stop() }
+        player.select(try silentClip("long", seconds: 5), autoplay: false)
+        player.seek(to: 4)
+        player.select(try silentClip("short", seconds: 2), preservingPosition: true, autoplay: false)
+        XCTAssertEqual(decoded.count, 2)
+        XCTAssertEqual(player.duration, 2, accuracy: 0.01)
+        XCTAssertEqual(player.position, 2, accuracy: 0.01)
+        XCTAssertFalse(decoded[0].isPlaying)
+        XCTAssertFalse(decoded[1].isPlaying)
+    }
+
+    @MainActor
+    func testUnreadableClipStopsPreviousAudioAndExposesItsFailure() {
+        let first = root.appendingPathComponent("good.wav"), bad = root.appendingPathComponent("bad.wav")
+        let a = StubAudioPlayback()
+        let player = AudioClipPlayer { url in
+            if url == first { return a }
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        player.toggle(first)
+        player.select(bad, preservingPosition: true)
+        XCTAssertFalse(a.isPlaying)
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertNil(player.activeURL)
+        XCTAssertEqual(player.failureURL, bad)
+        XCTAssertNotNil(player.failure)
+    }
+
+    @MainActor
+    func testListeningResultsRenderWithRealTransportAndUnavailableArtifactsAreExcluded() async throws {
+        let id = UUID(), store = ComparisonOutputStore(root: root.appendingPathComponent("listening-output"))
+        let directory = try store.createRunDirectory(id)
+        let sources = [try silentClip("source-a", seconds: 5), try silentClip("source-b", seconds: 3)]
+        let audioRoot = ProcessInfo.processInfo.environment["MLX_LISTENING_AUDIO_ROOT"].map { URL(fileURLWithPath: $0) }
+        let audioNames = ["fixed-original-8bit-instrumental.wav", "fixed-converted-4bit-instrumental.wav"]
+        var results: [VariantResult] = []
+        for index in 0..<2 {
+            let artifact = "\(index)-instrumental.wav", target = directory.appendingPathComponent(artifact)
+            let source = audioRoot?.appendingPathComponent(audioNames[index]) ?? sources[index]
+            try FileManager.default.copyItem(at: source, to: target)
+            let sample = ComparisonSample(promptID: "instrumental", outputExcerpt: "", tokensPerSecond: nil,
+                timeToFirstTokenSeconds: nil, error: nil, artifact: artifact, audioSeconds: try AVAudioPlayer(contentsOf: target).duration)
+            results.append(VariantResult(modelPath: "/model/\(index)", modelSignature: nil, samples: [sample],
+                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, aggregateMetric: index == 0 ? 1.2 : 0.9))
+        }
+        let run = ComparisonRun(id: id, promptSetID: "listening", promptSetName: "Instrumental comparison",
+            useCase: nil, variants: results.map(\.modelPath), results: results, startedAt: Date(), finishedAt: Date(),
+            state: .completed, mode: .musicGeneration,
+            promptEntries: [PromptEntry(id: "instrumental", text: "Instrumental jazz-funk · Rhodes, bass and drums")])
+        let clips = ComparisonViewLogic.audioClips(for: run, store: store, promptID: "instrumental")
+        XCTAssertEqual(clips.count, 2)
+        let player = AudioClipPlayer()
+        defer { player.stop() }
+        player.select(clips[0].url, autoplay: false)
+        player.seek(to: 1)
+        player.select(clips[1].url, preservingPosition: true, autoplay: false)
+        XCTAssertEqual(player.position, 1, accuracy: 0.05)
+        for width: CGFloat in [900, 600] {
+            let content = MediaRunResultsView(run: run, store: store,
+                name: { $0 == "/model/0" ? "Music model · 8-bit" : "Music model · 4-bit" },
+                onReview: { _, _ in }, audio: player)
+                .padding(20).frame(width: width, height: 600)
+                .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 600),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(250))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Music listening \(Int(width))"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_LISTENING_PROOF_DIR"] {
+                let output = URL(fileURLWithPath: path)
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                try png.write(to: output.appendingPathComponent("listening-\(Int(width)).png"))
+            }
+            window.close()
+        }
+        try FileManager.default.removeItem(at: clips[0].url)
+        XCTAssertEqual(ComparisonViewLogic.audioClips(for: run, store: store).map(\.modelPath), ["/model/1"])
+        XCTAssertTrue(ComparisonViewLogic.audioClips(for: run, store: store, promptID: "missing").isEmpty)
+    }
+
+    @MainActor
+    func testMusicListeningReviewPersistsItsOwnRubricAndCanBeCleared() async throws {
+        let url = root.appendingPathComponent("listening-runs.json")
+        let coordinator = makeCoordinator(runner: StubMediaRunner(), runsURL: url)
+        coordinator.start(variants: [("/music/a", nil)], promptSet: promptSet(for: .musicGeneration))
+        await waitForRun(coordinator)
+        let id = try XCTUnwrap(coordinator.runs.first?.id)
+        coordinator.reviewQuality(runID: id, modelPath: "/music/a", score: 4)
+        let reloaded = makeCoordinator(runner: StubMediaRunner(), runsURL: url)
+        let review = try XCTUnwrap(reloaded.runs.first?.qualityReviews?["/music/a"])
+        XCTAssertEqual(review.score, 4)
+        XCTAssertEqual(review.rubricID, "music-listening-v1")
+        XCTAssertNil(reloaded.runs.first?.winner, "listening scores must not promote a speed winner")
+        reloaded.reviewQuality(runID: id, modelPath: "/music/a", score: nil)
+        XCTAssertNil(try JSONStore<ComparisonRun>(fileURL: url).load().first?.qualityReviews?["/music/a"])
+    }
 
     @MainActor
     private func makeCoordinator(

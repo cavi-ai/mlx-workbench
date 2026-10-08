@@ -162,6 +162,12 @@ from `mlx-agent` at runtime.
   weights; raw component checkpoints keep the backend's original converter.
   Music generation requires the real root or nested tokenizer and uses the pinned
   backend's official prompt encoder; synthetic tiny-model fallback tokens are refused.
+  Completed music runs show A/B listening below the chart. One shared
+  `AudioClipPlayer` owns input/output playback, pause/resume and seeking;
+  switching models preserves elapsed time and clamps to a shorter clip's end.
+  Run changes and leaving results stop playback. Explicit 1–5 ratings persist
+  as `music-listening-v1` reviews, separately from speed; quality champions
+  require a complete, current cohort with every model reviewed under that rubric.
   Run history uses a searchable popover grouped by mode, newest
   first within each group; selecting a row keeps the existing results behavior.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`

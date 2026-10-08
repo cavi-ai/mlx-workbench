@@ -32,7 +32,9 @@ enum ComparisonInsights {
                     (run.effectiveMode == .chat ? $0.aggregateTokensPerSecond : $0.aggregateMetric) == best
                 } : []
                 let reviews = run.results.compactMap { run.qualityReviews?[$0.modelPath] }
-                let reviewed = reviews.count == run.results.count && reviews.allSatisfy { $0.rubricID == ComparisonQualityReview.taskOutcomeRubric && (1...5).contains($0.score) }
+                let rubric = run.effectiveMode == .musicGeneration
+                    ? ComparisonQualityReview.musicListeningRubric : ComparisonQualityReview.taskOutcomeRubric
+                let reviewed = reviews.count == run.results.count && reviews.allSatisfy { $0.rubricID == rubric && (1...5).contains($0.score) }
                 let quality = reviewed ? run.results.filter { run.qualityReviews?[$0.modelPath]?.score == reviews.map(\.score).max() } : []
                 let latencies = run.results.compactMap { nonnegative($0.aggregateTTFTSeconds) }
                 let latency = run.effectiveMode == .chat && latencies.count == run.results.count ? run.results.filter { $0.aggregateTTFTSeconds == latencies.min() } : []

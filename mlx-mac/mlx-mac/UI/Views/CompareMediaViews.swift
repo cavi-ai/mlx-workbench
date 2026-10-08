@@ -11,6 +11,24 @@ import UniformTypeIdentifiers
 // can be tested.
 
 enum ComparisonViewLogic {
+    struct ListeningClip: Identifiable {
+        let modelPath: String
+        let promptID: String
+        let url: URL
+        var id: String { modelPath + "|" + promptID }
+    }
+
+    static func audioClips(for run: ComparisonRun, store: ComparisonOutputStore, promptID: String? = nil) -> [ListeningClip] {
+        guard run.effectiveMode.outputKind == .audio else { return [] }
+        return run.results.filter { $0.error == nil }.flatMap { result in
+            result.samples.compactMap { sample in
+                guard sample.error == nil, promptID == nil || sample.promptID == promptID,
+                      let url = store.artifactURL(runID: run.id, artifact: sample.artifact ?? ""),
+                      store.artifactExists(runID: run.id, artifact: sample.artifact) else { return nil }
+                return ListeningClip(modelPath: result.modelPath, promptID: sample.promptID, url: url)
+            }
+        }
+    }
     /// Ready models whose task type the mode accepts.
     static func candidates(from models: [LibraryModel], mode: ComparisonMode) -> [LibraryModel] {
         models.filter { $0.readiness == .ready && mode.accepts($0.item.task?.type) }
@@ -68,8 +86,17 @@ struct MediaRunResultsView: View {
     let run: ComparisonRun
     let store: ComparisonOutputStore
     let name: (String) -> String
+    let onReview: (String, Int?) -> Void
 
     @State private var preview: PreviewImage?
+    @StateObject private var audio = AudioClipPlayer()
+
+    @MainActor
+    init(run: ComparisonRun, store: ComparisonOutputStore, name: @escaping (String) -> String,
+         onReview: @escaping (String, Int?) -> Void, audio: AudioClipPlayer? = nil) {
+        self.run = run; self.store = store; self.name = name; self.onReview = onReview
+        _audio = StateObject(wrappedValue: audio ?? AudioClipPlayer())
+    }
 
     /// Headers, prompts and cards share these, so every column's text starts on the same line.
     private static let promptWidth: CGFloat = 220
@@ -82,6 +109,10 @@ struct MediaRunResultsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             chart
+            if mode == .musicGeneration, run.state == .completed {
+                MusicListeningPanel(run: run, store: store, name: name, player: audio)
+                    .id(run.id)
+            }
             ScrollView(.horizontal) {
                 Grid(alignment: .topLeading, horizontalSpacing: WorkbenchSpacing.sm, verticalSpacing: WorkbenchSpacing.sm) {
                     GridRow(alignment: .lastTextBaseline) {
@@ -90,11 +121,16 @@ struct MediaRunResultsView: View {
                             .foregroundStyle(WorkbenchColor.muted)
                             .frame(width: Self.promptWidth, alignment: .leading)
                         ForEach(run.results) { result in
-                            Text(name(result.modelPath))
-                                .font(WorkbenchTypography.emphasis)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .help(result.modelPath)
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                                Text(name(result.modelPath))
+                                    .font(WorkbenchTypography.emphasis)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .help(result.modelPath)
+                                if mode == .musicGeneration, run.state == .completed {
+                                    listeningReview(result.modelPath)
+                                }
+                            }
                                 .padding(.horizontal, Self.inset)
                                 .frame(width: Self.columnWidth, alignment: .leading)
                         }
@@ -112,6 +148,22 @@ struct MediaRunResultsView: View {
             }
         }
         .sheet(item: $preview) { item in ImagePreviewSheet(url: item.url) }
+        .onDisappear { audio.stop() }
+        .onChange(of: run.id) { _, _ in audio.stop() }
+    }
+
+    private func listeningReview(_ path: String) -> some View {
+        let review = run.qualityReviews?[path]
+        let score = review?.rubricID == ComparisonQualityReview.musicListeningRubric ? review?.score ?? 0 : 0
+        return Picker("Listening quality", selection: Binding(
+            get: { score }, set: { onReview(path, $0 == 0 ? nil : $0) }
+        )) {
+            Text("Not reviewed").tag(0)
+            ForEach(1...5, id: \.self) { value in Text(ComparisonQualityReview.musicScoreTitle(value)).tag(value) }
+        }
+        .controlSize(.small)
+        .disabled(!ComparisonViewLogic.audioClips(for: run, store: store).contains { $0.modelPath == path })
+        .help(ComparisonQualityReview.musicRubric)
     }
 
     @ViewBuilder
@@ -143,7 +195,7 @@ struct MediaRunResultsView: View {
             if let kind = mode.inputKind, let url = inputURL(entry) {
                 switch kind {
                 case .image: ThumbnailView(url: url, size: CGSize(width: 96, height: 96)) { preview = PreviewImage(url: url) }
-                case .audio: AudioClipButton(url: url, label: "Play input")
+                case .audio: AudioClipButton(url: url, label: "Play input", player: audio)
                 case .video: ClipVideoView(url: url).frame(width: Self.promptWidth, height: Self.promptWidth * 9 / 16)
                 }
             }
@@ -238,7 +290,7 @@ struct MediaRunResultsView: View {
                     ThumbnailView(url: url, size: CGSize(width: Self.contentWidth, height: Self.contentWidth)) {
                         preview = PreviewImage(url: url)
                     }
-                case .audio: AudioClipButton(url: url, label: sample.audioSeconds.map { String(format: "Play · %.1f s", $0) } ?? "Play")
+                case .audio: AudioClipButton(url: url, label: sample.audioSeconds.map { String(format: "Play · %.1f s", $0) } ?? "Play", player: audio)
                 default: ClipVideoView(url: url).frame(width: Self.contentWidth, height: Self.contentWidth * 9 / 16)
                 }
             } else {
@@ -341,55 +393,262 @@ enum MediaImageLoader {
 }
 
 @MainActor
+protocol AudioClipPlayback: AnyObject {
+    var currentTime: TimeInterval { get set }
+    var duration: TimeInterval { get }
+    func play() -> Bool
+    func pause()
+    func stop()
+}
+
+extension AVAudioPlayer: AudioClipPlayback {}
+
+@MainActor
 final class AudioClipPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published private(set) var isPlaying = false
+    @Published private(set) var activeURL: URL?
+    @Published private(set) var position: TimeInterval = 0
+    @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var failure: String?
-    private var player: AVAudioPlayer?
+    @Published private(set) var failureURL: URL?
+    private var player: AudioClipPlayback?
+    private var timer: Timer?
+    private let makePlayer: (URL) throws -> AudioClipPlayback
+
+    init(makePlayer: @escaping (URL) throws -> AudioClipPlayback = { try AVAudioPlayer(contentsOf: $0) }) {
+        self.makePlayer = makePlayer
+        super.init()
+    }
 
     func toggle(_ url: URL) {
-        if isPlaying {
-            player?.stop()
-            isPlaying = false
+        if activeURL == url, let player {
+            if isPlaying { pause() }
+            else {
+                if position >= duration { player.currentTime = 0; position = 0 }
+                play()
+            }
             return
         }
+        select(url)
+    }
+
+    /// A/B compares elapsed seconds, without implying musical phrase alignment.
+    func select(_ url: URL, preservingPosition: Bool = false, autoplay: Bool = true) {
+        let elapsed = preservingPosition ? (player?.currentTime ?? position) : 0
+        stop()
         do {
-            let next = try AVAudioPlayer(contentsOf: url)
-            next.delegate = self
+            let next = try makePlayer(url)
+            guard next.duration.isFinite, next.duration > 0 else { throw CocoaError(.fileReadCorruptFile) }
+            if let native = next as? AVAudioPlayer { native.delegate = self }
             player = next
-            failure = nil
-            isPlaying = next.play()
+            activeURL = url
+            duration = next.duration
+            seek(to: elapsed)
+            if autoplay, position < duration { play() }
         } catch {
             failure = AppHost.render(error)
+            failureURL = url
         }
+    }
+
+    private func play() {
+        guard let player else { return }
+        isPlaying = player.play()
+        if !isPlaying { failure = "Audio playback could not start."; failureURL = activeURL; return }
+        failure = nil
+        failureURL = nil
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let player = self.player else { return }
+                self.position = min(max(player.currentTime, 0), self.duration)
+            }
+        }
+    }
+
+    func pause() {
+        player?.pause()
+        position = min(max(player?.currentTime ?? position, 0), duration)
+        isPlaying = false
+        timer?.invalidate()
+        timer = nil
+    }
+
+    func seek(to seconds: TimeInterval) {
+        guard seconds.isFinite, let player else { return }
+        position = min(max(seconds, 0), duration)
+        player.currentTime = position
+        if position >= duration { pause() }
     }
 
     func stop() {
+        timer?.invalidate()
+        timer = nil
         player?.stop()
+        player = nil
         isPlaying = false
+        activeURL = nil
+        position = 0
+        duration = 0
+        failure = nil
+        failureURL = nil
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor in self.isPlaying = false }
+        Task { @MainActor in
+            guard self.player === player else { return }
+            self.timer?.invalidate()
+            self.timer = nil
+            self.position = self.duration
+            self.isPlaying = false
+            if !flag { self.failure = "Audio playback ended unexpectedly." }
+        }
     }
 }
 
 struct AudioClipButton: View {
     let url: URL
     let label: String
-    @StateObject private var player = AudioClipPlayer()
+    @ObservedObject var player: AudioClipPlayer
+
+    private var selected: Bool { player.activeURL == url }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             Button { player.toggle(url) } label: {
-                Label(player.isPlaying ? "Stop" : label, systemImage: player.isPlaying ? "stop.fill" : "play.fill")
+                Label(selected && player.isPlaying ? "Pause" : label, systemImage: selected && player.isPlaying ? "pause.fill" : "play.fill")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            if selected || player.failureURL == url, let failure = player.failure {
+                Text(failure).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+        }
+    }
+}
+
+/// One transport for the run. Switching variants keeps elapsed seconds,
+/// clamped to the shorter clip; separately generated phrases need not align.
+struct MusicListeningPanel: View {
+    let run: ComparisonRun
+    let store: ComparisonOutputStore
+    let name: (String) -> String
+    @ObservedObject var player: AudioClipPlayer
+    @State private var promptID: String
+    @State private var leftPath: String?
+    @State private var rightPath: String?
+
+    init(run: ComparisonRun, store: ComparisonOutputStore, name: @escaping (String) -> String, player: AudioClipPlayer) {
+        self.run = run; self.store = store; self.name = name; self.player = player
+        let prompt = ComparisonViewLogic.rows(for: run).first?.id ?? ""
+        let clips = ComparisonViewLogic.audioClips(for: run, store: store, promptID: prompt)
+        _promptID = State(initialValue: prompt)
+        _leftPath = State(initialValue: clips.first?.modelPath)
+        _rightPath = State(initialValue: clips.dropFirst().first?.modelPath)
+    }
+
+    private var clips: [ComparisonViewLogic.ListeningClip] {
+        ComparisonViewLogic.audioClips(for: run, store: store, promptID: promptID)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Label("A/B listening", systemImage: "headphones").font(WorkbenchTypography.emphasis)
+                Spacer()
+                if ComparisonViewLogic.rows(for: run).count > 1 {
+                    Picker("Prompt", selection: $promptID) {
+                        ForEach(ComparisonViewLogic.rows(for: run)) { entry in
+                            Text(entry.text).lineLimit(1).tag(entry.id)
+                        }
+                    }.frame(maxWidth: 320).controlSize(.small)
+                }
+            }
+            if clips.isEmpty {
+                Text("Audio for this prompt is unavailable.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.md) { choices }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { choices }
+                }
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Button {
+                        if let url = player.activeURL { player.toggle(url) }
+                    } label: {
+                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .disabled(player.activeURL == nil)
+                    .accessibilityLabel(player.isPlaying ? "Pause listening" : "Resume listening")
+                    Slider(value: Binding(get: { player.position }, set: { player.seek(to: $0) }),
+                           in: 0...max(player.duration, 0.001))
+                        .disabled(player.activeURL == nil)
+                        .accessibilityLabel("Listening position")
+                    Text("\(clock(player.position)) / \(clock(player.duration))")
+                        .font(WorkbenchTypography.secondary.monospacedDigit())
+                        .foregroundStyle(WorkbenchColor.muted)
+                    Button("Reset") { player.seek(to: 0) }
+                        .controlSize(.small).disabled(player.activeURL == nil)
+                }
+                if let clip = clips.first(where: { $0.url == player.activeURL }) {
+                    Text("\(player.isPlaying ? "Playing" : "Paused") · \(name(clip.modelPath))")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
             if let failure = player.failure {
                 Text(failure).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
         }
-        .onDisappear { player.stop() }
+        .padding(WorkbenchSpacing.sm)
+        .background(WorkbenchColor.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+        .onChange(of: promptID) { _, _ in
+            if !clips.contains(where: { $0.url == player.activeURL }) { player.stop() }
+            if !clips.contains(where: { $0.modelPath == leftPath }) { leftPath = clips.first?.modelPath }
+            if !clips.contains(where: { $0.modelPath == rightPath }) || leftPath == rightPath {
+                rightPath = clips.first(where: { $0.modelPath != leftPath })?.modelPath
+            }
+        }
+        .onChange(of: player.activeURL) { _, url in
+            guard let clip = ComparisonViewLogic.audioClips(for: run, store: store).first(where: { $0.url == url }) else { return }
+            promptID = clip.promptID
+            if leftPath != clip.modelPath, rightPath != clip.modelPath { leftPath = clip.modelPath }
+        }
+    }
+
+    @ViewBuilder private var choices: some View {
+        choice("A", path: $leftPath, excluding: rightPath)
+        choice("B", path: $rightPath, excluding: leftPath)
+    }
+
+    private func choice(_ title: String, path: Binding<String?>, excluding: String?) -> some View {
+        let clip = clips.first { $0.modelPath == path.wrappedValue }
+        let selected = clip != nil && clip?.url == player.activeURL
+        return HStack(spacing: WorkbenchSpacing.xs) {
+            Button {
+                if let clip {
+                    player.select(clip.url, preservingPosition: true,
+                                  autoplay: player.activeURL == nil || player.isPlaying)
+                }
+            } label: {
+                Label("Listen \(title)", systemImage: selected ? "checkmark" : "play.fill")
+                    .foregroundStyle(selected ? WorkbenchColor.accent : WorkbenchColor.ink)
+            }
+            .buttonStyle(.bordered).controlSize(.small).disabled(clip == nil)
+            .help("Switch at the same elapsed time; shorter clips clamp to their end. Generated musical phrases may differ.")
+            Picker(title, selection: path) {
+                Text("Choose model…").tag(String?.none)
+                ForEach(clips.filter { $0.modelPath != excluding }) { candidate in
+                    Text(name(candidate.modelPath)).tag(String?.some(candidate.modelPath))
+                }
+            }.labelsHidden().frame(minWidth: 120, maxWidth: 260).controlSize(.small)
+        }
+    }
+
+    private func clock(_ seconds: Double) -> String {
+        let value = Int(max(0, seconds))
+        return String(format: "%d:%02d", value / 60, value % 60)
     }
 }
 
