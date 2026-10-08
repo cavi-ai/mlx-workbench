@@ -490,6 +490,31 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
+    func testBuiltinSpeechClipsAreTranscribedAsEnglishAndUserClipsAreNot() async throws {
+        let builtinSet = ComparisonMediaFixtures.speechToTextSet
+        let builtinRunner = StubMediaRunner()
+        let builtin = makeCoordinator(runner: builtinRunner, runsURL: root.appendingPathComponent("runs-builtin.json"))
+        builtin.start(variants: [("/m/whisper", nil)], promptSet: builtinSet)
+        await waitForRun(builtin)
+        XCTAssertEqual(builtin.runs.first?.state, .completed)
+        let builtinRequests = await builtinRunner.requests
+        XCTAssertEqual(builtinRequests.map(\.entry.id), builtinSet.prompts.map(\.id))
+        XCTAssertEqual(builtinRequests.map(\.language), Array(repeating: SpeechCanary.language, count: builtinSet.prompts.count))
+
+        let userSet = promptSet(for: .speechToText)
+        let userRunner = StubMediaRunner()
+        let user = makeCoordinator(runner: userRunner, runsURL: root.appendingPathComponent("runs-user.json"))
+        user.start(variants: [("/m/whisper", nil)], promptSet: userSet)
+        await waitForRun(user)
+        XCTAssertEqual(user.runs.first?.state, .completed)
+        let userRequests = await userRunner.requests
+        XCTAssertEqual(userRequests.map(\.entry.id), userSet.prompts.map(\.id))
+        XCTAssertEqual(userRequests.map(\.language), Array(repeating: nil, count: userSet.prompts.count))
+
+        XCTAssertNil(ComparisonMediaFixtures.language(ofBuiltinInput: "red-circle"))
+    }
+
+    @MainActor
     func testRunIsPersistedAfterEachVariantAndOnlyOneRunAtATime() async throws {
         let runner = StubMediaRunner(gated: true)
         let runsURL = root.appendingPathComponent("runs.json")

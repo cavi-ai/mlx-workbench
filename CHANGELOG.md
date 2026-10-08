@@ -38,6 +38,11 @@ and is versioned independently; submodule bumps are recorded here.
   chosen runtime is remembered across visits.
 ### Fixed
 
+- Compare speech-to-text: the built-in "Spoken sentences" clips are
+  transcribed with `--language en`; user-picked clips pass no language.
+- `vendor/mlx-agent` bumped to fcf0d91: `convert describe` drops special
+  tokens from answers (moondream3 no longer starts with
+  `<|md_reserved_4|>`).
 - Native app conversions failed with "[Errno 30] Read-only file system:
   '/.mlx-agent-receipts'": convert start/status commands did not pass
   `--receipts-dir`, so the agent derived its receipts directory from the
