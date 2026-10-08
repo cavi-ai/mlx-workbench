@@ -22,8 +22,9 @@ and is versioned independently; submodule bumps are recorded here.
   (`MLXWorkbenchCommit`, `MLXWorkbenchChannel`); `make dmg DMG_CHANNEL=nightly`
   names the image `mlx-workbench-nightly-<commit>.dmg`.
 - CI workflow `signed-dmg.yml` attaches a signed, notarized DMG to each
-  published release and publishes a rolling `nightly` prerelease from `main`,
-  signing with an App Store Connect API key.
+  published release and, when started by hand, publishes a rolling `nightly`
+  prerelease from `main` if the app's sources changed since the last one;
+  signing uses an App Store Connect API key.
 
 ## [0.4.0] - 2026-10-08
 ### Added

@@ -2,14 +2,14 @@ name: Signed DMG
 
 # Developer ID signed, notarized DMGs for the in-app updater: published
 # releases get mlx-workbench-<version>.dmg; the rolling `nightly` prerelease
-# gets mlx-workbench-nightly-<commit>.dmg built from main. Signing and
-# notarization use an App Store Connect API key (cloud-managed certificate).
+# gets mlx-workbench-nightly-<commit>.dmg built from main, only when started
+# by hand and only when the app's sources changed since the published nightly.
+# Signing and notarization use an App Store Connect API key (cloud-managed
+# certificate).
 
 on:
   release:
     types: [published]
-  schedule:
-    - cron: "17 7 * * *"
   workflow_dispatch:
     inputs:
       channel:
@@ -59,18 +59,24 @@ jobs:
           submodules: true
           persist-credentials: false
 
-      - name: Skip a nightly whose commit is already published
+      - name: Skip a nightly when the app has not changed
         id: skip
         run: |
           set -euo pipefail
           commit="$(git rev-parse --short=12 HEAD)"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
-          published="$(gh release view nightly --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)"
-          if [[ "$CHANNEL" == "nightly" && "$published" == *"mlx-workbench-nightly-$commit.dmg"* ]]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+          skip=false
+          if [[ "$CHANNEL" == "nightly" ]]; then
+            published="$(gh release view nightly --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name | capture("^mlx-workbench-nightly-(?<c>[0-9a-f]+)[.]dmg$").c' 2>/dev/null || true)"
+            # Docs, web UI and test-only merges do not change the app.
+            if [[ -n "$published" ]] && git cat-file -e "$published^{commit}" 2>/dev/null \
+              && git diff --quiet "$published" HEAD -- mlx-mac vendor/mlx-agent Makefile; then
+              skip=true
+              echo "::notice::App sources unchanged since nightly $published; nothing to build"
+            fi
           fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
 
       - name: Write the App Store Connect API key
         if: steps.skip.outputs.skip != 'true'
