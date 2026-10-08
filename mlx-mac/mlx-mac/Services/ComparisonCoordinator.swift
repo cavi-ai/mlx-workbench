@@ -228,6 +228,7 @@ final class ComparisonCoordinator: ObservableObject {
         // Inputs are shared by every variant: user-picked files as they are,
         // built-in ones generated once into the run's inputs folder.
         var inputs: [String: URL] = [:]
+        var inputLanguages: [String: String] = [:]
         var inputErrors: [String: String] = [:]
         if setupError == nil, mode.inputKind != nil {
             for entry in promptSet.prompts {
@@ -239,9 +240,10 @@ final class ComparisonCoordinator: ObservableObject {
                     } else {
                         inputErrors[entry.id] = "Input file not found: \(path)"
                     }
-                } else if entry.builtinInput != nil {
+                } else if let builtin = entry.builtinInput {
                     do {
                         inputs[entry.id] = try await generateInput(entry, store.inputsDirectory(runID))
+                        inputLanguages[entry.id] = ComparisonMediaFixtures.language(ofBuiltinInput: builtin)
                     } catch {
                         inputErrors[entry.id] = "Input could not be generated: \(AppHost.render(error))"
                     }
@@ -274,7 +276,8 @@ final class ComparisonCoordinator: ObservableObject {
                         entry: entry,
                         inputURL: inputs[entry.id],
                         outputURL: mode.outputKind == .text ? nil : artifactURL,
-                        maxTokens: min(entry.maxTokens, maxTokensCap())
+                        maxTokens: min(entry.maxTokens, maxTokensCap()),
+                        language: inputLanguages[entry.id]
                     )
                     do {
                         let output = try await runner.run(request)

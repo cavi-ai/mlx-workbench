@@ -182,6 +182,30 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertFalse(argv[10].contains("--model-type"), "a single-file download is not narrowed by type")
     }
 
+    func testSpeechComparisonPassesTheRequestLanguageToTranscribe() async throws {
+        let record = FileManager.default.temporaryDirectory.appendingPathComponent("argv-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: record) }
+        let agent = try FixtureAgent(recordingTo: record, payload: ["text": "The quick brown fox.", "seconds": 1, "audio_seconds": 3])
+        defer { agent.remove() }
+        let runner = LiveComparisonMediaRunner(api: WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path))
+        let entry = ComparisonMediaFixtures.speechToTextSet.prompts[0]
+
+        for language in [SpeechCanary.language, nil] {
+            let output = try await runner.run(MediaRunRequest(
+                mode: .speechToText, modelPath: "/m/whisper", entry: entry,
+                inputURL: URL(fileURLWithPath: "/tmp/clip.wav"), outputURL: nil, maxTokens: 64, language: language
+            ))
+            XCTAssertEqual(output.text, "The quick brown fox.")
+        }
+
+        let lines = try String(contentsOf: record, encoding: .utf8).split(separator: "\n")
+        let argv = try lines.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String]) }
+        XCTAssertEqual(argv.count, 2)
+        XCTAssertEqual(Array(argv[0].prefix(8)), ["convert", "transcribe", "--path", "/m/whisper", "--audio", "/tmp/clip.wav", "--language", "en"])
+        XCTAssertEqual(Array(argv[1].prefix(6)), ["convert", "transcribe", "--path", "/m/whisper", "--audio", "/tmp/clip.wav"])
+        XCTAssertFalse(argv[1].contains("--language"), "a user clip lets the model detect its language")
+    }
+
     func testConvertPreviewAcceptsFlatLegacyShape() async throws {
         let agent = try FixtureAgent(
             convertPreviewPayload: ["preview_hash": "hash-flat", "out": "/out"]
