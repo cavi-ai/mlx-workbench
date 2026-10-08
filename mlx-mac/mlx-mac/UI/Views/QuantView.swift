@@ -381,14 +381,7 @@ struct QuantView: View {
     private static let slotLetters = ["A", "B", "C", "D"]
 
     private var setupBar: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            HStack(spacing: WorkbenchSpacing.xs) {
-                Image(systemName: "slider.horizontal.3")
-                    .foregroundStyle(WorkbenchColor.accent)
-                Text("Compare models")
-                    .font(WorkbenchTypography.roundedHeading)
-            }
-
+        WorkbenchCard("Compare models", systemImage: "slider.horizontal.3", style: .tinted) {
             ViewThatFits(in: .horizontal) {
                 comparisonModePicker.pickerStyle(.segmented).labelsHidden().fixedSize()
                 comparisonModePicker.pickerStyle(.menu)
@@ -435,20 +428,13 @@ struct QuantView: View {
             }
             .padding(.top, WorkbenchSpacing.sm)
             .overlay(alignment: .top) {
-                Rectangle().fill(WorkbenchColor.accent.opacity(0.18)).frame(height: 1)
+                Rectangle().fill(WorkbenchColor.accent.opacity(.stroke)).frame(height: WorkbenchSpacing.hairline)
             }
             if comparison.activeRunID != nil {
                 ProgressView(comparison.progressMessage ?? "Measuring…")
             }
             ErrorBanner(text: comparison.lastError)
             ErrorBanner(text: comparison.persistenceError)
-        }
-        .padding(WorkbenchSpacing.surfaceInset)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WorkbenchColor.accent.opacity(0.035), in: RoundedRectangle(cornerRadius: WorkbenchRadius.page))
-        .overlay {
-            RoundedRectangle(cornerRadius: WorkbenchRadius.page)
-                .strokeBorder(WorkbenchColor.accent.opacity(0.25), lineWidth: 1)
         }
     }
 
@@ -483,10 +469,10 @@ struct QuantView: View {
         ForEach(Array(variantSlots.indices), id: \.self) { index in
             HStack(spacing: WorkbenchSpacing.xs) {
                 Text(Self.slotLetters[min(index, Self.slotLetters.count - 1)])
-                    .font(WorkbenchTypography.roundedLabel)
+                    .font(WorkbenchTypography.label)
                     .foregroundStyle(WorkbenchColor.accent)
                     .frame(width: 24, height: 24)
-                    .background(WorkbenchColor.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                    .background(WorkbenchColor.accent.opacity(.fill), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
                     .accessibilityHidden(true)
                 Picker("Model \(Self.slotLetters[min(index, Self.slotLetters.count - 1)])", selection: slotBinding(index)) {
                     Text("None").tag(String?.none)
@@ -516,10 +502,10 @@ struct QuantView: View {
                 }
             }
             .padding(WorkbenchSpacing.xs)
-            .background(WorkbenchColor.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
             .overlay {
                 RoundedRectangle(cornerRadius: WorkbenchRadius.control)
-                    .strokeBorder(WorkbenchColor.hairline.opacity(0.5), lineWidth: 1)
+                    .strokeBorder(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline)
             }
         }
 
@@ -746,7 +732,7 @@ struct QuantView: View {
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
                 Text("Speed")
-                    .font(WorkbenchTypography.roundedTitle)
+                    .font(WorkbenchTypography.section)
                 Text("TOKENS / SECOND")
                     .font(WorkbenchTypography.label)
                     .tracking(1)
@@ -781,7 +767,7 @@ struct QuantView: View {
     }
 
     private func variantCard(_ result: VariantResult, run: ComparisonRun) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             HStack {
                 Text(shortName(result.modelPath))
                     .font(WorkbenchTypography.emphasis)
@@ -817,9 +803,9 @@ struct QuantView: View {
                     .foregroundStyle(toolCalls > 0 && valid == toolCalls ? WorkbenchColor.success : WorkbenchColor.warning)
                 }
                 DisclosureGroup("Per-prompt outputs (\(result.samples.count))") {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         ForEach(result.samples, id: \.promptID) { sample in
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                                 HStack {
                                     Text(sample.promptID).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                                     Spacer()
@@ -845,7 +831,7 @@ struct QuantView: View {
                             }
                         }
                     }
-                    .padding(.top, 4)
+                    .padding(.top, WorkbenchSpacing.xxs)
                 }
                 if let useCase = run.useCase {
                     Button("Set as preferred for \(useCase.title)") {
@@ -882,7 +868,7 @@ struct QuantView: View {
     }
 
     private func statChip(_ label: String, value: Double) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: WorkbenchSpacing.xxs) {
             Text(label)
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
@@ -898,7 +884,7 @@ struct QuantView: View {
         let candidates = run.results.filter { $0.error == nil }
         let left = candidates.first { $0.modelPath == diffLeftPath }
         let right = candidates.first { $0.modelPath == diffRightPath }
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Output diff")
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: WorkbenchSpacing.xs) { diffControls(candidates) }
@@ -909,7 +895,7 @@ struct QuantView: View {
                 ForEach(ComparisonDiff.pairs(left, right)) { pair in
                     DisclosureGroup(pair.promptID) {
                         let lines = LineDiff.diff(before: pair.left, after: pair.right)
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                                 Text(diffText(line))
                                     .font(WorkbenchTypography.value)
@@ -918,12 +904,12 @@ struct QuantView: View {
                                     .textSelection(.enabled)
                             }
                         }
-                        .padding(.top, 4)
+                        .padding(.top, WorkbenchSpacing.xxs)
                     }
                 }
             }
         }
-        .padding(.top, 8)
+        .padding(.top, WorkbenchSpacing.xs)
     }
 
     private func diffText(_ line: DiffLine) -> String {
@@ -1098,7 +1084,7 @@ struct PromoteWinnerSheet: View {
                 .font(WorkbenchTypography.secondary)
         } else {
             Toggle(isOn: $enableEndpoint) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                     Text("Keep it always-on")
                         .font(WorkbenchTypography.secondary)
                     Text(endpointCaption)

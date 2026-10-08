@@ -59,6 +59,8 @@
 		27ABCD00000000000000002B /* CompareMediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD10000000000000002B /* CompareMediaViews.swift */; };
 
 		24BBLD000013 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000013 /* x */; };
+		28OVWB01 /* OverviewComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28OVWF01 /* OverviewComponents.swift */; };
+		28OVWB02 /* OverviewPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28OVWF02 /* OverviewPresentationTests.swift */; };
 
 		24BBLD000014 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000014 /* x */; };
 
@@ -242,6 +244,8 @@
 		24FREF000012 /* QuantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QuantView.swift; path = UI/Views/QuantView.swift; sourceTree = "<group>"; };
 		27ABCD10000000000000002B /* CompareMediaViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CompareMediaViews.swift; path = UI/Views/CompareMediaViews.swift; sourceTree = "<group>"; };
 
+		28OVWF01 /* OverviewComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = OverviewComponents.swift; path = UI/Views/OverviewComponents.swift; sourceTree = "<group>"; };
+		28OVWF02 /* OverviewPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = OverviewPresentationTests.swift; path = OverviewPresentationTests.swift; sourceTree = "<group>"; };
 		24FREF000013 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HomeView.swift; path = UI/Views/HomeView.swift; sourceTree = "<group>"; };
 
 		24FREF000014 /* ScoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScoutView.swift; path = UI/Views/ScoutView.swift; sourceTree = "<group>"; };
@@ -540,6 +544,7 @@
 				24FREF000012 /* QuantView.swift */,
 				27ABCD10000000000000002B /* CompareMediaViews.swift */,
 				24FREF000013 /* HomeView.swift */,
+				28OVWF01 /* OverviewComponents.swift */,
 				24FREF000014 /* ScoutView.swift */,
 				24FREF000015 /* ServeView.swift */,
 				24FREF000016 /* SettingsView.swift */,
@@ -605,6 +610,7 @@
 				27TST005 /* LaunchAgentManagerTests.swift */,
 				27TST006 /* WorkbenchPythonTests.swift */,
 				27TST007 /* HomeNextActionTests.swift */,
+				28OVWF02 /* OverviewPresentationTests.swift */,
 				27TST008 /* SetupCoordinatorTests.swift */,
 				27TST009 /* UpdateCoordinatorTests.swift */,
 				27ABCD100000000000000003 /* AppRouteTests.swift */,
@@ -805,6 +811,7 @@
 				24BBLD000012 /* x */,
 				27ABCD00000000000000002B /* CompareMediaViews.swift in Sources */,
 				24BBLD000013 /* x */,
+				28OVWB01 /* OverviewComponents.swift in Sources */,
 				24BBLD000014 /* x */,
 				24BBLD000015 /* x */,
 				24BBLD000016 /* x */,
@@ -952,6 +959,7 @@
 				27TSTB05 /* LaunchAgentManagerTests.swift in Sources */,
 				27TSTB06 /* WorkbenchPythonTests.swift in Sources */,
 				27TSTB07 /* HomeNextActionTests.swift in Sources */,
+				28OVWB02 /* OverviewPresentationTests.swift in Sources */,
 				27TSTB08 /* SetupCoordinatorTests.swift in Sources */,
 				27TSTB09 /* UpdateCoordinatorTests.swift in Sources */,
 			);

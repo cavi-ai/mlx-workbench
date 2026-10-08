@@ -9,6 +9,18 @@ struct HomeNextAction: Equatable {
     let reason: String
     let route: String
 
+    /// The verb phrase for the one button; mirrors what `HomeView.perform` does.
+    var buttonTitle: String {
+        switch kind {
+        case .configure: return "Open Settings"
+        case .scan: return "Open Library"
+        case .activity: return "Open Activity"
+        case .prepare: return "Prepare"
+        case .run: return "Run"
+        case .library: return route == AppRoute.reclaim.rawValue ? "Open Reclaim" : "Open Library"
+        }
+    }
+
     static func derive(workflow: ConversionWorkflow, snapshot: LibrarySnapshot?, rootsConfigured: Bool, isScanning: Bool, lastError: String?, agentReady: Bool, convertRuntimeReady: Bool, serveRuntimeReady: Bool, reclaimableBytes: Int64 = 0, diskFreeFraction: Double? = nil) -> HomeNextAction {
         if workflow.state == .queued || workflow.state == .running { return .init(kind: .activity, title: "Monitor conversion", reason: "A conversion is \(workflow.state.rawValue); Activity has the authoritative receipt and live status.", route: AppRoute.activity.rawValue) }
         if workflow.state == .verifying { return .init(kind: .activity, title: "Verify conversion output", reason: "The canary suite is checking the MLX output before it is marked verified.", route: AppRoute.activity.rawValue) }
@@ -48,9 +60,17 @@ enum ModelFlightStage: String, CaseIterable, Identifiable {
 }
 
 enum ModelFlightStageState: Equatable {
-    case pending, complete, attention, failed
-    var label: String { switch self { case .pending: return "Pending"; case .complete: return "Complete"; case .attention: return "Attention"; case .failed: return "Failed" } }
-    var color: Color { switch self { case .pending: return WorkbenchColor.warning; case .complete: return WorkbenchColor.success; case .attention: return WorkbenchColor.warning; case .failed: return WorkbenchColor.failure } }
+    case pending, active, complete, attention, failed
+
+    var label: String {
+        switch self {
+        case .pending: return "Pending"
+        case .active: return "In progress"
+        case .complete: return "Complete"
+        case .attention: return "Attention"
+        case .failed: return "Failed"
+        }
+    }
 }
 
 struct ModelFlightStagePresentation: Equatable, Identifiable {
@@ -98,7 +118,7 @@ struct ModelFlightPathPresentation: Equatable {
             verificationState = .pending
             verificationDetail = "No matching successful canary report yet."
         case .inProgress:
-            verificationState = .pending
+            verificationState = .active
             verificationDetail = "The canary suite is running."
         }
         let measured = completedRuns.contains { run in run.state == .completed && run.results.contains { result in result.modelPath == path && result.modelSignature == signature && result.error == nil && !result.samples.isEmpty } }
@@ -122,81 +142,188 @@ struct HomeView: View {
     @ObservedObject private var watch: WatchCoordinator
     private let onRouteSelection: (AppRoute) -> Void
     @Environment(\.openWindow) private var openWindow
+    @State private var contentWidth = WorkbenchSize.assumedContentWidth
 
-    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) { self.appHost = appHost; _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow); _watch = ObservedObject(wrappedValue: appHost.watch); self.onRouteSelection = onRouteSelection }
-    private var ggufRoots: [String] { if let roots = appHost.scanResult?.roots?.gguf, !roots.isEmpty { return roots }; return appHost.config.ggufRoots.isEmpty ? appHost.discoveredRoots : appHost.config.ggufRoots }
-    private var mlxRoots: [String] { appHost.scanResult?.roots?.mlx ?? appHost.config.mlxRoots }
-    private var agentReady: Bool { if case .ready = appHost.agentHealth { return true }; return false }
-    private var nextAction: HomeNextAction { HomeNextAction.derive(workflow: modelWorkflow.workflow, snapshot: appHost.librarySnapshot, rootsConfigured: !ggufRoots.isEmpty || !mlxRoots.isEmpty, isScanning: appHost.isScanning, lastError: appHost.lastError, agentReady: agentReady, convertRuntimeReady: appHost.runtimeReport.convert.ok, serveRuntimeReady: appHost.runtimeReport.serve.ok, reclaimableBytes: appHost.reclaim.totalReclaimableBytes, diskFreeFraction: DiskProbe.freeFraction()) }
-    private var flightPath: ModelFlightPathPresentation {
-        let model = ModelFlightPathPresentation.selectedModel(
+    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
+        self.appHost = appHost
+        _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
+        _watch = ObservedObject(wrappedValue: appHost.watch)
+        self.onRouteSelection = onRouteSelection
+    }
+
+    private var ggufRoots: [String] {
+        if let roots = appHost.scanResult?.roots?.gguf, !roots.isEmpty { return roots }
+        return appHost.config.ggufRoots.isEmpty ? appHost.discoveredRoots : appHost.config.ggufRoots
+    }
+
+    private var mlxRoots: [String] {
+        appHost.scanResult?.roots?.mlx ?? appHost.config.mlxRoots
+    }
+
+    private var agentReady: Bool {
+        if case .ready = appHost.agentHealth { return true }
+        return false
+    }
+
+    private var nextAction: HomeNextAction {
+        HomeNextAction.derive(
+            workflow: modelWorkflow.workflow,
+            snapshot: appHost.librarySnapshot,
+            rootsConfigured: !ggufRoots.isEmpty || !mlxRoots.isEmpty,
+            isScanning: appHost.isScanning,
+            lastError: appHost.lastError,
+            agentReady: agentReady,
+            convertRuntimeReady: appHost.runtimeReport.convert.ok,
+            serveRuntimeReady: appHost.runtimeReport.serve.ok,
+            reclaimableBytes: appHost.reclaim.totalReclaimableBytes,
+            diskFreeFraction: DiskProbe.freeFraction()
+        )
+    }
+
+    private var selectedModel: LibraryModel? {
+        ModelFlightPathPresentation.selectedModel(
             in: appHost.librarySnapshot,
             selectedModelPath: appHost.selectedModelPath
         )
-        return .derive(model: model, verification: model.map { appHost.verification.status(for: $0.item.path, signature: $0.item.signature) } ?? .unverified, completedRuns: appHost.comparison.runs, endpointState: appHost.endpoint.state, servers: modelWorkflow.servers)
+    }
+
+    private var flightPath: ModelFlightPathPresentation {
+        let model = selectedModel
+        let verification = model.map {
+            appHost.verification.status(for: $0.item.path, signature: $0.item.signature)
+        } ?? .unverified
+        return .derive(
+            model: model,
+            verification: verification,
+            completedRuns: appHost.comparison.runs,
+            endpointState: appHost.endpoint.state,
+            servers: modelWorkflow.servers
+        )
+    }
+
+    private var layoutMode: OverviewLayoutMode {
+        OverviewLayoutMode(contentWidth: contentWidth)
     }
 
     var body: some View {
-        ScrollView { VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) { nextActionSurface; workspaceContext; flightPathSurface; alertsSection; statusSurface; recommendationEvidence }.padding(WorkbenchSpacing.pageInset).frame(maxWidth: .infinity, alignment: .leading) }.background(WorkbenchColor.canvas).onAppear { appHost.analyzeReclaim() }
-    }
-
-    private var nextActionSurface: some View { WorkbenchSurface { VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { HStack(alignment: .firstTextBaseline) { VStack(alignment: .leading, spacing: 4) { Text("NEXT SAFE ACTION").font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.accent); Text(nextAction.title).font(WorkbenchTypography.section) }; Spacer(); StatusBadge(status: nextActionStatus) }; Text(nextAction.reason).font(WorkbenchTypography.body).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true); Button(nextAction.title) { perform(nextAction) }.buttonStyle(.borderedProminent).accessibilityLabel("Next safe action: " + nextAction.title) } } }
-    private var nextActionStatus: WorkbenchStatus {
-        switch nextAction.kind {
-        case .configure, .scan:
-            return .warning
-        case .activity:
-            switch modelWorkflow.workflow.state {
-            case .queued: return .queued
-            case .running: return .running
-            case .verifying: return WorkbenchStatus(rawValue: ConversionWorkflowState.verifying.rawValue)
-            case .verificationFailed, .failed: return .failure
-            default: return .warning
-            }
-        case .prepare, .run:
-            return .ready
-        case .library:
-            return .pending
-        }
-    }
-
-    private var workspaceContext: some View { WorkbenchSurface { VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { Text("MODEL WORKSPACE").font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.accent); HStack(alignment: .top, spacing: WorkbenchSpacing.xl) { instrumentValue("LIBRARY", appHost.librarySnapshot.map { String($0.models.count) + " models" } ?? "No snapshot", appHost.librarySnapshot.map { "Scanned " + timestamp($0.generatedAt) } ?? "Awaiting authoritative scan"); instrumentValue("HARDWARE", appHost.librarySnapshot?.hardware.chip ?? appHost.hardwareProfile.chip ?? "Unknown chip", appHost.librarySnapshot?.hardware.memoryBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory) } ?? "Memory unknown"); instrumentValue("ROOTS", String(ggufRoots.count + mlxRoots.count) + " configured", ggufRoots.first ?? mlxRoots.first ?? "No root configured") } } } }
-    private func instrumentValue(_ label: String, _ value: String, _ detail: String) -> some View { VStack(alignment: .leading, spacing: 4) { Text(label).font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted); Text(value).font(WorkbenchTypography.section).foregroundStyle(WorkbenchColor.ink); Text(detail).font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted).lineLimit(2) }.frame(maxWidth: .infinity, alignment: .leading) }
-
-    private var flightPathSurface: some View { WorkbenchSurface { VStack(alignment: .leading, spacing: WorkbenchSpacing.md) { HStack { VStack(alignment: .leading, spacing: 4) { Text("MODEL FLIGHT PATH").font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.accent); Text(flightPath.modelPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Select a model from Library").font(WorkbenchTypography.section) }; Spacer(); if let path = flightPath.modelPath { Text(path).font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted).lineLimit(1).truncationMode(.middle) } }; HStack(alignment: .top, spacing: 0) { ForEach(Array(flightPath.stages.enumerated()), id: \.element.id) { index, item in flightStage(item, isLast: index == flightPath.stages.count - 1) } }.accessibilityElement(children: .contain).accessibilityLabel("Model flight path") } } }
-    private func flightStage(_ item: ModelFlightStagePresentation, isLast: Bool) -> some View { HStack(alignment: .top, spacing: 6) { VStack(spacing: 6) { Image(systemName: item.stage.symbolName).font(WorkbenchTypography.body.weight(.semibold)).foregroundStyle(item.state.color).frame(width: 28, height: 28).background(item.state.color.opacity(0.12)).clipShape(Circle()); Text(item.stage.title).font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.ink).multilineTextAlignment(.center); Text(item.state.label).font(WorkbenchTypography.value).foregroundStyle(item.state.color) }.frame(maxWidth: .infinity); if !isLast { Rectangle().fill(WorkbenchColor.hairline).frame(height: 1).padding(.top, 14) } }.accessibilityElement(children: .ignore).accessibilityLabel(item.stage.title + ": " + item.state.label + ". " + item.detail) }
-
-    @ViewBuilder private var alertsSection: some View {
-        let alerts = watch.activeAlerts
-        if !alerts.isEmpty {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                SectionTitle(text: "Watch alerts")
-                ForEach(alerts) { alert in
-                    let presentation = WatchAlertPresentation(alert: alert)
-                    WorkbenchSurface(padding: WorkbenchSpacing.sm) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(presentation.title).font(WorkbenchTypography.section)
-                                Spacer()
-                                StatusBadge(status: .warning)
-                            }
-                            Text(presentation.message).font(WorkbenchTypography.body).foregroundStyle(WorkbenchColor.muted)
-                            HStack(spacing: 10) {
-                                if let primary = presentation.primary {
-                                    Button(primary.title) { perform(primary.kind, on: alert) }
-                                        .buttonStyle(.borderedProminent)
-                                        .controlSize(.small)
-                                }
-                                Button("Snooze 7 days") { watch.snooze(alert.id) }.controlSize(.small)
-                                Button(presentation.muteTitle) { watch.mute(alert.id) }
-                                    .controlSize(.small)
-                                    .foregroundStyle(WorkbenchColor.muted)
-                            }
-                        }
+        ScrollView {
+            regions
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: OverviewContentWidthKey.self, value: proxy.size.width)
                     }
                 }
+                .frame(maxWidth: WorkbenchSize.contentMaxWidth)
+                .padding(WorkbenchSpacing.pageInset)
+                .frame(maxWidth: .infinity)
+        }
+        .onPreferenceChange(OverviewContentWidthKey.self) { contentWidth = $0 }
+        .onAppear { appHost.analyzeReclaim() }
+    }
+
+    private var regions: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+            hero
+            FlightPathPanel(
+                model: selectedModel,
+                flightPath: flightPath,
+                showsStateText: OverviewLayoutMode.showsStageState(contentWidth: contentWidth),
+                chooseModel: { onRouteSelection(.library) }
+            )
+            LibraryStrip(
+                presentation: LibraryStripPresentation(
+                    snapshot: appHost.librarySnapshot,
+                    rootCount: ggufRoots.count + mlxRoots.count,
+                    reclaimableBytes: appHost.reclaim.totalReclaimableBytes,
+                    runs: appHost.comparison.runs
+                ),
+                showsCaptions: OverviewLayoutMode.showsTileCaptions(contentWidth: contentWidth),
+                open: openStripDestination
+            )
+            if !appHost.runtimeReport.ok {
+                runtimeWarning
+            }
+            lowerRow
+        }
+    }
+
+    private var hero: some View {
+        let action = nextAction
+        let instrument = ModelBudgetInstrument(
+            resources: appHost.resources,
+            reserveGB: appHost.config.fitReserveGB,
+            model: selectedModel,
+            hardware: appHost.hardwareProfile
+        )
+        let nextStep = NextStepPanel(action: action) { perform(action) }
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
+                instrument
+                    .frame(minWidth: WorkbenchSize.instrumentMinimum, idealWidth: WorkbenchSize.instrumentMinimum, maxWidth: .infinity)
+                nextStep
+                    .frame(minWidth: WorkbenchSize.nextStepMinimum, idealWidth: WorkbenchSize.nextStepMinimum, maxWidth: WorkbenchSize.nextStepMaximum)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(minWidth: WorkbenchSize.heroRowMinimum)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                instrument
+                nextStep
             }
         }
+    }
+
+    private var runtimeWarning: some View {
+        InlineMessage(
+            kind: .warning,
+            text: "The convert and serve runtime needs setup.",
+            action: (title: "Open Health", perform: { onRouteSelection(.health) })
+        )
+    }
+
+    @ViewBuilder
+    private var lowerRow: some View {
+        let alerts = watch.activeAlerts
+        let rows = recommendationRows
+        if layoutMode.usesTwoColumnLowerRow && !alerts.isEmpty && !rows.isEmpty {
+            HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
+                alertsPanel(alerts)
+                RecommendationsPanel(rows: rows)
+            }
+        } else if !alerts.isEmpty || !rows.isEmpty {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                if !alerts.isEmpty { alertsPanel(alerts) }
+                if !rows.isEmpty { RecommendationsPanel(rows: rows) }
+            }
+        }
+    }
+
+    private func alertsPanel(_ alerts: [WatchAlert]) -> some View {
+        WatchAlertsPanel(
+            alerts: alerts,
+            onAction: { kind, alert in perform(kind, on: alert) },
+            onSnooze: { watch.snooze($0.id) },
+            onMute: { watch.mute($0.id) }
+        )
+    }
+
+    private var recommendationRows: [OverviewRecommendationRow] {
+        guard appHost.librarySnapshot != nil else { return [] }
+        return UseCase.allCases.compactMap { useCase in
+            guard let recommendation = appHost.recommendations(for: useCase).first,
+                  let model = appHost.model(for: recommendation) else { return nil }
+            return OverviewRecommendationRow(
+                useCase: useCase.title,
+                modelName: model.displayName,
+                confidence: recommendation.confidence.title,
+                reason: recommendation.reasons.first?.message ?? "Ranked from the current local snapshot."
+            )
+        }
+    }
+
+    private func openStripDestination(_ index: Int) {
+        let routes: [AppRoute] = [.library, .reclaim, .compare]
+        guard routes.indices.contains(index) else { return }
+        onRouteSelection(routes[index])
     }
 
     private func perform(_ action: WatchAlertPresentation.ActionKind, on alert: WatchAlert) {
@@ -211,9 +338,22 @@ struct HomeView: View {
             watch.act(on: alert.id)
         }
     }
-    private var statusSurface: some View { WorkbenchSurface { VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { SectionTitle(text: "Operational status"); HStack(alignment: .top, spacing: WorkbenchSpacing.xl) { instrumentValue("WORKFLOW", modelWorkflow.workflow.state.rawValue, modelWorkflow.workflow.message ?? "No active conversion message"); instrumentValue("RUNTIME", appHost.runtimeReport.ok ? "Ready" : "Needs attention", appHost.runtimeReport.ok ? "Prepare and Run checks passed" : appHost.runtimeReport.install); instrumentValue("ENDPOINT", endpointStatusLabel, appHost.endpoint.state.summary) } } } }
-    private var endpointStatusLabel: String { switch appHost.endpoint.state { case .running: return "Running"; case .disabled: return "Disabled"; case .starting, .waitingForServer: return "Pending"; case .modelMismatch, .degraded: return "Attention" } }
-    @ViewBuilder private var recommendationEvidence: some View { if let snapshot = appHost.librarySnapshot { VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { SectionTitle(text: "Recommendation evidence"); Text("Current Library snapshot: " + timestamp(snapshot.generatedAt)).font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted); ForEach(UseCase.allCases) { useCase in if let recommendation = appHost.recommendations(for: useCase).first, let model = appHost.model(for: recommendation) { WorkbenchSurface(padding: WorkbenchSpacing.sm) { HStack(alignment: .top) { Text(useCase.title).font(WorkbenchTypography.value).frame(width: 145, alignment: .leading); VStack(alignment: .leading, spacing: 3) { Text(model.displayName).font(WorkbenchTypography.section); Text(recommendation.reasons.first?.message ?? "Ranked from the current local snapshot.").font(WorkbenchTypography.body).foregroundStyle(WorkbenchColor.muted) }; Spacer(); StatusBadge(state: recommendation.confidence.title) } } } } } } }
-    private func perform(_ action: HomeNextAction) { switch action.kind { case .run(let path): appHost.selectedModelPath = path; if let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) { modelWorkflow.prepareServe(model: model, exactPath: path) }; case .prepare(let path): appHost.selectedModelPath = path; if let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path }) { modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot) }; case .configure, .scan, .activity, .library: break }; onRouteSelection(AppRoute(rawID: action.route)) }
-    private func timestamp(_ date: Date) -> String { let formatter = DateFormatter(); formatter.dateStyle = .medium; formatter.timeStyle = .short; return formatter.string(from: date) }
+
+    private func perform(_ action: HomeNextAction) {
+        switch action.kind {
+        case .run(let path):
+            appHost.selectedModelPath = path
+            if let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) {
+                modelWorkflow.prepareServe(model: model, exactPath: path)
+            }
+        case .prepare(let path):
+            appHost.selectedModelPath = path
+            if let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path }) {
+                modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
+            }
+        case .configure, .scan, .activity, .library:
+            break
+        }
+        onRouteSelection(AppRoute(rawID: action.route))
+    }
 }

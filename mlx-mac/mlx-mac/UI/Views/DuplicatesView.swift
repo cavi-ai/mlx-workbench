@@ -28,7 +28,7 @@ struct DuplicatesView: View {
                 SourceCleanupSection(reclaim: reclaim, modelWorkflow: appHost.modelWorkflow, rescan: { appHost.requestRescan() })
                 reclaimSection
                 quarantinedSection
-                HStack(spacing: 10) {
+                HStack(spacing: WorkbenchSpacing.xs) {
                     Button("Rescan library") { appHost.requestRescan() }
                         .disabled(appHost.isScanning)
                     Spacer()
@@ -36,13 +36,13 @@ struct DuplicatesView: View {
                 if appHost.isScanning {
                     ProgressView("Scanning…")
                         .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 24)
+                        .padding(.top, WorkbenchSpacing.lg)
                 }
                 ErrorBanner(text: appHost.lastError)
                 if groups.isEmpty && !appHost.isScanning {
                     Text("No duplicate groups found.")
                         .foregroundStyle(WorkbenchColor.muted)
-                        .padding(.top, 12)
+                        .padding(.top, WorkbenchSpacing.sm)
                 }
                 ForEach(groups) { group in
                     groupCard(group)
@@ -61,7 +61,7 @@ struct DuplicatesView: View {
         .sheet(isPresented: Binding(get: { reclaim.trashPlan != nil }, set: { if !$0 { reclaim.cancelTrash() } })) {
             if let plan = reclaim.trashPlan {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                    Label("Move to Trash", systemImage: "trash").font(WorkbenchTypography.roundedTitle)
+                    Label("Move to Trash", systemImage: "trash").font(WorkbenchTypography.title)
                     Text(URL(fileURLWithPath: plan.record.from).lastPathComponent).font(WorkbenchTypography.emphasis)
                     Text(ByteCountFormatter.string(fromByteCount: plan.snapshot.bytes, countStyle: .file)).font(WorkbenchTypography.value)
                     Text("This item will leave quarantine. You can recover it from Trash in Finder; Put back here will no longer be available. Empty Trash in Finder to free disk space.")
@@ -81,7 +81,7 @@ struct DuplicatesView: View {
         .sheet(isPresented: Binding(get: { reclaim.folderPlan != nil }, set: { if !$0 { reclaim.cancelFolder() } })) {
             if let plan = reclaim.folderPlan {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                    Label("Quarantine model folder", systemImage: "folder.badge.minus").font(WorkbenchTypography.roundedTitle)
+                    Label("Quarantine model folder", systemImage: "folder.badge.minus").font(WorkbenchTypography.title)
                     Text(URL(fileURLWithPath: plan.snapshot.path).lastPathComponent).font(WorkbenchTypography.emphasis)
                     Text("\(plan.snapshot.fileCount ?? 0) files · \(ByteCountFormatter.string(fromByteCount: plan.snapshot.bytes, countStyle: .file))").font(WorkbenchTypography.value)
                     Text("Review whether other tasks still need this model. The entire folder will move to quarantine; Put back restores it. Quarantine keeps it on disk until you move it to Trash and empty Trash in Finder.").font(WorkbenchTypography.secondary)
@@ -122,10 +122,10 @@ struct DuplicatesView: View {
                     if let chain = opportunity.replacement {
                         ModelReplacementChainCard(chain: chain, onReviewFolder: { path in Task { await reclaim.previewFolder(path) } })
                     } else {
-                    HStack(alignment: .top, spacing: 10) {
+                    HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
                         Toggle(isOn: opportunityBinding(opportunity.id)) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                                HStack(spacing: WorkbenchSpacing.xxs) {
                                     Text(opportunity.kind.title).font(WorkbenchTypography.secondary).fontWeight(.medium)
                                     Text(ByteCountFormatter.string(fromByteCount: opportunity.bytes, countStyle: .file))
                                         .font(WorkbenchTypography.secondary)
@@ -163,7 +163,7 @@ struct DuplicatesView: View {
                 cachePruneSection
 
                 if !reclaim.lastMoves.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         ForEach(reclaim.lastMoves, id: \.path) { move in
                             if let destination = move.destination {
                                 Text("Moved \(URL(fileURLWithPath: move.path).lastPathComponent) → \(destination)")
@@ -274,7 +274,7 @@ struct DuplicatesView: View {
                 let visible = reclaim.quarantined.prefix(showAllQuarantined ? reclaim.quarantined.count : 8)
                 ForEach(Array(visible.enumerated()), id: \.element.to) { _, record in
                     HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                             Text(URL(fileURLWithPath: record.from).lastPathComponent)
                                 .font(WorkbenchTypography.secondary)
                             Text(record.from)
@@ -294,7 +294,7 @@ struct DuplicatesView: View {
                         Button { Task { await reclaim.previewTrash(record) } } label: { Label("Move to Trash", systemImage: "trash") }
                             .buttonStyle(.bordered).controlSize(.small).disabled(reclaim.isApplying)
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, WorkbenchSpacing.xxxs)
                 }
                 if reclaim.quarantined.count > 8 {
                     Button(showAllQuarantined ? "Show recent files" : "Show all \(reclaim.quarantined.count) files") { showAllQuarantined.toggle() }
@@ -323,7 +323,7 @@ struct DuplicatesView: View {
     }
 
     private func groupCard(_ group: DuplicateGroup) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
                 SectionTitle(text: group.modelKey ?? group.id)
                 Spacer()
@@ -334,7 +334,7 @@ struct DuplicatesView: View {
                 }
             }
             ForEach(group.sources, id: \.self) { path in
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
                     Image(systemName: "doc")
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(WorkbenchColor.muted)

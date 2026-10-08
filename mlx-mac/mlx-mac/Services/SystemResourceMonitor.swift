@@ -10,6 +10,8 @@ final class SystemResourceMonitor: ObservableObject {
     @Published private(set) var serverError: String?
     @Published private(set) var refreshingServers = false
     @Published var contextTokens = FitAdvisor.defaultContextTokens
+    /// True once the first memory probe has finished, whether or not it succeeded.
+    @Published private(set) var hasProbed = false
 
     private let probe: @Sendable () -> MemorySnapshot?
     private let now: () -> Date
@@ -38,6 +40,7 @@ final class SystemResourceMonitor: ObservableObject {
             memory = nil
             capturedAt = nil
         }
+        hasProbed = true
     }
 
     func refreshServers() async {

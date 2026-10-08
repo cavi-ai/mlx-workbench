@@ -66,7 +66,7 @@ struct ImageGenerationPanel: View {
                     .resizable()
                     .scaledToFit()
                     .frame(maxHeight: 420)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control))
             }
             HStack(spacing: WorkbenchSpacing.sm) {
                 Text(ImageGenerationPresentation.caption(result))

@@ -33,7 +33,7 @@ struct DoctorView: View {
     // MARK: - Environment
 
     private var environmentSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Environment")
             agentRow
             runtimeRow("Prepare runtime", ok: appHost.runtimeReport.convert.ok,
@@ -107,7 +107,7 @@ struct DoctorView: View {
     // MARK: - Findings
 
     private var findingsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
                 SectionTitle(text: "Model inventory findings")
                 Spacer()
@@ -126,7 +126,7 @@ struct DoctorView: View {
             if isRunning {
                 ProgressView()
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 8)
+                    .padding(.top, WorkbenchSpacing.xs)
             }
 
             ErrorBanner(text: errorMessage)
@@ -151,7 +151,7 @@ struct DoctorView: View {
                 ForEach(findings) { finding in
                     HStack(alignment: .top) {
                         StatusPill(state: finding.kind ?? "issue")
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                             Text(finding.path).font(WorkbenchTypography.secondary)
                                 .textSelection(.enabled)
                             if let message = finding.message {
@@ -165,7 +165,7 @@ struct DoctorView: View {
                                 .foregroundStyle(WorkbenchColor.muted)
                         }
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, WorkbenchSpacing.xxxs)
                 }
             }
         }

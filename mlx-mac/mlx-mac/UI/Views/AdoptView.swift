@@ -37,7 +37,7 @@ struct AdoptView: View {
     }
 
     private var formSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Adopt a role")
             Text("Pick the role this machine should fill. The agent verifies and wires a model for it.")
                 .font(WorkbenchTypography.secondary)
@@ -57,7 +57,7 @@ struct AdoptView: View {
     }
 
     private func resultSection(_ result: AdoptResult) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             SectionTitle(text: "Result")
             HStack {
                 if let status = result.status {
@@ -81,7 +81,7 @@ struct AdoptView: View {
     @ViewBuilder
     private var statusSection: some View {
         if let statePath = trackedStatePath {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                 HStack {
                     SectionTitle(text: "Adoption status")
                     Spacer()

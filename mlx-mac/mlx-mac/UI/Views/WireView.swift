@@ -58,7 +58,7 @@ struct WireView: View {
                     Text(result).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
                 }
                 if let preview {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                         HStack {
                             SectionTitle(text: "Preview")
                             Spacer()
@@ -92,7 +92,7 @@ struct WireView: View {
     // MARK: - Cross-client wiring
 
     private var clientWiringSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Client wiring")
             Text("Point installed clients at a running local server. Each client's own config is written atomically with backup and rollback.")
                 .font(WorkbenchTypography.secondary)
@@ -154,11 +154,11 @@ struct WireView: View {
             ErrorBanner(text: wiring.persistenceError)
 
             if !wiring.plans.isEmpty, let hash = wiring.previewHash {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                     SectionTitle(text: "Wiring preview")
                     ForEach(wiring.plans) { plan in
                         DisclosureGroup {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                                 ForEach(Array(plan.redactedDiff.enumerated()), id: \.offset) { _, line in
                                     Text(diffText(line))
                                         .font(WorkbenchTypography.value)
@@ -167,7 +167,7 @@ struct WireView: View {
                                         .textSelection(.enabled)
                                 }
                             }
-                            .padding(.top, 4)
+                            .padding(.top, WorkbenchSpacing.xxs)
                         } label: {
                             HStack {
                                 Text(plan.displayName).font(WorkbenchTypography.emphasis)
@@ -331,7 +331,7 @@ struct WireView: View {
         // Legacy single-file wiring. Cross-client wiring above is the
         // supported path; this stays available but collapsed.
         DisclosureGroup {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                 HStack {
                     TextField("Model repo id", text: $model)
                         .textFieldStyle(.roundedBorder)

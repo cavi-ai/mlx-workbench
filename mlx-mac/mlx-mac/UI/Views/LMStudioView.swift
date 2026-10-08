@@ -34,15 +34,15 @@ struct LMStudioView: View {
                 if isScanning {
                     ProgressView("Scanning…")
                         .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 24)
+                        .padding(.top, WorkbenchSpacing.lg)
                 }
                 ErrorBanner(text: errorMessage)
                 if !models.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                         SectionTitle(text: "Found \(models.count) GGUF models")
                         ForEach(models) { model in
                             HStack(spacing: WorkbenchSpacing.sm) {
-                                VStack(alignment: .leading, spacing: 2) {
+                                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                                     Text(model.name).font(WorkbenchTypography.body)
                                     Text(model.path)
                                         .font(WorkbenchTypography.secondary)
@@ -58,7 +58,7 @@ struct LMStudioView: View {
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
                             }
-                            .padding(.vertical, 2)
+                            .padding(.vertical, WorkbenchSpacing.xxxs)
                         }
                         Text("Prepare opens a conversion preview for the chosen GGUF.")
                             .font(WorkbenchTypography.secondary)

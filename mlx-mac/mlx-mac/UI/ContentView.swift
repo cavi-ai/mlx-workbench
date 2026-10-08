@@ -39,6 +39,7 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
         } detail: {
             visitedDestinations
+                .workbenchScrollEdge()
                 .navigationTitle(selectedRoute.label)
                 .navigationSubtitle(subtitle)
                 .toolbar {
@@ -55,6 +56,7 @@ struct ContentView: View {
 #endif
                 }
         }
+        .frame(minWidth: WorkbenchSize.windowMinimumWidth, minHeight: WorkbenchSize.windowMinimumHeight)
         .background { routeShortcutButtons }
         .onChange(of: selectedRouteID) { _, _ in
             visitedRoutes.insert(selectedRoute)

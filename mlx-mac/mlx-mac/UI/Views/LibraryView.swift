@@ -517,7 +517,8 @@ struct LibraryView: View {
         .foregroundStyle(WorkbenchColor.muted)
         .padding(.horizontal, WorkbenchSpacing.md)
         .padding(.vertical, WorkbenchSpacing.xs)
-        .background(WorkbenchColor.surface)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 
     // MARK: - Empty states

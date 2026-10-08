@@ -29,21 +29,34 @@ struct InlineMessage: View {
 
     let kind: Kind
     let text: String
+    /// Optional trailing, non-prominent action.
+    var action: (title: String, perform: () -> Void)? = nil
 
     var body: some View {
-        Label {
-            Text(text)
-                .font(WorkbenchTypography.body)
-                .foregroundStyle(WorkbenchColor.ink)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: kind.symbol)
-                .foregroundStyle(kind.color)
+        HStack(alignment: .center, spacing: WorkbenchSpacing.sm) {
+            Label {
+                Text(text)
+                    .font(WorkbenchTypography.body)
+                    .foregroundStyle(WorkbenchColor.ink)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: kind.symbol)
+                    .foregroundStyle(kind.color)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let action {
+                Button(action.title, action: action.perform)
+                    .buttonStyle(.bordered)
+            }
         }
         .padding(WorkbenchSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(kind.color.opacity(0.10), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+        .background(kind.color.opacity(.wash), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous)
+                .strokeBorder(kind.color.opacity(.stroke), lineWidth: WorkbenchSpacing.hairline)
+        }
     }
 }
 
@@ -68,10 +81,12 @@ struct WorkbenchStatus: Equatable {
 
     let label: String
     let tone: Tone
+    /// Work is in flight right now; badges pulse while it is.
+    let isLive: Bool
 
     static let idle = WorkbenchStatus(label: "Idle", tone: .neutral)
     static let pending = WorkbenchStatus(label: "Pending", tone: .warning)
-    static let running = WorkbenchStatus(label: "Running", tone: .information)
+    static let running = WorkbenchStatus(label: "Running", tone: .information, isLive: true)
     static let ready = WorkbenchStatus(label: "Ready", tone: .information)
     static let completed = WorkbenchStatus(label: "Completed", tone: .information)
     static let converted = WorkbenchStatus(label: "Converted", tone: .information)
@@ -109,15 +124,15 @@ struct WorkbenchStatus: Equatable {
         case "stopped": self = .stopped
         case "unknown": self = .unknown
         case "inspectingsource":
-            self = WorkbenchStatus(label: "Inspecting Source", tone: .information)
+            self = WorkbenchStatus(label: "Inspecting Source", tone: .information, isLive: true)
         case "existingmodelfound":
             self = WorkbenchStatus(label: "Existing Model Found", tone: .success)
         case "previewing", "previewingconversion":
-            self = WorkbenchStatus(label: canonical == "previewing" ? "Previewing" : "Previewing Conversion", tone: .information)
+            self = WorkbenchStatus(label: canonical == "previewing" ? "Previewing" : "Previewing Conversion", tone: .information, isLive: true)
         case "readytoconfirm":
             self = WorkbenchStatus(label: "Ready to Confirm", tone: .warning)
         case "verifying":
-            self = WorkbenchStatus(label: "Verifying", tone: .information)
+            self = WorkbenchStatus(label: "Verifying", tone: .information, isLive: true)
         case "verificationfailed":
             self = WorkbenchStatus(label: "Verification Failed", tone: .failure)
         case "needsconversion":
@@ -147,9 +162,10 @@ struct WorkbenchStatus: Equatable {
         }
     }
 
-    private init(label: String, tone: Tone) {
+    private init(label: String, tone: Tone, isLive: Bool = false) {
         self.label = label
         self.tone = tone
+        self.isLive = isLive
     }
 
     private static func displayLabel(for rawValue: String) -> String {
@@ -182,7 +198,8 @@ struct WorkbenchStatus: Equatable {
     }
 }
 
-/// Capsule with a tone dot and a sentence-case label.
+/// Capsule with a tone dot and a sentence-case label. The dot pulses while
+/// the status is live; relabels cross-fade.
 struct StatusBadge: View {
     let status: WorkbenchStatus
 
@@ -195,18 +212,21 @@ struct StatusBadge: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: WorkbenchSpacing.xxs) {
             Circle()
                 .fill(status.color)
                 .frame(width: 6, height: 6)
+                .livePulse(status.isLive)
             Text(status.label)
                 .font(WorkbenchTypography.label)
                 .lineLimit(1)
+                .contentTransition(.interpolate)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, WorkbenchSpacing.xs)
+        .padding(.vertical, WorkbenchSpacing.xxxs)
         .foregroundStyle(status.color)
-        .background(status.color.opacity(0.12), in: Capsule())
+        .background(status.color.opacity(.fill), in: Capsule())
+        .workbenchAnimation(value: status)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(status.label)
     }
@@ -220,24 +240,121 @@ struct StatusPill: View {
     }
 }
 
+/// `plain` lifts a card one step off the canvas; `tinted` marks the one panel
+/// on a page that holds the primary setup or recommendation.
+enum WorkbenchSurfaceStyle {
+    case plain
+    case tinted
+}
+
 struct WorkbenchSurface<Content: View>: View {
+    private let style: WorkbenchSurfaceStyle
     private let padding: CGFloat
     private let content: Content
 
-    init(padding: CGFloat = WorkbenchSpacing.surfaceInset, @ViewBuilder content: () -> Content) {
+    init(_ style: WorkbenchSurfaceStyle = .plain, padding: CGFloat = WorkbenchSpacing.surfaceInset, @ViewBuilder content: () -> Content) {
+        self.style = style
         self.padding = padding
         self.content = content()
+    }
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous)
+    }
+
+    private var stroke: Color {
+        style == .tinted ? WorkbenchColor.accent.opacity(.stroke) : WorkbenchColor.hairline
     }
 
     var body: some View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(WorkbenchColor.surface, in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous))
+            .background(WorkbenchColor.surface, in: shape)
+            .background(style == .tinted ? WorkbenchColor.accent.opacity(.wash) : Color.clear, in: shape)
             .overlay {
                 RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous)
-                    .stroke(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline)
+                    .strokeBorder(stroke, lineWidth: WorkbenchSpacing.hairline)
             }
+    }
+}
+
+/// The header row every card uses: accent symbol, title, trailing accessory.
+struct CardHeader<Accessory: View>: View {
+    let title: String
+    let systemImage: String
+    private let accessory: Accessory
+
+    init(_ title: String, systemImage: String, @ViewBuilder accessory: () -> Accessory) {
+        self.title = title
+        self.systemImage = systemImage
+        self.accessory = accessory()
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
+            Label {
+                Text(title)
+                    .font(WorkbenchTypography.cardTitle)
+                    .foregroundStyle(WorkbenchColor.ink)
+            } icon: {
+                Image(systemName: systemImage)
+                    .foregroundStyle(WorkbenchColor.accent)
+            }
+            Spacer(minLength: WorkbenchSpacing.xs)
+            accessory
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+extension CardHeader where Accessory == EmptyView {
+    init(_ title: String, systemImage: String) {
+        self.init(title, systemImage: systemImage) { EmptyView() }
+    }
+}
+
+/// A surface with a standard header above its content.
+struct WorkbenchCard<Accessory: View, Content: View>: View {
+    private let title: String
+    private let systemImage: String
+    private let style: WorkbenchSurfaceStyle
+    private let accessory: Accessory
+    private let content: Content
+
+    init(
+        _ title: String,
+        systemImage: String,
+        style: WorkbenchSurfaceStyle = .plain,
+        @ViewBuilder accessory: () -> Accessory,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.style = style
+        self.accessory = accessory()
+        self.content = content()
+    }
+
+    var body: some View {
+        WorkbenchSurface(style) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                CardHeader(title, systemImage: systemImage) { accessory }
+                content
+            }
+        }
+    }
+}
+
+extension WorkbenchCard where Accessory == EmptyView {
+    init(
+        _ title: String,
+        systemImage: String,
+        style: WorkbenchSurfaceStyle = .plain,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.init(title, systemImage: systemImage, style: style, accessory: { EmptyView() }, content: content)
     }
 }
 

@@ -44,7 +44,7 @@ struct TrainingView: View {
     }
 
     private var formSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "LoRA fine-tune")
             if !cachedRepoIdentities.isEmpty {
                 Picker("Cached base model", selection: cachedRepoSelection) {
@@ -97,7 +97,7 @@ struct TrainingView: View {
     }
 
     private var planSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
                 SectionTitle(text: "Training plan")
                 Spacer()
@@ -105,7 +105,7 @@ struct TrainingView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(previewHash == nil)
             }
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                 planRow("Base model", repo)
                 planRow("Dataset", data)
                 planRow("Iterations", itersText)
@@ -121,7 +121,7 @@ struct TrainingView: View {
     }
 
     private func planRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
             Text(label)
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)

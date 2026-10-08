@@ -49,7 +49,7 @@ struct FleetRouterSheet: View {
             case .plan:
                 EmptyView()
             case .working(let label):
-                HStack(spacing: 8) {
+                HStack(spacing: WorkbenchSpacing.xs) {
                     ProgressView().controlSize(.small)
                     Text(label).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
@@ -64,7 +64,7 @@ struct FleetRouterSheet: View {
             }
 
             if !warnings.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                     ForEach(warnings, id: \.self) { warning in
                         Text(warning)
                             .font(WorkbenchTypography.secondary)
@@ -116,7 +116,7 @@ struct FleetRouterSheet: View {
     }
 
     private func previewSection(diff: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             Text("Preview")
                 .font(WorkbenchTypography.secondary)
             ScrollView {

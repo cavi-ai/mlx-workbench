@@ -589,7 +589,7 @@ struct ComparisonHistoryPicker: View {
         } label: {
             HStack(spacing: WorkbenchSpacing.sm) {
                 Image(systemName: "clock.arrow.circlepath").foregroundStyle(WorkbenchColor.muted)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                     Text(selected?.promptSetName ?? "Run history").font(WorkbenchTypography.label).lineLimit(1)
                     if let selected {
                         Text("\(selected.effectiveMode.title) · \(selected.startedAt.formatted(date: .abbreviated, time: .shortened))")
@@ -618,7 +618,7 @@ struct ComparisonHistoryPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text("Run history").font(WorkbenchTypography.roundedHeading)
+            Text("Run history").font(WorkbenchTypography.cardTitle)
             TextField("Search runs or models", text: $query)
                 .textFieldStyle(.roundedBorder)
             ScrollView {
@@ -635,7 +635,7 @@ struct ComparisonHistoryPanel: View {
                                 onSelect(run.id)
                             } label: {
                                 HStack(spacing: WorkbenchSpacing.sm) {
-                                    VStack(alignment: .leading, spacing: 4) {
+                                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                                         Text(run.promptSetName).font(WorkbenchTypography.label).lineLimit(1)
                                         Text("\(run.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(ComparisonHistoryLogic.modelCount(run)) · \(run.state.rawValue.capitalized)")
                                             .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
@@ -647,8 +647,8 @@ struct ComparisonHistoryPanel: View {
                                 }
                                 .padding(WorkbenchSpacing.sm)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(selection == run.id ? WorkbenchColor.accent.opacity(0.12) : Color.clear,
-                                            in: RoundedRectangle(cornerRadius: 8))
+                                .background(selection == run.id ? WorkbenchColor.accent.opacity(.fill) : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)

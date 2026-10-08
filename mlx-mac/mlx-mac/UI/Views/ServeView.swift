@@ -132,7 +132,7 @@ struct ServeView: View {
     @ViewBuilder
     private var fitVerdictLine: some View {
         if let verdict = fitVerdict {
-            HStack(spacing: 8) {
+            HStack(spacing: WorkbenchSpacing.xs) {
                 Image(systemName: fitIcon(verdict))
                     .foregroundStyle(fitColor(verdict))
                 Text(verdict.summary)
@@ -179,7 +179,7 @@ struct ServeView: View {
     }
 
     private var endpointSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
                 SectionTitle(text: "Endpoints")
                 Spacer()
@@ -192,7 +192,7 @@ struct ServeView: View {
                 .foregroundStyle(WorkbenchColor.muted)
 
             if let verdict = prospectiveFleetVerdict(addingModelPath: nil) {
-                HStack(spacing: 8) {
+                HStack(spacing: WorkbenchSpacing.xs) {
                     Image(systemName: fitIcon(verdict))
                         .foregroundStyle(fitColor(verdict))
                     Text("Fleet memory: \(verdict.summary)")
@@ -202,11 +202,11 @@ struct ServeView: View {
             }
 
             if let pending = pendingFleetAction {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                     Text("Fleet memory: \(pending.summary). Enable anyway?")
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(WorkbenchColor.failure)
-                    HStack(spacing: 10) {
+                    HStack(spacing: WorkbenchSpacing.xs) {
                         Button("Enable anyway") {
                             pending.confirm()
                             pendingFleetAction = nil
@@ -233,7 +233,7 @@ struct ServeView: View {
             addEndpointControls
 
             if endpoint.fleet.slots.contains(where: { $0.role != nil }) {
-                HStack(spacing: 10) {
+                HStack(spacing: WorkbenchSpacing.xs) {
                     Button("Wire roles…") { showFleetRouter = true }
                         .buttonStyle(.bordered)
                     Text("Map roles onto running endpoints via mlx-agent fleet.")
@@ -260,8 +260,8 @@ struct ServeView: View {
 
     private func slotCard(_ slot: EndpointSlot) -> some View {
         let slotState = endpoint.slotStates[slot.id] ?? .disabled
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            HStack(spacing: WorkbenchSpacing.xs) {
                 StatusPill(state: slotStateLabel(slotState, enabled: slot.enabled))
                 Text(URL(fileURLWithPath: slot.modelPath).lastPathComponent)
                     .font(WorkbenchTypography.emphasis)
@@ -289,7 +289,7 @@ struct ServeView: View {
             if let residency = endpoint.slotResidencies[slot.id] {
                 Text(residency).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
-            HStack(spacing: 10) {
+            HStack(spacing: WorkbenchSpacing.xs) {
                 if case .modelMismatch = slotState {
                     Button("Swap to configured model") {
                         Task { await endpoint.swapSlot(id: slot.id, to: slot.modelPath, allowUnverified: true) }
@@ -573,7 +573,7 @@ struct ServeView: View {
     }
 
     private var loginItemSection: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: WorkbenchSpacing.xs) {
             if appHost.endpoint.fleet.installedAtLogin {
                 Button("Remove login item") {
                     do {
@@ -599,7 +599,7 @@ struct ServeView: View {
     private var loginItemControls: some View { loginItemSection }
 
     private var loginItemPreviewSheet: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Text("Login item preview").font(WorkbenchTypography.emphasis)
             Text("This LaunchAgent starts the endpoint once at login (RunAtLoad). The app keeps reconciling while it runs; mlx-agent receipts remain the process authority.")
                 .font(WorkbenchTypography.secondary)
@@ -649,7 +649,7 @@ struct ServeView: View {
     }
 
     private var selectedModelSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Selected completed model")
             if let model = selectedModel {
                 Text(model.displayName).font(WorkbenchTypography.section).fontWeight(.semibold)
@@ -670,7 +670,7 @@ struct ServeView: View {
     }
 
     private var launchSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Serve intent")
             if let remediation = presentation.remediation {
                 ErrorBanner(text: "Run runtime unavailable: \(remediation). Open Settings after installing the required runtime.")
@@ -695,7 +695,7 @@ struct ServeView: View {
     }
 
     private var serverSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
                 SectionTitle(text: "Authoritative server state")
                 Spacer()

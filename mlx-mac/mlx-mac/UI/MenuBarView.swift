@@ -17,7 +17,7 @@ struct MenuBarView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             Text(fleetSummary)
                 .font(WorkbenchTypography.emphasis)
             if case .running = endpoint.state, let latest = latestBenchmark {
@@ -44,7 +44,7 @@ struct MenuBarView: View {
             Divider()
             Button("Quit MLX Workbench") { NSApp.terminate(nil) }
         }
-        .padding(8)
+        .padding(WorkbenchSpacing.xs)
     }
 
     /// "N of M endpoints running" across the fleet (spec 09 P2).
@@ -57,7 +57,7 @@ struct MenuBarView: View {
     }
 
     private func slotRow(_ slot: EndpointSlot) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: WorkbenchSpacing.xxs) {
             Image(systemName: EndpointIcon.name(for: endpoint.slotStates[slot.id] ?? .disabled))
                 .frame(width: 14)
             Text("\(URL(fileURLWithPath: slot.modelPath).lastPathComponent) :\(slot.port)")
