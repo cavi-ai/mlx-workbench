@@ -4,8 +4,10 @@ name: Signed DMG
 # releases get mlx-workbench-<version>.dmg; the rolling `nightly` prerelease
 # gets mlx-workbench-nightly-<commit>.dmg built from main, only when started
 # by hand and only when the app's sources changed since the published nightly.
-# Signing and notarization use an App Store Connect API key (cloud-managed
-# certificate).
+# Signing uses a Developer ID Application certificate imported into a
+# throwaway keychain: Xcode cannot cloud-sign Developer ID when authenticated
+# with an API key. Provisioning and notarization use an App Store Connect API
+# key.
 
 on:
   release:
@@ -91,6 +93,34 @@ jobs:
           umask 077
           printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
 
+      - name: Install the Developer ID certificate
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEVELOPER_ID_P12" || -z "$DEVELOPER_ID_P12_PASSWORD" ]]; then
+            echo "::error::Repository secrets DEVELOPER_ID_P12 and DEVELOPER_ID_P12_PASSWORD are required"
+            exit 1
+          fi
+          umask 077
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          printf '%s' "$DEVELOPER_ID_P12" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -f pkcs12 \
+            -P "$DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          existing="$(security list-keychains -d user | xargs)"
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s "$keychain" $existing
+          security find-identity -v -p codesigning "$keychain" \
+            | grep "Developer ID Application: .*($DEVELOPER_TEAM)" > /dev/null
+
       - name: Build, sign and notarize
         if: steps.skip.outputs.skip != 'true'
         env:
@@ -134,6 +164,8 @@ jobs:
               --title "Nightly $COMMIT" --notes "Built from main at $COMMIT." --repo "$GITHUB_REPOSITORY"
           fi
 
-      - name: Remove the API key
+      - name: Remove the signing material
         if: always()
-        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/developer-id.p12"

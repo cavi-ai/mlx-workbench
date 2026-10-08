@@ -48,9 +48,12 @@ release it attaches `mlx-workbench-<version>.dmg`. A nightly runs only when
 started from the Actions tab (channel `nightly`): it replaces the `nightly`
 prerelease with `mlx-workbench-nightly-<commit>.dmg` built from `main`, and
 skips when `mlx-mac/`, `vendor/mlx-agent` and the `Makefile` are unchanged
-since the published nightly. It signs and notarizes with an App Store Connect API key
+since the published nightly. It provisions and notarizes with an App Store Connect API key
 stored as the repository secrets `ASC_KEY_ID`, `ASC_ISSUER_ID` and
-`ASC_KEY_P8` (the `.p8` contents).
+`ASC_KEY_P8` (the `.p8` contents). Xcode cannot cloud-sign Developer ID with
+an API key, so the job imports a Developer ID Application certificate into a
+throwaway keychain from `DEVELOPER_ID_P12` (base64 PKCS#12 with the private
+key and the Developer ID G2 intermediate) and `DEVELOPER_ID_P12_PASSWORD`.
 
 ## Boundaries
 

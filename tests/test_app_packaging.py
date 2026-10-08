@@ -135,11 +135,34 @@ class DmgTargetTests(unittest.TestCase):
             'capture("^mlx-workbench-nightly-(?<c>[0-9a-f]+)[.]dmg$")',
         ):
             self.assertIn(phrase, workflow)
-        # The key file never outlives the job.
-        cleanup = workflow.split("- name: Remove the API key", 1)[1]
+        # Signing material never outlives the job.
+        cleanup = workflow.split("- name: Remove the signing material", 1)[1]
         self.assertIn("if: always()", cleanup)
-        self.assertIn('rm -f "$RUNNER_TEMP/AuthKey.p8"', cleanup)
+        self.assertIn('security delete-keychain "$RUNNER_TEMP/signing.keychain-db"', cleanup)
+        self.assertIn('rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/developer-id.p12"', cleanup)
         self.assertIn("DEVELOPER_TEAM: Y76GMV87GM", workflow)
+
+    def test_ci_signs_developer_id_from_a_keychain_certificate(self):
+        # Xcode cannot cloud-sign Developer ID when authenticated with an API
+        # key, so the export needs the certificate in a keychain.
+        workflow = (ROOT / ".github" / "workflows" / "signed-dmg.yml").read_text(encoding="utf-8")
+        steps = workflow.split("\n      - name: ")
+        names = [step.split("\n", 1)[0] for step in steps[1:]]
+        self.assertLess(
+            names.index("Install the Developer ID certificate"), names.index("Build, sign and notarize")
+        )
+        install = next(s for s in steps if s.startswith("Install the Developer ID certificate"))
+        for phrase in (
+            "secrets.DEVELOPER_ID_P12 ",
+            "secrets.DEVELOPER_ID_P12_PASSWORD",
+            'security create-keychain -p "$password" "$keychain"',
+            'security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -f pkcs12',
+            "security set-key-partition-list -S apple-tool:,apple:,codesign:",
+            'security list-keychains -d user -s "$keychain" $existing',
+            'rm -f "$RUNNER_TEMP/developer-id.p12"',
+            'grep "Developer ID Application: .*($DEVELOPER_TEAM)"',
+        ):
+            self.assertIn(phrase, install)
 
     def test_nightly_builds_only_on_demand_and_only_for_app_changes(self):
         workflow = (ROOT / ".github" / "workflows" / "signed-dmg.yml").read_text(encoding="utf-8")

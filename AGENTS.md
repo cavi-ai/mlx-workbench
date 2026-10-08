@@ -354,7 +354,10 @@ from `mlx-agent` at runtime.
   Nightlies build only on manual dispatch and skip when `mlx-mac/`,
   `vendor/mlx-agent` and the `Makefile` are unchanged since the published one.
   `.github/workflows/signed-dmg.yml` publishes both DMGs with an App Store
-  Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets).
+  Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets) and
+  signs with a Developer ID Application certificate imported into a throwaway
+  keychain (`DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`): Xcode cannot
+  cloud-sign Developer ID when authenticated with an API key.
 - The Run view shows a **Memory-fit Advisor** verdict before serving:
   `FitAdvisor` estimates weights + KV cache + runtime overhead against live
   available memory (`MemorySnapshot` via Mach probes), yielding

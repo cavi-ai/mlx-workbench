@@ -24,7 +24,8 @@ and is versioned independently; submodule bumps are recorded here.
 - CI workflow `signed-dmg.yml` attaches a signed, notarized DMG to each
   published release and, when started by hand, publishes a rolling `nightly`
   prerelease from `main` if the app's sources changed since the last one;
-  signing uses an App Store Connect API key.
+  provisioning and notarization use an App Store Connect API key, signing a
+  Developer ID Application certificate in a throwaway keychain.
 
 ## [0.4.0] - 2026-10-08
 ### Added
