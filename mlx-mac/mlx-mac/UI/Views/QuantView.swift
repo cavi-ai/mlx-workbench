@@ -161,8 +161,10 @@ enum ComparePresentation {
         return [model.item.path, sibling?.item.path]
     }
 
-    static func canRun(slots: [String?], activeRunID: UUID?) -> Bool {
-        !variantPaths(slots).isEmpty && activeRunID == nil
+    static func canRun(slots: [String?], activeRunID: UUID?, availablePaths: Set<String>? = nil) -> Bool {
+        let paths = variantPaths(slots)
+        return !paths.isEmpty && activeRunID == nil
+            && (availablePaths.map { available in paths.allSatisfy { available.contains($0) } } ?? true)
     }
 
     /// A readable label for a model path recorded in a run: the Library's
@@ -382,6 +384,9 @@ struct QuantView: View {
     @State private var compareContentWidth = WorkbenchSize.assumedContentWidth
     @State private var mode: ComparisonMode = .chat
     @State private var showingSetEditor = false
+    @State private var pendingReuseSetup: MusicComparisonSetup?
+    @State private var reusedPromptSet: PromptSet?
+    @State private var reuseError: String?
     @State private var variantSlots: [String?] = [nil, nil]
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
     @State private var selectedRunID: ComparisonRun.ID?
@@ -485,6 +490,11 @@ struct QuantView: View {
             }
         }
         .task(id: isRouteActive) { consumeImportRequest() }
+        .sheet(item: $pendingReuseSetup) { setup in
+            MusicComparisonSetupSheet(setup: setup,
+                availablePaths: Set(readyModels.map { $0.item.path }), name: shortName,
+                onApply: applyReusedSetup)
+        }
         .onChange(of: appHost.workflowReportImportRequested) { _, _ in consumeImportRequest() }
         .onChange(of: comparison.activeRunID) { _, newValue in
             if let newValue { selectedRunID = newValue }
@@ -496,7 +506,8 @@ struct QuantView: View {
             }
             applySuggestions()
         }
-        .onChange(of: selectedPromptSetID) { _, _ in
+        .onChange(of: selectedPromptSetID) { _, newID in
+            if let reusedPromptSet, newID != reusedPromptSet.id { self.reusedPromptSet = nil }
             guard !manuallySelectedModels else { return }
             initializedSuggestions = false
             applySuggestions()
@@ -504,8 +515,10 @@ struct QuantView: View {
         .onChange(of: readyModels.map { $0.item.path }) { _, _ in
             guard comparison.activeRunID == nil else { return }
             if let familyFilter, !readyModels.contains(where: { ComparePresentation.familyLabel($0) == familyFilter }) { self.familyFilter = nil }
-            let reconciled = ComparisonInsights.reconcile(slots: variantSlots, available: Set(readyModels.map { $0.item.path }))
-            if reconciled != variantSlots { variantSlots = reconciled; selectionReason = "Unavailable models were cleared; your remaining selections were kept." }
+            if reusedPromptSet == nil {
+                let reconciled = ComparisonInsights.reconcile(slots: variantSlots, available: Set(readyModels.map { $0.item.path }))
+                if reconciled != variantSlots { variantSlots = reconciled; selectionReason = "Unavailable models were cleared; your remaining selections were kept." }
+            }
             applySuggestions()
         }
     }
@@ -563,6 +576,7 @@ struct QuantView: View {
     /// Mode, run pick and prompt set change together here, never from a change handler.
     private func apply(_ next: CompareSelection) {
         let modeChanged = next.mode != mode
+        if modeChanged { reusedPromptSet = nil }
         mode = next.mode
         selectedRunID = next.selectedRunID
         selectedPromptSetID = next.promptSetID
@@ -604,7 +618,12 @@ struct QuantView: View {
     }
 
     private var modePromptSets: [PromptSet] {
-        ComparisonViewLogic.promptSets(comparison.promptSets, for: mode)
+        let stored = ComparisonViewLogic.promptSets(comparison.promptSets, for: mode)
+        return reusedPromptSet.map { $0.effectiveMode == mode ? [$0] + stored : stored } ?? stored
+    }
+
+    private var unavailableSelections: [String] {
+        ComparePresentation.variantPaths(variantSlots).filter { path in !readyModels.contains { $0.item.path == path } }
     }
 
     private var selectedPromptSet: PromptSet? {
@@ -631,7 +650,7 @@ struct QuantView: View {
                 }
             }
 
-            if !readyModels.isEmpty {
+            if !readyModels.isEmpty || !ComparePresentation.variantPaths(variantSlots).isEmpty {
                 if filteredModels.isEmpty {
                     Text("No models match these filters. Your selected models are kept.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -656,6 +675,16 @@ struct QuantView: View {
             if comparison.activeRunID != nil {
                 ProgressView(comparison.progressMessage ?? "Measuring…")
             }
+            if reusedPromptSet != nil {
+                Text("Reused setup · temporary. Change models below, then run a new comparison.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+            if !unavailableSelections.isEmpty {
+                Label("Replace or remove unavailable models before running: \(unavailableSelections.map(shortName).joined(separator: ", ")).",
+                      systemImage: "exclamationmark.triangle")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+            }
+            ErrorBanner(text: reuseError)
             ErrorBanner(text: comparison.lastError)
             ErrorBanner(text: comparison.persistenceError)
         }
@@ -754,7 +783,7 @@ struct QuantView: View {
                         }
                     }
                 } label: {
-                    Text(variantSlots[index].flatMap { path in readyModels.first { $0.item.path == path } }.map(modelOptionLabel) ?? "Choose a model")
+                    Text(model.map(modelOptionLabel) ?? variantSlots[index].map { "Unavailable · \(shortName($0))" } ?? "Choose a model")
                         .lineLimit(1).truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -824,7 +853,8 @@ struct QuantView: View {
             .tint(WorkbenchColor.accent)
             .font(WorkbenchTypography.emphasis)
             .controlSize(.large)
-            .disabled(!ComparePresentation.canRun(slots: variantSlots, activeRunID: comparison.activeRunID))
+            .disabled(selectedPromptSet == nil || !ComparePresentation.canRun(slots: variantSlots,
+                activeRunID: comparison.activeRunID, availablePaths: Set(readyModels.map { $0.item.path })))
     }
 
     @ViewBuilder private var inlineControls: some View {
@@ -874,6 +904,17 @@ struct QuantView: View {
             ComparisonHistoryPicker(runs: comparison.runs, selection: shownRunBinding)
                 .frame(maxWidth: WorkbenchSize.Compare.historyMaximum, alignment: .leading)
                 .disabled(comparison.activeRunID != nil)
+            if let run = shownRun, run.state == .completed, run.effectiveMode == .musicGeneration {
+                Button {
+                    do { pendingReuseSetup = try MusicComparisonSetup(run: run); reuseError = nil }
+                    catch { reuseError = error.localizedDescription }
+                } label: { Label("Reuse setup", systemImage: "arrow.counterclockwise") }
+                    .buttonStyle(.borderless)
+                    .disabled(comparison.activeRunID != nil || run.promptEntries?.isEmpty != false)
+                    .help(run.promptEntries?.isEmpty != false
+                          ? "This older run has no recorded prompt snapshot."
+                          : "Edit the recorded music inputs for a new comparison.")
+            }
             Spacer()
             championsMenu
                 .disabled(comparison.activeRunID != nil)
@@ -1133,12 +1174,31 @@ struct QuantView: View {
     }
 
     private func startRun() {
-        guard let promptSet = selectedPromptSet else { return }
+        guard let promptSet = selectedPromptSet,
+              ComparePresentation.canRun(slots: variantSlots, activeRunID: comparison.activeRunID,
+                availablePaths: Set(readyModels.map { $0.item.path })) else { return }
         let variants = ComparePresentation.variantPaths(variantSlots).compactMap { path in
             readyModels.first { $0.item.path == path }
                 .map { (path: $0.item.path, signature: $0.item.signature) }
         }
         comparison.start(variants: variants, promptSet: promptSet, mode: mode)
+    }
+
+    private func applyReusedSetup(_ setup: MusicComparisonSetup, _ promptSet: PromptSet) {
+        guard comparison.activeRunID == nil else { return }
+        initializedSuggestions = true
+        manuallySelectedModels = true
+        mode = .musicGeneration
+        familyFilter = nil
+        sizeFilter = .all
+        modelSearch = ""
+        reusedPromptSet = promptSet
+        selectedPromptSetID = promptSet.id
+        variantSlots = setup.modelPaths.map { Optional($0) }
+        while variantSlots.count < 2 { variantSlots.append(nil) }
+        selectionReason = "Recorded model selection from \(setup.sourceName)."
+        reuseError = nil
+        pendingReuseSetup = nil
     }
 
     private func setPreferred(_ path: String, for useCase: UseCase) {
