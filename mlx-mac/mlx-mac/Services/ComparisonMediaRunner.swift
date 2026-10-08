@@ -119,6 +119,12 @@ struct LiveComparisonMediaRunner: ComparisonMediaRunner {
                 seconds: result.seconds, loadSeconds: result.loadSeconds, audioSeconds: result.audioSeconds,
                 realTimeFactor: result.realTimeFactor, peakMemoryGB: result.peakMemoryGB
             )
+        case .musicGeneration:
+            guard let out = request.outputURL else { throw ComparisonMediaError.missingOutputPath }
+            let result = try await api.music(path: request.modelPath, caption: entry.text, out: out.path,
+                                             parameters: entry.media ?? ComparisonMediaFixtures.musicGenerationParameters)
+            return MediaRunOutput(seconds: result.seconds, loadSeconds: result.loadSeconds, audioSeconds: result.audioSeconds,
+                                  realTimeFactor: result.realTimeFactor, peakMemoryGB: result.peakMemoryGB)
         case .imageGeneration:
             guard let out = request.outputURL else { throw ComparisonMediaError.missingOutputPath }
             let parameters = entry.media ?? MediaParameters()
@@ -172,7 +178,7 @@ enum ComparisonMediaScoring {
         let text = output.text ?? ""
         let seconds = output.seconds
         let realTimeFactor: Double? = output.realTimeFactor ?? {
-            guard mode == .speechToText || mode == .textToSpeech,
+            guard mode == .speechToText || mode == .textToSpeech || mode == .musicGeneration,
                   let seconds, let audio = output.audioSeconds, audio > 0 else { return nil }
             return seconds / audio
         }()

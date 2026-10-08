@@ -109,6 +109,16 @@ enum ComparisonMediaFixtures {
         mode: .textToSpeech
     )
 
+    static let musicGenerationParameters = MediaParameters(steps: 30, seed: 42, durationSeconds: 15, lyrics: "[instrumental]")
+
+    static let musicGenerationSet = PromptSet(
+        id: "builtin-music-generation", name: "Instrumental sketches", useCase: nil,
+        prompts: [
+            PromptEntry(id: "music-piano", text: "A gentle solo piano melody, warm and reflective, no vocals.", media: musicGenerationParameters),
+            PromptEntry(id: "music-electronic", text: "An upbeat electronic groove with crisp drums, rounded bass and bright synths, no vocals.", media: musicGenerationParameters),
+        ], origin: .builtin, mode: .musicGeneration
+    )
+
     static let imageGenerationSet = PromptSet(
         id: "builtin-image-generation",
         name: "Image prompts",
@@ -149,7 +159,7 @@ enum ComparisonMediaFixtures {
     )
 
     static let all: [PromptSet] = [
-        visionSet, videoUnderstandingSet, speechToTextSet, textToSpeechSet, imageGenerationSet, videoGenerationSet,
+        visionSet, videoUnderstandingSet, speechToTextSet, textToSpeechSet, musicGenerationSet, imageGenerationSet, videoGenerationSet,
     ]
 
     // MARK: Generators

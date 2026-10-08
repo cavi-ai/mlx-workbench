@@ -389,13 +389,10 @@ struct QuantView: View {
                     .font(WorkbenchTypography.roundedHeading)
             }
 
-            Picker("Mode", selection: $mode) {
-                ForEach(ComparisonMode.allCases) { entry in
-                    Text(entry.title).tag(entry)
-                }
+            ViewThatFits(in: .horizontal) {
+                comparisonModePicker.pickerStyle(.segmented).labelsHidden().fixedSize()
+                comparisonModePicker.pickerStyle(.menu)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
             .disabled(comparison.activeRunID != nil)
             .onChange(of: mode) { _, newMode in
                 familyFilter = nil
@@ -595,13 +592,7 @@ struct QuantView: View {
 
     private func runHeader(_ run: ComparisonRun) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
-            Picker("Run", selection: $selectedRunID) {
-                ForEach(comparison.runs) { entry in
-                    Text("\(entry.effectiveMode == .chat ? "" : entry.effectiveMode.title + " · ")\(entry.promptSetName) · \(entry.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(entry.results.count) models")
-                        .tag(Optional(entry.id))
-                }
-            }
-            .pickerStyle(.menu)
+            ComparisonHistoryPicker(runs: comparison.runs, selection: $selectedRunID)
             .frame(maxWidth: 420, alignment: .leading)
             championsMenu
             Spacer()
@@ -614,6 +605,14 @@ struct QuantView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+            }
+        }
+    }
+
+    private var comparisonModePicker: some View {
+        Picker("Mode", selection: $mode) {
+            ForEach(ComparisonMode.allCases) { entry in
+                Text(entry.title).tag(entry)
             }
         }
     }

@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: Prompt sets
 
-/// Generation settings for the image and video modes.
+/// Generation settings preserved with image, video and music prompt snapshots.
 struct MediaParameters: Codable, Equatable, Sendable {
     /// Square edge for image generation.
     var size: Int?
@@ -21,8 +21,11 @@ struct MediaParameters: Codable, Equatable, Sendable {
     var seed: Int?
     var frames: Int?
     var fps: Int?
+    /// Maximum requested music duration; the output reports its measured duration.
+    var durationSeconds: Double?
+    var lyrics: String?
 
-    init(size: Int? = nil, width: Int? = nil, height: Int? = nil, steps: Int? = nil, seed: Int? = nil, frames: Int? = nil, fps: Int? = nil) {
+    init(size: Int? = nil, width: Int? = nil, height: Int? = nil, steps: Int? = nil, seed: Int? = nil, frames: Int? = nil, fps: Int? = nil, durationSeconds: Double? = nil, lyrics: String? = nil) {
         self.size = size
         self.width = width
         self.height = height
@@ -30,6 +33,8 @@ struct MediaParameters: Codable, Equatable, Sendable {
         self.seed = seed
         self.frames = frames
         self.fps = fps
+        self.durationSeconds = durationSeconds
+        self.lyrics = lyrics
     }
 }
 

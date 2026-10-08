@@ -42,7 +42,7 @@ enum ComparisonViewLogic {
             if let seconds = sample.seconds, let audio = sample.audioSeconds {
                 parts.append(String(format: "%.1f s for %.1f s of audio", seconds, audio))
             }
-        case .textToSpeech:
+        case .textToSpeech, .musicGeneration:
             if let audio = sample.audioSeconds { parts.append(String(format: "%.1f s of audio", audio)) }
         case .imageGeneration, .videoGeneration:
             if let spread = sample.pixelStd { parts.append(String(format: "pixel spread %.1f", spread)) }
@@ -390,7 +390,10 @@ struct MediaPromptSetEditor: View {
         var text = ""
         var inputPath: String?
         var keywords = ""
+        var lyrics = "[instrumental]"
     }
+
+    @State private var durationSeconds = 15.0
 
     private var textLabel: String {
         switch mode {
@@ -405,6 +408,7 @@ struct MediaPromptSetEditor: View {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
             && entries.allSatisfy { draft in
                 (mode == .speechToText || !draft.text.trimmingCharacters(in: .whitespaces).isEmpty)
+                    && (mode != .musicGeneration || !draft.lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     && (mode.inputKind == nil || draft.inputPath != nil)
             }
     }
@@ -418,6 +422,10 @@ struct MediaPromptSetEditor: View {
                     ForEach($entries) { $draft in
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                             TextField(textLabel, text: $draft.text)
+                            if mode == .musicGeneration {
+                                TextField("Lyrics with section tags, or [instrumental]", text: $draft.lyrics, axis: .vertical)
+                                    .lineLimit(2...6)
+                            }
                             if let kind = mode.inputKind {
                                 HStack {
                                     Button("Choose \(kind.rawValue) file…") { draft.inputPath = Self.pick(kind) ?? draft.inputPath }
@@ -434,6 +442,11 @@ struct MediaPromptSetEditor: View {
                 }
             }
             .frame(maxHeight: 320)
+            if mode == .musicGeneration {
+                Stepper("Requested duration: \(Int(durationSeconds)) s", value: $durationSeconds, in: 5...360, step: 5)
+                Text("Duration is a maximum request. Listen to compare quality; generation speed measures performance only.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
             HStack {
                 Button { entries.append(Draft()) } label: { Label("Add prompt", systemImage: "plus") }
                 Spacer()
@@ -465,7 +478,9 @@ struct MediaPromptSetEditor: View {
                 inputKind: mode.inputKind,
                 inputPath: draft.inputPath,
                 expectedKeywords: words.isEmpty ? nil : words,
-                media: media
+                media: mode == .musicGeneration
+                    ? MediaParameters(steps: 30, seed: 42, durationSeconds: durationSeconds, lyrics: draft.lyrics)
+                    : media
             )
         }
         onSave(PromptSet(
@@ -491,5 +506,116 @@ struct MediaPromptSetEditor: View {
         case .audio: panel.allowedContentTypes = [.wav, .mp3]
         }
         return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+}
+
+// MARK: - Run history
+
+enum ComparisonHistoryLogic {
+    struct Group: Identifiable {
+        let mode: ComparisonMode
+        let runs: [ComparisonRun]
+        var id: ComparisonMode { mode }
+    }
+
+    static func groups(_ runs: [ComparisonRun], query: String) -> [Group] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matching = runs.filter { query.isEmpty || "\($0.effectiveMode.title) \($0.promptSetName) \($0.variants.joined(separator: " "))".localizedCaseInsensitiveContains(query) }
+        return ComparisonMode.allCases.compactMap { mode in
+            let entries = matching.filter { $0.effectiveMode == mode }.sorted { $0.startedAt > $1.startedAt }
+            return entries.isEmpty ? nil : Group(mode: mode, runs: entries)
+        }
+    }
+
+    static func modelCount(_ run: ComparisonRun) -> String {
+        "\(run.variants.count) \(run.variants.count == 1 ? "model" : "models")"
+    }
+}
+
+struct ComparisonHistoryPicker: View {
+    let runs: [ComparisonRun]
+    @Binding var selection: UUID?
+    @State private var expanded = false
+
+    private var selected: ComparisonRun? { runs.first { $0.id == selection } }
+
+    var body: some View {
+        Button {
+            expanded = true
+        } label: {
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Image(systemName: "clock.arrow.circlepath").foregroundStyle(WorkbenchColor.muted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selected?.promptSetName ?? "Run history").font(WorkbenchTypography.label).lineLimit(1)
+                    if let selected {
+                        Text("\(selected.effectiveMode.title) · \(selected.startedAt.formatted(date: .abbreviated, time: .shortened))")
+                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(1)
+                    }
+                }
+                Image(systemName: "chevron.down").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Choose comparison run")
+        .popover(isPresented: $expanded, arrowEdge: .bottom) {
+            ComparisonHistoryPanel(runs: runs, selection: selection) { id in
+                selection = id
+                expanded = false
+            }
+        }
+    }
+}
+
+struct ComparisonHistoryPanel: View {
+    let runs: [ComparisonRun]
+    let selection: UUID?
+    let onSelect: (UUID) -> Void
+    @State private var query = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Text("Run history").font(WorkbenchTypography.roundedHeading)
+            TextField("Search runs or models", text: $query)
+                .textFieldStyle(.roundedBorder)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                    let groups = ComparisonHistoryLogic.groups(runs, query: query)
+                    if groups.isEmpty {
+                        Text("No matching runs").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    }
+                    ForEach(groups) { group in
+                        Text(group.mode.title.uppercased()).font(WorkbenchTypography.metadata.weight(.semibold))
+                            .tracking(1).foregroundStyle(WorkbenchColor.muted).padding(.top, WorkbenchSpacing.xs)
+                        ForEach(group.runs) { run in
+                            Button {
+                                onSelect(run.id)
+                            } label: {
+                                HStack(spacing: WorkbenchSpacing.sm) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(run.promptSetName).font(WorkbenchTypography.label).lineLimit(1)
+                                        Text("\(run.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(ComparisonHistoryLogic.modelCount(run)) · \(run.state.rawValue.capitalized)")
+                                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                                    }
+                                    Spacer()
+                                    if selection == run.id {
+                                        Image(systemName: "checkmark").foregroundStyle(WorkbenchColor.accent)
+                                    }
+                                }
+                                .padding(WorkbenchSpacing.sm)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(selection == run.id ? WorkbenchColor.accent.opacity(0.12) : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 8))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(selection == run.id ? [.isSelected] : [])
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 400)
+        }
+        .padding(WorkbenchSpacing.md)
+        .frame(width: 400)
     }
 }

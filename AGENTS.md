@@ -121,13 +121,13 @@ from `mlx-agent` at runtime.
   arguments validated against the schema's required keys). Past runs are
   browsable history with Swift Charts; `ModelPerformanceProfile` aggregates
   per-model stats into Model Details.
-  **Compare modes**: a segmented picker above the variant slots (`ComparisonMode`:
+  **Compare modes**: a picker above the variant slots (segmented when it fits, otherwise a menu; `ComparisonMode`:
   chat, vision, video understanding, speech to text, text to speech, image
-  generation, video generation); slots list only models whose `ModelTaskType`
+  generation, video generation, music generation); slots list only models whose `ModelTaskType`
   the mode accepts (`ComparisonViewLogic.candidates(from:mode:)`). Chat keeps
   the ServeProbe path above unchanged. Every other mode runs per variant, per
   prompt, sequentially through an injectable `ComparisonMediaRunner` (live:
-  `convert describe|transcribe|speak|generate|video` on the `WorkbenchAPI`
+  `convert describe|transcribe|speak|music|generate|video` on the `WorkbenchAPI`
   actor, never the main actor). Blocking CLI execution runs on a dispatch
   worker through a throwing continuation, so long media jobs hold neither
   the API actor nor a Swift cooperative worker. Prompts carry optional media input
@@ -152,6 +152,13 @@ from `mlx-agent` at runtime.
   real-time factor, seconds per step, seconds per frame. Output diff and
   Promote winner stay chat-only; media runs do not feed the
   RecommendationEngine.
+  Music generation accepts `music_generation` models and uses the audio backend's
+  dedicated music loader. Prompt snapshots preserve caption, lyrics, requested
+  duration, steps and seed; built-ins request 15-second instrumental clips.
+  WAV playback and real-time factor use the existing audio results path, with
+  no automatic quality score. Generation is offline from an absolute local
+  directory. Run history uses a searchable popover grouped by mode, newest
+  first within each group; selecting a row keeps the existing results behavior.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.

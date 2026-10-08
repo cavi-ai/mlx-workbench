@@ -168,6 +168,16 @@ actor WorkbenchAPI {
         ["convert", "speak", "--path", path, "--text=\(text)", "--out", out, "--timeout", "600"]
     }
 
+    static func musicArguments(path: String, caption: String, out: String, parameters: MediaParameters) -> [String] {
+        ["convert", "music", "--path", path, "--caption=\(caption)", "--lyrics=\(parameters.lyrics ?? "[instrumental]")",
+         "--out", out, "--duration", String(parameters.durationSeconds ?? 15), "--steps", String(parameters.steps ?? 30),
+         "--seed", String(parameters.seed ?? 42), "--timeout", "3600"]
+    }
+
+    func music(path: String, caption: String, out: String, parameters: MediaParameters) async throws -> SpeakResult {
+        try await runOffActor(SpeakResult.self, Self.musicArguments(path: path, caption: caption, out: out, parameters: parameters), timeout: 3700)
+    }
+
     /// One sentence spoken into a new WAV by a converted text-to-speech model (`convert speak`).
     /// The text is one `--text=` token so a sentence that starts with a dash still parses.
     func speak(path: String, text: String, out: String) async throws -> SpeakResult {
