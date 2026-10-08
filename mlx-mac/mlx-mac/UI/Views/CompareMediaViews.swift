@@ -28,17 +28,17 @@ enum ComparisonViewLogic {
         return ids.map { PromptEntry(id: $0, text: $0) }
     }
 
-    /// The numbers shown under a result cell.
-    static func metricsLine(_ sample: ComparisonSample, mode: ComparisonMode) -> String {
+    /// The numbers shown under a result cell: the mode's primary metric, then the rest as one line
+    /// that wraps only between metrics (the spaces inside a metric do not break).
+    static func metrics(_ sample: ComparisonSample, mode: ComparisonMode) -> (primary: String?, details: String) {
+        let primary = mode.primaryMetric.value(of: sample).map(mode.primaryMetric.format)
         var parts: [String] = []
-        if let value = mode.primaryMetric.value(of: sample) { parts.append(mode.primaryMetric.format(value)) }
         switch mode {
         case .chat:
             break
         case .vision, .videoUnderstanding:
             if let tokens = sample.generationTokens { parts.append("\(tokens) tokens") }
         case .speechToText:
-            if let rate = sample.wordErrorRate { parts.append(String(format: "WER %.0f%%", rate * 100)) }
             if let seconds = sample.seconds, let audio = sample.audioSeconds {
                 parts.append(String(format: "%.1f s for %.1f s of audio", seconds, audio))
             }
@@ -50,7 +50,8 @@ enum ComparisonViewLogic {
         if mode != .speechToText, let seconds = sample.seconds { parts.append(String(format: "%.1f s", seconds)) }
         if let load = sample.loadSeconds { parts.append(String(format: "load %.1f s", load)) }
         if let memory = sample.peakMemoryGB { parts.append(String(format: "%.1f GB peak", memory)) }
-        return parts.joined(separator: " · ")
+        let details = parts.map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: " · ")
+        return (primary, details)
     }
 }
 
@@ -70,6 +71,12 @@ struct MediaRunResultsView: View {
 
     @State private var preview: PreviewImage?
 
+    /// Headers, prompts and cards share these, so every column's text starts on the same line.
+    private static let promptWidth: CGFloat = 220
+    private static let columnWidth: CGFloat = 264
+    private static let inset = WorkbenchSpacing.sm
+    private static let contentWidth = columnWidth - 2 * inset
+
     private var mode: ComparisonMode { run.effectiveMode }
 
     var body: some View {
@@ -77,17 +84,22 @@ struct MediaRunResultsView: View {
             chart
             ScrollView(.horizontal) {
                 Grid(alignment: .topLeading, horizontalSpacing: WorkbenchSpacing.sm, verticalSpacing: WorkbenchSpacing.sm) {
-                    GridRow {
+                    GridRow(alignment: .lastTextBaseline) {
                         Text("Prompt")
                             .font(WorkbenchTypography.label)
                             .foregroundStyle(WorkbenchColor.muted)
-                            .frame(width: 200, alignment: .leading)
+                            .frame(width: Self.promptWidth, alignment: .leading)
                         ForEach(run.results) { result in
                             Text(name(result.modelPath))
                                 .font(WorkbenchTypography.emphasis)
-                                .frame(width: 280, alignment: .leading)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(result.modelPath)
+                                .padding(.horizontal, Self.inset)
+                                .frame(width: Self.columnWidth, alignment: .leading)
                         }
                     }
+                    Divider()
                     ForEach(ComparisonViewLogic.rows(for: run)) { entry in
                         GridRow {
                             promptCell(entry)
@@ -124,15 +136,15 @@ struct MediaRunResultsView: View {
     }
 
     private func promptCell(_ entry: PromptEntry) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Text(entry.text)
                 .font(WorkbenchTypography.secondary)
                 .textSelection(.enabled)
             if let kind = mode.inputKind, let url = inputURL(entry) {
                 switch kind {
-                case .image: ThumbnailView(url: url, height: 72) { preview = PreviewImage(url: url) }
+                case .image: ThumbnailView(url: url, size: CGSize(width: 96, height: 96)) { preview = PreviewImage(url: url) }
                 case .audio: AudioClipButton(url: url, label: "Play input")
-                case .video: ClipVideoView(url: url).frame(height: 96)
+                case .video: ClipVideoView(url: url).frame(width: Self.promptWidth, height: Self.promptWidth * 9 / 16)
                 }
             }
             if let keywords = entry.expectedKeywords, !keywords.isEmpty {
@@ -141,7 +153,8 @@ struct MediaRunResultsView: View {
                     .foregroundStyle(WorkbenchColor.muted)
             }
         }
-        .frame(width: 200, alignment: .leading)
+        .padding(.vertical, Self.inset)
+        .frame(width: Self.promptWidth, alignment: .leading)
     }
 
     private func inputURL(_ entry: PromptEntry) -> URL? {
@@ -160,8 +173,9 @@ struct MediaRunResultsView: View {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    /// A card that fills its row's height, so the cards of one prompt line up top and bottom.
     private func resultCell(_ sample: ComparisonSample?, result: VariantResult) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             if let sample {
                 if let error = sample.error {
                     Text(error)
@@ -170,9 +184,7 @@ struct MediaRunResultsView: View {
                         .textSelection(.enabled)
                 } else {
                     outputView(sample)
-                    Text(ComparisonViewLogic.metricsLine(sample, mode: mode))
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
+                    metrics(sample)
                 }
             } else if let error = result.error {
                 Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
@@ -180,17 +192,34 @@ struct MediaRunResultsView: View {
                 Text("Pending").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
         }
-        .padding(WorkbenchSpacing.xs)
-        .frame(width: 280, alignment: .leading)
+        .padding(Self.inset)
+        .frame(width: Self.columnWidth, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(WorkbenchColor.canvas)
         .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+    }
+
+    private func metrics(_ sample: ComparisonSample) -> some View {
+        let metrics = ComparisonViewLogic.metrics(sample, mode: mode)
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            if let primary = metrics.primary {
+                Text(primary).font(WorkbenchTypography.emphasis.monospacedDigit())
+            }
+            if !metrics.details.isEmpty {
+                Text(metrics.details)
+                    .font(WorkbenchTypography.secondary.monospacedDigit())
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     @ViewBuilder
     private func outputView(_ sample: ComparisonSample) -> some View {
         switch mode.outputKind {
         case .text:
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                // The text's own height, up to 140 points; a longer answer scrolls.
                 ScrollView {
                     Text(sample.fullOutput ?? sample.outputExcerpt)
                         .font(WorkbenchTypography.value)
@@ -198,15 +227,19 @@ struct MediaRunResultsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 140)
+                .fixedSize(horizontal: false, vertical: true)
                 badge(sample)
             }
         case .image, .audio, .video:
             if let url = store.artifactURL(runID: run.id, artifact: sample.artifact ?? ""),
                FileManager.default.fileExists(atPath: url.path) {
                 switch mode.outputKind {
-                case .image: ThumbnailView(url: url, height: 140) { preview = PreviewImage(url: url) }
+                case .image:
+                    ThumbnailView(url: url, size: CGSize(width: Self.contentWidth, height: Self.contentWidth)) {
+                        preview = PreviewImage(url: url)
+                    }
                 case .audio: AudioClipButton(url: url, label: sample.audioSeconds.map { String(format: "Play · %.1f s", $0) } ?? "Play")
-                default: ClipVideoView(url: url).frame(height: 160)
+                default: ClipVideoView(url: url).frame(width: Self.contentWidth, height: Self.contentWidth * 9 / 16)
                 }
             } else {
                 Label("output pruned", systemImage: "trash.slash")
@@ -239,26 +272,37 @@ struct PreviewImage: Identifiable {
 
 // MARK: - Cells
 
-/// An image file as a thumbnail; click opens the larger view.
+/// An image file fitted into a fixed box; click opens the larger view. The box keeps its size while
+/// the file loads, so the grid does not jump.
 struct ThumbnailView: View {
     let url: URL
-    let height: CGFloat
+    let size: CGSize
     let onOpen: () -> Void
     @State private var image: NSImage?
+    @State private var loaded = false
 
     var body: some View {
-        Group {
+        ZStack {
+            WorkbenchColor.surface
             if let image {
                 Button(action: onOpen) {
-                    Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: height)
+                    Image(nsImage: image).resizable().scaledToFit()
                 }
                 .buttonStyle(.plain)
                 .help("Open larger")
-            } else {
+            } else if loaded {
                 Text("Image unavailable").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            } else {
+                ProgressView().controlSize(.small)
             }
         }
-        .task(id: url) { image = await MediaImageLoader.load(url) }
+        .frame(width: size.width, height: size.height)
+        .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+        .task(id: url) {
+            loaded = false
+            image = await MediaImageLoader.load(url)
+            loaded = true
+        }
     }
 }
 

@@ -441,12 +441,29 @@ final class ComparisonMediaTests: XCTestCase {
             output: MediaRunOutput(seconds: 3, audioSeconds: 6), artifact: "0-t.wav"
         )
         XCTAssertEqual(speech.realTimeFactor, 0.5)
-        let lines = [
-            ComparisonViewLogic.metricsLine(image, mode: .imageGeneration),
-            ComparisonViewLogic.metricsLine(speech, mode: .textToSpeech),
-        ]
-        XCTAssertTrue(lines[0].hasPrefix("2.00 s/step"), lines[0])
-        XCTAssertTrue(lines[1].hasPrefix("RTF 0.50"), lines[1])
+        XCTAssertEqual(ComparisonViewLogic.metrics(image, mode: .imageGeneration).primary, "2.00 s/step")
+        XCTAssertEqual(ComparisonViewLogic.metrics(speech, mode: .textToSpeech).primary, "RTF 0.50")
+    }
+
+    func testMetricDetailsWrapOnlyBetweenMetrics() {
+        let image = ComparisonMediaScoring.sample(
+            mode: .imageGeneration,
+            entry: PromptEntry(id: "i", text: "x", media: MediaParameters(size: 512, steps: 20, seed: 42)),
+            output: MediaRunOutput(seconds: 34.6, loadSeconds: 11.2, peakMemoryGB: 9.5, pixelStd: 54), artifact: "0-i.png"
+        )
+        let metrics = ComparisonViewLogic.metrics(image, mode: .imageGeneration)
+        XCTAssertEqual(metrics.primary, "1.73 s/step")
+        let nbsp = "\u{00A0}"
+        XCTAssertEqual(metrics.details, ["pixel spread 54.0", "34.6 s", "load 11.2 s", "9.5 GB peak"]
+            .map { $0.replacingOccurrences(of: " ", with: nbsp) }.joined(separator: " · "))
+
+        let speech = ComparisonMediaScoring.sample(
+            mode: .speechToText, entry: PromptEntry(id: "s", text: "the quick brown fox"),
+            output: MediaRunOutput(text: "the quick brown fox", seconds: 1, audioSeconds: 4), artifact: "0-s.txt"
+        )
+        let speechMetrics = ComparisonViewLogic.metrics(speech, mode: .speechToText)
+        XCTAssertFalse(speechMetrics.details.contains("WER"), "the badge already shows the word error rate")
+        XCTAssertEqual(speechMetrics.details, "1.0 s for 4.0 s of audio".replacingOccurrences(of: " ", with: nbsp))
     }
 
     // MARK: Coordinator

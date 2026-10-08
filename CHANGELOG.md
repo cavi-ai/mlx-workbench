@@ -26,6 +26,14 @@ and is versioned independently; submodule bumps are recorded here.
   prerelease from `main` if the app's sources changed since the last one;
   signing uses an App Store Connect API key.
 
+### Fixed
+
+- Compare results grid: headers, prompts and outputs share one left edge;
+  images fill their column and keep their size while loading; a model name
+  stays on one line (full path on hover); text outputs take their own height
+  up to a scrolling 140 points; the mode's metric leads each cell and the
+  other metrics wrap only between metrics; cards of one prompt share a height.
+
 ## [0.4.0] - 2026-10-08
 ### Added
 
