@@ -18,7 +18,7 @@ struct CanaryCase: Equatable, Sendable {
 }
 
 enum CanarySuite {
-    static let version = 1
+    static let version = 2
 
     static let longContextFact = "The crimson okapi hid forty-two brass keys under the old lighthouse."
 
@@ -57,7 +57,7 @@ enum CanarySuite {
             id: "arithmetic",
             title: "Reasoning",
             prompt: "Compute 17 * 23 step by step, then state the final number.",
-            maxTokens: 160,
+            maxTokens: 384,  // a complete step-by-step answer can exceed 256 tokens
             requiredSubstrings: ["391"],
             minResponseLength: 3
         ),

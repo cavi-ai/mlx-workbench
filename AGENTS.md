@@ -85,6 +85,12 @@ from `mlx-agent` at runtime.
   `ModelItem.draft` (scan's `draft`, or a converted output's `dspark_target_name`) names the target in Model Details.
   A DeepSeek-V4 DSpark `dflash` GGUF converts through mlx-agent's `deepseek_v4_dspark` port (`convert start --gguf`
   adds `--port`); other drafters are refused at plan time (`unsupported_draft`).
+- Native serving, verification, chat comparisons and endpoints use `--runtime auto`:
+  the agent reads local model metadata, selects a declared serving backend and
+  binds an optional backend's isolated executable into eager and JIT previews.
+  Already-MLX intake retains backend/install readiness. Prism's published 2-bit
+  packs use the pinned MLX-VLM Hadamard adapter without executing repository
+  runtime code. GGUF projector/companion files are refused before conversion.
 - Serve accepts HF repo ids or local directories (`serve start --path`,
   upstream ≥ the local-path serve change). `WorkbenchAPI.serveModelArguments`
   preserves every local directory, including HF-cache snapshots, through

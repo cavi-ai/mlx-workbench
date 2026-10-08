@@ -14,6 +14,17 @@ enum ModelWorkflowResolver {
         now: Date = Date()
     ) -> WorkflowDestinationDecision {
         _ = now
+        // Match the agent's companion classification, including filename evidence
+        // for saved workflows whose source metadata was not persisted.
+        let stem = URL(fileURLWithPath: source.path).deletingPathExtension().lastPathComponent.lowercased()
+        if source.companion == true
+            || ["clip", "mmproj"].contains(source.architecture?.lowercased() ?? "")
+            || stem.contains("mmproj") || stem.contains("projector") {
+            return .blocked(
+                sameDirectoryOutputURL(for: source),
+                reason: "This GGUF is a vision projector or companion file and cannot be converted as a standalone model. Select the main model GGUF or a supported Hugging Face source instead."
+            )
+        }
         if let existing = library?.models.first(where: { matchesEquivalent(source: source, candidate: $0) }) {
             return .reuseExisting(existing)
         }
