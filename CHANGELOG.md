@@ -43,6 +43,10 @@ and is versioned independently; submodule bumps are recorded here.
 - `vendor/mlx-agent` bumped to fcf0d91: `convert describe` drops special
   tokens from answers (moondream3 no longer starts with
   `<|md_reserved_4|>`).
+- `vendor/mlx-agent` bumped to b460e5e: Whisper models whose vocabulary
+  has no `<|nospeech|>` (those before large-v3) stop transcribing at the
+  end of speech instead of running to the token limit with invented text,
+  in Compare and in the speech-to-text canary.
 - Native app conversions failed with "[Errno 30] Read-only file system:
   '/.mlx-agent-receipts'": convert start/status commands did not pass
   `--receipts-dir`, so the agent derived its receipts directory from the
