@@ -9,21 +9,14 @@ import SwiftUI
 /// keys, and the buttons keep the rows addressable by label in UI tests.
 struct AppSidebar: View {
     @Binding var selectedRoute: AppRoute
-    @State private var labExpanded = false
 
     var badges: [AppRoute: String] = [:]
 
     var body: some View {
         List(selection: $selectedRoute) {
-            ForEach(AppRoute.grouped.filter { $0.group != .settings }, id: \.group) { projection in
-                if projection.group == .lab {
-                    Section {
-                        DisclosureGroup(isExpanded: labDisclosureBinding) {
-                            routeRows(projection.routes)
-                        } label: {
-                            Text(projection.group.rawValue)
-                        }
-                    }
+            ForEach(AppRoute.grouped, id: \.group) { projection in
+                if projection.group == .settings {
+                    Section { routeRows(projection.routes) }
                 } else {
                     Section(projection.group.rawValue) {
                         routeRows(projection.routes)
@@ -32,27 +25,7 @@ struct AppSidebar: View {
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                Divider()
-                routeRow(.settings)
-                    .padding(.horizontal, WorkbenchSpacing.xs)
-                    .padding(.vertical, WorkbenchSpacing.xxs)
-            }
-        }
-        .onChange(of: selectedRoute) { _, route in
-            if route.group == .lab {
-                labExpanded = true
-            }
-        }
         .accessibilityLabel("Workbench navigation")
-    }
-
-    private var labDisclosureBinding: Binding<Bool> {
-        Binding(
-            get: { labExpanded || selectedRoute.group == .lab },
-            set: { labExpanded = $0 }
-        )
     }
 
     @ViewBuilder

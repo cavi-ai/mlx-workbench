@@ -14,7 +14,7 @@ struct LibraryRow: Identifiable, Hashable {
     let id: String
     let name: String
     let detail: String
-    /// "{type} · {location}" for a variant; the count or bucket text otherwise.
+    /// Model type for a variant; the count or bucket text otherwise.
     let subline: String
     let readiness: ModelReadiness?
     let quantization: String
@@ -46,7 +46,7 @@ struct LibraryRow: Identifiable, Hashable {
     static func variant(_ model: LibraryModel, contextTokens: Int = FitAdvisor.defaultContextTokens) -> LibraryRow {
         LibraryRow(
             id: model.item.path,
-            name: model.displayName,
+            name: model.displayName.split(separator: "/").last.map(String.init) ?? model.displayName,
             detail: LibraryTablePresentation.detail(for: model),
             subline: LibraryTablePresentation.subline(for: model),
             readiness: model.readiness,
@@ -64,7 +64,7 @@ struct LibraryRow: Identifiable, Hashable {
     static func family(_ group: LibraryGroupViewModel, children: [LibraryRow]) -> LibraryRow {
         let quantizations = Set(children.map(\.quantization).filter { !$0.isEmpty })
         let types = Set(children.map(\.taskType))
-        let count = "\(children.count) variants"
+        let count = "\(children.count) \(children.count == 1 ? "model" : "variants")"
         return LibraryRow(
             id: familyIDPrefix + group.id,
             name: group.primaryDisplayName,
@@ -122,18 +122,20 @@ enum LibraryTablePresentation {
         return URL(fileURLWithPath: model.item.path).deletingLastPathComponent().path
     }
 
-    /// "{type} · {location}": the location is the parent folder name, or
-    /// "Hugging Face" for cache entries. A part the display name already
-    /// contains is left out, so the line never repeats the name.
+    /// Location stays in the inspector; rows carry only model type.
     static func subline(for model: LibraryModel) -> String {
-        let location: String? = {
-            if HFRepoID.forPath(model.item.path) != nil { return "Hugging Face" }
-            let folder = URL(fileURLWithPath: model.item.path).deletingLastPathComponent().lastPathComponent
-            return folder.isEmpty || folder == "/" ? nil : folder
-        }()
-        let parts = [model.item.task?.type.title, location].compactMap { $0 }
-        let distinct = parts.filter { !model.displayName.localizedCaseInsensitiveContains($0) }
-        return (distinct.isEmpty ? Array(parts.prefix(1)) : distinct).joined(separator: " · ")
+        model.item.task?.type.title ?? ""
+    }
+
+    /// Browsing families are visible series headings, including single-model
+    /// families. This projection never changes identity or evidence grouping.
+    static func familyRows(groups: [LibraryGroupViewModel], sortOrder: [KeyPathComparator<LibraryRow>], contextTokens: Int = FitAdvisor.defaultContextTokens) -> [LibraryRow] {
+        let order = sortOrder.isEmpty ? defaultSortOrder : sortOrder
+        return Dictionary(grouping: groups.flatMap(\.variants), by: ComparePresentation.familyLabel).map { name, models in
+            let children = models.map { LibraryRow.variant($0, contextTokens: contextTokens) }.sorted(using: order)
+            let group = ModelGroup(variants: models, normalizedModelKey: name, primaryDisplayName: name)
+            return LibraryRow.family(LibraryGroupViewModel(sourceGroup: group, variants: models), children: children)
+        }.sorted(using: order)
     }
 
     /// Sort key for the Fits now column: the estimated need at `contextTokens`,
@@ -436,7 +438,7 @@ struct LibraryNameCell: View {
         if showsInlineStatus, let readiness = row.readiness, readiness != .ready {
             LibraryStatusLabel(readiness: readiness)
                 .font(WorkbenchTypography.secondary)
-        } else {
+        } else if !row.subline.isEmpty {
             Text(row.subline)
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)

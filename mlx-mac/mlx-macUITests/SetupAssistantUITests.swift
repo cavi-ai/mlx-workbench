@@ -84,4 +84,56 @@ final class SetupAssistantUITests: XCTestCase {
                       "Assistant did not return after being skipped")
         capture("07-skip-returned")
     }
+
+    func testLibraryFamilyContextMenuReviewsDeletionWithoutDeletingOnCancel() throws {
+        let root = URL(fileURLWithPath: configPath).deletingLastPathComponent()
+        let model = root.appendingPathComponent("models/Qwen3-4B-4bit")
+        let script = root.appendingPathComponent("agent/scripts/mlx-agent")
+        try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{\"quantization\":{\"bits\":4}}".utf8).write(to: model.appendingPathComponent("config.json"))
+        try Data("fixture weights".utf8).write(to: model.appendingPathComponent("model.safetensors"))
+        let scan: [String: Any] = ["models": [], "outputs": [["path": model.path, "name": "Qwen3-4B-4bit", "model_key": "qwen3-4b", "quantization": ["bits": 4]]], "pending": [], "duplicates": [], "totals": ["gguf": 0, "pending": 0, "converted": 1, "unreadable": 0, "bytes": 14, "reclaimable_bytes": 0]]
+        try JSONSerialization.data(withJSONObject: scan).write(to: root.appendingPathComponent("scan.json"))
+        let python = """
+        import json, pathlib, sys
+        root = pathlib.Path(__file__).resolve().parents[2]
+        if sys.argv[1:3] == ['convert', 'scan']:
+            data = json.loads((root / 'scan.json').read_text())
+        else:
+            data = {'servers': [], 'jobs': [], 'changes': []}
+        print(json.dumps({'status': 'ok', 'data': data}))
+        """
+        try python.write(to: script, atomically: true, encoding: .utf8)
+        let config: [String: Any] = ["mlx_agent_path": root.appendingPathComponent("agent").path, "mlx_roots": [model.deletingLastPathComponent().path], "gguf_roots": [], "output_dir": root.appendingPathComponent("output").path, "verification_enabled": false, "watch_enabled": false]
+        try JSONSerialization.data(withJSONObject: config).write(to: URL(fileURLWithPath: configPath))
+        defer { app?.terminate(); try? FileManager.default.removeItem(at: root) }
+        app = XCUIApplication()
+        app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = configPath
+        app.launchEnvironment["CFFIXED_USER_HOME"] = root.path
+        app.launchEnvironment["XDG_STATE_HOME"] = root.appendingPathComponent("state").path
+        app.launchEnvironment["MLX_WORKBENCH_PYTHON"] = "/usr/bin/python3"
+        app.launchArguments = ["-mlx-workbench.setupCompleted.v1", "YES", "-mlx-workbench.selectedRoute", "models", "-library.groupMode", "family"]
+        app.launch(); app.activate()
+        let family = app.staticTexts["Qwen3"].firstMatch
+        XCTAssertTrue(family.waitForExistence(timeout: 45))
+        XCTAssertTrue(app.buttons["Settings"].exists)
+        XCTAssertTrue(app.buttons["Discover"].exists)
+        capture("08-library-visible-family-and-sidebar")
+        family.click()
+        capture("08b-library-inspector-after-selection")
+        family.rightClick()
+        let delete = app.menuItems["Delete…"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 10))
+        capture("09-library-delete-context-menu")
+        delete.click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 30))
+        XCTAssertTrue(sheet.staticTexts[model.path].exists)
+        XCTAssertTrue(sheet.buttons["Move to Trash"].exists)
+        capture("10-library-delete-review")
+        sheet.buttons["Cancel"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
+    }
 }

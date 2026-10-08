@@ -242,6 +242,7 @@ class AppHost: ObservableObject {
             return Self.scanMLXRoots(self.config, ggufRoots: roots)
         }
         self.reclaim.protectedPaths = { [weak self] in Array(self?.occupiedModelPaths ?? []) }
+        self.reclaim.servingModelPaths = { try await api.servingPathsForRemoval() }
         self.comparison.maxTokensCap = { [weak self] in self?.config.comparisonMaxTokens ?? 512 }
         // HF-cache reclaim rides the authoritative doctor prune flow.
         self.reclaim.doctorScan = { try await api.doctor(wiredRoots: [], hfCache: nil) }

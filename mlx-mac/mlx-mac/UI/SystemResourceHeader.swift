@@ -18,9 +18,6 @@ struct SystemResourceHeader: View {
                 Image(systemName: "memorychip")
                     .foregroundStyle(WorkbenchColor.muted)
                 if let memory = resources.memory {
-                    Text("RAM ~\(gb(memory.unavailableBytes))/\(gb(memory.totalBytes)) GB")
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .contentTransition(.numericText())
                     Text("~\(gb(memory.availableBytes)) GB available")
                         .foregroundStyle(memory.availableBytes < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
                         .contentTransition(.numericText())

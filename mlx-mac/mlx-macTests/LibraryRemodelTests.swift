@@ -229,18 +229,70 @@ final class LibraryRemodelTests: XCTestCase {
 
     // MARK: - Row text
 
-    func testSublineNamesTypeAndLocationWithoutRepeatingTheName() {
+    func testSublineKeepsLocationInInspector() {
         let local = model(path: "/vault/gguf/llama.gguf", type: .textLLM, name: "Llama")
-        XCTAssertEqual(LibraryTablePresentation.subline(for: local), "Text LLM · gguf")
+        XCTAssertEqual(LibraryTablePresentation.subline(for: local), "Text LLM")
 
         let repeated = model(path: "/vault/Llama/llama.gguf", type: .textLLM, name: "Llama")
         XCTAssertEqual(LibraryTablePresentation.subline(for: repeated), "Text LLM")
 
         let cached = model(path: "/Users/x/.cache/huggingface/hub/models--org--name/snapshots/abc/config.json", type: .visionLanguage, name: "org/name")
-        XCTAssertEqual(LibraryTablePresentation.subline(for: cached), "Vision-language · Hugging Face")
+        XCTAssertEqual(LibraryTablePresentation.subline(for: cached), "Vision-language")
 
         let untyped = model(path: "/vault/gguf/x.gguf", type: nil, name: "X")
-        XCTAssertEqual(LibraryTablePresentation.subline(for: untyped), "gguf")
+        XCTAssertEqual(LibraryTablePresentation.subline(for: untyped), "")
+    }
+
+    func testBrowsingFamilyHeadingsCombineSizesAndKeepSingleModelsGrouped() {
+        let small = model(path: "/m/Qwen3-4B-4bit", type: .textLLM, name: "org/Qwen3-4B-4bit")
+        let large = model(path: "/m/Qwen3-8B-8bit", type: .textLLM, name: "org/Qwen3-8B-8bit")
+        let llama = model(path: "/m/Llama-3B", type: .textLLM, name: "Llama-3B")
+        let source = [small, large, llama].flatMap { groups(of: [$0], family: $0.displayName) }
+        let rows = LibraryTablePresentation.familyRows(groups: source, sortOrder: [])
+        XCTAssertEqual(rows.map(\.name), ["Llama", "Qwen3"])
+        XCTAssertTrue(rows.allSatisfy(\.isFamily))
+        XCTAssertEqual(rows[0].children?.count, 1)
+        XCTAssertEqual(rows[1].children?.map(\.name), ["Qwen3-4B-4bit", "Qwen3-8B-8bit"])
+        XCTAssertEqual(Set(rows.flatMap(\.fitModels).map(\.item.path)), Set([small, large, llama].map(\.item.path)))
+        let snapshot = LibrarySnapshot(models: [small, large, llama], groups: source.map(\.sourceGroup), hardware: hardware, generatedAt: stamp)
+        XCTAssertEqual(LibraryPresentation.summary(for: snapshot, familyCount: rows.count).families, 2)
+    }
+
+    @MainActor
+    func testLibraryAndSidebarRenderAtCompactAndWideWindowSizes() async throws {
+        let host = AppHost(config: Config.defaults(), hardwareProfile: hardware)
+        let models = [
+            model(path: "/m/Qwen3-4B-4bit", type: .textLLM, name: "mlx-community/Qwen3-4B-4bit"),
+            model(path: "/m/Qwen3-8B-8bit", type: .textLLM, name: "mlx-community/Qwen3-8B-8bit"),
+            model(path: "/m/Llama-3B", type: .textLLM, name: "Llama-3B"),
+        ]
+        host.librarySnapshot = LibrarySnapshot(models: models, groups: models.map {
+            ModelGroup(variants: [$0], normalizedModelKey: $0.item.path, primaryDisplayName: $0.displayName)
+        }, hardware: hardware, totalBytes: models.reduce(0) { $0 + $1.item.bytes }, generatedAt: stamp)
+        for width in [960.0, 1440.0] {
+            let root = NavigationSplitView {
+                AppSidebar(selectedRoute: .constant(.library)).navigationSplitViewColumnWidth(210)
+            } detail: {
+                LibraryView(appHost: host).environment(\.isRouteActive, true)
+            }.frame(width: width, height: 760).preferredColorScheme(.dark)
+            let view = NSHostingView(rootView: root)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 760), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = view
+            window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(250))
+            view.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
+            attachment.name = "Library and sidebar at \(Int(width)) pt"; attachment.lifetime = .keepAlways
+            add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_UI_EVIDENCE_DIR"] {
+                try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("library-\(Int(width)).png"))
+            }
+            window.close()
+        }
     }
 
     func testModifiedIsARelativeDateAndADashWhenUnknown() {

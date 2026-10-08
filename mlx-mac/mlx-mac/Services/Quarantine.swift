@@ -81,9 +81,66 @@ struct QuarantineTrashResult: Sendable {
     let ledgerWarning: String?
 }
 
+struct LibraryTrashPlan: Equatable, Sendable {
+    let modelPath: String
+    let roots: [String]
+    let snapshot: QuarantineFileSnapshot
+    let includesCacheRepository: Bool
+}
+
 enum Quarantine {
     static let ledgerName = "quarantine-ledger.jsonl"
     static let maxLedgerBytes = 4 * 1024 * 1024
+
+    /// Explicit Library removal. Trash remains recoverable in Finder. A cache
+    /// repository moves as one unit, retaining its relative blob references.
+    static func previewModelTrash(_ modelPath: String, roots: [String], protected: [String], fileManager fm: FileManager = .default) throws -> LibraryTrashPlan {
+        let expanded = NSString(string: modelPath).expandingTildeInPath
+        try refuseLinks(in: expanded, fileManager: fm)
+        let cacheRepo = HFRepoID.forPath(expanded)
+        var target = URL(fileURLWithPath: expanded).standardizedFileURL
+        if cacheRepo != nil {
+            while !target.lastPathComponent.hasPrefix("models--"), target.path != "/" { target.deleteLastPathComponent() }
+            guard target.lastPathComponent.hasPrefix("models--"), fm.fileExists(atPath: target.path + "/snapshots") else { throw QuarantineError.outsideRoots(expanded) }
+        }
+        let path = target.path
+        let allowed = roots.filter { !$0.isEmpty }.map(resolve)
+        guard allowed.contains(where: { path != $0 && isWithin(path, parent: $0) }),
+              !allowed.contains(where: { isWithin($0, parent: path) }) else { throw QuarantineError.outsideRoots(path) }
+        guard !protected.contains(where: { item in
+            if item.hasPrefix("/") {
+                let other = resolve(item)
+                return isWithin(path, parent: other) || isWithin(other, parent: path)
+            }
+            return cacheRepo == item
+        }) else { throw QuarantineError.unsafeFolder("the model is serving, preferred, or in use. Stop its endpoint and remove its preference before deleting it.") }
+        let snapshot: QuarantineFileSnapshot
+        if cacheRepo != nil {
+            snapshot = try directorySnapshot(path, fileManager: fm, cacheRepository: true)
+        } else if path.lowercased().hasSuffix(".gguf") {
+            _ = try guardPath(path, roots: roots, fileManager: fm)
+            let attributes = try fm.attributesOfItem(atPath: path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular,
+                  let device = attributes[.systemNumber] as? UInt64, let inode = attributes[.systemFileNumber] as? UInt64,
+                  let modified = attributes[.modificationDate] as? Date, let created = attributes[.creationDate] as? Date else { throw QuarantineError.notFound(path) }
+            var status = stat()
+            guard lstat(path, &status) == 0 else { throw QuarantineError.changedSincePreview }
+            snapshot = QuarantineFileSnapshot(path: path, bytes: attributes[.size] as? Int64 ?? 0, device: device, inode: inode, modifiedAt: modified, createdAt: created, treeFingerprint: "\(status.st_ctimespec.tv_sec)|\(status.st_ctimespec.tv_nsec)")
+        } else {
+            snapshot = try folderSnapshot(target: path, roots: roots, protected: protected, fileManager: fm)
+        }
+        return LibraryTrashPlan(modelPath: modelPath, roots: roots, snapshot: snapshot, includesCacheRepository: cacheRepo != nil)
+    }
+
+    static func trashModel(_ plan: LibraryTrashPlan, roots: [String], protected: [String], fileManager fm: FileManager = .default, trash: ((URL) throws -> URL)? = nil) throws -> URL {
+        guard plan.roots == roots, try previewModelTrash(plan.modelPath, roots: roots, protected: protected, fileManager: fm) == plan else { throw QuarantineError.changedSincePreview }
+        let source = URL(fileURLWithPath: plan.snapshot.path)
+        if let trash { return try trash(source) }
+        var destination: NSURL?
+        try fm.trashItem(at: source, resultingItemURL: &destination)
+        guard let destination else { throw QuarantineError.trashFailed("Trash returned no recovery location. Inspect Finder before retrying.") }
+        return destination as URL
+    }
 
     /// Local, independently owned MLX outputs only. Cache snapshots and shared
     /// files require the cache manager's own reference-aware cleanup.
@@ -177,7 +234,7 @@ enum Quarantine {
         }
     }
 
-    private static func directorySnapshot(_ path: String, fileManager: FileManager) throws -> QuarantineFileSnapshot {
+    private static func directorySnapshot(_ path: String, fileManager: FileManager, cacheRepository: Bool = false) throws -> QuarantineFileSnapshot {
         let root = try fileManager.attributesOfItem(atPath: path)
         guard root[.type] as? FileAttributeType == .typeDirectory,
               let device = root[.systemNumber] as? UInt64, let inode = root[.systemFileNumber] as? UInt64,
@@ -193,6 +250,14 @@ enum Quarantine {
                 let child = directory + "/" + name
                 let attrs = try fileManager.attributesOfItem(atPath: child)
                 let type = attrs[.type] as? FileAttributeType
+                if cacheRepository, type == .typeSymbolicLink {
+                    let destination = try fileManager.destinationOfSymbolicLink(atPath: child)
+                    guard !destination.hasPrefix("/"), isWithin(resolve(child), parent: path + "/blobs"),
+                          (try? fileManager.attributesOfItem(atPath: resolve(child))[.type] as? FileAttributeType) == .typeRegular else { throw QuarantineError.symlinkRefused(child) }
+                    entries.append("\(child)|\(attrs[.systemFileNumber] ?? 0)|\(destination)")
+                    guard entries.count <= 10000 else { throw QuarantineError.unsafeFolder("more than 10,000 entries; review this folder in Finder.") }
+                    continue
+                }
                 guard type == .typeDirectory || type == .typeRegular,
                       attrs[.systemNumber] as? UInt64 == device else { throw QuarantineError.unsafeFolder("links, special files and mounted volumes are not allowed: \(child)") }
                 let size = (attrs[.size] as? Int64) ?? 0
