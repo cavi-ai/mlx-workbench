@@ -157,7 +157,10 @@ from `mlx-agent` at runtime.
   duration, steps and seed; built-ins request 15-second instrumental clips.
   WAV playback and real-time factor use the existing audio results path, with
   no automatic quality score. Generation is offline from an absolute local
-  directory. Run history uses a searchable popover grouped by mode, newest
+  directory. Already-exported quantized MiniMax Music 3 sources use the engine's
+  local music requantizer, preserving tokenizer/scheduler assets while rebuilding
+  weights; raw component checkpoints keep the backend's original converter.
+  Run history uses a searchable popover grouped by mode, newest
   first within each group; selecting a row keeps the existing results behavior.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
