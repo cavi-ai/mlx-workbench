@@ -94,6 +94,8 @@ and is versioned independently; submodule bumps are recorded here.
   installed app uses the checkout whose `vendor/mlx-agent` is set in Settings
   for its `.venv` and **Install Runtime…**; in-app updates apply only to an
   app built from its checkout.
+- `make dmg DEVELOPER_TEAM=<team id>` ships the Xcode Developer ID export,
+  notarized through the signed-in Xcode account and stapled.
 - Removed unused web API routes (adopt, wire, sloth, LM Studio import, serve
   metrics, arbitrary-argv CLI) whose panels were already gone.
 - `make docs-build` regenerates a stale versioned docs tree in place.
@@ -120,7 +122,7 @@ and is versioned independently; submodule bumps are recorded here.
   invocations now pass the app's receipt directory, matching serve.
 - Native app packaging: `make dmg` builds the Release SwiftUI app and
   packages it as a compressed DMG with an `/Applications` symlink, ad-hoc
-  signed (Developer ID signing via `make dmg CODESIGN_IDENTITY=…`).
+  signed.
 - App icon: the app ships a proper macOS squircle icon (anvil + MLX mark +
   spark + loopback dot), full 16–1024 px ladder in `AppIcon.appiconset`,
   master SVG checked in at `mlx-mac/assets/app-icon.svg`.

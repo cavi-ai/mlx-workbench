@@ -33,7 +33,7 @@ DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert pip-audit _audit_pkgs deps \
 	start stop restart status run test test-js test-live-scan test-swift test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
-	docs-test docs-build docs-verify docs-release version-bump dmg dmg-preflight build-swift-dist
+	docs-test docs-build docs-verify docs-release version-bump dmg build-swift-dist build-swift-devid
 
 help:
 	@B=''; C=''; D=''; G=''; N=''; \
@@ -327,47 +327,66 @@ build-swift-dist:
 		-derivedDataPath $(MLX_DIST_DD) \
 		OTHER_SWIFT_FLAGS='$$(inherited) -DMLX_WORKBENCH_DISTRIBUTION' build
 
-# Package the distribution app into a DMG. Ad-hoc signed by default; set
-# CODESIGN_IDENTITY="Developer ID Application: …" to sign the app and the DMG
-# for distribution, and NOTARY_PROFILE=<notarytool keychain profile> to
-# notarize and staple the DMG.
+# Developer ID build for the DMG: Xcode archives the distribution build,
+# exports it with the team's Developer ID certificate (cloud-managed or local),
+# notarizes it through the signed-in Xcode account, and staples the ticket.
+DEVELOPER_TEAM ?=
+NOTARY_ATTEMPTS ?= 40
+MLX_DIST_ARCHIVE   = $(MLX_DIST_DD)/mlx-workbench.xcarchive
+MLX_DIST_NOTARIZED = $(MLX_DIST_DD)/notarized/mlx-workbench.app
+
+build-swift-devid:
+	@if [ -z "$(DEVELOPER_TEAM)" ]; then echo "DEVELOPER_TEAM is required" >&2; exit 2; fi
+	@rm -rf "$(MLX_DIST_ARCHIVE)" "$(MLX_DIST_DD)/upload" "$(MLX_DIST_DD)/notarized"
+	@mkdir -p "$(MLX_DIST_DD)"
+	@plutil -create xml1 "$(MLX_DIST_DD)/ExportOptions.plist"
+	@plutil -insert method -string developer-id "$(MLX_DIST_DD)/ExportOptions.plist"
+	@plutil -insert signingStyle -string automatic "$(MLX_DIST_DD)/ExportOptions.plist"
+	@plutil -insert teamID -string "$(DEVELOPER_TEAM)" "$(MLX_DIST_DD)/ExportOptions.plist"
+	@plutil -insert destination -string upload "$(MLX_DIST_DD)/ExportOptions.plist"
+	@echo "Archiving mlx-workbench (Swift, Developer ID)..."
+	@xcodebuild archive -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+		-configuration Release -destination 'generic/platform=macOS' ARCHS=arm64 \
+		-archivePath "$(MLX_DIST_ARCHIVE)" -derivedDataPath $(MLX_DIST_DD) \
+		DEVELOPMENT_TEAM=$(DEVELOPER_TEAM) CODE_SIGN_STYLE=Automatic \
+		OTHER_SWIFT_FLAGS='$$(inherited) -DMLX_WORKBENCH_DISTRIBUTION' \
+		-allowProvisioningUpdates
+	@xcodebuild -exportArchive -archivePath "$(MLX_DIST_ARCHIVE)" \
+		-exportOptionsPlist "$(MLX_DIST_DD)/ExportOptions.plist" \
+		-exportPath "$(MLX_DIST_DD)/upload" -allowProvisioningUpdates
+	@for i in $$(seq 1 $(NOTARY_ATTEMPTS)); do \
+		if xcodebuild -exportNotarizedApp -archivePath "$(MLX_DIST_ARCHIVE)" \
+			-exportPath "$(MLX_DIST_DD)/notarized" > /dev/null 2>&1; then \
+			xcrun stapler validate "$(MLX_DIST_NOTARIZED)" && exit 0; \
+			exit 1; \
+		fi; \
+		sleep 30; \
+	done; \
+	echo "not notarized after $(NOTARY_ATTEMPTS) attempts" >&2; \
+	exit 1
+
+# Package the distribution app into a DMG: ad-hoc signed by default, or the
+# notarized Developer ID export with DEVELOPER_TEAM=<team id>.
 DMG_DIR       := .release
 DMG_VOLUME    := MLX Workbench
 DMG_APP       := MLX Workbench.app
 DMG_OUTPUT    := $(DMG_DIR)/mlx-workbench-$(shell $(PYTHON) -c 'from mlx_workbench import __version__; print(__version__)').dmg
-CODESIGN_IDENTITY ?= -
-NOTARY_PROFILE ?=
 
-dmg-preflight:
-	@if [ -n "$(NOTARY_PROFILE)" ] && [ "$(CODESIGN_IDENTITY)" = "-" ]; then \
-		echo "NOTARY_PROFILE needs a Developer ID CODESIGN_IDENTITY" >&2; \
-		exit 2; \
-	fi
-
-dmg: dmg-preflight build-swift-dist
+dmg: $(if $(DEVELOPER_TEAM),build-swift-devid,build-swift-dist)
 	@mkdir -p $(DMG_DIR)
 	@rm -rf "$(DMG_DIR)/stage" && mkdir -p "$(DMG_DIR)/stage"
-	@cp -R "$(MLX_DIST_APP)" "$(DMG_DIR)/stage/$(DMG_APP)"
-	@ln -s /Applications "$(DMG_DIR)/stage/Applications"
-	@if [ "$(CODESIGN_IDENTITY)" != "-" ]; then \
-		codesign --force --deep --options runtime --timestamp \
-			--sign "$(CODESIGN_IDENTITY)" "$(DMG_DIR)/stage/$(DMG_APP)"; \
+	@if [ -n "$(DEVELOPER_TEAM)" ]; then \
+		ditto "$(MLX_DIST_NOTARIZED)" "$(DMG_DIR)/stage/$(DMG_APP)"; \
 	else \
+		ditto "$(MLX_DIST_APP)" "$(DMG_DIR)/stage/$(DMG_APP)" && \
 		codesign --force --deep --sign - "$(DMG_DIR)/stage/$(DMG_APP)"; \
 	fi
+	@ln -s /Applications "$(DMG_DIR)/stage/Applications"
 	@hdiutil create -volname "$(DMG_VOLUME)" \
 		-srcfolder "$(DMG_DIR)/stage" \
 		-format UDZO -ov -fs HFS+J \
 		"$(DMG_OUTPUT)"
 	@rm -rf "$(DMG_DIR)/stage"
-	@if [ "$(CODESIGN_IDENTITY)" != "-" ]; then \
-		codesign --force --timestamp --sign "$(CODESIGN_IDENTITY)" "$(DMG_OUTPUT)"; \
-	fi
-	@if [ -n "$(NOTARY_PROFILE)" ]; then \
-		xcrun notarytool submit "$(DMG_OUTPUT)" --keychain-profile "$(NOTARY_PROFILE)" --wait && \
-		xcrun stapler staple "$(DMG_OUTPUT)" && \
-		xcrun stapler validate "$(DMG_OUTPUT)"; \
-	fi
 	@echo "DMG ready: $(DMG_OUTPUT)"
 
 run-swift: build-swift

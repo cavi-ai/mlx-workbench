@@ -62,34 +62,40 @@ class AppIconTests(unittest.TestCase):
 class DmgTargetTests(unittest.TestCase):
     def test_makefile_has_dmg_target_wired_to_release_build(self):
         for phrase in (
-            "dmg: dmg-preflight build-swift-dist",
+            "dmg: $(if $(DEVELOPER_TEAM),build-swift-devid,build-swift-dist)",
             "hdiutil create",
             "-format UDZO",
             "DMG_VOLUME",
-            "CODESIGN_IDENTITY",
+            "DEVELOPER_TEAM",
         ):
             self.assertIn(phrase, MAKEFILE)
 
     def test_dmg_app_is_compiled_without_the_source_path(self):
-        target = MAKEFILE.split("\nbuild-swift-dist:", 1)[1].split("\n\n", 1)[0]
-        self.assertIn("-configuration Release", target)
-        self.assertIn("-DMLX_WORKBENCH_DISTRIBUTION", target)
-        self.assertIn('cp -R "$(MLX_DIST_APP)"', MAKEFILE)
+        for name in ("build-swift-dist", "build-swift-devid"):
+            target = MAKEFILE.split(f"\n{name}:", 1)[1].split("\n\n", 1)[0]
+            self.assertIn("-configuration Release", target)
+            self.assertIn("-DMLX_WORKBENCH_DISTRIBUTION", target)
+            self.assertIn("arm64", target)
+        self.assertIn('ditto "$(MLX_DIST_APP)"', MAKEFILE)
 
-    def test_developer_id_dmg_is_timestamped_notarized_and_stapled(self):
-        recipe = MAKEFILE.split("\ndmg: dmg-preflight build-swift-dist", 1)[1].split("\n\n", 1)[0]
-        # Developer ID signatures need a secure timestamp to notarize.
-        self.assertIn("--options runtime --timestamp", recipe)
-        self.assertIn('codesign --force --timestamp --sign "$(CODESIGN_IDENTITY)" "$(DMG_OUTPUT)"', recipe)
-        self.assertIn(
-            'xcrun notarytool submit "$(DMG_OUTPUT)" --keychain-profile "$(NOTARY_PROFILE)" --wait',
-            recipe,
-        )
-        self.assertIn('xcrun stapler staple "$(DMG_OUTPUT)"', recipe)
-        self.assertIn('xcrun stapler validate "$(DMG_OUTPUT)"', recipe)
-        # Notarizing an ad-hoc signature is refused before anything builds.
-        guard = MAKEFILE.split("\ndmg-preflight:", 1)[1].split("\n\n", 1)[0]
-        self.assertIn('[ -n "$(NOTARY_PROFILE)" ] && [ "$(CODESIGN_IDENTITY)" = "-" ]', guard)
+    def test_developer_id_dmg_ships_the_notarized_stapled_export(self):
+        target = MAKEFILE.split("\nbuild-swift-devid:", 1)[1].split("\n\n", 1)[0]
+        for phrase in (
+            "DEVELOPMENT_TEAM=$(DEVELOPER_TEAM) CODE_SIGN_STYLE=Automatic",
+            "-allowProvisioningUpdates",
+            "method -string developer-id",
+            'teamID -string "$(DEVELOPER_TEAM)"',
+            "destination -string upload",
+            "-exportArchive",
+            "-exportNotarizedApp",
+            'xcrun stapler validate "$(MLX_DIST_NOTARIZED)"',
+        ):
+            self.assertIn(phrase, target)
+        recipe = MAKEFILE.split("\ndmg: ", 1)[1].split("\n\n", 1)[0]
+        notarized_branch = recipe.split('if [ -n "$(DEVELOPER_TEAM)" ]; then', 1)[1].split("else", 1)[0]
+        self.assertIn('ditto "$(MLX_DIST_NOTARIZED)"', notarized_branch)
+        # Re-signing would invalidate the notarization ticket.
+        self.assertNotIn("codesign", notarized_branch)
 
     def test_source_path_literal_is_compiled_out_of_distribution_builds(self):
         hits = []

@@ -48,7 +48,8 @@ from `mlx-agent` at runtime.
   `mlx-mac/assets/app-icon.svg`; `make dmg` packages a distribution Release
   build (`-DMLX_WORKBENCH_DISTRIBUTION`: no source path compiled in) as
   `MLX Workbench.app` on an `MLX Workbench` volume under `.release/` (ad-hoc
-  signed; `CODESIGN_IDENTITY=` for Developer ID).
+  signed; `DEVELOPER_TEAM=<team id>` archives, exports with Developer ID,
+  notarizes through the Xcode account, and staples via `build-swift-devid`).
 - `make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json` is the
   opt-in real-data native GGUF-to-Run acceptance surface. Its runner validates
   an explicit allowlisted local source and loopback config, selects only the
