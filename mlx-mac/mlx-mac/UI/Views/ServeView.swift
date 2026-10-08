@@ -45,7 +45,7 @@ struct ServeView: View {
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var endpoint: EndpointSupervisor
     private let onRouteSelection: (AppRoute) -> Void
-    @State private var runtime = "mlx_lm"
+    @State private var runtime = "auto"
     @State private var portText = ""
     @State private var contextText = String(FitAdvisor.defaultContextTokens)
     @State private var endpointPortText = ""
@@ -748,6 +748,7 @@ struct ServeView: View {
     @ViewBuilder
     private var launchFields: some View {
         Picker("Runtime", selection: $runtime) {
+            Text("Automatic").tag("auto")
             Text("mlx_lm").tag("mlx_lm")
             Text("mlx-vlm").tag("mlx-vlm")
         }

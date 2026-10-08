@@ -20,6 +20,34 @@ final class ModelWorkflowResolverTests: XCTestCase {
         XCTAssertEqual(decision, .available(URL(fileURLWithPath: "/Models/llama-3-q4")))
     }
 
+    func testCompanionCannotConvertOrReuseAnUnrelatedModelWithTheSameKey() {
+        let existing = makeLibraryModel(path: "/Models/base", modelKey: "hf")
+        for source in [
+            makeGGUF(path: "/Models/auxiliary.gguf", modelKey: "hf", companion: true),
+            makeGGUF(path: "/Models/renamed.gguf", modelKey: "hf", architecture: "clip"),
+            makeGGUF(path: "/Models/model-mmproj-BF16.gguf", modelKey: "hf"),
+            makeGGUF(path: "/Models/projector.gguf", modelKey: "hf"),
+        ] {
+            let decision = ModelWorkflowResolver.destination(
+                for: source, library: makeSnapshot(models: [existing]), fileManager: fileManager
+            )
+            guard case .blocked(_, let reason) = decision else {
+                XCTFail("Companion was offered as a model: \(source.path)")
+                continue
+            }
+            XCTAssertTrue(reason.contains("companion"))
+            XCTAssertTrue(reason.contains("main model"))
+        }
+    }
+
+    func testCompanionDirectoryNameDoesNotBlockTheMainModel() {
+        let source = makeGGUF(path: "/Models/projector/model-F16.gguf", modelKey: "model")
+        XCTAssertEqual(
+            ModelWorkflowResolver.destination(for: source, library: nil, fileManager: fileManager),
+            .available(URL(fileURLWithPath: "/Models/projector/model-F16"))
+        )
+    }
+
     func testEquivalentSiblingMLXIsReused() {
         let source = makeGGUF(path: "/Models/llama-3-q4.gguf", modelKey: "llama-3")
         let existing = makeLibraryModel(path: "/Models/llama-3-q4", modelKey: "llama-3")
@@ -96,10 +124,11 @@ final class ModelWorkflowResolverTests: XCTestCase {
         XCTAssertTrue(ModelWorkflowResolver.matchesEquivalent(source: source, candidate: existing))
     }
 
-    private func makeGGUF(path: String, modelKey: String?, signature: String? = nil) -> ModelItem {
+    private func makeGGUF(path: String, modelKey: String?, signature: String? = nil,
+                          architecture: String = "llama", companion: Bool? = nil) -> ModelItem {
         ModelItem(path: path, name: "llama-3-q4.gguf", bytes: 1_024, modifiedAt: nil, shard: nil,
-                  modelKey: modelKey, architecture: "llama", quantization: "Q4", parameters: "3B",
-                  structure: nil, signature: signature, companion: nil, readable: true, status: "ready",
+                  modelKey: modelKey, architecture: architecture, quantization: "Q4", parameters: "3B",
+                  structure: nil, signature: signature, companion: companion, readable: true, status: "ready",
                   outputs: [], tensorCount: nil, error: nil)
     }
 

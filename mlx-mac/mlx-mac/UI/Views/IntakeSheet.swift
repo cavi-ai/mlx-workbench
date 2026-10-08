@@ -172,9 +172,15 @@ struct IntakeSheet: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(intake.isBusy)
             case .alreadyMLX:
-                Button("Download") { Task { await finish(resolution) } }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(intake.isBusy)
+                if let backend = resolution.backend, !resolution.backendInstalled {
+                    Button("Install \(backend)") { Task { await intake.installBackend() } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(intake.isBusy)
+                } else {
+                    Button("Download") { Task { await finish(resolution) } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(intake.isBusy)
+                }
             case .gguf:
                 Picker("File", selection: $intake.selectedGGUF) {
                     ForEach(resolution.files.gguf) { file in

@@ -238,8 +238,8 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         )
     }
 
-    func testLiveServeLifecycleUsesPinnedMLXRuntime() async throws {
-        let agent = try FixtureAgent(expectedServeRuntime: "mlx_lm")
+    func testLiveServeLifecycleUsesAutomaticDeclaredRuntime() async throws {
+        let agent = try FixtureAgent(expectedServeRuntime: "auto")
         defer { agent.remove() }
 
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)

@@ -4,6 +4,30 @@ import XCTest
 @testable import mlx_workbench
 
 final class ModelWorkflowCoordinatorTests: XCTestCase {
+    func testRestoredProjectorWorkflowCannotPreviewOrQueueConversion() async {
+        let host = await makeHost(preview: ["preview_hash": "hash-1"], confirmReceipt: "receipt-1")
+        let timestamp = Date()
+        let record = ConversionWorkflow(
+            id: UUID(), sourcePath: "/Models/model-mmproj-BF16.gguf", sourceModelKey: "hf",
+            sourceSignature: nil, outputPath: "/Models/model-mmproj-BF16", previewHash: nil,
+            jobReceipt: nil, completedModelPath: nil, state: .failed, serveState: .idle,
+            message: "Conversion failed.", errorMessage: "Conversion failed.",
+            createdAt: timestamp, updatedAt: timestamp, lastKnownAgentState: "failed"
+        )
+        await MainActor.run { host.modelWorkflow.restore(record) }
+        await host.modelWorkflow.preview(qBits: 8, out: nil)
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .failed)
+            XCTAssertNil(host.modelWorkflow.workflow.previewHash)
+            XCTAssertTrue(host.modelWorkflow.workflow.errorMessage?.contains("companion") == true)
+        }
+        await host.modelWorkflow.confirm(qBits: 8)
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .failed)
+            XCTAssertNil(host.modelWorkflow.workflow.jobReceipt)
+        }
+    }
+
     func testInspectingEquivalentModelProducesRunExistingState() async {
         let host = await makeHost(snapshot: snapshotWithEquivalentMLX())
 
