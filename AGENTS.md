@@ -330,7 +330,17 @@ from `mlx-agent` at runtime.
   `origin/main`; both refuse a dirty tree, sync submodules, and finish with a
   streamed `make build-swift` rebuild-and-relaunch. Git runs as argv tokens
   through an injectable runner; the apply path is integration-tested against
-  a throwaway git repo.
+  a throwaway git repo. Installed builds (no checkout) update from GitHub
+  releases instead (`Services/ReleaseUpdater.swift`): Releases reads
+  `releases/latest` (`mlx-workbench-<version>.dmg`), Nightly reads the rolling
+  `nightly` prerelease (`mlx-workbench-nightly-<commit>.dmg`), compared with
+  Info.plist `MLXWorkbenchCommit`/`MLXWorkbenchChannel`. Install requires the
+  GitHub sha256 digest, a read-only mount, and the code requirement
+  `identifier com.cavi.mlxworkbench`, team `Y76GMV87GM`, `notarized`; the
+  swap is `replaceItemAt` beside the bundle and the old bundle goes to the
+  Trash. Translocated, disk-image and unwritable locations are refused.
+  `.github/workflows/signed-dmg.yml` publishes both DMGs with an App Store
+  Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets).
 - The Run view shows a **Memory-fit Advisor** verdict before serving:
   `FitAdvisor` estimates weights + KV cache + runtime overhead against live
   available memory (`MemorySnapshot` via Mach probes), yielding
