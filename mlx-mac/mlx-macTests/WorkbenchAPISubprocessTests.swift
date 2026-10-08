@@ -226,9 +226,11 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         let result = try await api.raw(["probe"])
 
         let reported = try XCTUnwrap(result["process_path"] as? String)
-        // Expect the interpreter the bridge actually resolves (env override →
-        // repo .venv → PATH), not a hard-coded python3.
-        let resolvedPython = try XCTUnwrap(WorkbenchPython.preferredExecutable())
+        // Expect the interpreter the bridge actually resolves for this agent
+        // path (env override → repo .venv → PATH), not a hard-coded python3.
+        let resolvedPython = try XCTUnwrap(WorkbenchPython.preferredExecutable(
+            repoRoot: WorkbenchPython.repoRoot(agentPath: agent.root.path)
+        ))
         let expectedDir = resolvedPython.deletingLastPathComponent().path
         XCTAssertTrue(
             reported.hasPrefix(expectedDir + ":"),

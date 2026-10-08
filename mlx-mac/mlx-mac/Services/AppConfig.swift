@@ -105,7 +105,7 @@ struct Config: Codable, Equatable {
             }
         }
 
-        let here = repoRootFromThisFile()
+        guard let here = WorkbenchPython.buildSourceRoot() else { return "" }
         let vendor = here.appendingPathComponent("vendor/mlx-agent")
         let script = vendor.appendingPathComponent("scripts/mlx-agent")
         if FileManager.default.fileExists(atPath: script.path) {
@@ -123,15 +123,6 @@ struct Config: Codable, Equatable {
         }
 
         return ""
-    }
-
-    /// <repo>/mlx-mac/mlx-mac/Services/AppConfig.swift → repo root.
-    fileprivate static func repoRootFromThisFile() -> URL {
-        return URL(fileURLWithPath: #file)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
     }
 }
 
@@ -175,7 +166,8 @@ struct ConfigModule {
     }
 
     func vendorAgentPath() -> String {
-        let candidate = Config.repoRootFromThisFile().appendingPathComponent("vendor/mlx-agent")
+        guard let root = WorkbenchPython.buildSourceRoot() else { return "" }
+        let candidate = root.appendingPathComponent("vendor/mlx-agent")
         let script = candidate.appendingPathComponent("scripts/mlx-agent")
         if FileManager.default.fileExists(atPath: script.path) {
             return candidate.path

@@ -31,15 +31,24 @@ struct LaunchAgentManager: Sendable {
     /// never a shell string.
     let run: @Sendable (_ executable: String, _ argv: [String]) throws -> String
     let uid: UInt32
+    /// Interpreter for the login item, resolved for the agent path the same
+    /// way CLI runs are (env override → repo .venv → PATH).
+    let interpreter: @Sendable (_ agentPath: String) -> URL?
+
+    static let defaultInterpreter: @Sendable (String) -> URL? = { agentPath in
+        WorkbenchPython.preferredExecutable(repoRoot: WorkbenchPython.repoRoot(agentPath: agentPath))
+    }
 
     init(
         home: URL = URL(fileURLWithPath: NSHomeDirectory()),
         run: @escaping @Sendable (String, [String]) throws -> String = LaunchAgentManager.launchctl,
-        uid: UInt32 = getuid()
+        uid: UInt32 = getuid(),
+        interpreter: @escaping @Sendable (String) -> URL? = LaunchAgentManager.defaultInterpreter
     ) {
         self.home = home
         self.run = run
         self.uid = uid
+        self.interpreter = interpreter
     }
 
     var plistURL: URL {
@@ -61,7 +70,7 @@ struct LaunchAgentManager: Sendable {
         let plist: [String: Any] = [
             "Label": Self.label,
             "ProgramArguments": [
-                pythonExecutable(),
+                pythonExecutable(agentPath: agentPath),
                 script,
                 "serve", "start",
                 "--repo", config.modelPath,
@@ -127,11 +136,7 @@ struct LaunchAgentManager: Sendable {
         return out
     }
 
-    private func pythonExecutable() -> String {
-        if let python = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PYTHON"]
-            ?? ProcessInfo.processInfo.environment["PYTHON"], python.hasPrefix("/") {
-            return python
-        }
-        return "/usr/bin/python3"
+    private func pythonExecutable(agentPath: String) -> String {
+        interpreter(agentPath)?.path ?? "/usr/bin/python3"
     }
 }

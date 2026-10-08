@@ -97,7 +97,86 @@ final class WorkbenchPythonTests: XCTestCase {
         XCTAssertNil(WorkbenchPython.resolveOnPath("target", environment: ["PATH": dir.path]))
     }
 
+    // MARK: - Repository root
+
+    func testInstalledBuildFindsCheckoutThroughAgentPath() throws {
+        let checkout = try makeCheckout()
+        let agent = checkout.appendingPathComponent("vendor/mlx-agent").path
+
+        let root = WorkbenchPython.repoRoot(agentPath: agent, buildRoot: nil)
+        XCTAssertEqual(root?.standardizedFileURL.path, checkout.standardizedFileURL.path)
+
+        let resolved = WorkbenchPython.preferredExecutable(
+            environment: ["PATH": "/nonexistent"],
+            repoRoot: root
+        )
+        XCTAssertEqual(
+            resolved?.standardizedFileURL.path,
+            checkout.appendingPathComponent(".venv/bin/python").standardizedFileURL.path
+        )
+    }
+
+    func testAgentPathWithTrailingSlashFindsCheckout() throws {
+        let checkout = try makeCheckout()
+        let agent = checkout.appendingPathComponent("vendor/mlx-agent").path + "/"
+
+        let root = WorkbenchPython.repoRoot(agentPath: agent, buildRoot: nil)
+        XCTAssertEqual(root?.standardizedFileURL.path, checkout.standardizedFileURL.path)
+    }
+
+    func testBuildCheckoutWinsOverAgentPath() throws {
+        let build = try makeCheckout()
+        let other = try makeCheckout()
+
+        let root = WorkbenchPython.repoRoot(
+            agentPath: other.appendingPathComponent("vendor/mlx-agent").path,
+            buildRoot: build
+        )
+        XCTAssertEqual(root, build)
+    }
+
+    func testAgentPathOutsideACheckoutHasNoRepoRoot() throws {
+        // A standalone mlx-agent checkout is not under vendor/.
+        let standalone = try makeRoot().appendingPathComponent("mlx-agent")
+        try makeAgentScript(in: standalone)
+        XCTAssertNil(WorkbenchPython.repoRoot(agentPath: standalone.path, buildRoot: nil))
+
+        // vendor/mlx-agent without the workbench Makefile is not a checkout.
+        let bare = try makeRoot()
+        let vendored = bare.appendingPathComponent("vendor/mlx-agent")
+        try makeAgentScript(in: vendored)
+        XCTAssertNil(WorkbenchPython.repoRoot(agentPath: vendored.path, buildRoot: nil))
+
+        XCTAssertNil(WorkbenchPython.repoRoot(agentPath: "  ", buildRoot: nil))
+    }
+
+    func testDistributionBuildsCarryNoSourcePath() {
+        #if MLX_WORKBENCH_DISTRIBUTION
+        XCTAssertNil(WorkbenchPython.buildSourceRoot())
+        XCTAssertNil(WorkbenchPython.buildCheckoutRoot())
+        #else
+        XCTAssertNotNil(WorkbenchPython.buildSourceRoot())
+        #endif
+    }
+
     // MARK: - Helpers
+
+    private func makeCheckout() throws -> URL {
+        let root = try makeRepoWithVenv()
+        FileManager.default.createFile(
+            atPath: root.appendingPathComponent("Makefile").path, contents: Data("all:\n".utf8)
+        )
+        try makeAgentScript(in: root.appendingPathComponent("vendor/mlx-agent"))
+        return root
+    }
+
+    private func makeAgentScript(in agent: URL) throws {
+        let script = agent.appendingPathComponent("scripts/mlx-agent")
+        try FileManager.default.createDirectory(
+            at: script.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        FileManager.default.createFile(atPath: script.path, contents: Data("#!/bin/sh\n".utf8))
+    }
 
     private func makeRoot() throws -> URL {
         let url = FileManager.default.temporaryDirectory

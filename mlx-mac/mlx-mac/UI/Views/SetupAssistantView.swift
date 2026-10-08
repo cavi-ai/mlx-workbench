@@ -54,7 +54,7 @@ struct SetupAssistantView: View {
 
     private var agentStep: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text("MLX Workbench drives conversions and serving through the mlx-agent CLI. The vendored checkout that ships with the app is used by default.")
+            Text("MLX Workbench drives conversions and serving through the mlx-agent CLI in an mlx-workbench checkout (vendor/mlx-agent). The checkout's .venv runs conversions and serving.")
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -65,7 +65,7 @@ struct SetupAssistantView: View {
                     .foregroundStyle(WorkbenchColor.muted)
                     .textSelection(.enabled)
             case .notConfigured:
-                guidance("No agent path is configured.", detail: "The vendored checkout is picked up automatically when the app runs from the repository. Otherwise set the path in Settings.")
+                guidance("No agent path is configured.", detail: "The vendored checkout is picked up automatically when the app runs from the repository. Otherwise clone mlx-workbench, run make install, and set the path in Settings to the checkout's vendor/mlx-agent.")
             case .notFound(let path, _):
                 guidance("The configured agent path does not exist.", detail: path)
             case .notUsable(_, _, let reason):

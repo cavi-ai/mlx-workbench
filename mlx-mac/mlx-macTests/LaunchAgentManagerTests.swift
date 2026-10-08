@@ -30,6 +30,24 @@ final class LaunchAgentManagerTests: XCTestCase {
         XCTAssertEqual(Array(arguments.dropFirst(2)), ["serve", "start", "--repo", "/models/qwen", "--runtime", "mlx", "--port", "8766"])
     }
 
+    func testPlistRunsTheInterpreterResolvedForTheAgentPath() throws {
+        let manager = LaunchAgentManager(
+            home: try makeHome(),
+            run: recordingRunner().run,
+            uid: 501,
+            interpreter: { agentPath in
+                agentPath == "/opt/agent" ? URL(fileURLWithPath: "/checkout/.venv/bin/python") : nil
+            }
+        )
+        let text = try manager.plistPreview(config: config, agentPath: "/opt/agent")
+        let data = try XCTUnwrap(text.data(using: .utf8))
+        let plist = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        )
+        let arguments = try XCTUnwrap(plist["ProgramArguments"] as? [String])
+        XCTAssertEqual(arguments.first, "/checkout/.venv/bin/python")
+    }
+
     func testInstallWritesPlistAndBootstrapsAfterBootout() throws {
         let home = try makeHome()
         let recorder = Recorder()
