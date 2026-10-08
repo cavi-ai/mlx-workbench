@@ -32,22 +32,20 @@ struct IntakeField: View {
     @Environment(\.openWindow) private var openWindow
     @State private var text = ""
 
+    /// A slim row on the page canvas; the explanation lives in the help tag.
     var body: some View {
-        WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                SectionTitle(text: "Add from Hugging Face")
-                HStack(spacing: WorkbenchSpacing.sm) {
-                    TextField("Paste a model link or org/name", text: $text)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(open)
-                    Button("Check", action: open)
-                        .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                Text("Shows what the model is and how it converts before anything downloads. ⇧⌘V opens this from anywhere.")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
-            }
+        HStack(spacing: WorkbenchSpacing.sm) {
+            Text("Add from Hugging Face")
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.muted)
+                .lineLimit(1)
+            TextField("Paste a model link or org/name", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(open)
+            Button("Check", action: open)
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .help("Shows what the model is and how it converts before anything downloads. ⇧⌘V opens this from anywhere.")
     }
 
     private func open() {
