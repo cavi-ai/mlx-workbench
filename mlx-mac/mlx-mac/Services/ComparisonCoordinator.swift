@@ -113,7 +113,9 @@ final class ComparisonCoordinator: ObservableObject {
               score == nil || (1...5).contains(score!) else { return }
         var updated = runs[index]
         var reviews = updated.qualityReviews ?? [:]
-        reviews[modelPath] = score.map { ComparisonQualityReview(score: $0, rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: now()) }
+        let rubric = updated.effectiveMode == .musicGeneration
+            ? ComparisonQualityReview.musicListeningRubric : ComparisonQualityReview.taskOutcomeRubric
+        reviews[modelPath] = score.map { ComparisonQualityReview(score: $0, rubricID: rubric, reviewedAt: now()) }
         updated.qualityReviews = reviews
         do {
             try runStore.upsert(updated, id: \.id)

@@ -655,6 +655,18 @@ final class ComparisonInsightsTests: XCTestCase {
         XCTAssertTrue(ComparisonInsights.champions(models: models, runs: [missingEntrant], environment: environment).isEmpty)
     }
 
+    func testMusicChampionsKeepListeningQualitySeparateFromSpeedAndOtherRubrics() throws {
+        var measured = run([result("/a", metric: 2), result("/b", metric: 1)], mode: .musicGeneration)
+        measured.qualityReviews = ["/a": ComparisonQualityReview(score: 5, rubricID: "music-listening-v1", reviewedAt: Date()),
+                                   "/b": ComparisonQualityReview(score: 2, rubricID: "music-listening-v1", reviewedAt: Date())]
+        let models = [model("/a", task: .musicGeneration), model("/b", task: .musicGeneration)]
+        let award = try XCTUnwrap(ComparisonInsights.champions(models: models, runs: [measured], environment: environment).first)
+        XCTAssertEqual(award.performance.map(\.modelPath), ["/b"])
+        XCTAssertEqual(award.quality.map(\.modelPath), ["/a"])
+        measured.qualityReviews?["/b"] = ComparisonQualityReview(score: 5, rubricID: "task-outcome-v1", reviewedAt: Date())
+        XCTAssertTrue(try XCTUnwrap(ComparisonInsights.champions(models: models, runs: [measured], environment: environment).first).quality.isEmpty)
+    }
+
     func testMediaChampionsUseModeMetricDirection() throws {
         let measured = run([result("/a", metric: 2), result("/b", metric: 1)], mode: .imageGeneration)
         let award = try XCTUnwrap(ComparisonInsights.champions(models: [model("/a", task: .imageGeneration), model("/b", task: .imageGeneration)], runs: [measured], environment: environment).first)

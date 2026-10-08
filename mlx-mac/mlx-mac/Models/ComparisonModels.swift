@@ -388,6 +388,19 @@ struct ComparisonQualityReview: Codable, Equatable, Sendable {
     let rubricID: String
     let reviewedAt: Date
     static let taskOutcomeRubric = "task-outcome-v1"
+    static let musicListeningRubric = "music-listening-v1"
+    static let musicRubric = "Your listening judgment across this run's prompts: 1 unusable · 2 severe issues · 3 usable with issues · 4 good with minor issues · 5 clean and matches the prompt. Speed does not establish musical quality."
+
+    static func musicScoreTitle(_ score: Int) -> String {
+        switch score {
+        case 1: return "1 · Unusable"
+        case 2: return "2 · Severe issues"
+        case 3: return "3 · Usable with issues"
+        case 4: return "4 · Good, minor issues"
+        case 5: return "5 · Clean, matches prompt"
+        default: return "Not reviewed"
+        }
+    }
     static let rubric = "1 unusable · 2 major corrections · 3 usable with corrections · 4 minor corrections · 5 meets task without corrections"
 }
 

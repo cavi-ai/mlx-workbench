@@ -693,7 +693,8 @@ struct QuantView: View {
                 MediaRunResultsView(
                     run: run,
                     store: comparison.outputStore ?? ComparisonOutputStore(),
-                    name: { shortName($0) }
+                    name: { shortName($0) },
+                    onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) }
                 )
             }
         }
