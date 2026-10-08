@@ -166,9 +166,21 @@ struct ContentView: View {
     /// The selected model is context for the lifecycle tabs only; elsewhere
     /// the title stands alone.
     private var subtitle: String {
-        guard selectedRoute.group == .lifecycle else { return "" }
-        guard let path = appHost.selectedModelPath, !path.isEmpty else { return "No model selected" }
+        Self.subtitle(route: selectedRoute, workflow: modelWorkflow.workflow, selectedModelPath: appHost.selectedModelPath)
+    }
+
+    /// Prepare names the workflow's source, which can differ from the Library
+    /// selection; the other lifecycle tabs name the selection.
+    static func subtitle(route: AppRoute, workflow: ConversionWorkflow, selectedModelPath: String?) -> String {
+        guard route.group == .lifecycle else { return "" }
+        if route == .prepare { return PrepareWorkflowPresentation(workflow: workflow).displayName }
+        guard let path = selectedModelPath, !path.isEmpty else { return "No model selected" }
         return HFRepoID.forPath(path) ?? URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    /// Prepare shows the workflow state on the page; the toolbar badge would repeat it.
+    static func showsWorkflowBadge(route: AppRoute, state: ConversionWorkflowState) -> Bool {
+        state != .idle && route != .prepare
     }
 
     /// Lifecycle and endpoint state ride in the toolbar only while they carry
@@ -181,7 +193,7 @@ struct ContentView: View {
                 return await endpoint.unloadServer(server)
             })
         }
-        if modelWorkflow.workflow.state != .idle {
+        if Self.showsWorkflowBadge(route: selectedRoute, state: modelWorkflow.workflow.state) {
             ToolbarItem(placement: .automatic) {
                 Button {
                     navigate(to: .activity)

@@ -29,8 +29,13 @@ struct ConversionProgressSnapshot: Equatable {
 
     /// The intake estimate for the bit width the destination names (`-MLX-<bits>bit`).
     static func estimate(for workflow: ConversionWorkflow) -> Int64? {
-        guard let estimates = workflow.estimatedOutputBytes, let bits = workflow.destinationBits else { return nil }
-        return estimates[String(bits)]
+        guard let bits = workflow.destinationBits else { return nil }
+        return estimate(for: workflow, bits: bits)
+    }
+
+    /// The intake estimate for one bit width; nil when intake gave none.
+    static func estimate(for workflow: ConversionWorkflow, bits: Int) -> Int64? {
+        workflow.estimatedOutputBytes?[String(bits)]
     }
 }
 
@@ -92,11 +97,11 @@ struct ProgressRing: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(WorkbenchColor.hairline, lineWidth: 8)
+                .stroke(WorkbenchColor.hairline, lineWidth: WorkbenchSize.Prepare.ringStroke)
             if let fraction {
                 Circle()
                     .trim(from: 0, to: fraction)
-                    .stroke(WorkbenchColor.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                    .stroke(WorkbenchColor.accent, style: StrokeStyle(lineWidth: WorkbenchSize.Prepare.ringStroke, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .workbenchAnimation(WorkbenchMotion.progress, value: fraction)
                 Text(fraction, format: .percent.precision(.fractionLength(0)))
@@ -105,13 +110,13 @@ struct ProgressRing: View {
             } else {
                 Circle()
                     .trim(from: 0, to: 0.28)
-                    .stroke(WorkbenchColor.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                    .stroke(WorkbenchColor.accent, style: StrokeStyle(lineWidth: WorkbenchSize.Prepare.ringStroke, lineCap: .round))
                     .rotationEffect(.degrees(spinning ? 270 : -90))
                     .workbenchAnimation(WorkbenchMotion.spin, value: spinning)
                     .onAppear { spinning = true }
             }
         }
-        .frame(width: 76, height: 76)
+        .frame(width: WorkbenchSize.Prepare.ringDiameter, height: WorkbenchSize.Prepare.ringDiameter)
         .accessibilityElement()
         .accessibilityLabel("Conversion progress")
         .accessibilityValue(fraction.map { "\(Int($0 * 100)) percent" } ?? "In progress")
@@ -167,7 +172,7 @@ struct ConversionLogAccordion: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .id("log-end")
                 }
-                .frame(maxHeight: 220)
+                .frame(maxHeight: WorkbenchSize.Prepare.logMaximumHeight)
                 .onChange(of: lines) { _, _ in proxy.scrollTo("log-end", anchor: .bottom) }
             }
         } label: {

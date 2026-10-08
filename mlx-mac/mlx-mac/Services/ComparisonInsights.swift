@@ -73,13 +73,24 @@ enum ComparisonInsights {
     }
 
     static func supportsFitEstimate(_ model: LibraryModel) -> Bool {
-        model.item.task?.type.isServable ?? true
+        supportsFitEstimate(task: model.item.task?.type)
+    }
+
+    /// An unlabelled task is treated as servable, as Library models are.
+    static func supportsFitEstimate(task: ModelTaskType?) -> Bool {
+        task?.isServable ?? true
     }
 
     static func fitEstimate(model: LibraryModel, hardware: HardwareProfile, memory: MemorySnapshot?, contextTokens: Int, reserveGB: Double) -> FitVerdict {
-        guard supportsFitEstimate(model) else { return .unknown(reason: "media pipeline memory not modeled") }
+        fitEstimate(bytes: model.item.bytes, parameters: model.item.parameters, task: model.item.task?.type, hardware: hardware, memory: memory, contextTokens: contextTokens, reserveGB: reserveGB)
+    }
+
+    /// The fit verdict for a size that is not (yet) a Library model, such as a
+    /// conversion's estimated output. Same math and memory rules as the model entry.
+    static func fitEstimate(bytes: Int64, parameters: String?, task: ModelTaskType?, hardware: HardwareProfile, memory: MemorySnapshot?, contextTokens: Int, reserveGB: Double) -> FitVerdict {
+        guard supportsFitEstimate(task: task) else { return .unknown(reason: "media pipeline memory not modeled") }
         guard let memory else { return .unknown(reason: "live memory unavailable") }
-        return FitAdvisor.verdict(modelBytes: model.item.bytes, contextTokens: contextTokens, parameters: model.item.parameters, hardware: hardware, memory: memory, reserveBytes: Int64(reserveGB * 1_000_000_000))
+        return FitAdvisor.verdict(modelBytes: bytes, contextTokens: contextTokens, parameters: parameters, hardware: hardware, memory: memory, reserveBytes: Int64(reserveGB * 1_000_000_000))
     }
 
     static func limitedValidation(_ result: VariantResult) -> String {

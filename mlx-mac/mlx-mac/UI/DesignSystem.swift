@@ -162,6 +162,23 @@ extension WorkbenchSize {
     }
 }
 
+extension WorkbenchSize {
+    /// Prepare route dimensions: quantization tiles, transform header, pipeline
+    /// track, and the conversion progress ring.
+    enum Prepare {
+        static let tileMinimum: CGFloat = 168
+        static let tileMaximum: CGFloat = 280
+        static let endpointMinimum: CGFloat = 240
+        static let arrow: CGFloat = 32
+        static let trackColumnMinimum: CGFloat = 88
+        static let ringDiameter: CGFloat = 76
+        static let ringStroke: CGFloat = 8
+        /// Content width from which the ring sits centered under the Convert node.
+        static let ringCenteredMinimum: CGFloat = 640
+        static let logMaximumHeight: CGFloat = 220
+    }
+}
+
 enum WorkbenchRadius {
     /// Small chips and swatches.
     static let chip: CGFloat = 4

@@ -92,7 +92,30 @@ struct ModelBudgetPresentation: Equatable {
         case loading, unavailable, live
     }
 
+    /// What a fit verdict is for: a Library model, or a bare size such as a
+    /// conversion's estimated output.
+    struct Subject: Equatable {
+        let bytes: Int64
+        let parameters: String?
+        let task: ModelTaskType?
+        /// A size without a Library model has no task label; true withholds the verdict then.
+        var requiresKnownTask = false
+
+        /// Whether the task is one the fit math models at all.
+        var supportsEstimate: Bool {
+            ComparisonInsights.supportsFitEstimate(task: task) && !(requiresKnownTask && task == nil)
+        }
+    }
+
     init(memory: MemorySnapshot?, reserveGB: Double, contextTokens: Int, model: LibraryModel?, hardware: HardwareProfile, hasProbed: Bool = true) {
+        self.init(
+            memory: memory, reserveGB: reserveGB, contextTokens: contextTokens,
+            subject: model.map { Subject(bytes: $0.item.bytes, parameters: $0.item.parameters, task: $0.item.task?.type) },
+            hardware: hardware, hasProbed: hasProbed
+        )
+    }
+
+    init(memory: MemorySnapshot?, reserveGB: Double, contextTokens: Int, subject: Subject?, hardware: HardwareProfile, hasProbed: Bool = true) {
         let reserve = max(0, reserveGB)
         if memory != nil {
             reading = .live
@@ -122,24 +145,26 @@ struct ModelBudgetPresentation: Equatable {
             segments = nil
         }
 
-        guard let model else {
+        guard let subject else {
             fit = .noModel
             markerFraction = nil
             return
         }
-        guard ComparisonInsights.supportsFitEstimate(model) else {
-            let type = model.item.task?.type.title.lowercased() ?? "these"
+        guard subject.supportsEstimate else {
+            let type = subject.task?.title.lowercased() ?? "these"
             fit = .notEstimated("Fit not estimated for \(type) models")
             markerFraction = nil
             return
         }
-        guard model.item.bytes > 0 else {
+        guard subject.bytes > 0 else {
             fit = .notEstimated("Fit not estimated: model size unavailable")
             markerFraction = nil
             return
         }
         let verdict = ComparisonInsights.fitEstimate(
-            model: model,
+            bytes: subject.bytes,
+            parameters: subject.parameters,
+            task: subject.task,
             hardware: hardware,
             memory: memory,
             contextTokens: contextTokens,
@@ -151,7 +176,7 @@ struct ModelBudgetPresentation: Equatable {
             return
         }
         fit = .estimated(verdict)
-        let needed = FitAdvisor.neededBytes(modelBytes: model.item.bytes, contextTokens: contextTokens, parameters: model.item.parameters)
+        let needed = FitAdvisor.neededBytes(modelBytes: subject.bytes, contextTokens: contextTokens, parameters: subject.parameters)
         neededBytes = needed
         if let segments, let budgetBytes, let totalBytes {
             let used = Double(min(needed, budgetBytes)) / Double(totalBytes)
@@ -644,27 +669,63 @@ struct FlightPathPanel: View {
     }
 
     private var stepper: some View {
-        let lastComplete = flightPath.lastCompleteIndex
-        return HStack(alignment: .top, spacing: 0) {
-            ForEach(Array(flightPath.stages.enumerated()), id: \.element.id) { index, item in
-                stageColumn(item, index: index, count: flightPath.stages.count, lastComplete: lastComplete)
+        FlightTrackView(
+            nodes: flightPath.stages.map {
+                FlightTrackNode(id: $0.stage.rawValue, title: $0.stage.title, symbol: $0.stage.symbolName, state: $0.state, detail: $0.detail, pulses: $0.state == .active)
+            },
+            showsStateText: showsStateText,
+            accessibilityTitle: "Model flight path"
+        )
+    }
+}
+
+/// One stop on a flight track: Overview's model stages and Prepare's
+/// conversion pipeline both draw through `FlightTrackView`.
+struct FlightTrackNode: Equatable, Identifiable {
+    let id: String
+    let title: String
+    let symbol: String
+    let state: ModelFlightStageState
+    let detail: String
+    /// Only an active node can pulse, and only while work is in flight.
+    let pulses: Bool
+}
+
+/// The one node-and-connector stepper: complete nodes fill with accent, the
+/// track fills up to the last complete node.
+struct FlightTrackView: View {
+    let nodes: [FlightTrackNode]
+    let showsStateText: Bool
+    let accessibilityTitle: String
+    /// Smallest column width; nil lets the columns share the row equally.
+    var columnMinimum: CGFloat?
+
+    private var lastComplete: Int? {
+        nodes.lastIndex { $0.state == .complete }
+    }
+
+    var body: some View {
+        let lastComplete = lastComplete
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(Array(nodes.enumerated()), id: \.element.id) { index, item in
+                column(item, index: index, lastComplete: lastComplete)
             }
         }
         .workbenchAnimation(WorkbenchMotion.standard, value: lastComplete)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Model flight path")
+        .accessibilityLabel(accessibilityTitle)
     }
 
-    private func stageColumn(_ item: ModelFlightStagePresentation, index: Int, count: Int, lastComplete: Int?) -> some View {
+    private func column(_ item: FlightTrackNode, index: Int, lastComplete: Int?) -> some View {
         let filledLeft = lastComplete.map { index <= $0 } ?? false
         let filledRight = lastComplete.map { index < $0 } ?? false
         return VStack(spacing: WorkbenchSpacing.xs) {
             HStack(spacing: 0) {
                 track(filled: filledLeft, visible: index > 0)
                 node(item)
-                track(filled: filledRight, visible: index < count - 1)
+                track(filled: filledRight, visible: index < nodes.count - 1)
             }
-            Text(item.stage.title)
+            Text(item.title)
                 .font(WorkbenchTypography.label)
                 .foregroundStyle(WorkbenchColor.ink)
                 .lineLimit(1)
@@ -675,10 +736,16 @@ struct FlightPathPanel: View {
                     .lineLimit(1)
             }
         }
+        .frame(minWidth: columnMinimum)
         .frame(maxWidth: .infinity)
         .help(item.detail)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(item.stage.title + ": " + item.state.label + ". " + item.detail)
+        .accessibilityLabel(Self.accessibilityLabel(for: item))
+    }
+
+    static func accessibilityLabel(for item: FlightTrackNode) -> String {
+        let base = item.title + ": " + item.state.label
+        return item.detail.isEmpty ? base : base + ". " + item.detail
     }
 
     private func track(filled: Bool, visible: Bool) -> some View {
@@ -689,8 +756,8 @@ struct FlightPathPanel: View {
     }
 
     @ViewBuilder
-    private func node(_ item: ModelFlightStagePresentation) -> some View {
-        let symbol = Image(systemName: item.stage.symbolName)
+    private func node(_ item: FlightTrackNode) -> some View {
+        let symbol = Image(systemName: item.symbol)
             .font(WorkbenchTypography.emphasis)
             .symbolRenderingMode(.hierarchical)
         switch item.state {
@@ -705,7 +772,7 @@ struct FlightPathPanel: View {
                 .frame(width: WorkbenchSize.stageNode, height: WorkbenchSize.stageNode)
                 .background(item.state.color.opacity(.fill), in: Circle())
                 .overlay { Circle().strokeBorder(item.state.color, lineWidth: WorkbenchSize.stageTrack) }
-                .livePulse(true)
+                .livePulse(item.pulses)
         case .pending, .attention, .failed:
             symbol
                 .foregroundStyle(item.state.color)
