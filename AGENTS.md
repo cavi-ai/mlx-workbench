@@ -160,6 +160,8 @@ from `mlx-agent` at runtime.
   directory. Already-exported quantized MiniMax Music 3 sources use the engine's
   local music requantizer, preserving tokenizer/scheduler assets while rebuilding
   weights; raw component checkpoints keep the backend's original converter.
+  Music generation requires the real root or nested tokenizer and uses the pinned
+  backend's official prompt encoder; synthetic tiny-model fallback tokens are refused.
   Run history uses a searchable popover grouped by mode, newest
   first within each group; selecting a row keeps the existing results behavior.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
