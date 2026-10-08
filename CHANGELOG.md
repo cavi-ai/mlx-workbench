@@ -11,6 +11,8 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-10-08
 ### Added
 
 - Serve presets ("endpoint profiles"): save the current model, runtime,
@@ -36,6 +38,74 @@ and is versioned independently; submodule bumps are recorded here.
 - Serve tab UX: the model field is a picker fed by converted models from the
   latest scan (repo id or local path) instead of raw free text, and the
   chosen runtime is remembered across visits.
+- Web UI: conversion progress banner (`/api/convert/progress`), a live
+  Convert tab panel with dismiss and retry, and a Compare Conversions
+  redesign (scan-fed model picker, 4-bit / 8-bit / both).
+- Native app, Add from Hugging Face: paste a link or `org/name` for a
+  conversion verdict before any download; optional converter backends
+  (mlx-vlm, mlx-audio, mlx-embeddings, mflux, mlx-video) install into
+  isolated hash-locked environments; downloads are confirmed and
+  receipt-tracked; the output size estimate is read from safetensors headers.
+- Native app model types beyond chat: speech-to-text, classification, image
+  generation, video generation, and speculative-decoding drafters.
+  Speech-to-text, classification, and image-generation conversions each get
+  a Quality Gate canary; image-generation models get a Generate panel;
+  drafters are never served.
+- Native app ports: Edge0/Audio8-ASR-Infinite (mlx-audio), Laya
+  classification (mlx-embeddings, 8-bit only), the Qwen-Image 2.1 recipe
+  with its LoRA (mflux), and DeepSeek-V4 DSpark `dflash` drafter GGUFs.
+- Native app Compare modes: vision, video understanding, speech to text,
+  text to speech, image generation, and video generation; each prompt's
+  output is saved under `comparison-outputs/` and the 10 newest media runs
+  keep their files.
+- Native app Compare decisions: model pickers and filters, reviewed task
+  outcomes, **Promote winner** (saves the use-case preference and can swap
+  the always-on endpoint), and task-specific model guidance with
+  **Use model…** and **Wire into clients…**.
+- Native app workflow evidence: capture requests for Claude, OpenClaw,
+  OpenCode, and custom harnesses; previewed report import; runtime,
+  timing-breakdown, task-quality, peak-memory, and quality-vs-runtime
+  charts; **Compare these models** and **Measure this workflow…**.
+- Native app fleet endpoints: up to four always-on endpoint slots
+  (`endpoint-fleet.json`, migrated once from `endpoint-config.json`) with
+  per-slot crash guards, a menu-bar aggregate, a fleet memory budget, and
+  role routing through `mlx-agent fleet --port-map`.
+- Native app reclaim: task-scoped replacement chains, macOS Trash for
+  quarantined GGUF files, and previewed quarantine, Put back, and Trash for
+  local MLX model folders.
+- Native app source reuse and cleanup: intake reuses ready local models,
+  local directories are served by path, downloaded checkpoints go straight
+  to conversion, and verified conversions offer source cleanup to the Trash
+  with a recovery journal and a guarded restore from Duplicates.
+- Native app shell: sidebar navigation, a sortable Library table with an
+  inspector, grouping by type and use case, a Prepare progress ring with
+  the converter log, a read-only "Web Queue" in Jobs, and completion
+  notifications.
+- Native app memory: the header shows estimated RAM use, available headroom,
+  and serving-model residency with unload controls; new endpoints default to
+  Load on request with a 10-minute idle unload and a 2 GB headroom reserve,
+  set per endpoint; existing endpoints keep their mode.
+- Native app Compare: a quality-vs-runtime workflow chart.
+
+### Changed
+
+- The native app is named MLX Workbench: bundle name, About, menu bar, and
+  the DMG volume and app. The executable, bundle identifier, and state paths
+  are unchanged.
+- The DMG app is a distribution build with no build-machine source path. An
+  installed app uses the checkout whose `vendor/mlx-agent` is set in Settings
+  for its `.venv` and **Install Runtime…**; in-app updates apply only to an
+  app built from its checkout.
+- `make dmg DEVELOPER_TEAM=<team id>` ships the Xcode Developer ID export,
+  notarized through the signed-in Xcode account and stapled.
+- Removed unused web API routes (adopt, wire, sloth, LM Studio import, serve
+  metrics, arbitrary-argv CLI) whose panels were already gone.
+- `make docs-build` regenerates a stale versioned docs tree in place.
+- Vendored mlx-agent `86f5586` → `v0.6.0`: intake, optional backends and
+  ports, `convert transcribe|decide|generate|speak|describe|video`,
+  `serve start --path|--jit`, `serve unload|policy`, `fleet --port-map`, and
+  local source reuse.
+
 ### Fixed
 
 - Compare speech-to-text: the built-in "Spoken sentences" clips are
@@ -54,10 +124,25 @@ and is versioned independently; submodule bumps are recorded here.
   invocations now pass the app's receipt directory, matching serve.
 - Native app packaging: `make dmg` builds the Release SwiftUI app and
   packages it as a compressed DMG with an `/Applications` symlink, ad-hoc
-  signed (Developer ID signing via `make dmg CODESIGN_IDENTITY=…`).
+  signed.
 - App icon: the app ships a proper macOS squircle icon (anvil + MLX mark +
   spark + loopback dot), full 16–1024 px ladder in `AppIcon.appiconset`,
   master SVG checked in at `mlx-mac/assets/app-icon.svg`.
+- Web Settings saves preserve native-app config keys; unexpected server
+  errors return a classified `internal_error` 500.
+- Web conversions of a GGUF with an unsupported architecture are refused at
+  confirm time (422 `architecture_unsupported`), naming the architecture.
+- Native intake: the output directory is scanned once when a root already
+  contains it; Prepare status refreshes while a job runs; the bit picker
+  re-targets repo destinations; unservable models get no Run action.
+- Native watch alerts offer the action that resolves them.
+- Native Overview opens the Library for completed non-servable outputs.
+- Native toolbar status badges are no longer nested.
+- Native agent timeouts and app quit stop the agent's whole process group,
+  including media backends it started.
+- Native Compare video cells no longer abort the app (AVKit is linked).
+- The native login item serves with the checkout's `.venv` interpreter
+  instead of `/usr/bin/python3`.
 
 ### Security
 
@@ -254,7 +339,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.4.0
 [0.3.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.1.0

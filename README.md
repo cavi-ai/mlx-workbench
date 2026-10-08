@@ -161,7 +161,7 @@ Loopback bind only, same-origin checks, and a per-process session token on every
 ```bash
 cd vendor/mlx-agent
 git fetch --tags
-git checkout v0.5.0   # or a newer release tag
+git checkout v0.6.0   # or a newer release tag
 cd ../..
 git add vendor/mlx-agent
 ```

@@ -32,16 +32,16 @@ standard macOS ladder) and commit both.
 `make dmg` builds the distribution app (no build-machine source path) and
 packages it as `MLX Workbench.app` in a compressed DMG with an
 `/Applications` symlink, ad-hoc signed. For a Developer ID signed,
-notarized, and stapled DMG:
+notarized, and stapled app:
 
 ```bash
-make dmg CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=<profile>
+make dmg DEVELOPER_TEAM=<team id>
 ```
 
-`<profile>` is a `notarytool` keychain profile created once with
-`xcrun notarytool store-credentials`. The app is signed with the hardened
-runtime and a secure timestamp, the DMG is signed, submitted, stapled, and
-validated. DMGs land in `.release/` (gitignored).
+Xcode archives the build, exports it with the team's Developer ID
+certificate (cloud-managed or local), uploads it to Apple's notary service
+through the account signed in to Xcode, and stapler-validates the notarized
+export before packaging. DMGs land in `.release/` (gitignored).
 
 ## Boundaries
 
