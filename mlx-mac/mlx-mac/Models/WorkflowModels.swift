@@ -90,4 +90,14 @@ struct ConversionWorkflow: Codable, Equatable, Identifiable {
         guard let match = outputPath.range(of: #"-MLX-(\d+)bit$"#, options: .regularExpression) else { return nil }
         return Int(outputPath[match].dropFirst("-MLX-".count).dropLast("bit".count))
     }
+
+    /// Whether this record already says what the agent reports. Reconciliation
+    /// skips such records, so repeated status refreshes and every app launch
+    /// leave the shared workflow file untouched.
+    func reflects(state: ConversionWorkflowState, message: String, errorMessage: String?, agentState: String) -> Bool {
+        self.state == state
+            && self.message == message
+            && self.errorMessage == errorMessage
+            && lastKnownAgentState == agentState
+    }
 }
