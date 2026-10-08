@@ -1,12 +1,12 @@
-import Charts
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
 // MARK: - QuantView
 // Compare tab: measured comparison of ready variants via prompt-set replay
-// (premium spec 03). Key metrics stay on screen; per-prompt outputs and
-// diffs stay behind disclosures. Past runs are browsable history.
+// (premium spec 03). Lettered lanes lead with the mode's primary metric above
+// a prompt-by-lane output grid; diffs stay behind a disclosure. Past runs are
+// browsable history.
 
 enum ComparePresentation {
     /// Measured comparisons replay chat prompts; only chat-servable types qualify.
@@ -179,12 +179,207 @@ enum ComparePresentation {
     }
 }
 
+// MARK: - Lanes and run selection
+
+/// One variant of the shown run, lettered in run order.
+struct CompareLane: Equatable, Identifiable {
+    enum State: Equatable {
+        case measured
+        case measuring
+        case waiting
+        case failed(String)
+        /// Completed with no positive value for the mode's metric.
+        case noMeasurement
+        /// Completed without a result for this variant (an interrupted run).
+        case notMeasured
+    }
+
+    let index: Int
+    let path: String
+    let state: State
+    let value: Double?
+    /// Share of the best lane (1 for leaders); set only when at least two lanes are ranked.
+    let fraction: Double?
+    let isLeader: Bool
+
+    var letter: String { ComparePresentation.letter(index) }
+    var id: String { "\(index)|\(path)" }
+}
+
+/// The mode, run pick and prompt set that Compare keeps coherent.
+struct CompareSelection: Equatable {
+    var mode: ComparisonMode
+    var selectedRunID: UUID?
+    var promptSetID: String
+}
+
+extension ComparePresentation {
+    static let slotLetters = ["A", "B", "C", "D"]
+
+    static func letter(_ index: Int) -> String {
+        slotLetters[min(max(index, 0), slotLetters.count - 1)]
+    }
+
+    /// One lane per run variant in run order; results are matched by model path.
+    static func lanes(for run: ComparisonRun) -> [CompareLane] {
+        let values = run.results.compactMap { run.metricValue(of: $0) }
+        let ranked = values.count >= 2
+        let best = run.effectiveMode.primaryMetric.higherIsBetter ? values.max() : values.min()
+        let leaders = Set(run.leaders.map(\.modelPath))
+        return run.variants.enumerated().map { index, path in
+            let result = run.results.first { $0.modelPath == path }
+            let value = result.flatMap { run.metricValue(of: $0) }
+            let state: CompareLane.State
+            if let result {
+                if let error = result.error { state = .failed(error) } else { state = value == nil ? .noMeasurement : .measured }
+            } else if run.state == .running {
+                state = index == run.results.count ? .measuring : .waiting
+            } else {
+                state = .notMeasured
+            }
+            var fraction: Double?
+            if ranked, let value, let best {
+                fraction = run.effectiveMode.primaryMetric.higherIsBetter ? value / best : best / value
+            }
+            return CompareLane(index: index, path: path, state: state, value: value, fraction: fraction,
+                isLeader: ranked && leaders.contains(path))
+        }
+    }
+
+    /// The formatted value split into its numeral and unit, in the order the format gives them.
+    static func splitValue(_ formatted: String) -> (number: String, unit: String) {
+        let tokens = formatted.split(separator: " ").map(String.init)
+        guard let numeric = tokens.firstIndex(where: { Double($0) != nil }) else { return (formatted, "") }
+        let unit = tokens.enumerated().filter { $0.offset != numeric }.map(\.element).joined(separator: " ")
+        return (tokens[numeric], unit)
+    }
+
+    static func laneStatus(_ state: CompareLane.State) -> String? {
+        switch state {
+        case .measured: return nil
+        case .measuring: return "Measuring…"
+        case .waiting: return "Waiting"
+        case .failed(let error): return error
+        case .noMeasurement: return "No measurement"
+        case .notMeasured: return "Not measured"
+        }
+    }
+
+    /// The first non-empty line of an error, trimmed; the rest belongs in a details view.
+    static func firstLine(of error: String) -> String {
+        error.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty } ?? ""
+    }
+
+    /// A variant that failed as a whole has no sample to show; its lane header carries the error.
+    static func showsNotRun(sample: ComparisonSample?, result: VariantResult?) -> Bool {
+        sample == nil && result?.error != nil
+    }
+
+    static func laneAccessibilityLabel(_ lane: CompareLane, name: String, metric: ComparisonMetric) -> String {
+        var parts = [lane.letter, name]
+        switch lane.state {
+        case .measured:
+            lane.value.map { parts.append(metric.format($0)) }
+            if lane.isLeader { parts.append("fastest") } else if let fraction = lane.fraction {
+                parts.append("\(Int((fraction * 100).rounded()))% of fastest")
+            }
+        case .measuring: parts.append("measuring")
+        case .waiting: parts.append("waiting")
+        case .failed: parts.append("failed")
+        case .noMeasurement: parts.append("no measurement")
+        case .notMeasured: parts.append("not measured")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    // MARK: Mode and run coherence
+
+    /// The run the results area renders: the active run, else the pick when it belongs to the
+    /// mode, else the mode's newest run.
+    static func shownRun(runs: [ComparisonRun], mode: ComparisonMode, selectedRunID: UUID?, activeRunID: UUID?) -> ComparisonRun? {
+        if let activeRunID, let active = runs.first(where: { $0.id == activeRunID }) { return active }
+        if let selectedRunID, let picked = runs.first(where: { $0.id == selectedRunID }), picked.effectiveMode == mode {
+            return picked
+        }
+        return runs.filter { $0.effectiveMode == mode }.max { $0.startedAt < $1.startedAt }
+    }
+
+    static func showsEmptyState(runs: [ComparisonRun], mode: ComparisonMode, selectedRunID: UUID?, activeRunID: UUID?) -> Bool {
+        shownRun(runs: runs, mode: mode, selectedRunID: selectedRunID, activeRunID: activeRunID) == nil
+    }
+
+    static func emptyTitle(for mode: ComparisonMode) -> String {
+        "No \(mode.title.lowercased()) comparisons yet"
+    }
+
+    /// The prompt set of the mode's newest run, so opening Compare resumes where the last run left off.
+    static func restoredPromptSetID(runs: [ComparisonRun], mode: ComparisonMode, promptSets: [PromptSet]) -> String? {
+        runs.filter { run in run.effectiveMode == mode && promptSets.contains { $0.id == run.promptSetID } }
+            .max { $0.startedAt < $1.startedAt }?
+            .promptSetID
+    }
+
+    /// A real mode change clears the run pick and takes the new mode's first prompt set.
+    static func changeMode(_ selection: CompareSelection, to mode: ComparisonMode, promptSets: [PromptSet]) -> CompareSelection {
+        guard mode != selection.mode else { return selection }
+        let sets = ComparisonViewLogic.promptSets(promptSets, for: mode)
+        return CompareSelection(mode: mode, selectedRunID: nil, promptSetID: sets.first?.id ?? "")
+    }
+
+    /// Picking a run from history or Champions shows exactly that run; a run of another mode
+    /// switches the mode and takes that run's prompt set when it still exists.
+    static func pick(_ run: ComparisonRun, from selection: CompareSelection, promptSets: [PromptSet]) -> CompareSelection {
+        var next = selection
+        next.selectedRunID = run.id
+        guard run.effectiveMode != selection.mode else { return next }
+        let sets = ComparisonViewLogic.promptSets(promptSets, for: run.effectiveMode)
+        next.mode = run.effectiveMode
+        next.promptSetID = sets.contains { $0.id == run.promptSetID } ? run.promptSetID : (sets.first?.id ?? "")
+        return next
+    }
+
+    // MARK: Grid geometry
+
+    struct GridLayout: Equatable {
+        let promptWidth: CGFloat
+        let laneWidth: CGFloat
+        /// True when the lanes do not fit at their minimum width.
+        let scrolls: Bool
+
+        /// Square thumbnails and 16:9 video frames fill the column inside its cell inset.
+        var mediaSide: CGFloat {
+            min(laneWidth - 2 * WorkbenchSize.Compare.cellInset, WorkbenchSize.Compare.thumbnailMaximum)
+        }
+    }
+
+    /// Lanes share the width up to their maximum; below the minimum they keep their ideal width and scroll.
+    static func gridLayout(contentWidth: CGFloat, laneCount: Int) -> GridLayout {
+        let size = WorkbenchSize.Compare.self
+        let lanes = CGFloat(max(laneCount, 1))
+        let prompt = contentWidth < size.compactBreakpoint ? size.promptColumnCompact : size.promptColumn
+        let share = (contentWidth - prompt - lanes * size.columnSpacing) / lanes
+        if share >= size.laneMinimum { return GridLayout(promptWidth: prompt, laneWidth: min(share, size.laneMaximum), scrolls: false) }
+        return GridLayout(promptWidth: prompt, laneWidth: size.laneIdeal, scrolls: true)
+    }
+
+    /// The muted line under a slot's model: quantization, then parameters or disk size.
+    static func tileLine(_ model: LibraryModel) -> String? {
+        let parameters = model.item.parameters.flatMap { $0.isEmpty ? nil : $0 }
+        let disk = model.item.bytes > 0 ? ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file) : nil
+        let line = [model.item.quantization, parameters ?? disk].compactMap { $0 }.joined(separator: " · ")
+        return line.isEmpty ? nil : line
+    }
+}
+
 struct QuantView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
     private let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive
 
+    @State private var compareContentWidth = WorkbenchSize.assumedContentWidth
     @State private var mode: ComparisonMode = .chat
     @State private var showingSetEditor = false
     @State private var variantSlots: [String?] = [nil, nil]
@@ -193,7 +388,8 @@ struct QuantView: View {
     @State private var diffLeftPath: String?
     @State private var diffRightPath: String?
     @State private var promoteContext: PromoteContext?
-    @State private var promotedWinnerPath: String?
+    @State private var promotedWinner: PromotedWinner?
+    @State private var showingFilters = false
     @State private var initializedSuggestions = false
     @State private var manuallySelectedModels = false
     @State private var selectionReason = "Waiting for eligible Library models."
@@ -225,6 +421,12 @@ struct QuantView: View {
         let run: ComparisonRun
         let winner: VariantResult
         var id: ComparisonRun.ID { run.id }
+    }
+
+    /// The model promoted from one specific run.
+    struct PromotedWinner: Equatable {
+        let runID: ComparisonRun.ID
+        let path: String
     }
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
@@ -288,13 +490,11 @@ struct QuantView: View {
             if let newValue { selectedRunID = newValue }
         }
         .onAppear {
-            if !initializedSuggestions, let recent = comparison.runs.first(where: { run in run.effectiveMode == mode && modePromptSets.contains(where: { $0.id == run.promptSetID }) }), modePromptSets.contains(where: { $0.id == recent.promptSetID }) {
-                selectedPromptSetID = recent.promptSetID
+            if !initializedSuggestions,
+               let restored = ComparePresentation.restoredPromptSetID(runs: comparison.runs, mode: mode, promptSets: modePromptSets) {
+                selectedPromptSetID = restored
             }
             applySuggestions()
-            if selectedRunID == nil {
-                selectedRunID = comparison.runs.first?.id
-            }
         }
         .onChange(of: selectedPromptSetID) { _, _ in
             guard !manuallySelectedModels else { return }
@@ -343,7 +543,7 @@ struct QuantView: View {
         guard let importPreview else { return }
         do {
             let count = try appHost.workflowEvidence.confirmImport(importPreview)
-            importMessage = "Imported \(count) new workflow records. Matching reports appear in Workflow performance."
+            importMessage = "Imported \(count) new workflow records."
             importError = nil
             appHost.analyzeReclaim()
         } catch { importError = AppHost.render(error); importMessage = nil }
@@ -352,12 +552,45 @@ struct QuantView: View {
 
     // MARK: - Selection
 
-    private var selectedRun: ComparisonRun? {
-        if let selectedRunID,
-           let run = comparison.runs.first(where: { $0.id == selectedRunID }) {
-            return run
-        }
-        return comparison.runs.first
+    private var shownRun: ComparisonRun? {
+        ComparePresentation.shownRun(runs: comparison.runs, mode: mode, selectedRunID: selectedRunID, activeRunID: comparison.activeRunID)
+    }
+
+    private var currentSelection: CompareSelection {
+        CompareSelection(mode: mode, selectedRunID: selectedRunID, promptSetID: selectedPromptSetID)
+    }
+
+    /// Mode, run pick and prompt set change together here, never from a change handler.
+    private func apply(_ next: CompareSelection) {
+        let modeChanged = next.mode != mode
+        mode = next.mode
+        selectedRunID = next.selectedRunID
+        selectedPromptSetID = next.promptSetID
+        guard modeChanged else { return }
+        familyFilter = nil
+        sizeFilter = .all
+        modelSearch = ""
+        initializedSuggestions = false
+        manuallySelectedModels = false
+        applySuggestions()
+    }
+
+    private func changeMode(to newMode: ComparisonMode) {
+        apply(ComparePresentation.changeMode(currentSelection, to: newMode, promptSets: comparison.promptSets))
+    }
+
+    private func pick(_ run: ComparisonRun) {
+        apply(ComparePresentation.pick(run, from: currentSelection, promptSets: comparison.promptSets))
+    }
+
+    private var modeBinding: Binding<ComparisonMode> {
+        Binding(get: { mode }, set: { changeMode(to: $0) })
+    }
+
+    private var shownRunBinding: Binding<UUID?> {
+        Binding(get: { shownRun?.id }, set: { id in
+            if let id, let run = comparison.runs.first(where: { $0.id == id }) { pick(run) }
+        })
     }
 
     // MARK: - Measured comparison setup
@@ -378,8 +611,6 @@ struct QuantView: View {
         modePromptSets.first { $0.id == selectedPromptSetID } ?? modePromptSets.first
     }
 
-    private static let slotLetters = ["A", "B", "C", "D"]
-
     private var setupBar: some View {
         WorkbenchCard("Compare models", systemImage: "slider.horizontal.3", style: .tinted) {
             ViewThatFits(in: .horizontal) {
@@ -387,44 +618,36 @@ struct QuantView: View {
                 comparisonModePicker.pickerStyle(.menu)
             }
             .disabled(comparison.activeRunID != nil)
-            .onChange(of: mode) { _, newMode in
-                familyFilter = nil
-                sizeFilter = .all
-                modelSearch = ""
-                initializedSuggestions = false
-                manuallySelectedModels = false
-                applySuggestions()
-                selectedPromptSetID = ComparisonViewLogic.promptSets(comparison.promptSets, for: newMode).first?.id ?? ""
-            }
 
             if readyModels.isEmpty {
-                Text(mode == .chat
-                    ? "No ready models in the latest Library snapshot."
-                    : "No ready \(mode.acceptedTaskTypes.map { $0.title.lowercased() }.joined(separator: " or ")) models in the latest Library snapshot.")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Text(mode == .chat
+                        ? "No ready models in the latest Library snapshot."
+                        : "No ready \(mode.acceptedTaskTypes.map { $0.title.lowercased() }.joined(separator: " or ")) models in the latest Library snapshot.")
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
+                    Button("Open Library") { onRouteSelection(.library) }
+                        .buttonStyle(.bordered)
+                }
             }
 
             if !readyModels.isEmpty {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: WorkbenchSpacing.sm) { modelFilters }
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { modelFilters }
-                }
                 if filteredModels.isEmpty {
                     Text("No models match these filters. Your selected models are kept.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 280), alignment: .leading)],
+                    columns: [GridItem(.adaptive(minimum: WorkbenchSize.Compare.tileMinimum, maximum: WorkbenchSize.Compare.tileMaximum),
+                        spacing: WorkbenchSize.Compare.tileSpacing, alignment: .topLeading)],
                     alignment: .leading,
-                    spacing: WorkbenchSpacing.xs
+                    spacing: WorkbenchSize.Compare.tileSpacing
                 ) {
                     slotControls
                 }
             }
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { comparisonControls }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { comparisonControls }
+                HStack(spacing: WorkbenchSpacing.xs) { inlineControls }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { wrappedControls }
             }
             .padding(.top, WorkbenchSpacing.sm)
             .overlay(alignment: .top) {
@@ -436,12 +659,35 @@ struct QuantView: View {
             ErrorBanner(text: comparison.lastError)
             ErrorBanner(text: comparison.persistenceError)
         }
+        .sheet(isPresented: $showingSetEditor) {
+            MediaPromptSetEditor(mode: mode) { set in
+                comparison.savePromptSet(set)
+                selectedPromptSetID = set.id
+            }
+        }
+    }
+
+    private var filtersActive: Bool { familyFilter != nil || sizeFilter != .all || !modelSearch.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    private var filterButton: some View {
+        Button { showingFilters = true } label: {
+            Label(filtersActive ? "Filter · \(filteredModels.count) of \(readyModels.count)" : "Filter",
+                systemImage: "line.3.horizontal.decrease")
+        }
+        .buttonStyle(.bordered)
+        .disabled(readyModels.isEmpty)
+        .popover(isPresented: $showingFilters, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                modelFilters
+            }
+            .padding(WorkbenchSpacing.md)
+            .frame(width: WorkbenchSize.Compare.filterPopoverWidth, alignment: .leading)
+        }
     }
 
     @ViewBuilder private var modelFilters: some View {
         TextField("Find a model…", text: $modelSearch)
             .textFieldStyle(.roundedBorder)
-            .frame(width: 160)
             .accessibilityLabel("Find a comparison model")
         Picker("Family", selection: $familyFilter) {
             Text("All families").tag(String?.none)
@@ -467,12 +713,23 @@ struct QuantView: View {
     @ViewBuilder
     private var slotControls: some View {
         ForEach(Array(variantSlots.indices), id: \.self) { index in
+            slotTile(index)
+        }
+
+        if variantSlots.count < ComparePresentation.maxSlots {
+            Button { variantSlots.append(nil) } label: { Label("Add model", systemImage: "plus") }
+                .buttonStyle(.borderless)
+                .foregroundStyle(WorkbenchColor.accent)
+                .help("Add a model")
+                .accessibilityLabel("Add a model")
+        }
+    }
+
+    private func slotTile(_ index: Int) -> some View {
+        let model = variantSlots[index].flatMap { path in readyModels.first { $0.item.path == path } }
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             HStack(spacing: WorkbenchSpacing.xs) {
-                Text(Self.slotLetters[min(index, Self.slotLetters.count - 1)])
-                    .font(WorkbenchTypography.label)
-                    .foregroundStyle(WorkbenchColor.accent)
-                    .frame(width: 24, height: 24)
-                    .background(WorkbenchColor.accent.opacity(.fill), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                LetterChip(letter: ComparePresentation.letter(index))
                     .accessibilityHidden(true)
                 Menu {
                     Button("None") { slotBinding(index).wrappedValue = nil }
@@ -501,7 +758,7 @@ struct QuantView: View {
                         .lineLimit(1).truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .accessibilityLabel("Model \(Self.slotLetters[min(index, Self.slotLetters.count - 1)])")
+                .accessibilityLabel("Model \(ComparePresentation.letter(index))")
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(variantSlots[index].map { shortName($0) } ?? "Choose a model")
 
@@ -509,23 +766,21 @@ struct QuantView: View {
                     Button { removeSlot(index) } label: { Image(systemName: "minus") }
                         .buttonStyle(.borderless)
                         .help("Remove this model")
-                        .accessibilityLabel("Remove model \(Self.slotLetters[min(index, Self.slotLetters.count - 1)])")
+                        .accessibilityLabel("Remove model \(ComparePresentation.letter(index))")
                 }
             }
-            .padding(WorkbenchSpacing.xs)
-            .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: WorkbenchRadius.control)
-                    .strokeBorder(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline)
+            if let line = model.flatMap(ComparePresentation.tileLine) {
+                Text(line)
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .lineLimit(1)
             }
         }
-
-        if variantSlots.count < ComparePresentation.maxSlots {
-            Button { variantSlots.append(nil) } label: { Label("Add model", systemImage: "plus") }
-                .buttonStyle(.borderless)
-                .foregroundStyle(WorkbenchColor.accent)
-                .help("Add a model")
-                .accessibilityLabel("Add a model")
+        .padding(WorkbenchSpacing.xs)
+        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: WorkbenchRadius.control)
+                .strokeBorder(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline)
         }
     }
 
@@ -535,16 +790,23 @@ struct QuantView: View {
         return [name, model.item.quantization, size].compactMap { $0 }.joined(separator: " · ")
     }
 
-    @ViewBuilder
-    private var comparisonControls: some View {
+    private var promptSetPicker: some View {
         Picker("Prompt set", selection: $selectedPromptSetID) {
             ForEach(modePromptSets) { set in
                 Text(set.name).tag(set.id)
             }
         }
         .font(WorkbenchTypography.emphasis)
-        .frame(maxWidth: 260, alignment: .leading)
+        .frame(maxWidth: WorkbenchSize.Compare.promptSetMaximum, alignment: .leading)
+    }
 
+    private var newSetButton: some View {
+        Button("New set…") { showingSetEditor = true }
+            .buttonStyle(.bordered)
+            .help("Build a prompt set\(mode.inputKind.map { " with your own \($0.rawValue) files" } ?? "").")
+    }
+
+    @ViewBuilder private var importPromptsButton: some View {
         if mode == .chat {
             Button("Import OpenCode prompts") {
                 if let imported = comparison.importHistory() {
@@ -554,16 +816,9 @@ struct QuantView: View {
             .buttonStyle(.bordered)
             .help("Read-only import of your opencode user prompts as a prompt set.")
         }
-            Button("New set…") { showingSetEditor = true }
-                .buttonStyle(.bordered)
-                .help("Build a prompt set\(mode.inputKind.map { " with your own \($0.rawValue) files" } ?? "").")
-                .sheet(isPresented: $showingSetEditor) {
-                    MediaPromptSetEditor(mode: mode) { set in
-                        comparison.savePromptSet(set)
-                        selectedPromptSetID = set.id
-                    }
-                }
+    }
 
+    private var runButton: some View {
         Button { startRun() } label: { Label("Run comparison", systemImage: "play.fill") }
             .buttonStyle(.borderedProminent)
             .tint(WorkbenchColor.accent)
@@ -572,43 +827,61 @@ struct QuantView: View {
             .disabled(!ComparePresentation.canRun(slots: variantSlots, activeRunID: comparison.activeRunID))
     }
 
+    @ViewBuilder private var inlineControls: some View {
+        promptSetPicker
+        newSetButton
+        importPromptsButton
+        filterButton
+        Spacer()
+        runButton
+    }
+
+    @ViewBuilder private var wrappedControls: some View {
+        runButton
+        HStack(spacing: WorkbenchSpacing.xs) {
+            promptSetPicker
+            newSetButton
+        }
+        HStack(spacing: WorkbenchSpacing.xs) {
+            importPromptsButton
+            filterButton
+        }
+    }
+
     // MARK: - Results
 
     @ViewBuilder
     private var resultsArea: some View {
-        if let run = selectedRun {
+        if let run = shownRun {
             runDetail(run)
         } else {
-            HStack { Spacer(); championsMenu }
-            Text("Pick models above and run a comparison to see results here.")
-                .font(WorkbenchTypography.body)
-                .foregroundStyle(WorkbenchColor.muted)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, minHeight: 240)
-        }
-    }
-
-    private func runHeader(_ run: ComparisonRun) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
-            ComparisonHistoryPicker(runs: comparison.runs, selection: $selectedRunID)
-            .frame(maxWidth: 420, alignment: .leading)
-            championsMenu
-            Spacer()
-            if run.effectiveMode == .chat, let winner = run.winner, run.state == .completed {
-                Label("Fastest: \(shortName(winner.modelPath))", systemImage: "bolt.fill")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.accent)
-                Button("Use fastest…") {
-                    promoteContext = PromoteContext(run: run, winner: winner)
+            WorkbenchSurface {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    runHeader
+                    ContentUnavailableView {
+                        Label(ComparePresentation.emptyTitle(for: mode), systemImage: "chart.bar.xaxis")
+                    } description: {
+                        Text("Choose models below and run the comparison.")
+                    }
+                    .frame(maxWidth: .infinity, minHeight: WorkbenchSize.Compare.emptyMinimumHeight)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
             }
         }
     }
 
+    private var runHeader: some View {
+        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
+            ComparisonHistoryPicker(runs: comparison.runs, selection: shownRunBinding)
+                .frame(maxWidth: WorkbenchSize.Compare.historyMaximum, alignment: .leading)
+                .disabled(comparison.activeRunID != nil)
+            Spacer()
+            championsMenu
+                .disabled(comparison.activeRunID != nil)
+        }
+    }
+
     private var comparisonModePicker: some View {
-        Picker("Mode", selection: $mode) {
+        Picker("Mode", selection: modeBinding) {
             ForEach(ComparisonMode.allCases) { entry in
                 Text(entry.title).tag(entry)
             }
@@ -626,9 +899,9 @@ struct QuantView: View {
             ForEach(champions) { champion in
                 Section {
                     ForEach(champion.performance) { result in
-                        if let value = champion.run.effectiveMode == .chat ? result.aggregateTokensPerSecond : result.aggregateMetric {
+                        if let value = champion.run.metricValue(of: result) {
                             Button {
-                                selectedRunID = champion.run.id
+                                pick(champion.run)
                             } label: {
                                 Label("\(champion.run.effectiveMode.primaryMetric.title): \(shortName(result.modelPath)) · \(champion.run.effectiveMode.primaryMetric.format(value))\(champion.performance.count > 1 ? " (tie)" : "")", systemImage: "trophy.fill")
                             }
@@ -637,7 +910,7 @@ struct QuantView: View {
                     ForEach(champion.quality) { result in
                         if let score = champion.run.qualityReviews?[result.modelPath]?.score {
                             Button {
-                                selectedRunID = champion.run.id
+                                pick(champion.run)
                             } label: {
                                 Label("Task quality: \(shortName(result.modelPath)) · \(score)/5\(champion.quality.count > 1 ? " (tie)" : "")", systemImage: "trophy.fill")
                             }
@@ -647,7 +920,7 @@ struct QuantView: View {
                     ForEach(champion.latency) { result in
                         if let value = result.aggregateTTFTSeconds {
                             Button("First token: \(shortName(result.modelPath)) · \(String(format: "%.2f s", value))\(champion.latency.count > 1 ? " (tie)" : "")") {
-                                selectedRunID = champion.run.id
+                                pick(champion.run)
                             }
                         }
                     }
@@ -657,9 +930,14 @@ struct QuantView: View {
                 }
             }
         } label: {
-            Label("Champions", systemImage: "trophy.fill")
-                .font(WorkbenchTypography.label)
-                .foregroundStyle(WorkbenchColor.warning)
+            Label {
+                Text("Champions").foregroundStyle(WorkbenchColor.ink)
+            } icon: {
+                Image(systemName: "trophy.fill")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(WorkbenchColor.accent)
+            }
+            .font(WorkbenchTypography.label)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
@@ -670,224 +948,78 @@ struct QuantView: View {
 
     private func runDetail(_ run: ComparisonRun) -> some View {
         let successful = run.results.filter { $0.error == nil }
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            runHeader(run)
+        let winnerPath = run.effectiveMode == .chat && run.state == .completed ? run.winner?.modelPath : nil
+        return WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                runHeader
 
-            if promotedWinnerPath != nil {
-                HStack(spacing: WorkbenchSpacing.sm) {
-                    Label("Fastest model selected.", systemImage: "checkmark.circle.fill")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.success)
-                    Button("Wire into clients…") { onRouteSelection(.clientSetup) }
-                        .controlSize(.small)
-                    Button("Review reclaim…") { onRouteSelection(.reclaim) }
-                        .controlSize(.small)
-                }
-            }
-
-            if run.effectiveMode == .chat {
-                if !successful.isEmpty {
-                    speedChart(successful)
-                }
-
-                DisclosureGroup("Outputs and per-model results") {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                        ForEach(run.results) { result in
-                            variantCard(result, run: run)
-                        }
-                        if run.state == .completed, successful.count >= 2 {
-                            diffSection(run)
-                        }
+                if let promotedWinner, promotedWinner.runID == run.id {
+                    HStack(spacing: WorkbenchSpacing.sm) {
+                        Label("Fastest model selected.", systemImage: "checkmark.circle.fill")
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.success)
+                        Button("Wire into clients…") { onRouteSelection(.clientSetup) }
+                            .controlSize(.small)
+                        Button("Review reclaim…") { onRouteSelection(.reclaim) }
+                            .controlSize(.small)
                     }
-                    .padding(.top, WorkbenchSpacing.sm)
                 }
-            } else {
+
                 MediaRunResultsView(
                     run: run,
                     store: comparison.outputStore ?? ComparisonOutputStore(),
+                    contentWidth: compareContentWidth,
+                    isRouteActive: isRouteActive,
                     name: { shortName($0) },
-                    onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) }
+                    onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
+                    laneActions: { lane in laneActions(lane, run: run, winnerPath: winnerPath) }
                 )
+                .id(run.id)
+
+                if run.effectiveMode == .chat, run.state == .completed, successful.count >= 2 {
+                    DisclosureGroup("Output diff") { diffSection(run) }
+                        .font(WorkbenchTypography.secondary)
+                }
+            }
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: CompareContentWidthKey.self, value: proxy.size.width)
+            })
+            .onPreferenceChange(CompareContentWidthKey.self) { width in
+                if width > 0 { compareContentWidth = width }
             }
         }
-        .formSection {}
         .sheet(item: $promoteContext) { context in
             PromoteWinnerSheet(
                 appHost: appHost,
                 context: context,
-                onPromoted: { path in promotedWinnerPath = path }
+                onPromoted: { path in promotedWinner = PromotedWinner(runID: context.run.id, path: path) }
             )
         }
     }
 
-    /// One glance: per-variant speed bars — decode (out) and prefill (in) —
-    /// with the run's decode average marked. Horizontal bars keep long model
-    /// names readable.
-    private func speedChart(_ results: [VariantResult]) -> some View {
-        struct Point: Identifiable {
-            let id: String
-            let variant: String
-            let metric: String
-            let value: Double
-        }
-        var points: [Point] = []
-        for result in results {
-            let name = shortName(result.modelPath)
-            if let decode = result.aggregateTokensPerSecond {
-                points.append(Point(id: "\(name)-out", variant: name, metric: "Decode (out)", value: decode))
-            }
-            if let prefill = result.aggregatePrefillTokensPerSecond {
-                points.append(Point(id: "\(name)-in", variant: name, metric: "Prefill (in, est.)", value: prefill))
-            }
-        }
-        let decodeValues = points.filter { $0.metric == "Decode (out)" }.map(\.value)
-        let average = decodeValues.isEmpty ? 0 : decodeValues.reduce(0, +) / Double(decodeValues.count)
-        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
-                Text("Speed")
-                    .font(WorkbenchTypography.section)
-                Text("TOKENS / SECOND")
-                    .font(WorkbenchTypography.label)
-                    .tracking(1)
-                    .foregroundStyle(WorkbenchColor.muted)
-                Spacer()
-                if average > 0 {
-                    Text(String(format: "Avg decode %.1f tok/s", average))
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                }
-            }
-            Chart {
-                ForEach(points) { point in
-                    BarMark(
-                        x: .value("tok/s", point.value),
-                        y: .value("Variant", point.variant)
-                    )
-                    .foregroundStyle(by: .value("Metric", point.metric))
-                    .cornerRadius(3)
-                }
-                if average > 0 {
-                    RuleMark(x: .value("Decode average", average))
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                }
-            }
-            .chartXAxis {
-                AxisMarks(position: .bottom)
-            }
-            .frame(height: CGFloat(max(results.count, 1)) * 44 + 40)
-        }.monospacedDigit()
-    }
-
-    private func variantCard(_ result: VariantResult, run: ComparisonRun) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            HStack {
-                Text(shortName(result.modelPath))
-                    .font(WorkbenchTypography.emphasis)
-                Spacer()
-                if let tps = result.aggregateTokensPerSecond {
-                    Text(String(format: "%.1f tok/s out", tps)).font(WorkbenchTypography.secondary)
-                }
-                if let prefill = result.aggregatePrefillTokensPerSecond {
-                    Text(String(format: "%.0f tok/s in (est.)", prefill))
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                }
-                if let ttft = result.aggregateTTFTSeconds {
-                    Text(String(format: "TTFT %.2fs", ttft))
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                }
-            }
-
-            if let error = result.error {
-                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
-            } else {
-                sampleStatStrip(result)
-                if let toolCalls = result.totalToolCalls {
-                    let valid = result.totalToolCallsValid
-                    Label(
-                        valid == nil
-                            ? "\(toolCalls) tool call(s)"
-                            : "\(toolCalls) tool call(s), \(valid!) with usable arguments",
-                        systemImage: toolCalls > 0 && valid == toolCalls ? "checkmark.circle" : "xmark.circle"
-                    )
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(toolCalls > 0 && valid == toolCalls ? WorkbenchColor.success : WorkbenchColor.warning)
-                }
-                DisclosureGroup("Per-prompt outputs (\(result.samples.count))") {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        ForEach(result.samples, id: \.promptID) { sample in
-                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                                HStack {
-                                    Text(sample.promptID).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                                    Spacer()
-                                    if let tps = sample.tokensPerSecond {
-                                        Text(String(format: "%.1f tok/s", tps))
-                                            .font(WorkbenchTypography.secondary)
-                                            .foregroundStyle(WorkbenchColor.muted)
-                                    }
-                                    if let prefill = sample.prefillTokensPerSecond {
-                                        Text(String(format: "in %.0f", prefill))
-                                            .font(WorkbenchTypography.secondary)
-                                            .foregroundStyle(WorkbenchColor.muted)
-                                    }
-                                    if let toolCalls = sample.toolCalls {
-                                        Text("\(toolCalls) call(s): \((sample.toolNames ?? []).joined(separator: ", "))")
-                                            .font(WorkbenchTypography.secondary)
-                                            .foregroundStyle(WorkbenchColor.muted)
-                                    }
-                                }
-                                Text(sample.outputExcerpt)
-                                    .font(WorkbenchTypography.value)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                    }
-                    .padding(.top, WorkbenchSpacing.xxs)
-                }
-                if let useCase = run.useCase {
-                    Button("Set as preferred for \(useCase.title)") {
-                        setPreferred(result.modelPath, for: useCase)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(appHost.recommendationPreferences.preferredModelIDs[useCase] == result.modelPath)
-                }
-            }
-        }
-        .padding(WorkbenchSpacing.sm)
-        .background(WorkbenchColor.canvas)
-        .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
-    }
-
-    /// High/low/average across this variant's per-prompt samples.
+    /// Chat lanes carry the promote button on the winner and the preferred-model menu.
     @ViewBuilder
-    private func sampleStatStrip(_ result: VariantResult) -> some View {
-        let values = result.samples.compactMap(\.tokensPerSecond)
-        if !values.isEmpty {
-            let average = values.reduce(0, +) / Double(values.count)
-            HStack(spacing: WorkbenchSpacing.md) {
-                statChip("avg", value: average)
-                statChip("high", value: values.max() ?? average)
-                statChip("low", value: values.min() ?? average)
-                if let bestTTFT = ComparisonAggregation.bestTTFT(result.samples) {
-                    Text(String(format: "best TTFT %.2fs", bestTTFT))
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
+    private func laneActions(_ lane: CompareLane, run: ComparisonRun, winnerPath: String?) -> some View {
+        if run.effectiveMode == .chat, lane.path == winnerPath || (run.useCase != nil && lane.state == .measured) {
+            HStack(spacing: WorkbenchSpacing.xs) {
+                if lane.path == winnerPath, let winner = run.winner {
+                    Button("Use fastest…") { promoteContext = PromoteContext(run: run, winner: winner) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                if let useCase = run.useCase, lane.state == .measured {
+                    Menu {
+                        Button("Set as preferred for \(useCase.title)") { setPreferred(lane.path, for: useCase) }
+                            .disabled(appHost.recommendationPreferences.preferredModelIDs[useCase] == lane.path)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("More actions for this model")
+                    .accessibilityLabel("More actions for model \(lane.letter)")
                 }
             }
-        }
-    }
-
-    private func statChip(_ label: String, value: Double) -> some View {
-        HStack(spacing: WorkbenchSpacing.xxs) {
-            Text(label)
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
-            Text(String(format: "%.1f", value))
-                .font(WorkbenchTypography.value)
-                .foregroundStyle(WorkbenchColor.ink)
         }
     }
 
@@ -898,7 +1030,6 @@ struct QuantView: View {
         let left = candidates.first { $0.modelPath == diffLeftPath }
         let right = candidates.first { $0.modelPath == diffRightPath }
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            SectionTitle(text: "Output diff")
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: WorkbenchSpacing.xs) { diffControls(candidates) }
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { diffControls(candidates) }
@@ -1070,7 +1201,6 @@ struct PromoteWinnerSheet: View {
                 Spacer()
                 Button(isApplying ? "Promoting…" : "Promote") { Task { await confirm() } }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
                     .disabled(isApplying)
             }
         }
@@ -1081,10 +1211,10 @@ struct PromoteWinnerSheet: View {
     private var statsLine: String {
         var parts: [String] = []
         if let tps = context.winner.aggregateTokensPerSecond {
-            parts.append(String(format: "%.1f tok/s", tps))
+            parts.append(ComparisonMetric.tokensPerSecond.format(tps))
         }
         if let ttft = context.winner.aggregateTTFTSeconds {
-            parts.append(String(format: "TTFT %.2fs", ttft))
+            parts.append(ComparisonViewLogic.firstToken(ttft))
         }
         return parts.isEmpty ? "Fastest measured variant in this run." : parts.joined(separator: " · ")
     }

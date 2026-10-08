@@ -69,7 +69,7 @@ struct SystemResourceHeader: View {
             Text("Used for model-fit reviews; does not change a running server’s context limit.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             Divider()
-            Text("SERVING MODELS").font(WorkbenchTypography.metadata.weight(.semibold)).tracking(1)
+            Text("Serving models").font(WorkbenchTypography.metadata.weight(.semibold))
                 .foregroundStyle(WorkbenchColor.muted)
             if let error = resources.serverError {
                 Text(error).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)

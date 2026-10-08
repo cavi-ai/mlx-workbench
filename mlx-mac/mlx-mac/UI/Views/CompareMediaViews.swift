@@ -1,7 +1,6 @@
 import AVFoundation
 import AVKit
 import AppKit
-import Charts
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -16,6 +15,11 @@ enum ComparisonViewLogic {
         let promptID: String
         let url: URL
         var id: String { modelPath + "|" + promptID }
+    }
+
+    /// Completed music runs offer A/B listening and a per-lane listening rating.
+    static func showsListening(_ run: ComparisonRun) -> Bool {
+        run.effectiveMode == .musicGeneration && run.state == .completed
     }
 
     static func audioClips(for run: ComparisonRun, store: ComparisonOutputStore, promptID: String? = nil) -> [ListeningClip] {
@@ -53,7 +57,9 @@ enum ComparisonViewLogic {
         var parts: [String] = []
         switch mode {
         case .chat:
-            break
+            if let ttft = sample.timeToFirstTokenSeconds { parts.append(firstToken(ttft)) }
+            if let prefill = sample.prefillTokensPerSecond { parts.append(prefillText(prefill)) }
+            parts.append(contentsOf: toolCallParts(calls: sample.toolCalls, names: sample.toolNames, usable: sample.toolCallsValid))
         case .vision, .videoUnderstanding:
             if let tokens = sample.generationTokens { parts.append("\(tokens) tokens") }
         case .speechToText:
@@ -63,7 +69,7 @@ enum ComparisonViewLogic {
         case .textToSpeech, .musicGeneration:
             if let audio = sample.audioSeconds { parts.append(String(format: "%.1f s of audio", audio)) }
         case .imageGeneration, .videoGeneration:
-            if let spread = sample.pixelStd { parts.append(String(format: "pixel spread %.1f", spread)) }
+            break
         }
         if mode != .speechToText, let seconds = sample.seconds { parts.append(String(format: "%.1f s", seconds)) }
         if let load = sample.loadSeconds { parts.append(String(format: "load %.1f s", load)) }
@@ -71,82 +77,203 @@ enum ComparisonViewLogic {
         let details = parts.map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: " · ")
         return (primary, details)
     }
+
+    static func firstToken(_ seconds: Double) -> String {
+        String(format: "first token %.2f s", seconds)
+    }
+
+    /// Prompt tokens over first-token time is a lower bound, so it always reads as an estimate.
+    static func prefillText(_ tokensPerSecond: Double) -> String {
+        String(format: "in ~%.0f tok/s (est.)", tokensPerSecond)
+    }
+
+    static func wordErrorText(_ rate: Double) -> String {
+        String(format: "%.0f%% word errors", rate * 100)
+    }
+
+    /// Tool-call facts for a sample or a whole result; nil `calls` means no tool was offered.
+    static func toolCallParts(calls: Int?, names: [String]?, usable: Int?) -> [String] {
+        guard let calls else { return [] }
+        guard calls > 0 else { return ["No tool calls"] }
+        let listed = (names ?? []).isEmpty ? "" : ": " + (names ?? []).joined(separator: ", ")
+        var parts = ["\(calls) tool \(calls == 1 ? "call" : "calls")\(listed)"]
+        if let usable { parts.append("\(usable) usable") }
+        return parts
+    }
+
+    /// The lines under a chat lane's number; unmeasured values are left out, never shown as zero.
+    static func chatLaneDetails(_ result: VariantResult) -> [String] {
+        var lines: [String] = []
+        if let prefill = result.aggregatePrefillTokensPerSecond { lines.append(prefillText(prefill)) }
+        if let ttft = result.aggregateTTFTSeconds { lines.append(firstToken(ttft)) }
+        let speeds = result.samples.compactMap(\.tokensPerSecond)
+        if speeds.count >= 2, let low = speeds.min(), let high = speeds.max() {
+            lines.append(String(format: "%.1f–%.1f tok/s across %d prompts", low, high, speeds.count))
+        }
+        if let calls = result.totalToolCalls {
+            lines.append(calls == 0 ? "No tool calls"
+                : "\(calls) tool \(calls == 1 ? "call" : "calls")" + (result.totalToolCallsValid.map { ", \($0) usable" } ?? ""))
+        }
+        return lines
+    }
 }
 
 // MARK: - Results grid
 
-/// One row per prompt, one column per variant; each cell shows what the variant produced.
-struct MediaRunResultsView: View {
-    private struct ChartPoint: Identifiable {
-        let name: String
-        let value: Double
-        var id: String { name }
+/// The letter identifying a variant, in slot tiles and lane headers alike.
+struct LetterChip: View {
+    let letter: String
+
+    var body: some View {
+        Text(letter)
+            .font(WorkbenchTypography.label)
+            .foregroundStyle(WorkbenchColor.accent)
+            .frame(width: WorkbenchSize.Compare.chip, height: WorkbenchSize.Compare.chip)
+            .background(WorkbenchColor.accent.opacity(.fill), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+    }
+}
+
+struct CompareContentWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// A failure as one tinted line (the error's first line, two lines at most); the full text opens in a popover.
+/// Lane headers and result cells both render failures through this view.
+struct FailureNotice: View {
+    let error: String
+    @State private var showsDetails = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Label(ComparePresentation.firstLine(of: error), systemImage: "exclamationmark.triangle.fill")
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.failure)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Details") { showsDetails = true }
+                .buttonStyle(.borderless)
+                .font(WorkbenchTypography.secondary)
+                .popover(isPresented: $showsDetails) {
+                    ScrollView {
+                        Text(error)
+                            .font(WorkbenchTypography.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(WorkbenchSize.Compare.cellInset)
+                    }
+                    .frame(width: WorkbenchSize.Compare.detailsPopoverWidth)
+                    .frame(maxHeight: WorkbenchSize.Compare.detailsPopoverWidth)
+                }
+        }
+    }
+}
+
+/// Model output clamped to a line limit; a longer answer offers its full selectable text in a popover.
+private struct OutputExcerpt: View {
+    let text: String
+    @State private var shownHeight: CGFloat = 0
+    @State private var fullHeight: CGFloat = 0
+    @State private var showsFull = false
+
+    private struct ShownHeightKey: PreferenceKey {
+        static let defaultValue: CGFloat = 0
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
     }
 
+    private struct FullHeightKey: PreferenceKey {
+        static let defaultValue: CGFloat = 0
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+    }
+
+    private var isTruncated: Bool { fullHeight > shownHeight + 1 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text(text)
+                .font(WorkbenchTypography.secondary)
+                .lineLimit(WorkbenchSize.Compare.textCellLineLimit)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: ShownHeightKey.self, value: proxy.size.height)
+                })
+                .background(
+                    Text(text)
+                        .font(WorkbenchTypography.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .hidden()
+                        .background(GeometryReader { proxy in
+                            Color.clear.preference(key: FullHeightKey.self, value: proxy.size.height)
+                        })
+                )
+                .onPreferenceChange(ShownHeightKey.self) { shownHeight = $0 }
+                .onPreferenceChange(FullHeightKey.self) { fullHeight = $0 }
+            if isTruncated {
+                Button("Show full output") { showsFull = true }
+                    .buttonStyle(.borderless)
+                    .font(WorkbenchTypography.secondary)
+                    .popover(isPresented: $showsFull) {
+                        ScrollView {
+                            Text(text)
+                                .font(WorkbenchTypography.secondary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(WorkbenchSize.Compare.cellInset)
+                        }
+                        .frame(width: WorkbenchSize.Compare.detailsPopoverWidth)
+                        .frame(maxHeight: WorkbenchSize.Compare.detailsPopoverWidth)
+                    }
+            }
+        }
+    }
+}
+
+/// Lettered lanes lead the grid; below them one row per prompt, one column per lane,
+/// so a letter means the same model down the whole page.
+struct MediaRunResultsView<LaneActions: View>: View {
     let run: ComparisonRun
     let store: ComparisonOutputStore
+    /// Measured by the owner above the run's identity boundary, so a run switch keeps the width.
+    let contentWidth: CGFloat
+    let isRouteActive: Bool
     let name: (String) -> String
     let onReview: (String, Int?) -> Void
+    let laneActions: (CompareLane) -> LaneActions
 
     @State private var preview: PreviewImage?
-    @StateObject private var audio = AudioClipPlayer()
+    @StateObject private var audio: AudioClipPlayer
 
     @MainActor
-    init(run: ComparisonRun, store: ComparisonOutputStore, name: @escaping (String) -> String,
-         onReview: @escaping (String, Int?) -> Void, audio: AudioClipPlayer? = nil) {
-        self.run = run; self.store = store; self.name = name; self.onReview = onReview
+    init(run: ComparisonRun, store: ComparisonOutputStore, contentWidth: CGFloat, isRouteActive: Bool,
+         name: @escaping (String) -> String, onReview: @escaping (String, Int?) -> Void,
+         audio: AudioClipPlayer? = nil, @ViewBuilder laneActions: @escaping (CompareLane) -> LaneActions) {
+        self.run = run
+        self.store = store
+        self.contentWidth = contentWidth
+        self.isRouteActive = isRouteActive
+        self.name = name
+        self.onReview = onReview
+        self.laneActions = laneActions
         _audio = StateObject(wrappedValue: audio ?? AudioClipPlayer())
     }
 
-    /// Headers, prompts and cards share these, so every column's text starts on the same line.
-    private static let promptWidth: CGFloat = 220
-    private static let columnWidth: CGFloat = 264
-    private static let inset = WorkbenchSpacing.sm
-    private static let contentWidth = columnWidth - 2 * inset
-
     private var mode: ComparisonMode { run.effectiveMode }
-
     var body: some View {
+        let lanes = ComparePresentation.lanes(for: run)
+        let layout = ComparePresentation.gridLayout(contentWidth: contentWidth, laneCount: run.variants.count)
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            chart
-            if mode == .musicGeneration, run.state == .completed {
+            if layout.scrolls {
+                ScrollView(.horizontal) { grid(lanes: lanes, layout: layout) }
+            } else {
+                grid(lanes: lanes, layout: layout)
+            }
+            if ComparisonViewLogic.showsListening(run) {
                 MusicListeningPanel(run: run, store: store, name: name, player: audio)
                     .id(run.id)
             }
-            ScrollView(.horizontal) {
-                Grid(alignment: .topLeading, horizontalSpacing: WorkbenchSpacing.sm, verticalSpacing: WorkbenchSpacing.sm) {
-                    GridRow(alignment: .lastTextBaseline) {
-                        Text("Prompt")
-                            .font(WorkbenchTypography.label)
-                            .foregroundStyle(WorkbenchColor.muted)
-                            .frame(width: Self.promptWidth, alignment: .leading)
-                        ForEach(run.results) { result in
-                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                                Text(name(result.modelPath))
-                                    .font(WorkbenchTypography.emphasis)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .help(result.modelPath)
-                                if mode == .musicGeneration, run.state == .completed {
-                                    listeningReview(result.modelPath)
-                                }
-                            }
-                                .padding(.horizontal, Self.inset)
-                                .frame(width: Self.columnWidth, alignment: .leading)
-                        }
-                    }
-                    Divider()
-                    ForEach(ComparisonViewLogic.rows(for: run)) { entry in
-                        GridRow {
-                            promptCell(entry)
-                            ForEach(run.results) { result in
-                                resultCell(result.samples.first { $0.promptID == entry.id }, result: result)
-                            }
-                        }
-                    }
-                }
-            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(item: $preview) { item in ImagePreviewSheet(url: item.url) }
         .onDisappear { audio.stop() }
         .onChange(of: run.id) { _, _ in audio.stop() }
@@ -161,42 +288,157 @@ struct MediaRunResultsView: View {
             Text("Not reviewed").tag(0)
             ForEach(1...5, id: \.self) { value in Text(ComparisonQualityReview.musicScoreTitle(value)).tag(value) }
         }
+        .pickerStyle(.menu)
+        .labelsHidden()
         .controlSize(.small)
+        .accessibilityLabel("Listening quality for \(name(path))")
         .disabled(!ComparisonViewLogic.audioClips(for: run, store: store).contains { $0.modelPath == path })
         .help(ComparisonQualityReview.musicRubric)
     }
 
-    @ViewBuilder
-    private var chart: some View {
-        let points = run.results.compactMap { result in
-            result.aggregateMetric.map { ChartPoint(name: name(result.modelPath), value: $0) }
-        }
-        if !points.isEmpty {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                Text("\(mode.primaryMetric.title) · \(mode.primaryMetric.higherIsBetter ? "higher" : "lower") is faster")
-                    .font(WorkbenchTypography.label)
-                    .foregroundStyle(WorkbenchColor.muted)
-                Chart {
-                    ForEach(points) { point in
-                        BarMark(x: .value(mode.primaryMetric.title, point.value), y: .value("Variant", point.name))
-                            .cornerRadius(3)
+    private func grid(lanes: [CompareLane], layout: ComparePresentation.GridLayout) -> some View {
+        let measuredCount = lanes.filter { $0.state == .measured }.count
+        return Grid(alignment: .topLeading, horizontalSpacing: WorkbenchSize.Compare.columnSpacing, verticalSpacing: WorkbenchSpacing.sm) {
+            GridRow(alignment: .top) {
+                captionCell
+                    .frame(width: layout.promptWidth, alignment: .leading)
+                ForEach(lanes) { lane in
+                    laneHeader(lane, measuredCount: measuredCount)
+                        .frame(width: layout.laneWidth, alignment: .topLeading)
+                }
+            }
+            Divider().gridCellUnsizedAxes(.horizontal)
+            ForEach(ComparisonViewLogic.rows(for: run)) { entry in
+                GridRow {
+                    promptCell(entry, width: layout.promptWidth)
+                    ForEach(lanes) { lane in
+                        let result = run.results.first { $0.modelPath == lane.path }
+                        resultCell(result?.samples.first { $0.promptID == entry.id }, result: result, lane: lane, layout: layout)
                     }
                 }
-                .frame(height: CGFloat(max(points.count, 1)) * 44 + 40)
             }
         }
     }
 
-    private func promptCell(_ entry: PromptEntry) -> some View {
+    private var captionCell: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text("Prompt")
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.ink)
+            Text("\(mode.primaryMetric.title) · \(mode.primaryMetric.higherIsBetter ? "higher" : "lower") is faster")
+                .font(WorkbenchTypography.metadata)
+                .foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Lane header
+
+    private func laneHeader(_ lane: CompareLane, measuredCount: Int) -> some View {
+        let result = run.results.first { $0.modelPath == lane.path }
+        let metric = mode.primaryMetric
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                HStack(spacing: WorkbenchSpacing.xs) {
+                    LetterChip(letter: lane.letter)
+                        .livePulse(lane.state == .measuring && isRouteActive)
+                    Spacer(minLength: 0)
+                    if lane.isLeader {
+                        Label("Fastest", systemImage: "bolt.fill")
+                            .font(WorkbenchTypography.label)
+                            .foregroundStyle(WorkbenchColor.accent)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .transition(.opacity)
+                    }
+                }
+                .workbenchAnimation(value: lane.isLeader)
+                Text(name(lane.path))
+                    .font(WorkbenchTypography.emphasis)
+                    .lineLimit(2, reservesSpace: true)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(lane.path)
+                laneValue(lane, metric: metric, measuredCount: measuredCount)
+                if let result, lane.state == .measured, mode == .chat {
+                    ForEach(ComparisonViewLogic.chatLaneDetails(result), id: \.self) { line in
+                        Text(line)
+                            .font(WorkbenchTypography.secondaryTabular)
+                            .foregroundStyle(WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(ComparePresentation.laneAccessibilityLabel(lane, name: name(lane.path), metric: metric))
+            laneActions(lane)
+            if ComparisonViewLogic.showsListening(run) {
+                listeningReview(lane.path)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func laneValue(_ lane: CompareLane, metric: ComparisonMetric, measuredCount: Int) -> some View {
+        if let value = lane.value, lane.state == .measured {
+            let parts = ComparePresentation.splitValue(metric.format(value))
+            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xxs) {
+                Text(parts.number)
+                    .font(WorkbenchTypography.display)
+                    .foregroundStyle(WorkbenchColor.ink)
+                    .lineLimit(1)
+                    .fixedSize()
+                Text(parts.unit)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .lineLimit(1)
+            }
+            if let fraction = lane.fraction {
+                bar(fraction: fraction, isLeader: lane.isLeader)
+            } else if measuredCount == 1 {
+                Text("Add a model to rank it")
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.muted)
+            }
+        } else if case .failed(let error) = lane.state {
+            FailureNotice(error: error)
+        } else if let status = ComparePresentation.laneStatus(lane.state) {
+            Text(status)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+                .lineLimit(1)
+                .help(status)
+        }
+    }
+
+    /// The lane's share of the fastest lane; the leader fills the track.
+    private func bar(fraction: Double, isLeader: Bool) -> some View {
+        ZStack(alignment: .leading) {
+            RoundedRectangle(cornerRadius: WorkbenchRadius.chip).fill(WorkbenchColor.well)
+            GeometryReader { proxy in
+                RoundedRectangle(cornerRadius: WorkbenchRadius.chip)
+                    .fill(isLeader ? WorkbenchColor.accent : WorkbenchColor.accent.opacity(.stroke))
+                    .frame(width: proxy.size.width * min(max(fraction, 0), 1))
+            }
+        }
+        .frame(height: WorkbenchSize.barHeightCompact)
+        .workbenchAnimation(value: Int((fraction * 100).rounded()))
+        .accessibilityHidden(true)
+    }
+
+    private func promptCell(_ entry: PromptEntry, width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Text(entry.text)
                 .font(WorkbenchTypography.secondary)
                 .textSelection(.enabled)
             if let kind = mode.inputKind, let url = inputURL(entry) {
                 switch kind {
-                case .image: ThumbnailView(url: url, size: CGSize(width: 96, height: 96)) { preview = PreviewImage(url: url) }
+                case .image:
+                    ThumbnailView(url: url, size: CGSize(width: WorkbenchSize.Compare.inputThumbnail, height: WorkbenchSize.Compare.inputThumbnail)) {
+                        preview = PreviewImage(url: url)
+                    }
                 case .audio: AudioClipButton(url: url, label: "Play input", player: audio)
-                case .video: ClipVideoView(url: url).frame(width: Self.promptWidth, height: Self.promptWidth * 9 / 16)
+                case .video: ClipVideoView(url: url).frame(width: width, height: width * 9 / 16)
                 }
             }
             if let keywords = entry.expectedKeywords, !keywords.isEmpty {
@@ -205,8 +447,8 @@ struct MediaRunResultsView: View {
                     .foregroundStyle(WorkbenchColor.muted)
             }
         }
-        .padding(.vertical, Self.inset)
-        .frame(width: Self.promptWidth, alignment: .leading)
+        .padding(.vertical, WorkbenchSize.Compare.cellInset)
+        .frame(width: width, alignment: .leading)
     }
 
     private func inputURL(_ entry: PromptEntry) -> URL? {
@@ -226,29 +468,35 @@ struct MediaRunResultsView: View {
     }
 
     /// A card that fills its row's height, so the cards of one prompt line up top and bottom.
-    private func resultCell(_ sample: ComparisonSample?, result: VariantResult) -> some View {
+    private func resultCell(_ sample: ComparisonSample?, result: VariantResult?, lane: CompareLane, layout: ComparePresentation.GridLayout) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             if let sample {
                 if let error = sample.error {
-                    Text(error)
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.failure)
-                        .textSelection(.enabled)
+                    FailureNotice(error: error)
                 } else {
-                    outputView(sample)
+                    outputView(sample, side: layout.mediaSide)
                     metrics(sample)
                 }
-            } else if let error = result.error {
-                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            } else if ComparePresentation.showsNotRun(sample: sample, result: result) {
+                Text("Not run").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             } else {
-                Text("Pending").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                Text(pendingText(lane.state)).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
         }
-        .padding(Self.inset)
-        .frame(width: Self.columnWidth, alignment: .leading)
+        .padding(WorkbenchSize.Compare.cellInset)
+        .frame(width: layout.laneWidth, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(WorkbenchColor.canvas)
         .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+    }
+
+    private func pendingText(_ state: CompareLane.State) -> String {
+        switch state {
+        case .measuring: return "Measuring…"
+        case .waiting: return "Waiting"
+        case .notMeasured: return "Not measured"
+        case .measured, .noMeasurement, .failed: return "No output"
+        }
     }
 
     private func metrics(_ sample: ComparisonSample) -> some View {
@@ -267,19 +515,11 @@ struct MediaRunResultsView: View {
     }
 
     @ViewBuilder
-    private func outputView(_ sample: ComparisonSample) -> some View {
+    private func outputView(_ sample: ComparisonSample, side: CGFloat) -> some View {
         switch mode.outputKind {
         case .text:
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                // The text's own height, up to 140 points; a longer answer scrolls.
-                ScrollView {
-                    Text(sample.fullOutput ?? sample.outputExcerpt)
-                        .font(WorkbenchTypography.value)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 140)
-                .fixedSize(horizontal: false, vertical: true)
+                OutputExcerpt(text: sample.fullOutput ?? sample.outputExcerpt)
                 badge(sample)
             }
         case .image, .audio, .video:
@@ -287,11 +527,11 @@ struct MediaRunResultsView: View {
                FileManager.default.fileExists(atPath: url.path) {
                 switch mode.outputKind {
                 case .image:
-                    ThumbnailView(url: url, size: CGSize(width: Self.contentWidth, height: Self.contentWidth)) {
+                    ThumbnailView(url: url, size: CGSize(width: side, height: side)) {
                         preview = PreviewImage(url: url)
                     }
                 case .audio: AudioClipButton(url: url, label: sample.audioSeconds.map { String(format: "Play · %.1f s", $0) } ?? "Play", player: audio)
-                default: ClipVideoView(url: url).frame(width: Self.contentWidth, height: Self.contentWidth * 9 / 16)
+                default: ClipVideoView(url: url).frame(width: side, height: side * 9 / 16)
                 }
             } else {
                 Label("output pruned", systemImage: "trash.slash")
@@ -309,7 +549,7 @@ struct MediaRunResultsView: View {
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(matched ? WorkbenchColor.success : WorkbenchColor.warning)
         } else if let rate = sample.wordErrorRate {
-            Label(String(format: "WER %.0f%%", rate * 100),
+            Label(ComparisonViewLogic.wordErrorText(rate),
                   systemImage: rate <= SpeechCanary.maxWordErrorRate ? "checkmark.circle" : "xmark.circle")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(rate <= SpeechCanary.maxWordErrorRate ? WorkbenchColor.success : WorkbenchColor.warning)
@@ -756,7 +996,6 @@ struct MediaPromptSetEditor: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") { save() }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
                     .disabled(!canSave)
             }
         }
@@ -887,8 +1126,8 @@ struct ComparisonHistoryPanel: View {
                         Text("No matching runs").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                     }
                     ForEach(groups) { group in
-                        Text(group.mode.title.uppercased()).font(WorkbenchTypography.metadata.weight(.semibold))
-                            .tracking(1).foregroundStyle(WorkbenchColor.muted).padding(.top, WorkbenchSpacing.xs)
+                        Text(group.mode.title).font(WorkbenchTypography.metadata.weight(.semibold))
+                            .foregroundStyle(WorkbenchColor.muted).padding(.top, WorkbenchSpacing.xs)
                         ForEach(group.runs) { run in
                             Button {
                                 onSelect(run.id)

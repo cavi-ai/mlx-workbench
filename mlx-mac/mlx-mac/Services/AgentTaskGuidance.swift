@@ -116,7 +116,7 @@ enum AgentTaskAdvisor {
                 let review = run.qualityReviews?[result.modelPath]
                 let quality = review.flatMap { $0.rubricID == ComparisonQualityReview.taskOutcomeRubric && (1...5).contains($0.score) ? $0.score : nil }
                 return candidate(path: result.modelPath, id: run.id.uuidString, date: date, quality: quality,
-                    performance: ComparisonInsights.positive(run.effectiveMode == .chat ? result.aggregateTokensPerSecond : result.aggregateMetric),
+                    performance: run.effectiveMode.metricValue(of: result),
                     latency: run.effectiveMode == .chat ? ComparisonInsights.nonnegative(result.aggregateTTFTSeconds) : nil,
                     samples: result.samples.count, reasons: reasons)
             }

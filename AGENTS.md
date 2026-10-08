@@ -119,7 +119,7 @@ from `mlx-agent` at runtime.
   TTFT, always labeled an estimate) and tool calls (builtin "Tool calling"
   set offers `PromptToolSpec`s; streamed `tool_calls` are counted and their
   arguments validated against the schema's required keys). Past runs are
-  browsable history with Swift Charts; `ModelPerformanceProfile` aggregates
+  browsable in a searchable history popover; `ModelPerformanceProfile` aggregates
   per-model stats into Model Details.
   **Compare modes**: a picker above the variant slots (segmented when it fits, otherwise a menu; `ComparisonMode`:
   chat, vision, video understanding, speech to text, text to speech, image
@@ -146,10 +146,11 @@ from `mlx-agent` at runtime.
   are never followed); run JSON is kept and a missing artifact renders as
   "output pruned". A sample's `artifact` containing `/`, `..` or a leading dot
   is refused. The coordinator only touches an output store it was handed
-  (`outputStore`, wired in `AppHost`). The results grid is one row per prompt,
-  one column per variant (text, image thumbnail with larger sheet, audio
-  play/stop, video player), with the mode's primary metric charted: tok/s,
-  real-time factor, seconds per step, seconds per frame. Output diff and
+  (`outputStore`, wired in `AppHost`). The results grid leads with one lettered
+  lane (A–D, run order) per variant carrying the mode's primary metric as its
+  largest numerals and a relative bar: tok/s, real-time factor, seconds per
+  step, seconds per frame. Below the lanes is one row per prompt, one column per
+  lane (text, image thumbnail with larger sheet, audio play/stop, video player). Output diff and
   Promote winner stay chat-only; media runs do not feed the
   RecommendationEngine.
   Music generation accepts `music_generation` models and uses the audio backend's
@@ -162,10 +163,11 @@ from `mlx-agent` at runtime.
   weights; raw component checkpoints keep the backend's original converter.
   Music generation requires the real root or nested tokenizer and uses the pinned
   backend's official prompt encoder; synthetic tiny-model fallback tokens are refused.
-  Completed music runs show A/B listening below the chart. One shared
+  Completed music runs show A/B listening below the lettered-lane grid. One shared
   `AudioClipPlayer` owns input/output playback, pause/resume and seeking;
   switching models preserves elapsed time and clamps to a shorter clip's end.
-  Run changes and leaving results stop playback. Explicit 1–5 ratings persist
+  Run changes and leaving results stop playback. Each lane header carries its
+  model's rating control; explicit 1–5 ratings persist
   as `music-listening-v1` reviews, separately from speed; quality champions
   require a complete, current cohort with every model reviewed under that rubric.
   Run history uses a searchable popover grouped by mode, newest

@@ -25,6 +25,8 @@ final class DesignLintTests: XCTestCase {
         Rule(pattern: #"cornerRadius: [0-9]"#, reason: "literal radius; use WorkbenchRadius", allowedFiles: ["DesignSystem.swift"], isRegex: true),
         Rule(pattern: #"opacity\([0-9.]+\)"#, reason: "literal opacity; use WorkbenchTint", allowedFiles: ["DesignSystem.swift"], isRegex: true),
         Rule(pattern: ".animation(", reason: "raw animation; use workbenchAnimation with a WorkbenchMotion curve", allowedFiles: ["DesignSystem.swift"]),
+        Rule(pattern: ".tracking(", reason: "letter-spaced text; use sentence case with the type token"),
+        Rule(pattern: ".kerning(", reason: "letter-spaced text; use sentence case with the type token"),
         Rule(pattern: "onRouteSelection(\"", reason: "route passed as a string; use AppRoute"),
         Rule(pattern: "AnyView(", reason: "type erasure in the view tree; use @ViewBuilder"),
     ]
@@ -90,6 +92,8 @@ final class DesignLintTests: XCTestCase {
             ".fill(Color.orange)",
             "static let metadata = Font.caption",
             "static let note = Font.footnote.monospaced()",
+            "Text(\"SERVING MODELS\").tracking(1)",
+            "Text(title).font(WorkbenchTypography.metadata).kerning(0.5)",
         ]
         for line in flagged {
             XCTAssertFalse(Self.violations(in: line, file: "Sample.swift").isEmpty, "expected a violation: \(line)")
@@ -108,6 +112,8 @@ final class DesignLintTests: XCTestCase {
             ".fill(Color.clear)",
             ".foregroundStyle(WorkbenchColor.onAccent)",
             "static let metadata = Font.subheadline",
+            "Text(\"Serving models\").font(WorkbenchTypography.metadata.weight(.semibold))",
+            "let trackingRate = measuredTrackingRate",
         ]
         for line in clean {
             XCTAssertEqual(Self.violations(in: line, file: "Sample.swift"), [], "unexpected violation: \(line)")

@@ -139,6 +139,12 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The value this mode ranks a result by; only positive, finite values count.
+    func metricValue(of result: VariantResult) -> Double? {
+        let value = self == .chat ? result.aggregateTokensPerSecond : result.aggregateMetric
+        return value.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+    }
+
     var primaryMetric: ComparisonMetric {
         switch self {
         case .chat: return .tokensPerSecond

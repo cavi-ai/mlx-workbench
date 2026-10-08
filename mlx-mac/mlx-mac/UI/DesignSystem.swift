@@ -179,6 +179,35 @@ extension WorkbenchSize {
     }
 }
 
+extension WorkbenchSize {
+    /// Compare route dimensions: lettered lanes, the prompt-by-lane grid and
+    /// the setup tiles. Widths are content widths inside the results surface.
+    enum Compare {
+        static let promptColumn: CGFloat = 184
+        static let promptColumnCompact: CGFloat = 140
+        /// Content width below which the prompt column uses its compact width.
+        static let compactBreakpoint: CGFloat = 600
+        static let laneMinimum: CGFloat = 200
+        static let laneIdeal: CGFloat = 240
+        static let laneMaximum: CGFloat = 320
+        static let columnSpacing: CGFloat = 12
+        static let cellInset: CGFloat = 12
+        static let chip: CGFloat = 28
+        static let thumbnailMaximum: CGFloat = 280
+        static let inputThumbnail: CGFloat = 96
+        /// Lines of model output a result cell shows before truncating.
+        static let textCellLineLimit = 8
+        static let detailsPopoverWidth: CGFloat = 360
+        static let tileMinimum: CGFloat = 220
+        static let tileMaximum: CGFloat = 360
+        static let tileSpacing: CGFloat = 12
+        static let historyMaximum: CGFloat = 420
+        static let promptSetMaximum: CGFloat = 260
+        static let filterPopoverWidth: CGFloat = 340
+        static let emptyMinimumHeight: CGFloat = 200
+    }
+}
+
 enum WorkbenchRadius {
     /// Small chips and swatches.
     static let chip: CGFloat = 4

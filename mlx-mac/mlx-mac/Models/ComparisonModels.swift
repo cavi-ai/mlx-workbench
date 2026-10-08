@@ -381,6 +381,19 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
             }
             .first
     }
+
+    /// The value the run's mode ranks a result by; only positive, finite values count.
+    func metricValue(of result: VariantResult) -> Double? {
+        result.error == nil ? effectiveMode.metricValue(of: result) : nil
+    }
+
+    /// Every measured result that equals the best value, so ties share the lead.
+    var leaders: [VariantResult] {
+        let measured = results.compactMap { result in metricValue(of: result).map { (result, $0) } }
+        let values = measured.map(\.1)
+        guard let best = effectiveMode.primaryMetric.higherIsBetter ? values.max() : values.min() else { return [] }
+        return measured.filter { $0.1 == best }.map(\.0)
+    }
 }
 
 struct ComparisonQualityReview: Codable, Equatable, Sendable {
