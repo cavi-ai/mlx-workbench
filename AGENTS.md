@@ -132,7 +132,9 @@ from `mlx-agent` at runtime.
   time into `<run>/inputs/` by `ComparisonMediaFixtures`: CoreGraphics PNGs, an
   AVAssetWriter MP4, `say`-synthesized WAVs; no binary assets in the repo) and
   optional `expectedKeywords` (contains-all, case-insensitive; `a|b` means
-  either). Speech-to-text is scored with `SpeechCanary.wordErrorRate`. Outputs
+  either). Speech-to-text is scored with `SpeechCanary.wordErrorRate`; built-in
+  speech clips are transcribed with `--language en` (`MediaRunRequest.language`),
+  user-picked clips with no language. Outputs
   are saved to `<Application Support>/mlx-workbench/comparison-outputs/<run-id>/<variant-index>-<prompt-id>.<txt|png|wav|mp4>`
   (`ComparisonOutputStore`); `ComparisonSample` carries `artifact` and the
   per-mode metrics, `ComparisonRun.mode` (nil = chat). When a media run starts,

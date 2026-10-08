@@ -15,6 +15,9 @@ struct MediaRunRequest: Sendable, Equatable {
     /// The new file the model writes, for modes whose output is a file (audio, image, video).
     let outputURL: URL?
     let maxTokens: Int
+    /// The spoken language of the input when it is known: set for the built-in speech clips,
+    /// nil for user-picked files so the model detects it.
+    let language: String?
 }
 
 struct MediaRunOutput: Sendable, Equatable {
@@ -107,7 +110,7 @@ struct LiveComparisonMediaRunner: ComparisonMediaRunner {
             )
         case .speechToText:
             guard let input = request.inputURL else { throw ComparisonMediaError.missingInput }
-            let result = try await api.transcribe(path: request.modelPath, audio: input.path, language: nil)
+            let result = try await api.transcribe(path: request.modelPath, audio: input.path, language: request.language)
             return MediaRunOutput(text: result.text, seconds: result.seconds, audioSeconds: result.audioSeconds)
         case .textToSpeech:
             guard let out = request.outputURL else { throw ComparisonMediaError.missingOutputPath }

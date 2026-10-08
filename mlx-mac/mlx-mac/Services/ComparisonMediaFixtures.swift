@@ -168,6 +168,12 @@ enum ComparisonMediaFixtures {
         }
     }
 
+    /// The spoken language of a built-in input: the system voice reads the English sentences
+    /// in English, the same as the speech canary.
+    static func language(ofBuiltinInput id: String) -> String? {
+        id == "speech" ? SpeechCanary.language : nil
+    }
+
     static let imageEdge = 256
     static let videoFramesPerSecond = 10
     static let videoSeconds = 3
