@@ -29,15 +29,19 @@ is compiled into the app from `AppIcon.appiconset` at build time. After
 changing the SVG, re-render the PNGs into the appiconset (16–1024 px, the
 standard macOS ladder) and commit both.
 
-`make dmg` builds the Release app and packages it as a compressed DMG with
-an `/Applications` symlink, ad-hoc signed. For distribution signing:
+`make dmg` builds the distribution app (no build-machine source path) and
+packages it as `MLX Workbench.app` in a compressed DMG with an
+`/Applications` symlink, ad-hoc signed. For a Developer ID signed,
+notarized, and stapled DMG:
 
 ```bash
-make dmg CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+make dmg CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=<profile>
 ```
 
-Notarization (`notarytool` + `stapler`) is a separate manual step after
-signing with a Developer ID. DMGs land in `.release/` (gitignored).
+`<profile>` is a `notarytool` keychain profile created once with
+`xcrun notarytool store-credentials`. The app is signed with the hardened
+runtime and a secure timestamp, the DMG is signed, submitted, stapled, and
+validated. DMGs land in `.release/` (gitignored).
 
 ## Boundaries
 
