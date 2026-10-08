@@ -44,9 +44,11 @@ through the account signed in to Xcode, and stapler-validates the notarized
 export before packaging. DMGs land in `.release/` (gitignored).
 
 `.github/workflows/signed-dmg.yml` builds the same DMG in CI: on a published
-release it attaches `mlx-workbench-<version>.dmg`, and nightly (or on demand)
-it replaces the `nightly` prerelease with `mlx-workbench-nightly-<commit>.dmg`
-built from `main`. It signs and notarizes with an App Store Connect API key
+release it attaches `mlx-workbench-<version>.dmg`. A nightly runs only when
+started from the Actions tab (channel `nightly`): it replaces the `nightly`
+prerelease with `mlx-workbench-nightly-<commit>.dmg` built from `main`, and
+skips when `mlx-mac/`, `vendor/mlx-agent` and the `Makefile` are unchanged
+since the published nightly. It signs and notarizes with an App Store Connect API key
 stored as the repository secrets `ASC_KEY_ID`, `ASC_ISSUER_ID` and
 `ASC_KEY_P8` (the `.p8` contents).
 

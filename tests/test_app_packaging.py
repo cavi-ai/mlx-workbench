@@ -121,7 +121,6 @@ class DmgTargetTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "signed-dmg.yml").read_text(encoding="utf-8")
         for phrase in (
             "types: [published]",
-            "schedule:",
             "workflow_dispatch:",
             "permissions: {}",
             "secrets.ASC_KEY_P8",
@@ -133,7 +132,7 @@ class DmgTargetTests(unittest.TestCase):
             "gh release create nightly",
             "--prerelease",
             'gh release upload "$TAG" "$DMG" --clobber',
-            "mlx-workbench-nightly-$commit.dmg",
+            'capture("^mlx-workbench-nightly-(?<c>[0-9a-f]+)[.]dmg$")',
         ):
             self.assertIn(phrase, workflow)
         # The key file never outlives the job.
@@ -141,6 +140,15 @@ class DmgTargetTests(unittest.TestCase):
         self.assertIn("if: always()", cleanup)
         self.assertIn('rm -f "$RUNNER_TEMP/AuthKey.p8"', cleanup)
         self.assertIn("DEVELOPER_TEAM: Y76GMV87GM", workflow)
+
+    def test_nightly_builds_only_on_demand_and_only_for_app_changes(self):
+        workflow = (ROOT / ".github" / "workflows" / "signed-dmg.yml").read_text(encoding="utf-8")
+        triggers = workflow.split("\non:", 1)[1].split("\npermissions:", 1)[0]
+        self.assertNotIn("schedule:", triggers)
+        self.assertNotIn("push:", triggers)
+        self.assertIn(
+            'git diff --quiet "$published" HEAD -- mlx-mac vendor/mlx-agent Makefile', workflow
+        )
 
     def test_source_path_literal_is_compiled_out_of_distribution_builds(self):
         hits = []

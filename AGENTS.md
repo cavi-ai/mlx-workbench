@@ -339,6 +339,8 @@ from `mlx-agent` at runtime.
   `identifier com.cavi.mlxworkbench`, team `Y76GMV87GM`, `notarized`; the
   swap is `replaceItemAt` beside the bundle and the old bundle goes to the
   Trash. Translocated, disk-image and unwritable locations are refused.
+  Nightlies build only on manual dispatch and skip when `mlx-mac/`,
+  `vendor/mlx-agent` and the `Makefile` are unchanged since the published one.
   `.github/workflows/signed-dmg.yml` publishes both DMGs with an App Store
   Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets).
 - The Run view shows a **Memory-fit Advisor** verdict before serving:
