@@ -10,17 +10,63 @@ final class EndpointSupervisorTests: XCTestCase {
         let recorder = LifecycleRecorder()
         world.recorder = recorder
         var lifecycle = world.lifecycle
-        lifecycle.jitPreview = { _, _ in "jit-hash" }
-        lifecycle.jitStart = { model, port, hash in
+        lifecycle.jitPreview = { _, _, policy in
+            XCTAssertEqual(policy, .automatic)
+            return "jit-hash"
+        }
+        lifecycle.jitStart = { model, port, hash, policy in
             XCTAssertEqual(hash, "jit-hash")
-            world.preload(repo: model, port: port, jit: true, modelState: "unloaded")
+            XCTAssertEqual(policy, .automatic)
+            world.preload(repo: model, port: port, jit: true, modelState: "unloaded", memoryPolicy: policy)
         }
         let supervisor = EndpointSupervisor(lifecycle: lifecycle, statusProvider: { try world.status() },
             store: JSONStore<EndpointConfig>(fileURL: storeURL))
         await supervisor.enable(modelPath: "/Models/a", port: 8766)
         await supervisor.reconcile()
         XCTAssertTrue(try XCTUnwrap(supervisor.fleet.slots.first).usesJIT)
+        XCTAssertEqual(supervisor.fleet.slots.first?.memoryPolicy, .automatic)
         XCTAssertEqual(try world.status().first?.modelState, "unloaded")
+        XCTAssertTrue(recorder.events.isEmpty)
+    }
+
+    func testPolicyChangesApplyToLoadedGatewayWithoutStoppingIt() async throws {
+        let world = FakeServeWorld()
+        let recorder = LifecycleRecorder()
+        world.recorder = recorder
+        world.preload(repo: "/Models/a", port: 8766, jit: true, modelState: "loaded", activeRequests: 1)
+        var lifecycle = world.lifecycle
+        lifecycle.configureMemory = { port, pid, policy in
+            XCTAssertEqual(pid, 1)
+            world.configureMemory(port: port, policy: policy)
+        }
+        let supervisor = EndpointSupervisor(lifecycle: lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        await supervisor.enable(modelPath: "/Models/a", port: 8766, loadOnRequest: true)
+        let id = try XCTUnwrap(supervisor.fleet.slots.first?.id)
+        let policy = EndpointMemoryPolicy(idleTimeoutSeconds: 60, keepLoaded: true, minimumHeadroomGB: 4)
+        await supervisor.setSlotMemoryPolicy(id: id, policy)
+        XCTAssertNil(supervisor.lastError)
+        XCTAssertEqual(try world.status().first?.memoryPolicy, policy)
+        XCTAssertEqual(try world.status().first?.modelState, "loaded")
+        XCTAssertEqual(try world.status().first?.activeRequests, 1)
+        XCTAssertTrue(recorder.events.isEmpty)
+    }
+
+    func testPolicySaveFailureDoesNotChangeGateway() async throws {
+        let world = FakeServeWorld()
+        world.preload(repo: "/Models/a", port: 8766, jit: true, modelState: "loaded")
+        let recorder = LifecycleRecorder()
+        var lifecycle = world.lifecycle
+        lifecycle.configureMemory = { _, _, _ in recorder.record("configure") }
+        let fleetURL = temporaryURL("fleet.json")
+        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a", loadOnRequest: true)
+        try JSONStore<EndpointFleetConfig>(fileURL: fleetURL).replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
+        let supervisor = EndpointSupervisor(lifecycle: lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL),
+            fleetStore: JSONStore<EndpointFleetConfig>(fileURL: fleetURL, replaceItem: { _, _ in throw StubError.offline }))
+        await supervisor.setSlotMemoryPolicy(id: slot.id, .automatic)
+        XCTAssertNotNil(supervisor.lastError)
+        XCTAssertNil(supervisor.fleet.slots.first?.memoryPolicy)
         XCTAssertTrue(recorder.events.isEmpty)
     }
 

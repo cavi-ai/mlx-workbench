@@ -54,6 +54,7 @@ struct ServeView: View {
     @State private var pendingFleetAction: PendingFleetAction?
     @State private var showFleetRouter = false
     @State private var showLoginItemPreview = false
+    @State private var expandedMemorySlots: Set<UUID> = []
 
     /// A wont-fit fleet action awaiting the user's explicit override (spec
     /// 09 P3 — same escape-hatch discipline as the quality gate).
@@ -314,10 +315,94 @@ struct ServeView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            if slot.usesJIT {
+                memoryManagement(slot)
+                if let reason = endpoint.slotLoadBlockedReasons[slot.id] {
+                    Label(reason, systemImage: "memorychip")
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.warning)
+                }
+            }
         }
         .padding(WorkbenchSpacing.sm)
         .background(WorkbenchColor.canvas)
         .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+    }
+
+    func memoryManagement(_ slot: EndpointSlot, expanded: Binding<Bool>? = nil) -> some View {
+        let policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
+        return DisclosureGroup(isExpanded: expanded ?? Binding(
+            get: { expandedMemorySlots.contains(slot.id) },
+            set: { value in if value { expandedMemorySlots.insert(slot.id) } else { expandedMemorySlots.remove(slot.id) } })) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                HStack {
+                    Picker("Unload when idle", selection: memoryBinding(slot, \.idleTimeoutSeconds)) {
+                        Text("Never").tag(0)
+                        Text("1 minute").tag(60)
+                        Text("5 minutes").tag(300)
+                        Text("10 minutes").tag(600)
+                        Text("30 minutes").tag(1800)
+                        Text("1 hour").tag(3600)
+                        if ![0, 60, 300, 600, 1800, 3600].contains(policy.idleTimeoutSeconds) {
+                            Text("\(policy.idleTimeoutSeconds) seconds").tag(policy.idleTimeoutSeconds)
+                        }
+                    }
+                    .frame(maxWidth: 280)
+                    .disabled(policy.keepLoaded)
+                    Toggle("Keep loaded after use", isOn: memoryBinding(slot, \.keepLoaded))
+                        .toggleStyle(.checkbox)
+                        .help("Prevent automatic unload after the first request. Manual unload remains available.")
+                }
+                HStack {
+                    Toggle("Check memory before loading", isOn: Binding(
+                        get: { policy.minimumHeadroomGB != nil },
+                        set: { enabled in
+                            var updated = policy
+                            updated.minimumHeadroomGB = enabled ? 2 : nil
+                            Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
+                        }))
+                        .toggleStyle(.checkbox)
+                    if let reserve = policy.minimumHeadroomGB {
+                        Picker("Reserve after loading", selection: Binding(
+                            get: { reserve },
+                            set: { value in
+                                var updated = policy
+                                updated.minimumHeadroomGB = value
+                                Task { await endpoint.setSlotMemoryPolicy(id: slot.id, updated) }
+                            })) {
+                            ForEach([1.0, 2, 4, 8], id: \.self) { value in Text("\(Int(value)) GB").tag(value) }
+                            if ![1.0, 2, 4, 8].contains(reserve) { Text("\(reserve, specifier: "%.1f") GB").tag(reserve) }
+                        }
+                        .frame(maxWidth: 270)
+                    }
+                }
+                Text("Uses estimated weights + runtime allowance + reserve. Other processes and larger contexts can change actual memory use. Unknown headroom blocks loading.")
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.muted)
+            }
+            .padding(.top, WorkbenchSpacing.sm)
+            .controlSize(.small)
+            .disabled(endpoint.isUnloading)
+        } label: {
+            HStack {
+                Text("Memory management")
+                Text(policy.keepLoaded ? "Keeps loaded" : (policy.idleTimeoutSeconds == 0 ? "Manual unload" : "Idle unload · \(policy.idleTimeoutSeconds / 60) min"))
+                    .foregroundStyle(WorkbenchColor.muted)
+                if let reserve = policy.minimumHeadroomGB {
+                    Text("\(reserve, specifier: "%.1f") GB reserve").foregroundStyle(WorkbenchColor.muted)
+                }
+            }
+        }
+        .font(WorkbenchTypography.secondary)
+    }
+
+    private func memoryBinding<Value>(_ slot: EndpointSlot, _ keyPath: WritableKeyPath<EndpointMemoryPolicy, Value>) -> Binding<Value> {
+        Binding(get: { (slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy)[keyPath: keyPath] },
+                set: { value in
+                    var policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
+                    policy[keyPath: keyPath] = value
+                    Task { await endpoint.setSlotMemoryPolicy(id: slot.id, policy) }
+                })
     }
 
     private func slotStateLabel(_ state: EndpointState, enabled: Bool) -> String {

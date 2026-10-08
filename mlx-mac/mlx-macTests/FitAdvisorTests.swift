@@ -6,6 +6,27 @@ import SwiftUI
 @testable import mlx_workbench
 
 final class FitAdvisorTests: XCTestCase {
+    @MainActor
+    func testEndpointMemoryControlsRenderCompactly() async throws {
+        let world = FakeServeWorld()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("endpoint.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let endpoint = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: url))
+        let host = AppHost(endpoint: endpoint)
+        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a", loadOnRequest: true, memoryPolicy: .automatic)
+        let controls = ServeView(appHost: host).memoryManagement(slot, expanded: .constant(true))
+        let view = NSHostingView(rootView: controls.padding(24).frame(width: 740).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        view.setFrameSize(NSSize(width: 740, height: view.fittingSize.height))
+        view.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(view.bounds.height, 100)
+        XCTAssertLessThan(view.bounds.height, 280)
+        let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: image)
+        let attachment = XCTAttachment(data: try XCTUnwrap(image.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        attachment.name = "JIT endpoint memory management controls"; attachment.lifetime = .keepAlways
+        add(attachment)
+    }
     private let gb: Int64 = 1_000_000_000
 
     @MainActor
