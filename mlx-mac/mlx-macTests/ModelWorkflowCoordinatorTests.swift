@@ -396,6 +396,23 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         XCTAssertEqual(recorder.states, [.failed])
     }
 
+    func testReconcilingAnUnchangedJobLeavesTheRecordUntouched() async {
+        for (agentState, expected) in [("failed", ConversionWorkflowState.failed), ("running", .running), ("queued", .queued)] {
+            let job = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: agentState)
+            let host = await makeHost(jobs: [job])
+            await MainActor.run { host.modelWorkflow.restore(makeWorkflow(state: .running, receipt: "receipt-1")) }
+
+            await host.modelWorkflow.reconcile(snapshot: nil, jobs: [job])
+            let first = await MainActor.run { host.modelWorkflow.history.first { $0.jobReceipt == "receipt-1" } }
+            XCTAssertEqual(first?.state, expected, agentState)
+
+            await host.modelWorkflow.reconcile(snapshot: nil, jobs: [job])
+            let second = await MainActor.run { host.modelWorkflow.history.first { $0.jobReceipt == "receipt-1" } }
+            XCTAssertEqual(second?.updatedAt, first?.updatedAt, "\(agentState): a reconcile that changes nothing must not rewrite the record")
+            XCTAssertEqual(second, first, agentState)
+        }
+    }
+
     func testVerificationResolutionNotifiesTheTerminalOutcome() async {
         let host = await makeHost()
         let recorder = TerminalStateRecorder()

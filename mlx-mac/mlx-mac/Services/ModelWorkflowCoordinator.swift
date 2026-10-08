@@ -822,8 +822,10 @@ final class ModelWorkflowCoordinator: ObservableObject {
             let agentState = job.state.lowercased()
             switch agentState {
             case "queued", "pending", "starting":
+                guard !record.reflects(state: .queued, message: "Conversion queued.", errorMessage: nil, agentState: job.state) else { continue }
                 replace(updatedRecord(from: record, state: .queued, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
             case "running", "active":
+                guard !record.reflects(state: .running, message: "Conversion running.", errorMessage: nil, agentState: job.state) else { continue }
                 replace(updatedRecord(from: record, state: .running, message: "Conversion running.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
             case "done", "completed", "complete", "succeeded", "success":
                 // Once the scan confirmed the output, later refreshes of the same done job change nothing.
@@ -832,7 +834,9 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 pendingCompletionRecordIDs.insert(record.id)
                 replace(updatedRecord(from: record, state: .running, message: "Conversion completed; waiting for a fresh library scan to confirm its MLX output.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
             case "failed", "error", "cancelled", "canceled":
-                replace(updatedRecord(from: record, state: .failed, message: "Conversion \(job.state).", errorMessage: .some("Conversion \(job.state)."), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
+                let message = "Conversion \(job.state)."
+                guard !record.reflects(state: .failed, message: message, errorMessage: message, agentState: job.state) else { continue }
+                replace(updatedRecord(from: record, state: .failed, message: message, errorMessage: .some(message), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
             default:
                 if record.id == workflow.id {
                     preserveLastKnownState(message: "Conversion status \(job.state) is not recognized; preserving the last known state.")
