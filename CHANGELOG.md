@@ -97,9 +97,10 @@ and is versioned independently; submodule bumps are recorded here.
 - Removed unused web API routes (adopt, wire, sloth, LM Studio import, serve
   metrics, arbitrary-argv CLI) whose panels were already gone.
 - `make docs-build` regenerates a stale versioned docs tree in place.
-- Vendored mlx-agent `86f5586` → `350b24b` over 12 bumps: intake, optional
-  backends and ports, `convert transcribe|decide|generate|speak|describe|video`,
-  `serve start --path`, `fleet --port-map`, and local source reuse.
+- Vendored mlx-agent `86f5586` → `v0.6.0`: intake, optional backends and
+  ports, `convert transcribe|decide|generate|speak|describe|video`,
+  `serve start --path|--jit`, `serve unload|policy`, `fleet --port-map`, and
+  local source reuse.
 
 ### Fixed
 
