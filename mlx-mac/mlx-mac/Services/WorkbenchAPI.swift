@@ -442,17 +442,17 @@ actor WorkbenchAPI {
         return ["--repo", model]
     }
 
-    func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false) throws -> [String: Any] {
+    func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil) throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + ["--runtime", runtime, "--receipts-dir", receiptDirectory]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
-        if jit { argv.append("--jit") }
+        if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
         return Self.unwrapPlan(try raw(argv))
     }
 
     func serveStart(repo: String, runtime: String, port: Int?,
-                    previewHash: String, jit: Bool = false) throws -> [String: Any] {
+                    previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil) throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + [
@@ -461,7 +461,7 @@ actor WorkbenchAPI {
                 "--receipts-dir", receiptDirectory,
             ]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
-        if jit { argv.append("--jit") }
+        if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
         return try raw(argv)
     }
 
@@ -475,6 +475,11 @@ actor WorkbenchAPI {
     func serveUnload(port: Int, expectedPID: Int) throws -> [String: Any] {
         try raw(["serve", "unload", "--port", String(port), "--expected-pid", String(expectedPID),
                  "--receipts-dir", receiptDirectory])
+    }
+
+    func serveMemoryPolicy(port: Int, expectedPID: Int, policy: EndpointMemoryPolicy) throws -> [String: Any] {
+        try raw(["serve", "policy", "--port", String(port), "--expected-pid", String(expectedPID),
+                 "--receipts-dir", receiptDirectory] + policy.arguments)
     }
 
     // MARK: - LoRA / Fuse
@@ -556,9 +561,18 @@ actor WorkbenchAPI {
                 jit: r["jit"] as? Bool,
                 modelState: r.string("model_state"),
                 workerPid: r.int("worker_pid"),
-                activeRequests: r.int("active_requests")
+                activeRequests: r.int("active_requests"),
+                memoryPolicy: Self.memoryPolicy(from: r["memory_policy"]),
+                loadBlockedReason: r.string("load_blocked_reason")
             )
         }
+    }
+
+    private static func memoryPolicy(from value: Any?) -> EndpointMemoryPolicy? {
+        guard let value, JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value),
+              let policy = try? JSONDecoder().decode(EndpointMemoryPolicy.self, from: data), policy.isValid else { return nil }
+        return policy
     }
 
     private static func serveProcessState(_ row: [String: Any]) -> String? {

@@ -30,6 +30,8 @@ final class EndpointSupervisor: ObservableObject {
     @Published private(set) var slotStates: [UUID: EndpointState] = [:]
     @Published private(set) var slotRestartAttempts: [UUID: Int] = [:]
     @Published private(set) var slotResidencies: [UUID: String] = [:]
+    @Published private(set) var slotMemoryPolicies: [UUID: EndpointMemoryPolicy] = [:]
+    @Published private(set) var slotLoadBlockedReasons: [UUID: String] = [:]
 
     /// Legacy single-slot view: the first slot plus the login-item flag.
     /// Removed when the transition shim is dropped (spec 09 rollout).
@@ -110,12 +112,14 @@ final class EndpointSupervisor: ObservableObject {
         defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
         let initialLoadMode = loadOnRequest ?? (fleet.slots.isEmpty ? lifecycle.jitPreview != nil : nil)
+        let isNew = fleet.slots.isEmpty
         if let id = fleet.slots.first?.id { pendingUserServeBySlot.removeValue(forKey: id) }
         mutateSlot0 { slot in
             slot.enabled = true
             slot.port = port
             slot.modelPath = modelPath
             if let initialLoadMode { slot.loadOnRequest = initialLoadMode }
+            if isNew, slot.usesJIT { slot.memoryPolicy = .automatic }
         }
         if let id = fleet.slots.first?.id {
             slotAttemptTimestamps[id] = []
@@ -167,8 +171,9 @@ final class EndpointSupervisor: ObservableObject {
         activeUserOperations += 1
         defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
+        let usesJIT = loadOnRequest ?? (lifecycle.jitPreview != nil)
         let candidate = EndpointSlot(enabled: true, port: port, modelPath: modelPath, role: role,
-                                     loadOnRequest: loadOnRequest ?? (lifecycle.jitPreview != nil))
+                                     loadOnRequest: usesJIT, memoryPolicy: usesJIT ? .automatic : nil)
         guard validate(candidate, isNew: true) else { return }
         fleet.slots.append(candidate)
         lastError = nil
@@ -280,6 +285,7 @@ final class EndpointSupervisor: ObservableObject {
             }
             var candidate = fleet
             candidate.slots[index].loadOnRequest = enabled
+            if enabled, candidate.slots[index].memoryPolicy == nil { candidate.slots[index].memoryPolicy = .automatic }
             try fleetStore.save(candidate)
             fleet = candidate
             persistenceError = nil
@@ -295,6 +301,45 @@ final class EndpointSupervisor: ObservableObject {
             await reconcile()
         } catch {
             lastError = "Could not change endpoint load mode: \(AppHost.render(error))"
+        }
+    }
+
+    /// Save desired policy before applying it to the receipt-owned gateway.
+    /// Policy updates do not stop the endpoint or interrupt inference leases.
+    func setSlotMemoryPolicy(id: UUID, _ policy: EndpointMemoryPolicy) async {
+        guard !isUnloading, !isReconciling, activeUserOperations == 0 else {
+            lastError = "Serving is changing. Wait before changing memory management."
+            return
+        }
+        guard let index = fleet.slots.firstIndex(where: { $0.id == id }), fleet.slots[index].usesJIT else { return }
+        isUnloading = true
+        defer { isUnloading = false }
+        var saved = false
+        do {
+            let slot = fleet.slots[index]
+            let current = try await statusProvider().first { $0.port == slot.port && $0.state?.lowercased() == "running" }
+            if let current {
+                guard HFRepoID.matches(current.modelIdentity, slot.modelPath), current.jit == true,
+                      let pid = current.pid, pid > 0 else {
+                    throw WorkflowEvidenceError.invalid("Endpoint identity changed. Refresh before changing memory management.")
+                }
+            }
+            var candidate = fleet
+            candidate.slots[index].memoryPolicy = policy
+            try fleetStore.save(candidate)
+            fleet = candidate
+            persistenceError = nil
+            saved = true
+            if let current, let pid = current.pid {
+                guard let configure = lifecycle.configureMemory else {
+                    throw WorkflowEvidenceError.invalid("Memory management is unavailable in this runtime.")
+                }
+                try await configure(slot.port, pid, policy)
+                slotMemoryPolicies[id] = policy
+            }
+            lastError = nil
+        } catch {
+            lastError = "\(saved ? "Memory policy saved, but could not be applied" : "Could not save memory policy"): \(AppHost.render(error))"
         }
     }
 
@@ -412,9 +457,23 @@ final class EndpointSupervisor: ObservableObject {
         if let ours = running.first(where: { $0.port == slot.port }) {
             if HFRepoID.matches(ours.modelIdentity, slot.modelPath) {
                 slotResidencies[slot.id] = ours.residencySummary
+                slotMemoryPolicies[slot.id] = ours.memoryPolicy
+                slotLoadBlockedReasons[slot.id] = ours.loadBlockedReason
                 guard (ours.jit == true) == slot.usesJIT else {
                     slotStates[slot.id] = .degraded(reason: "Endpoint load mode differs. Disable and enable it to apply the selected mode.")
                     return
+                }
+                if slot.usesJIT, let policy = slot.memoryPolicy, ours.memoryPolicy != policy {
+                    do {
+                        guard let configure = lifecycle.configureMemory, let pid = ours.pid, pid > 0 else {
+                            throw WorkflowEvidenceError.invalid("Memory management is unavailable in this runtime.")
+                        }
+                        try await configure(slot.port, pid, policy)
+                        slotMemoryPolicies[slot.id] = policy
+                    } catch {
+                        slotStates[slot.id] = .degraded(reason: "Could not apply memory policy: \(AppHost.render(error))")
+                        return
+                    }
                 }
                 slotStates[slot.id] = .running(modelPath: slot.modelPath, port: slot.port)
                 recordIntentionalServe(slot)
@@ -442,6 +501,8 @@ final class EndpointSupervisor: ObservableObject {
 
         slotStates[slot.id] = .starting
         slotResidencies.removeValue(forKey: slot.id)
+        slotMemoryPolicies.removeValue(forKey: slot.id)
+        slotLoadBlockedReasons.removeValue(forKey: slot.id)
         attempts.append(now())
         slotAttemptTimestamps[slot.id] = attempts
         slotRestartAttempts[slot.id] = attempts.count
@@ -452,8 +513,8 @@ final class EndpointSupervisor: ObservableObject {
                 guard let jitPreview = lifecycle.jitPreview, let jitStart = lifecycle.jitStart else {
                     throw WorkflowEvidenceError.invalid("JIT serving is unavailable in this runtime.")
                 }
-                preview = jitPreview
-                start = jitStart
+                preview = { model, port in try await jitPreview(model, port, slot.memoryPolicy) }
+                start = { model, port, hash in try await jitStart(model, port, hash, slot.memoryPolicy) }
             } else {
                 preview = lifecycle.preview
                 start = lifecycle.start

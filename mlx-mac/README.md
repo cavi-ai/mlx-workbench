@@ -95,7 +95,7 @@ created. It does not delete or quarantine model data.
 | **Library** | Scanned GGUF/MLX inventory with readiness, signatures, and per-model details (verification status, lineage) |
 | **Discover** | Hub candidates by role via the agent's scout |
 | **Prepare** | Preview/confirm conversion; completed outputs pass through the **Conversion Quality Gate** (canary suite on an ephemeral loopback server) before they are marked verified |
-| **Run** | Preview/confirm serving with a live **memory-fit verdict** (fits/tight/won't-fit + suggested context); hosts the **Always-on Endpoint** card |
+| **Run** | Preview/confirm serving with a live **memory-fit verdict** (fits/tight/won't-fit + suggested context); hosts the **Always-on Endpoint** card and compact JIT memory controls |
 | **Compare** | Start with the last served model and nearby alternatives; compare task outcomes, speed, latency, disk size, and estimated memory fit. Replay built-in or personal prompt sets, review outputs, import local workflow reports, and export agent-readable evidence. Using the fastest variant remains a reviewed preference/endpoint action; speed alone does not establish quality or justify reclaim. |
 | **Activity** | Conversion receipts, log tails, server table |
 | **Duplicates** | Duplicate groups plus the **Disk Pressure Advisor** (stale / superseded / cross-root reclaim via batched quarantine; HF-cache prune via doctor) |
@@ -123,6 +123,18 @@ refuses existing destinations and changed Trash items, and restores cache blobs
 before their references. Older history is labeled without invented dates or
 file identities; its preview describes the current Trash item. Disk space is
 released when you empty Trash.
+
+## JIT endpoint memory management
+
+Run's JIT endpoint cards offer **Memory management** controls for idle unload,
+**Keep loaded after use**, and a reserve before loading. New endpoints default
+to 10 idle minutes and a 2 GB reserve; existing endpoint policies stay unchanged
+until configured. Settings save before they apply to the live gateway, without
+restarting it. Active streams prevent unload. Keep loaded takes effect after the
+first request and still permits manual unload. Headroom checks estimate weights,
+runtime allowance and reserve; unavailable readings block loading and show the
+reason. Other processes, concurrent loads and growing contexts can change actual
+use after the check.
 
 ## Compare decisions and workflow evidence
 

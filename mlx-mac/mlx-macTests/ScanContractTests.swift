@@ -4,6 +4,21 @@ import XCTest
 @testable import mlx_workbench
 
 final class ScanContractTests: XCTestCase {
+    func testServeMemoryPolicyAndAdmissionFailureDecodeWithoutInventingDefaults() throws {
+        let servers = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [
+            ["jit": true, "memory_policy": ["idle_timeout_seconds": 600, "keep_loaded": false, "minimum_headroom_gb": 2],
+             "load_blocked_reason": "Insufficient headroom"],
+            ["jit": true],
+            ["memory_policy": ["idle_timeout_seconds": -1, "keep_loaded": false]],
+        ]]))
+        XCTAssertEqual(servers[0].memoryPolicy, .automatic)
+        XCTAssertEqual(servers[0].loadBlockedReason, "Insufficient headroom")
+        XCTAssertNil(servers[1].memoryPolicy)
+        XCTAssertNil(servers[2].memoryPolicy)
+        XCTAssertEqual(EndpointMemoryPolicy.automatic.arguments, ["--idle-timeout", "600", "--min-headroom-gb", "2.0"])
+        XCTAssertEqual(EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: true, minimumHeadroomGB: nil).arguments,
+                       ["--idle-timeout", "0", "--keep-loaded"])
+    }
     func testServeStatusDerivesOwnedProcessStateAndKeepsResidencySeparate() throws {
         let servers = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [
             ["path": "/Models/a", "port": 8766, "pid": 42, "alive": true, "argv_match": true,

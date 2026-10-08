@@ -352,6 +352,20 @@ from `mlx-agent` at runtime.
   exposes model residency separately from gateway liveness. JIT with direct
   `--launchd` is refused; native supervision owns the lifecycle. Comparison
   and verification continue to use eager serving.
+- **JIT memory management**: `EndpointSlot.memoryPolicy` is optional for legacy
+  fleets. New JIT slots use a 600-second idle timeout and a 2 GB reserve;
+  legacy slots preserve their old policy until explicitly configured. Run's
+  compact controls apply receipt/PID-bound `serve policy` updates without
+  restarting the gateway. Desired policy saves before live application; failures
+  remain visible and reconciliation retries the desired policy. The engine owns
+  the idle timer, so it works for harness requests without the app open. Idle
+  time starts when the final inference lease ends; keep-loaded prevents automatic
+  unload after use but permits manual unload. Cold-load admission uses fresh
+  OS headroom against local weight bytes × 1.10 + 1.5 GB runtime allowance +
+  configured reserve (decimal GB). Unknown headroom/weights blocks a guarded
+  load. This is an estimate, not a reservation across endpoints or a bound on
+  subsequent KV growth. Policies persist atomically in private gateway config;
+  invalid updates and save failures leave the active policy unchanged.
 - `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
   are not source of truth.
 

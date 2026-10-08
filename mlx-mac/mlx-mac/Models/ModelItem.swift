@@ -216,6 +216,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let modelState: String?
     let workerPid: Int?
     let activeRequests: Int?
+    let memoryPolicy: EndpointMemoryPolicy?
+    let loadBlockedReason: String?
 
     enum CodingKeys: String, CodingKey {
         case repo, path, runtime, port, pid, state, receipt
@@ -223,6 +225,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case modelState = "model_state"
         case workerPid = "worker_pid"
         case activeRequests = "active_requests"
+        case memoryPolicy = "memory_policy"
+        case loadBlockedReason = "load_blocked_reason"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -240,7 +244,9 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         jit: Bool? = nil,
         modelState: String? = nil,
         workerPid: Int? = nil,
-        activeRequests: Int? = nil
+        activeRequests: Int? = nil,
+        memoryPolicy: EndpointMemoryPolicy? = nil,
+        loadBlockedReason: String? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -255,6 +261,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.modelState = modelState
         self.workerPid = workerPid
         self.activeRequests = activeRequests
+        self.memoryPolicy = memoryPolicy
+        self.loadBlockedReason = loadBlockedReason
     }
 
     /// The identity serve reports for this server's model: the repo id for
