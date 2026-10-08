@@ -98,7 +98,7 @@ struct ProgressRing: View {
                     .trim(from: 0, to: fraction)
                     .stroke(WorkbenchColor.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .animation(.easeInOut(duration: 0.6), value: fraction)
+                    .workbenchAnimation(WorkbenchMotion.progress, value: fraction)
                 Text(fraction, format: .percent.precision(.fractionLength(0)))
                     .font(WorkbenchTypography.emphasis)
                     .foregroundStyle(WorkbenchColor.ink)
@@ -107,7 +107,7 @@ struct ProgressRing: View {
                     .trim(from: 0, to: 0.28)
                     .stroke(WorkbenchColor.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
                     .rotationEffect(.degrees(spinning ? 270 : -90))
-                    .animation(.linear(duration: 1.1).repeatForever(autoreverses: false), value: spinning)
+                    .workbenchAnimation(WorkbenchMotion.spin, value: spinning)
                     .onAppear { spinning = true }
             }
         }

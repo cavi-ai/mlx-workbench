@@ -28,7 +28,7 @@ struct SetupAssistantView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                 Text("SETUP").font(WorkbenchTypography.value)
                     .foregroundStyle(WorkbenchColor.accent)
                 Text(coordinator.step.title).font(WorkbenchTypography.section)
@@ -159,7 +159,7 @@ struct SetupAssistantView: View {
     }
 
     private func guidance(_ title: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             Text(title).font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.warning)
             Text(detail).font(WorkbenchTypography.value)

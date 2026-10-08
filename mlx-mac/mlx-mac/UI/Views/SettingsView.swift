@@ -302,7 +302,7 @@ struct SettingsView: View {
         Text(text)
             .font(WorkbenchTypography.secondary)
             .foregroundStyle(WorkbenchColor.muted)
-            .padding(.top, 20)
+            .padding(.top, WorkbenchSpacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -338,7 +338,8 @@ struct SettingsView: View {
         }
         .padding(.horizontal, WorkbenchSpacing.pageInset)
         .padding(.vertical, WorkbenchSpacing.sm)
-        .background(WorkbenchColor.surface)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 
     // MARK: - Validation
@@ -496,28 +497,22 @@ struct SettingsCard<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                Text(title)
-                    .font(WorkbenchTypography.section)
-                    .foregroundStyle(WorkbenchColor.ink)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Text(title)
+                        .font(WorkbenchTypography.section)
+                        .foregroundStyle(WorkbenchColor.ink)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                content()
             }
-            content()
         }
-        .padding(WorkbenchSpacing.surfaceInset)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WorkbenchColor.surface)
-        .overlay {
-            RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous)
-                .stroke(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous))
     }
 }
 

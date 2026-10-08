@@ -23,13 +23,13 @@ struct ScoutView: View {
                 if isScouting {
                     ProgressView("Discovering models…")
                         .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 24)
+                        .padding(.top, WorkbenchSpacing.lg)
                 } else if !candidates.isEmpty {
                     resultsSection
                 } else {
                     Text("Run a discovery to see candidates.")
                         .foregroundStyle(WorkbenchColor.muted)
-                        .padding(.top, 12)
+                        .padding(.top, WorkbenchSpacing.sm)
                 }
                 ErrorBanner(text: errorMessage)
                 Spacer()
@@ -39,7 +39,7 @@ struct ScoutView: View {
     }
 
     private var catalogSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) { catalogHeader }
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { catalogHeader }
@@ -47,8 +47,8 @@ struct ScoutView: View {
             Text("Metadata only. Local installation truth comes from the Library scan, not this catalog cache.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
-            HStack(alignment: .top, spacing: 24) {
-                VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                     statusRow(label: "Status", value: appHost.catalog.statusLabel)
                     if let snapshot = appHost.catalog.snapshot {
                         statusRow(label: "Source", value: snapshot.sourceLabel)
@@ -86,7 +86,7 @@ struct ScoutView: View {
     }
 
     private var formSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Discovery")
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: WorkbenchSpacing.xs) { discoveryControls }
@@ -114,7 +114,7 @@ struct ScoutView: View {
     }
 
     private func catalogResults(_ snapshot: CatalogSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
                 SectionTitle(text: "Catalog Entries (\(snapshot.records.count))")
                 Spacer()
@@ -123,10 +123,10 @@ struct ScoutView: View {
                     .foregroundStyle(WorkbenchColor.muted)
             }
             List(snapshot.records, id: \.self) { record in
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                     Text(record.repoIdentity)
                         .font(WorkbenchTypography.body)
-                    HStack(spacing: 8) {
+                    HStack(spacing: WorkbenchSpacing.xs) {
                         if let roles = record.roles, !roles.isEmpty {
                             Text(roles.map(\.title).joined(separator: ", "))
                                 .font(WorkbenchTypography.secondary)
@@ -146,14 +146,14 @@ struct ScoutView: View {
                         .foregroundStyle(WorkbenchColor.muted)
                         .textSelection(.enabled)
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, WorkbenchSpacing.xxxs)
             }
             .frame(height: 240)
         }
     }
 
     private var resultsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
                 SectionTitle(text: "Candidates (\(candidates.count))")
                 Spacer()
@@ -161,9 +161,9 @@ struct ScoutView: View {
             }
             List(candidates) { candidate in
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                         Text(candidate.repo).font(WorkbenchTypography.body)
-                        HStack(spacing: 8) {
+                        HStack(spacing: WorkbenchSpacing.xs) {
                             if let roles = candidate.roles, !roles.isEmpty {
                                 Text(roles.joined(separator: ", "))
                                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -223,7 +223,7 @@ struct ScoutView: View {
     }
 
     private func statusRow(label: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
             Text("\(label):")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)

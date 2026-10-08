@@ -211,7 +211,7 @@ struct ConvertView: View {
     }
 
     private var workflowCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Workflow status")
             HStack(spacing: WorkbenchSpacing.xs) {
                 StatusPill(state: modelWorkflow.workflow.state.rawValue)
@@ -331,7 +331,7 @@ struct ConvertView: View {
     }
 
     private func detailRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
             Text(label)
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)

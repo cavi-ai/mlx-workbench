@@ -19,12 +19,12 @@ struct WorkflowCaptureRequestView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Label("Capture a workflow", systemImage: "arrow.down.doc").font(WorkbenchTypography.roundedTitle)
+            Label("Capture a workflow", systemImage: "arrow.down.doc").font(WorkbenchTypography.title)
             Text("Copy the request, run your task, then review its measured report.").font(WorkbenchTypography.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let endpoint {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                    Label("Wired endpoint", systemImage: "network").font(WorkbenchTypography.roundedHeading)
+                    Label("Wired endpoint", systemImage: "network").font(WorkbenchTypography.emphasis)
                     Text(endpoint.baseURL).font(WorkbenchTypography.value).textSelection(.enabled)
                     Text("Clients: \(endpoint.clientIDs.joined(separator: ", ")) · verify the task uses this endpoint")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -104,7 +104,7 @@ struct WorkflowImportPreviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Label("Review workflow report", systemImage: "doc.text.magnifyingglass").font(WorkbenchTypography.roundedTitle)
+            Label("Review workflow report", systemImage: "doc.text.magnifyingglass").font(WorkbenchTypography.title)
             Text("\(preview.newRecords.count) new · \(preview.duplicateCount) already imported").font(WorkbenchTypography.value)
             Text("Historical or unmatched observations can be saved for reference. They cannot establish current model replacement advice. Import preserves all recorded identities, sources and timestamps.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -112,27 +112,29 @@ struct WorkflowImportPreviewView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                     ForEach(preview.report.records) { record in
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                            HStack {
-                                Text("\(record.harness) · \(record.workloadID)").font(WorkbenchTypography.roundedHeading)
-                                Spacer()
-                                Text(preview.newRecords.contains(where: { $0.id == record.id }) ? "New" : "Already imported").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+                        WorkbenchSurface(padding: WorkbenchSpacing.sm) {
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                                HStack {
+                                    Text("\(record.harness) · \(record.workloadID)").font(WorkbenchTypography.emphasis)
+                                    Spacer()
+                                    Text(preview.newRecords.contains(where: { $0.id == record.id }) ? "New" : "Already imported").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+                                }
+                                Text(models.first(where: { $0.path == record.modelPath })?.name ?? URL(fileURLWithPath: record.modelPath).lastPathComponent).font(WorkbenchTypography.emphasis)
+                                let status = WorkflowImportIdentity.status(record, models: models, environment: environment)
+                                Text(status.label).font(WorkbenchTypography.label).foregroundStyle(status == .matching ? WorkbenchColor.success : WorkbenchColor.warning)
+                                Text("\(record.sampleCount) samples · \(String(format: "%.2f", record.totalSeconds)) s total · \(record.measuredAt.formatted())").font(WorkbenchTypography.secondary)
+                                Text("Inference \(seconds(record.inferenceSeconds)) · tools \(seconds(record.toolSeconds)) · queue \(seconds(record.queueSeconds))").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                                if record.configurationFingerprint == nil { Text("Configuration identity missing · no replacement advice").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
+                                DisclosureGroup("Recorded source and identity") {
+                                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                                        Text("Source: \(record.source)")
+                                        Text("Model: \(record.modelPath)")
+                                        Text("Signature: \(record.modelSignature)")
+                                        Text("Environment: \(record.environmentFingerprint)")
+                                    }.font(WorkbenchTypography.value).textSelection(.enabled)
+                                }.font(WorkbenchTypography.secondary)
                             }
-                            Text(models.first(where: { $0.path == record.modelPath })?.name ?? URL(fileURLWithPath: record.modelPath).lastPathComponent).font(WorkbenchTypography.emphasis)
-                            let status = WorkflowImportIdentity.status(record, models: models, environment: environment)
-                            Text(status.label).font(WorkbenchTypography.label).foregroundStyle(status == .matching ? WorkbenchColor.success : WorkbenchColor.warning)
-                            Text("\(record.sampleCount) samples · \(String(format: "%.2f", record.totalSeconds)) s total · \(record.measuredAt.formatted())").font(WorkbenchTypography.secondary)
-                            Text("Inference \(seconds(record.inferenceSeconds)) · tools \(seconds(record.toolSeconds)) · queue \(seconds(record.queueSeconds))").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                            if record.configurationFingerprint == nil { Text("Configuration identity missing · no replacement advice").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
-                            DisclosureGroup("Recorded source and identity") {
-                                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                                    Text("Source: \(record.source)")
-                                    Text("Model: \(record.modelPath)")
-                                    Text("Signature: \(record.modelSignature)")
-                                    Text("Environment: \(record.environmentFingerprint)")
-                                }.font(WorkbenchTypography.value).textSelection(.enabled)
-                            }.font(WorkbenchTypography.secondary)
-                        }.padding(WorkbenchSpacing.sm).background(WorkbenchColor.accent.opacity(0.05), in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface))
+                        }
                     }
                 }
             }.frame(maxHeight: 360)
@@ -167,7 +169,7 @@ struct AgentModelGuidanceView: View {
             })
         } else {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Label("Model guidance for your agent", systemImage: "list.bullet.clipboard").font(WorkbenchTypography.roundedTitle)
+            Label("Model guidance for your agent", systemImage: "list.bullet.clipboard").font(WorkbenchTypography.title)
             Text("Task-specific choices from local evidence. Quality, speed and fit stay separate. Use model reviews a role preference and an optional endpoint switch.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             Text("\(evidence.contextTokens) tokens · headroom captured \(evidence.memoryCapturedAt?.formatted() ?? "unknown")")
@@ -178,37 +180,38 @@ struct AgentModelGuidanceView: View {
                         Text("No measured task cohorts yet. Run a comparison or import workflow reports to establish choices.").font(WorkbenchTypography.secondary)
                     }
                     ForEach(evidence.taskGuidance ?? []) { task in
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                            Text(task.title).font(WorkbenchTypography.roundedHeading)
-                            Text("\(task.harness ?? task.mode ?? task.source) · \(task.measuredAt.formatted())")
-                                .font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
-                            Text("Quality first among estimated fits: \(names(task.qualityFirstFitPaths))").font(WorkbenchTypography.emphasis)
-                            Text("Best reviewed outcome: \(names(task.qualityLeaders))")
-                            Text("Best measured \(metricTitle(task.performanceMetric)): \(names(task.performanceLeaders))")
-                            if !task.latencyLeaders.isEmpty { Text("Lowest first-token latency: \(names(task.latencyLeaders))") }
-                            ForEach(choices(task)) { candidate in
-                                HStack {
-                                    Text(candidate.name).font(WorkbenchTypography.label).lineLimit(1)
-                                    Spacer()
-                                    Button("Use model…") { prepare(taskID: task.id, path: candidate.modelPath) }
-                                        .disabled(isPreparing)
+                        WorkbenchSurface(padding: WorkbenchSpacing.sm) {
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                                Text(task.title).font(WorkbenchTypography.emphasis)
+                                Text("\(task.harness ?? task.mode ?? task.source) · \(task.measuredAt.formatted())")
+                                    .font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+                                Text("Quality first among estimated fits: \(names(task.qualityFirstFitPaths))").font(WorkbenchTypography.emphasis)
+                                Text("Best reviewed outcome: \(names(task.qualityLeaders))")
+                                Text("Best measured \(metricTitle(task.performanceMetric)): \(names(task.performanceLeaders))")
+                                if !task.latencyLeaders.isEmpty { Text("Lowest first-token latency: \(names(task.latencyLeaders))") }
+                                ForEach(choices(task)) { candidate in
+                                    HStack {
+                                        Text(candidate.name).font(WorkbenchTypography.label).lineLimit(1)
+                                        Spacer()
+                                        Button("Use model…") { prepare(taskID: task.id, path: candidate.modelPath) }
+                                            .disabled(isPreparing)
+                                    }
                                 }
-                            }
-                            ForEach(task.needsEvidence, id: \.self) { Text($0).foregroundStyle(WorkbenchColor.warning) }
-                            DisclosureGroup("Models and evidence") {
-                                ForEach(task.candidates) { candidate in
-                                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                                        Text(candidate.name).font(WorkbenchTypography.emphasis)
-                                        Text(candidate.fitSummary)
-                                        Text("Disk: \(candidate.diskBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown")")
-                                        ForEach(candidate.exclusionReasons, id: \.self) { Text($0).foregroundStyle(WorkbenchColor.warning) }
-                                        Text("Evidence: \(candidate.evidenceID)").font(WorkbenchTypography.value).textSelection(.enabled)
-                                    }.padding(.vertical, WorkbenchSpacing.xxs)
+                                ForEach(task.needsEvidence, id: \.self) { Text($0).foregroundStyle(WorkbenchColor.warning) }
+                                DisclosureGroup("Models and evidence") {
+                                    ForEach(task.candidates) { candidate in
+                                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                                            Text(candidate.name).font(WorkbenchTypography.emphasis)
+                                            Text(candidate.fitSummary)
+                                            Text("Disk: \(candidate.diskBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown")")
+                                            ForEach(candidate.exclusionReasons, id: \.self) { Text($0).foregroundStyle(WorkbenchColor.warning) }
+                                            Text("Evidence: \(candidate.evidenceID)").font(WorkbenchTypography.value).textSelection(.enabled)
+                                        }.padding(.vertical, WorkbenchSpacing.xxs)
+                                    }
+                                    if !task.unmeasuredModelPaths.isEmpty { Text("\(task.unmeasuredModelPaths.count) ready models have no observation in this cohort.").foregroundStyle(WorkbenchColor.muted) }
                                 }
-                                if !task.unmeasuredModelPaths.isEmpty { Text("\(task.unmeasuredModelPaths.count) ready models have no observation in this cohort.").foregroundStyle(WorkbenchColor.muted) }
-                            }
-                        }.font(WorkbenchTypography.secondary).padding(WorkbenchSpacing.sm)
-                            .background(WorkbenchColor.accent.opacity(0.05), in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface))
+                            }.font(WorkbenchTypography.secondary)
+                        }
                     }
                 }
             }.frame(maxHeight: 420)
@@ -283,21 +286,22 @@ struct ModelGuidanceReviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Label("Use \(review.candidate.name)", systemImage: "star.circle.fill").font(WorkbenchTypography.roundedTitle)
+            Label("Use \(review.candidate.name)", systemImage: "star.circle.fill").font(WorkbenchTypography.title)
             Text(review.candidate.modelPath).font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
             Picker("Preferred role", selection: $role) {
                 ForEach(review.roles) { Text($0.title).tag($0) }
             }
             Text("This saves a role preference across workflows. Client wiring and reclaim have separate reviews.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                Label(review.candidate.fitSummary, systemImage: "memorychip").font(WorkbenchTypography.emphasis)
-                Text("Estimate at \(review.evidence.contextTokens) tokens · \(review.evidence.reserveGB.formatted()) GB reserve")
-                    .font(WorkbenchTypography.secondary)
-                Text("Headroom checked \(review.evidence.memoryCapturedAt?.formatted() ?? "unknown"). Context here is an estimate, not an endpoint setting.")
-                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            }.padding(WorkbenchSpacing.sm)
-                .background(WorkbenchColor.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface))
+            WorkbenchSurface(.tinted, padding: WorkbenchSpacing.sm) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Label(review.candidate.fitSummary, systemImage: "memorychip").font(WorkbenchTypography.emphasis)
+                    Text("Estimate at \(review.evidence.contextTokens) tokens · \(review.evidence.reserveGB.formatted()) GB reserve")
+                        .font(WorkbenchTypography.secondary)
+                    Text("Headroom checked \(review.evidence.memoryCapturedAt?.formatted() ?? "unknown"). Context here is an estimate, not an endpoint setting.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
             Toggle("Also use on the always-on endpoint", isOn: $enableEndpoint)
                 .font(WorkbenchTypography.emphasis).disabled(!review.verified || review.candidate.fitStatus != "fits")
             Text(review.endpoint.enabled

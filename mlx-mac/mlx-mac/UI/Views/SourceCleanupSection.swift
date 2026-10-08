@@ -15,7 +15,7 @@ struct SourceCleanupSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             ViewThatFits(in: .horizontal) {
-                HStack { header; Spacer(); checkButton }
+                HStack { header; checkButton }
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { header; checkButton }
             }
             Text("Keep the verified conversion. Review its originals before moving them to Trash.")
@@ -38,11 +38,11 @@ struct SourceCleanupSection: View {
             if !blocked.isEmpty {
                 DisclosureGroup("Not eligible (\(blocked.count))") {
                     ForEach(blocked) { candidate in
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                             Text(candidate.title).font(WorkbenchTypography.label)
                             Text(candidate.reason ?? "Review this source manually.")
                                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                        }.padding(.vertical, 4)
+                        }.padding(.vertical, WorkbenchSpacing.xxs)
                     }
                 }.font(WorkbenchTypography.secondary)
             }
@@ -81,8 +81,7 @@ struct SourceCleanupSection: View {
     }
 
     private var header: some View {
-        Label("Original sources", systemImage: "externaldrive.badge.checkmark")
-            .font(WorkbenchTypography.roundedTitle).foregroundStyle(WorkbenchColor.accent)
+        CardHeader("Original sources", systemImage: "externaldrive.badge.checkmark")
     }
 
     private var checkButton: some View {
@@ -91,7 +90,7 @@ struct SourceCleanupSection: View {
     }
 
     private func candidateLabel(_ candidate: SourceCleanupCandidate) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             Text(candidate.title).font(WorkbenchTypography.emphasis).lineLimit(2)
             Text("\(LibraryTablePresentation.byteCount(candidate.bytes ?? 0)) to Trash")
                 .font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.warning)
@@ -107,30 +106,31 @@ struct SourceCleanupSection: View {
     }
 
     private func historyRow(_ batch: SourceCleanupBatch) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            ViewThatFits(in: .horizontal) {
-                HStack { historyLabel(batch); Spacer(); historyActions(batch) }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { historyLabel(batch); historyActions(batch) }
-            }
-            DisclosureGroup("\(batch.items.count) source \(batch.items.count == 1 ? "item" : "items")") {
-                ForEach(batch.items) { item in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(URL(fileURLWithPath: item.record.from).lastPathComponent).font(WorkbenchTypography.label)
-                            Spacer()
-                            Text(item.state.rawValue).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                        }
-                        Text(item.record.from).font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
-                            .lineLimit(2).textSelection(.enabled)
-                    }.padding(.vertical, 3)
+        WorkbenchSurface(padding: WorkbenchSpacing.sm) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                ViewThatFits(in: .horizontal) {
+                    HStack { historyLabel(batch); Spacer(); historyActions(batch) }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { historyLabel(batch); historyActions(batch) }
                 }
-            }.font(WorkbenchTypography.secondary)
-        }.padding(WorkbenchSpacing.sm)
-            .background(WorkbenchColor.accent.opacity(0.035), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                DisclosureGroup("\(batch.items.count) source \(batch.items.count == 1 ? "item" : "items")") {
+                    ForEach(batch.items) { item in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                            HStack {
+                                Text(URL(fileURLWithPath: item.record.from).lastPathComponent).font(WorkbenchTypography.label)
+                                Spacer()
+                                Text(item.state.rawValue).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                            }
+                            Text(item.record.from).font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
+                                .lineLimit(2).textSelection(.enabled)
+                        }.padding(.vertical, WorkbenchSpacing.xxxs)
+                    }
+                }.font(WorkbenchTypography.secondary)
+            }
+        }
     }
 
     private func historyLabel(_ batch: SourceCleanupBatch) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
             Text(batch.title).font(WorkbenchTypography.label).lineLimit(2)
             HStack {
                 if let date = batch.movedAt { Text(date, format: .dateTime.month().day().hour().minute()) }
@@ -160,10 +160,10 @@ struct SourceCleanupSection: View {
     private var cleanupPreview: some View {
         if let plan = reclaim.sourcePlan {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                Label("Move originals to Trash", systemImage: "trash").font(WorkbenchTypography.roundedTitle)
+                Label("Move originals to Trash", systemImage: "trash").font(WorkbenchTypography.title)
                 Text("\(plan.paths.count) items · \(LibraryTablePresentation.byteCount(plan.bytes))").font(WorkbenchTypography.value)
                 Text("The verified conversion stays in place. Shared blobs are protected. Empty Trash in Finder to free space.").font(WorkbenchTypography.secondary)
-                ScrollView { VStack(alignment: .leading, spacing: 8) {
+                ScrollView { VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                     ForEach(plan.paths, id: \.self) { Text($0).font(WorkbenchTypography.compactValue).textSelection(.enabled) }
                 }.frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 240)
                 HStack {
@@ -185,7 +185,7 @@ struct SourceCleanupSection: View {
     private var restorePreview: some View {
         if let plan = reclaim.sourceRestorePlan {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                Label("Restore original sources", systemImage: "arrow.uturn.backward").font(WorkbenchTypography.roundedTitle)
+                Label("Restore original sources", systemImage: "arrow.uturn.backward").font(WorkbenchTypography.title)
                 Text("\(plan.items.count) items · \(LibraryTablePresentation.byteCount(plan.bytes))").font(WorkbenchTypography.value)
                 Text("Restore these items to their original locations. Existing files will never be overwritten.").font(WorkbenchTypography.secondary)
                 if plan.includesLegacyRecords {
@@ -194,7 +194,7 @@ struct SourceCleanupSection: View {
                 }
                 ScrollView { VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                     ForEach(plan.items, id: \.record.id) { item in
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                             Text("From: \(item.record.to ?? "")")
                             Text("To: \(item.record.from)")
                         }.font(WorkbenchTypography.compactValue).textSelection(.enabled)

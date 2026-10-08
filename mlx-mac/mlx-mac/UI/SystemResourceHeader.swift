@@ -14,20 +14,23 @@ struct SystemResourceHeader: View {
 
     var body: some View {
         Button { expanded.toggle() } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: WorkbenchSpacing.xs) {
                 Image(systemName: "memorychip")
                     .foregroundStyle(WorkbenchColor.muted)
                 if let memory = resources.memory {
                     Text("RAM ~\(gb(memory.unavailableBytes))/\(gb(memory.totalBytes)) GB")
                         .foregroundStyle(WorkbenchColor.muted)
+                        .contentTransition(.numericText())
                     Text("~\(gb(memory.availableBytes)) GB available")
                         .foregroundStyle(memory.availableBytes < FitAdvisor.reserveBytes ? WorkbenchColor.warning : WorkbenchColor.ink)
+                        .contentTransition(.numericText())
                 } else {
                     Text("RAM unavailable").foregroundStyle(WorkbenchColor.muted)
                 }
             }
-            .font(WorkbenchTypography.compactValue.weight(.medium))
+            .font(WorkbenchTypography.label.monospacedDigit())
             .lineLimit(1)
+            .workbenchAnimation(value: resources.memory?.availableBytes)
         }
         .buttonStyle(.plain)
         .help("Live memory headroom and serving model controls")
@@ -35,11 +38,8 @@ struct SystemResourceHeader: View {
     }
 
     var panel: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Label("Memory & serving", systemImage: "memorychip")
-                    .font(WorkbenchTypography.roundedHeading)
-                Spacer()
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            CardHeader("Memory & serving", systemImage: "memorychip") {
                 Button { Task { await resources.refreshMemory(); await resources.refreshServers() } } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -48,7 +48,7 @@ struct SystemResourceHeader: View {
                 .disabled(resources.refreshingServers || endpoint.isUnloading)
             }
             if let memory = resources.memory {
-                HStack(alignment: .firstTextBaseline, spacing: 20) {
+                HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.md) {
                     memoryValue("Available headroom", bytes: memory.availableBytes, color: WorkbenchColor.accent)
                     memoryValue("Estimated in use", bytes: memory.unavailableBytes, color: WorkbenchColor.ink)
                 }
@@ -79,8 +79,8 @@ struct SystemResourceHeader: View {
             } else if let servers = resources.servers {
                 if servers.isEmpty { Text("No serving models").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
                 ForEach(servers) { server in
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: WorkbenchSpacing.sm) {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                             Text(HFRepoID.forPath(server.modelIdentity) ?? URL(fileURLWithPath: server.modelIdentity).lastPathComponent)
                                 .font(WorkbenchTypography.label).lineLimit(1)
                                 .help(server.modelIdentity)
@@ -118,7 +118,7 @@ struct SystemResourceHeader: View {
             if endpoint.isUnloading { ProgressView("Unloading…").controlSize(.small) }
             if let unloadError { Text(unloadError).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning) }
         }
-        .padding(20)
+        .padding(WorkbenchSpacing.md)
         .frame(width: 420)
         .task {
             while !Task.isCancelled {
@@ -129,10 +129,12 @@ struct SystemResourceHeader: View {
     }
 
     private func memoryValue(_ label: String, bytes: Int64, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
             Text(label).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            Text("~\(gb(bytes)) GB").font(WorkbenchTypography.roundedTitle)
-                .foregroundStyle(color).monospacedDigit()
+            Text("~\(gb(bytes)) GB").font(WorkbenchTypography.display)
+                .foregroundStyle(color)
+                .contentTransition(.numericText())
+                .workbenchAnimation(value: bytes)
         }
     }
 }

@@ -14,6 +14,7 @@ struct MlxWorkbenchApp: App {
                 }
         }
         .windowToolbarStyle(.unified)
+        .defaultSize(width: WorkbenchSize.windowDefaultWidth, height: WorkbenchSize.windowDefaultHeight)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About MLX Workbench") {

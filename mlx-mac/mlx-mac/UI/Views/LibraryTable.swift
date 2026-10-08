@@ -175,7 +175,7 @@ struct LibraryNameCell: View {
     let row: LibraryRow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.hairline) {
             Text(row.name)
                 .font(row.isFamily ? WorkbenchTypography.emphasis : WorkbenchTypography.body)
                 .lineLimit(1)
@@ -186,7 +186,7 @@ struct LibraryNameCell: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, WorkbenchSpacing.xxxs)
     }
 }
 

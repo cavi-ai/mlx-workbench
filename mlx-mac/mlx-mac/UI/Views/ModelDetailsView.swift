@@ -395,7 +395,7 @@ struct ModelDetailsView: View {
                         Image(systemName: event.kind.systemImage)
                             .foregroundStyle(event.kind == .verificationFailed ? WorkbenchColor.failure : WorkbenchColor.accent)
                             .frame(width: 18)
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                             HStack {
                                 Text(event.kind.title).font(WorkbenchTypography.emphasis)
                                 if event.stale {

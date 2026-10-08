@@ -8,37 +8,36 @@ struct ModelReplacementChainCard: View {
     var onReviewFolder: ((String) -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
-                Image(systemName: "checkmark.seal.fill").foregroundStyle(WorkbenchColor.success)
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                    Text("Keep \(chain.keeper.name)").font(WorkbenchTypography.roundedHeading)
-                    Text(chain.task).font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.accent)
-                }
-                Spacer()
-                Text("\(chain.replaced.count) to review").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
-            }
-            memberRow(chain.keeper, symbol: "checkmark", color: WorkbenchColor.success)
-            ForEach(chain.replaced, id: \.path) { member in
-                memberRow(member, symbol: "arrow.turn.up.right", color: WorkbenchColor.muted)
-            }
-            DisclosureGroup("Review \(ByteCountFormatter.string(fromByteCount: chain.replaced.reduce(0) { $0 + $1.diskBytes }, countStyle: .file)) · evidence and paths") {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    Text("The keeper is no worse on reviewed quality, speed, latency, estimated memory and disk in this task. Other tasks may need the replaced models. Review those uses before quarantining a model folder in Reclaim.")
-                        .font(WorkbenchTypography.secondary)
-                    Text(chain.source).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
-                    ForEach([chain.keeper] + chain.replaced, id: \.path) { member in
-                        Text(member.path).font(WorkbenchTypography.value).textSelection(.enabled)
-                        if member.path != chain.keeper.path, member.path.hasPrefix("/"), !member.path.lowercased().hasSuffix(".gguf"), let onReviewFolder {
-                            Button("Review folder cleanup…") { onReviewFolder(member.path) }.buttonStyle(.bordered)
-                        }
+        WorkbenchSurface(.tinted, padding: WorkbenchSpacing.sm) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(WorkbenchColor.success)
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        Text("Keep \(chain.keeper.name)").font(WorkbenchTypography.emphasis)
+                        Text(chain.task).font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.accent)
                     }
-                }.padding(.top, WorkbenchSpacing.xs)
-            }.font(WorkbenchTypography.secondary)
+                    Spacer()
+                    Text("\(chain.replaced.count) to review").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+                }
+                memberRow(chain.keeper, symbol: "checkmark", color: WorkbenchColor.success)
+                ForEach(chain.replaced, id: \.path) { member in
+                    memberRow(member, symbol: "arrow.turn.up.right", color: WorkbenchColor.muted)
+                }
+                DisclosureGroup("Review \(ByteCountFormatter.string(fromByteCount: chain.replaced.reduce(0) { $0 + $1.diskBytes }, countStyle: .file)) · evidence and paths") {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        Text("The keeper is no worse on reviewed quality, speed, latency, estimated memory and disk in this task. Other tasks may need the replaced models. Review those uses before quarantining a model folder in Reclaim.")
+                            .font(WorkbenchTypography.secondary)
+                        Text(chain.source).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
+                        ForEach([chain.keeper] + chain.replaced, id: \.path) { member in
+                            Text(member.path).font(WorkbenchTypography.value).textSelection(.enabled)
+                            if member.path != chain.keeper.path, member.path.hasPrefix("/"), !member.path.lowercased().hasSuffix(".gguf"), let onReviewFolder {
+                                Button("Review folder cleanup…") { onReviewFolder(member.path) }.buttonStyle(.bordered)
+                            }
+                        }
+                    }.padding(.top, WorkbenchSpacing.xs)
+                }.font(WorkbenchTypography.secondary)
+            }
         }
-        .padding(WorkbenchSpacing.sm)
-        .background(WorkbenchColor.accent.opacity(0.05), in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface))
-        .overlay(RoundedRectangle(cornerRadius: WorkbenchRadius.surface).stroke(WorkbenchColor.accent.opacity(0.2), lineWidth: WorkbenchSpacing.hairline))
     }
 
     private func memberRow(_ member: ModelReplacementMember, symbol: String, color: Color) -> some View {

@@ -4,8 +4,16 @@ import AppKit
 /// Semantic colors, resolved by AppKit so they follow the system appearance,
 /// accent, and accessibility settings. Views consume roles, never literals.
 enum WorkbenchColor {
+    /// Window content background.
     static let canvas = Color(nsColor: .windowBackgroundColor)
-    static let surface = Color(nsColor: .controlBackgroundColor)
+    /// Cards and grouped sections, one translucent step above the canvas.
+    /// The window and control backgrounds resolve to the same color, so an
+    /// opaque control color leaves cards indistinguishable from the canvas.
+    static let surface = Color(nsColor: .tertiarySystemFill)
+    /// Recessed wells inside a surface: capacity-bar track, slot cells.
+    static let well = Color(nsColor: .secondarySystemFill)
+    /// Text and symbols on a solid accent fill.
+    static let onAccent = Color(nsColor: .alternateSelectedControlTextColor)
     static let ink = Color(nsColor: .labelColor)
     static let muted = Color(nsColor: .secondaryLabelColor)
     static let hairline = Color(nsColor: .separatorColor)
@@ -16,26 +24,52 @@ enum WorkbenchColor {
     static let failure = Color(nsColor: .systemRed)
 }
 
+/// Strengths for tone-tinted fills and strokes. Every translucent tone color
+/// in the UI comes from one of these.
+enum WorkbenchTint: Double {
+    /// Large tinted panels and callouts.
+    case wash = 0.05
+    /// Badges, icon chips, selected cells.
+    case fill = 0.12
+    /// Borders and dividers on tinted panels.
+    case stroke = 0.25
+}
+
+extension Color {
+    func opacity(_ tint: WorkbenchTint) -> Color {
+        opacity(tint.rawValue)
+    }
+}
+
 /// Type roles mapped onto the system text styles so Dynamic Type and the
-/// system font stack apply. Values (paths, hashes, receipts, numbers) use the
-/// monospaced body size; nothing user-facing renders below 11 points.
+/// system font stack apply. One voice: SF Pro everywhere, rounded only for
+/// large numerals. Nothing renders below 11 points (macOS caption and
+/// footnote are 10 points).
 enum WorkbenchTypography {
+    /// The one lead numeral on a page, with tabular digits.
+    static let hero = Font.system(size: WorkbenchSize.heroNumeral, weight: .semibold, design: .rounded).monospacedDigit()
+    /// Large numerals in stats and meters, with tabular digits.
+    static let display = Font.system(.title, design: .rounded).weight(.semibold).monospacedDigit()
+    /// Sheet and window headings.
     static let title = Font.title2.weight(.semibold)
-    static let roundedTitle = Font.system(.title2, design: .rounded).weight(.semibold)
-    static let roundedHeading = Font.system(.headline, design: .rounded).weight(.semibold)
-    static let roundedLabel = Font.system(.callout, design: .rounded).weight(.bold)
+    /// Section headings inside a page.
     static let section = Font.title3.weight(.semibold)
+    /// Card headers.
+    static let cardTitle = Font.headline
     static let emphasis = Font.body.weight(.semibold)
     static let body = Font.body
     static let secondary = Font.callout
     static let label = Font.subheadline.weight(.medium)
+    /// Paths, hashes, receipts: monospaced at body size.
     static let value = Font.body.monospaced()
-    static let metadata = Font.caption
-    static let compactValue = Font.caption.monospaced()
+    static let metadata = Font.subheadline
+    static let compactValue = Font.subheadline.monospaced()
 }
 
+/// A 4-point grid; `xxxs` exists for hairline gaps inside dense clusters.
 enum WorkbenchSpacing {
     static let hairline: CGFloat = 1
+    static let xxxs: CGFloat = 2
     static let xxs: CGFloat = 4
     static let xs: CGFloat = 8
     static let sm: CGFloat = 12
@@ -46,10 +80,109 @@ enum WorkbenchSpacing {
     static let surfaceInset: CGFloat = 16
 }
 
+/// Fixed dimensions that are not spacing: instrument parts, window and
+/// layout thresholds. Views take every such number from here.
+enum WorkbenchSize {
+    static let heroNumeral: CGFloat = 40
+    static let barHeight: CGFloat = 22
+    static let barGap: CGFloat = 2
+    static let markerWidth: CGFloat = 3
+    static let markerOverhang: CGFloat = 4
+    static let stageNode: CGFloat = 32
+    static let stageTrack: CGFloat = 2
+    static let tileMinimum: CGFloat = 150
+    static let instrumentMinimum: CGFloat = 360
+    static let nextStepMinimum: CGFloat = 240
+    static let nextStepMaximum: CGFloat = 360
+    static let alertTitleIdeal: CGFloat = 240
+    /// Instrument plus Next Step plus the gap between them.
+    static let heroRowMinimum: CGFloat = 616
+    static let barLabelsMinimum: CGFloat = 460
+    static let stageStateMinimum: CGFloat = 600
+    static let tileCaptionsMinimum: CGFloat = 594
+    static let twoColumnMinimum: CGFloat = 1040
+    static let alertRowMinimum: CGFloat = 560
+    static let contentMaxWidth: CGFloat = 1120
+    /// Detail-column content width assumed before the first measurement.
+    static let assumedContentWidth: CGFloat = 792
+    static let windowDefaultWidth: CGFloat = 1050
+    static let windowDefaultHeight: CGFloat = 720
+    static let windowMinimumWidth: CGFloat = 740
+    static let windowMinimumHeight: CGFloat = 560
+}
+
 enum WorkbenchRadius {
+    /// Small chips and swatches.
+    static let chip: CGFloat = 4
     static let control: CGFloat = 6
     static let surface: CGFloat = 10
-    static let page: CGFloat = 14
+}
+
+/// Animation curves. Views animate through `workbenchAnimation`, which drops
+/// motion when Reduce Motion is on.
+enum WorkbenchMotion {
+    /// State changes, badge relabels, inserted rows.
+    static let standard = Animation.snappy(duration: 0.28)
+    /// Progress that advances in coarse steps.
+    static let progress = Animation.easeInOut(duration: 0.6)
+    /// Indeterminate rotation.
+    static let spin = Animation.linear(duration: 1.1).repeatForever(autoreverses: false)
+    /// One beat of the live-status pulse.
+    static let pulse = Animation.easeInOut(duration: 0.9)
+}
+
+private struct ReducibleAnimation<Value: Equatable>: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let animation: Animation
+    let value: Value
+
+    func body(content: Content) -> some View {
+        content.animation(reduceMotion ? nil : animation, value: value)
+    }
+}
+
+/// Fades a live indicator between full and stroke-strength opacity while
+/// active; static when inactive or when Reduce Motion is on.
+private struct LivePulse: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let isActive: Bool
+
+    func body(content: Content) -> some View {
+        if isActive && !reduceMotion {
+            content.phaseAnimator([1.0, WorkbenchTint.stroke.rawValue]) { view, phase in
+                view.opacity(phase)
+            } animation: { _ in
+                WorkbenchMotion.pulse
+            }
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func workbenchAnimation<Value: Equatable>(_ animation: Animation = WorkbenchMotion.standard, value: Value) -> some View {
+        modifier(ReducibleAnimation(animation: animation, value: value))
+    }
+
+    func livePulse(_ isActive: Bool) -> some View {
+        modifier(LivePulse(isActive: isActive))
+    }
+
+    /// On macOS 26 the toolbar floats over scrolled content; a hard edge keeps
+    /// the window title legible above dense text instead of overlapping it.
+    @ViewBuilder
+    func workbenchScrollEdge() -> some View {
+#if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            scrollEdgeEffectStyle(.hard, for: .top)
+        } else {
+            self
+        }
+#else
+        self
+#endif
+    }
 }
 
 /// Whether the enclosing route is the one currently shown in the detail

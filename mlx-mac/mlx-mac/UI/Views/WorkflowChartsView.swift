@@ -27,88 +27,84 @@ struct WorkflowChartsView: View {
     var body: some View {
         let available = tasks
         let selected = available.first { $0.id == selectedTaskID } ?? available.first
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            HStack {
-                Label("Workflow performance", systemImage: "chart.bar.xaxis")
-                    .font(WorkbenchTypography.roundedHeading)
-                Spacer()
-                if let selected { compareButton(selected) }
-            }
-            if let selected {
-                ViewThatFits(in: .horizontal) {
-                    HStack { controls(available, selected: selected) }
-                    VStack(alignment: .leading) { controls(available, selected: selected) }
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                CardHeader("Workflow performance", systemImage: "chart.bar.xaxis") {
+                    if let selected { compareButton(selected) }
                 }
-                let selection = WorkflowCharts.comparisonSelection(selected, models: models, mode: mode, activeRunID: activeRunID)
-                if selection.slots == nil {
-                    Text(selection.reason).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                }
-                if let selectionNote {
-                    Text(selectionNote).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
-                }
-                if let selectionError {
-                    Text(selectionError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
-                }
-                let series = WorkflowCharts.series(selected, records: workflow.records, metric: metric)
-                if series.points.isEmpty {
-                    Text(series.unavailableReason ?? "No current comparable \(metric.title.lowercased()) measurements in this cohort. Review the evidence below.")
-                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
-                } else {
-                    if metric == .qualityRuntime {
-                        tradeoffChart(series.points)
-                        tradeoffSelection(series.points, task: selected)
+                if let selected {
+                    ViewThatFits(in: .horizontal) {
+                        HStack { controls(available, selected: selected) }
+                        VStack(alignment: .leading) { controls(available, selected: selected) }
+                    }
+                    let selection = WorkflowCharts.comparisonSelection(selected, models: models, mode: mode, activeRunID: activeRunID)
+                    if selection.slots == nil {
+                        Text(selection.reason).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    }
+                    if let selectionNote {
+                        Text(selectionNote).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
+                    }
+                    if let selectionError {
+                        Text(selectionError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                    }
+                    let series = WorkflowCharts.series(selected, records: workflow.records, metric: metric)
+                    if series.points.isEmpty {
+                        Text(series.unavailableReason ?? "No current comparable \(metric.title.lowercased()) measurements in this cohort. Review the evidence below.")
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                     } else {
-                        ScrollView(.vertical) { chart(series.points) }
-                            .frame(height: min(chartHeight(series.points.count), 360))
-                    }
-                    Text(caption(selected))
-                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if metric == .breakdown {
-                        ForEach(series.points.map(\.candidate).filter { !WorkflowCharts.missingTimings($0).isEmpty }) { candidate in
-                            Text("\(candidate.name): \(WorkflowCharts.missingTimings(candidate).joined(separator: ", ")) unknown.")
-                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        if metric == .qualityRuntime {
+                            tradeoffChart(series.points)
+                            tradeoffSelection(series.points, task: selected)
+                        } else {
+                            ScrollView(.vertical) { chart(series.points) }
+                                .frame(height: min(chartHeight(series.points.count), 360))
                         }
-                    }
-                }
-                ForEach(series.missing) { candidate in
-                    Text("\(candidate.name): \(metric.title.lowercased()) unknown.")
-                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                }
-                DisclosureGroup("Configuration and source evidence") {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        Text("Configuration: \(selected.configurationFingerprint ?? "unknown — no cross-model comparison")")
-                            .font(WorkbenchTypography.value).textSelection(.enabled)
-                        Text("\(selected.useCase?.title ?? "No task role") · \(selected.candidates.first?.sampleCount ?? 0) samples. Different configurations and sample counts remain separate.")
-                        ForEach(selected.candidates) { candidate in
-                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                                Text(candidate.name).font(WorkbenchTypography.emphasis)
-                                Text(candidate.modelPath).font(WorkbenchTypography.value).textSelection(.enabled)
-                                Text("Captured \(candidate.measuredAt.formatted()) · report \(candidate.evidenceID)")
-                                    .textSelection(.enabled)
-                                if let record = workflow.records.first(where: { $0.id.uuidString == candidate.evidenceID }) {
-                                    Text("Source: \(record.source)").textSelection(.enabled)
-                                    Text("Quality: \(record.qualityScore.map { "\($0)/5" } ?? "unknown") · rubric: \(record.rubricID ?? "unknown")")
-                                    Text("Recorded peak memory: \(record.peakMemoryBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown")")
-                                }
-                                ForEach(candidate.exclusionReasons, id: \.self) { Text($0).foregroundStyle(WorkbenchColor.warning) }
-                                if candidate.comparable {
-                                    Text(timings(candidate))
-                                }
+                        Text(caption(selected))
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if metric == .breakdown {
+                            ForEach(series.points.map(\.candidate).filter { !WorkflowCharts.missingTimings($0).isEmpty }) { candidate in
+                                Text("\(candidate.name): \(WorkflowCharts.missingTimings(candidate).joined(separator: ", ")) unknown.")
+                                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                             }
                         }
-                        Text("Measured timings do not establish model quality or current memory fit. Unattributed time has no measured cause; GPU, disk and network utilization are not measured.")
-                            .foregroundStyle(WorkbenchColor.muted)
-                    }.font(WorkbenchTypography.secondary).padding(.top, WorkbenchSpacing.xs)
-                }.font(WorkbenchTypography.secondary)
-            } else {
-                Text("Import a Claude, OpenClaw or OpenCode workflow report to compare task runtime and timing breakdowns.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    }
+                    ForEach(series.missing) { candidate in
+                        Text("\(candidate.name): \(metric.title.lowercased()) unknown.")
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    }
+                    DisclosureGroup("Configuration and source evidence") {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            Text("Configuration: \(selected.configurationFingerprint ?? "unknown — no cross-model comparison")")
+                                .font(WorkbenchTypography.value).textSelection(.enabled)
+                            Text("\(selected.useCase?.title ?? "No task role") · \(selected.candidates.first?.sampleCount ?? 0) samples. Different configurations and sample counts remain separate.")
+                            ForEach(selected.candidates) { candidate in
+                                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                                    Text(candidate.name).font(WorkbenchTypography.emphasis)
+                                    Text(candidate.modelPath).font(WorkbenchTypography.value).textSelection(.enabled)
+                                    Text("Captured \(candidate.measuredAt.formatted()) · report \(candidate.evidenceID)")
+                                        .textSelection(.enabled)
+                                    if let record = workflow.records.first(where: { $0.id.uuidString == candidate.evidenceID }) {
+                                        Text("Source: \(record.source)").textSelection(.enabled)
+                                        Text("Quality: \(record.qualityScore.map { "\($0)/5" } ?? "unknown") · rubric: \(record.rubricID ?? "unknown")")
+                                        Text("Recorded peak memory: \(record.peakMemoryBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "unknown")")
+                                    }
+                                    ForEach(candidate.exclusionReasons, id: \.self) { Text($0).foregroundStyle(WorkbenchColor.warning) }
+                                    if candidate.comparable {
+                                        Text(timings(candidate))
+                                    }
+                                }
+                            }
+                            Text("Measured timings do not establish model quality or current memory fit. Unattributed time has no measured cause; GPU, disk and network utilization are not measured.")
+                                .foregroundStyle(WorkbenchColor.muted)
+                        }.font(WorkbenchTypography.secondary).padding(.top, WorkbenchSpacing.xs)
+                    }.font(WorkbenchTypography.secondary)
+                } else {
+                    Text("Import a Claude, OpenClaw or OpenCode workflow report to compare task runtime and timing breakdowns.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
             }
         }
-        .padding(WorkbenchSpacing.md)
-        .background(WorkbenchColor.accent.opacity(0.04), in: RoundedRectangle(cornerRadius: WorkbenchRadius.surface))
-        .overlay(RoundedRectangle(cornerRadius: WorkbenchRadius.surface).stroke(WorkbenchColor.hairline, lineWidth: WorkbenchSpacing.hairline))
         .onChange(of: selectedTaskID) { _, _ in selectionNote = nil; selectionError = nil }
         .onChange(of: selected?.id) { _, _ in inspectedModelPath = nil }
         .onChange(of: metric) { _, _ in inspectedModelPath = nil }
@@ -263,7 +259,7 @@ struct WorkflowChartsView: View {
                             }
                             .fixedSize()
                             .padding(WorkbenchSpacing.xxs)
-                            .background(WorkbenchColor.canvas, in: RoundedRectangle(cornerRadius: 3))
+                            .background(WorkbenchColor.canvas, in: RoundedRectangle(cornerRadius: WorkbenchRadius.chip))
                         }
                         .accessibilityLabel(candidate.name)
                         .accessibilityValue("\(metric.formattedValue(point.value)), recorded \(candidate.measuredAt.formatted())")

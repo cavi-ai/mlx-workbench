@@ -178,14 +178,14 @@ struct JobsView: View {
     }
 
     private var serversSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Servers")
             if modelWorkflow.servers.isEmpty {
                 Text("No authoritative server records are available.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             } else {
                 ForEach(modelWorkflow.servers) { server in
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         HStack {
                             StatusPill(state: server.state ?? "unknown")
                             Text(server.repo ?? "Unknown model").font(WorkbenchTypography.emphasis).lineLimit(1)
@@ -209,7 +209,7 @@ struct JobsView: View {
     }
 
     private var webQueueSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Web Queue")
             if let problem = webQueue.problem {
                 Text(problem + " The web UI preserves it as a numbered .corrupt file.")
@@ -221,7 +221,7 @@ struct JobsView: View {
                 Text("Queued by the web UI at \(webQueue.path). Read-only here; it drains while the web server runs.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 ForEach(webQueue.items) { item in
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         HStack {
                             StatusPill(state: item.state.rawValue)
                             Text(item.label).font(WorkbenchTypography.emphasis).lineLimit(1)
@@ -244,7 +244,7 @@ struct JobsView: View {
     }
 
     private func conversionCard(_ card: ActivityWorkflowCardPresentation) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
                 StatusPill(state: card.workflow.state.rawValue)
                 Text(card.stateTitle).font(WorkbenchTypography.emphasis)
@@ -356,7 +356,7 @@ struct LogSheet: View {
     @State private var truncated = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack { Text(path).font(WorkbenchTypography.emphasis); Spacer(); Button("Close") { dismiss() } }
             if truncated { Text("(truncated to the tail)").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
             ScrollView {
