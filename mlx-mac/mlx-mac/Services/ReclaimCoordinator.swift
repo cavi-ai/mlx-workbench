@@ -72,6 +72,9 @@ final class ReclaimCoordinator: ObservableObject {
     @Published private(set) var trashPlan: QuarantineTrashPlan?
     @Published private(set) var trashNote: String?
     @Published private(set) var folderPlan: ModelFolderReclaimPlan?
+    @Published private(set) var libraryTrashPlan: LibraryTrashPlan?
+    @Published private(set) var libraryTrashNote: String?
+    var servingModelPaths: (() async throws -> [String])?
     @Published private(set) var sourcePlan: ConvertedSourcePlan?
     @Published private(set) var sourceCleanupNote: String?
     @Published private(set) var sourceCandidates: [SourceCleanupCandidate] = []
@@ -183,6 +186,41 @@ final class ReclaimCoordinator: ObservableObject {
 
     private var protectedFolderPaths: [String] {
         protectedPaths() + opportunities.compactMap { $0.replacement?.keeper.path }
+    }
+
+    func previewLibraryTrash(_ path: String) async {
+        guard !isApplying else { return }
+        isApplying = true
+        defer { isApplying = false }
+        libraryTrashPlan = nil; libraryTrashNote = nil; lastError = nil
+        do {
+            guard let servingModelPaths else { throw QuarantineError.unsafeFolder("serving status is unavailable; refresh Health before retrying.") }
+            let serving = try await servingModelPaths()
+            let roots = sourceRoots, protected = protectedFolderPaths + serving, manager = fileManager
+            let plan = try await Task.detached(priority: .userInitiated) {
+                try Quarantine.previewModelTrash(path, roots: roots, protected: protected, fileManager: manager)
+            }.value
+            guard roots == sourceRoots else { throw QuarantineError.changedSincePreview }
+            libraryTrashPlan = plan
+        } catch { lastError = AppHost.render(error) }
+    }
+
+    func cancelLibraryTrash() { if !isApplying { libraryTrashPlan = nil } }
+
+    func confirmLibraryTrash() async {
+        guard !isApplying, let plan = libraryTrashPlan else { return }
+        isApplying = true
+        defer { isApplying = false; libraryTrashPlan = nil }
+        do {
+            guard let servingModelPaths else { throw QuarantineError.unsafeFolder("serving status is unavailable.") }
+            let serving = try await servingModelPaths()
+            let roots = sourceRoots, protected = protectedFolderPaths + serving, manager = fileManager
+            let destination = try await Task.detached(priority: .userInitiated) {
+                try Quarantine.trashModel(plan, roots: roots, protected: protected, fileManager: manager)
+            }.value
+            libraryTrashNote = "Moved to Trash. Recover in Finder: \(destination.path)"
+            lastError = nil
+        } catch { lastError = AppHost.render(error) }
     }
 
     func previewSource(_ workflow: ConversionWorkflow) async {

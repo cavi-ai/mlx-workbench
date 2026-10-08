@@ -289,6 +289,18 @@ actor WorkbenchAPI {
         return Self.servers(from: data) ?? []
     }
 
+    /// Removal cannot treat an unreadable status response as an empty fleet.
+    func servingPathsForRemoval() throws -> [String] {
+        try Self.servingPathsForRemoval(from: raw(["serve", "status", "--receipts-dir", receiptDirectory]))
+    }
+
+    static func servingPathsForRemoval(from data: [String: Any]) throws -> [String] {
+        guard let servers = Self.servers(from: data), servers.allSatisfy({ !$0.modelIdentity.isEmpty }) else {
+            throw BridgeError.remote(code: "invalid_serve_status", message: "Serving status could not be read safely; model deletion was refused.", remediation: "Refresh Health and retry.")
+        }
+        return servers.map(\.modelIdentity)
+    }
+
     func allJobs() throws -> [Job] {
         let data = try raw(["convert", "status", "--receipts-dir", receiptDirectory])
         return Self.jobs(from: data, key: "jobs") ?? []

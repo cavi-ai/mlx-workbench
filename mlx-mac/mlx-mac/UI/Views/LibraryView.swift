@@ -34,9 +34,9 @@ struct LibrarySummary: Equatable {
 enum LibraryPresentation {
     static let unknownQuantizationLabel = "Unknown"
 
-    static func summary(for snapshot: LibrarySnapshot) -> LibrarySummary {
+    static func summary(for snapshot: LibrarySnapshot, familyCount: Int? = nil) -> LibrarySummary {
         LibrarySummary(
-            families: snapshot.groups.count,
+            families: familyCount ?? snapshot.groups.count,
             models: snapshot.models.count,
             storage: LibraryTablePresentation.byteCount(snapshot.totalBytes),
             reclaimable: LibraryTablePresentation.byteCount(snapshot.reclaimableBytes),
@@ -190,6 +190,7 @@ enum LibraryPresentation {
 
 struct LibraryView: View {
     @ObservedObject var appHost: AppHost
+    @ObservedObject private var reclaim: ReclaimCoordinator
     private let onRouteSelection: (AppRoute) -> Void
 
     @State private var search = ""
@@ -197,7 +198,7 @@ struct LibraryView: View {
     @State private var quantizationFilter: String?
     @State private var selection: String?
     @State private var sortOrder = LibraryTablePresentation.defaultSortOrder
-    @State private var showInspector = true
+    @State private var showInspector = false
     @State private var columnCustomization = TableColumnCustomization<LibraryRow>()
     @State private var tier = LibraryColumnTier.resolve(width: WorkbenchSize.assumedContentWidth)
     /// The fit context the rows sort by. Follows the monitor's context
@@ -209,6 +210,7 @@ struct LibraryView: View {
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
+        _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -229,7 +231,7 @@ struct LibraryView: View {
     private var rows: [LibraryRow] {
         (LibraryGroupMode(rawValue: groupModeRaw) ?? .family) == .type
             ? LibraryTablePresentation.typeRows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
-            : LibraryTablePresentation.rows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
+            : LibraryTablePresentation.familyRows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
     }
 
     private var visiblePaths: [String] {
@@ -237,7 +239,7 @@ struct LibraryView: View {
     }
 
     private var selectedModel: LibraryModel? {
-        model(at: LibraryTablePresentation.modelPath(forSelection: selection))
+        contextModel(for: selection)
     }
 
     private var selectedFamily: LibraryRow? {
@@ -261,6 +263,32 @@ struct LibraryView: View {
 
     var body: some View {
         content
+            .sheet(isPresented: Binding(get: { reclaim.libraryTrashPlan != nil && isRouteActive }, set: { if !$0 { reclaim.cancelLibraryTrash() } })) {
+                if let plan = reclaim.libraryTrashPlan {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                        Text("Delete model?").font(WorkbenchTypography.title)
+                        Text(URL(fileURLWithPath: plan.modelPath).lastPathComponent).font(WorkbenchTypography.emphasis)
+                        Text(plan.includesCacheRepository
+                             ? "This moves the entire cached repository, including all its downloaded revisions and blobs, to macOS Trash."
+                             : "This moves the selected model to macOS Trash. You can put it back using Finder.")
+                        Text(plan.snapshot.path).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                        Text("\(LibraryTablePresentation.byteCount(plan.snapshot.bytes)) on disk. Empty Trash in Finder to free the space.")
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        HStack {
+                            Button("Cancel") { reclaim.cancelLibraryTrash() }.keyboardShortcut(.cancelAction)
+                            Spacer()
+                            if reclaim.isApplying { ProgressView().controlSize(.small) }
+                            Button("Move to Trash", role: .destructive) {
+                                Task {
+                                    await reclaim.confirmLibraryTrash()
+                                    if reclaim.lastError == nil { appHost.requestRescan() }
+                                }
+                            }.buttonStyle(.borderedProminent)
+                        }.disabled(reclaim.isApplying)
+                    }.padding(WorkbenchSpacing.lg).frame(width: 480)
+                        .interactiveDismissDisabled(reclaim.isApplying)
+                }
+            }
             .inspector(isPresented: inspectorBinding) {
                 inspector
                     .inspectorColumnWidth(
@@ -300,6 +328,12 @@ struct LibraryView: View {
             VStack(spacing: 0) {
                 ErrorBanner(text: appHost.lastError)
                     .padding([.horizontal, .top], WorkbenchSpacing.sm)
+                ErrorBanner(text: reclaim.lastError)
+                    .padding(.horizontal, WorkbenchSpacing.sm)
+                if let note = reclaim.libraryTrashNote {
+                    Text(note).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                        .padding(.horizontal, WorkbenchSpacing.sm)
+                }
                 if rows.isEmpty {
                     ContentUnavailableView(noMatchTitle, systemImage: noMatchSymbol, description: Text(noMatchDescription))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -307,7 +341,7 @@ struct LibraryView: View {
                     table
                 }
                 Divider()
-                footer(LibraryPresentation.summary(for: snapshot))
+                footer(LibraryPresentation.summary(for: snapshot, familyCount: Set(snapshot.models.map(ComparePresentation.familyLabel)).count))
             }
         } else if appHost.isScanning {
             ProgressView("Scanning local library…")
@@ -331,7 +365,10 @@ struct LibraryView: View {
 
     private var table: some View {
         let largestLeafBytes = LibraryTablePresentation.largestLeafBytes(in: rows)
-        return Table(of: LibraryRow.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
+        return Table(of: LibraryRow.self, selection: Binding(get: { selection }, set: {
+            selection = $0
+            showInspector = $0 != nil
+        }), sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
             TableColumn("Model", value: \.name) { row in
                 LibraryNameCell(row: row, isSelected: selection == row.id, showsInlineStatus: !tier.showsStatus)
             }
@@ -386,11 +423,11 @@ struct LibraryView: View {
             applyTier(newTier)
         }
         .contextMenu(forSelectionType: LibraryRow.ID.self) { ids in
-            if let model = model(at: LibraryTablePresentation.modelPath(forSelection: ids.first)) {
+            if let model = contextModel(for: ids.first) {
                 contextMenuItems(for: ModelActions(appHost: appHost, model: model, onRouteSelection: onRouteSelection))
             }
         } primaryAction: { ids in
-            if LibraryTablePresentation.modelPath(forSelection: ids.first) != nil {
+            if contextModel(for: ids.first) != nil {
                 showInspector = true
             }
         }
@@ -465,6 +502,10 @@ struct LibraryView: View {
             Button("Select for Compare") { actions.compare() }
             Button("Select for Run") { actions.run() }
         }
+        Divider()
+        Button("Delete…", role: .destructive) {
+            Task { await reclaim.previewLibraryTrash(actions.model.item.path) }
+        }.disabled(reclaim.isApplying)
     }
 
     // MARK: - Inspector
@@ -608,6 +649,15 @@ struct LibraryView: View {
             }
         }
         return nil
+    }
+
+    /// A single-model heading has the same actions as its only child. A
+    /// multi-model family never silently chooses a variant for deletion.
+    private func contextModel(for id: String?) -> LibraryModel? {
+        if let model = model(at: LibraryTablePresentation.modelPath(forSelection: id)) { return model }
+        guard let id, let row = LibraryTablePresentation.row(withID: id, in: rows),
+              row.fitModels.count == 1 else { return nil }
+        return row.fitModels.first
     }
 
     private func syncSelection() {

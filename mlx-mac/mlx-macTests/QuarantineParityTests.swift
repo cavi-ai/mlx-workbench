@@ -295,6 +295,100 @@ final class QuarantineParityTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: trash.appendingPathComponent("model.safetensors").path))
     }
 
+    func testLibraryTrashRechecksIdentityRootsAndProtectionBeforeMoving() throws {
+        let root = try makeRoot()
+        let model = try modelFolder(in: root)
+        let roots = [root.path]
+        let plan = try Quarantine.previewModelTrash(model.path, roots: roots, protected: [])
+        XCTAssertEqual(plan.snapshot.path, model.path)
+        var attempted = false
+        let move: (URL) throws -> URL = { source in
+            attempted = true
+            let destination = root.appendingPathComponent("test-trash")
+            try FileManager.default.moveItem(at: source, to: destination)
+            return destination
+        }
+        XCTAssertThrowsError(try Quarantine.trashModel(plan, roots: [], protected: [], trash: move))
+        XCTAssertThrowsError(try Quarantine.trashModel(plan, roots: roots, protected: [model.path], trash: move))
+        try Data("changed weights".utf8).write(to: model.appendingPathComponent("model.safetensors"))
+        XCTAssertThrowsError(try Quarantine.trashModel(plan, roots: roots, protected: [], trash: move))
+        XCTAssertFalse(attempted)
+        let fresh = try Quarantine.previewModelTrash(model.path, roots: roots, protected: [])
+        let destination = try Quarantine.trashModel(fresh, roots: roots, protected: [], trash: move)
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("model.safetensors")), Data("changed weights".utf8))
+    }
+
+    func testLibraryTrashMovesWholeCacheRepositoryAndRefusesExternalLinks() throws {
+        let root = try makeRoot()
+        let repo = root.appendingPathComponent("models--org--model")
+        let snapshot = repo.appendingPathComponent("snapshots/rev")
+        let blob = repo.appendingPathComponent("blobs/weights")
+        try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: blob.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("weights".utf8).write(to: blob)
+        let link = snapshot.appendingPathComponent("model.safetensors")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "../../blobs/weights")
+        let roots = [root.path]
+        let plan = try Quarantine.previewModelTrash(snapshot.path, roots: roots, protected: [])
+        XCTAssertTrue(plan.includesCacheRepository)
+        XCTAssertEqual(plan.snapshot.path, repo.path)
+        XCTAssertThrowsError(try Quarantine.previewModelTrash(snapshot.path, roots: roots, protected: ["org/model"]))
+        XCTAssertThrowsError(try Quarantine.previewModelTrash(snapshot.path, roots: roots, protected: [snapshot.path]))
+        XCTAssertThrowsError(try Quarantine.previewModelTrash(snapshot.path, roots: [repo.path], protected: []))
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "/etc/passwd")
+        XCTAssertThrowsError(try Quarantine.previewModelTrash(snapshot.path, roots: roots, protected: []))
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "../../blobs/weights")
+        let fresh = try Quarantine.previewModelTrash(snapshot.path, roots: roots, protected: [])
+        let destination = try Quarantine.trashModel(fresh, roots: roots, protected: []) { source in
+            let destination = root.appendingPathComponent("test-trash")
+            try FileManager.default.moveItem(at: source, to: destination)
+            return destination
+        }
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("snapshots/rev/model.safetensors")), Data("weights".utf8))
+    }
+
+    func testLibraryTrashProtectsGGUFAndRefusesChangedFile() throws {
+        let root = try makeRoot()
+        let file = root.appendingPathComponent("model.gguf")
+        try Data("weights".utf8).write(to: file)
+        let roots = [root.path]
+        let plan = try Quarantine.previewModelTrash(file.path, roots: roots, protected: [])
+        XCTAssertThrowsError(try Quarantine.previewModelTrash(file.path, roots: roots, protected: [file.path]))
+        try Data("changed".utf8).write(to: file)
+        XCTAssertThrowsError(try Quarantine.trashModel(plan, roots: roots, protected: [], trash: { _ in XCTFail("changed file reached Trash"); return file }))
+    }
+
+    func testRemovalStatusRequiresAnExplicitFleetAndModelIdentities() throws {
+        XCTAssertThrowsError(try WorkbenchAPI.servingPathsForRemoval(from: [:]))
+        XCTAssertThrowsError(try WorkbenchAPI.servingPathsForRemoval(from: ["servers": [["state": "running"]]]))
+        XCTAssertEqual(try WorkbenchAPI.servingPathsForRemoval(from: ["servers": []]), [])
+        XCTAssertEqual(try WorkbenchAPI.servingPathsForRemoval(from: ["servers": [["path": "/m/model", "state": "running"]]]), ["/m/model"])
+    }
+
+    @MainActor
+    func testLibraryTrashReadsFreshServingStatusAndRefusesUnavailableStatus() async throws {
+        let root = try makeRoot(), model = try modelFolder(in: root)
+        let reclaim = ReclaimCoordinator()
+        reclaim.mlxRoots = { [root.path] }
+        await reclaim.previewLibraryTrash(model.path)
+        XCTAssertNil(reclaim.libraryTrashPlan)
+        XCTAssertNotNil(reclaim.lastError)
+        var requests = 0
+        reclaim.servingModelPaths = {
+            requests += 1
+            return requests == 1 ? [] : [model.path]
+        }
+        await reclaim.previewLibraryTrash(model.path)
+        XCTAssertNotNil(reclaim.libraryTrashPlan)
+        await reclaim.confirmLibraryTrash()
+        XCTAssertEqual(requests, 2)
+        XCTAssertNil(reclaim.libraryTrashPlan)
+        XCTAssertNotNil(reclaim.lastError)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
+    }
+
     func testModelFolderRefusesRootsActiveDescendantsCacheLinksAndArbitraryDirectories() throws {
         let root = try makeRoot()
         let model = try modelFolder(in: root)

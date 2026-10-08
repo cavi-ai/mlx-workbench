@@ -474,23 +474,34 @@ struct QuantView: View {
                     .frame(width: 24, height: 24)
                     .background(WorkbenchColor.accent.opacity(.fill), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
                     .accessibilityHidden(true)
-                Picker("Model \(Self.slotLetters[min(index, Self.slotLetters.count - 1)])", selection: slotBinding(index)) {
-                    Text("None").tag(String?.none)
+                Menu {
+                    Button("None") { slotBinding(index).wrappedValue = nil }
                     if let selected = ComparePresentation.selectedOutsideFilter(forSlot: index, slots: variantSlots, candidates: readyModels, filtered: filteredModels) {
                         Section("Selected outside filters") {
-                            Text(modelOptionLabel(selected)).tag(Optional(selected.item.path))
+                            Button(modelOptionLabel(selected)) { slotBinding(index).wrappedValue = selected.item.path }
                         }
                     }
                     ForEach(ComparePresentation.groups(ComparePresentation.options(forSlot: index, slots: variantSlots, candidates: filteredModels), by: modelGrouping)) { group in
                         Section(group.title) {
                             ForEach(group.models, id: \.item.path) { model in
-                                Text(modelOptionLabel(model)).tag(Optional(model.item.path))
+                                Button {
+                                    slotBinding(index).wrappedValue = model.item.path
+                                } label: {
+                                    if variantSlots[index] == model.item.path {
+                                        Label(modelOptionLabel(model), systemImage: "checkmark")
+                                    } else {
+                                        Text(modelOptionLabel(model))
+                                    }
+                                }
                             }
                         }
                     }
+                } label: {
+                    Text(variantSlots[index].flatMap { path in readyModels.first { $0.item.path == path } }.map(modelOptionLabel) ?? "Choose a model")
+                        .lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
+                .accessibilityLabel("Model \(Self.slotLetters[min(index, Self.slotLetters.count - 1)])")
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(variantSlots[index].map { shortName($0) } ?? "Choose a model")
 
@@ -520,7 +531,8 @@ struct QuantView: View {
 
     private func modelOptionLabel(_ model: LibraryModel) -> String {
         let size = modelGrouping == .disk ? (model.item.bytes > 0 ? ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file) : "Disk unknown") : model.item.parameters
-        return [model.displayName, model.item.quantization, size].compactMap { $0 }.joined(separator: " · ")
+        let name = model.displayName.split(separator: "/").last.map(String.init) ?? model.displayName
+        return [name, model.item.quantization, size].compactMap { $0 }.joined(separator: " · ")
     }
 
     @ViewBuilder
