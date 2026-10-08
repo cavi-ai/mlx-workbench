@@ -79,12 +79,21 @@ and is versioned independently; submodule bumps are recorded here.
   inspector, grouping by type and use case, a Prepare progress ring with
   the converter log, a read-only "Web Queue" in Jobs, and completion
   notifications.
+- Native app memory: the header shows estimated RAM use, available headroom,
+  and serving-model residency with unload controls; new endpoints default to
+  Load on request with a 10-minute idle unload and a 2 GB headroom reserve,
+  set per endpoint; existing endpoints keep their mode.
+- Native app Compare: a quality-vs-runtime workflow chart.
 
 ### Changed
 
 - The native app is named MLX Workbench: bundle name, About, menu bar, and
   the DMG volume and app. The executable, bundle identifier, and state paths
   are unchanged.
+- The DMG app is a distribution build with no build-machine source path. An
+  installed app uses the checkout whose `vendor/mlx-agent` is set in Settings
+  for its `.venv` and **Install Runtime…**; in-app updates apply only to an
+  app built from its checkout.
 - Removed unused web API routes (adopt, wire, sloth, LM Studio import, serve
   metrics, arbitrary-argv CLI) whose panels were already gone.
 - `make docs-build` regenerates a stale versioned docs tree in place.
@@ -124,6 +133,11 @@ and is versioned independently; submodule bumps are recorded here.
 - Native watch alerts offer the action that resolves them.
 - Native Overview opens the Library for completed non-servable outputs.
 - Native toolbar status badges are no longer nested.
+- Native agent timeouts and app quit stop the agent's whole process group,
+  including media backends it started.
+- Native Compare video cells no longer abort the app (AVKit is linked).
+- The native login item serves with the checkout's `.venv` interpreter
+  instead of `/usr/bin/python3`.
 
 ### Security
 
