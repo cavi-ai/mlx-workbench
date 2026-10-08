@@ -465,7 +465,7 @@ final class ComparisonMediaTests: XCTestCase {
         let metrics = ComparisonViewLogic.metrics(image, mode: .imageGeneration)
         XCTAssertEqual(metrics.primary, "1.73 s/step")
         let nbsp = "\u{00A0}"
-        XCTAssertEqual(metrics.details, ["pixel spread 54.0", "34.6 s", "load 11.2 s", "9.5 GB peak"]
+        XCTAssertEqual(metrics.details, ["34.6 s", "load 11.2 s", "9.5 GB peak"]
             .map { $0.replacingOccurrences(of: " ", with: nbsp) }.joined(separator: " · "))
 
         let speech = ComparisonMediaScoring.sample(
@@ -600,9 +600,9 @@ final class ComparisonMediaTests: XCTestCase {
         player.select(clips[1].url, preservingPosition: true, autoplay: false)
         XCTAssertEqual(player.position, 1, accuracy: 0.05)
         for width: CGFloat in [900, 600] {
-            let content = MediaRunResultsView(run: run, store: store,
+            let content = MediaRunResultsView(run: run, store: store, contentWidth: width - 40, isRouteActive: true,
                 name: { $0 == "/model/0" ? "Music model · 8-bit" : "Music model · 4-bit" },
-                onReview: { _, _ in }, audio: player)
+                onReview: { _, _ in }, audio: player) { _ in EmptyView() }
                 .padding(20).frame(width: width, height: 600)
                 .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
             let host = NSHostingView(rootView: content)

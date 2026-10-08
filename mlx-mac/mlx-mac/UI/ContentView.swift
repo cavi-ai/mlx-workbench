@@ -172,7 +172,7 @@ struct ContentView: View {
     /// Prepare names the workflow's source, which can differ from the Library
     /// selection; the other lifecycle tabs name the selection.
     static func subtitle(route: AppRoute, workflow: ConversionWorkflow, selectedModelPath: String?) -> String {
-        guard route.group == .lifecycle else { return "" }
+        guard route.group == .lifecycle, route != .compare else { return "" }
         if route == .prepare { return PrepareWorkflowPresentation(workflow: workflow).displayName }
         guard let path = selectedModelPath, !path.isEmpty else { return "No model selected" }
         return HFRepoID.forPath(path) ?? URL(fileURLWithPath: path).lastPathComponent

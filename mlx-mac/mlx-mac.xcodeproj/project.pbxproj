@@ -136,6 +136,7 @@
 		24BBLD04C /* ComparisonCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF04A /* ComparisonCoordinatorTests.swift */; };
 		27ABCD00000000000000002C /* ComparisonMediaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD10000000000000002C /* ComparisonMediaTests.swift */; };
 		27ABCD00000000000000002E /* ReleaseUpdaterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD10000000000000002E /* ReleaseUpdaterTests.swift */; };
+		27ABCD0000000000000CE001 /* CompareRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD1000000000000CE001 /* CompareRemodelTests.swift */; };
 		24BBLD04D /* WiringModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF04B /* WiringModels.swift */; };
 		24BBLD04E /* JSONCTolerant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF04C /* JSONCTolerant.swift */; };
 		24BBLD04F /* ClientAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF04D /* ClientAdapters.swift */; };
@@ -327,6 +328,7 @@
 		24FREF04A /* ComparisonCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonCoordinatorTests.swift; sourceTree = "<group>"; };
 		27ABCD10000000000000002C /* ComparisonMediaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonMediaTests.swift; sourceTree = "<group>"; };
 		27ABCD10000000000000002E /* ReleaseUpdaterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseUpdaterTests.swift; sourceTree = "<group>"; };
+		27ABCD1000000000000CE001 /* CompareRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompareRemodelTests.swift; sourceTree = "<group>"; };
 		24FREF04B /* WiringModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WiringModels.swift; path = Models/WiringModels.swift; sourceTree = "<group>"; };
 		24FREF04C /* JSONCTolerant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = JSONCTolerant.swift; path = Services/JSONCTolerant.swift; sourceTree = "<group>"; };
 		24FREF04D /* ClientAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ClientAdapters.swift; path = Services/ClientAdapters.swift; sourceTree = "<group>"; };
@@ -592,6 +594,7 @@
 				24FREF04A /* ComparisonCoordinatorTests.swift */,
 				27ABCD10000000000000002C /* ComparisonMediaTests.swift */,
 				27ABCD10000000000000002E /* ReleaseUpdaterTests.swift */,
+				27ABCD1000000000000CE001 /* CompareRemodelTests.swift */,
 				24FREF04F /* WiringCoordinatorTests.swift */,
 				24FREF054 /* EndpointSupervisorTests.swift */,
 				24FREF05A /* ReclaimAdvisorTests.swift */,
@@ -931,6 +934,7 @@
 				24BBLD04C /* ComparisonCoordinatorTests.swift in Sources */,
 				27ABCD00000000000000002C /* ComparisonMediaTests.swift in Sources */,
 				27ABCD00000000000000002E /* ReleaseUpdaterTests.swift in Sources */,
+				27ABCD0000000000000CE001 /* CompareRemodelTests.swift in Sources */,
 				24BBLD051 /* WiringCoordinatorTests.swift in Sources */,
 				24BBLD056 /* EndpointSupervisorTests.swift in Sources */,
 				24BBLD05C /* ReclaimAdvisorTests.swift in Sources */,

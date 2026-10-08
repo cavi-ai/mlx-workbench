@@ -25,12 +25,7 @@ enum ComparisonInsights {
                 guard run.results.allSatisfy({ result in
                     fullCohort(result, run: run) && candidates.contains { valid(result, model: $0, environment: environment) }
                 }) else { return nil }
-                let metric = run.effectiveMode.primaryMetric
-                let values = run.results.compactMap { positive(run.effectiveMode == .chat ? $0.aggregateTokensPerSecond : $0.aggregateMetric) }
-                let best = metric.higherIsBetter ? values.max() : values.min()
-                let performance = values.count == run.results.count ? run.results.filter {
-                    (run.effectiveMode == .chat ? $0.aggregateTokensPerSecond : $0.aggregateMetric) == best
-                } : []
+                let performance = run.results.allSatisfy({ run.metricValue(of: $0) != nil }) ? run.leaders : []
                 let reviews = run.results.compactMap { run.qualityReviews?[$0.modelPath] }
                 let rubric = run.effectiveMode == .musicGeneration
                     ? ComparisonQualityReview.musicListeningRubric : ComparisonQualityReview.taskOutcomeRubric
@@ -118,7 +113,7 @@ enum ComparisonInsights {
             }
             let metric = run.effectiveMode.primaryMetric
             let measured = results.compactMap { result -> (String, Double)? in
-                positive(run.effectiveMode == .chat ? result.aggregateTokensPerSecond : result.aggregateMetric).map { (result.modelPath, $0) }
+                run.effectiveMode.metricValue(of: result).map { (result.modelPath, $0) }
             }
             let fastest = measured.sorted { metric.higherIsBetter ? $0.1 > $1.1 : $0.1 < $1.1 }.first
             return "\(run.promptSetName), run \(run.id): highest reviewed task outcome \(quality.0) (\(quality.1)/5); best measured \(metric.title) \(fastest?.0 ?? "unknown"). Choose the quality/speed tradeoff after checking context fit and disk. Review ties; this is task-scoped evidence."
@@ -171,16 +166,16 @@ enum ComparisonInsights {
         let source = served != nil ? "Last intentionally served model" : match(selectedPath) != nil ? "Library selection" : prior != nil ? "Last comparison model" : "First eligible model"
         // Distance is evaluated only within one completed run, never across prompt cohorts.
         let cohort = runs.filter { $0.state == .completed && $0.effectiveMode == mode && (promptSetID == nil || $0.promptSetID == promptSetID) }.sorted { $0.startedAt > $1.startedAt }.first { run in
-            run.results.contains { fullCohort($0, run: run) && valid($0, model: anchor, environment: environment) && positive(mode == .chat ? $0.aggregateTokensPerSecond : $0.aggregateMetric) != nil && (mode != .chat || nonnegative($0.aggregateTTFTSeconds) != nil) }
+            run.results.contains { fullCohort($0, run: run) && valid($0, model: anchor, environment: environment) && mode.metricValue(of: $0) != nil && (mode != .chat || nonnegative($0.aggregateTTFTSeconds) != nil) }
         }
         var ranked: [(LibraryModel, Double)] = []
         if let cohort, let baseline = cohort.results.first(where: { valid($0, model: anchor, environment: environment) }),
-           let speed = positive(mode == .chat ? baseline.aggregateTokensPerSecond : baseline.aggregateMetric) {
+           let speed = mode.metricValue(of: baseline) {
             for model in ordered where model.item.path != anchor.item.path {
                 guard let result = cohort.results.first(where: { valid($0, model: model, environment: environment) }),
                       fullCohort(result, run: cohort),
                       Set(result.samples.map(\.promptID)) == Set(baseline.samples.map(\.promptID)),
-                      let otherSpeed = positive(mode == .chat ? result.aggregateTokensPerSecond : result.aggregateMetric) else { continue }
+                      let otherSpeed = mode.metricValue(of: result) else { continue }
                 var distance = abs(log(otherSpeed / speed))
                 if mode == .chat {
                     guard let ttft = nonnegative(baseline.aggregateTTFTSeconds), let otherTTFT = nonnegative(result.aggregateTTFTSeconds) else { continue }

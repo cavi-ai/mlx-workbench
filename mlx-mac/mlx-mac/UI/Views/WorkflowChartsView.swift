@@ -24,9 +24,16 @@ struct WorkflowChartsView: View {
             hardware: hardware, memory: nil, contextTokens: 8192, reserveGB: 0)
     }
 
+    /// Renders only when workflow evidence yields a cohort to chart.
     var body: some View {
         let available = tasks
         let selected = available.first { $0.id == selectedTaskID } ?? available.first
+        if selected != nil {
+            surface(available: available, selected: selected)
+        }
+    }
+
+    private func surface(available: [AgentTaskGuidance], selected: AgentTaskGuidance?) -> some View {
         WorkbenchSurface {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 CardHeader("Workflow performance", systemImage: "chart.bar.xaxis") {
@@ -99,9 +106,6 @@ struct WorkflowChartsView: View {
                                 .foregroundStyle(WorkbenchColor.muted)
                         }.font(WorkbenchTypography.secondary).padding(.top, WorkbenchSpacing.xs)
                     }.font(WorkbenchTypography.secondary)
-                } else {
-                    Text("Import a Claude, OpenClaw or OpenCode workflow report to compare task runtime and timing breakdowns.")
-                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
             }
         }

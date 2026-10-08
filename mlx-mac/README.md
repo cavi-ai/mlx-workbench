@@ -138,7 +138,7 @@ use after the check.
 
 ## Compare decisions and workflow evidence
 
-Charts lead the Compare tab; outputs and machine/workflow details start collapsed.
+Lettered lanes lead the Compare tab, with each prompt's outputs below them; the output diff and machine/workflow details start collapsed.
 The compact **Champions** trophy menu links to task-specific speed, reviewed-quality,
 and first-token winners from the latest complete comparison cohort. Every entrant
 must still be available with its measured model signature and this Mac's environment;
@@ -185,7 +185,7 @@ at import and cannot establish current replacement advice. The
 request itself is not importable evidence, and its context must never be used
 to relabel an older run. Missing metrics remain unknown.
 
-**Workflow performance** charts appear on the opening Compare tab. Select a
+**Workflow performance** charts appear above the setup card once imported workflow evidence has a cohort to chart. Select a
 harness/task cohort, then use the compact **Chart** menu for total runtime,
 the inference/tool/queue timing breakdown, recorded task quality or measured
 peak memory. Cohorts keep configurations,
