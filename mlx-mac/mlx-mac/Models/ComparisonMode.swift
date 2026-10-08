@@ -82,6 +82,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case videoUnderstanding
     case speechToText
     case textToSpeech
+    case musicGeneration
     case imageGeneration
     case videoGeneration
 
@@ -94,6 +95,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .videoUnderstanding: return "Video understanding"
         case .speechToText: return "Speech to text"
         case .textToSpeech: return "Text to speech"
+        case .musicGeneration: return "Music generation"
         case .imageGeneration: return "Image generation"
         case .videoGeneration: return "Video generation"
         }
@@ -107,6 +109,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .vision, .videoUnderstanding: return [.visionLanguage]
         case .speechToText: return [.speechToText]
         case .textToSpeech: return [.textToSpeech]
+        case .musicGeneration: return [.musicGeneration]
         case .imageGeneration: return [.imageGeneration]
         case .videoGeneration: return [.videoGeneration]
         }
@@ -123,14 +126,14 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .vision: return .image
         case .videoUnderstanding: return .video
         case .speechToText: return .audio
-        case .chat, .textToSpeech, .imageGeneration, .videoGeneration: return nil
+        case .chat, .textToSpeech, .musicGeneration, .imageGeneration, .videoGeneration: return nil
         }
     }
 
     var outputKind: ComparisonOutputKind {
         switch self {
         case .chat, .vision, .videoUnderstanding, .speechToText: return .text
-        case .textToSpeech: return .audio
+        case .textToSpeech, .musicGeneration: return .audio
         case .imageGeneration: return .image
         case .videoGeneration: return .video
         }
@@ -140,7 +143,7 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .chat: return .tokensPerSecond
         case .vision, .videoUnderstanding: return .generationTokensPerSecond
-        case .speechToText, .textToSpeech: return .realTimeFactor
+        case .speechToText, .textToSpeech, .musicGeneration: return .realTimeFactor
         case .imageGeneration: return .secondsPerStep
         case .videoGeneration: return .secondsPerFrame
         }

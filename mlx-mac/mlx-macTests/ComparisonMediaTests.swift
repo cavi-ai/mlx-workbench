@@ -49,7 +49,7 @@ private actor StubMediaRunner: ComparisonMediaRunner {
             )
         case .speechToText:
             return MediaRunOutput(text: request.entry.text, seconds: 1, audioSeconds: 4)
-        case .textToSpeech:
+        case .textToSpeech, .musicGeneration:
             return MediaRunOutput(seconds: 3, audioSeconds: 6, realTimeFactor: 0.5)
         case .imageGeneration:
             return MediaRunOutput(seconds: 40, steps: 20, pixelStd: 60)
@@ -96,7 +96,12 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(ComparisonMode.videoUnderstanding.inputKind, .video)
         XCTAssertEqual(ComparisonMode.speechToText.inputKind, .audio)
         XCTAssertNil(ComparisonMode.imageGeneration.inputKind)
-        XCTAssertEqual(ComparisonMode.allCases.count, 7)
+        XCTAssertEqual(ComparisonMode.allCases.count, 8)
+        XCTAssertEqual(ComparisonMode.musicGeneration.acceptedTaskTypes, [.musicGeneration])
+        XCTAssertEqual(ComparisonMode.musicGeneration.outputKind, .audio)
+        XCTAssertEqual(ComparisonMode.musicGeneration.primaryMetric, .realTimeFactor)
+        XCTAssertFalse(ModelTaskType.musicGeneration.isServable)
+        XCTAssertFalse(ModelTaskType.musicGeneration.hasCanary)
     }
 
     private func model(_ path: String, type: ModelTaskType?) -> LibraryModel {
@@ -114,7 +119,7 @@ final class ComparisonMediaTests: XCTestCase {
         let models = [
             model("/llm", type: .textLLM), model("/vlm", type: .visionLanguage), model("/stt", type: .speechToText),
             model("/tts", type: .textToSpeech), model("/img", type: .imageGeneration), model("/vid", type: .videoGeneration),
-            model("/unlabelled", type: nil), model("/emb", type: .embedding),
+            model("/unlabelled", type: nil), model("/emb", type: .embedding), model("/music", type: .musicGeneration),
         ]
         func paths(_ mode: ComparisonMode) -> [String] {
             ComparisonViewLogic.candidates(from: models, mode: mode).map(\.item.path)
@@ -127,6 +132,7 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(paths(.textToSpeech), ["/tts"])
         XCTAssertEqual(paths(.imageGeneration), ["/img"])
         XCTAssertEqual(paths(.videoGeneration), ["/vid"])
+        XCTAssertEqual(paths(.musicGeneration), ["/music"])
     }
 
     func testPromptSetsAreFilteredByModeAndBuiltinMediaSetsAreWellFormed() {
@@ -201,6 +207,66 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     // MARK: Agent arguments and results
+
+    func testMusicParametersRoundTripAndKeepQualityUnknown() throws {
+        let parameters = MediaParameters(steps: 12, seed: 7, durationSeconds: 20, lyrics: "[verse]\nA new day")
+        XCTAssertEqual(try JSONDecoder().decode(MediaParameters.self, from: JSONEncoder().encode(parameters)), parameters)
+        let old = try JSONDecoder().decode(MediaParameters.self, from: Data("{\"steps\":20}".utf8))
+        XCTAssertNil(old.lyrics)
+        XCTAssertNil(old.durationSeconds)
+        XCTAssertEqual(WorkbenchAPI.musicArguments(path: "/local/music", caption: "-piano", out: "/out.wav", parameters: parameters),
+                       ["convert", "music", "--path", "/local/music", "--caption=-piano", "--lyrics=[verse]\nA new day", "--out", "/out.wav", "--duration", "20.0", "--steps", "12", "--seed", "7", "--timeout", "3600"])
+        let sample = ComparisonMediaScoring.sample(mode: .musicGeneration, entry: PromptEntry(id: "p", text: "piano"),
+                                                  output: MediaRunOutput(seconds: 10, audioSeconds: 20), artifact: "0-p.wav")
+        XCTAssertEqual(sample.realTimeFactor, 0.5)
+        XCTAssertNil(sample.wordErrorRate)
+        XCTAssertNil(sample.keywordsMatched)
+    }
+
+    private func historyRun(_ mode: ComparisonMode, _ title: String, at time: TimeInterval, models: [String] = ["/model"]) -> ComparisonRun {
+        ComparisonRun(id: UUID(), promptSetID: "set", promptSetName: title, useCase: nil, variants: models, results: [],
+                      startedAt: Date(timeIntervalSince1970: time), finishedAt: nil, state: .completed, mode: mode)
+    }
+
+    func testHistoryGroupsModesSortsNewestAndSearchesModels() {
+        let older = historyRun(.chat, "Tool calling", at: 10)
+        let newer = historyRun(.chat, "Tool calling", at: 20)
+        let music = historyRun(.musicGeneration, "Instrumental sketches", at: 30, models: ["/MiniMax-4bit", "/MiniMax-8bit"])
+        let groups = ComparisonHistoryLogic.groups([older, music, newer], query: "")
+        XCTAssertEqual(groups.map(\.mode), [.chat, .musicGeneration])
+        XCTAssertEqual(groups.first?.runs.map(\.id), [newer.id, older.id])
+        XCTAssertEqual(ComparisonHistoryLogic.groups([older, music], query: "  MINIMAX  ").first?.runs.map(\.id), [music.id])
+        XCTAssertTrue(ComparisonHistoryLogic.groups([older], query: "music").isEmpty)
+        XCTAssertEqual(ComparisonHistoryLogic.modelCount(older), "1 model")
+        XCTAssertEqual(ComparisonHistoryLogic.modelCount(music), "2 models")
+    }
+
+    @MainActor
+    func testHistoryPopoverRendersGroupedReadableRows() async throws {
+        let modes: [ComparisonMode] = [.chat, .chat, .vision, .musicGeneration, .imageGeneration]
+        let names = ["Tool calling", "Tool calling", "Vision basics", "Instrumental sketches", "Image prompts"]
+        let runs = zip(modes, names).enumerated().map { index, pair in
+            historyRun(pair.0, pair.1, at: 1_791_388_800 + Double(index * 180), models: index == 4 ? ["/one"] : ["/one", "/two"])
+        }
+        let picker = ComparisonHistoryPicker(runs: runs, selection: .constant(runs[3].id))
+        let root = VStack(alignment: .leading, spacing: 20) {
+            picker
+            ComparisonHistoryPanel(runs: runs, selection: runs[3].id, onSelect: { _ in })
+        }.padding(20).frame(width: 480, height: 600).background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        let view = NSHostingView(rootView: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(200))
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let attachment = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        attachment.name = "Grouped comparison history"; attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 
     func testAgentArgumentsKeepTextAsOneTokenAndShrinkVideoFrames() {
         XCTAssertEqual(
