@@ -23,6 +23,33 @@ struct EndpointConfig: Codable, Equatable, Sendable {
 
 // MARK: - Fleet models (spec 09)
 
+struct EndpointMemoryPolicy: Codable, Equatable, Sendable {
+    var idleTimeoutSeconds: Int
+    var keepLoaded: Bool
+    var minimumHeadroomGB: Double?
+
+    static let automatic = EndpointMemoryPolicy(idleTimeoutSeconds: 600, keepLoaded: false, minimumHeadroomGB: 2)
+    static let legacy = EndpointMemoryPolicy(idleTimeoutSeconds: 0, keepLoaded: false, minimumHeadroomGB: nil)
+
+    enum CodingKeys: String, CodingKey {
+        case idleTimeoutSeconds = "idle_timeout_seconds"
+        case keepLoaded = "keep_loaded"
+        case minimumHeadroomGB = "minimum_headroom_gb"
+    }
+
+    var isValid: Bool {
+        (0...86400).contains(idleTimeoutSeconds) &&
+        (minimumHeadroomGB.map { $0.isFinite && (0...1024).contains($0) } ?? true)
+    }
+
+    var arguments: [String] {
+        var result = ["--idle-timeout", String(idleTimeoutSeconds)]
+        if keepLoaded { result.append("--keep-loaded") }
+        if let minimumHeadroomGB { result += ["--min-headroom-gb", String(minimumHeadroomGB)] }
+        return result
+    }
+}
+
 /// One supervised endpoint: a model on its own stable loopback port.
 /// `role == nil` is first-class — an unassigned stable port, exactly like
 /// the original single endpoint.
@@ -34,15 +61,17 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     var role: UseCase?
     /// Absent in legacy fleets: preserve their eager-serving behavior.
     var loadOnRequest: Bool?
+    var memoryPolicy: EndpointMemoryPolicy?
     var usesJIT: Bool { loadOnRequest == true }
 
-    init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: UseCase? = nil, loadOnRequest: Bool? = nil) {
+    init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: UseCase? = nil, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) {
         self.id = id
         self.enabled = enabled
         self.port = port
         self.modelPath = modelPath
         self.role = role
         self.loadOnRequest = loadOnRequest
+        self.memoryPolicy = memoryPolicy
     }
 }
 
@@ -65,6 +94,7 @@ enum EndpointFleetValidation: Error, Equatable {
     case invalidPort(Int)
     case duplicatePort(Int)
     case duplicateRole(UseCase)
+    case invalidMemoryPolicy(UUID)
 }
 
 extension EndpointFleetValidation: LocalizedError {
@@ -78,6 +108,8 @@ extension EndpointFleetValidation: LocalizedError {
             return "Port \(port) is already used by another endpoint."
         case .duplicateRole(let role):
             return "Role \(role.title) is already assigned to another endpoint."
+        case .invalidMemoryPolicy:
+            return "Memory policy requires an idle timeout of 0–86400 seconds and a finite reserve of 0–1024 GB."
         }
     }
 }
@@ -92,6 +124,7 @@ extension EndpointFleetConfig {
         var seenPorts = Set<Int>()
         var seenRoles = Set<UseCase>()
         for slot in slots {
+            if let policy = slot.memoryPolicy, !policy.isValid { throw EndpointFleetValidation.invalidMemoryPolicy(slot.id) }
             guard (1...65535).contains(slot.port) else {
                 throw EndpointFleetValidation.invalidPort(slot.port)
             }

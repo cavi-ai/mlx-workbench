@@ -7,6 +7,18 @@ import XCTest
 /// supervisor internals behind the single-slot shim.
 @MainActor
 final class EndpointFleetTests: XCTestCase {
+    func testMemoryPolicySurvivesFleetPersistenceAndRejectsInvalidValues() throws {
+        let urls = makeStoreURLs()
+        let policy = EndpointMemoryPolicy(idleTimeoutSeconds: 300, keepLoaded: true, minimumHeadroomGB: 4)
+        let fleet = EndpointFleetConfig(slots: [EndpointSlot(enabled: true, port: 8766,
+            modelPath: "/Models/a", loadOnRequest: true, memoryPolicy: policy)], installedAtLogin: false)
+        try makeStore(urls).save(fleet)
+        XCTAssertEqual(makeStore(urls).load().config.slots.first?.memoryPolicy, policy)
+        var invalid = fleet
+        invalid.slots[0].memoryPolicy = EndpointMemoryPolicy(idleTimeoutSeconds: -1, keepLoaded: false, minimumHeadroomGB: nil)
+        XCTAssertThrowsError(try invalid.validated())
+    }
+
     // MARK: - Migration
 
     func testLegacyEnabledConfigMigratesToOneSlotFleet() throws {

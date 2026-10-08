@@ -15,10 +15,20 @@ final class FakeServeWorld: @unchecked Sendable {
     var survives = true
     var statusError: Error?
 
-    func preload(repo: String, port: Int, jit: Bool = false, modelState: String? = nil) {
+    func preload(repo: String, port: Int, jit: Bool = false, modelState: String? = nil, memoryPolicy: EndpointMemoryPolicy? = nil, activeRequests: Int? = nil) {
         lock.lock()
-        servers.append(ServerInfo(repo: repo, runtime: "mlx", port: port, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "r", jit: jit, modelState: modelState))
+        servers.append(ServerInfo(repo: repo, runtime: "mlx", port: port, pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "r", jit: jit, modelState: modelState, activeRequests: activeRequests, memoryPolicy: memoryPolicy))
         lock.unlock()
+    }
+
+    func configureMemory(port: Int, policy: EndpointMemoryPolicy) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let index = servers.firstIndex(where: { $0.port == port }) else { return }
+        let old = servers[index]
+        servers[index] = ServerInfo(repo: old.repo, path: old.path, runtime: old.runtime, port: old.port,
+            pid: old.pid, state: old.state, logPath: old.logPath, startedAt: old.startedAt, receipt: old.receipt,
+            jit: old.jit, modelState: old.modelState, workerPid: old.workerPid, activeRequests: old.activeRequests, memoryPolicy: policy)
     }
 
     func unloadModel(port: Int) {
