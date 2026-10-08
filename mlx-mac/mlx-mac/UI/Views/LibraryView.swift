@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -197,6 +198,11 @@ struct LibraryView: View {
     @State private var selection: String?
     @State private var sortOrder = LibraryTablePresentation.defaultSortOrder
     @State private var showInspector = true
+    @State private var columnCustomization = TableColumnCustomization<LibraryRow>()
+    @State private var tier = LibraryColumnTier.resolve(width: WorkbenchSize.assumedContentWidth)
+    /// The fit context the rows sort by. Follows the monitor's context
+    /// picker only; memory readings never reach the Library body.
+    @State private var contextTokens = FitAdvisor.defaultContextTokens
     @AppStorage("library.groupMode") private var groupModeRaw = LibraryGroupMode.family.rawValue
     @Environment(\.isRouteActive) private var isRouteActive
     @Environment(\.openWindow) private var openWindow
@@ -222,8 +228,8 @@ struct LibraryView: View {
 
     private var rows: [LibraryRow] {
         (LibraryGroupMode(rawValue: groupModeRaw) ?? .family) == .type
-            ? LibraryTablePresentation.typeRows(groups: groups, sortOrder: sortOrder)
-            : LibraryTablePresentation.rows(groups: groups, sortOrder: sortOrder)
+            ? LibraryTablePresentation.typeRows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
+            : LibraryTablePresentation.rows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
     }
 
     private var visiblePaths: [String] {
@@ -255,11 +261,15 @@ struct LibraryView: View {
 
     var body: some View {
         content
-            .background(WorkbenchColor.canvas)
             .inspector(isPresented: inspectorBinding) {
                 inspector
-                    .inspectorColumnWidth(min: 380, ideal: 500, max: 720)
+                    .inspectorColumnWidth(
+                        min: WorkbenchSize.Library.inspectorMinimum,
+                        ideal: WorkbenchSize.Library.inspectorIdeal,
+                        max: WorkbenchSize.Library.inspectorMaximum
+                    )
             }
+            .onReceive(appHost.resources.$contextTokens.removeDuplicates()) { contextTokens = $0 }
             .routeSearchable(text: $search, prompt: "Search family, variant, path, key, or evidence", isActive: isRouteActive)
             .toolbar { libraryToolbar }
             .onAppear {
@@ -320,39 +330,61 @@ struct LibraryView: View {
     // MARK: - Table
 
     private var table: some View {
-        Table(of: LibraryRow.self, selection: $selection, sortOrder: $sortOrder) {
+        let largestLeafBytes = LibraryTablePresentation.largestLeafBytes(in: rows)
+        return Table(of: LibraryRow.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
             TableColumn("Model", value: \.name) { row in
-                LibraryNameCell(row: row)
+                LibraryNameCell(row: row, isSelected: selection == row.id, showsInlineStatus: !tier.showsStatus)
             }
-            .width(min: 240, ideal: 380)
+            .width(min: WorkbenchSize.Library.modelMinimum, ideal: WorkbenchSize.Library.modelIdeal)
+            .customizationID("model")
+            .disabledCustomizationBehavior(.visibility)
 
-            TableColumn("Readiness", value: \.readinessSortKey) { row in
-                LibraryReadinessCell(row: row)
+            TableColumn("Fits now", value: \.fitSortKey) { row in
+                LibraryFitCell(
+                    row: row,
+                    resources: appHost.resources,
+                    reserveGB: appHost.config.fitReserveGB,
+                    hardware: appHost.hardwareProfile,
+                    showsGauge: tier.showsGauge
+                )
             }
-            .width(min: 120, ideal: 150, max: 190)
+            .width(min: WorkbenchSize.Library.fitsMinimum, ideal: WorkbenchSize.Library.fitsIdeal, max: WorkbenchSize.Library.fitsMaximum)
+            .customizationID("fits")
+            .disabledCustomizationBehavior(.visibility)
 
             TableColumn("Quant", value: \.quantization) { row in
-                Text(row.quantization)
-                    .font(WorkbenchTypography.value)
+                LibraryQuantCell(row: row)
             }
-            .width(min: 56, ideal: 72, max: 110)
+            .width(min: WorkbenchSize.Library.quantMinimum, ideal: WorkbenchSize.Library.quantIdeal, max: WorkbenchSize.Library.quantMaximum)
+            .customizationID("quant")
 
             TableColumn("Size", value: \.bytes) { row in
-                Text(LibraryTablePresentation.byteCount(row.bytes))
-                    .font(WorkbenchTypography.value)
+                LibrarySizeCell(row: row, largestLeafBytes: largestLeafBytes, showsBar: tier.showsSizeBar)
             }
-            .width(min: 80, ideal: 96, max: 130)
+            .width(min: WorkbenchSize.Library.sizeMinimum, ideal: WorkbenchSize.Library.sizeIdeal, max: WorkbenchSize.Library.sizeMaximum)
+            .customizationID("size")
+
+            TableColumn("Status", value: \.readinessSortKey) { row in
+                LibraryReadinessCell(row: row)
+            }
+            .width(min: WorkbenchSize.Library.statusMinimum, ideal: WorkbenchSize.Library.statusIdeal, max: WorkbenchSize.Library.statusMaximum)
+            .customizationID("status")
 
             TableColumn("Modified", value: \.modifiedSortKey) { row in
-                Text(row.modifiedAt.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
+                LibraryModifiedCell(row: row)
             }
-            .width(min: 100, ideal: 130, max: 170)
+            .width(min: WorkbenchSize.Library.modifiedMinimum, ideal: WorkbenchSize.Library.modifiedIdeal, max: WorkbenchSize.Library.modifiedMaximum)
+            .customizationID("modified")
         } rows: {
             tableRows(rows)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            tier = LibraryColumnTier.resolve(width: width, previous: tier)
+        }
+        .onChange(of: tier, initial: true) { _, newTier in
+            applyTier(newTier)
+        }
         .contextMenu(forSelectionType: LibraryRow.ID.self) { ids in
             if let model = model(at: LibraryTablePresentation.modelPath(forSelection: ids.first)) {
                 contextMenuItems(for: ModelActions(appHost: appHost, model: model, onRouteSelection: onRouteSelection))
@@ -369,6 +401,16 @@ struct LibraryView: View {
             showInspector = true
             return .handled
         }
+    }
+
+    /// Hides the columns the current table width has no room for. Model and
+    /// Fits now are never hidden.
+    private func applyTier(_ tier: LibraryColumnTier) {
+        func visibility(_ shown: Bool) -> Visibility { shown ? .automatic : .hidden }
+        columnCustomization[visibility: "quant"] = visibility(tier.showsQuant)
+        columnCustomization[visibility: "size"] = visibility(tier.showsSize)
+        columnCustomization[visibility: "status"] = visibility(tier.showsStatus)
+        columnCustomization[visibility: "modified"] = visibility(tier.showsModified)
     }
 
     @TableRowBuilder<LibraryRow>

@@ -82,6 +82,9 @@ struct ModelBudgetPresentation: Equatable {
     let markerFraction: Double?
     let fit: Fit
     let reading: Reading
+    /// Weights, KV cache and runtime overhead at `contextTokens`, set when the
+    /// model has an estimated fit. The Library gauge fills from it.
+    private(set) var neededBytes: Int64?
 
     /// What the lead region shows: a placeholder before the first probe,
     /// the unavailable state after a failed probe, or the live budget.
@@ -148,8 +151,9 @@ struct ModelBudgetPresentation: Equatable {
             return
         }
         fit = .estimated(verdict)
+        let needed = FitAdvisor.neededBytes(modelBytes: model.item.bytes, contextTokens: contextTokens, parameters: model.item.parameters)
+        neededBytes = needed
         if let segments, let budgetBytes, let totalBytes {
-            let needed = FitAdvisor.neededBytes(modelBytes: model.item.bytes, contextTokens: contextTokens, parameters: model.item.parameters)
             let used = Double(min(needed, budgetBytes)) / Double(totalBytes)
             markerFraction = min(1, max(0, segments.inUse + segments.reserve + used))
         } else {
@@ -254,6 +258,24 @@ struct ModelBudgetPresentation: Equatable {
         }
     }
 
+    /// The verdict in one word: "Fits", "Tight" or "Won't fit".
+    var verdictWord: String? {
+        switch tone {
+        case .fits: return "Fits"
+        case .tight: return "Tight"
+        case .wontFit: return "Won't fit"
+        case .neutral: return nil
+        }
+    }
+
+    /// How much of the model budget the model needs, 0...1. A budget of zero
+    /// or less is a full gauge: nothing fits.
+    var fitFraction: Double? {
+        guard case .estimated = fit, let neededBytes, let budgetBytes else { return nil }
+        guard budgetBytes > 0 else { return 1 }
+        return min(1, max(0, Double(neededBytes) / Double(budgetBytes)))
+    }
+
     var verdictSymbol: String {
         switch tone {
         case .fits: return "checkmark.circle"
@@ -286,6 +308,18 @@ struct ModelBudgetPresentation: Equatable {
 
     static func tokens(_ count: Int) -> String {
         count > 0 && count % 1024 == 0 ? "\(count / 1024)K" : "\(count)"
+    }
+}
+
+extension ModelBudgetPresentation.Tone {
+    /// The one mapping from a fit tone to a color, shared by Overview and Library.
+    var color: Color {
+        switch self {
+        case .neutral: return WorkbenchColor.muted
+        case .fits: return WorkbenchColor.accent
+        case .tight: return WorkbenchColor.warning
+        case .wontFit: return WorkbenchColor.failure
+        }
     }
 }
 
@@ -332,8 +366,10 @@ struct SegmentLabelsLayout: Layout {
 /// selected model's footprint marked from the start of the budget segment.
 struct CapacityBar: View {
     let presentation: ModelBudgetPresentation
+    var isCompact = false
 
     private var markerColor: Color { WorkbenchColor.ink }
+    private var trackHeight: CGFloat { isCompact ? WorkbenchSize.barHeightCompact : WorkbenchSize.barHeight }
 
     var body: some View {
         GeometryReader { proxy in
@@ -358,18 +394,18 @@ struct CapacityBar: View {
                         }
                     }
                 }
-                .frame(height: WorkbenchSize.barHeight)
+                .frame(height: trackHeight)
                 if let marker = presentation.markerFraction {
                     RoundedRectangle(cornerRadius: WorkbenchRadius.chip, style: .continuous)
                         .fill(markerColor)
-                        .frame(width: WorkbenchSize.markerWidth, height: WorkbenchSize.barHeight + WorkbenchSize.markerOverhang * 2)
+                        .frame(width: WorkbenchSize.markerWidth, height: trackHeight + WorkbenchSize.markerOverhang * 2)
                         .offset(x: max(0, min(width - WorkbenchSize.markerWidth, width * marker - WorkbenchSize.markerWidth / 2)))
                 }
             }
             .workbenchAnimation(WorkbenchMotion.standard, value: presentation.segments)
             .workbenchAnimation(WorkbenchMotion.standard, value: presentation.markerFraction)
         }
-        .frame(height: WorkbenchSize.barHeight + WorkbenchSize.markerOverhang * 2)
+        .frame(height: trackHeight + WorkbenchSize.markerOverhang * 2)
         .accessibilityHidden(true)
     }
 }
@@ -469,20 +505,11 @@ struct ModelBudgetInstrument: View {
         HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
             Image(systemName: budget.verdictSymbol)
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(toneColor(budget.tone))
+                .foregroundStyle(budget.tone.color)
             Text(budget.verdictText)
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(budget.tone == .neutral ? WorkbenchColor.muted : WorkbenchColor.ink)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func toneColor(_ tone: ModelBudgetPresentation.Tone) -> Color {
-        switch tone {
-        case .neutral: return WorkbenchColor.muted
-        case .fits: return WorkbenchColor.accent
-        case .tight: return WorkbenchColor.warning
-        case .wontFit: return WorkbenchColor.failure
         }
     }
 }

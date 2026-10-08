@@ -42,6 +42,24 @@ enum ModelTaskType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// The one SF Symbol for this model type, rendered hierarchically in the
+    /// Library rows and the inspector header.
+    var symbolName: String {
+        switch self {
+        case .textLLM: return "text.bubble"
+        case .visionLanguage: return "eye"
+        case .speechToText: return "waveform"
+        case .textToSpeech: return "speaker.wave.2"
+        case .musicGeneration: return "music.note"
+        case .embedding: return "point.3.connected.trianglepath.dotted"
+        case .classification: return "tag"
+        case .imageGeneration: return "photo"
+        case .videoGeneration: return "film"
+        case .speculativeDraft: return "bolt"
+        case .other: return "cube"
+        }
+    }
+
     /// The Conversion Quality Gate has a canary: chat completions for chat
     /// models, a spoken sentence to transcribe for speech-to-text models, a
     /// support ticket to route for classification models, a render for image models.

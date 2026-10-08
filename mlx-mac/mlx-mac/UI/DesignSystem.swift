@@ -62,6 +62,9 @@ enum WorkbenchTypography {
     static let label = Font.subheadline.weight(.medium)
     /// Paths, hashes, receipts: monospaced at body size.
     static let value = Font.body.monospaced()
+    /// Numbers in tables and prose: proportional text with tabular digits.
+    static let tabular = Font.body.monospacedDigit()
+    static let secondaryTabular = Font.callout.monospacedDigit()
     static let metadata = Font.subheadline
     static let compactValue = Font.subheadline.monospaced()
 }
@@ -109,6 +112,54 @@ enum WorkbenchSize {
     static let windowDefaultHeight: CGFloat = 720
     static let windowMinimumWidth: CGFloat = 740
     static let windowMinimumHeight: CGFloat = 560
+    /// Accent-tinted tile behind a model type symbol in an inspector header.
+    static let symbolTile: CGFloat = 44
+    /// Capacity bar track in a compact region such as the Library inspector.
+    static let barHeightCompact: CGFloat = 12
+}
+
+extension WorkbenchSize {
+    /// Library table and inspector dimensions. Table widths are the table's own
+    /// width (window minus sidebar and inspector); tier thresholds are the
+    /// widths below which a column or part of a cell gives way.
+    enum Library {
+        static let fitGaugeHeight: CGFloat = 6
+        static let fitGaugeMinimum: CGFloat = 48
+        static let fitGaugeMaximum: CGFloat = 64
+        static let sizeBarWidth: CGFloat = 32
+        static let sizeBarHeight: CGFloat = 4
+        static let rowSymbol: CGFloat = 18
+
+        static let inspectorMinimum: CGFloat = 380
+        static let inspectorIdeal: CGFloat = 440
+        static let inspectorMaximum: CGFloat = 720
+
+        static let tierHysteresis: CGFloat = 16
+        static let tierModified: CGFloat = 780
+        static let tierSizeBar: CGFloat = 700
+        static let tierStatus: CGFloat = 640
+        static let tierGauge: CGFloat = 520
+        static let tierQuant: CGFloat = 440
+        static let tierSize: CGFloat = 350
+
+        static let modelMinimum: CGFloat = 112
+        static let modelIdeal: CGFloat = 220
+        static let fitsMinimum: CGFloat = 64
+        static let fitsIdeal: CGFloat = 148
+        static let fitsMaximum: CGFloat = 180
+        static let quantMinimum: CGFloat = 56
+        static let quantIdeal: CGFloat = 64
+        static let quantMaximum: CGFloat = 72
+        static let sizeMinimum: CGFloat = 72
+        static let sizeIdeal: CGFloat = 104
+        static let sizeMaximum: CGFloat = 120
+        static let statusMinimum: CGFloat = 100
+        static let statusIdeal: CGFloat = 112
+        static let statusMaximum: CGFloat = 140
+        static let modifiedMinimum: CGFloat = 90
+        static let modifiedIdeal: CGFloat = 96
+        static let modifiedMaximum: CGFloat = 120
+    }
 }
 
 enum WorkbenchRadius {

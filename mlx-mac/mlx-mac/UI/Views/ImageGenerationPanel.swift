@@ -5,6 +5,9 @@ import SwiftUI
 struct ImageGenerationPanel: View {
     @ObservedObject var coordinator: ImageGenerationCoordinator
     let modelPath: String
+    /// False while the model still needs Prepare: Generate is then secondary
+    /// and disabled, so Prepare to run stays the one prominent action.
+    var isPrimary = true
 
     @State private var prompt = ""
     @State private var size = 1024
@@ -30,15 +33,24 @@ struct ImageGenerationPanel: View {
                     .frame(width: 96)
             }
             HStack(spacing: WorkbenchSpacing.sm) {
-                Button("Generate") {
-                    let request = ImageRequest(prompt: prompt, size: size, steps: steps, seed: seed)
-                    Task { await coordinator.generate(modelPath: modelPath, request: request) }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(coordinator.isGenerating || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                generateButton
+                    .disabled(!isPrimary || coordinator.isGenerating || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 progress
             }
             outcome
+        }
+    }
+
+    @ViewBuilder
+    private var generateButton: some View {
+        let button = Button("Generate") {
+            let request = ImageRequest(prompt: prompt, size: size, steps: steps, seed: seed)
+            Task { await coordinator.generate(modelPath: modelPath, request: request) }
+        }
+        if isPrimary {
+            button.buttonStyle(.borderedProminent)
+        } else {
+            button.buttonStyle(.bordered)
         }
     }
 

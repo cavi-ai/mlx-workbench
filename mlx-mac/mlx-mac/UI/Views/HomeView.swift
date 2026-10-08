@@ -26,8 +26,8 @@ struct HomeNextAction: Equatable {
         if workflow.state == .verifying { return .init(kind: .activity, title: "Verify conversion output", reason: "The canary suite is checking the MLX output before it is marked verified.", route: AppRoute.activity.rawValue) }
         if workflow.state == .verificationFailed { return .init(kind: .activity, title: "Resolve verification failure", reason: workflow.errorMessage ?? "The converted output failed the canary suite; Activity has the failing evidence.", route: AppRoute.activity.rawValue) }
         if workflow.state == .failed { return .init(kind: .activity, title: "Resolve conversion failure", reason: workflow.errorMessage ?? workflow.message ?? "The current conversion needs attention in Activity.", route: AppRoute.activity.rawValue) }
-        if let path = workflow.completedModelPath, !path.isEmpty {
-            let completed = snapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })
+        if let snapshot, let path = workflow.completedModelPath, !path.isEmpty {
+            let completed = snapshot.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })
             guard workflow.state == .completed || workflow.state == .verified, let completed, completed.readiness == .ready else { return .init(kind: .activity, title: "Reconcile completed output", reason: "The completed workflow no longer matches a ready model in the current Library snapshot.", route: AppRoute.activity.rawValue) }
             if !ModelTaskPresentation.isServable(completed) {
                 let type = completed.item.task?.type ?? .other
