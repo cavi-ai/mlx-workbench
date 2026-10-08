@@ -1065,7 +1065,7 @@ struct MusicComparisonSetupSheet: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             HStack(spacing: WorkbenchSpacing.sm) {
                 Image(systemName: "arrow.counterclockwise.circle.fill")
-                    .font(.title2).foregroundStyle(WorkbenchColor.accent)
+                    .font(WorkbenchTypography.title).foregroundStyle(WorkbenchColor.accent)
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                     Text("Reuse music setup").font(WorkbenchTypography.cardTitle)
                     Text(setup.sourceName).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
