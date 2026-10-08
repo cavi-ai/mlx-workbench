@@ -3,7 +3,9 @@ import Foundation
 
 // MARK: - UpdateCoordinator
 //
-// In-app updates for a checkout-run app (WorkbenchPython.repoRoot()). Two
+// In-app updates for an app built from its checkout
+// (WorkbenchPython.buildCheckoutRoot(); an installed build is never rebuilt
+// from the checkout its agent path points at). Two
 // channels, mirroring the repo's own provenance rules:
 //
 //   official — check out the newest `v*` release tag (detached HEAD at the
@@ -76,7 +78,7 @@ final class UpdateCoordinator: ObservableObject {
     }
 
     init(
-        repoRoot: URL? = WorkbenchPython.repoRoot(),
+        repoRoot: URL? = WorkbenchPython.buildCheckoutRoot(),
         defaults: UserDefaults = .standard,
         runGit: @escaping @Sendable ([String]) throws -> String = UpdateCoordinator.defaultGit
     ) {

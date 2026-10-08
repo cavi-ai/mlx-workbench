@@ -16,10 +16,10 @@ struct MlxWorkbenchApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About mlx-workbench") {
+                Button("About MLX Workbench") {
                     NSApp.activate(ignoringOtherApps: true)
                     let alert = NSAlert()
-                    alert.messageText = "mlx-workbench"
+                    alert.messageText = "MLX Workbench"
                     alert.informativeText = "Version \(Self.marketingVersion)\nLocal MLX model management for Apple Silicon."
                     alert.runModal()
                 }
@@ -47,7 +47,7 @@ struct MlxWorkbenchApp: App {
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 720, height: 640)
-        MenuBarExtra("mlx-workbench", systemImage: EndpointIcon.name(forStates: appHost.endpoint.fleet.slots.filter(\.enabled).compactMap { appHost.endpoint.slotStates[$0.id] })) {
+        MenuBarExtra("MLX Workbench", systemImage: EndpointIcon.name(forStates: appHost.endpoint.fleet.slots.filter(\.enabled).compactMap { appHost.endpoint.slotStates[$0.id] })) {
             MenuBarView(appHost: appHost)
         }
         .menuBarExtraStyle(.menu)

@@ -118,8 +118,9 @@ struct CLIProcess {
     /// Absolute path to the interpreter (env override → repo .venv → PATH).
     /// Process.executableURL requires an absolute path; a bare "python3"
     /// would throw at launch.
-    private func pythonExecutable() throws -> URL {
-        guard let url = WorkbenchPython.preferredExecutable() else {
+    private func pythonExecutable(agentPath: String) throws -> URL {
+        let repoRoot = WorkbenchPython.repoRoot(agentPath: agentPath)
+        guard let url = WorkbenchPython.preferredExecutable(repoRoot: repoRoot) else {
             throw BridgeError.skillUnavailable
         }
         return url
@@ -183,7 +184,7 @@ struct CLIProcess {
              timeout: TimeInterval? = nil) throws -> [String: Any] {
         let script = try cliScript(agentPath: agentPath)
         let time = timeout ?? (isScout ? scoutTimeout : defaultTimeout)
-        let pythonURL = try pythonExecutable()
+        let pythonURL = try pythonExecutable(agentPath: agentPath)
 
         var command = [pythonURL.path, script.path]
         command.append(contentsOf: argv.map { String($0) })

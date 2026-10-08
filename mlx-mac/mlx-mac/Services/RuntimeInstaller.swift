@@ -4,9 +4,9 @@ import Foundation
 //
 // Guided runtime setup ("click a button, it handles it"): runs the repo's
 // `make install` — submodule check + .venv (Python 3.12) + convert/serve
-// packages — with a live log tail. Only available when the app is running
-// from a checkout (WorkbenchPython.repoRoot()); installed builds keep the
-// manual hint.
+// packages — with a live log tail. Only available when a checkout is known
+// (WorkbenchPython.repoRoot(): the build checkout, or the checkout holding the
+// configured agent path); otherwise the manual hint stays.
 
 @MainActor
 final class RuntimeInstaller: ObservableObject {

@@ -59,6 +59,14 @@ evidence directory for each accepted run. See `mlx-mac/README.md` for the
 manifest contract, prerequisites, evidence layout, and failure classes, and
 `mlx-mac/docs/premium/` for the feature specs.
 
+Install from the release DMG: drag **MLX Workbench** to Applications, clone
+this repository with `--recurse-submodules`, run `make install` in the
+checkout, then set **Settings → mlx-agent checkout** to the checkout's
+`vendor/mlx-agent`. The installed app uses that checkout's `.venv` for
+conversions and serving and runs **Install Runtime…** there; in-app updates
+apply only to an app built from its checkout. `make dmg` builds this
+distribution app without the build machine's source path.
+
 ## Run
 
 ```bash

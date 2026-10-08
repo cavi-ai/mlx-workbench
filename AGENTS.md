@@ -45,8 +45,10 @@ from `mlx-agent` at runtime.
   `project.pbxproj` — register new sources there). `make test-swift` runs its
   XCTest suite. Design specs for premium features live in
   `mlx-mac/docs/premium/`. The app icon master is
-  `mlx-mac/assets/app-icon.svg`; `make dmg` packages the Release app into a
-  DMG under `.release/` (ad-hoc signed; `CODESIGN_IDENTITY=` for Developer ID).
+  `mlx-mac/assets/app-icon.svg`; `make dmg` packages a distribution Release
+  build (`-DMLX_WORKBENCH_DISTRIBUTION`: no source path compiled in) as
+  `MLX Workbench.app` on an `MLX Workbench` volume under `.release/` (ad-hoc
+  signed; `CODESIGN_IDENTITY=` for Developer ID).
 - `make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json` is the
   opt-in real-data native GGUF-to-Run acceptance surface. Its runner validates
   an explicit allowlisted local source and loopback config, selects only the
@@ -151,8 +153,12 @@ from `mlx-agent` at runtime.
   RecommendationEngine.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
-  `RuntimeChecker`, and the watch fingerprint probe. `RuntimeInstaller`
-  runs `make install` in-app when the runtime is missing.
+  `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.
+  The repo is the build checkout (`#file`, compiled out of distribution
+  builds) or, for installed builds, the checkout whose `vendor/mlx-agent` is
+  the configured agent path. `RuntimeInstaller` runs `make install` in-app
+  when the runtime is missing; `UpdateCoordinator` acts only on the build
+  checkout.
   `CLIProcess` drains stdout/stderr on dedicated threads: blocking pipe reads
   must not depend on shared dispatch workers while a CLI caller waits for EOF.
   Each agent child leads its own process group (media backends stay in it);

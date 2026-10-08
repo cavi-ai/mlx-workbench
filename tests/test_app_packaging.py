@@ -1,5 +1,6 @@
 """App icon + DMG packaging contract tests. Skips gracefully off macOS."""
 
+import plistlib
 import re
 import subprocess
 import unittest
@@ -9,6 +10,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ICONSET = ROOT / "mlx-mac" / "mlx-mac" / "Assets.xcassets" / "AppIcon.appiconset"
 MAKEFILE = (ROOT / "Makefile").read_text(encoding="utf-8")
+INFO_PLIST = ROOT / "mlx-mac" / "mlx-mac" / "Info.plist"
+SWIFT_SOURCES = ROOT / "mlx-mac" / "mlx-mac"
+DISPLAY_NAME = "MLX Workbench"
 
 REQUIRED_SIZES = {
     "icon_16x16.png": 16,
@@ -58,13 +62,50 @@ class AppIconTests(unittest.TestCase):
 class DmgTargetTests(unittest.TestCase):
     def test_makefile_has_dmg_target_wired_to_release_build(self):
         for phrase in (
-            "dmg: build-swift",
+            "dmg: dmg-preflight build-swift-dist",
             "hdiutil create",
             "-format UDZO",
             "DMG_VOLUME",
             "CODESIGN_IDENTITY",
         ):
             self.assertIn(phrase, MAKEFILE)
+
+    def test_dmg_app_is_compiled_without_the_source_path(self):
+        target = MAKEFILE.split("\nbuild-swift-dist:", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("-configuration Release", target)
+        self.assertIn("-DMLX_WORKBENCH_DISTRIBUTION", target)
+        self.assertIn('cp -R "$(MLX_DIST_APP)"', MAKEFILE)
+
+    def test_developer_id_dmg_is_timestamped_notarized_and_stapled(self):
+        recipe = MAKEFILE.split("\ndmg: dmg-preflight build-swift-dist", 1)[1].split("\n\n", 1)[0]
+        # Developer ID signatures need a secure timestamp to notarize.
+        self.assertIn("--options runtime --timestamp", recipe)
+        self.assertIn('codesign --force --timestamp --sign "$(CODESIGN_IDENTITY)" "$(DMG_OUTPUT)"', recipe)
+        self.assertIn(
+            'xcrun notarytool submit "$(DMG_OUTPUT)" --keychain-profile "$(NOTARY_PROFILE)" --wait',
+            recipe,
+        )
+        self.assertIn('xcrun stapler staple "$(DMG_OUTPUT)"', recipe)
+        self.assertIn('xcrun stapler validate "$(DMG_OUTPUT)"', recipe)
+        # Notarizing an ad-hoc signature is refused before anything builds.
+        guard = MAKEFILE.split("\ndmg-preflight:", 1)[1].split("\n\n", 1)[0]
+        self.assertIn('[ -n "$(NOTARY_PROFILE)" ] && [ "$(CODESIGN_IDENTITY)" = "-" ]', guard)
+
+    def test_source_path_literal_is_compiled_out_of_distribution_builds(self):
+        hits = []
+        for path in sorted(SWIFT_SOURCES.rglob("*.swift")):
+            text = path.read_text(encoding="utf-8")
+            if re.search(r"#file(Path)?\b", text):
+                hits.append(path.relative_to(ROOT).as_posix())
+        self.assertEqual(hits, ["mlx-mac/mlx-mac/Services/WorkbenchPython.swift"])
+        source = (SWIFT_SOURCES / "Services" / "WorkbenchPython.swift").read_text(encoding="utf-8")
+        self.assertEqual(len(re.findall(r"#file(Path)?\b", source)), 1)
+        guarded = re.search(
+            r"#if MLX_WORKBENCH_DISTRIBUTION\n(.*?)#else\n(.*?)#endif", source, re.S
+        )
+        self.assertIsNotNone(guarded)
+        self.assertNotIn("#file", guarded.group(1))
+        self.assertIn("#file", guarded.group(2))
 
     def test_dmg_target_is_declared_phony(self):
         lines = MAKEFILE.splitlines()
@@ -82,6 +123,40 @@ class DmgTargetTests(unittest.TestCase):
     def test_dmg_output_is_gitignored(self):
         entries = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
         self.assertIn("/.release/", entries)
+
+    def test_dmg_ships_the_app_under_the_display_name(self):
+        self.assertRegex(MAKEFILE, r"(?m)^DMG_VOLUME\s*:=\s*MLX Workbench\s*$")
+        self.assertRegex(MAKEFILE, r"(?m)^DMG_APP\s*:=\s*MLX Workbench\.app\s*$")
+        self.assertIn('"$(DMG_DIR)/stage/$(DMG_APP)"', MAKEFILE)
+        self.assertNotIn("stage/mlx-workbench.app", MAKEFILE)
+
+
+class AppNameTests(unittest.TestCase):
+    def test_bundle_names_are_the_display_name(self):
+        with INFO_PLIST.open("rb") as handle:
+            info = plistlib.load(handle)
+        self.assertEqual(info["CFBundleName"], DISPLAY_NAME)
+        self.assertEqual(info["CFBundleDisplayName"], DISPLAY_NAME)
+        # Executable and bundle id stay put: defaults, login items and the
+        # updater's relaunch of Bundle.main.bundleURL depend on them.
+        self.assertEqual(info["CFBundleExecutable"], "mlx-workbench")
+        self.assertEqual(info["CFBundleIdentifier"], "com.cavi.mlxworkbench")
+
+    def test_ui_labels_use_the_display_name(self):
+        label = re.compile(
+            r'(?:Button|Text|Label|MenuBarExtra|Window|WindowGroup)\(\s*"([^"]*)"'
+            r'|messageText\s*=\s*"([^"]*)"'
+        )
+        offenders = []
+        for path in sorted(SWIFT_SOURCES.rglob("*.swift")):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for number, line in enumerate(lines, 1):
+                for match in label.finditer(line):
+                    text = match.group(1) or match.group(2) or ""
+                    # "the mlx-workbench checkout" names the repository.
+                    if "mlx-workbench" in text.replace("mlx-workbench checkout", ""):
+                        offenders.append(f"{path.relative_to(ROOT)}:{number}: {text}")
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":

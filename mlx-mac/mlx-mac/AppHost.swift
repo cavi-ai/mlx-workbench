@@ -42,8 +42,8 @@ class AppHost: ObservableObject {
     let reclaim: ReclaimCoordinator
     /// Watch & regression alerts (premium spec 08).
     let watch: WatchCoordinator
-    /// Guided runtime setup (make install runner). Only actionable when the
-    /// app runs from a checkout; see WorkbenchPython.repoRoot().
+    /// Guided runtime setup (make install runner). Only actionable when a
+    /// checkout is known; see WorkbenchPython.repoRoot().
     let runtimeInstaller: RuntimeInstaller
     /// Hugging Face intake sheet state (verdict, backend install, downloads).
     let intake: IntakeCoordinator

@@ -3,7 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>mlx-workbench</string>
+	<string>MLX Workbench</string>
+	<key>CFBundleDisplayName</key>
+	<string>MLX Workbench</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.cavi.mlxworkbench</string>
 	<key>CFBundleVersion</key>
