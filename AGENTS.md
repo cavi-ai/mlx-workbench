@@ -179,6 +179,13 @@ from `mlx-agent` at runtime.
   model's listening rating control; explicit 1–5 ratings persist
   as `music-listening-v1` reviews, separately from speed; quality champions
   require a complete, current cohort with every model reviewed under that rubric.
+  Completed image-generation runs offer **Inspect images** and open generated-output
+  thumbnails in `ImageComparisonSheet` (input thumbnails retain the single-image preview).
+  Both panes select available outputs for one recorded prompt and share an
+  `ImageInspectionViewport`: fit-relative zoom and normalized pan, clamped separately
+  for each aspect ratio. Prompt changes reset the viewport; model switches retain it.
+  Keyboard arrows pan the focused image. The viewer reuses `TaskQualityRating` and
+  surfaces the coordinator's persistence error without changing review storage.
   Run history uses a searchable popover grouped by mode, newest
   first within each group; selecting a row keeps the existing results behavior.
   Completed music runs with prompt snapshots offer **Reuse setup** beside history.

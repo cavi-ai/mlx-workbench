@@ -1086,6 +1086,7 @@ struct QuantView: View {
                     isRouteActive: isRouteActive,
                     name: { shortName($0) },
                     onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
+                    reviewError: comparison.persistenceError,
                     laneActions: { lane in laneActions(lane, run: run, winnerPath: winnerPath) }
                 )
                 .id(run.id)

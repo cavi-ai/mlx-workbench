@@ -230,21 +230,25 @@ struct MediaRunResultsView<LaneActions: View>: View {
     let isRouteActive: Bool
     let name: (String) -> String
     let onReview: (String, Int?) -> Void
+    let reviewError: String?
     let laneActions: (CompareLane) -> LaneActions
 
     @State private var preview: PreviewImage?
+    @State private var imageInspection: ImageInspectionSelection?
     @StateObject private var audio: AudioClipPlayer
 
     @MainActor
     init(run: ComparisonRun, store: ComparisonOutputStore, contentWidth: CGFloat, isRouteActive: Bool,
          name: @escaping (String) -> String, onReview: @escaping (String, Int?) -> Void,
-         audio: AudioClipPlayer? = nil, @ViewBuilder laneActions: @escaping (CompareLane) -> LaneActions) {
+         audio: AudioClipPlayer? = nil, reviewError: String? = nil,
+         @ViewBuilder laneActions: @escaping (CompareLane) -> LaneActions) {
         self.run = run
         self.store = store
         self.contentWidth = contentWidth
         self.isRouteActive = isRouteActive
         self.name = name
         self.onReview = onReview
+        self.reviewError = reviewError
         self.laneActions = laneActions
         _audio = StateObject(wrappedValue: audio ?? AudioClipPlayer())
     }
@@ -263,9 +267,20 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 ComparisonListeningPanel(run: run, store: store, name: name, player: audio)
                     .id(run.id)
             }
+            if ComparisonViewLogic.showsImageInspection(run) {
+                Button {
+                    if let prompt = ComparisonViewLogic.rows(for: run).first {
+                        imageInspection = ImageInspectionSelection(promptID: prompt.id, modelPath: nil)
+                    }
+                } label: { Label("Inspect images", systemImage: "square.split.2x1") }
+                .controlSize(.small)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(item: $preview) { item in ImagePreviewSheet(url: item.url) }
+        .sheet(item: $imageInspection) { selection in
+            ImageComparisonSheet(run: run, store: store, selection: selection, name: name, onReview: onReview, reviewError: reviewError)
+        }
         .onDisappear { audio.stop() }
         .onChange(of: run.id) { _, _ in audio.stop() }
         .onChange(of: isRouteActive) { _, active in
@@ -470,7 +485,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 if let error = sample.error {
                     FailureNotice(error: error)
                 } else {
-                    outputView(sample, side: layout.mediaSide)
+                    outputView(sample, modelPath: lane.path, side: layout.mediaSide)
                     metrics(sample)
                 }
             } else if ComparePresentation.showsNotRun(sample: sample, result: result) {
@@ -511,7 +526,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
     }
 
     @ViewBuilder
-    private func outputView(_ sample: ComparisonSample, side: CGFloat) -> some View {
+    private func outputView(_ sample: ComparisonSample, modelPath: String, side: CGFloat) -> some View {
         switch mode.outputKind {
         case .text:
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -524,7 +539,9 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 switch mode.outputKind {
                 case .image:
                     ThumbnailView(url: url, size: CGSize(width: side, height: side)) {
-                        preview = PreviewImage(url: url)
+                        if ComparisonViewLogic.showsImageInspection(run) {
+                            imageInspection = ImageInspectionSelection(promptID: sample.promptID, modelPath: modelPath)
+                        } else { preview = PreviewImage(url: url) }
                     }
                 case .audio: AudioClipButton(url: url, label: sample.audioSeconds.map { String(format: "Play · %.1f s", $0) } ?? "Play", player: audio)
                 default: ClipVideoView(url: url).frame(width: side, height: side * 9 / 16)
@@ -554,7 +571,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
 }
 
 /// A compact explicit human judgment, independent of the speed and validation badges.
-private struct TaskQualityRating: View {
+struct TaskQualityRating: View {
     let run: ComparisonRun
     let modelPath: String
     let modelName: String
