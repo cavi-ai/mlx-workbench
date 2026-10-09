@@ -95,6 +95,8 @@ struct PromptSet: Codable, Equatable, Identifiable, Sendable {
     var origin: PromptSetOrigin
     /// The comparison mode this set is for; nil decodes as chat.
     var mode: ComparisonMode? = nil
+    /// App-owned input copies, separate from the disposable comparison output cache.
+    var inputStorageID: UUID? = nil
 
     var effectiveMode: ComparisonMode { mode ?? .chat }
 }

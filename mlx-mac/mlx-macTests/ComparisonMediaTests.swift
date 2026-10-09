@@ -1488,6 +1488,150 @@ final class ComparisonMediaTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testSavedReusedPromptSetOwnsInputsAfterRunCachePruningAndRestart() async throws {
+        let outputs = ComparisonOutputStore(root: root.appendingPathComponent("cache"))
+        var history = historyRun(.speechToText, "Saved speech", at: 100)
+        try outputs.createRunDirectory(history.id)
+        let source = outputs.inputsDirectory(history.id).appendingPathComponent("speech.wav")
+        let bytes = Data("recorded speech".utf8)
+        try bytes.write(to: source)
+        var entry = ComparisonMediaFixtures.speechToTextSet.prompts[0]
+        entry.inputPath = root.appendingPathComponent("original-gone.wav").path
+        history.promptEntries = [entry]; history.inputArtifacts = [entry.id: source.lastPathComponent]
+        let runs = JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json"))
+        try runs.replaceAll([history])
+        let historyBytes = try Data(contentsOf: runs.url)
+        let runner = StubMediaRunner()
+        let coordinator = makeCoordinator(runner: runner, store: outputs)
+        let setup = try ComparisonRunSetup(run: history, outputStore: outputs)
+        let result = await coordinator.createPromptSetWithInputCopies(setup.savedDraft(named: "Durable speech"))
+        let saved = try XCTUnwrap(result)
+        let owned = URL(fileURLWithPath: try XCTUnwrap(saved.prompts[0].inputPath))
+        XCTAssertNotNil(saved.inputStorageID)
+        XCTAssertNotEqual(owned, source)
+        XCTAssertEqual(try Data(contentsOf: owned), bytes)
+        XCTAssertEqual(try Data(contentsOf: runs.url), historyBytes)
+        XCTAssertFalse(coordinator.savingPromptSet)
+        XCTAssertNil(coordinator.activeRunID)
+        let requestsBefore = await runner.requests
+        XCTAssertTrue(requestsBefore.isEmpty)
+        outputs.prune(keeping: [])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertEqual(try Data(contentsOf: owned), bytes)
+        let restarted = makeCoordinator(runner: runner, store: outputs)
+        let restored = try XCTUnwrap(restarted.promptSets.first { $0.id == saved.id })
+        XCTAssertEqual(restored, saved)
+        restarted.start(variants: [("/speech/model", "current")], promptSet: restored)
+        await waitForRun(restarted)
+        let requests = await runner.requests
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(request.inputURL)), bytes)
+        XCTAssertEqual(request.language, SpeechCanary.language)
+        XCTAssertEqual(restarted.runs.first?.state, .completed)
+        XCTAssertEqual(restarted.runs.first { $0.id == history.id }, history)
+    }
+
+    @MainActor
+    func testOwnedInputSaveRollsBackPartialCopiesAndFailedJSONThenRetries() async throws {
+        let source = root.appendingPathComponent("original.png")
+        try Data("original image".utf8).write(to: source)
+        var draft = ComparisonPromptSetDraft(mode: .vision)
+        draft.name = "Saved images"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
+        draft.addPrompt(); draft.prompts[1].text = "Describe again"; draft.prompts[1].inputPath = source.path
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let sets = root.appendingPathComponent("sets.json")
+        let corrupt = Data("broken-json".utf8)
+        try corrupt.write(to: sets)
+        let failed = await coordinator.createPromptSetWithInputCopies(draft)
+        XCTAssertNil(failed)
+        XCTAssertFalse(coordinator.promptSets.contains { $0.id == draft.id })
+        XCTAssertEqual(try Data(contentsOf: sets), corrupt)
+        let ownedRoot = root.appendingPathComponent("prompt-set-inputs")
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: ownedRoot.path).isEmpty)
+        XCTAssertFalse(coordinator.savingPromptSet)
+        try JSONStore<PromptSet>(fileURL: sets).replaceAll([])
+        let retried = await coordinator.createPromptSetWithInputCopies(draft)
+        let saved = try XCTUnwrap(retried)
+        XCTAssertEqual(Set(saved.prompts.compactMap(\.inputPath)).count, 2)
+        for entry in saved.prompts {
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(entry.inputPath))), try Data(contentsOf: source))
+        }
+        let setBytes = try Data(contentsOf: sets)
+        let idsBefore = try FileManager.default.contentsOfDirectory(atPath: ownedRoot.path)
+        var bad = draft
+        bad.name = "Unavailable"; bad.prompts[1].inputPath = root.appendingPathComponent("gone.png").path
+        // The normal draft validates paths before copying; exercise a source disappearing
+        // during the copy transaction through the storage boundary as well.
+        let badSet = PromptSet(id: UUID().uuidString, name: "Partial", prompts: [
+            PromptEntry(id: "a", text: "First", inputKind: .image, inputPath: source.path),
+            PromptEntry(id: "b", text: "Second", inputKind: .image, inputPath: bad.prompts[1].inputPath)
+        ], origin: .userCreated, mode: .vision)
+        do { _ = try await ComparisonPromptInputStore(root: ownedRoot).copyingInputs(in: badSet); XCTFail("Missing second input must fail") }
+        catch { }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: ownedRoot.path), idsBefore)
+        XCTAssertEqual(try Data(contentsOf: sets), setBytes)
+        XCTAssertEqual(try Data(contentsOf: source), Data("original image".utf8))
+    }
+
+    @MainActor
+    func testRemovingOwnedPromptInputsPreservesBorrowedReferencesAndOtherFolders() async throws {
+        let source = root.appendingPathComponent("source.png")
+        try Data("original".utf8).write(to: source)
+        var draft = ComparisonPromptSetDraft(mode: .vision)
+        draft.name = "Owner"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let result = await coordinator.createPromptSetWithInputCopies(draft)
+        let owner = try XCTUnwrap(result)
+        let path = try XCTUnwrap(owner.prompts.first?.inputPath)
+        let borrowed = PromptSet(id: UUID().uuidString, name: "Borrowed", prompts: owner.prompts, origin: .userCreated, mode: .vision)
+        XCTAssertTrue(coordinator.savePromptSet(borrowed))
+        let inputStore = ComparisonPromptInputStore(root: root.appendingPathComponent("prompt-set-inputs"))
+        let unrelated = inputStore.root.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: false)
+        try Data("unrelated staged work".utf8).write(to: unrelated.appendingPathComponent("keep.txt"))
+        let sets = root.appendingPathComponent("sets.json")
+        let oldBytes = try Data(contentsOf: sets)
+        try Data("corrupt".utf8).write(to: sets)
+        XCTAssertFalse(coordinator.removePromptSet(id: owner.id))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+        try oldBytes.write(to: sets)
+        XCTAssertTrue(coordinator.removePromptSet(id: owner.id))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path), "Another durable set still references this copy")
+        XCTAssertTrue(coordinator.removePromptSet(id: borrowed.id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+        XCTAssertEqual(try Data(contentsOf: source), Data("original".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.appendingPathComponent("keep.txt").path))
+    }
+
+    func testOwnedInputStoreRejectsSymlinksAndLegacySetsDecodeWithoutOwnership() async throws {
+        let original = root.appendingPathComponent("original.png")
+        try Data("original".utf8).write(to: original)
+        let outside = root.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+        let ownedRoot = root.appendingPathComponent("owned")
+        try FileManager.default.createSymbolicLink(at: ownedRoot, withDestinationURL: outside)
+        let set = PromptSet(id: UUID().uuidString, name: "Legacy", prompts: [
+            PromptEntry(id: "p", text: "Describe", inputKind: .image, inputPath: original.path)
+        ], origin: .userCreated, mode: .vision)
+        do { _ = try await ComparisonPromptInputStore(root: ownedRoot).copyingInputs(in: set); XCTFail("Linked store must fail") }
+        catch { }
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: outside.path).isEmpty)
+        try FileManager.default.removeItem(at: ownedRoot)
+        let link = root.appendingPathComponent("linked-input.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: original)
+        var linked = set; linked.prompts[0].inputPath = link.path
+        do { _ = try await ComparisonPromptInputStore(root: ownedRoot).copyingInputs(in: linked); XCTFail("Linked input must fail") }
+        catch { }
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: ownedRoot.path).isEmpty)
+        XCTAssertEqual(try Data(contentsOf: original), Data("original".utf8))
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(set)) as? [String: Any])
+        json.removeValue(forKey: "inputStorageID")
+        let legacy = try JSONDecoder().decode(PromptSet.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(legacy, set)
+        XCTAssertNil(legacy.inputStorageID)
+    }
+
     func testReuseOtherModesPreservesRecordedPromptsAndCreatesIndependentCopies() throws {
         let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
         let input = root.appendingPathComponent("reference.png")
