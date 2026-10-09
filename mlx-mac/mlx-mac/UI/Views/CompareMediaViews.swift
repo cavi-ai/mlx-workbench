@@ -1070,8 +1070,9 @@ struct ClipVideoView: NSViewRepresentable {
 
 struct ComparisonPromptSetEditor: View {
     @State var draft: ComparisonPromptSetDraft
-    let onSave: (ComparisonPromptSetDraft) -> String?
+    let onSave: (ComparisonPromptSetDraft) async -> String?
     @State private var error: String?
+    @State private var saving = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -1084,18 +1085,33 @@ struct ComparisonPromptSetEditor: View {
                 Text(draft.name).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
             ComparisonPromptFields(draft: $draft)
+            if draft.mode.inputKind != nil {
+                Text("Saving keeps input copies with this set. Unchanged saved files are reused.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
             Text(draft.mode == .videoGeneration
                 ? "Blank settings use runtime defaults. Each model checks its size alignment and frame grouping when run. Saving does not generate output."
                 : "Settings apply to each prompt. Saving does not run a comparison; past runs keep their recorded inputs and outputs.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             ErrorBanner(text: error)
+            if saving {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    ProgressView().controlSize(.small)
+                    Text("Saving prompt set and input copies…").font(WorkbenchTypography.metadata)
+                }
+            }
             HStack {
                 Button { draft.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(draft.original == nil ? "Save prompt set" : "Save changes") {
-                    error = onSave(draft)
-                    if error == nil { dismiss() }
+                    let copy = draft
+                    saving = true
+                    Task { @MainActor in
+                        error = await onSave(copy)
+                        saving = false
+                        if error == nil { dismiss() }
+                    }
                 }
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
@@ -1104,6 +1120,8 @@ struct ComparisonPromptSetEditor: View {
         .textFieldStyle(.roundedBorder)
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: WorkbenchSize.Compare.promptEditorWidth)
+        .disabled(saving)
+        .interactiveDismissDisabled(saving)
     }
 
     /// The open panel, filtered to the kind of file the mode takes.

@@ -154,7 +154,7 @@ final class ComparisonCoordinator: ObservableObject {
         promptSetManagementError = nil
     }
 
-    /// Saving a reused setup makes its media independent of the ten-run cache.
+    /// Saving a new or reused setup makes its media independent of source files.
     /// Publish only after all copies and the durable JSON write succeed.
     func createPromptSetWithInputCopies(_ draft: ComparisonPromptSetDraft) async -> PromptSet? {
         guard !savingPromptSet, activeRunID == nil else {
@@ -254,6 +254,46 @@ final class ComparisonCoordinator: ObservableObject {
         }
     }
 
+    /// Preserve unchanged owned files, copy replacements, then atomically
+    /// compare against the editor's original snapshot before publishing.
+    func savePromptSetEditsWithInputCopies(_ edit: ComparisonPromptSetDraft) async -> Bool {
+        guard !savingPromptSet, activeRunID == nil, let original = edit.original else {
+            promptSetManagementError = "Select a saved prompt set after the current save or comparison finishes."
+            return false
+        }
+        savingPromptSet = true
+        defer { savingPromptSet = false }
+        var newOwnedID: UUID?
+        do {
+            let edited = try edit.promptSet()
+            let copied = try await promptInputStore.copyingInputs(in: edited, reusingInputsFrom: original)
+            if copied.inputStorageID != edited.inputStorageID { newOwnedID = copied.inputStorageID }
+            try Task.checkCancellation()
+            let saved = changePromptSet(id: edit.id, requiredMode: edit.mode, allowingInputSave: true) { stored in
+                guard stored == original else {
+                    throw PromptSetManagementError(message: "The saved prompt set changed while this editor was open. Cancel and reopen it before saving.")
+                }
+                return copied
+            }
+            guard saved else {
+                if let newOwnedID { promptInputStore.discard(newOwnedID) }
+                return false
+            }
+            reclaimPromptInputs(of: original)
+            return true
+        } catch {
+            if let newOwnedID { promptInputStore.discard(newOwnedID) }
+            promptSetManagementError = "Prompt set could not be updated: \(AppHost.render(error))"
+            return false
+        }
+    }
+
+    private func reclaimPromptInputs(of previous: PromptSet) {
+        guard runsLoaded, let sets = try? promptSetStore.load(), let savedRuns = try? runStore.load() else { return }
+        let legacy = savedRuns.filter { $0.inputArtifacts == nil }.flatMap { $0.promptEntries ?? [] }
+        promptInputStore.reclaimInputs(of: previous, sets: sets, legacyEntries: legacy)
+    }
+
     /// Called by the Edit action, never during view evaluation. Reopening a
     /// stale editor reads the current durable set without writing it.
     func prepareMusicPromptSetEdit(id: String) -> MusicPromptSetEdit? {
@@ -285,9 +325,10 @@ final class ComparisonCoordinator: ObservableObject {
         }
     }
 
-    private func changePromptSet(id: String, requiredMode: ComparisonMode? = nil, transform: (PromptSet) throws -> PromptSet?) -> Bool {
+    private func changePromptSet(id: String, requiredMode: ComparisonMode? = nil, allowingInputSave: Bool = false,
+                                 transform: (PromptSet) throws -> PromptSet?) -> Bool {
         do {
-            guard activeRunID == nil, !savingPromptSet else {
+            guard activeRunID == nil, !savingPromptSet || allowingInputSave else {
                 throw PromptSetManagementError(message: "Wait for the comparison to finish before managing prompt sets.")
             }
             guard let index = promptSets.firstIndex(where: { $0.id == id && Self.isManageablePromptSet($0)
@@ -308,12 +349,7 @@ final class ComparisonCoordinator: ObservableObject {
             if let changed { promptSets[index] = changed }
             else {
                 promptSets.remove(at: index)
-                // A failed load conservatively keeps copies; never infer live
-                // references from an incomplete in-memory list.
-                if runsLoaded, let previous, let sets = try? promptSetStore.load() {
-                    let legacy = runs.filter { $0.inputArtifacts == nil }.flatMap { $0.promptEntries ?? [] }
-                    promptInputStore.reclaimInputs(of: previous, sets: sets, legacyEntries: legacy)
-                }
+                if let previous { reclaimPromptInputs(of: previous) }
             }
             promptSetManagementError = nil
             return true

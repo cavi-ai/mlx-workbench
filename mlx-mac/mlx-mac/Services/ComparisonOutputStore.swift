@@ -6,8 +6,27 @@ struct ComparisonPromptInputStore: Sendable {
     let root: URL
     private var files: ComparisonOutputStore { ComparisonOutputStore(root: root) }
 
-    func copyingInputs(in set: PromptSet) async throws -> PromptSet {
-        guard set.effectiveMode.inputKind != nil, set.prompts.contains(where: { $0.inputPath != nil }) else { return set }
+    func copyingInputs(in set: PromptSet, reusingInputsFrom original: PromptSet? = nil) async throws -> PromptSet {
+        guard set.effectiveMode.inputKind != nil else { return set }
+        guard set.prompts.contains(where: { $0.inputPath != nil }) else {
+            var copy = set
+            if original != nil { copy.inputStorageID = nil }
+            return copy
+        }
+        var copying: [Int] = []
+        for index in set.prompts.indices {
+            let entry = set.prompts[index]
+            guard let path = entry.inputPath else { continue }
+            if original?.prompts.contains(where: { $0.id == entry.id && $0.inputPath == path }) == true,
+               let id = storageID(for: path) {
+                guard files.readableInputArtifactURL(runID: id, artifact: URL(fileURLWithPath: path).lastPathComponent) != nil else {
+                    throw ComparisonOutputStore.InputError.unsafeLocation
+                }
+                continue
+            }
+            copying.append(index)
+        }
+        guard !copying.isEmpty else { return set }
         let storageID = UUID()
         var copy = set
         copy.inputStorageID = storageID
@@ -28,7 +47,7 @@ struct ComparisonPromptInputStore: Sendable {
                 catch { discard(storageID); throw error }
             }.value
             created = true
-            for index in copy.prompts.indices {
+            for index in copying {
                 try Task.checkCancellation()
                 guard let path = copy.prompts[index].inputPath else { continue }
                 guard path.hasPrefix("/") else { throw ComparisonOutputStore.InputError.unavailable }
@@ -62,7 +81,7 @@ struct ComparisonPromptInputStore: Sendable {
         return id
     }
 
-    /// Reclaim unreferenced owned folders after a successful prompt-set removal.
+    /// Reclaim unreferenced owned folders after a successful removal or edit.
     /// Borrowed paths from other sets and legacy runs keep their source folders.
     func reclaimInputs(of removed: PromptSet, sets: [PromptSet], legacyEntries: [PromptEntry]) {
         guard (try? FileManager.default.attributesOfItem(atPath: root.path)[.type]) as? FileAttributeType == .typeDirectory else { return }

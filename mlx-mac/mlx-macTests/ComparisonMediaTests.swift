@@ -1632,6 +1632,144 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertNil(legacy.inputStorageID)
     }
 
+    @MainActor
+    func testNewMediaPromptSetsKeepTheirOwnInputsWhenOriginalsDisappear() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        for mode in [ComparisonMode.vision, .videoUnderstanding, .speechToText] {
+            let original = root.appendingPathComponent("original-\(mode.rawValue).input")
+            let bytes = Data("original \(mode.rawValue)".utf8)
+            try bytes.write(to: original)
+            var draft = ComparisonPromptSetDraft(mode: mode)
+            draft.name = "New \(mode.title)"; draft.prompts[0].text = "Recorded reference"
+            draft.prompts[0].inputPath = original.path
+            let result = await coordinator.createPromptSetWithInputCopies(draft)
+            let set = try XCTUnwrap(result)
+            let path = try XCTUnwrap(set.prompts.first?.inputPath)
+            XCTAssertNotEqual(path, original.path)
+            try FileManager.default.removeItem(at: original)
+            let restarted = makeCoordinator(runner: runner)
+            let edit = try XCTUnwrap(restarted.preparePromptSetEdit(id: set.id))
+            XCTAssertFalse(edit.prompts[0].inputFileUnavailable)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+            restarted.start(variants: [("/model", nil)], promptSet: try edit.promptSet())
+            await waitForRun(restarted)
+            XCTAssertEqual(restarted.runs.first?.state, .completed)
+            let requests = await runner.requests
+            XCTAssertEqual(try Data(contentsOf: XCTUnwrap(requests.last?.inputURL)), bytes)
+        }
+    }
+
+    @MainActor
+    func testOwnedPromptEditsReuseUnchangedFilesAndCopyOnlyReplacements() async throws {
+        let first = root.appendingPathComponent("first.png"), second = root.appendingPathComponent("second.png")
+        try Data("first".utf8).write(to: first); try Data("second".utf8).write(to: second)
+        var draft = ComparisonPromptSetDraft(mode: .vision)
+        draft.name = "Images"; draft.prompts[0].text = "First"; draft.prompts[0].inputPath = first.path
+        draft.addPrompt(); draft.prompts[1].text = "Second"; draft.prompts[1].inputPath = second.path
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let result = await coordinator.createPromptSetWithInputCopies(draft)
+        let original = try XCTUnwrap(result)
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("prompt-set-inputs"))
+        let originalID = try XCTUnwrap(original.inputStorageID)
+        let before = try FileManager.default.contentsOfDirectory(atPath: store.inputsDirectory(originalID).path)
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
+        edit.prompts[0].text = "Changed question"; edit.prompts[0].maxTokens = "512"
+        let textSaved = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        XCTAssertTrue(textSaved)
+        let textOnly = try XCTUnwrap(coordinator.promptSets.first { $0.id == original.id })
+        XCTAssertEqual(textOnly.inputStorageID, originalID)
+        XCTAssertEqual(textOnly.prompts.map(\.inputPath), original.prompts.map(\.inputPath))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: store.inputsDirectory(originalID).path), before)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: store.root.path), [originalID.uuidString])
+        let replacement = root.appendingPathComponent("replacement.png")
+        try Data("replacement".utf8).write(to: replacement)
+        edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
+        edit.prompts[0].inputPath = replacement.path
+        let replaced = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        XCTAssertTrue(replaced)
+        let updated = try XCTUnwrap(coordinator.promptSets.first { $0.id == original.id })
+        let newID = try XCTUnwrap(updated.inputStorageID)
+        XCTAssertNotEqual(newID, originalID)
+        XCTAssertEqual(updated.prompts[1].inputPath, original.prompts[1].inputPath)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: store.inputsDirectory(newID).path).count, 1)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(updated.prompts[0].inputPath))), Data("replacement".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(originalID).path), "The second prompt still owns its old input")
+        edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
+        edit.removePrompt(id: edit.prompts[1].id)
+        let removedPrompt = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        XCTAssertTrue(removedPrompt)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.runDirectory(originalID).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(newID).path))
+        XCTAssertEqual(try Data(contentsOf: first), Data("first".utf8))
+        XCTAssertEqual(try Data(contentsOf: second), Data("second".utf8))
+        XCTAssertEqual(try Data(contentsOf: replacement), Data("replacement".utf8))
+    }
+
+    @MainActor
+    func testOwnedPromptEditConflictAndCorruptStoreRollbackOnlyNewFiles() async throws {
+        let source = root.appendingPathComponent("source.png"), replacement = root.appendingPathComponent("replacement.png")
+        try Data("source".utf8).write(to: source); try Data("replacement".utf8).write(to: replacement)
+        var draft = ComparisonPromptSetDraft(mode: .vision)
+        draft.name = "Images"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let result = await coordinator.createPromptSetWithInputCopies(draft)
+        let saved = try XCTUnwrap(result)
+        let store = JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json"))
+        let ownedRoot = root.appendingPathComponent("prompt-set-inputs")
+        let folders = try FileManager.default.contentsOfDirectory(atPath: ownedRoot.path)
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: saved.id))
+        edit.prompts[0].inputPath = replacement.path
+        var concurrent = saved; concurrent.prompts[0].text = "Another editor changed this"
+        try store.replaceAll([concurrent])
+        let conflicted = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        XCTAssertFalse(conflicted)
+        XCTAssertTrue(coordinator.promptSetManagementError?.contains("reopen") == true)
+        XCTAssertEqual(try store.load(), [concurrent])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: ownedRoot.path), folders)
+        edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: saved.id))
+        edit.prompts[0].inputPath = replacement.path
+        let corrupt = Data("broken-json".utf8)
+        try corrupt.write(to: store.url)
+        let failed = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        XCTAssertFalse(failed)
+        XCTAssertEqual(try Data(contentsOf: store.url), corrupt)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: ownedRoot.path), folders)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(saved.prompts.first?.inputPath))), Data("source".utf8))
+        try store.replaceAll([concurrent])
+        let retried = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        XCTAssertTrue(retried)
+        XCTAssertFalse(coordinator.savingPromptSet)
+        XCTAssertNil(coordinator.promptSetManagementError)
+    }
+
+    @MainActor
+    func testOwnedInputEditReclaimsUsingCurrentLegacyRunReferences() async throws {
+        let source = root.appendingPathComponent("source.png"), replacement = root.appendingPathComponent("replacement.png")
+        try Data("source".utf8).write(to: source); try Data("replacement".utf8).write(to: replacement)
+        var draft = ComparisonPromptSetDraft(mode: .vision)
+        draft.name = "Images"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let result = await coordinator.createPromptSetWithInputCopies(draft)
+        let saved = try XCTUnwrap(result)
+        var legacy = historyRun(.vision, "Legacy reference", at: 100)
+        legacy.promptEntries = saved.prompts
+        let runs = JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json"))
+        // Simulate a durable reference added after this coordinator loaded runs.
+        try runs.replaceAll([legacy])
+        let historyBytes = try Data(contentsOf: runs.url)
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: saved.id))
+        edit.prompts[0].inputPath = replacement.path
+        let updated = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        XCTAssertTrue(updated)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(saved.prompts.first?.inputPath)))
+        XCTAssertEqual(try Data(contentsOf: runs.url), historyBytes)
+        // A failed authoritative run-store read must also prevent reclamation.
+        let current = try XCTUnwrap(coordinator.promptSets.first { $0.id == saved.id })
+        try Data("broken-runs".utf8).write(to: runs.url)
+        XCTAssertTrue(coordinator.removePromptSet(id: saved.id))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(current.prompts.first?.inputPath)))
+    }
+
     func testReuseOtherModesPreservesRecordedPromptsAndCreatesIndependentCopies() throws {
         let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
         let input = root.appendingPathComponent("reference.png")

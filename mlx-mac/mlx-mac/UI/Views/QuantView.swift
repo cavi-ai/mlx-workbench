@@ -527,7 +527,7 @@ struct QuantView: View {
         }
         .sheet(item: $pendingGeneralPromptSetEdit) { edit in
             ComparisonPromptSetEditor(draft: edit) { edited in
-                comparison.savePromptSetEdits(edited)
+                await comparison.savePromptSetEditsWithInputCopies(edited)
                     ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be saved.")
             }
         }
@@ -743,7 +743,7 @@ struct QuantView: View {
                 }
             } else {
                 ComparisonPromptSetEditor(draft: ComparisonPromptSetDraft(mode: mode)) { draft in
-                    guard let set = comparison.createPromptSet(draft) else {
+                    guard let set = await comparison.createPromptSetWithInputCopies(draft) else {
                         return comparison.promptSetManagementError ?? "Prompt set could not be created."
                     }
                     selectedPromptSetID = set.id
