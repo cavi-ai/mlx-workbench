@@ -192,6 +192,16 @@ from `mlx-agent` at runtime.
   for each aspect ratio. Prompt changes reset the viewport; model switches retain it.
   Keyboard arrows pan the focused image. The viewer reuses `TaskQualityRating` and
   surfaces the coordinator's persistence error without changing review storage.
+  Completed video-generation outputs open `VideoComparisonSheet`, with a single
+  `VideoComparisonPlayer` owning both native AVPlayers. Loading validates duration,
+  video tracks and readiness before shared playback can start. One host-clock start
+  and elapsed-time seek align the clips; shorter clips clamp at their end, and
+  generated motion need not match. Audio defaults off and can select only one clip.
+  Prompt changes stop/reset; model changes preserve time and playback state.
+  Dismissal releases players and observers, with generation guards fencing late
+  async load/seek completion. Completed-output previews have no separate transport;
+  video-understanding inputs retain their existing inline player. Ratings and
+  persistence errors reuse the existing comparison flow.
   Run history uses a searchable popover grouped by mode, newest
   first within each group; selecting a row keeps the existing results behavior.
   Completed music runs with prompt snapshots offer **Reuse setup** beside history.

@@ -58,7 +58,7 @@
 		24BBLD000012 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000012 /* x */; };
 		27ABCD00000000000000002B /* CompareMediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD10000000000000002B /* CompareMediaViews.swift */; };
 		29ABCD000000000000000001 /* CompareImageInspection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29ABCD100000000000000001 /* CompareImageInspection.swift */; };
-		2AABCD000000000000000001 /* CompareTextInspection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AABCD100000000000000001 /* CompareTextInspection.swift */; };
+		29ABCD000000000000000002 /* CompareVideoInspection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29ABCD100000000000000002 /* CompareVideoInspection.swift */; };
 
 		24BBLD000013 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000013 /* x */; };
 		28OVWB01 /* OverviewComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28OVWF01 /* OverviewComponents.swift */; };
@@ -262,7 +262,7 @@
 		24FREF000012 /* QuantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QuantView.swift; path = UI/Views/QuantView.swift; sourceTree = "<group>"; };
 		27ABCD10000000000000002B /* CompareMediaViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CompareMediaViews.swift; path = UI/Views/CompareMediaViews.swift; sourceTree = "<group>"; };
 		29ABCD100000000000000001 /* CompareImageInspection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CompareImageInspection.swift; path = UI/Views/CompareImageInspection.swift; sourceTree = "<group>"; };
-		2AABCD100000000000000001 /* CompareTextInspection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CompareTextInspection.swift; path = UI/Views/CompareTextInspection.swift; sourceTree = "<group>"; };
+		29ABCD100000000000000002 /* CompareVideoInspection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CompareVideoInspection.swift; path = UI/Views/CompareVideoInspection.swift; sourceTree = "<group>"; };
 
 		28OVWF01 /* OverviewComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = OverviewComponents.swift; path = UI/Views/OverviewComponents.swift; sourceTree = "<group>"; };
 		28OVWF02 /* OverviewPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = OverviewPresentationTests.swift; path = OverviewPresentationTests.swift; sourceTree = "<group>"; };
@@ -581,7 +581,7 @@
 				24FREF000012 /* QuantView.swift */,
 				27ABCD10000000000000002B /* CompareMediaViews.swift */,
 				29ABCD100000000000000001 /* CompareImageInspection.swift */,
-				2AABCD100000000000000001 /* CompareTextInspection.swift */,
+				29ABCD100000000000000002 /* CompareVideoInspection.swift */,
 				ACTPRSF1 /* ActivityPresentation.swift */,
 				RCLPRSF1 /* ReclaimPresentation.swift */,
 				RCLVWSF1 /* ReclaimViews.swift */,
@@ -865,7 +865,7 @@
 				24BBLD000012 /* x */,
 				27ABCD00000000000000002B /* CompareMediaViews.swift in Sources */,
 				29ABCD000000000000000001 /* CompareImageInspection.swift in Sources */,
-				2AABCD000000000000000001 /* CompareTextInspection.swift in Sources */,
+				29ABCD000000000000000002 /* CompareVideoInspection.swift in Sources */,
 				ACTPRSB1 /* ActivityPresentation.swift in Sources */,
 				RCLPRSB1 /* ReclaimPresentation.swift in Sources */,
 				RCLVWSB1 /* ReclaimViews.swift in Sources */,
