@@ -204,6 +204,8 @@ extension WorkbenchSize {
         static let historyMaximum: CGFloat = 420
         static let promptSetMaximum: CGFloat = 260
         static let promptSetRenameWidth: CGFloat = 420
+        static let musicPromptEditorWidth: CGFloat = 620
+        static let musicPromptEditorHeight: CGFloat = 390
         static let filterPopoverWidth: CGFloat = 340
         static let emptyMinimumHeight: CGFloat = 200
     }

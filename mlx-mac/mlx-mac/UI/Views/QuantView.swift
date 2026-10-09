@@ -384,6 +384,7 @@ struct QuantView: View {
     @State private var compareContentWidth = WorkbenchSize.assumedContentWidth
     @State private var mode: ComparisonMode = .chat
     @State private var showingSetEditor = false
+    @State private var pendingPromptSetEdit: MusicPromptSetEdit?
     @State private var pendingPromptSetRename: PromptSet?
     @State private var pendingPromptSetRemoval: PromptSet?
     @State private var pendingReuseSetup: MusicComparisonSetup?
@@ -506,6 +507,12 @@ struct QuantView: View {
             MusicPromptSetRenameSheet(set: set) { name in
                 comparison.renameMusicPromptSet(id: set.id, name: name)
                     ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be renamed.")
+            }
+        }
+        .sheet(item: $pendingPromptSetEdit) { edit in
+            MusicPromptSetEditSheet(edit: edit) { edited in
+                comparison.saveMusicPromptSetEdits(edited)
+                    ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be saved.")
             }
         }
         .alert("Remove saved prompt set?", isPresented: Binding(
@@ -852,6 +859,7 @@ struct QuantView: View {
             if mode == .musicGeneration {
                 MusicPromptSetActions(name: selectedPromptSet?.name,
                     isEnabled: comparison.activeRunID == nil && comparison.canManageMusicPromptSet(id: selectedPromptSetID),
+                    onEdit: openPromptSetEditor,
                     onRename: { pendingPromptSetRename = selectedPromptSet },
                     onRemove: { pendingPromptSetRemoval = selectedPromptSet })
             }
@@ -1217,6 +1225,11 @@ struct QuantView: View {
         guard comparison.removeMusicPromptSet(id: set.id) else { return }
         if reusedPromptSet?.id == set.id { reusedPromptSet = nil }
         if selectedPromptSetID == set.id { selectedPromptSetID = modePromptSets.first?.id ?? "" }
+    }
+
+    private func openPromptSetEditor() {
+        guard let set = selectedPromptSet else { return }
+        pendingPromptSetEdit = comparison.prepareMusicPromptSetEdit(id: set.id)
     }
 
     private func applyReusedSetup(_ setup: MusicComparisonSetup, _ promptSet: PromptSet) {
