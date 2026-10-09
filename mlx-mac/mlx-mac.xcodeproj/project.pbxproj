@@ -102,6 +102,9 @@
 		24BBLD029 /* ModelDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF023 /* ModelDetailsView.swift */; };
 		24BBLD030 /* LibraryViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF024 /* LibraryViewTests.swift */; };
 		PREPRMDB1 /* PrepareRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PREPRMDF1 /* PrepareRemodelTests.swift */; };
+		RUNPRSB1 /* RunPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = RUNPRSF1 /* RunPresentation.swift */; };
+		RUNRWYB1 /* RunRunwayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = RUNRWYF1 /* RunRunwayView.swift */; };
+		RUNRMDB1 /* RunRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RUNRMDF1 /* RunRemodelTests.swift */; };
 		24BBLD0LR /* LibraryRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF0LR /* LibraryRemodelTests.swift */; };
 		24BBLD031 /* CatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF025 /* CatalogClient.swift */; };
 		24BBLD032 /* CatalogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF026 /* CatalogStore.swift */; };
@@ -280,6 +283,9 @@
 		24FREF023 /* ModelDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelDetailsView.swift; path = UI/Views/ModelDetailsView.swift; sourceTree = "<group>"; };
 		24FREF024 /* LibraryViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryViewTests.swift; path = LibraryViewTests.swift; sourceTree = "<group>"; };
 		PREPRMDF1 /* PrepareRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PrepareRemodelTests.swift; path = PrepareRemodelTests.swift; sourceTree = "<group>"; };
+		RUNPRSF1 /* RunPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RunPresentation.swift; path = UI/Views/RunPresentation.swift; sourceTree = "<group>"; };
+		RUNRWYF1 /* RunRunwayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RunRunwayView.swift; path = UI/Views/RunRunwayView.swift; sourceTree = "<group>"; };
+		RUNRMDF1 /* RunRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RunRemodelTests.swift; path = RunRemodelTests.swift; sourceTree = "<group>"; };
 		24FREF0LR /* LibraryRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryRemodelTests.swift; path = LibraryRemodelTests.swift; sourceTree = "<group>"; };
 		24FREF025 /* CatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogClient.swift; path = Services/CatalogClient.swift; sourceTree = "<group>"; };
 		24FREF026 /* CatalogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CatalogStore.swift; path = Services/CatalogStore.swift; sourceTree = "<group>"; };
@@ -560,6 +566,8 @@
 				28OVWF01 /* OverviewComponents.swift */,
 				24FREF000014 /* ScoutView.swift */,
 				24FREF000015 /* ServeView.swift */,
+				RUNPRSF1 /* RunPresentation.swift */,
+				RUNRWYF1 /* RunRunwayView.swift */,
 				24FREF000016 /* SettingsView.swift */,
 				24FREF000018 /* TrainingView.swift */,
 				24FREF000019 /* WireView.swift */,
@@ -589,6 +597,7 @@
 				24FREF01F /* LibraryDomainTests.swift */,
 				24FREF024 /* LibraryViewTests.swift */,
 				PREPRMDF1 /* PrepareRemodelTests.swift */,
+				RUNRMDF1 /* RunRemodelTests.swift */,
 				24FREF0LR /* LibraryRemodelTests.swift */,
 				24FREF021 /* ModelLibraryBuilderTests.swift */,
 				24FREF029 /* RecommendationEngineTests.swift */,
@@ -832,6 +841,8 @@
 				28OVWB01 /* OverviewComponents.swift in Sources */,
 				24BBLD000014 /* x */,
 				24BBLD000015 /* x */,
+				RUNPRSB1 /* RunPresentation.swift in Sources */,
+				RUNRWYB1 /* RunRunwayView.swift in Sources */,
 				24BBLD000016 /* x */,
 				24BBLD000017 /* x */,
 				24BBLD000018 /* x */,
@@ -932,6 +943,7 @@
 				24BBLD025 /* LibraryDomainTests.swift in Sources */,
 				24BBLD030 /* LibraryViewTests.swift in Sources */,
 				PREPRMDB1 /* PrepareRemodelTests.swift in Sources */,
+				RUNRMDB1 /* RunRemodelTests.swift in Sources */,
 				24BBLD0LR /* LibraryRemodelTests.swift in Sources */,
 				24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */,
 				24BBLD035 /* RecommendationEngineTests.swift in Sources */,

@@ -208,6 +208,43 @@ extension WorkbenchSize {
     }
 }
 
+extension WorkbenchSize {
+    /// Run route dimensions. Collapse thresholds are measured against the
+    /// content width inside a surface (page content minus `surfaceChrome`).
+    enum Run {
+        static let contentMaxWidth: CGFloat = 1100
+        static let surfaceChrome: CGFloat = 40
+        static let compactThreshold: CGFloat = 600
+        static let rowThreshold: CGFloat = 700
+
+        static let heroBarHeight: CGFloat = 36
+        static let segmentMinimum: CGFloat = 8
+        static let labelMinimum: CGFloat = 72
+        static let nextOutline: CGFloat = 2
+        static let swatch: CGFloat = 10
+        static let legendSpacing: CGFloat = 16
+        /// Runway widths animate in steps of this many bytes, not on every memory tick.
+        static let animationStepBytes: Int64 = 500_000_000
+
+        static let chip: CGFloat = 72
+        static let nameMinimum: CGFloat = 160
+        static let portColumn: CGFloat = 130
+        static let detailLabel: CGFloat = 80
+        static let runtimeWidth: CGFloat = 150
+        static let portField: CGFloat = 96
+        static let contextWidth: CGFloat = 150
+        static let roleWidth: CGFloat = 150
+        static let loadToggle: CGFloat = 170
+        static let overflow: CGFloat = 28
+        static let slotModelMinimum: CGFloat = 160
+        static let memoryPopoverWidth: CGFloat = 480
+        static let idlePickerMaximum: CGFloat = 280
+        static let reservePickerMaximum: CGFloat = 270
+        static let loginSheetWidth: CGFloat = 640
+        static let loginSheetHeight: CGFloat = 420
+    }
+}
+
 enum WorkbenchRadius {
     /// Small chips and swatches.
     static let chip: CGFloat = 4
