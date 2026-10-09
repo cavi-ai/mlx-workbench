@@ -685,6 +685,8 @@ enum WorkbenchRelativeTime {
     static func text(for date: Date, style: RelativeDateTimeFormatter.UnitsStyle, now: Date = Date()) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = style
+        // A date within a minute of `now`, either side, reads as the present.
+        if abs(date.timeIntervalSince(now)) <= 60 { return "just now" }
         return formatter.localizedString(for: date, relativeTo: now)
     }
 }

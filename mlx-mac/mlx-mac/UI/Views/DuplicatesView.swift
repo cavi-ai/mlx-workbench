@@ -2,14 +2,21 @@ import SwiftUI
 import AppKit
 
 // MARK: - DuplicatesView
-// Exact vs variant duplicate groups from convert scan; quarantine keepers.
+// The Reclaim route: where the bytes are, what can be reclaimed, the quarantine
+// shelf, cleanup history and duplicate groups from the convert scan.
 
 struct DuplicatesView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var reclaim: ReclaimCoordinator
+    @Environment(\.isRouteActive) private var isRouteActive
 
     @State private var selectedOpportunities: Set<String> = []
     @State private var showAllQuarantined = false
+    @State private var showsDuplicates = false
+    @State private var layout = ReclaimLayout()
+    @State private var analyzedGeneration: Date?
+
+    private static let recentQuarantineCount = 8
 
     init(appHost: AppHost) {
         self.appHost = appHost
@@ -22,43 +29,85 @@ struct DuplicatesView: View {
         appHost.scanResult?.duplicates ?? []
     }
 
+    private var libraryGeneration: Date? { appHost.librarySnapshot?.generatedAt }
+
+    /// Only opportunities that are still actionable can be part of a selection.
+    private var effectiveSelection: Set<String> {
+        selectedOpportunities.intersection(Set(reclaim.opportunities.filter(\.actionable).map(\.id)))
+    }
+
+    private var presentedSheets: Set<ReclaimSheet> {
+        ReclaimSheets.presented(
+            hasTrashPlan: reclaim.trashPlan != nil,
+            hasFolderPlan: reclaim.folderPlan != nil,
+            sourcePlanWorkflowID: nil,
+            reviewedSourceID: nil,
+            hasRestorePlan: false,
+            isRouteActive: isRouteActive
+        )
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                SourceCleanupSection(reclaim: reclaim, modelWorkflow: appHost.modelWorkflow, rescan: { appHost.requestRescan() })
-                reclaimSection
-                quarantinedSection
-                HStack(spacing: WorkbenchSpacing.xs) {
-                    Button("Rescan library") { appHost.requestRescan() }
-                        .disabled(appHost.isScanning)
-                    Spacer()
+        let models = appHost.librarySnapshot?.models ?? []
+        let ledger = ReclaimLedger(
+            opportunities: reclaim.opportunities,
+            quarantined: reclaim.quarantined,
+            candidates: reclaim.sourceCandidates,
+            sourcesChecked: reclaim.sourcesChecked,
+            history: reclaim.sourceHistory,
+            hasLibrary: appHost.librarySnapshot != nil,
+            models: models,
+            generatedAt: libraryGeneration
+        )
+        GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                    ErrorBanner(text: reclaim.lastError)
+                    ErrorBanner(text: reclaim.sourceHistoryError)
+                    ErrorBanner(text: appHost.lastError)
+                    ReclaimLedgerView(ledger: ledger, isStacked: layout.stacksStages)
+                    suggestionsSection(models)
+                    Divider()
+                    quarantinedSection(models)
+                    Divider()
+                    SourceHistorySection(reclaim: reclaim, models: models, layout: layout)
+                    Divider()
+                    duplicatesSection
                 }
-                if appHost.isScanning {
-                    ProgressView("Scanning…")
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, WorkbenchSpacing.lg)
-                }
-                ErrorBanner(text: appHost.lastError)
-                if groups.isEmpty && !appHost.isScanning {
-                    Text("No duplicate groups found.")
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .padding(.top, WorkbenchSpacing.sm)
-                }
-                ForEach(groups) { group in
-                    groupCard(group)
-                }
-                Spacer()
+                .frame(maxWidth: WorkbenchSize.Reclaim.contentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(WorkbenchSpacing.pageInset)
             }
-            .padding(WorkbenchSpacing.pageInset)
+            .defaultScrollAnchor(.top)
+            .onChange(of: viewport.size.width, initial: true) { _, width in
+                layout = ReclaimLayout(viewportWidth: width, previous: layout)
+            }
+        }
+        .toolbar {
+            if isRouteActive {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { appHost.requestRescan() } label: {
+                        Label("Rescan library", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(appHost.isScanning)
+                    .help("Rescan library")
+                }
+            }
         }
         .onAppear {
-            appHost.analyzeReclaim()
-            reclaim.refreshQuarantined()
-            if appHost.scanResult == nil, !appHost.isScanning {
-                appHost.requestRescan()
+            for trigger in ReclaimTriggers.onMount(hasScan: appHost.scanResult != nil, isScanning: appHost.isScanning) {
+                switch trigger {
+                case .analyze: analyze()
+                case .refreshQuarantined: reclaim.refreshQuarantined()
+                case .rescan: appHost.requestRescan()
+                }
             }
         }
-        .sheet(isPresented: Binding(get: { reclaim.trashPlan != nil }, set: { if !$0 { reclaim.cancelTrash() } })) {
+        .onChange(of: libraryGeneration) { reanalyzeIfNeeded() }
+        .onChange(of: ReclaimFreshness.hasOpenPreview(reclaim)) { _, isOpen in
+            if !isOpen { reanalyzeIfNeeded() }
+        }
+        .sheet(isPresented: Binding(get: { presentedSheets.contains(.moveToTrash) }, set: { if !$0 { reclaim.cancelTrash() } })) {
             if let plan = reclaim.trashPlan {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                     Label("Move to Trash", systemImage: "trash").font(WorkbenchTypography.title)
@@ -78,7 +127,7 @@ struct DuplicatesView: View {
                 .interactiveDismissDisabled(reclaim.isApplying)
             }
         }
-        .sheet(isPresented: Binding(get: { reclaim.folderPlan != nil }, set: { if !$0 { reclaim.cancelFolder() } })) {
+        .sheet(isPresented: Binding(get: { presentedSheets.contains(.quarantineFolder) }, set: { if !$0 { reclaim.cancelFolder() } })) {
             if let plan = reclaim.folderPlan {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                     Label("Quarantine model folder", systemImage: "folder.badge.minus").font(WorkbenchTypography.title)
@@ -101,95 +150,98 @@ struct DuplicatesView: View {
         }
     }
 
-    // MARK: - Reclaim (Disk Pressure Advisor)
+    // MARK: - Analysis
 
-    private var reclaimSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { reclaimHeader }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { reclaimHeader }
-            }
-            Text("Review replacements by task. Preview GGUF files or local MLX folders before quarantining them, then use Trash when you are ready to remove them.")
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
+    private func analyze() {
+        appHost.analyzeReclaim()
+        analyzedGeneration = libraryGeneration
+    }
 
-            if reclaim.opportunities.isEmpty {
-                Text("No reclaim opportunities from the latest snapshot.")
+    private func reanalyzeIfNeeded() {
+        guard ReclaimFreshness.shouldReanalyze(
+            analyzed: analyzedGeneration,
+            current: libraryGeneration,
+            hasOpenPreview: ReclaimFreshness.hasOpenPreview(reclaim),
+            hasUnreadMoves: !reclaim.lastMoves.isEmpty
+        ) else { return }
+        analyze()
+    }
+
+    // MARK: - Suggestions (Disk Pressure Advisor)
+
+    private func suggestionsSection(_ models: [LibraryModel]) -> some View {
+        let state = ReclaimSuggestionsState(
+            opportunityCount: reclaim.opportunities.count,
+            candidateCount: reclaim.sourceCandidates.count,
+            lastMoveCount: reclaim.lastMoves.count,
+            cacheAvailable: reclaim.doctorScan != nil,
+            cacheFindingCount: reclaim.cacheFindings.count
+        )
+        let selection = effectiveSelection
+        let primary = ReclaimProminence.primary(
+            hasPlan: reclaim.plan != nil,
+            hasSelection: !selection.isEmpty,
+            hasPrunePreview: reclaim.cachePruneHash != nil
+        )
+        return WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                suggestionsHeader(state)
+                Text("Review replacements by task. Preview GGUF files or local MLX folders before quarantining them, then use Trash when you are ready to remove them.")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
-            } else {
-                ForEach(reclaim.opportunities) { opportunity in
-                    if let chain = opportunity.replacement {
-                        ModelReplacementChainCard(chain: chain, onReviewFolder: { path in Task { await reclaim.previewFolder(path) } })
-                    } else {
-                    HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
-                        Toggle(isOn: opportunityBinding(opportunity.id)) {
-                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                                HStack(spacing: WorkbenchSpacing.xxs) {
-                                    Text(opportunity.kind.title).font(WorkbenchTypography.secondary).fontWeight(.medium)
-                                    Text(ByteCountFormatter.string(fromByteCount: opportunity.bytes, countStyle: .file))
-                                        .font(WorkbenchTypography.secondary)
-                                        .foregroundStyle(WorkbenchColor.warning)
-                                    if opportunity.confidence == .review {
-                                        Text("review").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                                    }
-                                    if !opportunity.actionable {
-                                        Text("manual only").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                                    }
-                                }
-                                Text(opportunity.evidence)
-                                    .font(WorkbenchTypography.secondary)
-                                    .foregroundStyle(WorkbenchColor.muted)
-                                ForEach(opportunity.paths, id: \.self) { path in
-                                    Text(path)
-                                        .font(WorkbenchTypography.value)
-                                        .foregroundStyle(WorkbenchColor.muted)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                }
-                            }
-                        }
-                        .toggleStyle(.checkbox)
-                        .disabled(!opportunity.actionable)
-                    }
-                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                if state.showsEmpty {
+                    ReclaimDesignedState(symbol: "checkmark.circle", text: "No reclaim opportunities from the latest snapshot.")
                 }
-
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: WorkbenchSpacing.xs) { reclaimActions }
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { reclaimActions }
-                }
-
-                cachePruneSection
-
-                if !reclaim.lastMoves.isEmpty {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        ForEach(reclaim.lastMoves, id: \.path) { move in
-                            if let destination = move.destination {
-                                Text("Moved \(URL(fileURLWithPath: move.path).lastPathComponent) → \(destination)")
-                                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
+                ForEach(ReclaimSuggestionGroup.groups(reclaim.opportunities)) { group in
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        Text(group.kind.title)
+                            .font(WorkbenchTypography.label)
+                            .foregroundStyle(WorkbenchColor.muted)
+                        ForEach(group.opportunities) { opportunity in
+                            if let chain = opportunity.replacement {
+                                ModelReplacementChainCard(chain: chain, onReviewFolder: { path in Task { await reclaim.previewFolder(path) } })
                             } else {
-                                Text("\(URL(fileURLWithPath: move.path).lastPathComponent): \(move.error ?? "failed")")
-                                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+                                ReclaimSuggestionRowView(
+                                    row: ReclaimSuggestionRow(opportunity, models: models),
+                                    isCompact: layout.compactSuggestions,
+                                    isSelected: opportunityBinding(opportunity.id)
+                                )
                             }
                         }
                     }
+                }
+                SourceCleanupSection(reclaim: reclaim, modelWorkflow: appHost.modelWorkflow, models: models, layout: layout, rescan: { appHost.requestRescan() })
+                if !reclaim.cacheFindings.isEmpty { cacheFindingsView(models, primary: primary) }
+                if !reclaim.opportunities.isEmpty { actionBar(primary: primary, selection: selection) }
+                if state.showsMoveResults { moveResults }
+                if let note = reclaim.cachePruneNote {
+                    Text(note).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.accent)
                 }
             }
-            ErrorBanner(text: reclaim.lastError)
         }
-        .formSection {}
+    }
+
+    private func suggestionsHeader(_ state: ReclaimSuggestionsState) -> some View {
+        Group {
+            if layout.wrapsHeader {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    SectionTitle(text: "Suggestions")
+                    ReclaimFlowLayout() { suggestionControls(state) }
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
+                    SectionTitle(text: "Suggestions")
+                    Spacer()
+                    ReclaimFlowLayout() { suggestionControls(state) }
+                }
+            }
+        }
     }
 
     @ViewBuilder
-    private var reclaimHeader: some View {
-        SectionTitle(text: "Reclaim")
-        if reclaim.totalReclaimableBytes > 0 {
-            Text("\(ByteCountFormatter.string(fromByteCount: reclaim.totalReclaimableBytes, countStyle: .file)) available to quarantine")
-                .font(WorkbenchTypography.value)
-                .foregroundStyle(WorkbenchColor.warning)
-        }
-        Button("Analyze") { appHost.analyzeReclaim() }
+    private func suggestionControls(_ state: ReclaimSuggestionsState) -> some View {
+        Button("Analyze") { analyze() }
             .buttonStyle(.bordered)
         Button("Review model folder…") {
             let panel = NSOpenPanel()
@@ -202,45 +254,65 @@ struct DuplicatesView: View {
                 guard response == .OK, let path = panel.url?.path else { return }
                 Task { await reclaim.previewFolder(path) }
             }
-        }.disabled(reclaim.isApplying)
+        }
+        .buttonStyle(.borderless)
+        .disabled(reclaim.isApplying)
+        if state.showsCacheControls {
+            Button("Check HF cache") { Task { await reclaim.checkCache() } }
+                .buttonStyle(.borderless)
+        }
+    }
+
+    private func actionBar(primary: ReclaimAction?, selection: Set<String>) -> some View {
+        Group {
+            if layout.compactSuggestions {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    planSummary
+                    HStack(spacing: WorkbenchSpacing.xs) { reclaimActions(primary: primary, selection: selection) }
+                }
+            } else {
+                HStack(spacing: WorkbenchSpacing.xs) {
+                    planSummary
+                    Spacer()
+                    reclaimActions(primary: primary, selection: selection)
+                }
+            }
+        }
     }
 
     @ViewBuilder
-    private var reclaimActions: some View {
-        if reclaim.plan == nil {
-            Button("Preview reclaim") { reclaim.preview(selected: selectedOpportunities) }
-                .buttonStyle(.borderedProminent)
-                .disabled(selectedOpportunities.isEmpty)
-        } else {
-            Button("Preview reclaim") { reclaim.preview(selected: selectedOpportunities) }
-                .buttonStyle(.bordered)
-                .disabled(selectedOpportunities.isEmpty)
-        }
+    private var planSummary: some View {
         if let plan = reclaim.plan {
             Text("Quarantine \(plan.items.count) file(s) · \(ByteCountFormatter.string(fromByteCount: plan.totalBytes, countStyle: .file))")
-                .font(WorkbenchTypography.value)
+                .font(WorkbenchTypography.tabular)
+        }
+    }
+
+    @ViewBuilder
+    private func reclaimActions(primary: ReclaimAction?, selection: Set<String>) -> some View {
+        Button("Preview reclaim") { reclaim.preview(selected: selection) }
+            .reclaimButtonStyle(.previewReclaim, primary: primary)
+            .disabled(selection.isEmpty)
+        if let plan = reclaim.plan {
             Button("Confirm quarantine") {
                 reclaim.confirm(previewHash: plan.previewHash)
                 selectedOpportunities = []
             }
-            .buttonStyle(.borderedProminent)
+            .reclaimButtonStyle(.confirmQuarantine, primary: primary)
             .disabled(reclaim.isApplying)
         }
     }
 
-    @ViewBuilder
-    private var cacheActions: some View {
-        Button("Check HF cache") { Task { await reclaim.checkCache() } }
-            .buttonStyle(.bordered)
-        if !reclaim.cacheFindings.isEmpty {
-            Text("\(reclaim.cacheFindings.count) incomplete cache item(s), \(ByteCountFormatter.string(fromByteCount: reclaim.cacheReclaimableBytes, countStyle: .file)) reclaimable")
-                .font(WorkbenchTypography.value)
-                .foregroundStyle(WorkbenchColor.warning)
-            if reclaim.cachePruneHash == nil {
-                Button("Preview prune") { Task { await reclaim.previewCachePrune() } }
-            } else {
-                Button("Confirm prune") { Task { await reclaim.confirmCachePrune() } }
-                    .buttonStyle(.borderedProminent)
+    private var moveResults: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            ForEach(reclaim.lastMoves, id: \.path) { move in
+                if let destination = move.destination {
+                    Text("Moved \(URL(fileURLWithPath: move.path).lastPathComponent) → \(destination)")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
+                } else {
+                    Text("\(URL(fileURLWithPath: move.path).lastPathComponent): \(move.error ?? "failed")")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+                }
             }
         }
     }
@@ -254,93 +326,133 @@ struct DuplicatesView: View {
         )
     }
 
+    // MARK: - HF-cache prune (authoritative doctor flow)
+
+    private func cacheFindingsView(_ models: [LibraryModel], primary: ReclaimAction?) -> some View {
+        let summary = ReclaimCacheSummary(findings: reclaim.cacheFindings)
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Text("Incomplete Hugging Face cache items")
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.muted)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.sm) { cacheSummaryText(summary); Spacer(); pruneButton(primary: primary) }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { cacheSummaryText(summary); pruneButton(primary: primary) }
+            }
+            DisclosureGroup("Incomplete cache items (\(summary.count))") {
+                ForEach(reclaim.cacheFindings) { finding in
+                    let name = ReclaimNames.resolve(paths: [finding.path], models: models)
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                        HStack {
+                            Text(name.title).font(WorkbenchTypography.label).help(name.detail ?? finding.path)
+                            Spacer()
+                            Text(finding.size.map { ReclaimFormat.byteCount($0) } ?? "size not recorded")
+                                .font(WorkbenchTypography.secondaryTabular).foregroundStyle(WorkbenchColor.muted)
+                        }
+                        Text(finding.path).font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted)
+                            .lineLimit(1).truncationMode(.middle).textSelection(.enabled).help(finding.path)
+                    }.padding(.vertical, WorkbenchSpacing.xxxs)
+                }
+            }.font(WorkbenchTypography.secondary)
+        }
+    }
+
+    private func cacheSummaryText(_ summary: ReclaimCacheSummary) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+            Text(summary.text).font(WorkbenchTypography.secondaryTabular)
+            Text("Removes permanently").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+        }
+    }
+
+    @ViewBuilder
+    private func pruneButton(primary: ReclaimAction?) -> some View {
+        if reclaim.cachePruneHash == nil {
+            Button("Preview prune") { Task { await reclaim.previewCachePrune() } }
+                .buttonStyle(.bordered)
+        } else {
+            Button("Confirm prune") { Task { await reclaim.confirmCachePrune() } }
+                .reclaimButtonStyle(.confirmPrune, primary: primary)
+        }
+    }
+
     // MARK: - Quarantine ledger (review + put back)
 
-    private var quarantinedSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+    private func quarantinedSection(_ models: [LibraryModel]) -> some View {
+        let total = reclaim.quarantined.count
+        let visible = reclaim.quarantined.prefix(showAllQuarantined ? total : Self.recentQuarantineCount)
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             HStack {
                 SectionTitle(text: "Quarantine")
                 Spacer()
-                Text("\(reclaim.quarantined.count) \(reclaim.quarantined.count == 1 ? "file" : "files")").font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted)
+                Text(ReclaimFormat.count(total, "file")).font(WorkbenchTypography.secondaryTabular).foregroundStyle(WorkbenchColor.muted)
             }
             Text("Put files back, or move them to macOS Trash after review. Quarantine keeps the files on disk; empty Trash in Finder to free space.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             if reclaim.quarantined.isEmpty {
-                Text("Nothing is currently in quarantine.")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
+                ReclaimDesignedState(symbol: "tray", text: "Nothing is currently in quarantine.")
             } else {
-                let visible = reclaim.quarantined.prefix(showAllQuarantined ? reclaim.quarantined.count : 8)
-                ForEach(Array(visible.enumerated()), id: \.element.to) { _, record in
-                    HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                            Text(URL(fileURLWithPath: record.from).lastPathComponent)
-                                .font(WorkbenchTypography.secondary)
-                            Text(record.from)
-                                .font(WorkbenchTypography.secondary)
-                                .foregroundStyle(WorkbenchColor.muted)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .textSelection(.enabled)
-                        }
-                        Spacer()
-                        Text(ByteCountFormatter.string(fromByteCount: record.bytes, countStyle: .file))
-                            .font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.muted)
-                        Button("Put back") { Task { await reclaim.restore(record); if reclaim.lastError == nil { appHost.requestRescan() } } }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(reclaim.isApplying)
-                        Button { Task { await reclaim.previewTrash(record) } } label: { Label("Move to Trash", systemImage: "trash") }
-                            .buttonStyle(.bordered).controlSize(.small).disabled(reclaim.isApplying)
-                    }
-                    .padding(.vertical, WorkbenchSpacing.xxxs)
+                ForEach(visible, id: \.to) { record in
+                    ReclaimQuarantineRowView(
+                        row: ReclaimQuarantineRow(record, models: models),
+                        isCompact: layout.compactQuarantine,
+                        isBusy: reclaim.isApplying,
+                        onPutBack: { Task { await reclaim.restore(record); if reclaim.lastError == nil { appHost.requestRescan() } } },
+                        onTrash: { Task { await reclaim.previewTrash(record) } }
+                    )
                 }
-                if reclaim.quarantined.count > 8 {
-                    Button(showAllQuarantined ? "Show recent files" : "Show all \(reclaim.quarantined.count) files") { showAllQuarantined.toggle() }
+                if total > Self.recentQuarantineCount {
+                    Button(showAllQuarantined ? "Show recent files" : "Show all \(total) files") { showAllQuarantined.toggle() }
                 }
             }
             if let note = reclaim.trashNote { Text(note).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
-            ErrorBanner(text: reclaim.lastError)
-        }
-        .formSection {}
-    }
-
-    // MARK: - HF-cache prune (authoritative doctor flow)
-
-    @ViewBuilder
-    private var cachePruneSection: some View {
-        if reclaim.doctorScan != nil {
-            Divider()
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { cacheActions }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { cacheActions }
-            }
-            if let note = reclaim.cachePruneNote {
-                Text(note).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.accent)
-            }
         }
     }
 
-    private func groupCard(_ group: DuplicateGroup) -> some View {
+    // MARK: - Duplicate groups
+
+    private var duplicatesSection: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            if appHost.isScanning {
+                ProgressView("Scanning…")
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+            if groups.isEmpty {
+                SectionTitle(text: "Duplicate groups")
+                if !appHost.isScanning {
+                    ReclaimDesignedState(symbol: "square.on.square", text: "No duplicate groups found.")
+                }
+            } else {
+                DisclosureGroup("Duplicate groups (\(groups.count))", isExpanded: $showsDuplicates) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                        ForEach(groups) { group in groupRow(group) }
+                    }.padding(.top, WorkbenchSpacing.xs)
+                }.font(WorkbenchTypography.emphasis)
+            }
+        }
+    }
+
+    private func groupRow(_ group: DuplicateGroup) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            HStack {
-                SectionTitle(text: group.modelKey ?? group.id)
+            HStack(alignment: .firstTextBaseline) {
+                Text(group.modelKey ?? group.id).font(WorkbenchTypography.label)
                 Spacer()
-                if let reclaim = group.reclaimableBytes {
-                    Text("Reclaims \(ByteCountFormatter.string(fromByteCount: reclaim, countStyle: .file))")
-                .font(WorkbenchTypography.value)
-                .foregroundStyle(WorkbenchColor.warning)
+                if let reclaimable = group.reclaimableBytes {
+                    Text("Reclaims \(ByteCountFormatter.string(fromByteCount: reclaimable, countStyle: .file))")
+                        .font(WorkbenchTypography.secondaryTabular)
                 }
             }
             ForEach(group.sources, id: \.self) { path in
-                HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
+                HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
                     Image(systemName: "doc")
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(WorkbenchColor.muted)
                     Text(path)
-                        .font(WorkbenchTypography.secondary)
+                        .font(WorkbenchTypography.compactValue)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                         .textSelection(.enabled)
+                        .help(path)
                     Spacer()
                     if group.keep == path {
                         Text("keep").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.accent)
@@ -350,9 +462,8 @@ struct DuplicatesView: View {
             if let redundant = group.redundant, !redundant.isEmpty {
                 Text("\(redundant.count) redundant")
                     .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.warning)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
         }
-        .formSection {}
     }
 }

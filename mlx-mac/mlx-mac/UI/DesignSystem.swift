@@ -282,6 +282,38 @@ extension WorkbenchSize {
     }
 }
 
+extension WorkbenchSize {
+    /// Reclaim route dimensions. Thresholds are measured against the page
+    /// content width (stages) or the width inside a surface (rows), both
+    /// derived from the width the page is offered.
+    enum Reclaim {
+        static let contentMaxWidth: CGFloat = Run.contentMaxWidth
+        static let surfaceChrome: CGFloat = Run.surfaceChrome
+        static let historyIndent: CGFloat = 24
+        static let hysteresis: CGFloat = Library.tierHysteresis
+
+        static let stageMinimum: CGFloat = 200
+        static let stageGap: CGFloat = WorkbenchSpacing.md
+        static let stageThreshold: CGFloat = stageMinimum * 3 + stageGap * 2
+
+        static let symbolColumn: CGFloat = 24
+        static let suggestionNameMinimum: CGFloat = 240
+        static let byteColumn: CGFloat = 88
+        static let checkboxColumn: CGFloat = 28
+        static let suggestionThreshold: CGFloat = 520
+        static let headerThreshold: CGFloat = 680
+
+        static let quarantineNameMinimum: CGFloat = 200
+        static let dateColumn: CGFloat = 120
+        static let quarantineThreshold: CGFloat = 644
+
+        static let historyNameMinimum: CGFloat = 200
+        static let historyBytesColumn: CGFloat = 112
+        static let historyThreshold: CGFloat = 600
+        static let detailLabel: CGFloat = 80
+    }
+}
+
 enum WorkbenchRadius {
     /// Small chips and swatches.
     static let chip: CGFloat = 4

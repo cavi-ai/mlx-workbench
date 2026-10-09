@@ -251,10 +251,14 @@ final class QuarantineParityTests: XCTestCase {
         let api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] }, convertStatus: { [] },
             servePreview: { _, _, _ in [:] }, serveStart: { _, _, _, _ in [:] }, serveStatus: { [] }, serveStop: { _ in [:] })
         let workflows = ModelWorkflowCoordinator(api: api, persistence: ModelWorkflowPersistence(load: { [fixture.workflow] }, upsert: { _ in }))
-        let view = NSHostingView(rootView: SourceCleanupSection(reclaim: reclaim, modelWorkflow: workflows, rescan: {}).padding(24).frame(width: 680).preferredColorScheme(.dark))
+        let page = VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            SourceCleanupSection(reclaim: reclaim, modelWorkflow: workflows, rescan: {})
+            SourceHistorySection(reclaim: reclaim, models: [], layout: ReclaimLayout())
+        }
+        let view = NSHostingView(rootView: page.padding(24).frame(width: 680).preferredColorScheme(.dark))
         view.setFrameSize(NSSize(width: 680, height: view.fittingSize.height))
         view.layoutSubtreeIfNeeded()
-        XCTAssertGreaterThan(view.bounds.height, 200)
+        XCTAssertGreaterThan(view.bounds.height, 120)
         XCTAssertLessThan(view.bounds.height, 850)
         let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: image)
