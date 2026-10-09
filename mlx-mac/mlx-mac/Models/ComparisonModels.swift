@@ -206,9 +206,13 @@ struct MusicComparisonSetup: Identifiable {
         return try prompts.map { try $0.entry() }
     }
 
-    func promptSet() throws -> PromptSet {
-        PromptSet(id: UUID().uuidString, name: "\(sourceName) · reused", useCase: nil,
-                  prompts: try validatedPrompts(), origin: .userCreated, mode: .musicGeneration)
+    func promptSet(named name: String? = nil) throws -> PromptSet {
+        let title = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "\(sourceName) · reused"
+        guard !title.isEmpty, !title.unicodeScalars.contains(where: { $0.value < 32 }) else {
+            throw InvalidSetup(message: "Enter a prompt set name without control characters.")
+        }
+        return PromptSet(id: UUID().uuidString, name: title, useCase: nil,
+                         prompts: try validatedPrompts(), origin: .userCreated, mode: .musicGeneration)
     }
 }
 

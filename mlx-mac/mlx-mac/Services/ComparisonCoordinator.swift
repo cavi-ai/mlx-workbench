@@ -93,8 +93,9 @@ final class ComparisonCoordinator: ObservableObject {
         runs.filter { $0.state == .completed }.flatMap { benchmarks(for: $0) }
     }
 
-    func savePromptSet(_ set: PromptSet) {
-        guard set.origin == .userCreated else { return }
+    @discardableResult
+    func savePromptSet(_ set: PromptSet) -> Bool {
+        guard set.origin == .userCreated else { return false }
         do {
             try promptSetStore.upsert(set, id: \.id)
             if let index = promptSets.firstIndex(where: { $0.id == set.id }) {
@@ -102,8 +103,10 @@ final class ComparisonCoordinator: ObservableObject {
             } else {
                 promptSets.append(set)
             }
+            return true
         } catch {
             persistenceError = "Prompt set could not be saved: \(AppHost.render(error))"
+            return false
         }
     }
 

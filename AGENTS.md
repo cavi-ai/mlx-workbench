@@ -184,6 +184,10 @@ from `mlx-agent` at runtime.
   starts fresh results with current model signatures and no copied quality reviews.
   Missing recorded models stay selected and block Run until explicitly replaced
   or removed; inventory refreshes must not silently clear a reused cohort.
+  The reuse editor's **Save as prompt set…** writes a newly identified user prompt
+  set through the existing prompt store, preserving per-prompt settings without
+  model selections. Save failures keep the editor open and leave published prompt
+  sets unchanged; saving never starts generation or overwrites the source preset.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.
