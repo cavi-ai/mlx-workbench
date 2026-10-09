@@ -212,6 +212,65 @@ final class ComparisonPhase2Tests: XCTestCase {
 
     // MARK: - Helpers
 
+    func testDiffUsesFullRecordedOutputsAndExcludesFailedSamples() {
+        func result(_ path: String, full: String) -> VariantResult {
+            VariantResult(modelPath: path, modelSignature: nil, samples: [
+                ComparisonSample(promptID: "p", outputExcerpt: "same prefix", tokensPerSecond: nil,
+                    timeToFirstTokenSeconds: nil, error: nil, fullOutput: full),
+                ComparisonSample(promptID: "failed", outputExcerpt: "partial", tokensPerSecond: nil,
+                    timeToFirstTokenSeconds: nil, error: "Interrupted")
+            ], aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)
+        }
+        let pairs = ComparisonDiff.pairs(result("a", full: "Full answer A"), result("b", full: "Full answer B"))
+        XCTAssertEqual(pairs.map(\.promptID), ["p"])
+        XCTAssertEqual(pairs.first?.left, "Full answer A")
+        XCTAssertEqual(pairs.first?.right, "Full answer B")
+    }
+
+    func testNewChatSamplesRetainFullResponseBeyondExcerpt() throws {
+        let response = String(repeating: "A long response. ", count: 50) + "Final conclusion."
+        let probe = ProbeSample(text: response, completionTokens: 100, timeToFirstTokenSeconds: 0.2,
+            durationSeconds: 2, metricsEstimated: false)
+        let sample = ComparisonAggregation.sample(from: probe, promptID: "p")
+        XCTAssertEqual(sample.outputExcerpt, String(response.prefix(280)))
+        XCTAssertEqual(sample.fullOutput, response)
+        let restored = try JSONDecoder().decode(ComparisonSample.self, from: JSONEncoder().encode(sample))
+        XCTAssertEqual(restored.fullOutput, response)
+    }
+
+    func testTextComparisonPreservesLegacyExcerptsEmptyResponsesAndGuardsLongDiffs() throws {
+        func result(_ path: String, full: String?, error: String? = nil) -> VariantResult {
+            VariantResult(modelPath: path, modelSignature: nil, samples: [
+                ComparisonSample(promptID: "p", outputExcerpt: "legacy excerpt", tokensPerSecond: nil,
+                    timeToFirstTokenSeconds: nil, error: nil, fullOutput: full)
+            ], aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: error)
+        }
+        let legacy = result("a", full: nil)
+        let empty = result("b", full: "")
+        let pair = try XCTUnwrap(ComparisonDiff.pairs(legacy, empty).first)
+        XCTAssertTrue(pair.leftIsExcerpt)
+        XCTAssertFalse(pair.rightIsExcerpt)
+        XCTAssertEqual(pair.right, "")
+        XCTAssertEqual(ComparisonDiff.output(legacy, promptID: "p")?.text, "legacy excerpt")
+        XCTAssertNil(ComparisonDiff.output(legacy, promptID: "missing"))
+        XCTAssertNil(ComparisonDiff.output(result("c", full: "partial", error: "failed"), promptID: "p"))
+        XCTAssertTrue(ComparisonDiff.pairs(legacy, legacy).isEmpty)
+        let lines = try XCTUnwrap(ComparisonDiff.differences(pair))
+        XCTAssertTrue(lines.contains { $0.kind == .removed && $0.text == "legacy excerpt" })
+        XCTAssertNil(ComparisonDiff.differences(.init(promptID: "p", left: String(repeating: "x", count: 20_001), right: "x")))
+        XCTAssertNil(ComparisonDiff.differences(.init(promptID: "p", left: String(repeating: "line\n", count: 501), right: "x")))
+    }
+
+    func testTextComparisonHandlesDuplicatePromptIDsWithoutCrashing() {
+        let sample = ComparisonSample(promptID: "p", outputExcerpt: "first", tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil, error: nil)
+        func result(_ path: String) -> VariantResult {
+            VariantResult(modelPath: path, modelSignature: nil, samples: [sample, sample],
+                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)
+        }
+        XCTAssertEqual(ComparisonDiff.pairs(result("a"), result("b")).count, 1)
+    }
+
     private var promptSetStoreURL: URL!
     private var runStoreURL: URL!
 

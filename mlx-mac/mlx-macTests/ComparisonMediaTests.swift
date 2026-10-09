@@ -84,6 +84,70 @@ final class ComparisonMediaTests: XCTestCase {
 
     // MARK: Modes
 
+    @MainActor
+    func testTextInspectionModesAndNativeReadingDifferenceLayouts() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("text-output"))
+        for mode in ComparisonMode.allCases {
+            var run = historyRun(mode, mode.title, at: 100, models: ["/model/a", "/model/b"])
+            run.results = ["a", "b"].map { key in
+                VariantResult(modelPath: "/model/\(key)", modelSignature: nil, samples: [
+                    ComparisonSample(promptID: "p", outputExcerpt: "excerpt", tokensPerSecond: nil,
+                        timeToFirstTokenSeconds: nil, error: nil, fullOutput: "Full output \(key)")
+                ], aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)
+            }
+            XCTAssertEqual(ComparisonDiff.isAvailable(run), mode.outputKind == .text)
+            run.state = .running
+            XCTAssertFalse(ComparisonDiff.isAvailable(run))
+            run.state = .completed; run.results.removeLast()
+            XCTAssertFalse(ComparisonDiff.isAvailable(run))
+        }
+
+        for (mode, width, changes) in [(ComparisonMode.vision, 1000.0, false),
+                                      (.speechToText, 760.0, false), (.videoUnderstanding, 1000.0, true), (.chat, 760.0, true)] {
+            var run = historyRun(mode, mode.title, at: 100, models: ["/model/a", "/model/b"])
+            run.promptEntries = [PromptEntry(id: "p", text: "Describe the bird and its surroundings.")]
+            run.results = ["a", "b"].enumerated().map { index, key in
+                let output = index == 0 ? "A red bird rests on a snowy branch.\nIt faces left.\nA pine forest fills the background."
+                    : "A brown bird rests on a snowy branch.\nIt faces left.\nA distant forest fills the background."
+                return VariantResult(modelPath: "/model/\(key)", modelSignature: "recorded", samples: [
+                    ComparisonSample(promptID: "p", outputExcerpt: output, tokensPerSecond: 25,
+                        timeToFirstTokenSeconds: 0.4, error: nil, fullOutput: mode == .chat ? nil : output)
+                ], aggregateTokensPerSecond: 25, aggregateTTFTSeconds: 0.4, error: nil)
+            }
+            run.qualityReviews = ["/model/a": ComparisonQualityReview(score: 5, rubricID: "task-outcome-v1", reviewedAt: Date())]
+            let view = VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                Text("\(mode.title) · Compare text A/B").font(WorkbenchTypography.cardTitle)
+                if !changes {
+                    TextComparisonEditor(run: run, store: store,
+                        name: { $0 == "/model/a" ? "Qwen · 8-bit" : "Qwen · 4-bit" },
+                        onReview: { _, _ in XCTFail("Reading must not write a rating") })
+                } else {
+                    TextComparisonContent(run: run, promptID: "p", leftPath: "/model/a", rightPath: "/model/b",
+                    showChanges: changes, store: store, name: { $0 == "/model/a" ? "Qwen · 8-bit" : "Qwen · 4-bit" },
+                    onReview: { _, _ in XCTFail("Reading outputs must not write quality ratings") })
+                }
+            }
+            .padding(WorkbenchSpacing.pageInset).frame(width: width, height: 600, alignment: .topLeading)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 600),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Text A/B · \(mode.rawValue)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_TEXT_COMPARISON_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("text-\(mode.rawValue).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.root.path))
+    }
+
     func testEachModeNamesTheTaskTypesItAcceptsAndItsMetric() {
         XCTAssertEqual(ComparisonMode.chat.acceptedTaskTypes, [.textLLM, .visionLanguage])
         XCTAssertEqual(ComparisonMode.vision.acceptedTaskTypes, [.visionLanguage])
