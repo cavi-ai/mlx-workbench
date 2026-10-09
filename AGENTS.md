@@ -269,14 +269,20 @@ from `mlx-agent` at runtime.
   `ComparisonRunSetupSheet`, sharing `ComparisonPromptFields` with the regular
   editor. Only completed runs with valid recorded prompt/model identities can
   open it. Snapshots supply the prompts, per-prompt settings, use case and model
-  paths; the current serving limits still apply. Missing external input files
-  are flagged and must be replaced before Use/Save; built-in input IDs stay
-  deferred to the existing Run fixture generator. Save creates an independent
+  paths; the current serving limits still apply. Runs with `inputArtifacts` use
+  only their fenced saved inputs from the injected output store; unavailable
+  copies require explicit replacement before Use/Save, never fallback to original
+  files or fixture regeneration. Legacy runs retain current original paths or
+  deferred built-in generation. Saved built-in speech copies preserve their
+  language hint; replacing the input clears it. Run copies inputs before pruning
+  the ten-run cache so reusing its oldest run does not delete the source first.
+  Save creates an independent
   prompt-set identity through `createPromptSet`; failure retains the draft.
   Use restores a temporary set and model paths without writing or running.
   Missing models remain selected and block Run until replaced/removed. New runs
   capture current signatures and evidence; original results/reviews stay intact.
-  Input paths refer to current files, not archived copies of historical content.
+  Saved prompt sets referencing the output cache require replacement files after
+  those inputs are pruned; saving a set does not extend cache retention.
   Non-music result lanes expose `TaskQualityRating`, a compact menu over the
   existing `task-outcome-v1` human rating scale. Per-mode guidance lives in help
   text; ratings never derive from speed, keywords or word-error rate.

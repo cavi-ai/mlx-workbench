@@ -374,7 +374,6 @@ final class ComparisonCoordinator: ObservableObject {
                 await execute(runID: run.id, variants: variants, promptSet: promptSet, probe: probe, now: now)
             }
         } else if let mediaRunner, let outputStore {
-            pruneOutputs(store: outputStore)
             Task {
                 await executeMedia(
                     runID: run.id, mode: mode, variants: variants, promptSet: promptSet,
@@ -415,6 +414,9 @@ final class ComparisonCoordinator: ObservableObject {
         if setupError == nil, mode.inputKind != nil {
             for entry in promptSet.prompts {
                 progressMessage = "Preparing input for \(entry.id)…"
+                if let builtin = entry.builtinInput {
+                    inputLanguages[entry.id] = ComparisonMediaFixtures.language(ofBuiltinInput: builtin)
+                }
                 if let path = entry.inputPath {
                     do {
                         guard path.hasPrefix("/") else { throw ComparisonOutputStore.InputError.unavailable }
@@ -424,7 +426,7 @@ final class ComparisonCoordinator: ObservableObject {
                     } catch {
                         inputErrors[entry.id] = "Input could not be saved: \(AppHost.render(error))"
                     }
-                } else if let builtin = entry.builtinInput {
+                } else if entry.builtinInput != nil {
                     do {
                         let url = try await generateInput(entry, store.inputsDirectory(runID))
                         guard url.deletingLastPathComponent().standardizedFileURL == store.inputsDirectory(runID).standardizedFileURL,
@@ -437,7 +439,6 @@ final class ComparisonCoordinator: ObservableObject {
                         try FileManager.default.removeItem(at: url)
                         inputs[entry.id] = store.inputArtifactURL(runID: runID, artifact: artifact)
                         inputArtifacts[entry.id] = artifact
-                        inputLanguages[entry.id] = ComparisonMediaFixtures.language(ofBuiltinInput: builtin)
                     } catch {
                         inputErrors[entry.id] = "Input could not be generated: \(AppHost.render(error))"
                     }
@@ -451,6 +452,9 @@ final class ComparisonCoordinator: ObservableObject {
             runs[index].inputArtifacts = inputArtifacts
             persist(runs[index])
         }
+        // Reused inputs can belong to the oldest retained run. Copy them into
+        // this run before pruning their source folder.
+        pruneOutputs(store: store)
 
         for (variantIndex, variant) in variants.enumerated() {
             guard let runIndex = runs.firstIndex(where: { $0.id == runID }) else { return }

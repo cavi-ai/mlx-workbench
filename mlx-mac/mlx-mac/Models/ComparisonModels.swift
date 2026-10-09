@@ -110,6 +110,7 @@ struct ComparisonPromptSetDraft: Identifiable {
     struct Prompt: Identifiable {
         private let original: PromptEntry
         private let initialMedia: MediaParameters?
+        private let savedInput: Bool
         var id: String { original.id }
         var text: String
         var inputPath: String
@@ -124,16 +125,16 @@ struct ComparisonPromptSetDraft: Identifiable {
         var seed: String
         var toolName: String? { original.tool?.name }
         var builtinInput: String? { inputPath == (original.inputPath ?? "") ? original.builtinInput : nil }
+        var usesSavedInput: Bool { savedInput && inputPath == (original.inputPath ?? "") }
         var inputFileUnavailable: Bool {
-            guard !inputPath.isEmpty else { return false }
-            var isDirectory: ObjCBool = false
+            guard !inputPath.isEmpty else { return usesSavedInput }
             return !inputPath.hasPrefix("/") || inputPath.unicodeScalars.contains(where: { $0.value < 32 })
-                || !FileManager.default.fileExists(atPath: inputPath, isDirectory: &isDirectory)
-                || isDirectory.boolValue || !FileManager.default.isReadableFile(atPath: inputPath)
+                || !ComparisonOutputStore.isReadableRegularFile(URL(fileURLWithPath: inputPath))
         }
 
-        init(_ entry: PromptEntry, mode: ComparisonMode) {
+        init(_ entry: PromptEntry, mode: ComparisonMode, savedInput: Bool = false) {
             original = entry
+            self.savedInput = savedInput
             initialMedia = entry.media ?? ComparisonPromptSetDraft.defaultParameters(for: mode)
             text = entry.text; inputPath = entry.inputPath ?? ""
             keywords = entry.expectedKeywords?.joined(separator: ", ") ?? ""
@@ -295,7 +296,7 @@ struct ComparisonRunSetup: Identifiable {
     private let useCase: UseCase?
     var draft: ComparisonPromptSetDraft
 
-    init(run: ComparisonRun) throws {
+    init(run: ComparisonRun, outputStore: ComparisonOutputStore? = nil) throws {
         guard run.state == .completed, run.effectiveMode != .musicGeneration,
               let entries = run.promptEntries, !entries.isEmpty else {
             throw ComparisonPromptSetDraft.InvalidDraft(message: "This run has no recorded setup to reuse.")
@@ -310,7 +311,19 @@ struct ComparisonRunSetup: Identifiable {
         id = run.id; sourceName = run.promptSetName; modelPaths = run.variants; useCase = run.useCase
         draft = ComparisonPromptSetDraft(mode: run.effectiveMode, useCase: run.useCase)
         draft.name = "\(sourceName) · reused"
-        draft.prompts = entries.map { ComparisonPromptSetDraft.Prompt($0, mode: run.effectiveMode) }
+        draft.prompts = entries.map { entry in
+            guard run.effectiveMode.inputKind != nil, let artifacts = run.inputArtifacts else {
+                return ComparisonPromptSetDraft.Prompt(entry, mode: run.effectiveMode)
+            }
+            var copy = entry
+            copy.inputPath = artifacts[entry.id].flatMap {
+                outputStore?.readableInputArtifactURL(runID: run.id, artifact: $0)?.path
+            }
+            // A missing saved input must require a replacement, never regenerate
+            // a fixture or substitute the current original file.
+            if copy.inputPath == nil { copy.builtinInput = nil }
+            return ComparisonPromptSetDraft.Prompt(copy, mode: run.effectiveMode, savedInput: true)
+        }
     }
 
     /// Saving creates an independent identity and leaves the temporary draft intact.

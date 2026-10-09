@@ -1343,6 +1343,134 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(ComparisonViewLogic.videoClips(for: run, store: store, promptID: "motion").isEmpty)
     }
 
+    func testReuseSavedInputsAfterOriginalChangesOrDisappears() throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("saved-reuse"))
+        for mode in [ComparisonMode.vision, .videoUnderstanding, .speechToText] {
+            var run = historyRun(mode, "Saved inputs", at: 100)
+            let original = root.appendingPathComponent("original-\(mode.rawValue).png")
+            try Data("changed original".utf8).write(to: original)
+            try store.createRunDirectory(run.id)
+            let saved = store.inputsDirectory(run.id).appendingPathComponent("saved.png")
+            try Data("recorded input".utf8).write(to: saved)
+            run.promptEntries = [PromptEntry(id: "p", text: "Recorded text", inputKind: mode.inputKind,
+                inputPath: original.path, expectedKeywords: ["recorded"])]
+            run.inputArtifacts = ["p": "saved.png"]
+            let history = run
+            for removeOriginal in [false, true] {
+                if removeOriginal { try FileManager.default.removeItem(at: original) }
+                let setup = try ComparisonRunSetup(run: run, outputStore: store)
+                XCTAssertTrue(setup.draft.prompts[0].usesSavedInput)
+                XCTAssertFalse(setup.draft.prompts[0].inputFileUnavailable)
+                let set = try setup.draft.promptSet()
+                XCTAssertEqual(set.prompts[0].inputPath, saved.path)
+                XCTAssertEqual(try Data(contentsOf: saved), Data("recorded input".utf8))
+                XCTAssertEqual(try setup.savedDraft(named: "Copy").promptSet().prompts, set.prompts)
+                XCTAssertEqual(run, history)
+            }
+        }
+    }
+
+    func testReuseMissingSavedInputsNeverFallsBackAndAcceptsExplicitReplacement() throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("missing-reuse"))
+        var run = historyRun(.vision, "Saved inputs", at: 100)
+        let original = root.appendingPathComponent("available-original.png")
+        try Data("current file".utf8).write(to: original)
+        run.promptEntries = [PromptEntry(id: "p", text: "Describe", inputKind: .image,
+            inputPath: original.path, builtinInput: "red-circle")]
+        try store.createRunDirectory(run.id)
+        let link = store.inputsDirectory(run.id).appendingPathComponent("link.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: original)
+        for artifacts in [[String: String](), ["p": "missing.png"], ["p": "../available-original.png"], ["p": "link.png"]] {
+            run.inputArtifacts = artifacts
+            var setup = try ComparisonRunSetup(run: run, outputStore: store)
+            XCTAssertTrue(setup.draft.prompts[0].usesSavedInput)
+            XCTAssertTrue(setup.draft.prompts[0].inputFileUnavailable)
+            XCTAssertNil(setup.draft.prompts[0].builtinInput)
+            XCTAssertThrowsError(try setup.draft.promptSet())
+            XCTAssertThrowsError(try setup.savedDraft(named: "Copy").promptSet())
+            setup.draft.prompts[0].inputPath = original.path
+            XCTAssertFalse(setup.draft.prompts[0].usesSavedInput)
+            XCTAssertEqual(try setup.draft.promptSet().prompts[0].inputPath, original.path)
+            XCTAssertNil(try setup.draft.promptSet().prompts[0].builtinInput)
+            setup.draft.prompts[0].inputPath = link.path
+            XCTAssertThrowsError(try setup.draft.promptSet(), "A replacement symbolic link cannot be snapshotted")
+        }
+    }
+
+    @MainActor
+    func testReuseOldestRetainedInputCopiesBeforePruningAndPreservesSpeechLanguage() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("retained-reuse"))
+        var run = historyRun(.speechToText, "Recorded speech", at: 100)
+        let entry = ComparisonMediaFixtures.speechToTextSet.prompts[0]
+        run.promptEntries = [entry]
+        try store.createRunDirectory(run.id)
+        let saved = store.inputsDirectory(run.id).appendingPathComponent("saved.wav")
+        let contents = Data("saved speech fixture".utf8)
+        try contents.write(to: saved)
+        run.inputArtifacts = [entry.id: "saved.wav"]
+        var history = [run]
+        for index in 1..<ComparisonOutputStore.retainedRuns {
+            let newer = historyRun(.speechToText, "Newer \(index)", at: 100 + Double(index))
+            try store.createRunDirectory(newer.id)
+            history.append(newer)
+        }
+        try JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json")).replaceAll(history)
+        let runner = StubMediaRunner()
+        let coordinator = makeCoordinator(runner: runner, store: store)
+        let setup = try ComparisonRunSetup(run: run, outputStore: store)
+        let set = try setup.draft.promptSet()
+        XCTAssertEqual(set.prompts[0].inputPath, saved.path)
+        coordinator.start(variants: [("/speech/a", "current")], promptSet: set)
+        await waitForRun(coordinator)
+        let requests = await runner.requests
+        let request = try XCTUnwrap(requests.first)
+        let input = try XCTUnwrap(request.inputURL)
+        XCTAssertNotEqual(input, saved)
+        XCTAssertEqual(try Data(contentsOf: input), contents)
+        XCTAssertEqual(request.language, SpeechCanary.language)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.runDirectory(run.id).path))
+        XCTAssertEqual(coordinator.runs.first { $0.id == run.id }, run)
+        let next = try XCTUnwrap(coordinator.runs.first)
+        XCTAssertEqual(next.state, .completed)
+        XCTAssertNotNil(next.inputArtifacts?[entry.id])
+        let directories = try FileManager.default.contentsOfDirectory(atPath: store.root.path)
+        XCTAssertEqual(directories.count, ComparisonOutputStore.retainedRuns)
+    }
+
+    @MainActor
+    func testReuseSheetLabelsSavedAndPrunedInputs() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("reuse-proof"))
+        var run = historyRun(.vision, "Bird descriptions · fixture", at: 100, models: ["/vision/a"])
+        try store.createRunDirectory(run.id)
+        let saved = store.inputsDirectory(run.id).appendingPathComponent("bird.png")
+        try Data("input fixture".utf8).write(to: saved)
+        run.promptEntries = [PromptEntry(id: "p", text: "Describe the bird and its surroundings", inputKind: .image,
+            inputPath: root.appendingPathComponent("gone.png").path, expectedKeywords: ["bird", "snow"])]
+        run.inputArtifacts = ["p": "bird.png"]
+        for label in ["saved", "pruned"] {
+            if label == "pruned" { try FileManager.default.removeItem(at: saved) }
+            let sheet = ComparisonRunSetupSheet(setup: try ComparisonRunSetup(run: run, outputStore: store),
+                availablePaths: ["/vision/a"], name: { _ in "Vision model · fixture" },
+                onApply: { _, _ in XCTFail("Rendering must not apply or run"); return nil },
+                onSave: { _ in XCTFail("Rendering must not save"); return nil })
+            let host = NSHostingView(rootView: sheet.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 720),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Reuse \(label) input"; attachment.lifetime = .keepAlways; add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_REUSE_SETUP_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("reuse-input-\(label).png"))
+            }
+            window.close()
+        }
+    }
+
     func testReuseOtherModesPreservesRecordedPromptsAndCreatesIndependentCopies() throws {
         let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
         let input = root.appendingPathComponent("reference.png")
