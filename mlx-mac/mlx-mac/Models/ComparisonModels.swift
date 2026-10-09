@@ -99,6 +99,119 @@ struct PromptSet: Codable, Equatable, Identifiable, Sendable {
     var effectiveMode: ComparisonMode { mode ?? .chat }
 }
 
+/// An editable, temporary copy of recorded music inputs. Never writes a preset
+/// or carries results, reviews or old model signatures into the next run.
+struct MusicComparisonSetup: Identifiable {
+    struct InvalidSetup: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    struct Prompt: Identifiable {
+        private let original: PromptEntry
+        var id: String { original.id }
+        var caption: String
+        var lyrics: String
+        var duration: String
+        var steps: String
+        var seed: String
+
+        init(_ entry: PromptEntry) {
+            original = entry
+            caption = entry.text
+            lyrics = entry.media?.lyrics ?? ""
+            duration = entry.media?.durationSeconds.map { String($0) } ?? ""
+            steps = entry.media?.steps.map { String($0) } ?? ""
+            seed = entry.media?.seed.map { String($0) } ?? ""
+        }
+
+        func entry() throws -> PromptEntry {
+            func validateText(_ text: String, name: String, limit: Int) throws {
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      text.unicodeScalars.count <= limit,
+                      !text.unicodeScalars.contains(where: { $0.value < 32 && $0 != "\n" && $0 != "\t" }) else {
+                    throw InvalidSetup(message: "\(name) must contain text, at most \(limit) characters, without control characters.")
+                }
+            }
+            func integer(_ text: String, name: String, range: ClosedRange<Int>) throws -> Int? {
+                let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if value.isEmpty { return nil }
+                guard let number = Int(value), range.contains(number) else {
+                    throw InvalidSetup(message: "\(name) must be a whole number from \(range.lowerBound) to \(range.upperBound).")
+                }
+                return number
+            }
+            try validateText(caption, name: "Caption", limit: 2000)
+            let lyricsValue: String? = lyrics.isEmpty ? nil : lyrics
+            if lyrics.isEmpty, original.media?.lyrics == "" {
+                throw InvalidSetup(message: "Recorded lyrics are empty. Enter lyrics or [instrumental] before using this setup.")
+            }
+            try validateText(lyricsValue ?? "[instrumental]", name: "Lyrics", limit: 10000)
+            let durationText = duration.trimmingCharacters(in: .whitespacesAndNewlines)
+            let durationValue: Double?
+            if durationText.isEmpty { durationValue = nil }
+            else {
+                guard let number = Double(durationText), number.isFinite, number > 0, number <= 360 else {
+                    throw InvalidSetup(message: "Duration must be greater than 0 and at most 360 seconds.")
+                }
+                durationValue = number
+            }
+            let stepsValue = try integer(steps, name: "Steps", range: 1...30)
+            let seedValue = try integer(seed, name: "Seed", range: 0...4_294_967_295)
+            var copy = original
+            copy.text = caption
+            // Preserve optional fields exactly when untouched, including a nil
+            // media object and any fields this editor does not manage.
+            if lyrics != (original.media?.lyrics ?? "") || duration != (original.media?.durationSeconds.map { String($0) } ?? "")
+                || steps != (original.media?.steps.map { String($0) } ?? "") || seed != (original.media?.seed.map { String($0) } ?? "") {
+                var media = original.media ?? MediaParameters()
+                media.lyrics = lyricsValue
+                media.durationSeconds = durationValue
+                media.steps = stepsValue
+                media.seed = seedValue
+                copy.media = media
+            }
+            return copy
+        }
+    }
+
+    let id: UUID
+    let sourceName: String
+    let modelPaths: [String]
+    var prompts: [Prompt]
+
+    init(run: ComparisonRun) throws {
+        guard run.state == .completed, run.effectiveMode == .musicGeneration,
+              let entries = run.promptEntries, !entries.isEmpty else {
+            throw InvalidSetup(message: "This run has no recorded music setup to reuse.")
+        }
+        guard !run.variants.isEmpty, run.variants.count <= 4,
+              !run.variants.contains(where: { $0.isEmpty }), Set(run.variants).count == run.variants.count,
+              !entries.contains(where: { $0.id.isEmpty }), Set(entries.map(\.id)).count == entries.count else {
+            throw InvalidSetup(message: "This recorded setup contains invalid model or prompt selections.")
+        }
+        id = run.id
+        sourceName = run.promptSetName
+        modelPaths = run.variants
+        prompts = entries.map(Prompt.init)
+    }
+
+    var validationError: String? {
+        do { _ = try validatedPrompts(); return nil }
+        catch { return error.localizedDescription }
+    }
+
+    private func validatedPrompts() throws -> [PromptEntry] {
+        guard !prompts.isEmpty else { throw InvalidSetup(message: "At least one prompt is required.") }
+        return try prompts.map { try $0.entry() }
+    }
+
+    func promptSet() throws -> PromptSet {
+        PromptSet(id: UUID().uuidString, name: "\(sourceName) · reused", useCase: nil,
+                  prompts: try validatedPrompts(), origin: .userCreated, mode: .musicGeneration)
+    }
+}
+
 /// Small built-in starter sets per use case. Versioned content: changing a
 /// prompt's text changes its id's meaning, so edits bump the entry id suffix.
 enum BuiltinPromptSets {

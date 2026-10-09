@@ -40,6 +40,15 @@ final class CompareRemodelTests: XCTestCase {
 
     // MARK: Lane states
 
+    func testUnavailableReusedModelsBlockRunningUntilExplicitlyReplacedOrRemoved() {
+        let slots: [String?] = ["/a", "/missing"]
+        let available: Set<String> = ["/a", "/b"]
+        XCTAssertFalse(ComparePresentation.canRun(slots: slots, activeRunID: nil, availablePaths: available))
+        XCTAssertTrue(ComparePresentation.canRun(slots: ["/a", "/b"], activeRunID: nil, availablePaths: available))
+        XCTAssertTrue(ComparePresentation.canRun(slots: ["/a", nil], activeRunID: nil, availablePaths: available))
+        XCTAssertFalse(ComparePresentation.canRun(slots: ["/a", "/b"], activeRunID: UUID(), availablePaths: available))
+    }
+
     func testSixLaneStates() {
         let variants = ["/a", "/b", "/c", "/d"]
         let running = run(.chat, variants: variants, results: [result("/a", tps: 40)], state: .running)

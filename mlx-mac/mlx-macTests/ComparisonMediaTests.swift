@@ -234,6 +234,63 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertNil(sample.keywordsMatched)
     }
 
+    func testReuseMusicSetupUsesRecordedPromptsAndPreservesOptionalParameters() throws {
+        let prompts = [PromptEntry(id: "one", text: "  jazz-funk instrumental\n", maxTokens: 77,
+                                  media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]")),
+                       PromptEntry(id: "two", text: "Acoustic guitar", media: nil)]
+        var run = historyRun(.musicGeneration, "Saved music", at: 10, models: ["/a", "/b"])
+        run.promptEntries = prompts
+        let setup = try MusicComparisonSetup(run: run)
+        let prepared = try setup.promptSet()
+        XCTAssertEqual(prepared.prompts, prompts, "reuse must not substitute the current preset or invented defaults")
+        XCTAssertEqual(prepared.effectiveMode, .musicGeneration)
+        XCTAssertNotEqual(prepared.id, run.promptSetID)
+        XCTAssertEqual(setup.modelPaths, ["/a", "/b"])
+        XCTAssertEqual(setup.id, run.id)
+        XCTAssertEqual(run.promptEntries, prompts)
+    }
+
+    func testReuseMusicSetupEditsEachPromptWithoutChangingItsPeers() throws {
+        var run = historyRun(.musicGeneration, "Saved music", at: 10)
+        run.promptEntries = [PromptEntry(id: "a", text: "Jazz", media: MediaParameters(steps: 12, seed: 7, durationSeconds: 20, lyrics: "[instrumental]")),
+                             PromptEntry(id: "b", text: "Piano", media: MediaParameters(steps: 8, seed: 0, durationSeconds: 9, lyrics: "[verse]\nA new day"))]
+        var setup = try MusicComparisonSetup(run: run)
+        setup.prompts[0].caption = "Funk"
+        setup.prompts[0].duration = "15.5"
+        setup.prompts[0].steps = "6"
+        setup.prompts[0].seed = "4294967295"
+        let prepared = try setup.promptSet()
+        XCTAssertEqual(prepared.prompts[0].text, "Funk")
+        XCTAssertEqual(prepared.prompts[0].media, MediaParameters(steps: 6, seed: 4_294_967_295, durationSeconds: 15.5, lyrics: "[instrumental]"))
+        XCTAssertEqual(prepared.prompts[1], run.promptEntries?[1])
+        XCTAssertEqual(run.promptEntries?.first?.text, "Jazz")
+    }
+
+    func testReuseRefusesMissingSnapshotsAndInvalidMusicArguments() throws {
+        var run = historyRun(.musicGeneration, "Legacy", at: 10)
+        XCTAssertThrowsError(try MusicComparisonSetup(run: run))
+        run.promptEntries = []
+        XCTAssertThrowsError(try MusicComparisonSetup(run: run))
+        run.promptEntries = [PromptEntry(id: "p", text: "Piano")]
+        for value in ["NaN", "infinity", "0", "361", "garbage"] {
+            var setup = try MusicComparisonSetup(run: run)
+            setup.prompts[0].duration = value
+            XCTAssertThrowsError(try setup.promptSet(), value)
+        }
+        for value in ["0", "31", "2.5"] {
+            var setup = try MusicComparisonSetup(run: run)
+            setup.prompts[0].steps = value
+            XCTAssertThrowsError(try setup.promptSet(), value)
+        }
+        for value in ["-1", "4294967296", "garbage"] {
+            var setup = try MusicComparisonSetup(run: run)
+            setup.prompts[0].seed = value
+            XCTAssertThrowsError(try setup.promptSet(), value)
+        }
+        run.mode = .chat
+        XCTAssertThrowsError(try MusicComparisonSetup(run: run))
+    }
+
     private func historyRun(_ mode: ComparisonMode, _ title: String, at time: TimeInterval, models: [String] = ["/model"]) -> ComparisonRun {
         ComparisonRun(id: UUID(), promptSetID: "set", promptSetName: title, useCase: nil, variants: models, results: [],
                       startedAt: Date(timeIntervalSince1970: time), finishedAt: nil, state: .completed, mode: mode)
@@ -626,6 +683,92 @@ final class ComparisonMediaTests: XCTestCase {
         try FileManager.default.removeItem(at: clips[0].url)
         XCTAssertEqual(ComparisonViewLogic.audioClips(for: run, store: store).map(\.modelPath), ["/model/1"])
         XCTAssertTrue(ComparisonViewLogic.audioClips(for: run, store: store, promptID: "missing").isEmpty)
+    }
+
+    func testReuseValidatesTextAndCanClearExplicitParametersToDefaults() throws {
+        var run = historyRun(.musicGeneration, "Saved music", at: 100)
+        run.promptEntries = [PromptEntry(id: "p", text: "Piano", media:
+            MediaParameters(size: 512, steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))]
+        var setup = try MusicComparisonSetup(run: run)
+        setup.prompts[0].duration = ""; setup.prompts[0].steps = ""
+        setup.prompts[0].seed = ""; setup.prompts[0].lyrics = ""
+        let cleared = try setup.promptSet().prompts[0]
+        XCTAssertEqual(cleared.media, MediaParameters(size: 512), "Unedited media fields must survive")
+        for caption in ["   ", "Piano\u{0}", String(repeating: "🎹", count: 2001)] {
+            setup.prompts[0].caption = caption
+            XCTAssertThrowsError(try setup.promptSet())
+        }
+        setup.prompts[0].caption = String(repeating: "🎹", count: 2000)
+        XCTAssertNoThrow(try setup.promptSet())
+        for lyrics in ["  ", "Song\u{1}", String(repeating: "a", count: 10001)] {
+            setup.prompts[0].lyrics = lyrics
+            XCTAssertThrowsError(try setup.promptSet())
+        }
+        run.promptEntries?[0].media?.lyrics = ""
+        XCTAssertNotNil(try MusicComparisonSetup(run: run).validationError)
+        run = historyRun(.musicGeneration, "Duplicate models", at: 100, models: ["/model", "/model"])
+        run.promptEntries = [PromptEntry(id: "p", text: "Piano")]
+        XCTAssertThrowsError(try MusicComparisonSetup(run: run))
+    }
+
+    @MainActor
+    func testReusedMusicSetupStartsFreshRunWithoutMutatingSavedInputsOrReviews() async throws {
+        let runner = StubMediaRunner(), runsURL = root.appendingPathComponent("reuse-runs.json")
+        let coordinator = makeCoordinator(runner: runner, runsURL: runsURL)
+        var set = promptSet(for: .musicGeneration)
+        set.origin = .userCreated
+        set.prompts = [PromptEntry(id: "recorded", text: "Instrumental jazz-funk",
+            media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))]
+        coordinator.savePromptSet(set)
+        coordinator.start(variants: [("/music/a", nil)], promptSet: set)
+        await waitForRun(coordinator)
+        let originalID = try XCTUnwrap(coordinator.runs.first?.id)
+        coordinator.reviewQuality(runID: originalID, modelPath: "/music/a", score: 4)
+        let original = try XCTUnwrap(coordinator.runs.first)
+        var setup = try MusicComparisonSetup(run: original)
+        setup.prompts[0].duration = "20"
+        let prepared = try setup.promptSet()
+        let presetsBefore = try Data(contentsOf: root.appendingPathComponent("sets.json"))
+        coordinator.start(variants: [("/music/a", nil)], promptSet: prepared)
+        await waitForRun(coordinator)
+        let newRun = try XCTUnwrap(coordinator.runs.first { $0.id != originalID })
+        XCTAssertEqual(newRun.state, .completed)
+        XCTAssertEqual(newRun.promptEntries, prepared.prompts)
+        XCTAssertTrue(newRun.qualityReviews?.isEmpty ?? true)
+        XCTAssertEqual(coordinator.runs.first { $0.id == originalID }, original)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("sets.json")), presetsBefore)
+        let requests = await runner.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests.last?.entry, prepared.prompts.first)
+        XCTAssertEqual(requests.last?.entry.media?.durationSeconds, 20)
+        XCTAssertEqual(requests.last?.entry.media?.seed, 7)
+        XCTAssertEqual(requests.last?.entry.media?.steps, 12)
+        XCTAssertEqual(requests.last?.modelPath, "/music/a")
+        XCTAssertEqual(try JSONStore<ComparisonRun>(fileURL: runsURL).load().count, 2)
+    }
+
+    @MainActor
+    func testReuseMusicSheetRendersRecordedFieldsAndUnavailableModel() async throws {
+        var run = historyRun(.musicGeneration, "Instrumental comparison", at: 100, models: ["/music/8bit", "/music/4bit"])
+        run.promptEntries = [PromptEntry(id: "recorded", text: "Instrumental jazz-funk with Rhodes, bass and drums",
+            media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))]
+        let view = MusicComparisonSetupSheet(setup: try MusicComparisonSetup(run: run), availablePaths: ["/music/8bit"],
+            name: { $0 == "/music/8bit" ? "Music model · 8-bit" : "Music model · 4-bit" },
+            onApply: { _, _ in XCTFail("Rendering must not apply or generate") })
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 590),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "Reuse music setup"; attachment.lifetime = .keepAlways; add(attachment)
+        if let path = ProcessInfo.processInfo.environment["MLX_REUSE_PROOF_PATH"] { try png.write(to: URL(fileURLWithPath: path)) }
     }
 
     @MainActor

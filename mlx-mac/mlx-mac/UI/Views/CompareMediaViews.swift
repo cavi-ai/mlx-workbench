@@ -1051,6 +1051,96 @@ struct MediaPromptSetEditor: View {
     }
 }
 
+// MARK: - Reuse recorded music inputs
+
+struct MusicComparisonSetupSheet: View {
+    @State var setup: MusicComparisonSetup
+    let availablePaths: Set<String>
+    let name: (String) -> String
+    let onApply: (MusicComparisonSetup, PromptSet) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var applyError: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Image(systemName: "arrow.counterclockwise.circle.fill")
+                    .font(WorkbenchTypography.title).foregroundStyle(WorkbenchColor.accent)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Text("Reuse music setup").font(WorkbenchTypography.cardTitle)
+                    Text(setup.sourceName).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                ForEach(Array(setup.modelPaths.enumerated()), id: \.offset) { index, path in
+                    HStack(spacing: WorkbenchSpacing.xs) {
+                        LetterChip(letter: ComparePresentation.letter(index))
+                        Text(name(path)).font(WorkbenchTypography.label).lineLimit(1).truncationMode(.middle)
+                        if !availablePaths.contains(path) {
+                            Label("Unavailable", systemImage: "exclamationmark.triangle")
+                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+                        }
+                    }.help(path)
+                }
+                if setup.modelPaths.contains(where: { !availablePaths.contains($0) }) {
+                    Text("Replace or remove unavailable models in Compare before running.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+                }
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    ForEach(Array(setup.prompts.indices), id: \.self) { index in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                            Text("PROMPT \(index + 1)").font(WorkbenchTypography.metadata.weight(.semibold))
+                                .foregroundStyle(WorkbenchColor.accent)
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                                Text("Caption").font(WorkbenchTypography.label)
+                                TextField("Describe the music", text: $setup.prompts[index].caption, axis: .vertical)
+                                    .lineLimit(2...5).accessibilityLabel("Prompt \(index + 1) caption")
+                            }
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                                Text("Lyrics").font(WorkbenchTypography.label)
+                                TextField("Default: [instrumental]", text: $setup.prompts[index].lyrics, axis: .vertical)
+                                    .lineLimit(2...6).accessibilityLabel("Prompt \(index + 1) lyrics")
+                            }
+                            HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
+                                parameter("Duration · seconds", defaultValue: "Default: 15", value: $setup.prompts[index].duration)
+                                parameter("Steps", defaultValue: "Default: 30", value: $setup.prompts[index].steps)
+                                parameter("Seed", defaultValue: "Default: 42", value: $setup.prompts[index].seed)
+                            }
+                        }
+                        .padding(WorkbenchSpacing.md)
+                        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                    }
+                }
+            }.frame(maxHeight: 390)
+            Text("Temporary inputs for a new run. Blank settings use the current defaults. Saved results and listening ratings stay with the original run.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            ErrorBanner(text: applyError ?? setup.validationError)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Use setup") {
+                    do { onApply(setup, try setup.promptSet()); dismiss() }
+                    catch { applyError = error.localizedDescription }
+                }
+                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
+                .keyboardShortcut(.defaultAction).disabled(setup.validationError != nil)
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(width: 620)
+    }
+
+    private func parameter(_ title: String, defaultValue: String, value: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text(title).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            TextField(defaultValue, text: value).accessibilityLabel(title)
+        }.frame(maxWidth: .infinity)
+    }
+}
+
 // MARK: - Run history
 
 enum ComparisonHistoryLogic {

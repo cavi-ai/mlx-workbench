@@ -178,6 +178,12 @@ from `mlx-agent` at runtime.
   require a complete, current cohort with every model reviewed under that rubric.
   Run history uses a searchable popover grouped by mode, newest
   first within each group; selecting a row keeps the existing results behavior.
+  Completed music runs with prompt snapshots offer **Reuse setup** beside history.
+  `MusicComparisonSetup` copies recorded inputs into a temporary per-prompt editor;
+  applying it never writes a preset or starts generation. The existing Run button
+  starts fresh results with current model signatures and no copied quality reviews.
+  Missing recorded models stay selected and block Run until explicitly replaced
+  or removed; inventory refreshes must not silently clear a reused cohort.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.
