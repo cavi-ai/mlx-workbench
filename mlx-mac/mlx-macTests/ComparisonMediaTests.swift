@@ -762,6 +762,153 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(run.qualityReviews?["/speech/a"]?.rubricID, ComparisonQualityReview.taskOutcomeRubric)
     }
 
+    func testLinkedImageViewportFitsPansClampsAndResetsAcrossAspectRatios() {
+        let canvas = CGSize(width: 400, height: 400)
+        let landscape = CGSize(width: 800, height: 400)
+        let portrait = CGSize(width: 400, height: 800)
+        var viewport = ImageInspectionViewport()
+        XCTAssertEqual(viewport.fittedSize(image: landscape, canvas: canvas), CGSize(width: 400, height: 200))
+        XCTAssertEqual(viewport.offset(image: landscape, canvas: canvas), .zero)
+        viewport.setZoom(2)
+        viewport.pan(by: CGSize(width: 80, height: 60), image: landscape, canvas: canvas)
+        XCTAssertEqual(viewport.offset(image: landscape, canvas: canvas), CGSize(width: 80, height: 0))
+        XCTAssertEqual(viewport.offset(image: portrait, canvas: canvas), .zero,
+                       "The linked normalized position must clamp to each image's visible bounds")
+        viewport.setZoom(4)
+        viewport.pan(by: CGSize(width: 10_000, height: -10_000), image: landscape, canvas: canvas)
+        XCTAssertEqual(viewport.offset(image: landscape, canvas: canvas), CGSize(width: 600, height: -200))
+        XCTAssertEqual(viewport.offset(image: portrait, canvas: canvas), CGSize(width: 200, height: -400))
+        viewport.setZoom(.infinity)
+        XCTAssertEqual(viewport.zoom, 4)
+        viewport.setZoom(100)
+        XCTAssertEqual(viewport.zoom, 8)
+        viewport.reset()
+        XCTAssertEqual(viewport.zoom, 1)
+        XCTAssertEqual(viewport.center, .zero)
+        XCTAssertEqual(viewport.fittedSize(image: .zero, canvas: canvas), .zero)
+        XCTAssertEqual(viewport.offset(image: landscape, canvas: .zero), .zero)
+    }
+
+    @MainActor
+    func testImageInspectionPairsOnlyAvailableOutputsFromTheSelectedPrompt() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("image-inspection"))
+        var run = historyRun(.imageGeneration, "Images", at: 100, models: ["/a", "/b"])
+        let directory = try store.createRunDirectory(run.id)
+        let fixture = try await ComparisonMediaFixtures.generateInput(
+            for: PromptEntry(id: "fixture", text: "", builtinInput: "red-circle"), into: directory)
+        try FileManager.default.copyItem(at: fixture, to: directory.appendingPathComponent("a.png"))
+        run.results = ["/a", "/b"].map { path in
+            VariantResult(modelPath: path, modelSignature: nil, samples: [
+                ComparisonSample(promptID: "first", outputExcerpt: "", tokensPerSecond: nil, timeToFirstTokenSeconds: nil,
+                                 error: nil, artifact: path == "/a" ? "a.png" : "pruned.png"),
+                ComparisonSample(promptID: "second", outputExcerpt: "", tokensPerSecond: nil, timeToFirstTokenSeconds: nil,
+                                 error: nil, artifact: "a.png")],
+                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)
+        }
+        XCTAssertTrue(ComparisonViewLogic.showsImageInspection(run))
+        XCTAssertEqual(ComparisonViewLogic.imageClips(for: run, store: store, promptID: "first").map(\.modelPath), ["/a"])
+        XCTAssertEqual(ComparisonViewLogic.imageClips(for: run, store: store, promptID: "second").count, 2)
+        XCTAssertTrue(ComparisonViewLogic.imageClips(for: run, store: store, promptID: "absent").isEmpty)
+        run.state = .running
+        XCTAssertFalse(ComparisonViewLogic.showsImageInspection(run))
+        run.state = .completed; run.mode = .textToSpeech
+        XCTAssertFalse(ComparisonViewLogic.showsImageInspection(run))
+        XCTAssertTrue(ComparisonViewLogic.imageClips(for: run, store: store, promptID: "second").isEmpty)
+    }
+
+    @MainActor
+    func testImageComparisonViewerRendersAndNativeZoomControlsDoNotWriteRatings() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("image-viewer-proof"))
+        var run = historyRun(.imageGeneration, "Shapes", at: 100, models: ["/image/a", "/image/b"])
+        run.promptEntries = [PromptEntry(id: "shapes", text: "Simple geometric shapes on a white background")]
+        let directory = try store.createRunDirectory(run.id)
+        for (index, builtin) in ["red-circle", "blue-squares"].enumerated() {
+            let output = try await ComparisonMediaFixtures.generateInput(
+                for: PromptEntry(id: "image-\(index)", text: "", builtinInput: builtin), into: directory)
+            run.results.append(VariantResult(modelPath: index == 0 ? "/image/a" : "/image/b", modelSignature: nil,
+                samples: [ComparisonSample(promptID: "shapes", outputExcerpt: "", tokensPerSecond: nil,
+                    timeToFirstTokenSeconds: nil, error: nil, artifact: output.lastPathComponent)],
+                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil))
+        }
+        run.qualityReviews = ["/image/b": ComparisonQualityReview(score: 4, rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: Date())]
+        for size in [CGSize(width: 1000, height: 720), CGSize(width: 760, height: 620)] {
+            let content = ImageComparisonSheet(run: run, store: store,
+                selection: ImageInspectionSelection(promptID: "shapes", modelPath: "/image/b"),
+                name: { $0 == "/image/a" ? "Shape model A · 8-bit" : "Shape model B · 4-bit" },
+                onReview: { _, _ in XCTFail("Inspection and zoom must not write ratings") })
+                .frame(width: size.width, height: size.height).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(400))
+            host.layoutSubtreeIfNeeded()
+            let initialBitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: initialBitmap)
+            if let path = ProcessInfo.processInfo.environment["MLX_IMAGE_INSPECTION_PROOF_DIR"] {
+                let output = URL(fileURLWithPath: path)
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                try XCTUnwrap(initialBitmap.representation(using: .png, properties: [:]))
+                    .write(to: output.appendingPathComponent("image-inspection-\(Int(size.width)).png"))
+            }
+            func panePixels() throws -> [Data] {
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let image = try XCTUnwrap(bitmap.cgImage)
+                let scale = CGFloat(image.width) / size.width
+                return try [CGFloat(34), size.width / 2 + 18].map { x in
+                    let rect = CGRect(x: x * scale, y: 180 * scale,
+                                      width: (size.width / 2 - 60) * scale, height: 360 * scale)
+                    let pane = try XCTUnwrap(image.cropping(to: rect))
+                    return try XCTUnwrap(NSBitmapImageRep(cgImage: pane).representation(using: .png, properties: [:]))
+                }
+            }
+            func click(_ point: NSPoint) throws {
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                    window.sendEvent(event)
+                }
+            }
+            if size.width == 1000 {
+                // Native pointer events hit the fixed-viewport toolbar, then compare image-only regions.
+                let fitted = try panePixels()
+                try click(NSPoint(x: 443, y: 34))
+                try await Task.sleep(for: .milliseconds(200))
+                let zoomed = try panePixels()
+                XCTAssertNotEqual(fitted[0], zoomed[0], "Zoom must change A's rendered image")
+                XCTAssertNotEqual(fitted[1], zoomed[1], "The same zoom action must change B's rendered image")
+                try click(NSPoint(x: 250, y: 330))
+                try await Task.sleep(for: .milliseconds(100))
+                let arrow = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                    modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, characters: "\u{F703}",
+                    charactersIgnoringModifiers: "\u{F703}", isARepeat: false, keyCode: 124))
+                window.sendEvent(arrow)
+                try await Task.sleep(for: .milliseconds(200))
+                let panned = try panePixels()
+                XCTAssertNotEqual(zoomed[0], panned[0], "Arrow keys in A must pan A")
+                XCTAssertNotEqual(zoomed[1], panned[1], "Arrow keys in A must also pan B")
+                try click(NSPoint(x: 556, y: 34))
+                try await Task.sleep(for: .milliseconds(200))
+                XCTAssertEqual(try panePixels(), fitted, "Reset must return both panes to fit")
+            }
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Image comparison \(Int(size.width))"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_IMAGE_INSPECTION_PROOF_DIR"] {
+                let output = URL(fileURLWithPath: path)
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                try png.write(to: output.appendingPathComponent("image-inspection-\(Int(size.width)).png"))
+            }
+        }
+    }
+
     func testReuseOtherModesPreservesRecordedPromptsAndCreatesIndependentCopies() throws {
         let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
         let input = root.appendingPathComponent("reference.png")
