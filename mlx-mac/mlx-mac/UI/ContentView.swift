@@ -182,9 +182,9 @@ struct ContentView: View {
         return HFRepoID.forPath(path) ?? URL(fileURLWithPath: path).lastPathComponent
     }
 
-    /// Prepare shows the workflow state on the page; the toolbar badge would repeat it.
+    /// Prepare and Activity show the workflow state on the page; the toolbar badge would repeat it.
     static func showsWorkflowBadge(route: AppRoute, state: ConversionWorkflowState) -> Bool {
-        state != .idle && route != .prepare
+        state != .idle && route != .prepare && route != .activity
     }
 
     /// Lifecycle and endpoint state ride in the toolbar only while they carry

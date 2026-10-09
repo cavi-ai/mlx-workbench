@@ -36,8 +36,8 @@ from `mlx-agent` at runtime.
   A fixture change must keep both suites green; see `tests/fixtures/README.md`.
 - The web UI's durable convert queue (`convert-queue.json`, schema 1.1) has
   exactly one writer: the web server. The native app reads it read-only via
-  `Services/WebConvertQueue.swift` and shows it in Jobs as "Web Queue" with
-  provenance; schema and path resolution mirror
+  `Services/WebConvertQueue.swift` and shows it in Activity as "Web Queue" with
+  provenance, only when it holds items or a problem; schema and path resolution mirror
   `mlx_workbench/convert_queue.py` and are pinned by shared fixtures. Never
   write to that file from the native app.
 - `tests/` contains unit and release-doc coverage.

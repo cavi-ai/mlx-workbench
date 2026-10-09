@@ -138,37 +138,6 @@ struct CompareContentWidthKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
-/// A failure as one tinted line (the error's first line, two lines at most); the full text opens in a popover.
-/// Lane headers and result cells both render failures through this view.
-struct FailureNotice: View {
-    let error: String
-    @State private var showsDetails = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            Label(ComparePresentation.firstLine(of: error), systemImage: "exclamationmark.triangle.fill")
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.failure)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Details") { showsDetails = true }
-                .buttonStyle(.borderless)
-                .font(WorkbenchTypography.secondary)
-                .popover(isPresented: $showsDetails) {
-                    ScrollView {
-                        Text(error)
-                            .font(WorkbenchTypography.secondary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(WorkbenchSize.Compare.cellInset)
-                    }
-                    .frame(width: WorkbenchSize.Compare.detailsPopoverWidth)
-                    .frame(maxHeight: WorkbenchSize.Compare.detailsPopoverWidth)
-                }
-        }
-    }
-}
-
 /// Model output clamped to a line limit; a longer answer offers its full selectable text in a popover.
 private struct OutputExcerpt: View {
     let text: String

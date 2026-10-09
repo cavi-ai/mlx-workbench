@@ -349,10 +349,14 @@ enum VerificationOutcome: Codable, Equatable, Sendable {
     case error(message: String)
     case keptDespiteFailure
 
+    /// The workflow message a passing verification records: the lead, then `summary`.
+    static let passedLead = "Verification passed."
+    static let passedSummary = "All canaries passed."
+
     var summary: String {
         switch self {
         case .passed:
-            return "All canaries passed."
+            return Self.passedSummary
         case .failed(let canaryIDs):
             return "Failed canaries: \(canaryIDs.joined(separator: ", "))."
         case .error(let message):

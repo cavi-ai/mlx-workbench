@@ -197,7 +197,7 @@ extension WorkbenchSize {
         static let inputThumbnail: CGFloat = 96
         /// Lines of model output a result cell shows before truncating.
         static let textCellLineLimit = 8
-        static let detailsPopoverWidth: CGFloat = 360
+        static let detailsPopoverWidth = WorkbenchSize.detailsPopoverWidth
         static let tileMinimum: CGFloat = 220
         static let tileMaximum: CGFloat = 360
         static let tileSpacing: CGFloat = 12
@@ -208,6 +208,40 @@ extension WorkbenchSize {
         static let musicPromptEditorHeight: CGFloat = 390
         static let filterPopoverWidth: CGFloat = 340
         static let emptyMinimumHeight: CGFloat = 200
+    }
+}
+
+extension WorkbenchSize {
+    /// Width of a details popover that holds a full failure text.
+    static let detailsPopoverWidth: CGFloat = 360
+
+    /// Activity route dimensions. Row widths are the width inside a row
+    /// (page content minus `rowChrome`), derived from the width the page is offered.
+    enum Activity {
+        static let rowChrome: CGFloat = 32
+        /// The narrowest row that fits every wide header column and its gaps.
+        static let rowThreshold: CGFloat = stateWord + trackWidth + nameMinimum + timeColumn + actionColumn + WorkbenchSpacing.sm * 4
+        static let stateWord: CGFloat = 88
+        static let trackWidth: CGFloat = 120
+        static let nameMinimum: CGFloat = 200
+        static let timeColumn: CGFloat = 96
+        static let overflow: CGFloat = 28
+        /// Horizontal padding of a small bordered button around its title.
+        static let smallButtonChrome: CGFloat = 24
+        /// The widest primary action ("Keep anyway (unverified)"), the gap and the overflow menu.
+        static let actionColumn: CGFloat = ceil(
+            NSAttributedString(
+                string: "Keep anyway (unverified)",
+                attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .small))]
+            ).size().width
+        ) + smallButtonChrome + WorkbenchSpacing.xs + overflow
+        static let nodeCompact: CGFloat = 16
+        static let connector: CGFloat = 10
+        static let detailLabel: CGFloat = 80
+        static let serverNameMinimum: CGFloat = 160
+        static let portColumn: CGFloat = 130
+        /// Where a wide row's detail lines start: under the name.
+        static let nameIndent: CGFloat = stateWord + trackWidth + WorkbenchSpacing.sm * 2
     }
 }
 
