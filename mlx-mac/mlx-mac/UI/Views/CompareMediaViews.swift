@@ -1058,8 +1058,12 @@ struct MusicComparisonSetupSheet: View {
     let availablePaths: Set<String>
     let name: (String) -> String
     let onApply: (MusicComparisonSetup, PromptSet) -> Void
+    let onSave: (PromptSet) throws -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var applyError: String?
+    @State private var showingSaveName = false
+    @State private var saveName = ""
+    @State private var savedName: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -1117,7 +1121,30 @@ struct MusicComparisonSetupSheet: View {
             Text("Temporary inputs for a new run. Blank settings use the current defaults. Saved results and listening ratings stay with the original run.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             ErrorBanner(text: applyError ?? setup.validationError)
+            if showingSaveName {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    TextField("Prompt set name", text: $saveName)
+                        .accessibilityLabel("Saved music prompt set name")
+                    Button("Save") { savePromptSet() }
+                        .disabled(saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || setup.validationError != nil)
+                    Button { showingSaveName = false; applyError = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless).help("Cancel saving the prompt set")
+                        .accessibilityLabel("Cancel saving the prompt set")
+                }
+            }
+            if let savedName {
+                Label("Saved ‘\(savedName)’ in the prompt set picker.", systemImage: "checkmark.circle")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.success)
+            }
             HStack {
+                Button("Save as prompt set…") {
+                    saveName = "\(setup.sourceName) copy"
+                    showingSaveName = true
+                    savedName = nil
+                    applyError = nil
+                }
+                .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.accent)
+                .disabled(showingSaveName || setup.validationError != nil)
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Use setup") {
@@ -1131,6 +1158,16 @@ struct MusicComparisonSetupSheet: View {
         .textFieldStyle(.roundedBorder)
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: 620)
+    }
+
+    private func savePromptSet() {
+        do {
+            let set = try setup.promptSet(named: saveName)
+            try onSave(set)
+            savedName = set.name
+            showingSaveName = false
+            applyError = nil
+        } catch { applyError = error.localizedDescription }
     }
 
     private func parameter(_ title: String, defaultValue: String, value: Binding<String>) -> some View {

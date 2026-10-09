@@ -754,7 +754,8 @@ final class ComparisonMediaTests: XCTestCase {
             media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))]
         let view = MusicComparisonSetupSheet(setup: try MusicComparisonSetup(run: run), availablePaths: ["/music/8bit"],
             name: { $0 == "/music/8bit" ? "Music model · 8-bit" : "Music model · 4-bit" },
-            onApply: { _, _ in XCTFail("Rendering must not apply or generate") })
+            onApply: { _, _ in XCTFail("Rendering must not apply or generate") },
+            onSave: { _ in XCTFail("Rendering must not save") })
             .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
         let host = NSHostingView(rootView: view)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 590),
@@ -769,6 +770,59 @@ final class ComparisonMediaTests: XCTestCase {
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = "Reuse music setup"; attachment.lifetime = .keepAlways; add(attachment)
         if let path = ProcessInfo.processInfo.environment["MLX_REUSE_PROOF_PATH"] { try png.write(to: URL(fileURLWithPath: path)) }
+    }
+
+    @MainActor
+    func testNamedMusicPromptSetPersistsEditedSnapshotWithoutOverwritingSourceOrGenerating() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        let original = PromptSet(id: "original", name: "My instrumental", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Piano", maxTokens: 77,
+                media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))],
+            origin: .userCreated, mode: .musicGeneration)
+        XCTAssertTrue(coordinator.savePromptSet(original))
+        var run = historyRun(.musicGeneration, original.name, at: 100)
+        run.promptEntries = original.prompts
+        var setup = try MusicComparisonSetup(run: run)
+        setup.prompts[0].caption = "Rhodes, bass and drums"
+        setup.prompts[0].lyrics = "[verse]\nA new day"
+        setup.prompts[0].duration = "20"; setup.prompts[0].steps = "8"; setup.prompts[0].seed = "99"
+        let saved = try setup.promptSet(named: "  My instrumental  ")
+        XCTAssertEqual(saved.name, original.name, "Same-name copies must still have independent identities")
+        XCTAssertNotEqual(saved.id, original.id)
+        XCTAssertNotEqual(try setup.promptSet(named: saved.name).id, saved.id)
+        XCTAssertEqual(saved.prompts[0].maxTokens, 77)
+        XCTAssertEqual(saved.prompts[0].media, MediaParameters(steps: 8, seed: 99, durationSeconds: 20, lyrics: "[verse]\nA new day"))
+        XCTAssertTrue(coordinator.savePromptSet(saved))
+        let loaded = try JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json")).load()
+        XCTAssertEqual(loaded.first { $0.id == original.id }, original)
+        XCTAssertEqual(loaded.first { $0.id == saved.id }, saved)
+        let reloaded = makeCoordinator(runner: runner)
+        XCTAssertEqual(reloaded.promptSets.first { $0.id == saved.id }, saved)
+        XCTAssertNil(coordinator.activeRunID)
+        XCTAssertTrue(coordinator.runs.isEmpty)
+        let requests = await runner.requests
+        XCTAssertTrue(requests.isEmpty, "Saving must not generate audio")
+        XCTAssertEqual(run.promptEntries, original.prompts)
+        for name in ["", " \n ", "Name\u{0}"] { XCTAssertThrowsError(try setup.promptSet(named: name)) }
+        setup.prompts[0].steps = "31"
+        XCTAssertThrowsError(try setup.promptSet(named: "Invalid settings"))
+    }
+
+    @MainActor
+    func testMusicPromptSetSaveFailureLeavesStoreAndPublishedPresetsUntouched() throws {
+        let url = root.appendingPathComponent("sets.json")
+        let corrupt = Data("not-json".utf8)
+        try corrupt.write(to: url)
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let before = coordinator.promptSets
+        var run = historyRun(.musicGeneration, "Music", at: 100)
+        run.promptEntries = [PromptEntry(id: "p", text: "Piano")]
+        let saved = try MusicComparisonSetup(run: run).promptSet(named: "Piano copy")
+        XCTAssertFalse(coordinator.savePromptSet(saved))
+        XCTAssertEqual(coordinator.promptSets, before)
+        XCTAssertEqual(try Data(contentsOf: url), corrupt)
+        XCTAssertNotNil(coordinator.persistenceError)
+        XCTAssertNil(coordinator.activeRunID)
     }
 
     @MainActor

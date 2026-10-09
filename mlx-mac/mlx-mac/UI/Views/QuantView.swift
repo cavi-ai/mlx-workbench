@@ -493,7 +493,11 @@ struct QuantView: View {
         .sheet(item: $pendingReuseSetup) { setup in
             MusicComparisonSetupSheet(setup: setup,
                 availablePaths: Set(readyModels.map { $0.item.path }), name: shortName,
-                onApply: applyReusedSetup)
+                onApply: applyReusedSetup, onSave: { set in
+                    guard comparison.savePromptSet(set) else {
+                        throw MusicComparisonSetup.InvalidSetup(message: comparison.persistenceError ?? "Prompt set could not be saved.")
+                    }
+                })
         }
         .onChange(of: appHost.workflowReportImportRequested) { _, _ in consumeImportRequest() }
         .onChange(of: comparison.activeRunID) { _, newValue in
