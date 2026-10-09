@@ -826,6 +826,115 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicPromptSetRenameAndRemovalPreserveHistoryReviewsAndOutputs() async throws {
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let source = PromptSet(id: "music-source", name: "Instrumental", useCase: nil,
+            prompts: promptSet(for: .musicGeneration).prompts, origin: .userCreated, mode: .musicGeneration)
+        let other = PromptSet(id: "music-other", name: source.name, useCase: nil,
+            prompts: source.prompts, origin: .userCreated, mode: .musicGeneration)
+        XCTAssertTrue(coordinator.savePromptSet(source)); XCTAssertTrue(coordinator.savePromptSet(other))
+        coordinator.start(variants: [("/music/a", nil)], promptSet: source)
+        await waitForRun(coordinator)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        coordinator.reviewQuality(runID: run.id, modelPath: "/music/a", score: 4)
+        let history = try Data(contentsOf: root.appendingPathComponent("runs.json"))
+        let artifact = try XCTUnwrap(coordinator.outputStore?.artifactURL(runID: run.id,
+            artifact: try XCTUnwrap(run.results.first?.samples.first?.artifact)))
+        let output = try Data(contentsOf: artifact)
+        XCTAssertTrue(coordinator.renameMusicPromptSet(id: source.id, name: "  Jazz-funk  "))
+        var renamed = source; renamed.name = "Jazz-funk"
+        XCTAssertEqual(coordinator.promptSets.first { $0.id == source.id }, renamed)
+        XCTAssertEqual(makeCoordinator(runner: StubMediaRunner()).promptSets.first { $0.id == source.id }, renamed)
+        XCTAssertTrue(coordinator.removeMusicPromptSet(id: source.id))
+        let reloaded = makeCoordinator(runner: StubMediaRunner())
+        XCTAssertFalse(reloaded.promptSets.contains { $0.id == source.id })
+        XCTAssertEqual(reloaded.promptSets.first { $0.id == other.id }, other)
+        XCTAssertEqual(reloaded.runs.first?.qualityReviews?["/music/a"]?.score, 4)
+        XCTAssertEqual(reloaded.runs.first?.promptSetName, source.name)
+        XCTAssertEqual(reloaded.runs.first?.promptEntries, source.prompts)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("runs.json")), history)
+        XCTAssertEqual(try Data(contentsOf: artifact), output)
+    }
+
+    @MainActor
+    func testMusicPromptManagementRejectsBuiltinsOtherModesTemporaryAndActiveSets() async throws {
+        let runner = StubMediaRunner(gated: true), coordinator = makeCoordinator(runner: runner)
+        let music = PromptSet(id: "music-user", name: "Music", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
+        let chat = PromptSet(id: "chat-user", name: "Chat", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Hello")], origin: .userCreated)
+        XCTAssertTrue(coordinator.savePromptSet(music)); XCTAssertTrue(coordinator.savePromptSet(chat))
+        let before = try Data(contentsOf: root.appendingPathComponent("sets.json"))
+        for id in [ComparisonMediaFixtures.musicGenerationSet.id, chat.id, "temporary"] {
+            XCTAssertFalse(coordinator.canManageMusicPromptSet(id: id))
+            XCTAssertFalse(coordinator.renameMusicPromptSet(id: id, name: "Changed"))
+            XCTAssertFalse(coordinator.removeMusicPromptSet(id: id))
+        }
+        for name in ["", " \n ", "Music\u{0}"] { XCTAssertFalse(coordinator.renameMusicPromptSet(id: music.id, name: name)) }
+        coordinator.start(variants: [("/music/a", nil)], promptSet: music)
+        XCTAssertNotNil(coordinator.activeRunID)
+        XCTAssertFalse(coordinator.renameMusicPromptSet(id: music.id, name: "While running"))
+        XCTAssertFalse(coordinator.removeMusicPromptSet(id: music.id))
+        await runner.release(1); await waitForRun(coordinator)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("sets.json")), before)
+    }
+
+    @MainActor
+    func testMusicPromptManagementUsesDurableInputsAndDoesNotOverwriteCorruption() throws {
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let original = PromptSet(id: "music-user", name: "Music", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
+        XCTAssertTrue(coordinator.savePromptSet(original))
+        let url = root.appendingPathComponent("sets.json"), store = JSONStore<PromptSet>(fileURL: url)
+        var fresh = original; fresh.prompts[0].text = "Updated on disk"
+        try store.upsert(fresh, id: \.id)
+        XCTAssertTrue(coordinator.renameMusicPromptSet(id: original.id, name: "Renamed"))
+        XCTAssertEqual(coordinator.promptSets.first { $0.id == original.id }?.prompts, fresh.prompts)
+        let published = coordinator.promptSets, corrupt = Data("broken-json".utf8)
+        try corrupt.write(to: url)
+        XCTAssertFalse(coordinator.renameMusicPromptSet(id: original.id, name: "Must fail"))
+        XCTAssertFalse(coordinator.removeMusicPromptSet(id: original.id))
+        XCTAssertEqual(coordinator.promptSets, published)
+        XCTAssertEqual(try Data(contentsOf: url), corrupt)
+        XCTAssertNotNil(coordinator.promptSetManagementError)
+        XCTAssertNil(coordinator.persistenceError, "Management failures must not overwrite unrelated persistence state")
+        fresh.mode = .chat
+        try store.replaceAll([fresh])
+        let changed = try Data(contentsOf: url)
+        XCTAssertFalse(coordinator.removeMusicPromptSet(id: original.id))
+        XCTAssertEqual(try Data(contentsOf: url), changed)
+        try store.replaceAll([])
+        XCTAssertFalse(coordinator.renameMusicPromptSet(id: original.id, name: "Missing"))
+        XCTAssertEqual(try store.load(), [])
+        try store.replaceAll([original])
+        XCTAssertTrue(coordinator.renameMusicPromptSet(id: original.id, name: "Recovered name"))
+        XCTAssertNil(coordinator.promptSetManagementError, "A successful retry must clear its stale action error")
+    }
+
+    @MainActor
+    func testMusicPromptSetRenameSheetRendersWithoutMutatingTheSet() async throws {
+        let set = PromptSet(id: "music-user", name: "Jazz-funk instrumentals", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
+        let content = MusicPromptSetRenameSheet(set: set) { _ in
+            XCTFail("Rendering must not rename a set"); return nil
+        }
+        .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 280),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "Rename saved music prompt set"; attachment.lifetime = .keepAlways; add(attachment)
+        if let path = ProcessInfo.processInfo.environment["MLX_MUSIC_MANAGE_PROOF_PATH"] { try png.write(to: URL(fileURLWithPath: path)) }
+    }
+
+    @MainActor
     func testMusicListeningReviewPersistsItsOwnRubricAndCanBeCleared() async throws {
         let url = root.appendingPathComponent("listening-runs.json")
         let coordinator = makeCoordinator(runner: StubMediaRunner(), runsURL: url)

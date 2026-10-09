@@ -63,6 +63,20 @@ final class JSONStore<Value: Codable> {
         }
     }
 
+    /// Read and change one existing identity under the same mutation lock.
+    /// Returning nil removes it; a missing identity never creates a store.
+    @discardableResult
+    func update<ID: Equatable>(id: ID, keyPath: KeyPath<Value, ID>, transform: (Value) throws -> Value?) throws -> Bool {
+        try withLock {
+            var values = try loadUnlocked()
+            guard let index = values.firstIndex(where: { $0[keyPath: keyPath] == id }) else { return false }
+            if let updated = try transform(values[index]) { values[index] = updated }
+            else { values.remove(at: index) }
+            try write(values)
+            return true
+        }
+    }
+
     private func loadUnlocked() throws -> [Value] {
         guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
         return try JSONDecoder().decode([Value].self, from: Data(contentsOf: fileURL))

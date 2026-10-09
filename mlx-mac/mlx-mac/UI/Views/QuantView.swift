@@ -384,6 +384,8 @@ struct QuantView: View {
     @State private var compareContentWidth = WorkbenchSize.assumedContentWidth
     @State private var mode: ComparisonMode = .chat
     @State private var showingSetEditor = false
+    @State private var pendingPromptSetRename: PromptSet?
+    @State private var pendingPromptSetRemoval: PromptSet?
     @State private var pendingReuseSetup: MusicComparisonSetup?
     @State private var reusedPromptSet: PromptSet?
     @State private var reuseError: String?
@@ -500,6 +502,20 @@ struct QuantView: View {
                 })
         }
         .onChange(of: appHost.workflowReportImportRequested) { _, _ in consumeImportRequest() }
+        .sheet(item: $pendingPromptSetRename) { set in
+            MusicPromptSetRenameSheet(set: set) { name in
+                comparison.renameMusicPromptSet(id: set.id, name: name)
+                    ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be renamed.")
+            }
+        }
+        .alert("Remove saved prompt set?", isPresented: Binding(
+            get: { pendingPromptSetRemoval != nil },
+            set: { if !$0 { pendingPromptSetRemoval = nil } }), presenting: pendingPromptSetRemoval) { set in
+                Button("Remove", role: .destructive) { removePromptSet(set) }
+                Button("Cancel", role: .cancel) { }
+            } message: { set in
+                Text("‘\(set.name)’ will be removed from the prompt set picker. Past runs, audio outputs and listening ratings will be kept.")
+            }
         .onChange(of: comparison.activeRunID) { _, newValue in
             if let newValue { selectedRunID = newValue }
         }
@@ -691,6 +707,7 @@ struct QuantView: View {
             ErrorBanner(text: reuseError)
             ErrorBanner(text: comparison.lastError)
             ErrorBanner(text: comparison.persistenceError)
+            ErrorBanner(text: comparison.promptSetManagementError)
         }
         .sheet(isPresented: $showingSetEditor) {
             MediaPromptSetEditor(mode: mode) { set in
@@ -824,13 +841,21 @@ struct QuantView: View {
     }
 
     private var promptSetPicker: some View {
-        Picker("Prompt set", selection: $selectedPromptSetID) {
-            ForEach(modePromptSets) { set in
-                Text(set.name).tag(set.id)
+        HStack(spacing: WorkbenchSpacing.xs) {
+            Picker("Prompt set", selection: $selectedPromptSetID) {
+                ForEach(modePromptSets) { set in
+                    Text(set.name).tag(set.id)
+                }
+            }
+            .font(WorkbenchTypography.emphasis)
+            .frame(maxWidth: WorkbenchSize.Compare.promptSetMaximum, alignment: .leading)
+            if mode == .musicGeneration {
+                MusicPromptSetActions(name: selectedPromptSet?.name,
+                    isEnabled: comparison.activeRunID == nil && comparison.canManageMusicPromptSet(id: selectedPromptSetID),
+                    onRename: { pendingPromptSetRename = selectedPromptSet },
+                    onRemove: { pendingPromptSetRemoval = selectedPromptSet })
             }
         }
-        .font(WorkbenchTypography.emphasis)
-        .frame(maxWidth: WorkbenchSize.Compare.promptSetMaximum, alignment: .leading)
     }
 
     private var newSetButton: some View {
@@ -1186,6 +1211,12 @@ struct QuantView: View {
                 .map { (path: $0.item.path, signature: $0.item.signature) }
         }
         comparison.start(variants: variants, promptSet: promptSet, mode: mode)
+    }
+
+    private func removePromptSet(_ set: PromptSet) {
+        guard comparison.removeMusicPromptSet(id: set.id) else { return }
+        if reusedPromptSet?.id == set.id { reusedPromptSet = nil }
+        if selectedPromptSetID == set.id { selectedPromptSetID = modePromptSets.first?.id ?? "" }
     }
 
     private func applyReusedSetup(_ setup: MusicComparisonSetup, _ promptSet: PromptSet) {
