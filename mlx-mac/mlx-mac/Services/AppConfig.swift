@@ -154,12 +154,15 @@ struct ConfigModule {
         self.pathOverride = pathOverride
     }
 
-    func configPath() -> String {
+    func configPath(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
         if let pathOverride { return pathOverride }
-        if let override = ProcessInfo.processInfo.environment[configEnv] {
+        if WorkbenchStatePaths.isHostedUnitTest(environment) {
+            return WorkbenchStatePaths.hostedTestRoot.appendingPathComponent(".config/mlx-workbench/config.json").path
+        }
+        if let override = environment[configEnv] {
             return Path.expandedURL(override).path
         }
-        if let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"] {
+        if let base = environment["XDG_CONFIG_HOME"] {
             return URL(fileURLWithPath: base).appendingPathComponent("mlx-workbench/config.json").path
         }
         return Path.home().appendingPathComponent(".config/mlx-workbench/config.json").path

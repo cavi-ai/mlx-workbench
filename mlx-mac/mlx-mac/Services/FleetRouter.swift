@@ -42,8 +42,9 @@ enum FleetRouter {
     /// `fleet apply`, so the file carries fleet's managed header and later
     /// `fleet` runs (app or CLI) can keep managing it; the path is distinct
     /// from any hand-maintained router config, which fleet would refuse.
-    static let defaultTargetPath =
-        NSHomeDirectory() + "/Library/Application Support/mlx-workbench/fleet-router.yaml"
+    static var defaultTargetPath: String {
+        WorkbenchStatePaths.applicationSupport().appendingPathComponent("fleet-router.yaml").path
+    }
 
     /// App UseCase → fleet's canonical role vocabulary.
     static func fleetRoleName(for useCase: UseCase) -> String {

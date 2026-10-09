@@ -13,9 +13,7 @@ actor WorkbenchAPI {
     init(
         cli: CLIProcess,
         agentPath: String,
-        receiptDirectory: String = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/mlx-workbench", isDirectory: true)
-            .path
+        receiptDirectory: String = WorkbenchStatePaths.applicationSupport().path
     ) {
         self.cli = cli
         self.agentPath = agentPath

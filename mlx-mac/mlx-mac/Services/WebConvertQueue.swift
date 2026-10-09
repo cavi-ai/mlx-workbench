@@ -56,11 +56,14 @@ enum WebConvertQueue {
 
     /// Mirrors convert_queue.queue_path: beside an explicit
     /// MLX_WORKBENCH_CONFIG profile, else $XDG_STATE_HOME/mlx-workbench/,
-    /// else ~/.local/state/mlx-workbench/.
+    /// else ~/.local/state/mlx-workbench/. Hosted unit tests use the test root as home.
     static func defaultPath(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> URL {
+        if WorkbenchStatePaths.isHostedUnitTest(environment) {
+            return defaultPath(environment: [:], home: WorkbenchStatePaths.hostedTestRoot)
+        }
         if let override = environment["MLX_WORKBENCH_CONFIG"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
                 .deletingLastPathComponent()

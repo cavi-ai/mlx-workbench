@@ -209,15 +209,20 @@ from `mlx-agent` at runtime.
   (AttributeGraph precondition via re-entrant layout). The watch
   fingerprint probe answers from a prewarmed cache and degrades to
   "unknown" on the main thread instead of probing. Keep this invariant.
-- **Hosted unit tests never start live services.** `make test-swift` runs
-  inside the app (TEST_HOST = mlx-workbench.app), which loads the user's real
-  config and state. `AppHost.startLiveServices()` (WindowGroup `onAppear`)
+- **Hosted unit tests never start live services or touch real state.**
+  `make test-swift` runs inside the app (TEST_HOST = mlx-workbench.app).
+  `AppHost.startLiveServices()` (WindowGroup `onAppear`)
   owns all launch-time live work: quality-gate attach, watch and endpoint
   supervision, resource sampling, and the first scan with workflow
   reconciliation. It returns early when `XCTestConfigurationFilePath` is set,
   so the suite never starts or stops real servers. UI tests launch a separate
   app process without that variable and keep live behavior. Keep new
-  launch-time live work behind this method.
+  launch-time live work behind this method. Default state locations resolve
+  through `Services/WorkbenchStatePaths.swift`: in a hosted unit-test process
+  Application Support, `config.json` and the web queue live under
+  `WorkbenchStatePaths.hostedTestRoot`, which the test bundle's principal
+  class (`HostedTestStateRoot`) replaces with a fresh temporary directory per
+  test. New default state paths go through it.
 - The Wire tab also does **Cross-client Wiring**: `WiringCoordinator` detects
   installed clients (opencode/Continue/Zed/Aider writable; LM Studio/Ollama
   advisory-only) and previews/confirms atomic writes to each client's own

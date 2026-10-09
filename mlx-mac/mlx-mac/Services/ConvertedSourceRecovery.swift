@@ -64,7 +64,7 @@ struct SourceCleanupBatch: Identifiable {
 /// Trash and original destinations are independently fenced; no overwrite or
 /// recursive deletion is used. Old journals bind identity at explicit preview.
 enum ConvertedSourceRecovery {
-    static let journalURL = JSONStore<ConvertedSourceMove>.defaultFileURL("source-cleanup.json")
+    static var journalURL: URL { JSONStore<ConvertedSourceMove>.defaultFileURL("source-cleanup.json") }
 
     static func history(roots: [String], journalURL: URL = journalURL, trashRoots: [String]? = nil,
                         fileManager fm: FileManager = .default) throws -> [SourceCleanupBatch] {

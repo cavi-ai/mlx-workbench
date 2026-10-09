@@ -120,16 +120,7 @@ final class CatalogStore {
     }
 
     private static func defaultApplicationSupportDirectory() -> URL {
-        if let url = try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        ) {
-            return url.appendingPathComponent("mlx-workbench", isDirectory: true)
-        }
-        return URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/mlx-workbench", isDirectory: true)
+        WorkbenchStatePaths.applicationSupport()
     }
 
     private static func describe(_ error: Error) -> String {
