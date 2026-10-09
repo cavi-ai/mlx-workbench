@@ -1,5 +1,81 @@
 import Foundation
 
+/// Durable input copies owned by saved prompt sets. Uses the same fenced UUID
+/// layout and copying rules as outputs, but never participates in run retention.
+struct ComparisonPromptInputStore: Sendable {
+    let root: URL
+    private var files: ComparisonOutputStore { ComparisonOutputStore(root: root) }
+
+    func copyingInputs(in set: PromptSet) async throws -> PromptSet {
+        guard set.effectiveMode.inputKind != nil, set.prompts.contains(where: { $0.inputPath != nil }) else { return set }
+        let storageID = UUID()
+        var copy = set
+        copy.inputStorageID = storageID
+        var created = false
+        do {
+            try await Task.detached {
+                let fm = FileManager.default
+                guard (try? fm.attributesOfItem(atPath: root.deletingLastPathComponent().path)[.type]) as? FileAttributeType == .typeDirectory else {
+                    throw ComparisonOutputStore.InputError.unsafeLocation
+                }
+                if fm.fileExists(atPath: root.path) {
+                    guard (try? fm.attributesOfItem(atPath: root.path)[.type]) as? FileAttributeType == .typeDirectory else {
+                        throw ComparisonOutputStore.InputError.unsafeLocation
+                    }
+                } else { try fm.createDirectory(at: root, withIntermediateDirectories: false) }
+                try fm.createDirectory(at: files.runDirectory(storageID), withIntermediateDirectories: false)
+                do { try fm.createDirectory(at: files.inputsDirectory(storageID), withIntermediateDirectories: false) }
+                catch { discard(storageID); throw error }
+            }.value
+            created = true
+            for index in copy.prompts.indices {
+                try Task.checkCancellation()
+                guard let path = copy.prompts[index].inputPath else { continue }
+                guard path.hasPrefix("/") else { throw ComparisonOutputStore.InputError.unavailable }
+                let artifact = try await files.snapshotInput(from: URL(fileURLWithPath: path), runID: storageID)
+                copy.prompts[index].inputPath = files.inputArtifactURL(runID: storageID, artifact: artifact)?.path
+            }
+            try Task.checkCancellation()
+            return copy
+        } catch {
+            if created { discard(storageID) }
+            throw error
+        }
+    }
+
+    /// Only a task-created or recorded UUID folder under this owned root is removed.
+    func discard(_ storageID: UUID) {
+        let fm = FileManager.default
+        guard (try? fm.attributesOfItem(atPath: root.path)[.type]) as? FileAttributeType == .typeDirectory,
+              (try? fm.attributesOfItem(atPath: files.runDirectory(storageID).path)[.type]) as? FileAttributeType == .typeDirectory else { return }
+        try? fm.removeItem(at: files.runDirectory(storageID))
+    }
+
+    /// Resolve only this store's exact `<uuid>/inputs/<basename>` path shape.
+    func storageID(for path: String) -> UUID? {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let inputs = url.deletingLastPathComponent()
+        let directory = inputs.deletingLastPathComponent()
+        guard path.hasPrefix("/"), ComparisonOutputStore.isContainedName(url.lastPathComponent),
+              inputs.lastPathComponent == "inputs", directory.deletingLastPathComponent() == root.standardizedFileURL,
+              let id = UUID(uuidString: directory.lastPathComponent) else { return nil }
+        return id
+    }
+
+    /// Reclaim unreferenced owned folders after a successful prompt-set removal.
+    /// Borrowed paths from other sets and legacy runs keep their source folders.
+    func reclaimInputs(of removed: PromptSet, sets: [PromptSet], legacyEntries: [PromptEntry]) {
+        guard (try? FileManager.default.attributesOfItem(atPath: root.path)[.type]) as? FileAttributeType == .typeDirectory else { return }
+        var keep = Set(sets.compactMap(\.inputStorageID))
+        for entry in sets.flatMap(\.prompts) + legacyEntries {
+            if let path = entry.inputPath, let id = storageID(for: path) { keep.insert(id) }
+        }
+        var candidates = Set(removed.prompts.compactMap { entry in entry.inputPath.flatMap(storageID(for:)) })
+        if let id = removed.inputStorageID { candidates.insert(id) }
+        for id in candidates.subtracting(keep) { discard(id) }
+    }
+}
+
 // MARK: - ComparisonOutputStore
 //
 // Where media comparison runs keep what the models produced, so the results

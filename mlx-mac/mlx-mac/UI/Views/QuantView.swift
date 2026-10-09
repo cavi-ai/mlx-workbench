@@ -508,7 +508,7 @@ struct QuantView: View {
                 availablePaths: Set(readyModels.map { $0.item.path }), name: shortName,
                 onApply: applyReusedSetup, onSave: { draft in
                     guard comparison.activeRunID == nil else { return "Wait for the current comparison to finish." }
-                    return comparison.createPromptSet(draft) == nil
+                    return await comparison.createPromptSetWithInputCopies(draft) == nil
                         ? (comparison.promptSetManagementError ?? "Prompt set could not be saved.") : nil
                 })
         }
@@ -537,7 +537,7 @@ struct QuantView: View {
                 Button("Remove", role: .destructive) { removePromptSet(set) }
                 Button("Cancel", role: .cancel) { }
             } message: { set in
-                Text("‘\(set.name)’ will be removed from the prompt set picker. Past runs, saved outputs and quality reviews will be kept.")
+                Text("‘\(set.name)’ will be removed from the prompt set picker. Its unreferenced input copies will be reclaimed. Past runs, saved outputs and quality reviews will be kept.")
             }
         .onChange(of: comparison.activeRunID) { _, newValue in
             if let newValue { selectedRunID = newValue }

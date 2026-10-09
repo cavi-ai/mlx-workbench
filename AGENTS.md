@@ -281,8 +281,18 @@ from `mlx-agent` at runtime.
   Use restores a temporary set and model paths without writing or running.
   Missing models remain selected and block Run until replaced/removed. New runs
   capture current signatures and evidence; original results/reviews stay intact.
-  Saved prompt sets referencing the output cache require replacement files after
-  those inputs are pruned; saving a set does not extend cache retention.
+  Reuse-sheet Save runs `createPromptSetWithInputCopies` asynchronously. It copies
+  explicit input files into `prompt-set-inputs/<uuid>/inputs/` beside the prompt-set
+  JSON, then publishes the set only after its atomic JSON save succeeds.
+  `PromptSet.inputStorageID` is optional for legacy compatibility; existing sets
+  are not migrated. Built-in fixture IDs are preserved without generation, and
+  file copies stay off the main actor. Copy/save failures discard only their new
+  owned folder. The sheet blocks edits/dismissal during Save; the coordinator
+  blocks Run and edit/rename/remove during copying. Successful removal considers
+  only the removed set's owned/referenced UUID folders, retains other saved-set
+  references from saved sets and loaded legacy runs, and never sweeps staging
+  folders or original files. Failed/unknown stores keep copies conservatively.
+  Temporary setups retain the ten-run cache; newly saved copies are independent.
   Shared prompt cards offer a collapsed `ComparisonPromptInputPreview` only for
   readable regular input files. Image previews reuse the thumbnail/larger sheet;
   audio previews share one `AudioClipPlayer` per editor with seek controls;

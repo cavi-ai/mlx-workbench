@@ -18,10 +18,12 @@ final class ComparisonCoordinator: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var persistenceError: String?
     @Published private(set) var promptSetManagementError: String?
+    @Published private(set) var savingPromptSet = false
 
     private let probe: ServeProbe
     private let runStore: JSONStore<ComparisonRun>
     private let promptSetStore: JSONStore<PromptSet>
+    private let promptInputStore: ComparisonPromptInputStore
     private let now: () -> Date
     private let mediaRunner: ComparisonMediaRunner?
     /// Where media runs keep their outputs. Nil disables media modes, so nothing here
@@ -57,6 +59,8 @@ final class ComparisonCoordinator: ObservableObject {
         self.probe = probe
         self.runStore = runStore
         self.promptSetStore = promptSetStore
+        self.promptInputStore = ComparisonPromptInputStore(root: promptSetStore.url.deletingLastPathComponent()
+            .appendingPathComponent("prompt-set-inputs", isDirectory: true))
         self.now = now
         self.mediaRunner = mediaRunner
         self.outputStore = outputStore
@@ -148,6 +152,30 @@ final class ComparisonCoordinator: ObservableObject {
         try promptSetStore.upsert(set, id: \.id)
         promptSets.append(set)
         promptSetManagementError = nil
+    }
+
+    /// Saving a reused setup makes its media independent of the ten-run cache.
+    /// Publish only after all copies and the durable JSON write succeed.
+    func createPromptSetWithInputCopies(_ draft: ComparisonPromptSetDraft) async -> PromptSet? {
+        guard !savingPromptSet, activeRunID == nil else {
+            promptSetManagementError = "Wait for the current save or comparison to finish."
+            return nil
+        }
+        savingPromptSet = true
+        defer { savingPromptSet = false }
+        var ownedID: UUID?
+        do {
+            guard draft.original == nil else { throw PromptSetManagementError(message: "Use Save changes to edit this set.") }
+            let set = try await promptInputStore.copyingInputs(in: draft.promptSet())
+            ownedID = set.inputStorageID
+            try Task.checkCancellation()
+            try persistNewPromptSet(set)
+            return set
+        } catch {
+            if let ownedID { promptInputStore.discard(ownedID) }
+            promptSetManagementError = "Prompt set could not be created: \(AppHost.render(error))"
+            return nil
+        }
     }
 
     private static func isManageablePromptSet(_ set: PromptSet) -> Bool {
@@ -259,7 +287,7 @@ final class ComparisonCoordinator: ObservableObject {
 
     private func changePromptSet(id: String, requiredMode: ComparisonMode? = nil, transform: (PromptSet) throws -> PromptSet?) -> Bool {
         do {
-            guard activeRunID == nil else {
+            guard activeRunID == nil, !savingPromptSet else {
                 throw PromptSetManagementError(message: "Wait for the comparison to finish before managing prompt sets.")
             }
             guard let index = promptSets.firstIndex(where: { $0.id == id && Self.isManageablePromptSet($0)
@@ -267,16 +295,26 @@ final class ComparisonCoordinator: ObservableObject {
                 throw PromptSetManagementError(message: "Select a saved, user-created prompt set.")
             }
             var changed: PromptSet?
+            var previous: PromptSet?
             let found = try promptSetStore.update(id: id, keyPath: \.id) { stored in
                 guard Self.isManageablePromptSet(stored), requiredMode == nil || stored.effectiveMode == requiredMode else {
                     throw PromptSetManagementError(message: "The saved prompt set changed. Select it again.")
                 }
+                previous = stored
                 changed = try transform(stored)
                 return changed
             }
             guard found else { throw PromptSetManagementError(message: "The saved prompt set is no longer available.") }
             if let changed { promptSets[index] = changed }
-            else { promptSets.remove(at: index) }
+            else {
+                promptSets.remove(at: index)
+                // A failed load conservatively keeps copies; never infer live
+                // references from an incomplete in-memory list.
+                if runsLoaded, let previous, let sets = try? promptSetStore.load() {
+                    let legacy = runs.filter { $0.inputArtifacts == nil }.flatMap { $0.promptEntries ?? [] }
+                    promptInputStore.reclaimInputs(of: previous, sets: sets, legacyEntries: legacy)
+                }
+            }
             promptSetManagementError = nil
             return true
         } catch {
@@ -333,6 +371,10 @@ final class ComparisonCoordinator: ObservableObject {
     /// every other mode runs each prompt through the media runner and keeps
     /// what the model produced.
     func start(variants: [(path: String, signature: String?)], promptSet: PromptSet, mode: ComparisonMode? = nil) {
+        guard !savingPromptSet else {
+            lastError = "Wait for the prompt set save to finish."
+            return
+        }
         guard activeRunID == nil else {
             lastError = "A comparison run is already in progress."
             return

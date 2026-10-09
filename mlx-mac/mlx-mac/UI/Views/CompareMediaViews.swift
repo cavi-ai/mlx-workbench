@@ -1306,12 +1306,13 @@ struct ComparisonRunSetupSheet: View {
     let availablePaths: Set<String>
     let name: (String) -> String
     let onApply: (ComparisonRunSetup, PromptSet) -> String?
-    let onSave: (ComparisonPromptSetDraft) -> String?
+    let onSave: (ComparisonPromptSetDraft) async -> String?
     @Environment(\.dismiss) private var dismiss
     @State private var error: String?
     @State private var showingSaveName = false
     @State private var saveName = ""
     @State private var savedName: String?
+    @State private var saving = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -1341,7 +1342,7 @@ struct ComparisonRunSetupSheet: View {
             }
             ComparisonPromptFields(draft: $setup.draft)
             if setup.draft.mode.inputKind != nil {
-                Text("Saved inputs stay in the ten-run cache. A saved prompt set using them will need replacement files after they are pruned. Older runs use current original files or regenerate built-in fixtures.")
+                Text("Save as prompt set keeps its own input copies. Temporary setups use the ten-run cache; older runs use original files or built-in fixtures.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
             Text("Recorded prompts and models for a new run. Current serving limits and runtime defaults still apply. Original results and ratings stay intact.")
@@ -1352,8 +1353,13 @@ struct ComparisonRunSetupSheet: View {
                     TextField("Prompt set name", text: $saveName).accessibilityLabel("Saved prompt set name")
                     Button("Save") {
                         let copy = setup.savedDraft(named: saveName)
-                        error = onSave(copy)
-                        if error == nil { savedName = saveName; showingSaveName = false }
+                        let title = saveName
+                        saving = true
+                        Task { @MainActor in
+                            error = await onSave(copy)
+                            if error == nil { savedName = title; showingSaveName = false }
+                            saving = false
+                        }
                     }
                     Button { showingSaveName = false; error = nil } label: { Image(systemName: "xmark") }
                         .buttonStyle(.borderless).help("Cancel saving the prompt set")
@@ -1363,6 +1369,12 @@ struct ComparisonRunSetupSheet: View {
             if let savedName {
                 Label("Saved ‘\(savedName)’ in the prompt set picker.", systemImage: "checkmark.circle")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.success)
+            }
+            if saving {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    ProgressView().controlSize(.small)
+                    Text("Saving prompt set and input copies…").font(WorkbenchTypography.metadata)
+                }
             }
             HStack(spacing: WorkbenchSpacing.sm) {
                 Button { setup.draft.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
@@ -1384,6 +1396,8 @@ struct ComparisonRunSetupSheet: View {
         .textFieldStyle(.roundedBorder)
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: WorkbenchSize.Compare.promptEditorWidth)
+        .disabled(saving)
+        .interactiveDismissDisabled(saving)
     }
 }
 
