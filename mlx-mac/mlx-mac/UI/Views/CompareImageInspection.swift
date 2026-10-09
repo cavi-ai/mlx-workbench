@@ -2,27 +2,12 @@ import AppKit
 import SwiftUI
 
 extension ComparisonViewLogic {
-    struct ImageClip: Identifiable {
-        let modelPath: String
-        let url: URL
-        var id: String { modelPath }
-    }
-
     static func showsImageInspection(_ run: ComparisonRun) -> Bool {
         run.effectiveMode.outputKind == .image && run.state == .completed
     }
 
-    static func imageClips(for run: ComparisonRun, store: ComparisonOutputStore, promptID: String) -> [ImageClip] {
-        guard run.effectiveMode.outputKind == .image else { return [] }
-        return run.results.compactMap { result in
-            guard result.error == nil,
-                  let sample = result.samples.first(where: { $0.promptID == promptID }), sample.error == nil,
-                  let url = store.artifactURL(runID: run.id, artifact: sample.artifact ?? "") else { return nil }
-            var directory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), !directory.boolValue,
-                  FileManager.default.isReadableFile(atPath: url.path) else { return nil }
-            return ImageClip(modelPath: result.modelPath, url: url)
-        }
+    static func imageClips(for run: ComparisonRun, store: ComparisonOutputStore, promptID: String) -> [OutputClip] {
+        outputClips(for: run, store: store, promptID: promptID, kind: .image)
     }
 }
 
@@ -95,7 +80,7 @@ struct ImageComparisonSheet: View {
         _rightPath = State(initialValue: clips.first(where: { $0.modelPath != left })?.modelPath)
     }
 
-    private var clips: [ComparisonViewLogic.ImageClip] {
+    private var clips: [ComparisonViewLogic.OutputClip] {
         ComparisonViewLogic.imageClips(for: run, store: store, promptID: promptID)
     }
 

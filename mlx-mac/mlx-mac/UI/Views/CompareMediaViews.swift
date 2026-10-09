@@ -10,6 +10,25 @@ import UniformTypeIdentifiers
 // can be tested.
 
 enum ComparisonViewLogic {
+    struct OutputClip: Identifiable {
+        let modelPath: String
+        let url: URL
+        var id: String { modelPath }
+    }
+
+    static func outputClips(for run: ComparisonRun, store: ComparisonOutputStore, promptID: String,
+                            kind: ComparisonOutputKind) -> [OutputClip] {
+        guard run.effectiveMode.outputKind == kind else { return [] }
+        return run.results.compactMap { result in
+            guard result.error == nil,
+                  let sample = result.samples.first(where: { $0.promptID == promptID }), sample.error == nil,
+                  let url = store.artifactURL(runID: run.id, artifact: sample.artifact ?? "") else { return nil }
+            var directory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), !directory.boolValue,
+                  FileManager.default.isReadableFile(atPath: url.path) else { return nil }
+            return OutputClip(modelPath: result.modelPath, url: url)
+        }
+    }
     struct ListeningClip: Identifiable {
         let modelPath: String
         let promptID: String
@@ -235,6 +254,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
 
     @State private var preview: PreviewImage?
     @State private var imageInspection: ImageInspectionSelection?
+    @State private var videoInspection: ImageInspectionSelection?
     @StateObject private var audio: AudioClipPlayer
 
     @MainActor
@@ -275,16 +295,27 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 } label: { Label("Inspect images", systemImage: "square.split.2x1") }
                 .controlSize(.small)
             }
+            if ComparisonViewLogic.showsVideoInspection(run) {
+                Button {
+                    if let prompt = ComparisonViewLogic.rows(for: run).first {
+                        videoInspection = ImageInspectionSelection(promptID: prompt.id, modelPath: nil)
+                    }
+                } label: { Label("Inspect videos", systemImage: "film") }
+                .controlSize(.small)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(item: $preview) { item in ImagePreviewSheet(url: item.url) }
         .sheet(item: $imageInspection) { selection in
             ImageComparisonSheet(run: run, store: store, selection: selection, name: name, onReview: onReview, reviewError: reviewError)
         }
+        .sheet(item: $videoInspection) { selection in
+            VideoComparisonSheet(run: run, store: store, selection: selection, name: name, onReview: onReview, reviewError: reviewError)
+        }
         .onDisappear { audio.stop() }
         .onChange(of: run.id) { _, _ in audio.stop() }
         .onChange(of: isRouteActive) { _, active in
-            if !active { audio.stop() }
+            if !active { audio.stop(); videoInspection = nil }
         }
     }
 
@@ -544,7 +575,18 @@ struct MediaRunResultsView<LaneActions: View>: View {
                         } else { preview = PreviewImage(url: url) }
                     }
                 case .audio: AudioClipButton(url: url, label: sample.audioSeconds.map { String(format: "Play · %.1f s", $0) } ?? "Play", player: audio)
-                default: ClipVideoView(url: url).frame(width: side, height: side * 9 / 16)
+                default:
+                    if ComparisonViewLogic.showsVideoInspection(run) {
+                        Button {
+                            videoInspection = ImageInspectionSelection(promptID: sample.promptID, modelPath: modelPath)
+                        } label: {
+                            VStack(spacing: WorkbenchSpacing.xs) {
+                                ClipVideoView(url: url, controlsStyle: .none).allowsHitTesting(false)
+                                    .frame(width: side, height: side * 9 / 16)
+                                Label("Inspect video", systemImage: "film").font(WorkbenchTypography.metadata)
+                            }
+                        }.buttonStyle(.plain)
+                    } else { ClipVideoView(url: url).frame(width: side, height: side * 9 / 16) }
                 }
             } else {
                 Label("output pruned", systemImage: "trash.slash")
@@ -963,10 +1005,11 @@ struct ComparisonListeningPanel: View {
 /// and without AVKit loaded the `VideoPlayer` overlay aborts while building its type metadata.
 struct ClipVideoView: NSViewRepresentable {
     let url: URL
+    var controlsStyle: AVPlayerViewControlsStyle = .inline
 
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
-        view.controlsStyle = .inline
+        view.controlsStyle = controlsStyle
         view.player = AVPlayer(url: url)
         return view
     }

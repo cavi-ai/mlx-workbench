@@ -909,6 +909,156 @@ final class ComparisonMediaTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testVideoComparisonTransportLoadsRealClipsPausedSeeksBothAndReleasesPlayers() async throws {
+        let first = try await ComparisonMediaFixtures.generateInput(
+            for: PromptEntry(id: "video-a", text: "", builtinInput: "red-square-right"), into: root)
+        let second = root.appendingPathComponent("video-b.mp4")
+        let export = try XCTUnwrap(AVAssetExportSession(asset: AVURLAsset(url: first), presetName: AVAssetExportPresetPassthrough))
+        export.outputURL = second; export.outputFileType = .mp4
+        export.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: 1.5, preferredTimescale: 600))
+        await withCheckedContinuation { continuation in
+            export.exportAsynchronously { continuation.resume() }
+        }
+        XCTAssertEqual(export.status, .completed)
+        let transport = VideoComparisonPlayer()
+        await transport.load([first, second])
+        XCTAssertNil(transport.failure)
+        XCTAssertEqual(transport.players.count, 2)
+        XCTAssertEqual(transport.duration, 3, accuracy: 0.2)
+        XCTAssertFalse(transport.isPlaying)
+        XCTAssertTrue(transport.players.allSatisfy { $0.rate == 0 && $0.isMuted })
+        await transport.seek(to: 1.2)
+        for player in transport.players { XCTAssertEqual(player.currentTime().seconds, 1.2, accuracy: 0.1) }
+        transport.setAudio(first)
+        XCTAssertFalse(transport.players[0].isMuted)
+        XCTAssertTrue(transport.players[1].isMuted)
+        await transport.toggle()
+        XCTAssertTrue(transport.isPlaying)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertGreaterThan(transport.players[0].currentTime().seconds, 1.3, "The real decoder must advance during playback")
+        XCTAssertEqual(transport.players[1].currentTime().seconds,
+                       min(transport.players[0].currentTime().seconds, 1.5), accuracy: 0.15)
+        XCTAssertTrue(transport.isPlaying, "The longer clip continues after the shorter clip ends")
+        transport.pause()
+        XCTAssertFalse(transport.isPlaying)
+        XCTAssertTrue(transport.players.allSatisfy { $0.rate == 0 })
+        await transport.seek(to: 2.5)
+        XCTAssertEqual(transport.players[0].currentTime().seconds, 2.5, accuracy: 0.1)
+        XCTAssertEqual(transport.players[1].currentTime().seconds, 1.5, accuracy: 0.2,
+                       "The shorter clip must clamp independently")
+        await transport.toggle()
+        await transport.load([second])
+        XCTAssertEqual(transport.position, transport.duration, accuracy: 0.2)
+        XCTAssertFalse(transport.isPlaying, "Switching to an ended shorter clip must not restart it")
+        await transport.seek(to: 99)
+        XCTAssertEqual(transport.position, transport.duration, accuracy: 0.1)
+        await transport.seek(to: .nan)
+        XCTAssertEqual(transport.position, transport.duration, accuracy: 0.1)
+        await transport.toggle()
+        XCTAssertEqual(transport.position, 0, accuracy: 0.1, "Playing an ended comparison restarts both clips")
+        transport.pause()
+        let players = transport.players
+        transport.stop()
+        XCTAssertTrue(transport.players.isEmpty)
+        XCTAssertEqual(transport.position, 0)
+        XCTAssertTrue(players.allSatisfy { $0.rate == 0 && $0.currentItem == nil })
+        await transport.load([root.appendingPathComponent("missing.mp4")])
+        XCTAssertNotNil(transport.failure)
+        XCTAssertFalse(transport.isLoading)
+        XCTAssertTrue(transport.players.isEmpty)
+        let loading = Task { await transport.load([first, second]) }
+        for _ in 0..<20 {
+            if transport.isLoading || !transport.players.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        transport.stop()
+        await loading.value
+        XCTAssertTrue(transport.players.isEmpty, "A late load must not revive a closed transport")
+        XCTAssertFalse(transport.isLoading)
+    }
+
+    @MainActor
+    func testVideoViewerHostsSharedPlayersAndReleasesThemOnDismissal() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("video-viewer-proof"))
+        var run = historyRun(.videoGeneration, "Moving shapes", at: 100, models: ["/video/a", "/video/b"])
+        run.promptEntries = [PromptEntry(id: "motion", text: "A red square moving steadily across a white background")]
+        let directory = try store.createRunDirectory(run.id)
+        let source = try await ComparisonMediaFixtures.generateInput(
+            for: PromptEntry(id: "source", text: "", builtinInput: "red-square-right"), into: root)
+        for key in ["a", "b"] {
+            try FileManager.default.copyItem(at: source, to: directory.appendingPathComponent("\(key).mp4"))
+            run.results.append(VariantResult(modelPath: "/video/\(key)", modelSignature: nil,
+                samples: [ComparisonSample(promptID: "motion", outputExcerpt: "", tokensPerSecond: nil,
+                    timeToFirstTokenSeconds: nil, error: nil, artifact: "\(key).mp4")],
+                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil))
+        }
+        run.qualityReviews = ["/video/a": ComparisonQualityReview(score: 4, rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: Date())]
+        XCTAssertTrue(ComparisonViewLogic.showsVideoInspection(run))
+        XCTAssertEqual(ComparisonViewLogic.videoClips(for: run, store: store, promptID: "motion").count, 2)
+        XCTAssertTrue(ComparisonViewLogic.videoClips(for: run, store: store, promptID: "absent").isEmpty)
+        let transport = VideoComparisonPlayer()
+        for size in [CGSize(width: 1000, height: 680), CGSize(width: 760, height: 600)] {
+            let content = VideoComparisonSheet(run: run, store: store,
+                selection: ImageInspectionSelection(promptID: "motion", modelPath: "/video/a"),
+                name: { $0 == "/video/a" ? "Video model A · 8-bit" : "Video model B · 4-bit" },
+                onReview: { _, _ in XCTFail("Playback must not write ratings") }, transport: transport)
+                .frame(width: size.width, height: size.height).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: AnyView(content))
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            defer { window.close() }
+            for _ in 0..<40 {
+                if transport.players.count == 2, !transport.isLoading { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTAssertEqual(transport.players.count, 2)
+            XCTAssertNil(transport.failure)
+            XCTAssertFalse(transport.isPlaying, "Opening the viewer must not autoplay")
+            await transport.seek(to: 1.2)
+            let playerClass = try XCTUnwrap(NSClassFromString("AVPlayerView"))
+            func embeddedPlayers(_ view: NSView) -> [AVPlayer] {
+                view.subviews.flatMap { child in
+                    if child.isKind(of: playerClass), let player = child.value(forKey: "player") as? AVPlayer { return [player] }
+                    return embeddedPlayers(child)
+                }
+            }
+            host.layoutSubtreeIfNeeded()
+            let embedded = embeddedPlayers(host)
+            XCTAssertEqual(embedded.count, 2)
+            XCTAssertTrue(embedded.allSatisfy { player in transport.players.contains { $0 === player } })
+            for player in embedded { XCTAssertEqual(player.currentTime().seconds, 1.2, accuracy: 0.1) }
+            try await Task.sleep(for: .milliseconds(200))
+            func playerViews(_ view: NSView) -> [NSView] {
+                view.subviews.flatMap { child in child.isKind(of: playerClass) ? [child] : playerViews(child) }
+            }
+            XCTAssertTrue(playerViews(host).allSatisfy { ($0.value(forKey: "readyForDisplay") as? Bool) == true },
+                          "Both native video panes must have a frame ready for display")
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Video comparison \(Int(size.width))"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_VIDEO_COMPARISON_PROOF_DIR"] {
+                let output = URL(fileURLWithPath: path)
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                try png.write(to: output.appendingPathComponent("video-comparison-\(Int(size.width)).png"))
+            }
+            await transport.toggle()
+            XCTAssertTrue(transport.isPlaying)
+            host.rootView = AnyView(EmptyView())
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertTrue(transport.players.isEmpty, "Dismissing the viewer must release its transport")
+            XCTAssertTrue(embedded.allSatisfy { $0.rate == 0 && $0.currentItem == nil })
+        }
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("b.mp4"))
+        XCTAssertEqual(ComparisonViewLogic.videoClips(for: run, store: store, promptID: "motion").map(\.modelPath), ["/video/a"])
+        run.state = .running; XCTAssertFalse(ComparisonViewLogic.showsVideoInspection(run))
+        run.state = .completed; run.mode = .videoUnderstanding
+        XCTAssertFalse(ComparisonViewLogic.showsVideoInspection(run))
+        XCTAssertTrue(ComparisonViewLogic.videoClips(for: run, store: store, promptID: "motion").isEmpty)
+    }
+
     func testReuseOtherModesPreservesRecordedPromptsAndCreatesIndependentCopies() throws {
         let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
         let input = root.appendingPathComponent("reference.png")
