@@ -933,10 +933,7 @@ struct MediaPromptSetEditor: View {
         var text = ""
         var inputPath: String?
         var keywords = ""
-        var lyrics = "[instrumental]"
     }
-
-    @State private var durationSeconds = 15.0
 
     private var textLabel: String {
         switch mode {
@@ -951,7 +948,6 @@ struct MediaPromptSetEditor: View {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
             && entries.allSatisfy { draft in
                 (mode == .speechToText || !draft.text.trimmingCharacters(in: .whitespaces).isEmpty)
-                    && (mode != .musicGeneration || !draft.lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     && (mode.inputKind == nil || draft.inputPath != nil)
             }
     }
@@ -965,10 +961,6 @@ struct MediaPromptSetEditor: View {
                     ForEach($entries) { $draft in
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                             TextField(textLabel, text: $draft.text)
-                            if mode == .musicGeneration {
-                                TextField("Lyrics with section tags, or [instrumental]", text: $draft.lyrics, axis: .vertical)
-                                    .lineLimit(2...6)
-                            }
                             if let kind = mode.inputKind {
                                 HStack {
                                     Button("Choose \(kind.rawValue) file…") { draft.inputPath = Self.pick(kind) ?? draft.inputPath }
@@ -985,11 +977,6 @@ struct MediaPromptSetEditor: View {
                 }
             }
             .frame(maxHeight: 320)
-            if mode == .musicGeneration {
-                Stepper("Requested duration: \(Int(durationSeconds)) s", value: $durationSeconds, in: 5...360, step: 5)
-                Text("Duration is a maximum request. Listen to compare quality; generation speed measures performance only.")
-                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            }
             HStack {
                 Button { entries.append(Draft()) } label: { Label("Add prompt", systemImage: "plus") }
                 Spacer()
@@ -1020,9 +1007,7 @@ struct MediaPromptSetEditor: View {
                 inputKind: mode.inputKind,
                 inputPath: draft.inputPath,
                 expectedKeywords: words.isEmpty ? nil : words,
-                media: mode == .musicGeneration
-                    ? MediaParameters(steps: 30, seed: 42, durationSeconds: durationSeconds, lyrics: draft.lyrics)
-                    : media
+                media: media
             )
         }
         onSave(PromptSet(
@@ -1053,31 +1038,43 @@ struct MediaPromptSetEditor: View {
 
 // MARK: - Saved music prompt sets
 
-/// Shared fields for saved-set editing and recorded-run reuse.
+/// Shared fields for creation, saved-set editing and recorded-run reuse.
 struct MusicPromptFields: View {
     @Binding var prompts: [MusicComparisonSetup.Prompt]
+    var onRemove: ((String) -> Void)?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                ForEach(Array(prompts.indices), id: \.self) { index in
+                ForEach($prompts) { $prompt in
+                    let number = (prompts.firstIndex { $0.id == prompt.id } ?? 0) + 1
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                        Text("PROMPT \(index + 1)").font(WorkbenchTypography.metadata.weight(.semibold))
-                            .foregroundStyle(WorkbenchColor.accent)
+                        HStack {
+                            Text("PROMPT \(number)").font(WorkbenchTypography.metadata.weight(.semibold))
+                                .foregroundStyle(WorkbenchColor.accent)
+                            Spacer()
+                            if let onRemove {
+                                Button { onRemove(prompt.id) } label: { Image(systemName: "minus.circle") }
+                                    .buttonStyle(.borderless)
+                                    .disabled(prompts.count <= 1)
+                                    .accessibilityLabel("Remove prompt \(number)")
+                                    .help("Remove this prompt; at least one prompt is required.")
+                            }
+                        }
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                             Text("Caption").font(WorkbenchTypography.label)
-                            TextField("Describe the music", text: $prompts[index].caption, axis: .vertical)
-                                .lineLimit(2...5).accessibilityLabel("Prompt \(index + 1) caption")
+                            TextField("Describe the music", text: $prompt.caption, axis: .vertical)
+                                .lineLimit(2...5).accessibilityLabel("Prompt \(number) caption")
                         }
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                             Text("Lyrics").font(WorkbenchTypography.label)
-                            TextField("Default: [instrumental]", text: $prompts[index].lyrics, axis: .vertical)
-                                .lineLimit(2...6).accessibilityLabel("Prompt \(index + 1) lyrics")
+                            TextField("Default: [instrumental]", text: $prompt.lyrics, axis: .vertical)
+                                .lineLimit(2...6).accessibilityLabel("Prompt \(number) lyrics")
                         }
                         HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
-                            parameter("Duration · seconds", defaultValue: "Default: 15", value: $prompts[index].duration)
-                            parameter("Steps", defaultValue: "Default: 30", value: $prompts[index].steps)
-                            parameter("Seed", defaultValue: "Default: 42", value: $prompts[index].seed)
+                            parameter("Duration · seconds", defaultValue: "Default: 15", value: $prompt.duration)
+                            parameter("Steps", defaultValue: "Default: 30", value: $prompt.steps)
+                            parameter("Seed", defaultValue: "Default: 42", value: $prompt.seed)
                         }
                     }
                     .padding(WorkbenchSpacing.md)
@@ -1092,6 +1089,39 @@ struct MusicPromptFields: View {
             Text(title).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             TextField(defaultValue, text: value).accessibilityLabel(title)
         }.frame(maxWidth: .infinity)
+    }
+}
+
+struct MusicPromptSetCreateSheet: View {
+    @State var draft = MusicPromptSetDraft()
+    let onSave: (MusicPromptSetDraft) -> String?
+    @State private var error: String?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Label("New music prompt set", systemImage: "music.note.list")
+                .font(WorkbenchTypography.cardTitle)
+            TextField("Set name", text: $draft.name).accessibilityLabel("Music prompt set name")
+            MusicPromptFields(prompts: $draft.prompts, onRemove: { draft.removePrompt(id: $0) })
+            Text("Settings apply to each prompt. Duration is a maximum request. Blank settings use the current defaults. Saving does not generate audio.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            ErrorBanner(text: error)
+            HStack {
+                Button { draft.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save prompt set") {
+                    error = onSave(draft)
+                    if error == nil { dismiss() }
+                }
+                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(width: WorkbenchSize.Compare.musicPromptEditorWidth)
     }
 }
 

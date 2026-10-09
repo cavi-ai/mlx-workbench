@@ -116,6 +116,24 @@ final class ComparisonCoordinator: ObservableObject {
         var errorDescription: String? { message }
     }
 
+    /// Create from a validated draft, keeping failures local to this action and
+    /// publishing only after the atomic store accepts the new identity.
+    func createMusicPromptSet(_ draft: MusicPromptSetDraft) -> PromptSet? {
+        do {
+            let set = try draft.promptSet()
+            guard !promptSets.contains(where: { $0.id == set.id }) else {
+                throw PromptSetManagementError(message: "This draft has already been saved. Create a new set instead.")
+            }
+            try promptSetStore.upsert(set, id: \.id)
+            promptSets.append(set)
+            promptSetManagementError = nil
+            return set
+        } catch {
+            promptSetManagementError = "Prompt set could not be created: \(AppHost.render(error))"
+            return nil
+        }
+    }
+
     private static func isManageableMusicPromptSet(_ set: PromptSet) -> Bool {
         set.origin == .userCreated && set.effectiveMode == .musicGeneration
             && !builtinSets.contains { $0.id == set.id }

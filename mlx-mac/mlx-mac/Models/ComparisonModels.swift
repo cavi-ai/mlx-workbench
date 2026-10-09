@@ -216,6 +216,39 @@ struct MusicComparisonSetup: Identifiable {
     }
 }
 
+/// New music inputs stay in memory until an explicit save. Each prompt uses
+/// the same validation and generation fields as saved-set editing and reuse.
+struct MusicPromptSetDraft {
+    private let id = UUID().uuidString
+    var name = ""
+    var prompts: [MusicComparisonSetup.Prompt] = [newPrompt()]
+
+    private static func newPrompt() -> MusicComparisonSetup.Prompt {
+        MusicComparisonSetup.Prompt(PromptEntry(id: UUID().uuidString, text: "",
+            media: MediaParameters(steps: 30, seed: 42, durationSeconds: 15, lyrics: "[instrumental]")))
+    }
+
+    mutating func addPrompt() { prompts.append(Self.newPrompt()) }
+
+    mutating func removePrompt(id: String) {
+        guard prompts.count > 1 else { return }
+        prompts.removeAll { $0.id == id }
+    }
+
+    func promptSet() throws -> PromptSet {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !title.unicodeScalars.contains(where: { $0.value < 32 }) else {
+            throw MusicComparisonSetup.InvalidSetup(message: "Enter a prompt set name without control characters.")
+        }
+        guard !prompts.isEmpty, !prompts.contains(where: { $0.id.isEmpty }),
+              Set(prompts.map(\.id)).count == prompts.count else {
+            throw MusicComparisonSetup.InvalidSetup(message: "At least one prompt with a unique identity is required.")
+        }
+        return PromptSet(id: id, name: title, useCase: nil,
+            prompts: try prompts.map { try $0.entry() }, origin: .userCreated, mode: .musicGeneration)
+    }
+}
+
 /// A value-only draft of a saved set. The original remains the authority for
 /// its identity and metadata, and lets persistence detect a stale editor.
 struct MusicPromptSetEdit: Identifiable {
