@@ -151,7 +151,20 @@ from `mlx-agent` at runtime.
   directories directly under `comparison-outputs/` named by a run UUID; links
   are never followed); run JSON is kept and a missing artifact renders as
   "output pruned". A sample's `artifact` containing `/`, `..` or a leading dot
-  is refused. The coordinator only touches an output store it was handed
+  is refused. New input-media runs save user-picked files off the main actor before
+  replaying any model; built-in inputs are generated once, captured under unique
+  basenames and their temporary generated files removed. `ComparisonRun.inputArtifacts`
+  records the saved input per prompt inside the run's `inputs/` folder before replay.
+  Sources and saved files must be readable regular files; symbolic links and symlinked
+  store directories are refused. User-picked originals are never changed or removed.
+  Input copies follow the existing ten-run output retention. Results preview saved
+  inputs, label older user-picked originals as unsaved, and never substitute an original
+  when a recorded copy is unavailable. Speech input text is labeled as a reference
+  transcript; keyword checks describe case-insensitive presence and alternatives.
+  The text A/B editor uses the same input-evidence resolver and offers a Finder
+  reveal action that rechecks availability before opening the saved or labeled
+  legacy original file. It shows the recorded reference and expected-word checks.
+  The coordinator only touches an output store it was handed
   (`outputStore`, wired in `AppHost`). The results grid leads with one lettered
   lane (A–D, run order) per variant carrying the mode's primary metric as its
   largest numerals and a relative bar: tok/s, real-time factor, seconds per

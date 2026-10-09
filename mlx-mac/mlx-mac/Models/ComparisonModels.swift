@@ -770,6 +770,9 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     /// The prompts this run replayed, kept so the results grid still shows
     /// them after the prompt set is edited. All new runs snapshot their cohort.
     var promptEntries: [PromptEntry]? = nil
+    /// Saved media input basenames in this run's inputs folder, keyed by prompt id.
+    /// Nil identifies older runs that did not record user-picked inputs.
+    var inputArtifacts: [String: String]? = nil
     /// Explicit human task-outcome review, independent of speed and canary checks.
     var qualityReviews: [String: ComparisonQualityReview]? = nil
 

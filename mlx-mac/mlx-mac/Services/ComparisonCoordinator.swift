@@ -406,24 +406,37 @@ final class ComparisonCoordinator: ObservableObject {
             setupError = "Output folder could not be created: \(AppHost.render(error))"
         }
 
-        // Inputs are shared by every variant: user-picked files as they are,
-        // built-in ones generated once into the run's inputs folder.
+        // Every variant uses the same saved input; later changes to the original
+        // user-picked file cannot change a cohort halfway through replay.
         var inputs: [String: URL] = [:]
+        var inputArtifacts: [String: String] = [:]
         var inputLanguages: [String: String] = [:]
         var inputErrors: [String: String] = [:]
         if setupError == nil, mode.inputKind != nil {
             for entry in promptSet.prompts {
                 progressMessage = "Preparing input for \(entry.id)…"
                 if let path = entry.inputPath {
-                    var isDirectory: ObjCBool = false
-                    if path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue {
-                        inputs[entry.id] = URL(fileURLWithPath: path)
-                    } else {
-                        inputErrors[entry.id] = "Input file not found: \(path)"
+                    do {
+                        guard path.hasPrefix("/") else { throw ComparisonOutputStore.InputError.unavailable }
+                        let artifact = try await store.snapshotInput(from: URL(fileURLWithPath: path), runID: runID)
+                        inputs[entry.id] = store.inputArtifactURL(runID: runID, artifact: artifact)
+                        inputArtifacts[entry.id] = artifact
+                    } catch {
+                        inputErrors[entry.id] = "Input could not be saved: \(AppHost.render(error))"
                     }
                 } else if let builtin = entry.builtinInput {
                     do {
-                        inputs[entry.id] = try await generateInput(entry, store.inputsDirectory(runID))
+                        let url = try await generateInput(entry, store.inputsDirectory(runID))
+                        guard url.deletingLastPathComponent().standardizedFileURL == store.inputsDirectory(runID).standardizedFileURL,
+                              store.readableInputArtifactURL(runID: runID, artifact: url.lastPathComponent) != nil else {
+                            throw ComparisonOutputStore.InputError.unsafeLocation
+                        }
+                        let artifact = try await store.snapshotInput(from: url, runID: runID)
+                        // Only this freshly generated, owned file is removed. User-picked
+                        // originals are never changed by the snapshot operation.
+                        try FileManager.default.removeItem(at: url)
+                        inputs[entry.id] = store.inputArtifactURL(runID: runID, artifact: artifact)
+                        inputArtifacts[entry.id] = artifact
                         inputLanguages[entry.id] = ComparisonMediaFixtures.language(ofBuiltinInput: builtin)
                     } catch {
                         inputErrors[entry.id] = "Input could not be generated: \(AppHost.render(error))"
@@ -432,6 +445,11 @@ final class ComparisonCoordinator: ObservableObject {
                     inputErrors[entry.id] = ComparisonMediaError.missingInput.localizedDescription
                 }
             }
+        }
+
+        if mode.inputKind != nil, let index = runs.firstIndex(where: { $0.id == runID }) {
+            runs[index].inputArtifacts = inputArtifacts
+            persist(runs[index])
         }
 
         for (variantIndex, variant) in variants.enumerated() {

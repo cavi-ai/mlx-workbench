@@ -32,6 +32,60 @@ struct ComparisonOutputStore: Sendable {
         runDirectory(runID).appendingPathComponent("inputs", isDirectory: true)
     }
 
+    enum InputError: LocalizedError {
+        case unavailable, unsafeLocation
+        var errorDescription: String? {
+            switch self {
+            case .unavailable: return "Choose a readable regular input file; symbolic links and directories cannot be saved."
+            case .unsafeLocation: return "The comparison input folder is unavailable or contains a symbolic link."
+            }
+        }
+    }
+
+    /// Copy once before replaying any model. File copying stays off the main actor.
+    /// Unique names preserve extensions without colliding with prompt ids or other inputs.
+    func snapshotInput(from source: URL, runID: UUID) async throws -> String {
+        try await Task.detached {
+            let fm = FileManager.default
+            guard !source.path.unicodeScalars.contains(where: { $0.value < 32 }),
+                  Self.isReadableRegularFile(source) else { throw InputError.unavailable }
+            for directory in [root, runDirectory(runID), inputsDirectory(runID)] {
+                guard (try? fm.attributesOfItem(atPath: directory.path)[.type]) as? FileAttributeType == .typeDirectory else {
+                    throw InputError.unsafeLocation
+                }
+            }
+            var target = inputsDirectory(runID).appendingPathComponent(UUID().uuidString)
+            if !source.pathExtension.isEmpty { target.appendPathExtension(source.pathExtension) }
+            guard Self.isContainedName(target.lastPathComponent) else { throw InputError.unavailable }
+            do {
+                try fm.copyItem(at: source, to: target)
+                guard Self.isReadableRegularFile(target) else { throw InputError.unavailable }
+                return target.lastPathComponent
+            } catch {
+                try? fm.removeItem(at: target)
+                throw error
+            }
+        }.value
+    }
+
+    func inputArtifactURL(runID: UUID, artifact: String) -> URL? {
+        guard Self.isContainedName(artifact) else { return nil }
+        return inputsDirectory(runID).appendingPathComponent(artifact, isDirectory: false)
+    }
+
+    func readableInputArtifactURL(runID: UUID, artifact: String) -> URL? {
+        for directory in [root, runDirectory(runID), inputsDirectory(runID)] {
+            guard (try? FileManager.default.attributesOfItem(atPath: directory.path)[.type]) as? FileAttributeType == .typeDirectory else { return nil }
+        }
+        guard let url = inputArtifactURL(runID: runID, artifact: artifact), Self.isReadableRegularFile(url) else { return nil }
+        return url
+    }
+
+    static func isReadableRegularFile(_ url: URL) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.type]) as? FileAttributeType == .typeRegular
+            && FileManager.default.isReadableFile(atPath: url.path)
+    }
+
     @discardableResult
     func createRunDirectory(_ runID: UUID) throws -> URL {
         let directory = runDirectory(runID)
