@@ -679,6 +679,16 @@ struct FlightPathPanel: View {
     }
 }
 
+/// The one relative-time formatter: Library's modified column and Overview's
+/// captions both read it, as do the Activity rows.
+enum WorkbenchRelativeTime {
+    static func text(for date: Date, style: RelativeDateTimeFormatter.UnitsStyle, now: Date = Date()) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = style
+        return formatter.localizedString(for: date, relativeTo: now)
+    }
+}
+
 /// One stop on a flight track: Overview's model stages and Prepare's
 /// conversion pipeline both draw through `FlightTrackView`.
 struct FlightTrackNode: Equatable, Identifiable {
@@ -689,6 +699,8 @@ struct FlightTrackNode: Equatable, Identifiable {
     let detail: String
     /// Only an active node can pulse, and only while work is in flight.
     let pulses: Bool
+    /// The stage does not apply to this run; drawn dashed, never as pending.
+    var isNotApplicable = false
 }
 
 /// The one node-and-connector stepper: complete nodes fill with accent, the
@@ -699,6 +711,8 @@ struct FlightTrackView: View {
     let accessibilityTitle: String
     /// Smallest column width; nil lets the columns share the row equally.
     var columnMinimum: CGFloat?
+    /// A row-sized track: bare nodes and connectors, one accessibility element named by `accessibilityTitle`.
+    var compact = false
 
     private var lastComplete: Int? {
         nodes.lastIndex { $0.state == .complete }
@@ -706,14 +720,52 @@ struct FlightTrackView: View {
 
     var body: some View {
         let lastComplete = lastComplete
-        HStack(alignment: .top, spacing: 0) {
+        if compact {
+            compactTrack(lastComplete: lastComplete)
+        } else {
+            HStack(alignment: .top, spacing: 0) {
+                ForEach(Array(nodes.enumerated()), id: \.element.id) { index, item in
+                    column(item, index: index, lastComplete: lastComplete)
+                }
+            }
+            .workbenchAnimation(WorkbenchMotion.standard, value: lastComplete)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(accessibilityTitle)
+        }
+    }
+
+    private func compactTrack(lastComplete: Int?) -> some View {
+        HStack(spacing: 0) {
             ForEach(Array(nodes.enumerated()), id: \.element.id) { index, item in
-                column(item, index: index, lastComplete: lastComplete)
+                if index > 0 {
+                    Rectangle()
+                        .fill((lastComplete.map { index <= $0 } ?? false) ? WorkbenchColor.accent : WorkbenchColor.hairline)
+                        .frame(width: WorkbenchSize.Activity.connector, height: WorkbenchSize.stageTrack)
+                }
+                compactNode(item)
             }
         }
         .workbenchAnimation(WorkbenchMotion.standard, value: lastComplete)
-        .accessibilityElement(children: .contain)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityTitle)
+    }
+
+    @ViewBuilder
+    private func compactNode(_ item: FlightTrackNode) -> some View {
+        let size = WorkbenchSize.Activity.nodeCompact
+        if item.isNotApplicable {
+            Circle()
+                .strokeBorder(WorkbenchColor.muted, style: StrokeStyle(lineWidth: WorkbenchSize.stageTrack, dash: [WorkbenchSpacing.xxxs, WorkbenchSpacing.xxxs]))
+                .frame(width: size, height: size)
+        } else if item.state == .complete {
+            Circle().fill(WorkbenchColor.accent).frame(width: size, height: size)
+        } else {
+            Circle()
+                .fill(item.state.tone == .neutral ? Color.clear : item.state.color.opacity(.fill))
+                .overlay { Circle().strokeBorder(item.state.color, lineWidth: WorkbenchSize.stageTrack) }
+                .frame(width: size, height: size)
+                .livePulse(item.state == .active && item.pulses)
+        }
     }
 
     private func column(_ item: FlightTrackNode, index: Int, lastComplete: Int?) -> some View {
@@ -730,7 +782,7 @@ struct FlightTrackView: View {
                 .foregroundStyle(WorkbenchColor.ink)
                 .lineLimit(1)
             if showsStateText {
-                Text(item.state.label)
+                Text(item.isNotApplicable ? Self.notApplicableLabel : item.state.label)
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(item.state.tone == .neutral || item.state.tone == .accent ? WorkbenchColor.muted : item.state.color)
                     .lineLimit(1)
@@ -743,8 +795,10 @@ struct FlightTrackView: View {
         .accessibilityLabel(Self.accessibilityLabel(for: item))
     }
 
+    static let notApplicableLabel = "Not applicable"
+
     static func accessibilityLabel(for item: FlightTrackNode) -> String {
-        let base = item.title + ": " + item.state.label
+        let base = item.title + ": " + (item.isNotApplicable ? notApplicableLabel : item.state.label)
         return item.detail.isEmpty ? base : base + ". " + item.detail
     }
 
@@ -774,11 +828,20 @@ struct FlightTrackView: View {
                 .overlay { Circle().strokeBorder(item.state.color, lineWidth: WorkbenchSize.stageTrack) }
                 .livePulse(item.pulses)
         case .pending, .attention, .failed:
-            symbol
-                .foregroundStyle(item.state.color)
-                .frame(width: WorkbenchSize.stageNode, height: WorkbenchSize.stageNode)
-                .background(item.state.tone == .neutral ? Color.clear : item.state.color.opacity(.fill), in: Circle())
-                .overlay { Circle().strokeBorder(item.state.color, lineWidth: WorkbenchSize.stageTrack) }
+            if item.isNotApplicable {
+                symbol
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .frame(width: WorkbenchSize.stageNode, height: WorkbenchSize.stageNode)
+                    .overlay {
+                        Circle().strokeBorder(WorkbenchColor.muted, style: StrokeStyle(lineWidth: WorkbenchSize.stageTrack, dash: [WorkbenchSpacing.xxxs, WorkbenchSpacing.xxxs]))
+                    }
+            } else {
+                symbol
+                    .foregroundStyle(item.state.color)
+                    .frame(width: WorkbenchSize.stageNode, height: WorkbenchSize.stageNode)
+                    .background(item.state.tone == .neutral ? Color.clear : item.state.color.opacity(.fill), in: Circle())
+                    .overlay { Circle().strokeBorder(item.state.color, lineWidth: WorkbenchSize.stageTrack) }
+            }
         }
     }
 }
@@ -805,9 +868,7 @@ struct LibraryStripPresentation: Equatable {
         let last = completed.map { $0.finishedAt ?? $0.startedAt }.max()
         let lastCaption: String
         if let last {
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .full
-            lastCaption = "Last " + formatter.localizedString(for: last, relativeTo: now)
+            lastCaption = "Last " + WorkbenchRelativeTime.text(for: last, style: .full, now: now)
         } else {
             lastCaption = "None yet"
         }

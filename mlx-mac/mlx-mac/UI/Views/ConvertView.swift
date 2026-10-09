@@ -25,8 +25,12 @@ struct PrepareWorkflowPresentation: Equatable {
     let estimatedOutputBytes: [String: Int64]?
     let completedModelPath: String?
     let hasJobReceipt: Bool
+    /// Confirm conversion ran: the workflow captured the source-cleanup choice.
+    let hasConfirmEvidence: Bool
+    /// The output's model type when the Library lists it; decides whether Verify applies.
+    let taskType: ModelTaskType?
 
-    init(workflow: ConversionWorkflow) {
+    init(workflow: ConversionWorkflow, taskType: ModelTaskType? = nil) {
         sourcePath = workflow.sourcePath
         destinationPath = workflow.outputPath
         state = workflow.state
@@ -40,6 +44,8 @@ struct PrepareWorkflowPresentation: Equatable {
         estimatedOutputBytes = workflow.estimatedOutputBytes
         completedModelPath = workflow.completedModelPath
         hasJobReceipt = workflow.jobReceipt != nil
+        hasConfirmEvidence = workflow.reclaimSourceAfterVerification != nil
+        self.taskType = taskType
     }
 
     static let repoScheme = "hf://"
@@ -283,9 +289,34 @@ extension PrepareWorkflowPresentation {
         return false
     }
 
+    /// The completion message for a type without a canary (`ModelWorkflowCoordinator`
+    /// resolveCompletionAfterFreshScan); the fallback when the output's type is unknown.
+    static let noCanaryMessageMarker = "have no canary"
+
+    /// The failures `ModelWorkflowCoordinator` records when confirmed conversion cannot be queued.
+    static let queueFailurePrefix = "Conversion could not be queued"
+    static let missingReceiptMessage = "Conversion start did not include a job receipt."
+
+    /// A failure recorded at conversion submission: the run stopped at Convert.
+    var failedWhileQueueing: Bool {
+        [errorMessage, message].contains { text in
+            guard let text else { return false }
+            return text.hasPrefix(Self.queueFailurePrefix) || text == Self.missingReceiptMessage
+        }
+    }
+
+    /// A completed conversion whose model type has no canary is never verified;
+    /// its Verify stage does not apply.
+    var verificationNotApplicable: Bool {
+        guard state == .completed else { return false }
+        if let taskType { return !taskType.hasCanary }
+        return message?.contains(Self.noCanaryMessageMarker) == true
+    }
+
     /// Source, Preview, Convert, Verify, Ready. A failed run is placed at the
     /// stage its persisted fields prove it reached: a job receipt means Convert,
-    /// a preview hash means Preview, otherwise Source.
+    /// a preview hash means Preview, confirm evidence means Convert, otherwise Source.
+    /// Verify not applicable leaves its node pending and Ready complete.
     func stageStates(hasVerificationEvidence evidence: Bool) -> [ModelFlightStageState] {
         let pending = ModelFlightStageState.pending, complete = ModelFlightStageState.complete
         let active = ModelFlightStageState.active, failed = ModelFlightStageState.failed
@@ -305,14 +336,17 @@ extension PrepareWorkflowPresentation {
         case .verifying:
             return [complete, complete, complete, active, pending]
         case .completed:
-            return evidence ? [complete, complete, complete, complete, complete] : [complete, complete, complete, pending, pending]
+            if evidence { return [complete, complete, complete, complete, complete] }
+            return verificationNotApplicable ? [complete, complete, complete, pending, complete] : [complete, complete, complete, pending, pending]
         case .verified:
             return [complete, complete, complete, complete, complete]
         case .verificationFailed:
             return [complete, complete, complete, failed, pending]
         case .failed:
+            if failedWhileQueueing { return [complete, complete, failed, pending, pending] }
             if hasJobReceipt { return [complete, complete, failed, pending, pending] }
             if hasPreviewHash { return [complete, failed, pending, pending, pending] }
+            if hasConfirmEvidence { return [complete, complete, failed, pending, pending] }
             return [failed, pending, pending, pending, pending]
         }
     }
@@ -324,6 +358,7 @@ extension PrepareWorkflowPresentation {
 
     func stageNodes(hasVerificationEvidence evidence: Bool) -> [FlightTrackNode] {
         let states = stageStates(hasVerificationEvidence: evidence)
+        let skipsVerify = verificationNotApplicable && !evidence
         return states.indices.map { index in
             FlightTrackNode(
                 id: Self.stageTitles[index],
@@ -331,13 +366,35 @@ extension PrepareWorkflowPresentation {
                 symbol: Self.stageSymbols[index],
                 state: states[index],
                 detail: "",
-                pulses: states[index] == .active && pulsesActiveStage
+                pulses: states[index] == .active && pulsesActiveStage,
+                isNotApplicable: skipsVerify && index == 3
             )
         }
     }
 }
 
 // MARK: - Actions
+
+extension ActivityWorkflowAction {
+    var isRunModel: Bool { if case .runModel = self { return true } else { return false } }
+    var isOpenInLibrary: Bool { if case .openInLibrary = self { return true } else { return false } }
+
+    private var priority: Int {
+        switch self {
+        case .runModel: return 0
+        case .openInLibrary: return 1
+        case .retryPreview: return 2
+        case .keepAnyway: return 3
+        }
+    }
+
+    /// The one next step among the offered actions: Run model, else Open in
+    /// Library, else the state's own action. Prepare's onward button and every
+    /// Activity row's button come from this rule.
+    static func primary(among actions: [ActivityWorkflowAction]) -> ActivityWorkflowAction? {
+        actions.min { $0.priority < $1.priority }
+    }
+}
 
 struct PrepareExistingModel: Equatable {
     let path: String
@@ -379,17 +436,14 @@ struct PrepareActionPlan: Equatable {
         case .queued, .running, .verifying:
             return PrepareActionPlan(items: [Item(action: .openActivity, isProminent: false, isEnabled: true)])
         case .completed, .verified:
-            let run = onward.first { if case .runModel = $0 { return true } else { return false } }
-            let library = onward.first { if case .openInLibrary = $0 { return true } else { return false } }
-            if let run {
-                var items = [Item(action: .onward(run), isProminent: true, isEnabled: true)]
-                if let library { items.append(Item(action: .onward(library), isProminent: false, isEnabled: true)) }
-                return PrepareActionPlan(items: items)
+            guard let primary = ActivityWorkflowAction.primary(among: onward) else {
+                return PrepareActionPlan(items: [Item(action: .rescan, isProminent: true, isEnabled: true)])
             }
-            if let library {
-                return PrepareActionPlan(items: [Item(action: .onward(library), isProminent: true, isEnabled: true)])
+            var items = [Item(action: .onward(primary), isProminent: true, isEnabled: true)]
+            if primary.isRunModel, let library = onward.first(where: \.isOpenInLibrary) {
+                items.append(Item(action: .onward(library), isProminent: false, isEnabled: true))
             }
-            return PrepareActionPlan(items: [Item(action: .rescan, isProminent: true, isEnabled: true)])
+            return PrepareActionPlan(items: items)
         case .existingModelFound:
             guard let existing else {
                 return PrepareActionPlan(items: [Item(action: .rescan, isProminent: true, isEnabled: true)])
@@ -432,7 +486,9 @@ struct ConvertView: View {
     }
 
     private var presentation: PrepareWorkflowPresentation {
-        PrepareWorkflowPresentation(workflow: modelWorkflow.workflow)
+        let workflow = modelWorkflow.workflow
+        let taskType = PrepareWorkflowPresentation(workflow: workflow).outputModel(in: appHost.librarySnapshot)?.item.task?.type
+        return PrepareWorkflowPresentation(workflow: workflow, taskType: taskType)
     }
 
     private var sourceModel: LibraryModel? { presentation.sourceModel(in: appHost.librarySnapshot) }

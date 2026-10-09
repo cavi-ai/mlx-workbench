@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum ActivityWorkflowAction: Equatable {
@@ -101,13 +102,18 @@ enum ActivityPresentation {
 struct JobsView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
+    @ObservedObject private var verification: VerificationCoordinator
     private let onRouteSelection: (AppRoute) -> Void
 
-    @State private var lastKnownJobs: [Job] = []
     @State private var isRefreshing = false
     @State private var statusError: String?
     @State private var selectedLog: LogSelection?
     @State private var webQueue = WebConvertQueue.Snapshot(items: [], path: "", problem: nil)
+    @State private var isCompact = false
+    @State private var verificationStatuses: [UUID: VerificationStatus] = [:]
+    @State private var expandedRows: Set<UUID> = []
+    @State private var expandedServers: Set<String> = []
+    @State private var showsEarlierServers = false
     @Environment(\.isRouteActive) private var isRouteActive
 
     struct LogSelection: Identifiable {
@@ -118,6 +124,7 @@ struct JobsView: View {
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
+        _verification = ObservedObject(wrappedValue: appHost.verification)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -125,7 +132,7 @@ struct JobsView: View {
         ActivityPresentation.cards(
             workflow: modelWorkflow.workflow,
             history: modelWorkflow.history,
-            jobs: lastKnownJobs,
+            jobs: modelWorkflow.jobs,
             snapshot: appHost.librarySnapshot,
             scanModels: appHost.scanResult?.models ?? [],
             agentReady: agentReady,
@@ -139,20 +146,29 @@ struct JobsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                ErrorBanner(text: statusError)
-                ErrorBanner(text: modelWorkflow.persistenceError)
-                serversSection
-                SectionTitle(text: "Conversions")
-                if cards.isEmpty {
-                    Text("No conversion activity yet.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                } else {
-                    ForEach(cards) { conversionCard($0) }
+        let page = ActivityTimeline.page(
+            cards: cards, snapshot: appHost.librarySnapshot, verification: verificationStatuses, now: Date()
+        )
+        let inFlight = ActivityPoll.inFlightIDs(workflow: modelWorkflow.workflow, history: modelWorkflow.history)
+        GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                    ErrorBanner(text: statusError)
+                    ErrorBanner(text: modelWorkflow.persistenceError)
+                    conversions(page)
+                    serversSection
+                    if !webQueue.items.isEmpty || webQueue.problem != nil {
+                        ActivityWebQueueView(snapshot: webQueue, isCompact: isCompact)
+                    }
                 }
-                webQueueSection
+                .frame(maxWidth: WorkbenchSize.Run.contentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(WorkbenchSpacing.pageInset)
             }
-            .padding(WorkbenchSpacing.pageInset)
+            .defaultScrollAnchor(.top)
+            .onChange(of: viewport.size.width, initial: true) { _, width in
+                isCompact = ActivityLayout.isCompact(rowWidth: ActivityLayout(viewportWidth: width).rowWidth, wasCompact: isCompact)
+            }
         }
         .sheet(item: $selectedLog) { LogSheet(path: $0.path) }
         .toolbar {
@@ -168,121 +184,131 @@ struct JobsView: View {
                 }
             }
         }
-        .task {
-            await refresh()
-            while !Task.isCancelled && cards.contains(where: \.isActive) {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+        .task { await refresh() }
+        .task(id: inFlight) {
+            guard !inFlight.isEmpty else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: ActivityPoll.interval)
+                guard !Task.isCancelled else { return }
                 await refresh()
             }
         }
+        .onChange(of: verification.reports, initial: true) { refreshVerification() }
+        .onChange(of: modelWorkflow.history) { refreshVerification() }
+        .onChange(of: modelWorkflow.workflow) { refreshVerification() }
+        .onChange(of: appHost.librarySnapshot?.generatedAt) { refreshVerification() }
     }
+
+    // MARK: Conversions
+
+    @ViewBuilder
+    private func conversions(_ page: ActivityPage) -> some View {
+        if page.isEmpty {
+            designedState(symbol: "clock.arrow.circlepath", text: "No conversions yet; the ones you start in Prepare appear here.")
+        } else {
+            if !page.inFlight.isEmpty { rowSection("In flight", rows: page.inFlight) }
+            ForEach(page.groups) { rowSection($0.title, rows: $0.rows) }
+        }
+    }
+
+    private func rowSection(_ title: String, rows: [ActivityRowPresentation]) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            SectionTitle(text: title)
+            WorkbenchSurface {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                        if index > 0 { Divider().padding(.vertical, WorkbenchSpacing.sm) }
+                        ActivityRowView(
+                            row: row,
+                            isCompact: isCompact,
+                            pulses: isRouteActive,
+                            isExpanded: expansion(of: row.id),
+                            perform: perform,
+                            viewLog: { selectedLog = LogSelection(id: $0, path: $0) },
+                            copySource: copyToPasteboard,
+                            dismiss: { appHost.modelWorkflow.dismiss(recordID: row.id) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func expansion(of id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { expandedRows.contains(id) },
+            set: { if $0 { expandedRows.insert(id) } else { expandedRows.remove(id) } }
+        )
+    }
+
+    // MARK: Servers
 
     private var serversSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+        let split = ActivityServerRow.split(modelWorkflow.servers, models: appHost.librarySnapshot?.models ?? [], now: Date())
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Servers")
-            if modelWorkflow.servers.isEmpty {
-                Text("No authoritative server records are available.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            if split.running.isEmpty && split.earlier.isEmpty {
+                designedState(symbol: "server.rack", text: "No server records yet; serving a model from Run adds one.")
             } else {
-                ForEach(modelWorkflow.servers) { server in
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        HStack {
-                            StatusPill(state: server.state ?? "unknown")
-                            Text(server.repo ?? "Unknown model").font(WorkbenchTypography.emphasis).lineLimit(1)
-                            Spacer()
-                            if let port = server.port { Text(":\(port)").font(WorkbenchTypography.secondary) }
-                            if let logPath = server.logPath, !logPath.isEmpty {
-                                Button("View log") { selectedLog = LogSelection(id: logPath, path: logPath) }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                            }
-                        }
-                        detailLine("PID", server.pid.map(String.init) ?? "Not reported")
-                        detailLine("Receipt", server.receipt ?? "Not reported")
-                        detailLine("Started", server.startedAt ?? "Not reported")
-                        detailLine("Log path", server.logPath ?? "Not reported")
-                    }
-                    .formSection {}
+                if split.running.isEmpty {
+                    designedState(symbol: "server.rack", text: "No server is running.")
+                } else {
+                    serverSurface(split.running, style: isCompact ? .twoLine : .wide)
                 }
-            }
-        }
-    }
-
-    private var webQueueSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            SectionTitle(text: "Web Queue")
-            if let problem = webQueue.problem {
-                Text(problem + " The web UI preserves it as a numbered .corrupt file.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            } else if webQueue.items.isEmpty {
-                Text("Nothing queued by the web UI.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            } else {
-                Text("Queued by the web UI at \(webQueue.path). Read-only here; it drains while the web server runs.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                ForEach(webQueue.items) { item in
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        HStack {
-                            StatusPill(state: item.state.rawValue)
-                            Text(item.label).font(WorkbenchTypography.emphasis).lineLimit(1)
-                            Spacer()
-                            Text(item.kind == .gguf ? "GGUF" : "HF cache")
-                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                            Text("q\(item.qBits)")
-                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                        }
-                        detailLine("Source", item.path ?? item.repo ?? "—")
-                        if let out = item.out { detailLine("Output", out) }
-                        if let failure = item.failure {
-                            detailLine("Failure", "\(failure.message) \(failure.remediation)")
-                        }
-                    }
-                    .formSection {}
-                }
-            }
-        }
-    }
-
-    private func conversionCard(_ card: ActivityWorkflowCardPresentation) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            HStack {
-                StatusPill(state: card.workflow.state.rawValue)
-                Text(card.stateTitle).font(WorkbenchTypography.emphasis)
-                Spacer()
-                Text("Updated \(timestamp(card.workflow.updatedAt))")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            }
-            detailLine("Source", card.workflow.sourcePath.isEmpty ? "Not recorded" : card.workflow.sourcePath)
-            detailLine("Destination", card.workflow.outputPath.isEmpty ? "Not recorded" : card.workflow.outputPath)
-            detailLine("Receipt", card.workflow.jobReceipt ?? "Not reported")
-            detailLine("Created", timestamp(card.workflow.createdAt))
-            detailLine("Agent state", card.workflow.lastKnownAgentState ?? "Not reported")
-            detailLine("Log path", card.logPath ?? "Not reported")
-            if let logPath = card.logPath, !logPath.isEmpty {
-                Button("View log") { selectedLog = LogSelection(id: logPath, path: logPath) }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-            if let failure = card.workflow.errorMessage {
-                Text(failure).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure).textSelection(.enabled)
-            } else if let message = card.workflow.message {
-                Text(message).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            }
-            if !card.actions.isEmpty || !card.isActive {
-                HStack {
-                    ForEach(Array(card.actions.enumerated()), id: \.offset) { _, action in
-                        Button(actionTitle(action)) { perform(action) }
-                    }
-                    if !card.isActive {
-                        Spacer()
-                        Button("Dismiss") { appHost.modelWorkflow.dismiss(recordID: card.workflow.id) }
+                if !split.earlier.isEmpty {
+                    DisclosureGroup(isExpanded: $showsEarlierServers) {
+                        serverSurface(split.earlier, style: isCompact ? .oneLine : .wide)
+                            .padding(.top, WorkbenchSpacing.xs)
+                    } label: {
+                        Text("Earlier servers (\(split.earlier.count))")
+                            .font(WorkbenchTypography.label)
                             .foregroundStyle(WorkbenchColor.muted)
                     }
                 }
-                .buttonStyle(.bordered)
             }
         }
-        .formSection {}
+    }
+
+    private func serverSurface(_ rows: [ActivityServerRow], style: ActivityServerRowView.Style) -> some View {
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                    if index > 0 { Divider().padding(.vertical, WorkbenchSpacing.sm) }
+                    ActivityServerRowView(
+                        row: row,
+                        style: style,
+                        isExpanded: Binding(
+                            get: { expandedServers.contains(row.id) },
+                            set: { if $0 { expandedServers.insert(row.id) } else { expandedServers.remove(row.id) } }
+                        ),
+                        viewLog: { selectedLog = LogSelection(id: $0, path: $0) }
+                    )
+                }
+            }
+        }
+    }
+
+    private func designedState(symbol: String, text: String) -> some View {
+        Label {
+            Text(text)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(WorkbenchColor.muted)
+        }
+    }
+
+    // MARK: Status
+
+    private func refreshVerification() {
+        let snapshot = appHost.librarySnapshot
+        var next: [UUID: VerificationStatus] = [:]
+        for card in cards where card.workflow.state == .completed {
+            guard let path = card.workflow.completedModelPath else { continue }
+            let signature = PrepareWorkflowPresentation(workflow: card.workflow).outputModel(in: snapshot)?.item.signature
+            next[card.id] = verification.status(for: path, signature: signature)
+        }
+        verificationStatuses = next
     }
 
     private func refresh() async {
@@ -292,7 +318,6 @@ struct JobsView: View {
         webQueue = WebConvertQueue.loadDefault()
         do {
             let jobs = try await appHost.api.convertStatus()
-            lastKnownJobs = jobs
             statusError = nil
             await appHost.refreshWorkflowStatus(jobs: jobs)
         } catch {
@@ -301,13 +326,9 @@ struct JobsView: View {
         }
     }
 
-    private func actionTitle(_ action: ActivityWorkflowAction) -> String {
-        switch action {
-        case .openInLibrary: return "Open in Library"
-        case .runModel: return "Run model"
-        case .retryPreview: return "Retry preview"
-        case .keepAnyway: return "Keep anyway (unverified)"
-        }
+    private func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func perform(_ action: ActivityWorkflowAction) {
@@ -330,22 +351,6 @@ struct JobsView: View {
             appHost.selectedModelPath = record.sourcePath
             onRouteSelection(.prepare)
         }
-    }
-
-    private func detailLine(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).foregroundStyle(WorkbenchColor.muted).frame(width: 110, alignment: .leading)
-            Text(value).font(WorkbenchTypography.value).foregroundStyle(WorkbenchColor.ink).textSelection(.enabled)
-            Spacer()
-        }
-        .font(WorkbenchTypography.value)
-    }
-
-    private func timestamp(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
     }
 }
 

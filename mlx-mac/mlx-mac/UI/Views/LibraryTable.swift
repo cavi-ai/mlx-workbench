@@ -149,9 +149,7 @@ enum LibraryTablePresentation {
     /// Relative date such as "2d ago"; "—" when the scan reported none.
     static func modifiedText(_ date: Date?, now: Date = Date()) -> String {
         guard let date else { return "—" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: now)
+        return WorkbenchRelativeTime.text(for: date, style: .abbreviated, now: now)
     }
 
     static func byteCount(_ value: Int64) -> String {

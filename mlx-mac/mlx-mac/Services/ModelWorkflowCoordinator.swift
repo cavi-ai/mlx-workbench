@@ -371,14 +371,14 @@ final class ModelWorkflowCoordinator: ObservableObject {
         do {
             let response = try await api.convertStart(workflow.sourcePath, qBits, workflow.outputPath, hash)
             guard let receipt = await receipt(from: response), !receipt.isEmpty else {
-                fail("Conversion start did not include a job receipt.")
+                fail(PrepareWorkflowPresentation.missingReceiptMessage)
                 return
             }
             conversionPreviewQBits = nil
             conversionPreviewOutput = nil
             update(state: .queued, jobReceipt: receipt, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: "queued", persist: true)
         } catch {
-            fail("Conversion could not be queued: \(AppHost.render(error))")
+            fail("\(PrepareWorkflowPresentation.queueFailurePrefix): \(AppHost.render(error))")
         }
     }
 
@@ -455,14 +455,14 @@ final class ModelWorkflowCoordinator: ObservableObject {
         do {
             let response = try await api.convertRepoStart(repoRequest(repo, backend: backend, qBits: qBits, output: workflow.outputPath), hash)
             guard let receipt = await receipt(from: response), !receipt.isEmpty else {
-                fail("Conversion start did not include a job receipt.")
+                fail(PrepareWorkflowPresentation.missingReceiptMessage)
                 return
             }
             conversionPreviewQBits = nil
             conversionPreviewOutput = nil
             update(state: .queued, jobReceipt: receipt, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: "queued", persist: true)
         } catch {
-            fail("Conversion could not be queued: \(AppHost.render(error))")
+            fail("\(PrepareWorkflowPresentation.queueFailurePrefix): \(AppHost.render(error))")
         }
     }
 
@@ -775,7 +775,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 updatedRecord(
                     from: record,
                     state: .verified,
-                    message: "Verification passed. \(summary)",
+                    message: "\(VerificationOutcome.passedLead) \(summary)",
                     errorMessage: .some(nil)
                 ),
                 persist: true,
