@@ -769,19 +769,12 @@ class AppHost: ObservableObject {
         }
     }
 
-    /// Hosted unit tests run inside this app (TEST_HOST). xcodebuild sets
-    /// `XCTestConfigurationFilePath` in that process; an app launched by
-    /// XCUIApplication receives only its explicit launch environment.
-    static func isHostedUnitTest(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
-        environment["XCTestConfigurationFilePath"] != nil
-    }
-
     /// Launch-time live work against the user's real config and state: the
     /// quality gate, watch and endpoint supervision, resource sampling, and
     /// the first scan with workflow reconciliation. Skipped in a hosted
     /// unit-test process so the suite never starts or stops real servers.
     func startLiveServices(environment: [String: String] = ProcessInfo.processInfo.environment) {
-        guard !Self.isHostedUnitTest(environment) else { return }
+        guard !WorkbenchStatePaths.isHostedUnitTest(environment) else { return }
         applyFeatureToggles()
         endpoint.startMonitoring()
         resources.startMonitoring()

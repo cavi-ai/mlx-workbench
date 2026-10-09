@@ -86,7 +86,9 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         throw XCTSkip("run make test-swift-live-scan to validate the configured local inventory")
 #else
 
-        let config = ConfigModule().load()
+        var environment = ProcessInfo.processInfo.environment
+        environment["XCTestConfigurationFilePath"] = nil
+        let config = ConfigModule(pathOverride: ConfigModule().configPath(environment: environment)).load()
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: config.mlxAgentPath)
         let result = try await api.scan(
             ggufRoots: ConfigModule().scanRoots(value: config),

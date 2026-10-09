@@ -94,21 +94,7 @@ final class VerificationStore {
     }
 
     static func defaultFileURL(fileManager: FileManager = .default) -> URL {
-        let applicationSupport: URL
-        if let url = try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        ) {
-            applicationSupport = url
-        } else {
-            applicationSupport = URL(fileURLWithPath: NSHomeDirectory())
-                .appendingPathComponent("Library/Application Support", isDirectory: true)
-        }
-
-        return applicationSupport
-            .appendingPathComponent("mlx-workbench", isDirectory: true)
+        WorkbenchStatePaths.applicationSupport(fileManager: fileManager)
             .appendingPathComponent(fileName, isDirectory: false)
     }
 }

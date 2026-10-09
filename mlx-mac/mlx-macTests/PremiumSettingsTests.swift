@@ -79,8 +79,8 @@ final class PremiumSettingsTests: XCTestCase {
     // MARK: - Launch services
 
     func testHostedSuiteIsDetectedAsUnitTestHost() {
-        XCTAssertTrue(AppHost.isHostedUnitTest())
-        XCTAssertFalse(AppHost.isHostedUnitTest([:]))
+        XCTAssertTrue(WorkbenchStatePaths.isHostedUnitTest())
+        XCTAssertFalse(WorkbenchStatePaths.isHostedUnitTest([:]))
     }
 
     func testUnitTestHostSkipsLiveServices() async {

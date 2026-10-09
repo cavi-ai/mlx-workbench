@@ -79,6 +79,8 @@
 		26CFBL001 /* ContractFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26CFREF001 /* ContractFixtureTests.swift */; };
 		26WQBL002 /* WebConvertQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26WQREF002 /* WebConvertQueueTests.swift */; };
 		26PWBL001 /* PromoteWinnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26PWREF001 /* PromoteWinnerTests.swift */; };
+		28HSIBL001 /* HostedStateIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28HSIREF001 /* HostedStateIsolationTests.swift */; };
+		28HTRBL001 /* HostedTestStateRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28HTRREF001 /* HostedTestStateRoot.swift */; };
 		26EFBL001 /* EndpointFleetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26EFREF001 /* EndpointFleetTests.swift */; };
 		26EFBL002 /* ServeWorldFakes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26EFREF002 /* ServeWorldFakes.swift */; };
 		26FFBL01 /* FleetFitAdvisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26FFREF01 /* FleetFitAdvisorTests.swift */; };
@@ -165,6 +167,7 @@
 		24BBLD064 /* FitAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF062 /* FitAdvisor.swift */; };
 		24BBLD065 /* FitAdvisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF063 /* FitAdvisorTests.swift */; };
 		24BBLD06C /* WorkbenchPython.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF06A /* WorkbenchPython.swift */; };
+		28WSPBL001 /* WorkbenchStatePaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28WSPREF001 /* WorkbenchStatePaths.swift */; };
 		24BBLD06D /* RuntimeInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF06B /* RuntimeInstaller.swift */; };
 		27CFG0001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27CFG0002 /* AppConfig.swift */; };
 		24BBLD069 /* AlertNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF067 /* AlertNotifier.swift */; };
@@ -364,6 +367,7 @@
 		24FREF066 /* ComparisonPhase2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonPhase2Tests.swift; sourceTree = "<group>"; };
 		24FREF064 /* PremiumSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PremiumSettingsTests.swift; sourceTree = "<group>"; };
 		24FREF06A /* WorkbenchPython.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchPython.swift; path = Services/WorkbenchPython.swift; sourceTree = "<group>"; };
+		28WSPREF001 /* WorkbenchStatePaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchStatePaths.swift; path = Services/WorkbenchStatePaths.swift; sourceTree = "<group>"; };
 		24FREF06B /* RuntimeInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RuntimeInstaller.swift; path = Services/RuntimeInstaller.swift; sourceTree = "<group>"; };
 		27CFG0002 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppConfig.swift; path = Services/AppConfig.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000001 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppRoute.swift; path = UI/AppRoute.swift; sourceTree = "<group>"; };
@@ -383,6 +387,8 @@
 		26CFREF001 /* ContractFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractFixtureTests.swift; sourceTree = "<group>"; };
 		26WQREF002 /* WebConvertQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebConvertQueueTests.swift; sourceTree = "<group>"; };
 		26PWREF001 /* PromoteWinnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromoteWinnerTests.swift; sourceTree = "<group>"; };
+		28HSIREF001 /* HostedStateIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedStateIsolationTests.swift; sourceTree = "<group>"; };
+		28HTRREF001 /* HostedTestStateRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedTestStateRoot.swift; sourceTree = "<group>"; };
 		26EFREF001 /* EndpointFleetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointFleetTests.swift; sourceTree = "<group>"; };
 		26EFREF002 /* ServeWorldFakes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeWorldFakes.swift; sourceTree = "<group>"; };
 		26FFREF01 /* FleetFitAdvisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetFitAdvisorTests.swift; sourceTree = "<group>"; };
@@ -509,6 +515,7 @@
 				28MEM001F /* SystemResourceMonitor.swift */,
 				24FREF067 /* AlertNotifier.swift */,
 				24FREF06A /* WorkbenchPython.swift */,
+				28WSPREF001 /* WorkbenchStatePaths.swift */,
 				24FREF06B /* RuntimeInstaller.swift */,
 				27CFG0002 /* AppConfig.swift */,
 				27STP001 /* SetupCoordinator.swift */,
@@ -608,6 +615,8 @@
 				26CFREF001 /* ContractFixtureTests.swift */,
 				26WQREF002 /* WebConvertQueueTests.swift */,
 				26PWREF001 /* PromoteWinnerTests.swift */,
+				28HSIREF001 /* HostedStateIsolationTests.swift */,
+				28HTRREF001 /* HostedTestStateRoot.swift */,
 				26EFREF001 /* EndpointFleetTests.swift */,
 				26EFREF002 /* ServeWorldFakes.swift */,
 				26FFREF01 /* FleetFitAdvisorTests.swift */,
@@ -896,6 +905,7 @@
 				24BBLD069 /* AlertNotifier.swift in Sources */,
 				24BBLD06A /* HFRepoID.swift in Sources */,
 				24BBLD06C /* WorkbenchPython.swift in Sources */,
+				28WSPBL001 /* WorkbenchStatePaths.swift in Sources */,
 				24BBLD06D /* RuntimeInstaller.swift in Sources */,
 				27CFG0001 /* AppConfig.swift in Sources */,
 				27STPB01 /* SetupCoordinator.swift in Sources */,
@@ -948,6 +958,8 @@
 				26CFBL001 /* ContractFixtureTests.swift in Sources */,
 				26WQBL002 /* WebConvertQueueTests.swift in Sources */,
 				26PWBL001 /* PromoteWinnerTests.swift in Sources */,
+				28HSIBL001 /* HostedStateIsolationTests.swift in Sources */,
+				28HTRBL001 /* HostedTestStateRoot.swift in Sources */,
 				26EFBL001 /* EndpointFleetTests.swift in Sources */,
 				26EFBL002 /* ServeWorldFakes.swift in Sources */,
 				26FFBL01 /* FleetFitAdvisorTests.swift in Sources */,
@@ -1074,6 +1086,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSPrincipalClass = "mlx_workbenchTests.HostedTestStateRoot";
 				GCC_OPTIMIZATION_LEVEL = 0;
 				ONLY_ACTIVE_ARCH = YES;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/mlx-workbench.app/Contents/MacOS/mlx-workbench";
@@ -1098,6 +1111,7 @@
 				SDKROOT = macosx;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSPrincipalClass = "mlx_workbenchTests.HostedTestStateRoot";
 				GCC_OPTIMIZATION_LEVEL = 0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/mlx-workbench.app/Contents/MacOS/mlx-workbench";
 				CLANG_ENABLE_MODULES = YES;
