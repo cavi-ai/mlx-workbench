@@ -1495,6 +1495,134 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
+    func testTaskQualityRatingsRenderWithOutputsWithoutSaving() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("rating-proof"))
+        for mode in [ComparisonMode.chat, .imageGeneration] {
+            var run = historyRun(mode, "Bird comparison", at: 100, models: ["/model/a", "/model/b"])
+            run.promptEntries = [PromptEntry(id: "p", text: "A red bird resting on a snowy branch")]
+            if mode == .imageGeneration {
+                let directory = try store.createRunDirectory(run.id)
+                let image = try await ComparisonMediaFixtures.generateInput(
+                    for: PromptEntry(id: "fixture", text: "", builtinInput: "red-circle"), into: directory)
+                try FileManager.default.copyItem(at: image, to: directory.appendingPathComponent("a.png"))
+                try FileManager.default.copyItem(at: image, to: directory.appendingPathComponent("b.png"))
+            }
+            run.results = ["a", "b"].enumerated().map { index, key in
+                VariantResult(modelPath: "/model/\(key)", modelSignature: "measured", samples: [
+                    ComparisonSample(promptID: "p", outputExcerpt: index == 0 ? "A red bird on a snowy branch." : "A bird on a branch.",
+                        tokensPerSecond: index == 0 ? 20 : 40, timeToFirstTokenSeconds: 0.3, error: nil,
+                        artifact: "\(key).png", secondsPerStep: index == 0 ? 1.8 : 0.9)],
+                    aggregateTokensPerSecond: index == 0 ? 20 : 40, aggregateTTFTSeconds: 0.3,
+                    error: nil, aggregateMetric: index == 0 ? 1.8 : 0.9)
+            }
+            run.qualityReviews = ["/model/a": ComparisonQualityReview(score: 5, rubricID: "task-outcome-v1", reviewedAt: Date())]
+            let view = MediaRunResultsView(run: run, store: store, contentWidth: 940, isRouteActive: true,
+                name: { $0 == "/model/a" ? "Model A · 8-bit" : "Model B · 4-bit" },
+                onReview: { _, _ in XCTFail("Rendering must not write a quality rating") }, laneActions: { _ in EmptyView() })
+                .padding(WorkbenchSpacing.pageInset).frame(width: 988, height: 620)
+                .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 988, height: 620),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "\(mode.title) · task quality ratings"; attachment.lifetime = .keepAlways; add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_QUALITY_RATINGS_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("ratings-\(mode.rawValue).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    func testTaskQualityReviewRequiresCompleteInspectableOutputs() throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("quality-outputs"))
+        var run = historyRun(.vision, "Vision", at: 100)
+        run.promptEntries = [PromptEntry(id: "p", text: "Describe it")]
+        let sample = ComparisonSample(promptID: "p", outputExcerpt: "A red bird", tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil, error: nil)
+        run.results = [VariantResult(modelPath: "/model", modelSignature: nil, samples: [sample],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)]
+        XCTAssertNil(ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: "/model", store: store))
+        XCTAssertNotNil(ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: "/absent", store: store))
+        run.state = .running
+        XCTAssertNotNil(ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: "/model", store: store))
+        run.state = .completed; run.promptEntries?.append(PromptEntry(id: "missing", text: "Another question"))
+        XCTAssertNotNil(ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: "/model", store: store))
+        run.promptEntries = [PromptEntry(id: "p", text: "Describe it")]
+        let failed = ComparisonSample(promptID: "p", outputExcerpt: "", tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil, error: "Generation failed")
+        run.results = [VariantResult(modelPath: "/model", modelSignature: nil, samples: [failed],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)]
+        XCTAssertNotNil(ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: "/model", store: store))
+        let fileSample = ComparisonSample(promptID: "p", outputExcerpt: "", tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil, error: nil, artifact: "output.png")
+        run.results = [VariantResult(modelPath: "/model", modelSignature: nil, samples: [fileSample],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)]
+        for mode in [ComparisonMode.imageGeneration, .videoGeneration, .textToSpeech] {
+            run.mode = mode
+            XCTAssertNotNil(ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: "/model", store: store))
+        }
+        let output = try store.createRunDirectory(run.id).appendingPathComponent("output.png")
+        try Data("output".utf8).write(to: output)
+        XCTAssertNil(ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: "/model", store: store))
+        try FileManager.default.removeItem(at: output)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: false)
+        XCTAssertNotNil(ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: "/model", store: store))
+    }
+
+    @MainActor
+    func testTaskQualityRatingsPersistClearAndDoNotChangeMeasuredOutputs() throws {
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            let runsURL = root.appendingPathComponent("quality-\(mode.rawValue).json")
+            var run = historyRun(mode, "Quality", at: 100)
+            run.promptEntries = [PromptEntry(id: "p", text: "Task")]
+            run.results = [VariantResult(modelPath: "/model", modelSignature: "measured", samples: [
+                ComparisonSample(promptID: "p", outputExcerpt: "Saved answer", tokensPerSecond: 20,
+                    timeToFirstTokenSeconds: 0.3, error: nil, artifact: "output.png")],
+                aggregateTokensPerSecond: 20, aggregateTTFTSeconds: 0.3, error: nil)]
+            try JSONStore<ComparisonRun>(fileURL: runsURL).replaceAll([run])
+            let coordinator = makeCoordinator(runner: StubMediaRunner(), runsURL: runsURL)
+            coordinator.reviewQuality(runID: run.id, modelPath: "/model", score: 4)
+            let reloaded = makeCoordinator(runner: StubMediaRunner(), runsURL: runsURL)
+            let saved = try XCTUnwrap(reloaded.runs.first)
+            XCTAssertEqual(saved.qualityReviews?["/model"]?.score, 4)
+            XCTAssertEqual(saved.qualityReviews?["/model"]?.rubricID, "task-outcome-v1")
+            XCTAssertEqual(saved.results, run.results)
+            XCTAssertEqual(saved.promptEntries, run.promptEntries)
+            reloaded.reviewQuality(runID: run.id, modelPath: "/model", score: nil)
+            XCTAssertNil(try JSONStore<ComparisonRun>(fileURL: runsURL).load().first?.qualityReviews?["/model"])
+            XCTAssertNil(reloaded.activeRunID)
+        }
+    }
+
+    @MainActor
+    func testTaskQualityRatingWriteFailureRetainsPublishedReview() throws {
+        var run = historyRun(.vision, "Quality", at: 100)
+        run.promptEntries = [PromptEntry(id: "p", text: "Task")]
+        run.results = [VariantResult(modelPath: "/model", modelSignature: nil, samples: [],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)]
+        run.qualityReviews = ["/model": ComparisonQualityReview(score: 4, rubricID: "task-outcome-v1", reviewedAt: Date())]
+        let url = root.appendingPathComponent("runs.json")
+        try JSONStore<ComparisonRun>(fileURL: url).replaceAll([run])
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let corrupt = Data("broken-json".utf8); try corrupt.write(to: url)
+        coordinator.reviewQuality(runID: run.id, modelPath: "/model", score: 1)
+        XCTAssertEqual(coordinator.runs.first, run)
+        XCTAssertNotNil(coordinator.persistenceError)
+        XCTAssertEqual(try Data(contentsOf: url), corrupt)
+        try JSONStore<ComparisonRun>(fileURL: url).replaceAll([run])
+        coordinator.reviewQuality(runID: run.id, modelPath: "/model", score: 3)
+        XCTAssertEqual(coordinator.runs.first?.qualityReviews?["/model"]?.score, 3)
+        XCTAssertNil(coordinator.persistenceError)
+    }
+
+    @MainActor
     func testMusicListeningReviewPersistsItsOwnRubricAndCanBeCleared() async throws {
         let url = root.appendingPathComponent("listening-runs.json")
         let coordinator = makeCoordinator(runner: StubMediaRunner(), runsURL: url)

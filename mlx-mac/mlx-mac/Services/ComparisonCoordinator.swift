@@ -298,6 +298,7 @@ final class ComparisonCoordinator: ObservableObject {
         do {
             try runStore.upsert(updated, id: \.id)
             runs[index] = updated
+            persistenceError = nil
         } catch { persistenceError = "Task review could not be saved: \(AppHost.render(error))" }
     }
 

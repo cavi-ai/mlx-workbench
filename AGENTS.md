@@ -238,6 +238,16 @@ from `mlx-agent` at runtime.
   Missing models remain selected and block Run until replaced/removed. New runs
   capture current signatures and evidence; original results/reviews stay intact.
   Input paths refer to current files, not archived copies of historical content.
+  Non-music result lanes expose `TaskQualityRating`, a compact menu over the
+  existing `task-outcome-v1` human rating scale. Per-mode guidance lives in help
+  text; ratings never derive from speed, keywords or word-error rate.
+  `ComparisonViewLogic.qualityReviewUnavailableReason` requires a completed,
+  successful full prompt cohort and readable media outputs for new judgments.
+  Saved ratings stay visible and clearable after media is pruned. Rating changes
+  use `reviewQuality` without altering measured samples or prompt snapshots;
+  failed writes retain published reviews and successful retries clear the error.
+  Quality awards retain the existing all-entrants-reviewed, same-rubric,
+  current-identity/environment guards and share ties.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.
