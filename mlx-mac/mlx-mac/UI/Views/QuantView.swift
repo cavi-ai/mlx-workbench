@@ -974,7 +974,7 @@ struct QuantView: View {
                         if run.effectiveMode == .musicGeneration {
                             pendingReuseSetup = try MusicComparisonSetup(run: run)
                         } else {
-                            pendingGeneralReuseSetup = try ComparisonRunSetup(run: run)
+                            pendingGeneralReuseSetup = try ComparisonRunSetup(run: run, outputStore: comparison.outputStore)
                         }
                         reuseError = nil
                     }

@@ -1182,8 +1182,13 @@ private struct ComparisonPromptCard: View {
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         .lineLimit(1).truncationMode(.middle).help(prompt.inputPath)
                 }
+                if prompt.usesSavedInput, !prompt.inputFileUnavailable {
+                    Label("Saved input from this run", systemImage: "archivebox")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.accent)
+                }
                 if prompt.inputFileUnavailable {
-                    Label("Input file unavailable · choose a replacement", systemImage: "exclamationmark.triangle")
+                    Label(prompt.usesSavedInput ? "Saved input unavailable · choose a replacement"
+                        : "Input file unavailable · choose a replacement", systemImage: "exclamationmark.triangle")
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
                 }
             }
@@ -1273,6 +1278,10 @@ struct ComparisonRunSetupSheet: View {
                 }
             }
             ComparisonPromptFields(draft: $setup.draft)
+            if setup.draft.mode.inputKind != nil {
+                Text("Saved inputs stay in the ten-run cache. A saved prompt set using them will need replacement files after they are pruned. Older runs use current original files or regenerate built-in fixtures.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
             Text("Recorded prompts and models for a new run. Current serving limits and runtime defaults still apply. Original results and ratings stay intact.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             ErrorBanner(text: error)
