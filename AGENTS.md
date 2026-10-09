@@ -203,6 +203,14 @@ from `mlx-agent` at runtime.
   coordinator's explicit Edit action, outside view evaluation.
   Invalid, stale or failed edits keep the editor open; Cancel and opening an editor
   never write or generate audio. Historical snapshots and output files are untouched.
+  **New set…** in music mode uses `MusicPromptSetDraft` and `MusicPromptFields`
+  for the same per-prompt caption, lyrics, duration, steps and seed controls.
+  New prompts start with explicit 15-second/30-step/seed-42 instrumental settings;
+  clearing settings uses the existing optional-default semantics. Add/remove is
+  draft-only, keeps stable prompt identities, and retains at least one prompt.
+  Explicit Save validates all inputs and selects the set only after the existing
+  prompt store accepts it. Invalid or failed saves keep the draft open; Cancel
+  never writes or generates. Other media modes retain their existing editor.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.

@@ -809,6 +809,87 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
+    func testNewMusicPromptSetPersistsIndependentSettingsWithoutGenerating() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        var draft = MusicPromptSetDraft()
+        draft.name = "  Instrumental contrasts  "
+        draft.prompts[0].caption = "Rhodes, bass and drums"
+        draft.prompts[0].duration = "12.5"; draft.prompts[0].steps = "8"; draft.prompts[0].seed = "7"
+        draft.addPrompt()
+        draft.prompts[1].caption = "Acoustic guitar and strings"
+        draft.prompts[1].lyrics = "[verse]\nA new day"
+        draft.prompts[1].duration = "20"; draft.prompts[1].steps = "12"; draft.prompts[1].seed = "99"
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        let saved = try draft.promptSet()
+        XCTAssertEqual(saved.name, "Instrumental contrasts")
+        XCTAssertEqual(saved.origin, .userCreated); XCTAssertEqual(saved.effectiveMode, .musicGeneration)
+        XCTAssertEqual(saved.prompts[0].text, "Rhodes, bass and drums")
+        XCTAssertEqual(saved.prompts[0].media, MediaParameters(steps: 8, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))
+        XCTAssertEqual(saved.prompts[1].media, MediaParameters(steps: 12, seed: 99, durationSeconds: 20, lyrics: "[verse]\nA new day"))
+        XCTAssertNotEqual(saved.prompts[0].id, saved.prompts[1].id)
+        XCTAssertEqual(coordinator.createMusicPromptSet(draft), saved)
+        let loaded = makeCoordinator(runner: runner)
+        XCTAssertEqual(loaded.promptSets.first { $0.id == saved.id }, saved)
+        XCTAssertTrue(coordinator.runs.isEmpty); XCTAssertNil(coordinator.activeRunID)
+        let requests = await runner.requests
+        XCTAssertTrue(requests.isEmpty, "Creating a saved set must not generate audio")
+    }
+
+    func testNewMusicPromptSetRemovalKeepsSurvivingSettingsAndOnePromptMinimum() throws {
+        var draft = MusicPromptSetDraft(); draft.name = "Piano"
+        draft.prompts[0].caption = "Solo piano"
+        let firstID = draft.prompts[0].id
+        draft.addPrompt(); let secondID = draft.prompts[1].id
+        draft.prompts[1].caption = "Strings"; draft.prompts[1].seed = "123"
+        draft.removePrompt(id: firstID)
+        XCTAssertEqual(try draft.promptSet().prompts.map(\.id), [secondID])
+        XCTAssertEqual(try draft.promptSet().prompts[0].media?.seed, 123)
+        draft.removePrompt(id: secondID)
+        XCTAssertEqual(draft.prompts.count, 1)
+        draft.prompts = []
+        XCTAssertThrowsError(try draft.promptSet())
+    }
+
+    func testNewMusicPromptSetUsesSharedValidationAndOptionalDefaults() throws {
+        var draft = MusicPromptSetDraft(); draft.name = "Piano"; draft.prompts[0].caption = "Solo piano"
+        for name in ["", " \n ", "Name\u{0}"] {
+            var invalid = draft; invalid.name = name
+            XCTAssertThrowsError(try invalid.promptSet())
+        }
+        let invalidFields: [(WritableKeyPath<MusicComparisonSetup.Prompt, String>, String)] = [
+                               (\.duration, "nan"), (\.duration, "361"),
+                               (\.steps, "31"), (\.steps, "0"), (\.seed, "-1"), (\.seed, "4294967296"),
+                               (\.caption, " \n "), (\.lyrics, " \n ")]
+        for (field, value) in invalidFields {
+            var invalid = draft; invalid.prompts[0][keyPath: field] = value
+            XCTAssertThrowsError(try invalid.promptSet())
+        }
+        draft.prompts[0].duration = ""; draft.prompts[0].steps = ""; draft.prompts[0].seed = ""; draft.prompts[0].lyrics = ""
+        let saved = try draft.promptSet()
+        XCTAssertEqual(saved.prompts[0].media, MediaParameters())
+    }
+
+    @MainActor
+    func testNewMusicPromptSetFailedSaveCanRetryWithoutLosingDraft() throws {
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let url = root.appendingPathComponent("sets.json"), corrupt = Data("not-json".utf8)
+        try corrupt.write(to: url)
+        var draft = MusicPromptSetDraft(); draft.name = "Piano"; draft.prompts[0].caption = "Solo piano"
+        draft.prompts[0].seed = "77"
+        let saved = try draft.promptSet(), before = coordinator.promptSets
+        XCTAssertNil(coordinator.createMusicPromptSet(draft))
+        XCTAssertEqual(try Data(contentsOf: url), corrupt)
+        XCTAssertEqual(coordinator.promptSets, before)
+        try FileManager.default.removeItem(at: url)
+        XCTAssertNotNil(coordinator.promptSetManagementError)
+        XCTAssertEqual(coordinator.createMusicPromptSet(draft), saved)
+        XCTAssertNil(coordinator.promptSetManagementError)
+        XCTAssertEqual(try JSONStore<PromptSet>(fileURL: url).load(), [saved])
+        XCTAssertNil(coordinator.createMusicPromptSet(draft), "A repeated save cannot overwrite an existing set")
+        XCTAssertEqual(try JSONStore<PromptSet>(fileURL: url).load(), [saved])
+    }
+
+    @MainActor
     func testMusicPromptSetSaveFailureLeavesStoreAndPublishedPresetsUntouched() throws {
         let url = root.appendingPathComponent("sets.json")
         let corrupt = Data("not-json".utf8)
@@ -1008,6 +1089,33 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertThrowsError(try MusicPromptSetEdit(set: set))
         edit.prompts = []
         XCTAssertThrowsError(try edit.updatedPromptSet())
+    }
+
+    @MainActor
+    func testNewMusicPromptSetSheetRendersIndependentSettingsWithoutSaving() async throws {
+        var draft = MusicPromptSetDraft(); draft.name = "Instrumental contrasts"
+        draft.prompts[0].caption = "Jazz-funk with Rhodes, bass and drums"
+        draft.prompts[0].duration = "12.5"; draft.prompts[0].steps = "8"; draft.prompts[0].seed = "7"
+        draft.addPrompt(); draft.prompts[1].caption = "Acoustic guitar and strings"
+        draft.prompts[1].duration = "20"; draft.prompts[1].steps = "12"; draft.prompts[1].seed = "99"
+        let content = MusicPromptSetCreateSheet(draft: draft) { _ in
+            XCTFail("Rendering must not save a set"); return nil
+        }.background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 580),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "New music prompt set"; attachment.lifetime = .keepAlways; add(attachment)
+        if let path = ProcessInfo.processInfo.environment["MLX_MUSIC_CREATE_PROOF_PATH"] {
+            try png.write(to: URL(fileURLWithPath: path))
+        }
     }
 
     @MainActor

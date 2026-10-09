@@ -717,9 +717,19 @@ struct QuantView: View {
             ErrorBanner(text: comparison.promptSetManagementError)
         }
         .sheet(isPresented: $showingSetEditor) {
-            MediaPromptSetEditor(mode: mode) { set in
-                comparison.savePromptSet(set)
-                selectedPromptSetID = set.id
+            if mode == .musicGeneration {
+                MusicPromptSetCreateSheet { draft in
+                    guard let set = comparison.createMusicPromptSet(draft) else {
+                        return comparison.promptSetManagementError ?? "Prompt set could not be created."
+                    }
+                    selectedPromptSetID = set.id
+                    return nil
+                }
+            } else {
+                MediaPromptSetEditor(mode: mode) { set in
+                    comparison.savePromptSet(set)
+                    selectedPromptSetID = set.id
+                }
             }
         }
     }
