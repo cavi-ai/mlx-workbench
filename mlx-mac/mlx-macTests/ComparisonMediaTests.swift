@@ -685,6 +685,110 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(ComparisonViewLogic.audioClips(for: run, store: store, promptID: "missing").isEmpty)
     }
 
+    func testReuseOtherModesPreservesRecordedPromptsAndCreatesIndependentCopies() throws {
+        let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
+        let input = root.appendingPathComponent("reference.png")
+        try Data("reference".utf8).write(to: input)
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            var run = historyRun(mode, "Recorded", at: 100, models: ["/first", "/missing"])
+            let entry = PromptEntry(id: "recorded", text: "Red bird", maxTokens: 77,
+                tool: mode == .chat ? tool : nil, inputKind: mode.inputKind,
+                inputPath: mode.inputKind == nil ? nil : input.path,
+                expectedKeywords: ["red", "bird"],
+                media: MediaParameters(size: 512, steps: 9, seed: 17, frames: 33, fps: 12))
+            run.promptEntries = [entry]
+            let original = run
+            var setup = try ComparisonRunSetup(run: run)
+            let temporary = try setup.draft.promptSet()
+            XCTAssertNotEqual(temporary.id, run.promptSetID)
+            XCTAssertEqual(temporary.effectiveMode, mode)
+            XCTAssertEqual(temporary.prompts, [entry])
+            XCTAssertEqual(setup.modelPaths, ["/first", "/missing"])
+            setup.draft.prompts[0].text = "Blue bird"
+            let saved = try setup.savedDraft(named: "Copy").promptSet()
+            XCTAssertNotEqual(saved.id, temporary.id)
+            XCTAssertEqual(saved.name, "Copy")
+            XCTAssertEqual(saved.prompts[0].text, "Blue bird")
+            XCTAssertEqual(saved.prompts[0].id, "recorded")
+            XCTAssertEqual(saved.prompts[0].tool, entry.tool)
+            XCTAssertEqual(run, original)
+        }
+        let chat = ComparisonRun(id: UUID(), promptSetID: "tools", promptSetName: "Tools", useCase: .coding,
+            variants: ["/model"], results: [], startedAt: Date(), finishedAt: nil, state: .completed,
+            promptEntries: [PromptEntry(id: "p", text: "Call a tool", tool: tool)])
+        XCTAssertEqual(try ComparisonRunSetup(run: chat).draft.promptSet().useCase, .coding)
+    }
+
+    func testReuseOtherModesRejectsMissingSnapshotsAndInvalidSelections() throws {
+        var run = historyRun(.imageGeneration, "Legacy", at: 100)
+        XCTAssertThrowsError(try ComparisonRunSetup(run: run))
+        run.promptEntries = []; XCTAssertThrowsError(try ComparisonRunSetup(run: run))
+        run.promptEntries = [PromptEntry(id: "p", text: "A forest")]
+        run.state = .running; XCTAssertThrowsError(try ComparisonRunSetup(run: run))
+        run.state = .completed; run.mode = .musicGeneration
+        XCTAssertThrowsError(try ComparisonRunSetup(run: run))
+        run.mode = .imageGeneration
+        run.promptEntries = [PromptEntry(id: "p", text: "A forest"), PromptEntry(id: "p", text: "Another forest")]
+        XCTAssertThrowsError(try ComparisonRunSetup(run: run))
+        for models in [[], [""], ["/model", "/model"], ["/a", "/b", "/c", "/d", "/e"]] {
+            var invalid = historyRun(.chat, "Invalid selection", at: 100, models: models)
+            invalid.promptEntries = [PromptEntry(id: "p", text: "Question")]
+            XCTAssertThrowsError(try ComparisonRunSetup(run: invalid))
+        }
+    }
+
+    func testReuseOtherModesFlagsMissingFilesAndAllowsReplacementOrBuiltinFixtures() throws {
+        var run = historyRun(.vision, "Vision", at: 100)
+        run.promptEntries = [PromptEntry(id: "p", text: "What is here?", inputKind: .image,
+            inputPath: root.appendingPathComponent("gone.png").path)]
+        var setup = try ComparisonRunSetup(run: run)
+        XCTAssertTrue(setup.draft.prompts[0].inputFileUnavailable)
+        XCTAssertThrowsError(try setup.draft.promptSet())
+        let replacement = root.appendingPathComponent("new.png")
+        try Data("reference".utf8).write(to: replacement)
+        setup.draft.prompts[0].inputPath = replacement.path
+        XCTAssertFalse(setup.draft.prompts[0].inputFileUnavailable)
+        XCTAssertEqual(try setup.draft.promptSet().prompts[0].inputPath, replacement.path)
+        run.promptEntries = [PromptEntry(id: "p", text: "What is here?", inputKind: .image, builtinInput: "red-circle")]
+        let builtin = try ComparisonRunSetup(run: run)
+        XCTAssertFalse(builtin.draft.prompts[0].inputFileUnavailable)
+        XCTAssertEqual(try builtin.draft.promptSet().prompts[0].builtinInput, "red-circle")
+    }
+
+    @MainActor
+    func testReusedVideoSetupSavesCopyAndStartsFreshRunWithoutChangingHistory() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        var originalDraft = ComparisonPromptSetDraft(mode: .videoGeneration)
+        originalDraft.name = "Video"; originalDraft.prompts[0].text = "A forest"
+        originalDraft.prompts[0].steps = "9"; originalDraft.prompts[0].seed = "17"
+        let originalSet = try XCTUnwrap(coordinator.createPromptSet(originalDraft))
+        coordinator.start(variants: [("/video/a", "old-signature")], promptSet: originalSet)
+        await waitForRun(coordinator)
+        let runID = try XCTUnwrap(coordinator.runs.first?.id)
+        coordinator.reviewQuality(runID: runID, modelPath: "/video/a", score: 4)
+        let originalRun = try XCTUnwrap(coordinator.runs.first)
+        let historyBefore = try Data(contentsOf: root.appendingPathComponent("runs.json"))
+        var setup = try ComparisonRunSetup(run: originalRun)
+        setup.draft.prompts[0].steps = "12"
+        let saved = try XCTUnwrap(coordinator.createPromptSet(setup.savedDraft(named: "Video copy")))
+        XCTAssertNotEqual(saved.id, originalSet.id)
+        XCTAssertEqual(coordinator.promptSets.first { $0.id == originalSet.id }, originalSet)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("runs.json")), historyBefore)
+        XCTAssertNil(coordinator.activeRunID)
+        let requestsBeforeRun = await runner.requests
+        XCTAssertEqual(requestsBeforeRun.count, 1)
+        let temporary = try setup.draft.promptSet()
+        coordinator.start(variants: [(setup.modelPaths[0], "new-signature")], promptSet: temporary)
+        await waitForRun(coordinator)
+        let next = try XCTUnwrap(coordinator.runs.first { $0.id != runID })
+        XCTAssertEqual(next.state, .completed)
+        XCTAssertEqual(next.promptEntries?.first?.media?.steps, 12)
+        XCTAssertEqual(next.promptEntries?.first?.media?.seed, 17)
+        XCTAssertEqual(next.results.first?.modelSignature, "new-signature")
+        XCTAssertTrue(next.qualityReviews?.isEmpty ?? true)
+        XCTAssertEqual(coordinator.runs.first { $0.id == runID }, originalRun)
+    }
+
     func testReuseValidatesTextAndCanClearExplicitParametersToDefaults() throws {
         var run = historyRun(.musicGeneration, "Saved music", at: 100)
         run.promptEntries = [PromptEntry(id: "p", text: "Piano", media:
@@ -770,6 +874,57 @@ final class ComparisonMediaTests: XCTestCase {
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = "Reuse music setup"; attachment.lifetime = .keepAlways; add(attachment)
         if let path = ProcessInfo.processInfo.environment["MLX_REUSE_PROOF_PATH"] { try png.write(to: URL(fileURLWithPath: path)) }
+    }
+
+    @MainActor
+    func testReuseOtherModeSheetRendersMissingInputsWithoutSavingOrRunning() async throws {
+        var run = historyRun(.vision, "Bird descriptions", at: 100, models: ["/vision/a", "/vision/missing"])
+        run.promptEntries = [PromptEntry(id: "recorded", text: "Describe the bird and its surroundings", maxTokens: 512,
+            inputKind: .image, inputPath: root.appendingPathComponent("missing-bird.png").path,
+            expectedKeywords: ["bird", "snow"])]
+        let sheet = ComparisonRunSetupSheet(setup: try ComparisonRunSetup(run: run), availablePaths: ["/vision/a"],
+            name: { $0 == "/vision/a" ? "Vision model · 8-bit" : "Vision model · 4-bit" },
+            onApply: { _, _ in XCTFail("Rendering must not apply or run"); return nil },
+            onSave: { _ in XCTFail("Rendering must not save"); return nil })
+        let host = NSHostingView(rootView: sheet.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 720),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(200))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "Reuse vision setup · missing model and file"; attachment.lifetime = .keepAlways; add(attachment)
+        if let directory = ProcessInfo.processInfo.environment["MLX_REUSE_SETUP_PROOF_DIR"] {
+            try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("reuse-vision.png"))
+        }
+        window.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    @MainActor
+    func testReusedSetupSaveFailureRetainsDraftAndCanRetryAsIndependentCopy() throws {
+        var run = historyRun(.imageGeneration, "Images", at: 100)
+        run.promptEntries = [PromptEntry(id: "p", text: "A red bird", media: MediaParameters(size: 768, steps: 9, seed: 17))]
+        var setup = try ComparisonRunSetup(run: run)
+        setup.draft.prompts[0].seed = "42"
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let storeURL = root.appendingPathComponent("sets.json")
+        let corrupt = Data("broken-json".utf8); try corrupt.write(to: storeURL)
+        XCTAssertNil(coordinator.createPromptSet(setup.savedDraft(named: "Copy")))
+        XCTAssertEqual(try Data(contentsOf: storeURL), corrupt)
+        XCTAssertEqual(try setup.draft.promptSet().prompts[0].media?.seed, 42)
+        XCTAssertTrue(coordinator.promptSets.allSatisfy { $0.origin == .builtin })
+        try FileManager.default.removeItem(at: storeURL)
+        let saved = try XCTUnwrap(coordinator.createPromptSet(setup.savedDraft(named: "Copy")))
+        XCTAssertNotEqual(saved.id, setup.draft.id)
+        XCTAssertNil(coordinator.promptSetManagementError)
+        XCTAssertEqual(saved.prompts[0].media, MediaParameters(size: 768, steps: 9, seed: 42))
+        XCTAssertTrue(coordinator.runs.isEmpty)
+        XCTAssertNil(coordinator.activeRunID)
     }
 
     @MainActor

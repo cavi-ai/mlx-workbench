@@ -389,6 +389,7 @@ struct QuantView: View {
     @State private var pendingPromptSetRename: PromptSet?
     @State private var pendingPromptSetRemoval: PromptSet?
     @State private var pendingReuseSetup: MusicComparisonSetup?
+    @State private var pendingGeneralReuseSetup: ComparisonRunSetup?
     @State private var reusedPromptSet: PromptSet?
     @State private var reuseError: String?
     @State private var variantSlots: [String?] = [nil, nil]
@@ -502,6 +503,15 @@ struct QuantView: View {
                     guard comparison.savePromptSet(set) else {
                         throw MusicComparisonSetup.InvalidSetup(message: comparison.persistenceError ?? "Prompt set could not be saved.")
                     }
+                })
+        }
+        .sheet(item: $pendingGeneralReuseSetup) { setup in
+            ComparisonRunSetupSheet(setup: setup,
+                availablePaths: Set(readyModels.map { $0.item.path }), name: shortName,
+                onApply: applyReusedSetup, onSave: { draft in
+                    guard comparison.activeRunID == nil else { return "Wait for the current comparison to finish." }
+                    return comparison.createPromptSet(draft) == nil
+                        ? (comparison.promptSetManagementError ?? "Prompt set could not be saved.") : nil
                 })
         }
         .onChange(of: appHost.workflowReportImportRequested) { _, _ in consumeImportRequest() }
@@ -960,16 +970,23 @@ struct QuantView: View {
             ComparisonHistoryPicker(runs: comparison.runs, selection: shownRunBinding)
                 .frame(maxWidth: WorkbenchSize.Compare.historyMaximum, alignment: .leading)
                 .disabled(comparison.activeRunID != nil)
-            if let run = shownRun, run.state == .completed, run.effectiveMode == .musicGeneration {
+            if let run = shownRun, run.state == .completed {
                 Button {
-                    do { pendingReuseSetup = try MusicComparisonSetup(run: run); reuseError = nil }
+                    do {
+                        if run.effectiveMode == .musicGeneration {
+                            pendingReuseSetup = try MusicComparisonSetup(run: run)
+                        } else {
+                            pendingGeneralReuseSetup = try ComparisonRunSetup(run: run)
+                        }
+                        reuseError = nil
+                    }
                     catch { reuseError = error.localizedDescription }
                 } label: { Label("Reuse setup", systemImage: "arrow.counterclockwise") }
                     .buttonStyle(.borderless)
                     .disabled(comparison.activeRunID != nil || run.promptEntries?.isEmpty != false)
                     .help(run.promptEntries?.isEmpty != false
                           ? "This older run has no recorded prompt snapshot."
-                          : "Edit the recorded music inputs for a new comparison.")
+                          : "Edit the recorded prompts and settings for a new comparison.")
             }
             Spacer()
             championsMenu
@@ -1260,19 +1277,30 @@ struct QuantView: View {
 
     private func applyReusedSetup(_ setup: MusicComparisonSetup, _ promptSet: PromptSet) {
         guard comparison.activeRunID == nil else { return }
+        useRecordedSetup(mode: .musicGeneration, paths: setup.modelPaths, name: setup.sourceName, promptSet: promptSet)
+        pendingReuseSetup = nil
+    }
+
+    private func applyReusedSetup(_ setup: ComparisonRunSetup, _ promptSet: PromptSet) -> String? {
+        guard comparison.activeRunID == nil else { return "Wait for the current comparison to finish." }
+        useRecordedSetup(mode: setup.draft.mode, paths: setup.modelPaths, name: setup.sourceName, promptSet: promptSet)
+        pendingGeneralReuseSetup = nil
+        return nil
+    }
+
+    private func useRecordedSetup(mode: ComparisonMode, paths: [String], name: String, promptSet: PromptSet) {
         initializedSuggestions = true
         manuallySelectedModels = true
-        mode = .musicGeneration
+        self.mode = mode
         familyFilter = nil
         sizeFilter = .all
         modelSearch = ""
         reusedPromptSet = promptSet
         selectedPromptSetID = promptSet.id
-        variantSlots = setup.modelPaths.map { Optional($0) }
+        variantSlots = paths.map { Optional($0) }
         while variantSlots.count < 2 { variantSlots.append(nil) }
-        selectionReason = "Recorded model selection from \(setup.sourceName)."
+        selectionReason = "Recorded model selection from \(name)."
         reuseError = nil
-        pendingReuseSetup = nil
     }
 
     private func setPreferred(_ path: String, for useCase: UseCase) {
