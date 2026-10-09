@@ -1,53 +1,13 @@
 import SwiftUI
 
-struct RunPresentation: Equatable {
-    let workflow: ConversionWorkflow
-    let model: LibraryModel?
-    let servers: [ServerInfo]
-    let runtimeAvailable: Bool
-    let runtimeMessage: String
-
-    var selectedCompletedModel: LibraryModel? {
-        guard workflow.state == .completed,
-              let completedPath = workflow.completedModelPath,
-              let model,
-              model.item.path == completedPath || model.outputPaths.contains(completedPath),
-              model.readiness == .ready else { return nil }
-        return model
-    }
-    var modelPath: String? {
-        guard selectedCompletedModel != nil else { return nil }
-        return workflow.completedModelPath
-    }
-    var activeServer: ServerInfo? {
-        guard let modelPath else { return nil }
-        return servers.first(where: {
-            $0.state?.lowercased() == "running"
-                && HFRepoID.matches($0.modelIdentity, modelPath)
-        })
-    }
-    var canPreview: Bool {
-        selectedCompletedModel != nil && runtimeAvailable && workflow.serveState != .previewing && activeServer == nil
-    }
-    var canConfirm: Bool {
-        selectedCompletedModel != nil && runtimeAvailable && workflow.serveState == .readyToConfirm
-    }
-    var remediation: String? { runtimeAvailable ? nil : runtimeMessage }
-    var selectionError: String? {
-        selectedCompletedModel == nil
-            ? "Run requires a ready Library model that exactly matches the completed workflow output."
-            : nil
-    }
-}
-
 struct ServeView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var endpoint: EndpointSupervisor
+    @Environment(\.isRouteActive) private var isRouteActive
     private let onRouteSelection: (AppRoute) -> Void
     @State private var runtime = "auto"
     @State private var portText = ""
-    @State private var contextText = String(FitAdvisor.defaultContextTokens)
     @State private var endpointPortText = ""
     @State private var newSlotRole: UseCase?
     @State private var newSlotLoadOnRequest = true
@@ -55,16 +15,16 @@ struct ServeView: View {
     @State private var showFleetRouter = false
     @State private var showLoginItemPreview = false
     @State private var expandedMemorySlots: Set<UUID> = []
+    @State private var viewportWidth = WorkbenchSize.assumedContentWidth + WorkbenchSpacing.pageInset * 2
+    @State private var loginItemMessage: String?
+    @State private var loginItemMessageIsError = false
 
-    /// A wont-fit fleet action awaiting the user's explicit override (spec
-    /// 09 P3 — same escape-hatch discipline as the quality gate).
+    /// A wont-fit fleet action awaiting the user's explicit override.
     private struct PendingFleetAction: Identifiable {
         let id = UUID()
         let summary: String
         let confirm: () -> Void
     }
-    @State private var loginItemMessage: String?
-    @State private var loginItemMessageIsError = false
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -73,10 +33,13 @@ struct ServeView: View {
         self.onRouteSelection = onRouteSelection
     }
 
+    // MARK: - State
+
+    private var models: [LibraryModel] { appHost.librarySnapshot?.models ?? [] }
+
     private var selectedModel: LibraryModel? {
-        let path = modelWorkflow.workflow.completedModelPath ?? appHost.selectedModelPath
-        guard let path else { return nil }
-        return appHost.librarySnapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })
+        guard let path = RunPresentation.shownModelPath(workflow: modelWorkflow.workflow, selectedModelPath: appHost.selectedModelPath) else { return nil }
+        return models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })
     }
 
     private var presentation: RunPresentation {
@@ -85,24 +48,36 @@ struct ServeView: View {
             model: selectedModel,
             servers: modelWorkflow.servers,
             runtimeAvailable: appHost.runtimeReport.serve.ok,
-            runtimeMessage: appHost.runtimeReport.serve.message
+            runtimeMessage: appHost.runtimeReport.serve.message,
+            serveInFlight: modelWorkflow.isServeSubmissionInFlight
         )
     }
 
+    private var layout: RunLayout { RunLayout(viewportWidth: viewportWidth) }
     private var port: Int? { Int(portText.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    private var innerWidth: CGFloat { layout.innerWidth }
+    private var isCompact: Bool { layout.isCompact }
+    private var isTwoLine: Bool { layout.isTwoLine }
+    private var runningServers: [ServerInfo] { modelWorkflow.servers.filter { $0.state?.lowercased() == "running" } }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                selectedModelSection
-                launchSection
-                endpointSection
-                serverSection
+        let presentation = presentation
+        GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                    heroRegion(presentation)
+                    serveSection(presentation)
+                    endpointSection(presentation)
+                }
+                .frame(maxWidth: WorkbenchSize.Run.contentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(WorkbenchSpacing.pageInset)
             }
-            .padding(WorkbenchSpacing.pageInset)
+            .onChange(of: viewport.size.width, initial: true) { _, width in viewportWidth = width }
         }
-        .task {
-            await appHost.refreshWorkflowStatus()
+        .task { await modelWorkflow.refreshServers() }
+        .onChange(of: isRouteActive) { _, active in
+            if active { Task { await modelWorkflow.refreshServers() } }
         }
         .onAppear {
             if endpointPortText.isEmpty {
@@ -111,64 +86,361 @@ struct ServeView: View {
         }
     }
 
-    // MARK: - Memory fit
-
-    private var contextTokens: Int {
-        Int(contextText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? FitAdvisor.defaultContextTokens
+    private func designedState(symbol: String, text: String) -> some View {
+        Label {
+            Text(text)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(WorkbenchColor.muted)
+        }
     }
 
-    private var fitVerdict: FitVerdict? {
-        guard let model = selectedModel else { return nil }
-        return FitAdvisor.verdict(
-            modelBytes: model.item.bytes > 0 ? model.item.bytes : nil,
-            contextTokens: contextTokens,
-            parameters: model.item.parameters,
-            hardware: appHost.hardwareProfile,
-            memory: MemorySnapshot.probe(),
-            reserveBytes: Int64(appHost.config.fitReserveGB * 1_000_000_000)
-        )
+    // MARK: - Now serving
+
+    /// Now serving and the memory runway share one plain region on the canvas.
+    private func heroRegion(_ presentation: RunPresentation) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+            nowServingSection(presentation)
+            RunRunwayView(
+                resources: appHost.resources,
+                servers: modelWorkflow.servers,
+                models: models,
+                hardware: appHost.hardwareProfile,
+                reserveGB: appHost.config.fitReserveGB,
+                nextModel: presentation.runwayModel,
+                isCompact: isCompact
+            )
+        }
     }
 
-    @ViewBuilder
-    private var fitVerdictLine: some View {
-        if let verdict = fitVerdict {
-            HStack(spacing: WorkbenchSpacing.xs) {
-                Image(systemName: fitIcon(verdict))
-                    .foregroundStyle(fitColor(verdict))
-                Text(verdict.summary)
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(fitColor(verdict))
-                if case .wontFit(_, let suggestion) = verdict, let suggestion {
-                    Button("Use \(suggestion) instead") {
-                        contextText = String(suggestion)
-                    }
-                    .font(WorkbenchTypography.secondary)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+    private func nowServingSection(_ presentation: RunPresentation) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            HStack {
+                SectionTitle(text: "Now serving")
+                Spacer()
+                Button {
+                    Task { await modelWorkflow.refreshServers() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh serving status")
+                .accessibilityLabel("Refresh serving status")
+            }
+            ErrorBanner(text: modelWorkflow.serversError)
+            if runningServers.isEmpty {
+                designedState(symbol: "moon.zzz", text: "Nothing is serving.")
+            } else {
+                ForEach(runningServers) { server in
+                    servingRow(server, presentation: presentation)
                 }
             }
         }
     }
 
-    private func fitIcon(_ verdict: FitVerdict) -> String {
-        switch verdict {
-        case .fits: return "checkmark.circle.fill"
-        case .tight: return "exclamationmark.circle.fill"
-        case .wontFit: return "xmark.octagon.fill"
-        case .unknown: return "questionmark.circle"
+    private func servingRow(_ server: ServerInfo, presentation: RunPresentation) -> some View {
+        let model = RunModels.model(for: server.modelIdentity, in: models)
+        let name = RunModels.name(for: server.modelIdentity, model: model)
+        let isSelected = presentation.activeServer == server
+        let protected = AppHost.isProtectedServer(server, protected: appHost.protectedServingModels)
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if isTwoLine {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    HStack(spacing: WorkbenchSpacing.xs) {
+                        servingChip(server)
+                        servingName(name, identity: server.modelIdentity)
+                        Spacer(minLength: WorkbenchSpacing.xs)
+                        servingAction(server, name: name, isSelected: isSelected, protected: protected)
+                    }
+                    HStack(spacing: WorkbenchSpacing.sm) {
+                        servingPort(server)
+                        servingResidency(server)
+                    }
+                }
+            } else {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    servingChip(server)
+                    servingName(name, identity: server.modelIdentity)
+                    servingPort(server)
+                    servingResidency(server)
+                    Spacer(minLength: WorkbenchSpacing.xs)
+                    servingAction(server, name: name, isSelected: isSelected, protected: protected)
+                }
+            }
+            if isSelected { selectedServerDetails(server) }
+        }
+        .padding(WorkbenchSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+    }
+
+    private func servingChip(_ server: ServerInfo) -> some View {
+        StatusPill(state: RunStateWord.word(for: server))
+            .livePulse(RunStateWord.isLoading(server) && isRouteActive)
+            .frame(minWidth: WorkbenchSize.Run.chip, alignment: .leading)
+    }
+
+    private func servingResidency(_ server: ServerInfo) -> some View {
+        Text(server.residencySummary)
+            .font(WorkbenchTypography.metadata)
+            .foregroundStyle(WorkbenchColor.muted)
+            .lineLimit(1)
+            .livePulse(RunStateWord.isLoading(server) && isRouteActive)
+    }
+
+    private func servingName(_ name: String, identity: String) -> some View {
+        Text(name)
+            .font(WorkbenchTypography.emphasis)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(minWidth: WorkbenchSize.Run.nameMinimum, alignment: .leading)
+            .help(identity)
+    }
+
+    private func servingPort(_ server: ServerInfo) -> some View {
+        Text(verbatim: server.port.map { RunFormat.endpoint(port: $0) } ?? "No port")
+            .font(WorkbenchTypography.compactValue)
+            .textSelection(.enabled)
+            .lineLimit(1)
+            .frame(width: WorkbenchSize.Run.portColumn, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func servingAction(_ server: ServerInfo, name: String, isSelected: Bool, protected: Bool) -> some View {
+        if isSelected {
+            Button("Stop server") {
+                Task {
+                    guard let modelPath = presentation.modelPath,
+                          await appHost.stopSelectedServer(modelPath: modelPath) else { return }
+                    if modelWorkflow.workflow.serveState == .stopped { onRouteSelection(.activity) }
+                }
+            }
+            .disabled(modelWorkflow.isServeSubmissionInFlight || protected)
+            .help(protected ? "This model is in an active verification or comparison." : "Stop this server.")
+        } else {
+            let unloads = server.jit == true
+            Button(unloads ? "Unload" : "Stop") {
+                Task {
+                    _ = await appHost.unloadServing(server)
+                    await modelWorkflow.refreshServers()
+                }
+            }
+            .accessibilityLabel("\(unloads ? "Unload" : "Stop") \(name)")
+            .disabled(endpoint.isUnloading || protected || server.port == nil ||
+                      ["unloaded", "loading", "unloading"].contains(server.modelState ?? "") ||
+                      (server.activeRequests ?? 0) > 0)
+            .help(protected ? "This model is in an active verification or comparison."
+                  : (unloads ? "Release model weights while keeping this endpoint reachable." : "Stop this server and disable automatic restart."))
         }
     }
 
-    private func fitColor(_ verdict: FitVerdict) -> Color {
-        switch verdict {
-        case .fits: return WorkbenchColor.accent
-        case .tight: return WorkbenchColor.warning
-        case .wontFit: return WorkbenchColor.failure
-        case .unknown: return WorkbenchColor.muted
+    private func selectedServerDetails(_ server: ServerInfo) -> some View {
+        LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: innerWidth < WorkbenchSize.Run.compactThreshold ? 1 : 2),
+            alignment: .leading,
+            spacing: WorkbenchSpacing.xxs
+        ) {
+            detailLine("PID", server.pid.map(String.init), identifier: true)
+            detailLine("Started", server.startedAt)
+            detailLine("Receipt", server.receipt, identifier: true, accessibilityID: "active-server-receipt")
+            detailLine("Log path", server.logPath, identifier: true)
         }
     }
 
-    // MARK: - Endpoints (fleet, spec 09 P2)
+    /// Identifiers (PID, receipt, path) are monospaced; a missing value is plain text.
+    private func detailLine(_ title: String, _ value: String?, identifier: Bool = false, accessibilityID: String? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
+            Text(title)
+                .font(WorkbenchTypography.metadata)
+                .foregroundStyle(WorkbenchColor.muted)
+                .frame(width: WorkbenchSize.Run.detailLabel, alignment: .leading)
+            Group {
+                if let accessibilityID {
+                    Text(verbatim: value ?? "Not reported").accessibilityIdentifier(accessibilityID)
+                } else {
+                    Text(verbatim: value ?? "Not reported")
+                }
+            }
+            .font(identifier && value != nil ? WorkbenchTypography.compactValue : WorkbenchTypography.secondaryTabular)
+            .foregroundStyle(value == nil ? WorkbenchColor.muted : WorkbenchColor.ink)
+            .textSelection(.enabled)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+    }
+
+    // MARK: - Serve a model
+
+    private func serveSection(_ presentation: RunPresentation) -> some View {
+        WorkbenchSurface(.tinted) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                SectionTitle(text: "Serve a model")
+                if let model = selectedModel { modelHeader(model) }
+                switch presentation.stage {
+                case .noModel:
+                    designedState(symbol: "tray", text: "Select a completed, ready MLX model from Library or Activity before running it.")
+                    Button("Open Library") { onRouteSelection(.library) }
+                        .buttonStyle(.bordered)
+                case .nonServable:
+                    designedState(
+                        symbol: "nosign",
+                        text: "\(selectedModel?.item.task?.type.title ?? "This kind of") models are not served. Use them from the Library inspector."
+                    )
+                    Button("Open Library") { onRouteSelection(.library) }
+                        .buttonStyle(.bordered)
+                case .notEligible:
+                    if let error = presentation.selectionError { InlineMessage(kind: .info, text: error) }
+                    Button("Open Library") { onRouteSelection(.library) }
+                        .buttonStyle(.bordered)
+                case .runtimeMissing:
+                    InlineMessage(
+                        kind: .error,
+                        text: "Run runtime unavailable: \(presentation.remediation ?? "unknown"). Open Settings after installing the required runtime."
+                    )
+                    Button("Open Settings") { onRouteSelection(.settings) }
+                        .buttonStyle(.bordered)
+                default:
+                    serveControls(presentation)
+                }
+                if let message = presentation.visibleMessage {
+                    Text(message)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
+                }
+                ErrorBanner(text: presentation.visibleError)
+            }
+        }
+    }
+
+    private func modelHeader(_ model: LibraryModel) -> some View {
+        let item = model.item
+        let facts = [
+            item.architecture, item.parameters, item.quantization,
+            ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file), item.status,
+        ].compactMap { $0 }.filter { !$0.isEmpty }
+        return HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
+            Image(systemName: item.task?.type.symbolName ?? "cube")
+                .font(WorkbenchTypography.section)
+                .foregroundStyle(WorkbenchColor.accent)
+                .frame(width: WorkbenchSize.symbolTile, height: WorkbenchSize.symbolTile)
+                .background(WorkbenchColor.accent.opacity(.fill), in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                Text(model.displayName)
+                    .font(WorkbenchTypography.emphasis)
+                    .lineLimit(1)
+                Text(facts.joined(separator: " · "))
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .lineLimit(1)
+                Text(item.path)
+                    .font(WorkbenchTypography.compactValue)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func serveControls(_ presentation: RunPresentation) -> some View {
+        if isCompact {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    serveActions(presentation)
+                    stateWords(presentation)
+                }
+                launchFields
+            }
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
+                launchFields
+                Spacer(minLength: WorkbenchSpacing.xs)
+                stateWords(presentation)
+                serveActions(presentation)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stateWords(_ presentation: RunPresentation) -> some View {
+        if let words = presentation.stateWords {
+            Text(words)
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.muted)
+                .livePulse(presentation.stage == .starting && isRouteActive)
+        }
+    }
+
+    @ViewBuilder
+    private var launchFields: some View {
+        let fields = Group {
+            Picker("Runtime", selection: $runtime) {
+                Text("Automatic").tag("auto")
+                Text("mlx_lm").tag("mlx_lm")
+                Text("mlx-vlm").tag("mlx-vlm")
+            }
+            .frame(width: WorkbenchSize.Run.runtimeWidth)
+            TextField("Port", text: $portText, prompt: Text("Optional"))
+                .textFieldStyle(.roundedBorder)
+                .frame(width: WorkbenchSize.Run.portField)
+            RunContextControl(
+                resources: appHost.resources,
+                model: selectedModel,
+                hardware: appHost.hardwareProfile,
+                reserveGB: appHost.config.fitReserveGB
+            )
+        }
+        if isCompact {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { fields }
+        } else {
+            HStack(spacing: WorkbenchSpacing.sm) { fields }
+        }
+    }
+
+    private func previewServeAction() {
+        Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
+    }
+
+    private func confirmServeAction() {
+        Task {
+            await modelWorkflow.confirmServe(runtime: runtime, port: port)
+            if modelWorkflow.workflow.serveState == .running { onRouteSelection(.activity) }
+        }
+    }
+
+    @ViewBuilder
+    private func serveActions(_ presentation: RunPresentation) -> some View {
+        let busy = modelWorkflow.isServeSubmissionInFlight
+        // Exactly one action is armed at a time: preview until the intent is
+        // ready to confirm, then confirm.
+        if presentation.canConfirm {
+            Button("Preview serve", action: previewServeAction)
+                .buttonStyle(.bordered)
+                .disabled(!presentation.canPreview || busy)
+            Button("Confirm and run", action: confirmServeAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(busy)
+        } else if presentation.canPreview {
+            Button("Preview serve", action: previewServeAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(busy)
+            Button("Confirm and run", action: confirmServeAction)
+                .buttonStyle(.bordered)
+                .disabled(true)
+        } else {
+            Button("Preview serve", action: previewServeAction)
+                .buttonStyle(.bordered)
+                .disabled(true)
+            Button("Confirm and run", action: confirmServeAction)
+                .buttonStyle(.bordered)
+                .disabled(true)
+        }
+    }
+
+    // MARK: - Endpoints
 
     /// Smallest port from the default that no slot claims yet.
     private var suggestedPort: Int {
@@ -178,60 +450,51 @@ struct ServeView: View {
         return candidate
     }
 
-    private var endpointSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            HStack {
+    private func endpointSection(_ presentation: RunPresentation) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            HStack(alignment: .firstTextBaseline) {
                 SectionTitle(text: "Endpoints")
                 Spacer()
-                Text("\(endpoint.fleet.slots.count)/\(EndpointFleetConfig.maxSlots)")
-                    .font(WorkbenchTypography.secondary)
+                Text(verbatim: "\(endpoint.fleet.slots.count) of \(EndpointFleetConfig.maxSlots)")
+                    .font(WorkbenchTypography.secondaryTabular)
                     .foregroundStyle(WorkbenchColor.muted)
             }
-            Text("Keep models serving on stable loopback ports — one model per endpoint, across restarts and swaps. Clients wired in Wire keep working.")
+            Text("Keep models serving on stable loopback ports, across restarts and swaps. Clients wired in Wire keep working.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
-
-            if let verdict = prospectiveFleetVerdict(addingModelPath: nil) {
-                HStack(spacing: WorkbenchSpacing.xs) {
-                    Image(systemName: fitIcon(verdict))
-                        .foregroundStyle(fitColor(verdict))
-                    Text("Fleet memory: \(verdict.summary)")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(fitColor(verdict))
-                }
-            }
-
+            RunFleetVerdictLine(
+                resources: appHost.resources,
+                slots: endpoint.fleet.slots,
+                servers: modelWorkflow.servers,
+                models: models,
+                reserveGB: appHost.config.fitReserveGB
+            )
             if let pending = pendingFleetAction {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                    Text("Fleet memory: \(pending.summary). Enable anyway?")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.failure)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    InlineMessage(kind: .warning, text: "Fleet memory: \(pending.summary). Enable anyway?")
                     HStack(spacing: WorkbenchSpacing.xs) {
                         Button("Enable anyway") {
                             pending.confirm()
                             pendingFleetAction = nil
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(WorkbenchColor.failure)
                         Button("Cancel") { pendingFleetAction = nil }
-                            .buttonStyle(.bordered)
                     }
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
             }
-
             if endpoint.fleet.slots.isEmpty {
-                Text("No endpoints yet. Add one for the selected model.")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
+                if let reason = presentation.addEndpointBlockedReason {
+                    designedState(symbol: "point.3.connected.trianglepath.dotted", text: reason)
+                } else {
+                    designedState(symbol: "point.3.connected.trianglepath.dotted", text: "No endpoints yet. Add one for the model above.")
+                }
             } else {
                 ForEach(endpoint.fleet.slots) { slot in
-                    slotCard(slot)
+                    slotRow(slot)
                 }
             }
-
-            addEndpointControls
-
+            addEndpointControls(presentation)
             if endpoint.fleet.slots.contains(where: { $0.role != nil }) {
                 HStack(spacing: WorkbenchSpacing.xs) {
                     Button("Wire roles…") { showFleetRouter = true }
@@ -240,100 +503,157 @@ struct ServeView: View {
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(WorkbenchColor.muted)
                 }
-                .sheet(isPresented: $showFleetRouter) {
-                    FleetRouterSheet(appHost: appHost)
-                }
             }
-
             loginItemSection
-
             ErrorBanner(text: endpoint.lastError)
             ErrorBanner(text: endpoint.persistenceError)
             if let loginItemMessage {
-                Text(loginItemMessage)
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(loginItemMessageIsError ? WorkbenchColor.failure : WorkbenchColor.success)
+                InlineMessage(kind: loginItemMessageIsError ? .error : .success, text: loginItemMessage)
             }
         }
-        .formSection {}
+        .sheet(isPresented: $showFleetRouter) {
+            FleetRouterSheet(appHost: appHost)
+        }
     }
 
-    private func slotCard(_ slot: EndpointSlot) -> some View {
+    private func slotRow(_ slot: EndpointSlot) -> some View {
         let slotState = endpoint.slotStates[slot.id] ?? .disabled
+        let model = RunModels.model(for: slot.modelPath, in: models)
+        let name = RunModels.name(for: slot.modelPath, model: model)
+        let attempts = endpoint.slotRestartAttempts[slot.id] ?? 0
+        let isLoading = modelWorkflow.servers.contains { $0.port == slot.port && RunStateWord.isLoading($0) }
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            HStack(spacing: WorkbenchSpacing.xs) {
+            HStack(spacing: WorkbenchSpacing.sm) {
                 StatusPill(state: slotStateLabel(slotState, enabled: slot.enabled))
-                Text(URL(fileURLWithPath: slot.modelPath).lastPathComponent)
+                    .frame(minWidth: WorkbenchSize.Run.chip, alignment: .leading)
+                Text(name)
                     .font(WorkbenchTypography.emphasis)
                     .lineLimit(1)
-                if let role = slot.role {
-                    Text(role.title)
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                }
-                Text(":\(slot.port)")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
-                Spacer()
-                slotFitChip(slot)
-                let attempts = endpoint.slotRestartAttempts[slot.id] ?? 0
-                if attempts > 0 {
-                    Text("\(attempts) restart(s)")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                }
+                    .truncationMode(.middle)
+                    .frame(minWidth: WorkbenchSize.Run.slotModelMinimum, alignment: .leading)
+                    .help(slot.modelPath)
+                if !isTwoLine { slotFacts(slot, attempts: attempts) }
+                Spacer(minLength: WorkbenchSpacing.xs)
+                slotMenu(slot, slotState: slotState)
             }
-            Text(slotState.summary)
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
-            if let residency = endpoint.slotResidencies[slot.id] {
-                Text(residency).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            if isTwoLine {
+                HStack(spacing: WorkbenchSpacing.sm) { slotFacts(slot, attempts: attempts) }
             }
             HStack(spacing: WorkbenchSpacing.xs) {
+                Text(slotState.summary)
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.muted)
+                if let residency = endpoint.slotResidencies[slot.id] {
+                    Text(residency)
+                        .font(WorkbenchTypography.metadata)
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .livePulse(isLoading && isRouteActive)
+                }
                 if case .modelMismatch = slotState {
                     Button("Swap to configured model") {
                         Task { await endpoint.swapSlot(id: slot.id, to: slot.modelPath, allowUnverified: true) }
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
-                Button(slot.enabled ? "Disable" : "Enable") {
-                    if slot.enabled {
-                        Task { await endpoint.setSlotEnabled(id: slot.id, false) }
-                    } else {
-                        enableSlotWithFitCheck(slot)
-                    }
-                }
-                rolePicker(slot)
-                Toggle("Load on request", isOn: Binding(
-                    get: { slot.usesJIT },
-                    set: { value in Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) } }))
-                    .toggleStyle(.checkbox)
-                    .help("Keep the endpoint reachable without resident weights. Changing load mode restarts this endpoint.")
-                    .disabled(endpoint.isUnloading)
-                Spacer()
-                Button("Remove") { Task { await endpoint.removeSlot(id: slot.id) } }
-                    .foregroundStyle(WorkbenchColor.failure)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            if slot.usesJIT {
-                memoryManagement(slot)
-                if let reason = endpoint.slotLoadBlockedReasons[slot.id] {
-                    Label(reason, systemImage: "memorychip")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.warning)
-                }
+            if slot.usesJIT, let reason = endpoint.slotLoadBlockedReasons[slot.id] {
+                Label(reason, systemImage: "memorychip")
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.warning)
             }
         }
         .padding(WorkbenchSpacing.sm)
-        .background(WorkbenchColor.canvas)
-        .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+        .popover(isPresented: memoryPopoverBinding(slot), arrowEdge: .bottom) {
+            memoryManagement(endpoint.fleet.slots.first(where: { $0.id == slot.id }) ?? slot, expanded: .constant(true))
+                .padding(WorkbenchSpacing.md)
+                .frame(width: WorkbenchSize.Run.memoryPopoverWidth)
+        }
     }
 
+    @ViewBuilder
+    private func slotFacts(_ slot: EndpointSlot, attempts: Int) -> some View {
+        if let role = slot.role {
+            Text(role.title)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+        }
+        Text(verbatim: RunFormat.port(slot.port))
+            .font(WorkbenchTypography.compactValue)
+            .foregroundStyle(WorkbenchColor.muted)
+        Text(slot.usesJIT ? "Load on request" : "Always loaded")
+            .font(WorkbenchTypography.metadata)
+            .foregroundStyle(WorkbenchColor.muted)
+        if attempts > 0 {
+            Text(verbatim: "\(attempts) restart(s)")
+                .font(WorkbenchTypography.metadata)
+                .foregroundStyle(WorkbenchColor.muted)
+        }
+        RunSlotFitChip(
+            resources: appHost.resources,
+            slot: slot,
+            servers: modelWorkflow.servers,
+            models: models,
+            hardware: appHost.hardwareProfile,
+            reserveGB: appHost.config.fitReserveGB
+        )
+    }
+
+    private func slotMenu(_ slot: EndpointSlot, slotState: EndpointState) -> some View {
+        Menu {
+            Button(slot.enabled ? "Disable" : "Enable") {
+                if slot.enabled {
+                    Task { await endpoint.setSlotEnabled(id: slot.id, false) }
+                } else {
+                    enableSlotWithFitCheck(slot)
+                }
+            }
+            Picker("Role", selection: Binding(
+                get: { slot.role },
+                set: { newRole in
+                    Task { await endpoint.updateSlot(id: slot.id, modelPath: slot.modelPath, port: slot.port, role: newRole) }
+                }
+            )) {
+                Text("Unassigned").tag(UseCase?.none)
+                ForEach(UseCase.allCases) { role in
+                    Text(role.title).tag(UseCase?.some(role))
+                }
+            }
+            Toggle("Load on request", isOn: Binding(
+                get: { slot.usesJIT },
+                set: { value in Task { await endpoint.setSlotLoadOnRequest(id: slot.id, value) } }))
+                .help("Keep the endpoint reachable without resident weights. Changing load mode restarts this endpoint.")
+                .disabled(endpoint.isUnloading)
+            if slot.usesJIT {
+                Button("Memory management…") { expandedMemorySlots.insert(slot.id) }
+            }
+            Divider()
+            Button("Remove", role: .destructive) { Task { await endpoint.removeSlot(id: slot.id) } }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: WorkbenchSize.Run.overflow)
+        .help("Endpoint actions")
+        .accessibilityLabel("Actions for \(RunModels.name(for: slot.modelPath, model: RunModels.model(for: slot.modelPath, in: models)))")
+    }
+
+    private func memoryPopoverBinding(_ slot: EndpointSlot) -> Binding<Bool> {
+        Binding(
+            get: { expandedMemorySlots.contains(slot.id) },
+            set: { value in
+                if value { expandedMemorySlots.insert(slot.id) } else { expandedMemorySlots.remove(slot.id) }
+            }
+        )
+    }
+
+    /// The slot's idle, keep-loaded and headroom controls; `expanded` defaults to the page's per-slot state.
     func memoryManagement(_ slot: EndpointSlot, expanded: Binding<Bool>? = nil) -> some View {
         let policy = slot.memoryPolicy ?? endpoint.slotMemoryPolicies[slot.id] ?? .legacy
-        return DisclosureGroup(isExpanded: expanded ?? Binding(
-            get: { expandedMemorySlots.contains(slot.id) },
-            set: { value in if value { expandedMemorySlots.insert(slot.id) } else { expandedMemorySlots.remove(slot.id) } })) {
+        return DisclosureGroup(isExpanded: expanded ?? memoryPopoverBinding(slot)) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 HStack {
                     Picker("Unload when idle", selection: memoryBinding(slot, \.idleTimeoutSeconds)) {
@@ -344,10 +664,10 @@ struct ServeView: View {
                         Text("30 minutes").tag(1800)
                         Text("1 hour").tag(3600)
                         if ![0, 60, 300, 600, 1800, 3600].contains(policy.idleTimeoutSeconds) {
-                            Text("\(policy.idleTimeoutSeconds) seconds").tag(policy.idleTimeoutSeconds)
+                            Text(verbatim: "\(policy.idleTimeoutSeconds) seconds").tag(policy.idleTimeoutSeconds)
                         }
                     }
-                    .frame(maxWidth: 280)
+                    .frame(maxWidth: WorkbenchSize.Run.idlePickerMaximum)
                     .disabled(policy.keepLoaded)
                     Toggle("Keep loaded after use", isOn: memoryBinding(slot, \.keepLoaded))
                         .toggleStyle(.checkbox)
@@ -373,7 +693,7 @@ struct ServeView: View {
                             ForEach([1.0, 2, 4, 8], id: \.self) { value in Text("\(Int(value)) GB").tag(value) }
                             if ![1.0, 2, 4, 8].contains(reserve) { Text("\(reserve, specifier: "%.1f") GB").tag(reserve) }
                         }
-                        .frame(maxWidth: 270)
+                        .frame(maxWidth: WorkbenchSize.Run.reservePickerMaximum)
                     }
                 }
                 Text("Uses estimated weights + runtime allowance + reserve. Other processes and larger contexts can change actual memory use. Unknown headroom blocks loading.")
@@ -416,83 +736,78 @@ struct ServeView: View {
         }
     }
 
-    @ViewBuilder
-    private func slotFitChip(_ slot: EndpointSlot) -> some View {
-        if let verdict = slotFitVerdict(slot) {
-            Image(systemName: fitIcon(verdict))
-                .foregroundStyle(fitColor(verdict))
-                .help(verdict.summary)
-        }
-    }
-
-    private func slotFitVerdict(_ slot: EndpointSlot) -> FitVerdict? {
-        guard !slot.modelPath.isEmpty else { return nil }
-        let model = appHost.librarySnapshot?.models.first(where: {
-            $0.item.path == slot.modelPath || $0.outputPaths.contains(slot.modelPath)
-        })
-        return FitAdvisor.verdict(
-            modelBytes: model.flatMap { $0.item.bytes > 0 ? $0.item.bytes : nil },
-            contextTokens: FitAdvisor.defaultContextTokens,
-            parameters: model?.item.parameters,
-            hardware: appHost.hardwareProfile,
-            memory: MemorySnapshot.probe(),
-            reserveBytes: Int64(appHost.config.fitReserveGB * 1_000_000_000)
-        )
-    }
-
-    private func rolePicker(_ slot: EndpointSlot) -> some View {
-        Picker("Role", selection: Binding(
-            get: { slot.role },
-            set: { newRole in
-                Task { await endpoint.updateSlot(id: slot.id, modelPath: slot.modelPath, port: slot.port, role: newRole) }
-            }
-        )) {
-            Text("Unassigned").tag(UseCase?.none)
-            ForEach(UseCase.allCases) { role in
-                Text(role.title).tag(UseCase?.some(role))
-            }
-        }
-        .labelsHidden()
-        .frame(width: 120)
-    }
+    // MARK: - Add endpoint
 
     @ViewBuilder
-    private var addEndpointControls: some View {
+    private func addEndpointControls(_ presentation: RunPresentation) -> some View {
         if endpoint.fleet.slots.count >= EndpointFleetConfig.maxSlots {
-            Text("Endpoint cap reached (\(EndpointFleetConfig.maxSlots)). Remove one to add another.")
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
+            designedState(symbol: "square.stack.3d.up.slash", text: "Endpoint cap reached (\(EndpointFleetConfig.maxSlots)). Remove one to add another.")
         } else {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { addEndpointFields }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { addEndpointFields }
+            let canAdd = presentation.canAddEndpoint
+            if isCompact {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    HStack(spacing: WorkbenchSpacing.sm) {
+                        addEndpointPortAndRole
+                    }
+                    HStack(spacing: WorkbenchSpacing.sm) {
+                        addEndpointLoadToggle
+                        Spacer(minLength: WorkbenchSpacing.xs)
+                        addEndpointButtons(presentation, canAdd: canAdd)
+                    }
+                }
+            } else {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    addEndpointPortAndRole
+                    addEndpointLoadToggle
+                    Spacer(minLength: WorkbenchSpacing.xs)
+                    addEndpointButtons(presentation, canAdd: canAdd)
+                }
             }
         }
     }
 
     @ViewBuilder
-    private var addEndpointFields: some View {
-        TextField("Port", text: $endpointPortText)
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 90)
+    private var addEndpointPortAndRole: some View {
+        LabeledContent("Port") {
+            TextField("Port", text: $endpointPortText)
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .frame(width: WorkbenchSize.Run.portField)
+        }
         Picker("Role", selection: $newSlotRole) {
             Text("Unassigned").tag(UseCase?.none)
             ForEach(UseCase.allCases) { role in
                 Text(role.title).tag(UseCase?.some(role))
             }
         }
-        .labelsHidden()
-        .frame(width: 120)
+        .frame(width: WorkbenchSize.Run.roleWidth)
+    }
+
+    private var addEndpointLoadToggle: some View {
         Toggle("Load on request", isOn: $newSlotLoadOnRequest)
             .toggleStyle(.checkbox)
+            .frame(minWidth: WorkbenchSize.Run.loadToggle, alignment: .leading)
             .help("Start a reachable endpoint now; load the selected local model on the first inference request.")
-        Button("Add endpoint for selected model") { addEndpoint(allowUnverified: false) }
-            .buttonStyle(.borderedProminent)
-            .disabled(selectedModel == nil)
-        Button("Add anyway (unverified)") { addEndpoint(allowUnverified: true) }
-            .buttonStyle(.bordered)
-            .disabled(selectedModel == nil)
-            .foregroundStyle(WorkbenchColor.warning)
+    }
+
+    private func addEndpointButtons(_ presentation: RunPresentation, canAdd: Bool) -> some View {
+        HStack(spacing: WorkbenchSpacing.xs) {
+            Button("Add endpoint") { addEndpoint(allowUnverified: false) }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canAdd)
+                .help(presentation.addEndpointBlockedReason ?? "Adds the model shown above as a new endpoint.")
+            Menu {
+                Button("Add anyway (unverified)") { addEndpoint(allowUnverified: true) }
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(!canAdd)
+            .help("More ways to add")
+            .accessibilityLabel("More ways to add an endpoint")
+        }
     }
 
     private func addEndpoint(allowUnverified: Bool) {
@@ -511,7 +826,7 @@ struct ServeView: View {
                 )
             }
         }
-        if let verdict = prospectiveFleetVerdict(addingModelPath: model.item.path),
+        if let verdict = appHost.runFleetVerdict(adding: model.item.path),
            case .wontFit = verdict {
             pendingFleetAction = PendingFleetAction(summary: verdict.summary, confirm: action)
             return
@@ -520,10 +835,10 @@ struct ServeView: View {
     }
 
     /// Enabling a slot that tips the fleet past wont-fit needs the explicit
-    /// override; tight is warned in place by the header verdict line.
+    /// override; tight is warned in place by the fleet verdict line.
     private func enableSlotWithFitCheck(_ slot: EndpointSlot) {
         let action = { _ = Task { await endpoint.setSlotEnabled(id: slot.id, true) } }
-        if let verdict = prospectiveFleetVerdict(addingModelPath: slot.modelPath),
+        if let verdict = appHost.runFleetVerdict(adding: slot.modelPath),
            case .wontFit = verdict {
             pendingFleetAction = PendingFleetAction(summary: verdict.summary, confirm: action)
             return
@@ -531,46 +846,7 @@ struct ServeView: View {
         action()
     }
 
-    // MARK: - Fleet memory budget (spec 09 P3)
-
-    /// Summed verdict over enabled slots, or over enabled slots plus a
-    /// candidate — nil when there is nothing to sum. Derived, never
-    /// persisted.
-    private func prospectiveFleetVerdict(addingModelPath: String?) -> FitVerdict? {
-        var paths = endpoint.fleet.slots
-            .filter { $0.enabled && !$0.modelPath.isEmpty }
-            .map(\.modelPath)
-        if let addingModelPath { paths.append(addingModelPath) }
-        guard !paths.isEmpty else { return nil }
-        guard let available = availableMemoryBytes else {
-            return .unknown(reason: "memory probe unavailable")
-        }
-        return FleetFitAdvisor.verdict(
-            estimates: paths.map { fleetEstimate(for: $0) },
-            availableBytes: available,
-            reserveBytes: Int64(appHost.config.fitReserveGB * 1_000_000_000)
-        )
-    }
-
-    private func fleetEstimate(for modelPath: String) -> FleetFitAdvisor.Estimate {
-        let model = appHost.librarySnapshot?.models.first(where: {
-            $0.item.path == modelPath || $0.outputPaths.contains(modelPath)
-        })
-        guard let bytes = model?.item.bytes, bytes > 0 else { return .unknown }
-        return .known(
-            modelBytes: bytes,
-            contextTokens: FitAdvisor.defaultContextTokens,
-            parameters: model?.item.parameters
-        )
-    }
-
-    /// Live available memory, with FitAdvisor's 60%-of-total fallback when
-    /// the Mach probe fails.
-    private var availableMemoryBytes: Int64? {
-        if let probed = MemorySnapshot.probe() { return probed.availableBytes }
-        guard let total = appHost.hardwareProfile.memoryBytes, total > 0 else { return nil }
-        return Int64(Double(total) * 0.6)
-    }
+    // MARK: - Login item
 
     private var loginItemSection: some View {
         HStack(spacing: WorkbenchSpacing.xs) {
@@ -596,8 +872,6 @@ struct ServeView: View {
         }
     }
 
-    private var loginItemControls: some View { loginItemSection }
-
     private var loginItemPreviewSheet: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Text("Login item preview").font(WorkbenchTypography.emphasis)
@@ -617,8 +891,8 @@ struct ServeView: View {
                     .buttonStyle(.borderedProminent)
             }
         }
-        .padding()
-        .frame(width: 640, height: 420)
+        .padding(WorkbenchSpacing.md)
+        .frame(width: WorkbenchSize.Run.loginSheetWidth, height: WorkbenchSize.Run.loginSheetHeight)
     }
 
     private var agentRootPath: String {
@@ -645,147 +919,6 @@ struct ServeView: View {
         } catch {
             loginItemMessageIsError = true
             loginItemMessage = AppHost.render(error)
-        }
-    }
-
-    private var selectedModelSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            SectionTitle(text: "Selected completed model")
-            if let model = selectedModel {
-                Text(model.displayName).font(WorkbenchTypography.section).fontWeight(.semibold)
-                detailLine("Model path", model.item.path)
-                detailLine("Architecture", model.item.architecture ?? "Not reported")
-                detailLine("Parameters", model.item.parameters ?? "Not reported")
-                detailLine("Quantization", model.item.quantization ?? "Not reported")
-                detailLine("Observed size", ByteCountFormatter.string(fromByteCount: model.item.bytes, countStyle: .file))
-                detailLine("Library status", model.item.status)
-                ErrorBanner(text: presentation.selectionError)
-            } else {
-                Text("Select a completed, ready MLX model from Library or Activity before running it.")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                Button("Open Library") { onRouteSelection(.library) }
-            }
-        }
-        .formSection {}
-    }
-
-    private var launchSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            SectionTitle(text: "Serve intent")
-            if let remediation = presentation.remediation {
-                ErrorBanner(text: "Run runtime unavailable: \(remediation). Open Settings after installing the required runtime.")
-                Button("Open Settings") { onRouteSelection(.settings) }
-            }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { launchFields }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { launchFields }
-            }
-            fitVerdictLine
-            detailLine("Serve state", modelWorkflow.workflow.serveState.rawValue)
-            if let message = modelWorkflow.workflow.message {
-                Text(message).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            }
-            ErrorBanner(text: modelWorkflow.workflow.errorMessage)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { serveActions }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { serveActions }
-            }
-        }
-        .formSection {}
-    }
-
-    private var serverSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            HStack {
-                SectionTitle(text: "Authoritative server state")
-                Spacer()
-                Button("Refresh") { Task { await appHost.refreshWorkflowStatus() } }
-            }
-            if let server = presentation.activeServer {
-                HStack {
-                    StatusPill(state: server.state ?? "unknown")
-                    Text(server.modelIdentity.isEmpty ? "Unknown model" : server.modelIdentity).font(WorkbenchTypography.emphasis)
-                    Spacer()
-                    Button("Stop server") {
-                        Task {
-                            guard let modelPath = presentation.modelPath else { return }
-                            await modelWorkflow.stopServer(modelPath: modelPath)
-                            if modelWorkflow.workflow.serveState == .stopped { onRouteSelection(.activity) }
-                        }
-                    }
-                    .disabled(modelWorkflow.isServeSubmissionInFlight)
-                }
-                detailLine("Port", server.port.map(String.init) ?? "Not reported")
-                detailLine("PID", server.pid.map(String.init) ?? "Not reported")
-                detailLine("Receipt", server.receipt ?? "Not reported", accessibilityID: "active-server-receipt")
-                detailLine("Log path", server.logPath ?? "Not reported")
-                detailLine("Started", server.startedAt ?? "Not reported")
-            } else {
-                Text("No running server is reported.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            }
-        }
-        .formSection {}
-    }
-
-    private func detailLine(_ title: String, _ value: String, accessibilityID: String? = nil) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).foregroundStyle(WorkbenchColor.muted).frame(width: 120, alignment: .leading)
-            Group {
-                if let accessibilityID {
-                    Text(value).accessibilityIdentifier(accessibilityID)
-                } else {
-                    Text(value)
-                }
-            }
-            .font(WorkbenchTypography.value)
-            .foregroundStyle(WorkbenchColor.ink)
-            .textSelection(.enabled)
-            Spacer()
-        }
-        .font(WorkbenchTypography.body)
-    }
-
-    @ViewBuilder
-    private var launchFields: some View {
-        Picker("Runtime", selection: $runtime) {
-            Text("Automatic").tag("auto")
-            Text("mlx_lm").tag("mlx_lm")
-            Text("mlx-vlm").tag("mlx-vlm")
-        }
-        .frame(maxWidth: 180, alignment: .leading)
-        TextField("Port (optional)", text: $portText).textFieldStyle(.roundedBorder).frame(width: 140)
-        TextField("Context", text: $contextText).textFieldStyle(.roundedBorder).frame(width: 90)
-    }
-
-    private func previewServeAction() {
-        Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
-    }
-
-    private func confirmServeAction() {
-        Task {
-            await modelWorkflow.confirmServe(runtime: runtime, port: port)
-            if modelWorkflow.workflow.serveState == .running { onRouteSelection(.activity) }
-        }
-    }
-
-    @ViewBuilder
-    private var serveActions: some View {
-        // Exactly one action is armed at a time: preview until the intent is
-        // ready to confirm, then confirm. The armed action is prominent.
-        if presentation.canConfirm {
-            Button("Preview serve", action: previewServeAction)
-                .buttonStyle(.bordered)
-                .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
-            Button("Confirm and run", action: confirmServeAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(modelWorkflow.isServeSubmissionInFlight)
-        } else {
-            Button("Preview serve", action: previewServeAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(!presentation.canPreview || modelWorkflow.isServeSubmissionInFlight)
-            Button("Confirm and run", action: confirmServeAction)
-                .buttonStyle(.bordered)
-                .disabled(!presentation.canConfirm || modelWorkflow.isServeSubmissionInFlight)
         }
     }
 }

@@ -61,8 +61,8 @@ struct SystemResourceHeader: View {
                 Text("Memory readings unavailable").foregroundStyle(WorkbenchColor.muted)
             }
             Picker("Context for model fit", selection: $resources.contextTokens) {
-                ForEach([2048, 4096, 8192, 16384, 32768, 65536], id: \.self) { tokens in
-                    Text("\(tokens / 1024)K tokens").tag(tokens)
+                ForEach(SystemResourceMonitor.contextOptions, id: \.self) { tokens in
+                    Text(RunContext.title(tokens)).tag(tokens)
                 }
             }
             .font(WorkbenchTypography.metadata)
@@ -99,7 +99,7 @@ struct SystemResourceHeader: View {
                         .disabled(endpoint.isUnloading || resources.refreshingServers || server.port == nil ||
                                   server.modelState == "unloaded" || server.modelState == "loading" || server.modelState == "unloading" ||
                                   (server.activeRequests ?? 0) > 0 ||
-                                  protectedModels.contains(where: { HFRepoID.matches($0, server.modelIdentity) }))
+                                  AppHost.isProtectedServer(server, protected: protectedModels))
                         .help(server.jit == true
                               ? "Release model weights while keeping this endpoint reachable. The next request loads the same local files."
                               : "Stop this server and disable automatic restart. Enable Load on request in Run for JIT unload.")

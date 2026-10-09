@@ -361,7 +361,7 @@ final class PrepareRemodelTests: XCTestCase {
     func testOtherRoutesKeepTheirSubtitles() {
         let record = workflow(state: .inspectingSource)
         XCTAssertEqual(ContentView.subtitle(route: .compare, workflow: record, selectedModelPath: "/models/other-model"), "")
-        XCTAssertEqual(ContentView.subtitle(route: .run, workflow: record, selectedModelPath: nil), "No model selected")
+        XCTAssertEqual(ContentView.subtitle(route: .run, workflow: record, selectedModelPath: nil), "")
         XCTAssertEqual(ContentView.subtitle(route: .overview, workflow: record, selectedModelPath: "/models/other-model"), "")
     }
 

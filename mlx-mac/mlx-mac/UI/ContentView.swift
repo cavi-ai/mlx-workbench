@@ -174,6 +174,10 @@ struct ContentView: View {
     static func subtitle(route: AppRoute, workflow: ConversionWorkflow, selectedModelPath: String?) -> String {
         guard route.group == .lifecycle, route != .compare else { return "" }
         if route == .prepare { return PrepareWorkflowPresentation(workflow: workflow).displayName }
+        if route == .run {
+            guard let path = RunPresentation.shownModelPath(workflow: workflow, selectedModelPath: selectedModelPath) else { return "" }
+            return HFRepoID.forPath(path) ?? URL(fileURLWithPath: path).lastPathComponent
+        }
         guard let path = selectedModelPath, !path.isEmpty else { return "No model selected" }
         return HFRepoID.forPath(path) ?? URL(fileURLWithPath: path).lastPathComponent
     }
@@ -188,9 +192,8 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var contextToolbar: some ToolbarContent {
         ToolbarItem(placement: .automatic) {
-            SystemResourceHeader(resources: appHost.resources, endpoint: endpoint, protectedModels: protectedServingModels, onUnload: { server in
-                guard !protectedServingModels.contains(where: { HFRepoID.matches($0, server.modelIdentity) }) else { return false }
-                return await endpoint.unloadServer(server)
+            SystemResourceHeader(resources: appHost.resources, endpoint: endpoint, protectedModels: appHost.protectedServingModels, onUnload: { server in
+                await appHost.unloadServing(server)
             })
         }
         if Self.showsWorkflowBadge(route: selectedRoute, state: modelWorkflow.workflow.state) {
@@ -221,16 +224,6 @@ struct ContentView: View {
                 .accessibilityLabel("Endpoint: \(endpoint.state.summary)")
             }
         }
-    }
-
-    private var protectedServingModels: Set<String> {
-        var paths = Set<String>()
-        if let path = appHost.verification.activeModelPath { paths.insert(path) }
-        if let id = appHost.comparison.activeRunID,
-           let run = appHost.comparison.runs.first(where: { $0.id == id }) {
-            paths.formUnion(run.variants)
-        }
-        return paths
     }
 
     private var endpointStatus: WorkbenchStatus {

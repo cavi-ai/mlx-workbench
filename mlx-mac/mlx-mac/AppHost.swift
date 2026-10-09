@@ -725,6 +725,35 @@ class AppHost: ObservableObject {
         return "\(saved) Endpoint requested; check Run for its current status."
     }
 
+    /// Models in an active verification or comparison; their servers are not stopped or unloaded.
+    var protectedServingModels: Set<String> {
+        var paths = Set<String>()
+        if let path = verification.activeModelPath { paths.insert(path) }
+        if let id = comparison.activeRunID,
+           let run = comparison.runs.first(where: { $0.id == id }) {
+            paths.formUnion(run.variants)
+        }
+        return paths
+    }
+
+    /// Whether a server's model is in `protected`.
+    nonisolated static func isProtectedServer(_ server: ServerInfo, protected: Set<String>) -> Bool {
+        protected.contains(where: { HFRepoID.matches($0, server.modelIdentity) })
+    }
+
+    /// The one stop/unload path for the toolbar and Run; protected models are refused.
+    func unloadServing(_ server: ServerInfo) async -> Bool {
+        guard !Self.isProtectedServer(server, protected: protectedServingModels) else { return false }
+        return await endpoint.unloadServer(server)
+    }
+
+    /// Run's stop for the selected model's server; a protected model is refused before any workflow call.
+    func stopSelectedServer(modelPath: String) async -> Bool {
+        guard !protectedServingModels.contains(where: { HFRepoID.matches($0, modelPath) }) else { return false }
+        await modelWorkflow.stopServer(modelPath: modelPath)
+        return true
+    }
+
     /// Paths that must never be reclaimed: running servers and the active
     /// conversion's source/output.
     var occupiedModelPaths: Set<String> {

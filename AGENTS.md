@@ -249,11 +249,11 @@ from `mlx-agent` at runtime.
   gating with explicit unverified override, cap 4). The menu bar aggregates
   ("N of M endpoints running", worst-state icon, per-slot start/stop).
   The **fleet memory budget** (spec 09 P3): `FleetFitAdvisor` sums
-  FitAdvisor estimates over enabled slots against one live
-  `MemorySnapshot` (per-slot runtime overhead; unknown model sizes make the
-  verdict unknown, never fabricated). The section header shows the summed
-  verdict; enabling a slot that tips the fleet past won't-fit needs an
-  explicit inline override.
+  FitAdvisor estimates over enabled slots that are not already resident
+  against the shared monitor's `MemorySnapshot` (per-slot runtime overhead;
+  unknown model sizes or unavailable memory make the verdict unknown, never
+  fabricated). The section shows the summed verdict; enabling a slot that
+  tips the fleet past won't-fit needs an explicit inline override.
   The **role router** (spec 09 P4): "Wire roles…" in the Endpoints section
   maps roles onto running slots via `mlx-agent fleet render/apply` with
   `--port-map` (mlx-agent ≥ the port-map change, cavi-ai/mlx-agent#41;
@@ -384,10 +384,13 @@ from `mlx-agent` at runtime.
   `vendor/mlx-agent` and the `Makefile` are unchanged since the published one.
   `.github/workflows/signed-dmg.yml` publishes both DMGs with an App Store
   Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets).
-- The Run view shows a **Memory-fit Advisor** verdict before serving:
-  `FitAdvisor` estimates weights + KV cache + runtime overhead against live
-  available memory (`MemorySnapshot` via Mach probes), yielding
-  fits/tight/won't-fit with a suggested max context. Verdicts are derived,
+- The Run view shows a **Memory-fit Advisor** verdict before serving as a
+  memory runway: `FitAdvisor` estimates weights + KV cache + runtime overhead
+  against the shared monitor's live available memory, with resident models
+  drawn inside the in-use span, yielding fits/tight/won't-fit with a suggested
+  max context (the toolbar's context option). Image, speech and other
+  non-servable models get no verdict and no serve actions; unavailable memory
+  is unknown. Run's refresh only reads `serve status`. Verdicts are derived,
   never persisted.
 - The native toolbar shares `SystemResourceMonitor`: Mach memory estimates
   refresh off-main every five seconds; unavailable readings remain unknown.

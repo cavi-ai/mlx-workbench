@@ -91,6 +91,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
     /// The agent's conversion jobs from the latest status refresh.
     @Published private(set) var jobs: [Job] = []
     @Published private(set) var persistenceError: String?
+    /// Set when the last read-only serving refresh failed; cleared by the next success.
+    @Published private(set) var serversError: String?
     @Published private(set) var isConversionSubmissionInFlight = false
     @Published private(set) var isServeSubmissionInFlight = false
 
@@ -645,6 +647,17 @@ final class ModelWorkflowCoordinator: ObservableObject {
             preserveLastKnownState(message: "Conversion status unavailable: \(AppHost.render(error))")
         }
         return await refreshServingStatus()
+    }
+
+    /// Read-only: replaces `servers` from `serve status`. It never touches
+    /// conversion jobs, workflow records, verification or any serve action.
+    func refreshServers() async {
+        do {
+            servers = try await api.serveStatus()
+            serversError = nil
+        } catch {
+            serversError = "Serving status unavailable: \(AppHost.render(error))"
+        }
     }
 
     @discardableResult
