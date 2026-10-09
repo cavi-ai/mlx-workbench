@@ -226,6 +226,18 @@ from `mlx-agent` at runtime.
   Current measurements, task tradeoffs and measured alternative selection require
   exact equality with the selected set's recorded prompt entries, not just its ID.
   Past runs, quality reviews and output artifacts remain historical evidence.
+  **Reuse setup** in other modes uses `ComparisonRunSetup` and
+  `ComparisonRunSetupSheet`, sharing `ComparisonPromptFields` with the regular
+  editor. Only completed runs with valid recorded prompt/model identities can
+  open it. Snapshots supply the prompts, per-prompt settings, use case and model
+  paths; the current serving limits still apply. Missing external input files
+  are flagged and must be replaced before Use/Save; built-in input IDs stay
+  deferred to the existing Run fixture generator. Save creates an independent
+  prompt-set identity through `createPromptSet`; failure retains the draft.
+  Use restores a temporary set and model paths without writing or running.
+  Missing models remain selected and block Run until replaced/removed. New runs
+  capture current signatures and evidence; original results/reviews stay intact.
+  Input paths refer to current files, not archived copies of historical content.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.

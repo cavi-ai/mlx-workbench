@@ -902,16 +902,7 @@ struct ComparisonPromptSetEditor: View {
             } else {
                 Text(draft.name).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                    ForEach($draft.prompts) { $prompt in
-                        ComparisonPromptCard(prompt: $prompt, mode: draft.mode,
-                            number: (draft.prompts.firstIndex { $0.id == prompt.id } ?? 0) + 1,
-                            canRemove: draft.prompts.count > 1,
-                            onRemove: { draft.removePrompt(id: prompt.id) })
-                    }
-                }
-            }.frame(maxHeight: WorkbenchSize.Compare.promptEditorHeight)
+            ComparisonPromptFields(draft: $draft)
             Text(draft.mode == .videoGeneration
                 ? "Blank settings use runtime defaults. Each model checks its size alignment and frame grouping when run. Saving does not generate output."
                 : "Settings apply to each prompt. Saving does not run a comparison; past runs keep their recorded inputs and outputs.")
@@ -946,6 +937,24 @@ struct ComparisonPromptSetEditor: View {
         case .audio: panel.allowedContentTypes = [.wav, .mp3]
         }
         return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+}
+
+/// The same cards are used for new sets, saved-set edits and recorded-run reuse.
+private struct ComparisonPromptFields: View {
+    @Binding var draft: ComparisonPromptSetDraft
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                ForEach($draft.prompts) { $prompt in
+                    ComparisonPromptCard(prompt: $prompt, mode: draft.mode,
+                        number: (draft.prompts.firstIndex { $0.id == prompt.id } ?? 0) + 1,
+                        canRemove: draft.prompts.count > 1,
+                        onRemove: { draft.removePrompt(id: prompt.id) })
+                }
+            }
+        }.frame(maxHeight: WorkbenchSize.Compare.promptEditorHeight)
     }
 }
 
@@ -992,6 +1001,10 @@ private struct ComparisonPromptCard: View {
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         .lineLimit(1).truncationMode(.middle).help(prompt.inputPath)
                 }
+                if prompt.inputFileUnavailable {
+                    Label("Input file unavailable · choose a replacement", systemImage: "exclamationmark.triangle")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+                }
             }
             if mode == .vision || mode == .videoUnderstanding {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
@@ -1037,6 +1050,88 @@ private struct ComparisonPromptCard: View {
             Text(title).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             TextField(placeholder, text: value).accessibilityLabel("Prompt \(number) \(title.lowercased())")
         }.frame(maxWidth: .infinity)
+    }
+}
+
+struct ComparisonRunSetupSheet: View {
+    @State var setup: ComparisonRunSetup
+    let availablePaths: Set<String>
+    let name: (String) -> String
+    let onApply: (ComparisonRunSetup, PromptSet) -> String?
+    let onSave: (ComparisonPromptSetDraft) -> String?
+    @Environment(\.dismiss) private var dismiss
+    @State private var error: String?
+    @State private var showingSaveName = false
+    @State private var saveName = ""
+    @State private var savedName: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Image(systemName: "arrow.counterclockwise.circle.fill")
+                    .font(WorkbenchTypography.title).foregroundStyle(WorkbenchColor.accent)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Text("Reuse \(setup.draft.mode.title.lowercased()) setup").font(WorkbenchTypography.cardTitle)
+                    Text(setup.sourceName).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                ForEach(Array(setup.modelPaths.enumerated()), id: \.offset) { index, path in
+                    HStack(spacing: WorkbenchSpacing.xs) {
+                        LetterChip(letter: ComparePresentation.letter(index))
+                        Text(name(path)).font(WorkbenchTypography.label).lineLimit(1).truncationMode(.middle)
+                        if !availablePaths.contains(path) {
+                            Label("Unavailable", systemImage: "exclamationmark.triangle")
+                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+                        }
+                    }.help(path)
+                }
+                if setup.modelPaths.contains(where: { !availablePaths.contains($0) }) {
+                    Text("Replace or remove unavailable models in Compare before running.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+                }
+            }
+            ComparisonPromptFields(draft: $setup.draft)
+            Text("Recorded prompts and models for a new run. Current serving limits and runtime defaults still apply. Original results and ratings stay intact.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            ErrorBanner(text: error)
+            if showingSaveName {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    TextField("Prompt set name", text: $saveName).accessibilityLabel("Saved prompt set name")
+                    Button("Save") {
+                        let copy = setup.savedDraft(named: saveName)
+                        error = onSave(copy)
+                        if error == nil { savedName = saveName; showingSaveName = false }
+                    }
+                    Button { showingSaveName = false; error = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless).help("Cancel saving the prompt set")
+                        .accessibilityLabel("Cancel saving the prompt set")
+                }
+            }
+            if let savedName {
+                Label("Saved ‘\(savedName)’ in the prompt set picker.", systemImage: "checkmark.circle")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.success)
+            }
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Button { setup.draft.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
+                Button("Save as prompt set…") {
+                    saveName = "\(setup.sourceName) copy"; showingSaveName = true; savedName = nil; error = nil
+                }
+                .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.accent).disabled(showingSaveName)
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Use setup") {
+                    do {
+                        error = onApply(setup, try setup.draft.promptSet())
+                        if error == nil { dismiss() }
+                    } catch { self.error = error.localizedDescription }
+                }
+                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent).keyboardShortcut(.defaultAction)
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(width: WorkbenchSize.Compare.promptEditorWidth)
     }
 }
 

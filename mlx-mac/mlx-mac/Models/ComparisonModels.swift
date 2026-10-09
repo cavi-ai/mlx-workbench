@@ -124,6 +124,13 @@ struct ComparisonPromptSetDraft: Identifiable {
         var seed: String
         var toolName: String? { original.tool?.name }
         var builtinInput: String? { inputPath == (original.inputPath ?? "") ? original.builtinInput : nil }
+        var inputFileUnavailable: Bool {
+            guard !inputPath.isEmpty else { return false }
+            var isDirectory: ObjCBool = false
+            return !inputPath.hasPrefix("/") || inputPath.unicodeScalars.contains(where: { $0.value < 32 })
+                || !FileManager.default.fileExists(atPath: inputPath, isDirectory: &isDirectory)
+                || isDirectory.boolValue || !FileManager.default.isReadableFile(atPath: inputPath)
+        }
 
         init(_ entry: PromptEntry, mode: ComparisonMode) {
             original = entry
@@ -168,10 +175,7 @@ struct ComparisonPromptSetDraft: Identifiable {
                 if inputPath.isEmpty, builtinInput != nil {
                     // Preserve a recorded built-in fixture without materializing it.
                 } else {
-                    var isDirectory: ObjCBool = false
-                    guard inputPath.hasPrefix("/"), !inputPath.unicodeScalars.contains(where: { $0.value < 32 }),
-                          FileManager.default.fileExists(atPath: inputPath, isDirectory: &isDirectory),
-                          !isDirectory.boolValue, FileManager.default.isReadableFile(atPath: inputPath) else {
+                    guard !inputPath.isEmpty, !inputFileUnavailable else {
                         throw InvalidDraft(message: "Choose a readable \(kind.rawValue) file. The recorded file may have moved.")
                     }
                 }
@@ -221,13 +225,15 @@ struct ComparisonPromptSetDraft: Identifiable {
 
     let original: PromptSet?
     private let newID = UUID().uuidString
+    private let copiedUseCase: UseCase?
     var id: String { original?.id ?? newID }
     let mode: ComparisonMode
     var name: String
     var prompts: [Prompt]
 
-    init(mode: ComparisonMode) {
+    init(mode: ComparisonMode, useCase: UseCase? = nil) {
         original = nil; self.mode = mode; name = ""
+        copiedUseCase = useCase
         prompts = [Self.newPrompt(mode: mode)]
     }
 
@@ -238,6 +244,7 @@ struct ComparisonPromptSetDraft: Identifiable {
             throw InvalidDraft(message: "Select a saved prompt set with valid prompt identities.")
         }
         original = set; mode = set.effectiveMode; name = set.name
+        copiedUseCase = set.useCase
         prompts = set.prompts.map { Prompt($0, mode: set.effectiveMode) }
     }
 
@@ -273,9 +280,44 @@ struct ComparisonPromptSetDraft: Identifiable {
             do { return try prompt.entry(for: mode) }
             catch { throw InvalidDraft(message: "Prompt \(index + 1): \(error.localizedDescription)") }
         }
-        var set = original ?? PromptSet(id: id, name: title, useCase: nil, prompts: [], origin: .userCreated, mode: mode)
+        var set = original ?? PromptSet(id: id, name: title, useCase: copiedUseCase, prompts: [], origin: .userCreated, mode: mode)
         set.name = title; set.prompts = entries
         return set
+    }
+}
+
+/// Recorded non-music inputs prepared for a new run. Model paths are retained
+/// for review; signatures, results and reviews are never carried forward.
+struct ComparisonRunSetup: Identifiable {
+    let id: UUID
+    let sourceName: String
+    let modelPaths: [String]
+    private let useCase: UseCase?
+    var draft: ComparisonPromptSetDraft
+
+    init(run: ComparisonRun) throws {
+        guard run.state == .completed, run.effectiveMode != .musicGeneration,
+              let entries = run.promptEntries, !entries.isEmpty else {
+            throw ComparisonPromptSetDraft.InvalidDraft(message: "This run has no recorded setup to reuse.")
+        }
+        guard !run.variants.isEmpty, run.variants.count <= 4,
+              !run.variants.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                  || $0.unicodeScalars.contains(where: { $0.value < 32 }) }),
+              Set(run.variants).count == run.variants.count,
+              !entries.contains(where: { $0.id.isEmpty }), Set(entries.map(\.id)).count == entries.count else {
+            throw ComparisonPromptSetDraft.InvalidDraft(message: "This recorded setup contains invalid model or prompt selections.")
+        }
+        id = run.id; sourceName = run.promptSetName; modelPaths = run.variants; useCase = run.useCase
+        draft = ComparisonPromptSetDraft(mode: run.effectiveMode, useCase: run.useCase)
+        draft.name = "\(sourceName) · reused"
+        draft.prompts = entries.map { ComparisonPromptSetDraft.Prompt($0, mode: run.effectiveMode) }
+    }
+
+    /// Saving creates an independent identity and leaves the temporary draft intact.
+    func savedDraft(named name: String) -> ComparisonPromptSetDraft {
+        var copy = ComparisonPromptSetDraft(mode: draft.mode, useCase: useCase)
+        copy.name = name; copy.prompts = draft.prompts
+        return copy
     }
 }
 
