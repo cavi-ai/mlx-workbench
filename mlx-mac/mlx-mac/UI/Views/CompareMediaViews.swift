@@ -1053,14 +1053,58 @@ struct MediaPromptSetEditor: View {
 
 // MARK: - Saved music prompt sets
 
+/// Shared fields for saved-set editing and recorded-run reuse.
+struct MusicPromptFields: View {
+    @Binding var prompts: [MusicComparisonSetup.Prompt]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                ForEach(Array(prompts.indices), id: \.self) { index in
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                        Text("PROMPT \(index + 1)").font(WorkbenchTypography.metadata.weight(.semibold))
+                            .foregroundStyle(WorkbenchColor.accent)
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                            Text("Caption").font(WorkbenchTypography.label)
+                            TextField("Describe the music", text: $prompts[index].caption, axis: .vertical)
+                                .lineLimit(2...5).accessibilityLabel("Prompt \(index + 1) caption")
+                        }
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                            Text("Lyrics").font(WorkbenchTypography.label)
+                            TextField("Default: [instrumental]", text: $prompts[index].lyrics, axis: .vertical)
+                                .lineLimit(2...6).accessibilityLabel("Prompt \(index + 1) lyrics")
+                        }
+                        HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
+                            parameter("Duration · seconds", defaultValue: "Default: 15", value: $prompts[index].duration)
+                            parameter("Steps", defaultValue: "Default: 30", value: $prompts[index].steps)
+                            parameter("Seed", defaultValue: "Default: 42", value: $prompts[index].seed)
+                        }
+                    }
+                    .padding(WorkbenchSpacing.md)
+                    .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                }
+            }
+        }.frame(maxHeight: WorkbenchSize.Compare.musicPromptEditorHeight)
+    }
+
+    private func parameter(_ title: String, defaultValue: String, value: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text(title).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            TextField(defaultValue, text: value).accessibilityLabel(title)
+        }.frame(maxWidth: .infinity)
+    }
+}
+
 struct MusicPromptSetActions: View {
     let name: String?
     let isEnabled: Bool
+    let onEdit: () -> Void
     let onRename: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
         Menu {
+            Button("Edit…", systemImage: "slider.horizontal.3", action: onEdit)
             Button("Rename…", systemImage: "pencil", action: onRename)
             Button("Remove…", systemImage: "trash", role: .destructive, action: onRemove)
         } label: { Image(systemName: "ellipsis.circle") }
@@ -1069,6 +1113,43 @@ struct MusicPromptSetActions: View {
             .disabled(!isEnabled)
             .accessibilityLabel("Manage saved music prompt set")
             .help(isEnabled ? "Manage \(name ?? "prompt set")" : "Select a saved music prompt set; built-ins and temporary setups cannot be changed.")
+    }
+}
+
+struct MusicPromptSetEditSheet: View {
+    @State var edit: MusicPromptSetEdit
+    let onSave: (MusicPromptSetEdit) -> String?
+    @State private var error: String?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(WorkbenchTypography.title).foregroundStyle(WorkbenchColor.accent)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Text("Edit music prompt set").font(WorkbenchTypography.cardTitle)
+                    Text(edit.original.name).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
+            MusicPromptFields(prompts: $edit.prompts)
+            Text("Save changes to this set. Blank settings use the current defaults. Past runs keep their recorded inputs, audio and ratings.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            ErrorBanner(text: error ?? edit.validationError)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save changes") {
+                    error = onSave(edit)
+                    if error == nil { dismiss() }
+                }
+                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
+                .keyboardShortcut(.defaultAction).disabled(edit.validationError != nil)
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(width: WorkbenchSize.Compare.musicPromptEditorWidth)
     }
 }
 
@@ -1151,33 +1232,7 @@ struct MusicComparisonSetupSheet: View {
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
                 }
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                    ForEach(Array(setup.prompts.indices), id: \.self) { index in
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                            Text("PROMPT \(index + 1)").font(WorkbenchTypography.metadata.weight(.semibold))
-                                .foregroundStyle(WorkbenchColor.accent)
-                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                                Text("Caption").font(WorkbenchTypography.label)
-                                TextField("Describe the music", text: $setup.prompts[index].caption, axis: .vertical)
-                                    .lineLimit(2...5).accessibilityLabel("Prompt \(index + 1) caption")
-                            }
-                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                                Text("Lyrics").font(WorkbenchTypography.label)
-                                TextField("Default: [instrumental]", text: $setup.prompts[index].lyrics, axis: .vertical)
-                                    .lineLimit(2...6).accessibilityLabel("Prompt \(index + 1) lyrics")
-                            }
-                            HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
-                                parameter("Duration · seconds", defaultValue: "Default: 15", value: $setup.prompts[index].duration)
-                                parameter("Steps", defaultValue: "Default: 30", value: $setup.prompts[index].steps)
-                                parameter("Seed", defaultValue: "Default: 42", value: $setup.prompts[index].seed)
-                            }
-                        }
-                        .padding(WorkbenchSpacing.md)
-                        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
-                    }
-                }
-            }.frame(maxHeight: 390)
+            MusicPromptFields(prompts: $setup.prompts)
             Text("Temporary inputs for a new run. Blank settings use the current defaults. Saved results and listening ratings stay with the original run.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             ErrorBanner(text: applyError ?? setup.validationError)
@@ -1217,7 +1272,7 @@ struct MusicComparisonSetupSheet: View {
         }
         .textFieldStyle(.roundedBorder)
         .padding(WorkbenchSpacing.pageInset)
-        .frame(width: 620)
+        .frame(width: WorkbenchSize.Compare.musicPromptEditorWidth)
     }
 
     private func savePromptSet() {
@@ -1230,12 +1285,6 @@ struct MusicComparisonSetupSheet: View {
         } catch { applyError = error.localizedDescription }
     }
 
-    private func parameter(_ title: String, defaultValue: String, value: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            Text(title).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            TextField(defaultValue, text: value).accessibilityLabel(title)
-        }.frame(maxWidth: .infinity)
-    }
 }
 
 // MARK: - Run history

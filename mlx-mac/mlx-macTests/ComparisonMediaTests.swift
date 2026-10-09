@@ -912,6 +912,130 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
+    func testEditingSavedMusicSetPreservesIdentityHistoryReviewsAndOutputs() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        let original = PromptSet(id: "music-edit", name: "Instrumentals", useCase: .coding,
+            prompts: [PromptEntry(id: "one", text: "Piano", maxTokens: 77, expectedKeywords: ["piano"],
+                media: MediaParameters(size: 512, steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]")),
+                PromptEntry(id: "two", text: "Acoustic guitar")], origin: .userCreated, mode: .musicGeneration)
+        XCTAssertTrue(coordinator.savePromptSet(original))
+        coordinator.start(variants: [("/music/a", nil)], promptSet: original)
+        await waitForRun(coordinator)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        coordinator.reviewQuality(runID: run.id, modelPath: "/music/a", score: 4)
+        let history = try Data(contentsOf: root.appendingPathComponent("runs.json"))
+        let setsURL = root.appendingPathComponent("sets.json"), before = try Data(contentsOf: setsURL)
+        let artifact = try XCTUnwrap(coordinator.outputStore?.artifactURL(runID: run.id,
+            artifact: try XCTUnwrap(run.results.first?.samples.first?.artifact)))
+        let output = try Data(contentsOf: artifact)
+        var edit = try XCTUnwrap(coordinator.prepareMusicPromptSetEdit(id: original.id))
+        edit.prompts[0].caption = "Rhodes, bass and drums"
+        edit.prompts[0].lyrics = "[verse]\nA new day"
+        edit.prompts[0].duration = "20"; edit.prompts[0].steps = "8"; edit.prompts[0].seed = "99"
+        XCTAssertEqual(try Data(contentsOf: setsURL), before, "Opening and editing the draft must not write")
+        XCTAssertEqual(coordinator.promptSets.first { $0.id == original.id }, original)
+        XCTAssertTrue(coordinator.saveMusicPromptSetEdits(edit))
+        var expected = original
+        expected.prompts[0].text = "Rhodes, bass and drums"
+        expected.prompts[0].media = MediaParameters(size: 512, steps: 8, seed: 99, durationSeconds: 20, lyrics: "[verse]\nA new day")
+        XCTAssertEqual(coordinator.promptSets.first { $0.id == original.id }, expected)
+        let reloaded = makeCoordinator(runner: runner)
+        XCTAssertEqual(reloaded.promptSets.first { $0.id == original.id }, expected)
+        XCTAssertEqual(reloaded.runs.first?.promptEntries, original.prompts)
+        XCTAssertEqual(reloaded.runs.first?.qualityReviews?["/music/a"]?.score, 4)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("runs.json")), history)
+        XCTAssertEqual(try Data(contentsOf: artifact), output)
+        let requests = await runner.requests
+        XCTAssertEqual(requests.count, 2, "Saving must not generate additional audio")
+    }
+
+    @MainActor
+    func testMusicEditSaveRejectsInvalidStaleMissingAndCorruptStoredSets() throws {
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        let original = PromptSet(id: "music-edit", name: "Music", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
+        XCTAssertTrue(coordinator.savePromptSet(original))
+        let url = root.appendingPathComponent("sets.json"), store = JSONStore<PromptSet>(fileURL: url)
+        let before = try Data(contentsOf: url)
+        var invalid = try MusicPromptSetEdit(set: original); invalid.prompts[0].duration = "0"
+        XCTAssertFalse(coordinator.saveMusicPromptSetEdits(invalid))
+        XCTAssertEqual(try Data(contentsOf: url), before)
+        var edit = try MusicPromptSetEdit(set: original); edit.prompts[0].caption = "Jazz"
+        var changed = original; changed.prompts[0].text = "Changed on disk"
+        try store.replaceAll([changed])
+        let freshBytes = try Data(contentsOf: url)
+        XCTAssertFalse(coordinator.saveMusicPromptSetEdits(edit))
+        XCTAssertEqual(try Data(contentsOf: url), freshBytes)
+        try store.replaceAll([])
+        XCTAssertFalse(coordinator.saveMusicPromptSetEdits(edit))
+        XCTAssertEqual(try store.load(), [])
+        let corrupt = Data("broken-json".utf8); try corrupt.write(to: url)
+        XCTAssertFalse(coordinator.saveMusicPromptSetEdits(edit))
+        XCTAssertEqual(try Data(contentsOf: url), corrupt)
+        XCTAssertNil(coordinator.prepareMusicPromptSetEdit(id: original.id))
+        XCTAssertEqual(coordinator.promptSets.first { $0.id == original.id }, original)
+        XCTAssertNotNil(coordinator.promptSetManagementError)
+        try store.replaceAll([changed])
+        var freshEdit = try XCTUnwrap(coordinator.prepareMusicPromptSetEdit(id: original.id))
+        XCTAssertEqual(freshEdit.original, changed, "Reopening after a stale save must read the current durable snapshot")
+        let reopenedBytes = try Data(contentsOf: url)
+        freshEdit.prompts[0].seed = "99"
+        XCTAssertEqual(try Data(contentsOf: url), reopenedBytes, "Opening the editor must not write")
+        XCTAssertTrue(coordinator.saveMusicPromptSetEdits(freshEdit))
+        XCTAssertEqual(coordinator.promptSets.first { $0.id == original.id }?.prompts[0].text, changed.prompts[0].text)
+        XCTAssertNil(coordinator.promptSetManagementError)
+    }
+
+    @MainActor
+    func testMusicEditProtectsBuiltinsOtherModesAndActiveComparisons() async throws {
+        XCTAssertThrowsError(try MusicPromptSetEdit(set: ComparisonMediaFixtures.musicGenerationSet))
+        let chat = PromptSet(id: "chat", name: "Chat", useCase: nil, prompts: [PromptEntry(id: "p", text: "Hello")], origin: .userCreated)
+        XCTAssertThrowsError(try MusicPromptSetEdit(set: chat))
+        var set = PromptSet(id: "music-edit", name: "Music", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
+        let runner = StubMediaRunner(gated: true), coordinator = makeCoordinator(runner: runner)
+        XCTAssertTrue(coordinator.savePromptSet(set))
+        let before = try Data(contentsOf: root.appendingPathComponent("sets.json"))
+        var edit = try MusicPromptSetEdit(set: set); edit.prompts[0].caption = "Jazz"
+        coordinator.start(variants: [("/music/a", nil)], promptSet: set)
+        XCTAssertNil(coordinator.prepareMusicPromptSetEdit(id: set.id))
+        XCTAssertFalse(coordinator.saveMusicPromptSetEdits(edit))
+        await runner.release(1); await waitForRun(coordinator)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("sets.json")), before)
+        set.prompts = []
+        XCTAssertThrowsError(try MusicPromptSetEdit(set: set))
+        set.prompts = [PromptEntry(id: "p", text: "Piano"), PromptEntry(id: "p", text: "Guitar")]
+        XCTAssertThrowsError(try MusicPromptSetEdit(set: set))
+        edit.prompts = []
+        XCTAssertThrowsError(try edit.updatedPromptSet())
+    }
+
+    @MainActor
+    func testSavedMusicEditSheetRendersRecordedSettingsWithoutSaving() async throws {
+        let set = PromptSet(id: "music-edit", name: "Jazz-funk instrumentals", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Instrumental jazz-funk with Rhodes, bass and drums",
+                media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))],
+            origin: .userCreated, mode: .musicGeneration)
+        let content = MusicPromptSetEditSheet(edit: try MusicPromptSetEdit(set: set)) { _ in
+            XCTFail("Rendering must not save a set"); return nil
+        }
+        .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 530),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "Edit saved music prompt set"; attachment.lifetime = .keepAlways; add(attachment)
+        if let path = ProcessInfo.processInfo.environment["MLX_MUSIC_EDIT_PROOF_PATH"] { try png.write(to: URL(fileURLWithPath: path)) }
+    }
+
+    @MainActor
     func testMusicPromptSetRenameSheetRendersWithoutMutatingTheSet() async throws {
         let set = PromptSet(id: "music-user", name: "Jazz-funk instrumentals", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)

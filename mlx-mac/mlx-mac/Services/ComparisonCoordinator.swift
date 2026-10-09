@@ -144,7 +144,38 @@ final class ComparisonCoordinator: ObservableObject {
         changeMusicPromptSet(id: id) { _ in nil }
     }
 
-    private func changeMusicPromptSet(id: String, transform: (PromptSet) -> PromptSet?) -> Bool {
+    /// Called by the Edit action, never during view evaluation. Reopening a
+    /// stale editor reads the current durable set without writing it.
+    func prepareMusicPromptSetEdit(id: String) -> MusicPromptSetEdit? {
+        do {
+            guard activeRunID == nil, canManageMusicPromptSet(id: id) else {
+                throw PromptSetManagementError(message: "Select a saved music prompt set after the comparison finishes.")
+            }
+            guard let stored = try promptSetStore.load().first(where: { $0.id == id }),
+                  Self.isManageableMusicPromptSet(stored) else {
+                throw PromptSetManagementError(message: "The saved music prompt set is no longer available.")
+            }
+            let edit = try MusicPromptSetEdit(set: stored)
+            if let index = promptSets.firstIndex(where: { $0.id == id }) { promptSets[index] = stored }
+            promptSetManagementError = nil
+            return edit
+        } catch {
+            promptSetManagementError = "Music prompt set could not be opened: \(AppHost.render(error))"
+            return nil
+        }
+    }
+
+    @discardableResult
+    func saveMusicPromptSetEdits(_ edit: MusicPromptSetEdit) -> Bool {
+        changeMusicPromptSet(id: edit.id) { stored in
+            guard stored == edit.original else {
+                throw PromptSetManagementError(message: "The saved prompt set changed while this editor was open. Cancel and reopen it before saving.")
+            }
+            return try edit.updatedPromptSet()
+        }
+    }
+
+    private func changeMusicPromptSet(id: String, transform: (PromptSet) throws -> PromptSet?) -> Bool {
         do {
             guard activeRunID == nil else {
                 throw PromptSetManagementError(message: "Wait for the comparison to finish before managing prompt sets.")
@@ -157,7 +188,7 @@ final class ComparisonCoordinator: ObservableObject {
                 guard Self.isManageableMusicPromptSet(stored) else {
                     throw PromptSetManagementError(message: "The saved prompt set changed. Select it again.")
                 }
-                changed = transform(stored)
+                changed = try transform(stored)
                 return changed
             }
             guard found else { throw PromptSetManagementError(message: "The saved prompt set is no longer available.") }

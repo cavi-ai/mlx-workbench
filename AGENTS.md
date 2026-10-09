@@ -188,13 +188,21 @@ from `mlx-agent` at runtime.
   set through the existing prompt store, preserving per-prompt settings without
   model selections. Save failures keep the editor open and leave published prompt
   sets unchanged; saving never starts generation or overwrites the source preset.
-  Saved user-created music prompt sets have a compact Rename/Remove menu beside
+  Saved user-created music prompt sets have a compact Edit/Rename/Remove menu beside
   the picker. Both actions recheck the persisted set and use `JSONStore.update`
   under its mutation lock; publication follows a successful atomic write.
   Built-in IDs, other modes, temporary setups and active comparisons are refused.
   Removal requires confirmation and changes only the prompt store; run snapshots,
   audio and quality reviews remain intact. Removing the selected set falls back
   to an available prompt set.
+  `MusicPromptSetEdit` is a value-only draft of a saved set; shared `MusicPromptFields`
+  and the reuse editor's validation preserve optional settings and unedited fields.
+  Explicit Save keeps the set and prompt identities, checks the original snapshot
+  against the current persisted set, and publishes only after a successful write.
+  Opening or reopening an editor loads the current persisted set through the
+  coordinator's explicit Edit action, outside view evaluation.
+  Invalid, stale or failed edits keep the editor open; Cancel and opening an editor
+  never write or generate audio. Historical snapshots and output files are untouched.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.

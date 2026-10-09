@@ -216,6 +216,38 @@ struct MusicComparisonSetup: Identifiable {
     }
 }
 
+/// A value-only draft of a saved set. The original remains the authority for
+/// its identity and metadata, and lets persistence detect a stale editor.
+struct MusicPromptSetEdit: Identifiable {
+    let original: PromptSet
+    var id: String { original.id }
+    var prompts: [MusicComparisonSetup.Prompt]
+
+    init(set: PromptSet) throws {
+        guard set.origin == .userCreated, set.effectiveMode == .musicGeneration,
+              !set.prompts.isEmpty, !set.prompts.contains(where: { $0.id.isEmpty }),
+              Set(set.prompts.map(\.id)).count == set.prompts.count else {
+            throw MusicComparisonSetup.InvalidSetup(message: "Select a saved, user-created music prompt set with valid prompt identities.")
+        }
+        original = set
+        prompts = set.prompts.map(MusicComparisonSetup.Prompt.init)
+    }
+
+    var validationError: String? {
+        do { _ = try updatedPromptSet(); return nil }
+        catch { return error.localizedDescription }
+    }
+
+    func updatedPromptSet() throws -> PromptSet {
+        guard prompts.map(\.id) == original.prompts.map(\.id) else {
+            throw MusicComparisonSetup.InvalidSetup(message: "The edited set must keep its original prompt identities.")
+        }
+        var updated = original
+        updated.prompts = try prompts.map { try $0.entry() }
+        return updated
+    }
+}
+
 /// Small built-in starter sets per use case. Versioned content: changing a
 /// prompt's text changes its id's meaning, so edits bump the entry id suffix.
 enum BuiltinPromptSets {
