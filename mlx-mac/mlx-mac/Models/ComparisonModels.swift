@@ -623,7 +623,7 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     /// Of the emitted calls, how many carried usable arguments (parse as a
     /// JSON object containing the offered tool's required keys).
     let toolCallsValid: Int?
-    /// Media modes: the full text output (`outputExcerpt` keeps the first 280 characters).
+    /// Full recorded text when available; older chat runs retain only an excerpt.
     let fullOutput: String?
     /// Media modes: file name of the saved output inside the run's output folder.
     let artifact: String?
@@ -850,19 +850,50 @@ struct ComparisonQualityReview: Codable, Equatable, Sendable {
 
 /// Pairs per-prompt outputs from two variants for the side-by-side diff view.
 enum ComparisonDiff {
+    struct Output: Equatable {
+        let text: String
+        let isExcerpt: Bool
+    }
+
     struct Pair: Equatable, Identifiable {
         let promptID: String
         let left: String
         let right: String
+        var leftIsExcerpt = false
+        var rightIsExcerpt = false
         var id: String { promptID }
     }
 
+    static func isAvailable(_ run: ComparisonRun) -> Bool {
+        run.state == .completed && run.effectiveMode.outputKind == .text && run.results.count >= 2
+    }
+
+    static func output(_ result: VariantResult, promptID: String) -> Output? {
+        guard result.error == nil, let sample = result.samples.first(where: { $0.promptID == promptID }),
+              sample.error == nil else { return nil }
+        return Output(text: sample.fullOutput ?? sample.outputExcerpt, isExcerpt: sample.fullOutput == nil)
+    }
+
     static func pairs(_ left: VariantResult, _ right: VariantResult) -> [Pair] {
-        let rightByID = Dictionary(uniqueKeysWithValues: right.samples.map { ($0.promptID, $0) })
+        guard left.modelPath != right.modelPath else { return [] }
+        var seen = Set<String>()
         return left.samples.compactMap { sample in
-            guard let other = rightByID[sample.promptID] else { return nil }
-            return Pair(promptID: sample.promptID, left: sample.outputExcerpt, right: other.outputExcerpt)
+            guard seen.insert(sample.promptID).inserted,
+                  let a = output(left, promptID: sample.promptID),
+                  let b = output(right, promptID: sample.promptID) else { return nil }
+            return Pair(promptID: sample.promptID, left: a.text, right: b.text,
+                leftIsExcerpt: a.isExcerpt, rightIsExcerpt: b.isExcerpt)
         }
+    }
+
+    /// The shared line differ uses quadratic storage. Keep long responses readable
+    /// without running an unbounded diff during layout, and never silently truncate.
+    static func differences(_ pair: Pair) -> [DiffLine]? {
+        guard pair.left.count <= 20_000, pair.right.count <= 20_000 else { return nil }
+        let a = pair.left.split(separator: "\n", omittingEmptySubsequences: false).count
+        let b = pair.right.split(separator: "\n", omittingEmptySubsequences: false).count
+        guard a <= 500, b <= 500 else { return nil }
+        return LineDiff.diff(before: pair.left, after: pair.right)
     }
 }
 
@@ -947,7 +978,8 @@ enum ComparisonAggregation {    static func medianTokensPerSecond(_ samples: [Co
             prefillTokensPerSecond: probe.prefillTokensPerSecond,
             toolCalls: probe.toolCalls,
             toolNames: probe.toolNames,
-            toolCallsValid: probe.toolCallsValid
+            toolCallsValid: probe.toolCallsValid,
+            fullOutput: probe.text
         )
     }
 

@@ -156,8 +156,14 @@ from `mlx-agent` at runtime.
   lane (A–D, run order) per variant carrying the mode's primary metric as its
   largest numerals and a relative bar: tok/s, real-time factor, seconds per
   step, seconds per frame. Below the lanes is one row per prompt, one column per
-  lane (text, image thumbnail with larger sheet, audio play/stop, video player). Output diff and
-  Promote winner stay chat-only; media runs do not feed the
+  lane (text, image thumbnail with larger sheet, audio play/stop, video player).
+  Completed text-output runs (chat, vision, video understanding, speech to text) offer
+  `TextComparisonPanel` below the charts: two model outputs for one recorded prompt,
+  selectable reading or bounded line differences, with existing task-quality ratings.
+  `ComparisonDiff` prefers full recorded output, labels older excerpt-only samples,
+  excludes failed/unpaired samples and limits the quadratic differ to 20,000 characters
+  and 500 lines per output without truncating the reading view. New chat samples persist
+  `fullOutput`; old runs are not rewritten. Promote winner stays chat-only; media runs do not feed the
   RecommendationEngine.
   Music generation accepts `music_generation` models and uses the audio backend's
   dedicated music loader. Prompt snapshots preserve caption, lyrics, requested
