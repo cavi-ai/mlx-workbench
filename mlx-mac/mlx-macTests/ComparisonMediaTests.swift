@@ -29,6 +29,20 @@ private final class StubAudioPlayback: AudioClipPlayback {
 }
 
 /// Stands in for the agent: records every request, writes the output file for file modes.
+private actor ChangingInputRunner: ComparisonMediaRunner {
+    let original: URL
+    private(set) var inputs: [URL] = []
+    private(set) var contents: [String] = []
+    init(original: URL) { self.original = original }
+    func run(_ request: MediaRunRequest) async throws -> MediaRunOutput {
+        let input = try XCTUnwrap(request.inputURL)
+        inputs.append(input)
+        contents.append(try String(contentsOf: input, encoding: .utf8))
+        if inputs.count == 1 { try Data("changed source".utf8).write(to: original) }
+        return MediaRunOutput(text: "description", generationTokensPerSecond: 10)
+    }
+}
+
 private actor StubMediaRunner: ComparisonMediaRunner {
     private(set) var requests: [MediaRunRequest] = []
     private var failingModels: Set<String>
@@ -83,6 +97,168 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     // MARK: Modes
+
+    @MainActor
+    func testEveryVariantUsesOneSavedInputEvenWhenOriginalChanges() async throws {
+        let original = root.appendingPathComponent("original.png")
+        try Data("original source".utf8).write(to: original)
+        let runner = ChangingInputRunner(original: original)
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("saved-inputs"))
+        let coordinator = makeCoordinator(runner: runner, store: store)
+        let set = PromptSet(id: "s", name: "Source stability", useCase: nil, prompts: [
+            PromptEntry(id: "p", text: "Describe this image", inputKind: .image, inputPath: original.path)
+        ], origin: .userCreated, mode: .vision)
+        coordinator.start(variants: [("/m/a", nil), ("/m/b", nil)], promptSet: set)
+        await waitForRun(coordinator)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        XCTAssertEqual(run.state, .completed)
+        let contents = await runner.contents, inputs = await runner.inputs
+        XCTAssertEqual(contents, ["original source", "original source"])
+        XCTAssertEqual(inputs.count, 2)
+        XCTAssertEqual(inputs.first, inputs.last)
+        XCTAssertNotEqual(inputs.first, original)
+        XCTAssertEqual(inputs.first?.deletingLastPathComponent(), store.inputsDirectory(run.id))
+        XCTAssertEqual(try String(contentsOf: original, encoding: .utf8), "changed source")
+        let artifact = try XCTUnwrap(run.inputArtifacts?["p"])
+        XCTAssertEqual(store.inputArtifactURL(runID: run.id, artifact: artifact), inputs.first)
+        XCTAssertEqual(inputs.first?.pathExtension, "png")
+        try FileManager.default.removeItem(at: original)
+        let restored = try XCTUnwrap(JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json")).load().first)
+        XCTAssertEqual(restored.inputArtifacts, run.inputArtifacts)
+        let entry = try XCTUnwrap(restored.promptEntries?.first)
+        XCTAssertEqual(ComparisonViewLogic.inputEvidence(for: restored, entry: entry, store: store), .saved(try XCTUnwrap(inputs.first)))
+    }
+
+    func testInputSnapshotsRefuseDirectoriesLinksAndUnsafeStorePaths() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("snapshots")), runID = UUID()
+        try store.createRunDirectory(runID)
+        let original = root.appendingPathComponent("original.wav")
+        try Data("source".utf8).write(to: original)
+        let link = root.appendingPathComponent("source-link.wav")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: original)
+        for source in [link, try XCTUnwrap(root), root.appendingPathComponent("missing.wav")] {
+            do { _ = try await store.snapshotInput(from: source, runID: runID); XCTFail("Unsafe input was saved") }
+            catch { XCTAssertTrue(error is ComparisonOutputStore.InputError) }
+        }
+        try FileManager.default.removeItem(at: store.inputsDirectory(runID))
+        let outside = root.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: store.inputsDirectory(runID), withDestinationURL: outside)
+        do { _ = try await store.snapshotInput(from: original, runID: runID); XCTFail("Symlinked input folder was used") }
+        catch { XCTAssertTrue(error is ComparisonOutputStore.InputError) }
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: outside.path).isEmpty)
+        XCTAssertEqual(try String(contentsOf: original, encoding: .utf8), "source")
+        for name in ["../a.wav", "a/b.wav", ".hidden", "", "x..y.wav", "a\\b.wav"] {
+            XCTAssertNil(store.inputArtifactURL(runID: runID, artifact: name))
+        }
+    }
+
+    func testInputEvidenceDistinguishesSavedLegacyAndUnavailableInputsWithoutFallback() throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("evidence"))
+        var run = historyRun(.vision, "Input evidence", at: 100)
+        try store.createRunDirectory(run.id)
+        let original = root.appendingPathComponent("source.png")
+        try Data("new original".utf8).write(to: original)
+        let entry = PromptEntry(id: "p", text: "Question", inputKind: .image, inputPath: original.path)
+        XCTAssertEqual(ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store), .original(original))
+        let saved = store.inputsDirectory(run.id).appendingPathComponent("saved.png")
+        try Data("recorded input".utf8).write(to: saved)
+        run.inputArtifacts = ["p": "saved.png"]
+        XCTAssertEqual(ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store), .saved(saved))
+        try FileManager.default.removeItem(at: saved)
+        XCTAssertEqual(ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store), .unavailable("Saved input unavailable"))
+        XCTAssertEqual(try String(contentsOf: original, encoding: .utf8), "new original")
+        run.inputArtifacts = ["p": "../source.png"]
+        XCTAssertNil(ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store).url)
+        run.inputArtifacts = nil
+        try FileManager.default.removeItem(at: original)
+        XCTAssertEqual(ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store), .unavailable("Original input unavailable"))
+        let legacyJSON = try JSONEncoder().encode(run)
+        XCTAssertNil(try JSONDecoder().decode(ComparisonRun.self, from: legacyJSON).inputArtifacts)
+    }
+
+    @MainActor
+    func testGeneratedInputsKeepDistinctContentsWhenPromptFilenamesCollide() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("builtin-inputs"))
+        let runner = StubMediaRunner()
+        let probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "h" }, start: { _, _, _ in }, stop: { _ in }),
+            prober: IdleProber(), pickPort: { 9997 })
+        let coordinator = ComparisonCoordinator(probe: probe,
+            runStore: JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("builtin-runs.json")),
+            promptSetStore: JSONStore<PromptSet>(fileURL: root.appendingPathComponent("builtin-sets.json")),
+            mediaRunner: runner, outputStore: store)
+        let set = PromptSet(id: "s", name: "Collision fixture", useCase: nil, prompts: [
+            PromptEntry(id: "a b", text: "Red", inputKind: .image, builtinInput: "red-circle"),
+            PromptEntry(id: "a/b", text: "Blue", inputKind: .image, builtinInput: "blue-squares")
+        ], origin: .userCreated, mode: .vision)
+        coordinator.start(variants: [("/m/a", nil), ("/m/b", nil)], promptSet: set)
+        await waitForRun(coordinator)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        let requests = await runner.requests
+        XCTAssertEqual(requests.count, 4)
+        guard requests.count == 4 else { return }
+        let first = try XCTUnwrap(requests[0].inputURL), second = try XCTUnwrap(requests[1].inputURL)
+        XCTAssertNotEqual(first, second)
+        XCTAssertNotEqual(try Data(contentsOf: first), try Data(contentsOf: second))
+        XCTAssertEqual(requests[2].inputURL, first)
+        XCTAssertEqual(requests[3].inputURL, second)
+        XCTAssertEqual(run.inputArtifacts?.count, 2)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: store.inputsDirectory(run.id).path).count, 2)
+    }
+
+    @MainActor
+    func testNativeGridShowsSavedUnavailableAndLegacyInputEvidence() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("grid-inputs"))
+        var run = historyRun(.vision, "Vision fixture", at: 100, models: ["/model/a", "/model/b"])
+        try store.createRunDirectory(run.id)
+        let saved = try await ComparisonMediaFixtures.generateInput(
+            for: PromptEntry(id: "p", text: "", builtinInput: "red-circle"), into: store.inputsDirectory(run.id))
+        let image = try Data(contentsOf: saved)
+        let original = root.appendingPathComponent("selected-image.png")
+        let entry = PromptEntry(id: "p", text: "Describe the shape and its color.", inputKind: .image,
+            inputPath: original.path, expectedKeywords: ["red", "circle|round"])
+        run.promptEntries = [entry]
+        run.inputArtifacts = ["p": saved.lastPathComponent]
+        run.results = ["a", "b"].enumerated().map { index, key in
+            VariantResult(modelPath: "/model/\(key)", modelSignature: "fixture", samples: [
+                ComparisonSample(promptID: "p", outputExcerpt: index == 0 ? "A red circle on a white background." : "A red shape.",
+                    tokensPerSecond: nil, timeToFirstTokenSeconds: nil, error: nil,
+                    fullOutput: index == 0 ? "A red circle on a white background." : "A red shape.",
+                    keywordsMatched: index == 0, generationTokensPerSecond: index == 0 ? 20 : 40)
+            ], aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil,
+                aggregateMetric: index == 0 ? 20 : 40)
+        }
+        for (label, width) in [("saved", 1000.0), ("unavailable", 760.0), ("legacy", 760.0)] {
+            if label == "unavailable" {
+                try FileManager.default.removeItem(at: saved)
+                try image.write(to: original)
+            } else if label == "legacy" { run.inputArtifacts = nil }
+            let evidence = ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store)
+            if label == "saved" { XCTAssertEqual(evidence, .saved(saved)) }
+            else if label == "unavailable" { XCTAssertNil(evidence.url) }
+            else { XCTAssertEqual(evidence, .original(original)) }
+            let view = MediaRunResultsView(run: run, store: store, contentWidth: width - 48, isRouteActive: true,
+                name: { $0 == "/model/a" ? "Model A · fixture" : "Model B · fixture" },
+                onReview: { _, _ in XCTFail("Rendering must not write a rating") }, laneActions: { _ in EmptyView() })
+                .padding(WorkbenchSpacing.pageInset).frame(width: width, height: 640, alignment: .topLeading)
+                .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 640),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Input evidence · \(label)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_INPUT_EVIDENCE_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("input-\(label).png"))
+            }
+            window.close()
+        }
+    }
 
     @MainActor
     func testTextInspectionModesAndNativeReadingDifferenceLayouts() async throws {
@@ -146,6 +322,50 @@ final class ComparisonMediaTests: XCTestCase {
             window.close()
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.root.path))
+    }
+
+    @MainActor
+    func testTextEditorShowsSavedInputAndReferenceTranscriptContext() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("text-context"))
+        var run = historyRun(.speechToText, "Transcript context fixture", at: 100, models: ["/model/a", "/model/b"])
+        try store.createRunDirectory(run.id)
+        let entry = PromptEntry(id: "p", text: "We build local models on this Mac.", inputKind: .audio, builtinInput: "speech")
+        let audio = try await ComparisonMediaFixtures.generateInput(for: entry, into: store.inputsDirectory(run.id))
+        run.promptEntries = [entry]
+        run.inputArtifacts = [entry.id: audio.lastPathComponent]
+        run.results = ["a", "b"].enumerated().map { index, key in
+            VariantResult(modelPath: "/model/\(key)", modelSignature: "fixture", samples: [
+                ComparisonSample(promptID: "p", outputExcerpt: index == 0 ? entry.text : "We build models on this Mac.",
+                    tokensPerSecond: nil, timeToFirstTokenSeconds: nil, error: nil,
+                    fullOutput: index == 0 ? entry.text : "We build models on this Mac.")
+            ], aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)
+        }
+        for (label, width) in [("saved", 1000.0), ("unavailable", 760.0)] {
+            if label == "unavailable" { try FileManager.default.removeItem(at: audio) }
+            let evidence = ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store)
+            if label == "saved" { XCTAssertEqual(evidence.url, audio) }
+            else { XCTAssertNil(evidence.url) }
+            let view = TextComparisonEditor(run: run, store: store,
+                name: { $0 == "/model/a" ? "Model A · fixture" : "Model B · fixture" },
+                onReview: { _, _ in XCTFail("Rendering must not write a review") })
+                .padding(WorkbenchSpacing.pageInset).frame(width: width, height: 600, alignment: .topLeading)
+                .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 600),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Text input context · \(label)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_INPUT_EVIDENCE_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("text-input-\(label).png"))
+            }
+            window.close()
+        }
     }
 
     func testEachModeNamesTheTaskTypesItAcceptsAndItsMetric() {

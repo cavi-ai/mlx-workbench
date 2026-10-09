@@ -29,6 +29,51 @@ enum ComparisonViewLogic {
             return OutputClip(modelPath: result.modelPath, url: url)
         }
     }
+    enum InputEvidence: Equatable {
+        case saved(URL), original(URL), unavailable(String)
+        var url: URL? {
+            switch self {
+            case .saved(let url), .original(let url): return url
+            case .unavailable: return nil
+            }
+        }
+        var label: String {
+            switch self {
+            case .saved: return "Saved input"
+            case .original: return "Original file · not saved with run"
+            case .unavailable(let message): return message
+            }
+        }
+    }
+
+    static func inputEvidence(for run: ComparisonRun, entry: PromptEntry, store: ComparisonOutputStore) -> InputEvidence {
+        if let artifacts = run.inputArtifacts {
+            guard let artifact = artifacts[entry.id],
+                  let url = store.readableInputArtifactURL(runID: run.id, artifact: artifact) else {
+                return .unavailable("Saved input unavailable")
+            }
+            return .saved(url)
+        }
+        if let path = entry.inputPath, path.hasPrefix("/") {
+            let url = URL(fileURLWithPath: path)
+            return ComparisonOutputStore.isReadableRegularFile(url) ? .original(url) : .unavailable("Original input unavailable")
+        }
+        guard entry.builtinInput != nil, let kind = run.effectiveMode.inputKind else {
+            return .unavailable("Input not recorded")
+        }
+        let ext: String
+        switch kind {
+        case .image: ext = "png"
+        case .video: ext = "mp4"
+        case .audio: ext = "wav"
+        }
+        let artifact = "\(ComparisonOutputStore.safeComponent(entry.id)).\(ext)"
+        guard let url = store.readableInputArtifactURL(runID: run.id, artifact: artifact) else {
+            return .unavailable("Saved input unavailable")
+        }
+        return .saved(url)
+    }
+
     struct ListeningClip: Identifiable {
         let modelPath: String
         let promptID: String
@@ -470,43 +515,39 @@ struct MediaRunResultsView<LaneActions: View>: View {
 
     private func promptCell(_ entry: PromptEntry, width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if mode == .speechToText {
+                Text("Reference transcript").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
             Text(entry.text)
                 .font(WorkbenchTypography.secondary)
                 .textSelection(.enabled)
-            if let kind = mode.inputKind, let url = inputURL(entry) {
-                switch kind {
-                case .image:
-                    ThumbnailView(url: url, size: CGSize(width: WorkbenchSize.Compare.inputThumbnail, height: WorkbenchSize.Compare.inputThumbnail)) {
-                        preview = PreviewImage(url: url)
+                .fixedSize(horizontal: false, vertical: true)
+            if let kind = mode.inputKind {
+                let evidence = ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store)
+                Text(evidence.label).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(entry.inputPath ?? "Inputs are retained with the newest media runs. Older original files may have changed since the run.")
+                if let url = evidence.url {
+                    switch kind {
+                    case .image:
+                        ThumbnailView(url: url, size: CGSize(width: WorkbenchSize.Compare.inputThumbnail, height: WorkbenchSize.Compare.inputThumbnail)) {
+                            preview = PreviewImage(url: url)
+                        }
+                    case .audio: AudioClipButton(url: url, label: "Play input", player: audio)
+                    case .video: ClipVideoView(url: url).frame(width: width, height: width * 9 / 16)
                     }
-                case .audio: AudioClipButton(url: url, label: "Play input", player: audio)
-                case .video: ClipVideoView(url: url).frame(width: width, height: width * 9 / 16)
                 }
             }
             if let keywords = entry.expectedKeywords, !keywords.isEmpty {
-                Text("expects: \(keywords.joined(separator: ", "))")
+                Text("Expected words: \(keywords.joined(separator: ", "))")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help("All listed checks must match. A | separates alternatives; matching ignores case and checks for text presence, not task quality.")
             }
         }
         .padding(.vertical, WorkbenchSize.Compare.cellInset)
         .frame(width: width, alignment: .leading)
-    }
-
-    private func inputURL(_ entry: PromptEntry) -> URL? {
-        if let path = entry.inputPath, FileManager.default.fileExists(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-        guard entry.builtinInput != nil, let kind = entry.inputKind else { return nil }
-        let ext: String
-        switch kind {
-        case .image: ext = "png"
-        case .video: ext = "mp4"
-        case .audio: ext = "wav"
-        }
-        let url = store.inputsDirectory(run.id)
-            .appendingPathComponent("\(ComparisonOutputStore.safeComponent(entry.id)).\(ext)")
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     /// A card that fills its row's height, so the cards of one prompt line up top and bottom.

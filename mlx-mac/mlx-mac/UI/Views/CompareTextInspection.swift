@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// One recorded prompt, two outputs. Collapsed below the charts by default.
@@ -50,7 +51,36 @@ struct TextComparisonEditor: View {
                 }
             }
             if let entry = ComparisonViewLogic.rows(for: run).first(where: { $0.id == promptID }) {
+                if run.effectiveMode == .speechToText {
+                    Text("Reference transcript").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
                 Text(entry.text).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if run.effectiveMode.inputKind != nil {
+                    let evidence = ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store)
+                    HStack(spacing: WorkbenchSpacing.sm) {
+                        Text(evidence.label).font(WorkbenchTypography.metadata)
+                            .foregroundStyle(evidence.url == nil ? WorkbenchColor.warning : WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if evidence.url != nil {
+                            Button("Show input in Finder") {
+                                // Recheck availability at the action boundary; never fall
+                                // back to a changed original when a saved copy disappeared.
+                                if let url = ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store).url {
+                                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                                }
+                            }
+                            .font(WorkbenchTypography.metadata).buttonStyle(.borderless)
+                            .help(evidence.url?.path ?? "")
+                        }
+                    }
+                }
+                if let keywords = entry.expectedKeywords, !keywords.isEmpty {
+                    Text("Expected words: \(keywords.joined(separator: ", "))")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help("All listed checks must match. A | separates alternatives; matching ignores case and checks for text presence, not task quality.")
+                }
             }
             ViewThatFits(in: .horizontal) {
                 HStack { controls }
