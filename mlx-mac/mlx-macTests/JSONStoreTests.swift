@@ -48,6 +48,26 @@ final class JSONStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), before)
     }
 
+    func testUpdateRenamesAndRemovesOnlyTheSelectedIdentity() throws {
+        let url = storeURL(), store = JSONStore<Item>(fileURL: url)
+        XCTAssertFalse(try store.update(id: "missing", keyPath: \.id) { _ in XCTFail("Missing item must not be transformed"); return nil })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        try store.replaceAll([Item(id: "a", note: "one"), Item(id: "b", note: "two")])
+        XCTAssertTrue(try store.update(id: "a", keyPath: \.id) { Item(id: $0.id, note: "renamed") })
+        XCTAssertEqual(try store.load(), [Item(id: "a", note: "renamed"), Item(id: "b", note: "two")])
+        XCTAssertTrue(try store.update(id: "a", keyPath: \.id) { _ in nil })
+        XCTAssertEqual(try store.load(), [Item(id: "b", note: "two")])
+    }
+
+    func testUpdateWriteFailureLeavesOriginalDataUntouched() throws {
+        let url = storeURL()
+        let store = JSONStore<Item>(fileURL: url) { _, _ in throw CocoaError(.fileWriteNoPermission) }
+        try store.replaceAll([Item(id: "a", note: "one")])
+        let before = try Data(contentsOf: url)
+        XCTAssertThrowsError(try store.update(id: "a", keyPath: \.id) { _ in nil })
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+
     func testWriteFailureLeavesNoTemporaryLitter() throws {
         let url = storeURL()
         let store = JSONStore<Item>(fileURL: url) { _, _ in

@@ -1051,6 +1051,66 @@ struct MediaPromptSetEditor: View {
     }
 }
 
+// MARK: - Saved music prompt sets
+
+struct MusicPromptSetActions: View {
+    let name: String?
+    let isEnabled: Bool
+    let onRename: () -> Void
+    let onRemove: () -> Void
+
+    var body: some View {
+        Menu {
+            Button("Rename…", systemImage: "pencil", action: onRename)
+            Button("Remove…", systemImage: "trash", role: .destructive, action: onRemove)
+        } label: { Image(systemName: "ellipsis.circle") }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(!isEnabled)
+            .accessibilityLabel("Manage saved music prompt set")
+            .help(isEnabled ? "Manage \(name ?? "prompt set")" : "Select a saved music prompt set; built-ins and temporary setups cannot be changed.")
+    }
+}
+
+struct MusicPromptSetRenameSheet: View {
+    let set: PromptSet
+    let onRename: (String) -> String?
+    @State private var name: String
+    @State private var error: String?
+    @Environment(\.dismiss) private var dismiss
+
+    init(set: PromptSet, onRename: @escaping (String) -> String?) {
+        self.set = set
+        self.onRename = onRename
+        _name = State(initialValue: set.name)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Label("Rename music prompt set", systemImage: "pencil")
+                .font(WorkbenchTypography.title)
+            Text("Only this saved set's name changes. Past runs keep their recorded names and inputs.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            TextField("Prompt set name", text: $name).textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Music prompt set name")
+            ErrorBanner(text: error)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Rename") {
+                    error = onRename(name)
+                    if error == nil { dismiss() }
+                }
+                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(width: WorkbenchSize.Compare.promptSetRenameWidth)
+    }
+}
+
 // MARK: - Reuse recorded music inputs
 
 struct MusicComparisonSetupSheet: View {

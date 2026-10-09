@@ -203,6 +203,7 @@ extension WorkbenchSize {
         static let tileSpacing: CGFloat = 12
         static let historyMaximum: CGFloat = 420
         static let promptSetMaximum: CGFloat = 260
+        static let promptSetRenameWidth: CGFloat = 420
         static let filterPopoverWidth: CGFloat = 340
         static let emptyMinimumHeight: CGFloat = 200
     }

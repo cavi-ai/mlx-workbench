@@ -17,6 +17,7 @@ final class ComparisonCoordinator: ObservableObject {
     @Published private(set) var progressMessage: String?
     @Published private(set) var lastError: String?
     @Published private(set) var persistenceError: String?
+    @Published private(set) var promptSetManagementError: String?
 
     private let probe: ServeProbe
     private let runStore: JSONStore<ComparisonRun>
@@ -106,6 +107,66 @@ final class ComparisonCoordinator: ObservableObject {
             return true
         } catch {
             persistenceError = "Prompt set could not be saved: \(AppHost.render(error))"
+            return false
+        }
+    }
+
+    private struct PromptSetManagementError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    private static func isManageableMusicPromptSet(_ set: PromptSet) -> Bool {
+        set.origin == .userCreated && set.effectiveMode == .musicGeneration
+            && !builtinSets.contains { $0.id == set.id }
+    }
+
+    func canManageMusicPromptSet(id: String) -> Bool {
+        promptSets.contains { $0.id == id && Self.isManageableMusicPromptSet($0) }
+    }
+
+    @discardableResult
+    func renameMusicPromptSet(id: String, name: String) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.unicodeScalars.contains(where: { $0.value < 32 }) else {
+            promptSetManagementError = "Enter a prompt set name without control characters."
+            return false
+        }
+        return changeMusicPromptSet(id: id) { set in
+            var renamed = set
+            renamed.name = name
+            return renamed
+        }
+    }
+
+    @discardableResult
+    func removeMusicPromptSet(id: String) -> Bool {
+        changeMusicPromptSet(id: id) { _ in nil }
+    }
+
+    private func changeMusicPromptSet(id: String, transform: (PromptSet) -> PromptSet?) -> Bool {
+        do {
+            guard activeRunID == nil else {
+                throw PromptSetManagementError(message: "Wait for the comparison to finish before managing prompt sets.")
+            }
+            guard let index = promptSets.firstIndex(where: { $0.id == id && Self.isManageableMusicPromptSet($0) }) else {
+                throw PromptSetManagementError(message: "Select a saved, user-created music prompt set.")
+            }
+            var changed: PromptSet?
+            let found = try promptSetStore.update(id: id, keyPath: \.id) { stored in
+                guard Self.isManageableMusicPromptSet(stored) else {
+                    throw PromptSetManagementError(message: "The saved prompt set changed. Select it again.")
+                }
+                changed = transform(stored)
+                return changed
+            }
+            guard found else { throw PromptSetManagementError(message: "The saved prompt set is no longer available.") }
+            if let changed { promptSets[index] = changed }
+            else { promptSets.remove(at: index) }
+            promptSetManagementError = nil
+            return true
+        } catch {
+            promptSetManagementError = "Music prompt set could not be updated: \(AppHost.render(error))"
             return false
         }
     }
