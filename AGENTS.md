@@ -290,9 +290,18 @@ from `mlx-agent` at runtime.
   owned folder. The sheet blocks edits/dismissal during Save; the coordinator
   blocks Run and edit/rename/remove during copying. Successful removal considers
   only the removed set's owned/referenced UUID folders, retains other saved-set
-  references from saved sets and loaded legacy runs, and never sweeps staging
+  references from saved sets and an authoritative run-store read, and never sweeps staging
   folders or original files. Failed/unknown stores keep copies conservatively.
   Temporary setups retain the ten-run cache; newly saved copies are independent.
+  New-set and saved-set editors use the same asynchronous input ownership path.
+  `savePromptSetEditsWithInputCopies` keeps unchanged owned inputs, copies only
+  external/replacement inputs, then checks `edit.original` against the durable
+  set under `JSONStore.update` before publication. Failed/conflicting saves discard
+  only their new folder. Successful edits reclaim old folders only when no saved
+  set or legacy run references them. Settings-only edits do not copy owned files.
+  Existing path-based sets are preserved on load and get owned copies when saved
+  explicitly in the editor. Save blocks editor changes/dismissal until it finishes;
+  built-in fixtures remain deferred and original source files stay untouched.
   Shared prompt cards offer a collapsed `ComparisonPromptInputPreview` only for
   readable regular input files. Image previews reuse the thumbnail/larger sheet;
   audio previews share one `AudioClipPlayer` per editor with seek controls;
