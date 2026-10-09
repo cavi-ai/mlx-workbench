@@ -52,6 +52,7 @@ struct ComparisonPromptInputStore: Sendable {
                 guard let path = copy.prompts[index].inputPath else { continue }
                 guard path.hasPrefix("/") else { throw ComparisonOutputStore.InputError.unavailable }
                 let artifact = try await files.snapshotInput(from: URL(fileURLWithPath: path), runID: storageID)
+                copy.prompts[index].inputName = copy.prompts[index].inputDisplayName
                 copy.prompts[index].inputPath = files.inputArtifactURL(runID: storageID, artifact: artifact)?.path
             }
             try Task.checkCancellation()

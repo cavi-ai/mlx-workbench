@@ -302,6 +302,13 @@ from `mlx-agent` at runtime.
   Existing path-based sets are preserved on load and get owned copies when saved
   explicitly in the editor. Save blocks editor changes/dismissal until it finishes;
   built-in fixtures remain deferred and original source files stay untouched.
+  `PromptEntry.inputName` optionally records a display-only source filename before
+  owned copies change its path. Names survive save/reuse chains and settings-only
+  edits; replacing the path clears the old name before the new copy captures it.
+  Prompt cards, result-grid input labels and text A/B use `inputDisplayName`.
+  Invalid names are ignored; legacy records fall back to their recorded path's
+  basename without inventing an earlier name. Names never resolve paths or enter
+  argv; missing saved copies remain unavailable even when their name is known.
   Shared prompt cards offer a collapsed `ComparisonPromptInputPreview` only for
   readable regular input files. Image previews reuse the thumbnail/larger sheet;
   audio previews share one `AudioClipPlayer` per editor with seek controls;
