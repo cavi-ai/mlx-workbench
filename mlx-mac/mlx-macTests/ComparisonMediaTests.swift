@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import AVKit
 import Foundation
 import ImageIO
 import SwiftUI
@@ -16,6 +17,20 @@ private struct IdleProber: EndpointProbing {
 }
 
 private enum StubMediaError: Error { case chatNotExpected, modelFailed }
+
+@MainActor
+private final class PromptPreviewFixture: ObservableObject {
+    @Published var url: URL
+    init(url: URL) { self.url = url }
+}
+
+private struct PromptPreviewFixtureView: View {
+    @ObservedObject var fixture: PromptPreviewFixture
+    let audio: AudioClipPlayer
+    var body: some View {
+        ComparisonPromptInputPreview(url: fixture.url, kind: .audio, audio: audio, expanded: true)
+    }
+}
 
 @MainActor
 private final class StubAudioPlayback: AudioClipPlayback {
@@ -1361,6 +1376,7 @@ final class ComparisonMediaTests: XCTestCase {
                 let setup = try ComparisonRunSetup(run: run, outputStore: store)
                 XCTAssertTrue(setup.draft.prompts[0].usesSavedInput)
                 XCTAssertFalse(setup.draft.prompts[0].inputFileUnavailable)
+                XCTAssertEqual(setup.draft.prompts[0].inputPreviewURL, saved)
                 let set = try setup.draft.promptSet()
                 XCTAssertEqual(set.prompts[0].inputPath, saved.path)
                 XCTAssertEqual(try Data(contentsOf: saved), Data("recorded input".utf8))
@@ -1385,6 +1401,7 @@ final class ComparisonMediaTests: XCTestCase {
             var setup = try ComparisonRunSetup(run: run, outputStore: store)
             XCTAssertTrue(setup.draft.prompts[0].usesSavedInput)
             XCTAssertTrue(setup.draft.prompts[0].inputFileUnavailable)
+            XCTAssertNil(setup.draft.prompts[0].inputPreviewURL)
             XCTAssertNil(setup.draft.prompts[0].builtinInput)
             XCTAssertThrowsError(try setup.draft.promptSet())
             XCTAssertThrowsError(try setup.savedDraft(named: "Copy").promptSet())
@@ -2198,6 +2215,80 @@ final class ComparisonMediaTests: XCTestCase {
         if let path = ProcessInfo.processInfo.environment["MLX_MUSIC_CREATE_PROOF_PATH"] {
             try png.write(to: URL(fileURLWithPath: path))
         }
+    }
+
+    @MainActor
+    func testPromptInputPreviewsRenderRealMediaWithoutAutoplay() async throws {
+        let entries: [(ComparisonMediaKind, PromptEntry)] = [
+            (.image, PromptEntry(id: "image", text: "Describe the red circle", inputKind: .image, builtinInput: "red-circle")),
+            (.audio, PromptEntry(id: "audio", text: "The red bird landed on the branch.", inputKind: .audio, builtinInput: "speech")),
+            (.video, PromptEntry(id: "video", text: "Describe the motion", inputKind: .video, builtinInput: "red-square-right"))
+        ]
+        func players(in view: NSView) -> [AVPlayerView] {
+            (view as? AVPlayerView).map { [$0] } ?? view.subviews.flatMap { players(in: $0) }
+        }
+        var audioLoads = 0
+        let audio = AudioClipPlayer { _ in audioLoads += 1; return StubAudioPlayback() }
+        for (kind, entry) in entries {
+            let url = try await ComparisonMediaFixtures.generateInput(for: entry, into: root)
+            for expanded in [false, true] {
+                let content = ComparisonPromptInputPreview(url: url, kind: kind, audio: audio, expanded: expanded)
+                    .padding(WorkbenchSpacing.md).background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+                let host = NSHostingView(rootView: AnyView(content))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 240),
+                    styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+                try await Task.sleep(for: .milliseconds(250))
+                host.layoutSubtreeIfNeeded()
+                let videoViews = players(in: host)
+                XCTAssertEqual(videoViews.count, kind == .video && expanded ? 1 : 0)
+                XCTAssertTrue(videoViews.allSatisfy { $0.player?.rate == 0 }, "Preview must never autoplay")
+                XCTAssertEqual(audioLoads, 0)
+                XCTAssertNil(audio.activeURL)
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                attachment.name = "Input \(kind.rawValue) preview · \(expanded ? "expanded" : "collapsed")"
+                attachment.lifetime = .keepAlways; add(attachment)
+                if let directory = ProcessInfo.processInfo.environment["MLX_PROMPT_INPUT_PROOF_DIR"] {
+                    try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(kind.rawValue)-\(expanded).png"))
+                }
+                host.rootView = AnyView(EmptyView())
+                try await Task.sleep(for: .milliseconds(50))
+                XCTAssertTrue(videoViews.allSatisfy { $0.player?.rate == 0 })
+                window.close()
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    @MainActor
+    func testPromptInputPreviewStopsAudioOnReplacementAndRemoval() async throws {
+        let fixture = PromptPreviewFixture(url: root.appendingPathComponent("first.wav"))
+        let playback = StubAudioPlayback()
+        var audioLoads = 0
+        let audio = AudioClipPlayer { _ in audioLoads += 1; return playback }
+        let host = NSHostingView(rootView: AnyView(PromptPreviewFixtureView(fixture: fixture, audio: audio)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 240),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(audioLoads, 0)
+        audio.toggle(fixture.url)
+        XCTAssertTrue(playback.isPlaying)
+        fixture.url = root.appendingPathComponent("replacement.wav")
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertFalse(playback.isPlaying)
+        XCTAssertNil(audio.activeURL)
+        audio.toggle(fixture.url)
+        XCTAssertTrue(playback.isPlaying)
+        host.rootView = AnyView(EmptyView())
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertFalse(playback.isPlaying)
+        XCTAssertNil(audio.activeURL)
+        window.close()
     }
 
     @MainActor

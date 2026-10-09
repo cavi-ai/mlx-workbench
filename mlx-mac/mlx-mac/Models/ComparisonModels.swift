@@ -126,6 +126,10 @@ struct ComparisonPromptSetDraft: Identifiable {
         var toolName: String? { original.tool?.name }
         var builtinInput: String? { inputPath == (original.inputPath ?? "") ? original.builtinInput : nil }
         var usesSavedInput: Bool { savedInput && inputPath == (original.inputPath ?? "") }
+        var inputPreviewURL: URL? {
+            guard !inputPath.isEmpty, !inputFileUnavailable else { return nil }
+            return URL(fileURLWithPath: inputPath)
+        }
         var inputFileUnavailable: Bool {
             guard !inputPath.isEmpty else { return usesSavedInput }
             return !inputPath.hasPrefix("/") || inputPath.unicodeScalars.contains(where: { $0.value < 32 })
