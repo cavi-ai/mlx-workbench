@@ -809,6 +809,147 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
+    func testOtherModePromptSettingsPersistPerPromptAndReachTheRunner() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        var draft = ComparisonPromptSetDraft(mode: .videoGeneration)
+        draft.name = "Video contrasts"; draft.prompts[0].text = "Snow falling in a forest"
+        draft.prompts[0].width = "640"; draft.prompts[0].height = "352"
+        draft.prompts[0].frames = "33"; draft.prompts[0].fps = "12"
+        draft.prompts[0].steps = "8"; draft.prompts[0].seed = "7"
+        draft.addPrompt(); draft.prompts[1].text = "Clouds moving over mountains"
+        draft.prompts[1].steps = "12"; draft.prompts[1].seed = "99"
+        let set = try XCTUnwrap(coordinator.createPromptSet(draft))
+        XCTAssertEqual(set.prompts[0].media, MediaParameters(width: 640, height: 352, steps: 8, seed: 7, frames: 33, fps: 12))
+        XCTAssertEqual(set.prompts[1].media, MediaParameters(width: 416, height: 240, steps: 12, seed: 99, frames: 17))
+        let loaded = makeCoordinator(runner: runner)
+        XCTAssertEqual(loaded.promptSets.first { $0.id == set.id }, set)
+        let requestsBefore = await runner.requests
+        XCTAssertTrue(requestsBefore.isEmpty)
+        coordinator.start(variants: [("/video/a", nil)], promptSet: set)
+        await waitForRun(coordinator)
+        let requests = await runner.requests
+        XCTAssertEqual(requests.map(\.entry.media), [set.prompts[0].media, set.prompts[1].media])
+        let run = try XCTUnwrap(coordinator.runs.first)
+        let historyBytes = try Data(contentsOf: root.appendingPathComponent("runs.json"))
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id))
+        edit.prompts[0].steps = "20"; edit.addPrompt(); edit.prompts[2].text = "A calm lake"
+        edit.removePrompt(id: set.prompts[1].id)
+        XCTAssertTrue(coordinator.savePromptSetEdits(edit))
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("runs.json")), historyBytes)
+        XCTAssertEqual(run.promptEntries, set.prompts)
+        XCTAssertTrue(coordinator.renamePromptSet(id: set.id, name: "Renamed video"))
+        XCTAssertTrue(coordinator.removePromptSet(id: set.id))
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("runs.json")), historyBytes)
+        XCTAssertEqual(coordinator.runs.first?.promptEntries, set.prompts)
+    }
+
+    @MainActor
+    func testOtherModeEditingRejectsStaleAndCorruptStoresAndRecoversOnReopen() throws {
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+        draft.name = "Images"; draft.prompts[0].text = "A lighthouse"
+        let set = try XCTUnwrap(coordinator.createPromptSet(draft))
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id)); edit.prompts[0].seed = "77"
+        let store = JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json"))
+        var changed = set; changed.prompts[0].text = "A mountain"
+        try store.replaceAll([changed])
+        XCTAssertFalse(coordinator.savePromptSetEdits(edit))
+        XCTAssertEqual(try store.load(), [changed])
+        var fresh = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id)); fresh.prompts[0].seed = "99"
+        XCTAssertTrue(coordinator.savePromptSetEdits(fresh))
+        XCTAssertEqual(try store.load()[0].prompts[0].text, "A mountain")
+        XCTAssertEqual(try store.load()[0].prompts[0].media?.seed, 99)
+        let before = coordinator.promptSets, corrupt = Data("broken-json".utf8)
+        try corrupt.write(to: store.url)
+        XCTAssertFalse(coordinator.renamePromptSet(id: set.id, name: "Unsafe"))
+        XCTAssertFalse(coordinator.removePromptSet(id: set.id))
+        XCTAssertNil(coordinator.createPromptSet(draft))
+        XCTAssertEqual(coordinator.promptSets, before)
+        XCTAssertEqual(try Data(contentsOf: store.url), corrupt)
+    }
+
+    @MainActor
+    func testOtherModeDraftsValidateInputsAndProtectBuiltinsAndUneditedFields() throws {
+        let input = root.appendingPathComponent("input.png"); try Data("input".utf8).write(to: input)
+        let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
+        let original = PromptSet(id: "chat-edit", name: "Tools", useCase: .coding,
+            prompts: [PromptEntry(id: "p", text: "Call the tool", maxTokens: 77, tool: tool)], origin: .userCreated)
+        var chat = try ComparisonPromptSetDraft(set: original)
+        chat.prompts[0].text = "Use the saved tool"; chat.prompts[0].maxTokens = "512"
+        let edited = try chat.promptSet()
+        XCTAssertEqual(edited.id, original.id); XCTAssertEqual(edited.mode, nil)
+        XCTAssertEqual(edited.useCase, .coding); XCTAssertEqual(edited.prompts[0].tool, tool)
+        XCTAssertEqual(edited.prompts[0].maxTokens, 512)
+        XCTAssertThrowsError(try ComparisonPromptSetDraft(set: BuiltinPromptSets.coding))
+        for mode in [ComparisonMode.vision, .videoUnderstanding, .speechToText] {
+            var draft = ComparisonPromptSetDraft(mode: mode); draft.name = "Inputs"
+            draft.prompts[0].text = "Describe the input"
+            XCTAssertThrowsError(try draft.promptSet())
+            draft.prompts[0].inputPath = input.path
+            XCTAssertEqual(try draft.promptSet().prompts[0].inputKind, mode.inputKind)
+            draft.prompts[0].inputPath = root.path
+            XCTAssertThrowsError(try draft.promptSet())
+        }
+        var image = ComparisonPromptSetDraft(mode: .imageGeneration); image.name = "Images"; image.prompts[0].text = "Piano"
+        let invalidImageFields: [(WritableKeyPath<ComparisonPromptSetDraft.Prompt, String>, String)] = [
+            (\.size, "513"), (\.steps, "101"), (\.seed, "-1")]
+        for (field, value) in invalidImageFields {
+            var invalid = image; invalid.prompts[0][keyPath: field] = value
+            XCTAssertThrowsError(try invalid.promptSet())
+        }
+        image.prompts[0].size = "768"; image.prompts[0].steps = "9"; image.prompts[0].seed = "100"
+        XCTAssertEqual(try image.promptSet().prompts[0].media, MediaParameters(size: 768, steps: 9, seed: 100))
+        let firstID = image.prompts[0].id
+        image.removePrompt(id: firstID)
+        XCTAssertEqual(image.prompts.count, 1)
+        image.prompts = []; XCTAssertThrowsError(try image.promptSet())
+        let coordinator = makeCoordinator(runner: StubMediaRunner())
+        XCTAssertFalse(coordinator.canManagePromptSet(id: BuiltinPromptSets.coding.id))
+        XCTAssertFalse(coordinator.renamePromptSet(id: BuiltinPromptSets.coding.id, name: "Unsafe"))
+        XCTAssertFalse(coordinator.removePromptSet(id: BuiltinPromptSets.coding.id))
+    }
+
+    func testLegacyVideoDefaultsRemainExactUntilSettingsAreChanged() throws {
+        let set = PromptSet(id: "legacy-video", name: "Legacy", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "A forest")], origin: .userCreated, mode: .videoGeneration)
+        var draft = try ComparisonPromptSetDraft(set: set)
+        XCTAssertEqual(try draft.promptSet(), set)
+        XCTAssertEqual(draft.prompts[0].width, "416")
+        draft.prompts[0].steps = "9"
+        XCTAssertEqual(try draft.promptSet().prompts[0].media,
+            MediaParameters(width: 416, height: 240, steps: 9, seed: 42, frames: 17))
+        var square = set; square.prompts[0].media = MediaParameters(size: 512, steps: 10)
+        var squareEdit = try ComparisonPromptSetDraft(set: square)
+        XCTAssertEqual(try squareEdit.promptSet(), square)
+        squareEdit.prompts[0].width = ""
+        XCTAssertEqual(try squareEdit.promptSet().prompts[0].media, MediaParameters(height: 512, steps: 10))
+    }
+
+    @MainActor
+    func testOtherModeManagementRefusesActiveRunsAndSaveFailureCanRetry() async throws {
+        let runner = StubMediaRunner(gated: true), coordinator = makeCoordinator(runner: runner)
+        var draft = ComparisonPromptSetDraft(mode: .imageGeneration); draft.name = "Images"; draft.prompts[0].text = "Piano"
+        let store = JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json"))
+        let corrupt = Data("invalid".utf8); try corrupt.write(to: store.url)
+        XCTAssertNil(coordinator.createPromptSet(draft))
+        XCTAssertEqual(try Data(contentsOf: store.url), corrupt)
+        try FileManager.default.removeItem(at: store.url)
+        let set = try XCTUnwrap(coordinator.createPromptSet(draft))
+        XCTAssertNil(coordinator.promptSetManagementError)
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id)); edit.prompts[0].seed = "99"
+        coordinator.start(variants: [("/image/a", nil)], promptSet: set)
+        XCTAssertNil(coordinator.preparePromptSetEdit(id: set.id))
+        XCTAssertFalse(coordinator.savePromptSetEdits(edit))
+        XCTAssertFalse(coordinator.renamePromptSet(id: set.id, name: "Changed"))
+        XCTAssertFalse(coordinator.removePromptSet(id: set.id))
+        XCTAssertEqual(try store.load(), [set])
+        await runner.release(1); await waitForRun(coordinator)
+        XCTAssertTrue(coordinator.savePromptSetEdits(edit))
+        XCTAssertNil(coordinator.promptSetManagementError)
+        XCTAssertEqual(try store.load()[0].prompts[0].media?.seed, 99)
+    }
+
+    @MainActor
     func testNewMusicPromptSetPersistsIndependentSettingsWithoutGenerating() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
         var draft = MusicPromptSetDraft()
@@ -1116,6 +1257,38 @@ final class ComparisonMediaTests: XCTestCase {
         if let path = ProcessInfo.processInfo.environment["MLX_MUSIC_CREATE_PROOF_PATH"] {
             try png.write(to: URL(fileURLWithPath: path))
         }
+    }
+
+    @MainActor
+    func testOtherModePromptEditorsRenderWithoutWritingOrRunning() async throws {
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            var draft = ComparisonPromptSetDraft(mode: mode)
+            draft.name = "\(mode.title) comparison"
+            draft.prompts[0].text = mode == .speechToText ? "The red bird landed on the branch." : "Describe a red bird in a snowy forest."
+            if let kind = mode.inputKind {
+                draft.prompts[0].inputPath = root.appendingPathComponent("reference.\(kind == .image ? "png" : kind == .video ? "mp4" : "wav")").path
+            }
+            if mode == .vision || mode == .videoUnderstanding { draft.prompts[0].keywords = "red, bird" }
+            let content = ComparisonPromptSetEditor(draft: draft) { _ in
+                XCTFail("Rendering must not save or run a comparison"); return nil
+            }.background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 580),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "\(mode.title) prompt editor"; attachment.lifetime = .keepAlways; add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_PROMPT_PARITY_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(mode.rawValue).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
     }
 
     @MainActor

@@ -143,6 +143,20 @@ final class ComparisonInsightsTests: XCTestCase {
         XCTAssertEqual(suggested.paths[1], "/b")
         XCTAssertTrue(suggested.reason.contains("same local run"))
     }
+    func testEditedPromptSettingsInvalidateCurrentMeasurementsButRetainHistory() {
+        let models = [model("/a"), model("/b", key: "other"), model("/c")]
+        let measured = run([result("/a"), result("/b", speed: 21), result("/c", speed: 60)])
+        XCTAssertNotNil(ComparisonInsights.currentResult(model: models[0], runs: [measured], environment: environment,
+            promptSetID: "work", promptEntries: [prompt]))
+        var edited = prompt; edited.maxTokens = 512
+        XCTAssertNil(ComparisonInsights.currentResult(model: models[0], runs: [measured], environment: environment,
+            promptSetID: "work", promptEntries: [edited]))
+        let suggested = ComparisonInsights.suggestion(candidates: models, lastServed: [:], selectedPath: "/a",
+            runs: [measured], mode: .chat, environment: environment, promptSetID: "work", promptEntries: [edited])
+        XCTAssertEqual(suggested.paths[1], "/c")
+        XCTAssertTrue(suggested.reason.contains("unmeasured"))
+        XCTAssertEqual(measured.promptEntries, [prompt])
+    }
     func testSupersessionRejectsLowerQualityBiggerStaleUnknownAndProtected() {
         let left = model("/a")
         let replacement = model("/b", bytes: 3_000_000_000)

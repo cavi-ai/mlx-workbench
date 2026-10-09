@@ -154,7 +154,7 @@ enum ComparisonInsights {
         value.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
     }
 
-    static func suggestion(candidates: [LibraryModel], lastServed: [String: Date], selectedPath: String?, runs: [ComparisonRun], mode: ComparisonMode, environment: String?, promptSetID: String? = nil) -> Selection {
+    static func suggestion(candidates: [LibraryModel], lastServed: [String: Date], selectedPath: String?, runs: [ComparisonRun], mode: ComparisonMode, environment: String?, promptSetID: String? = nil, promptEntries: [PromptEntry]? = nil) -> Selection {
         let ordered = candidates.sorted { $0.item.path < $1.item.path }
         guard !ordered.isEmpty else { return Selection(paths: [nil, nil], reason: "Waiting for eligible Library models.") }
         func match(_ path: String?) -> LibraryModel? {
@@ -165,7 +165,9 @@ enum ComparisonInsights {
         let anchor = served ?? match(selectedPath) ?? prior ?? ordered[0]
         let source = served != nil ? "Last intentionally served model" : match(selectedPath) != nil ? "Library selection" : prior != nil ? "Last comparison model" : "First eligible model"
         // Distance is evaluated only within one completed run, never across prompt cohorts.
-        let cohort = runs.filter { $0.state == .completed && $0.effectiveMode == mode && (promptSetID == nil || $0.promptSetID == promptSetID) }.sorted { $0.startedAt > $1.startedAt }.first { run in
+        let cohort = runs.filter { $0.state == .completed && $0.effectiveMode == mode
+            && (promptSetID == nil || $0.promptSetID == promptSetID)
+            && (promptEntries == nil || $0.promptEntries == promptEntries) }.sorted { $0.startedAt > $1.startedAt }.first { run in
             run.results.contains { fullCohort($0, run: run) && valid($0, model: anchor, environment: environment) && mode.metricValue(of: $0) != nil && (mode != .chat || nonnegative($0.aggregateTTFTSeconds) != nil) }
         }
         var ranked: [(LibraryModel, Double)] = []
@@ -200,8 +202,9 @@ enum ComparisonInsights {
         return Selection(paths: paths, reason: "\(source). \(explanation)")
     }
 
-    static func currentResult(model: LibraryModel, runs: [ComparisonRun], environment: String?, promptSetID: String) -> (ComparisonRun, VariantResult)? {
-        for run in runs.sorted(by: { $0.startedAt > $1.startedAt }) where run.state == .completed && run.promptSetID == promptSetID {
+    static func currentResult(model: LibraryModel, runs: [ComparisonRun], environment: String?, promptSetID: String, promptEntries: [PromptEntry]? = nil) -> (ComparisonRun, VariantResult)? {
+        for run in runs.sorted(by: { $0.startedAt > $1.startedAt }) where run.state == .completed && run.promptSetID == promptSetID
+            && (promptEntries == nil || run.promptEntries == promptEntries) {
             if let result = run.results.first(where: { fullCohort($0, run: run) && valid($0, model: model, environment: environment) }) { return (run, result) }
         }
         return nil

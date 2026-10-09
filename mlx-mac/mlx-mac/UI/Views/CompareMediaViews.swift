@@ -887,107 +887,51 @@ struct ClipVideoView: NSViewRepresentable {
 
 // MARK: - Media prompt sets
 
-/// Builds a user prompt set for a media mode, with an input file picker per entry
-/// for the modes that take one.
-struct MediaPromptSetEditor: View {
-    let mode: ComparisonMode
-    let onSave: (PromptSet) -> Void
-
+struct ComparisonPromptSetEditor: View {
+    @State var draft: ComparisonPromptSetDraft
+    let onSave: (ComparisonPromptSetDraft) -> String?
+    @State private var error: String?
     @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var entries: [Draft] = [Draft()]
-
-    struct Draft: Identifiable {
-        let id = UUID().uuidString
-        var text = ""
-        var inputPath: String?
-        var keywords = ""
-    }
-
-    private var textLabel: String {
-        switch mode {
-        case .vision, .videoUnderstanding: return "Question"
-        case .speechToText: return "What the audio says"
-        case .textToSpeech: return "Text to speak"
-        default: return "Prompt"
-        }
-    }
-
-    private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty
-            && entries.allSatisfy { draft in
-                (mode == .speechToText || !draft.text.trimmingCharacters(in: .whitespaces).isEmpty)
-                    && (mode.inputKind == nil || draft.inputPath != nil)
-            }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text("New \(mode.title.lowercased()) prompt set").font(WorkbenchTypography.emphasis)
-            TextField("Set name", text: $name)
+            Label("\(draft.original == nil ? "New" : "Edit") \(draft.mode.title.lowercased()) prompt set",
+                  systemImage: "slider.horizontal.3").font(WorkbenchTypography.cardTitle)
+            if draft.original == nil {
+                TextField("Set name", text: $draft.name).accessibilityLabel("Prompt set name")
+            } else {
+                Text(draft.name).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
             ScrollView {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                    ForEach($entries) { $draft in
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                            TextField(textLabel, text: $draft.text)
-                            if let kind = mode.inputKind {
-                                HStack {
-                                    Button("Choose \(kind.rawValue) file…") { draft.inputPath = Self.pick(kind) ?? draft.inputPath }
-                                    Text(draft.inputPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "No file chosen")
-                                        .font(WorkbenchTypography.secondary)
-                                        .foregroundStyle(WorkbenchColor.muted)
-                                }
-                            }
-                            if mode == .vision || mode == .videoUnderstanding {
-                                TextField("Expected words, comma-separated (optional)", text: $draft.keywords)
-                            }
-                        }
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    ForEach($draft.prompts) { $prompt in
+                        ComparisonPromptCard(prompt: $prompt, mode: draft.mode,
+                            number: (draft.prompts.firstIndex { $0.id == prompt.id } ?? 0) + 1,
+                            canRemove: draft.prompts.count > 1,
+                            onRemove: { draft.removePrompt(id: prompt.id) })
                     }
                 }
-            }
-            .frame(maxHeight: 320)
+            }.frame(maxHeight: WorkbenchSize.Compare.promptEditorHeight)
+            Text(draft.mode == .videoGeneration
+                ? "Blank settings use runtime defaults. Each model checks its size alignment and frame grouping when run. Saving does not generate output."
+                : "Settings apply to each prompt. Saving does not run a comparison; past runs keep their recorded inputs and outputs.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            ErrorBanner(text: error)
             HStack {
-                Button { entries.append(Draft()) } label: { Label("Add prompt", systemImage: "plus") }
+                Button { draft.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canSave)
+                Button(draft.original == nil ? "Save prompt set" : "Save changes") {
+                    error = onSave(draft)
+                    if error == nil { dismiss() }
+                }
+                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
+                .keyboardShortcut(.defaultAction)
             }
         }
+        .textFieldStyle(.roundedBorder)
         .padding(WorkbenchSpacing.pageInset)
-        .frame(width: 520)
-    }
-
-    private func save() {
-        let media: MediaParameters? = {
-            switch mode {
-            case .imageGeneration: return MediaParameters(size: 512, steps: 20, seed: 42)
-            case .videoGeneration: return ComparisonMediaFixtures.videoGenerationParameters
-            default: return nil
-            }
-        }()
-        let prompts = entries.map { draft -> PromptEntry in
-            let words = draft.keywords.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            return PromptEntry(
-                id: draft.id,
-                text: draft.text.trimmingCharacters(in: .whitespacesAndNewlines),
-                maxTokens: 256,
-                inputKind: mode.inputKind,
-                inputPath: draft.inputPath,
-                expectedKeywords: words.isEmpty ? nil : words,
-                media: media
-            )
-        }
-        onSave(PromptSet(
-            id: UUID().uuidString,
-            name: name.trimmingCharacters(in: .whitespaces),
-            useCase: nil,
-            prompts: prompts,
-            origin: .userCreated,
-            mode: mode
-        ))
-        dismiss()
+        .frame(width: WorkbenchSize.Compare.promptEditorWidth)
     }
 
     /// The open panel, filtered to the kind of file the mode takes.
@@ -1002,6 +946,97 @@ struct MediaPromptSetEditor: View {
         case .audio: panel.allowedContentTypes = [.wav, .mp3]
         }
         return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+}
+
+private struct ComparisonPromptCard: View {
+    @Binding var prompt: ComparisonPromptSetDraft.Prompt
+    let mode: ComparisonMode
+    let number: Int
+    let canRemove: Bool
+    let onRemove: () -> Void
+
+    private var textLabel: String {
+        switch mode {
+        case .vision, .videoUnderstanding: "Question"
+        case .speechToText: "Reference transcript (optional)"
+        case .textToSpeech: "Text to speak"
+        default: "Prompt"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            HStack {
+                Text("PROMPT \(number)").font(WorkbenchTypography.metadata.weight(.semibold))
+                    .foregroundStyle(WorkbenchColor.accent)
+                Spacer()
+                Button(action: onRemove) { Image(systemName: "minus.circle") }
+                    .buttonStyle(.borderless).disabled(!canRemove)
+                    .accessibilityLabel("Remove prompt \(number)")
+                    .help("Remove this prompt; at least one prompt is required.")
+            }
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                Text(textLabel).font(WorkbenchTypography.label)
+                TextField(textLabel, text: $prompt.text, axis: .vertical)
+                    .lineLimit(2...5).accessibilityLabel("Prompt \(number) \(textLabel.lowercased())")
+            }
+            if let kind = mode.inputKind {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Button("Choose \(kind.rawValue) file…") {
+                        if let path = ComparisonPromptSetEditor.pick(kind) { prompt.inputPath = path }
+                    }
+                    Text(prompt.inputPath.isEmpty
+                        ? (prompt.builtinInput == nil ? "No file chosen" : "Built-in \(kind.rawValue) fixture")
+                        : URL(fileURLWithPath: prompt.inputPath).lastPathComponent)
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        .lineLimit(1).truncationMode(.middle).help(prompt.inputPath)
+                }
+            }
+            if mode == .vision || mode == .videoUnderstanding {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Text("Expected words · optional").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    TextField("Comma-separated; a|b accepts either", text: $prompt.keywords)
+                        .accessibilityLabel("Prompt \(number) expected words")
+                }
+            }
+            if mode == .chat || mode == .vision || mode == .videoUnderstanding {
+                parameter("Token limit", placeholder: "Default: 256", value: $prompt.maxTokens)
+                    .help("Requested maximum output tokens. Run also applies the current serving token cap.")
+                if mode == .chat, let name = prompt.toolName {
+                    Label("Saved tool: \(name)", systemImage: "wrench.and.screwdriver")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
+            if mode == .imageGeneration {
+                HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
+                    parameter("Size · square px", placeholder: "Default: 512", value: $prompt.size)
+                    parameter("Steps", placeholder: "Default: 20", value: $prompt.steps)
+                    parameter("Seed", placeholder: "Default: 42", value: $prompt.seed)
+                }
+            }
+            if mode == .videoGeneration {
+                HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
+                    parameter("Width · px", placeholder: "Runtime default", value: $prompt.width)
+                    parameter("Height · px", placeholder: "Runtime default", value: $prompt.height)
+                    parameter("Frames", placeholder: "Runtime default", value: $prompt.frames)
+                }
+                HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
+                    parameter("Frame rate · fps", placeholder: "Model default", value: $prompt.fps)
+                    parameter("Steps", placeholder: "Model default", value: $prompt.steps)
+                    parameter("Seed", placeholder: "Default: 42", value: $prompt.seed)
+                }
+            }
+        }
+        .padding(WorkbenchSpacing.md)
+        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+    }
+
+    private func parameter(_ title: String, placeholder: String, value: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text(title).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            TextField(placeholder, text: value).accessibilityLabel("Prompt \(number) \(title.lowercased())")
+        }.frame(maxWidth: .infinity)
     }
 }
 
@@ -1094,7 +1129,7 @@ struct MusicPromptSetCreateSheet: View {
     }
 }
 
-struct MusicPromptSetActions: View {
+struct PromptSetActions: View {
     let name: String?
     let isEnabled: Bool
     let onEdit: () -> Void
@@ -1110,8 +1145,8 @@ struct MusicPromptSetActions: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .disabled(!isEnabled)
-            .accessibilityLabel("Manage saved music prompt set")
-            .help(isEnabled ? "Manage \(name ?? "prompt set")" : "Select a saved music prompt set; built-ins and temporary setups cannot be changed.")
+            .accessibilityLabel("Manage saved prompt set")
+            .help(isEnabled ? "Manage \(name ?? "prompt set")" : "Select a saved prompt set; built-ins and temporary setups cannot be changed.")
     }
 }
 
@@ -1152,7 +1187,7 @@ struct MusicPromptSetEditSheet: View {
     }
 }
 
-struct MusicPromptSetRenameSheet: View {
+struct PromptSetRenameSheet: View {
     let set: PromptSet
     let onRename: (String) -> String?
     @State private var name: String
@@ -1167,12 +1202,12 @@ struct MusicPromptSetRenameSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Label("Rename music prompt set", systemImage: "pencil")
+            Label("Rename \(set.effectiveMode.title.lowercased()) prompt set", systemImage: "pencil")
                 .font(WorkbenchTypography.title)
             Text("Only this saved set's name changes. Past runs keep their recorded names and inputs.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             TextField("Prompt set name", text: $name).textFieldStyle(.roundedBorder)
-                .accessibilityLabel("Music prompt set name")
+                .accessibilityLabel("Prompt set name")
             ErrorBanner(text: error)
             HStack {
                 Spacer()
@@ -1190,6 +1225,8 @@ struct MusicPromptSetRenameSheet: View {
         .frame(width: WorkbenchSize.Compare.promptSetRenameWidth)
     }
 }
+
+typealias MusicPromptSetRenameSheet = PromptSetRenameSheet
 
 // MARK: - Reuse recorded music inputs
 

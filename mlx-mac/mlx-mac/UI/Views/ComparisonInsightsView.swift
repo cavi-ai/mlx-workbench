@@ -66,6 +66,7 @@ struct ComparisonInsightsView: View {
     @ObservedObject var workflow: WorkflowEvidenceStore
     let models: [LibraryModel]
     let promptSetID: String
+    let promptEntries: [PromptEntry]
     let mode: ComparisonMode
     let onReclaim: () -> Void
     let onWire: (String) -> Void
@@ -100,7 +101,9 @@ struct ComparisonInsightsView: View {
             }
             Text("Speed and first-token latency below use the selected prompt set. Compare within the same run; human task reviews and limited validation do not establish general model quality. Fit is an estimate, including context and your configured reserve. GPU utilization and disk I/O are not measured.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            ForEach(ComparisonInsights.taskTradeoffs(models: models, runs: comparison.runs.filter { $0.promptSetID == promptSetID }, environment: environment).prefix(1), id: \.self) { text in
+            ForEach(ComparisonInsights.taskTradeoffs(models: models, runs: comparison.runs.filter {
+                $0.promptSetID == promptSetID && $0.promptEntries == promptEntries
+            }, environment: environment).prefix(1), id: \.self) { text in
                 Text(text).font(WorkbenchTypography.secondary)
             }
             if !replacements.isEmpty {
@@ -155,7 +158,8 @@ struct ComparisonInsightsView: View {
     }
 
     @ViewBuilder private func decisionRow(_ model: LibraryModel) -> some View {
-        let measured = ComparisonInsights.currentResult(model: model, runs: comparison.runs, environment: environment, promptSetID: promptSetID)
+        let measured = ComparisonInsights.currentResult(model: model, runs: comparison.runs, environment: environment,
+            promptSetID: promptSetID, promptEntries: promptEntries)
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
                 Text(model.displayName).font(WorkbenchTypography.body).frame(width: 200, alignment: .leading)

@@ -99,6 +99,186 @@ struct PromptSet: Codable, Equatable, Identifiable, Sendable {
     var effectiveMode: ComparisonMode { mode ?? .chat }
 }
 
+/// Value-only editor for the non-music modes. Copies preserve fields the mode
+/// does not edit (including tool schemas and legacy metadata).
+struct ComparisonPromptSetDraft: Identifiable {
+    struct InvalidDraft: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    struct Prompt: Identifiable {
+        private let original: PromptEntry
+        private let initialMedia: MediaParameters?
+        var id: String { original.id }
+        var text: String
+        var inputPath: String
+        var keywords: String
+        var maxTokens: String
+        var size: String
+        var width: String
+        var height: String
+        var frames: String
+        var fps: String
+        var steps: String
+        var seed: String
+        var toolName: String? { original.tool?.name }
+        var builtinInput: String? { inputPath == (original.inputPath ?? "") ? original.builtinInput : nil }
+
+        init(_ entry: PromptEntry, mode: ComparisonMode) {
+            original = entry
+            initialMedia = entry.media ?? ComparisonPromptSetDraft.defaultParameters(for: mode)
+            text = entry.text; inputPath = entry.inputPath ?? ""
+            keywords = entry.expectedKeywords?.joined(separator: ", ") ?? ""
+            maxTokens = String(entry.maxTokens)
+            size = initialMedia?.size.map(String.init) ?? ""
+            width = (initialMedia?.width ?? initialMedia?.size).map(String.init) ?? ""
+            height = (initialMedia?.height ?? initialMedia?.size).map(String.init) ?? ""
+            frames = initialMedia?.frames.map(String.init) ?? ""
+            fps = initialMedia?.fps.map(String.init) ?? ""
+            steps = initialMedia?.steps.map(String.init) ?? ""
+            seed = initialMedia?.seed.map(String.init) ?? ""
+        }
+
+        func entry(for mode: ComparisonMode) throws -> PromptEntry {
+            func integer(_ value: String, _ title: String, _ range: ClosedRange<Int>) throws -> Int? {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty { return nil }
+                guard let number = Int(trimmed), range.contains(number) else {
+                    throw InvalidDraft(message: "\(title) must be a whole number from \(range.lowerBound) to \(range.upperBound).")
+                }
+                return number
+            }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard (mode == .speechToText || !trimmed.isEmpty),
+                  !text.unicodeScalars.contains(where: { $0.value < 32 && $0 != "\n" && $0 != "\t" }) else {
+                throw InvalidDraft(message: "Enter plain text for this prompt.")
+            }
+            let limit: Int? = switch mode {
+            case .vision, .videoUnderstanding: 4000
+            case .imageGeneration, .videoGeneration, .textToSpeech: 2000
+            default: nil
+            }
+            if let limit, text.unicodeScalars.count > limit {
+                throw InvalidDraft(message: "Text must be at most \(limit) characters for \(mode.title.lowercased()).")
+            }
+            var copy = original
+            copy.text = text
+            if let kind = mode.inputKind {
+                if inputPath.isEmpty, builtinInput != nil {
+                    // Preserve a recorded built-in fixture without materializing it.
+                } else {
+                    var isDirectory: ObjCBool = false
+                    guard inputPath.hasPrefix("/"), !inputPath.unicodeScalars.contains(where: { $0.value < 32 }),
+                          FileManager.default.fileExists(atPath: inputPath, isDirectory: &isDirectory),
+                          !isDirectory.boolValue, FileManager.default.isReadableFile(atPath: inputPath) else {
+                        throw InvalidDraft(message: "Choose a readable \(kind.rawValue) file. The recorded file may have moved.")
+                    }
+                }
+                copy.inputKind = kind
+                if inputPath != (original.inputPath ?? "") {
+                    copy.inputPath = inputPath.isEmpty ? nil : inputPath
+                    copy.builtinInput = nil
+                }
+            }
+            if mode == .chat || mode == .vision || mode == .videoUnderstanding {
+                copy.maxTokens = try integer(maxTokens, "Token limit", mode == .chat ? 1...Int.max : 1...4096) ?? 256
+            }
+            if mode == .vision || mode == .videoUnderstanding,
+               keywords != (original.expectedKeywords?.joined(separator: ", ") ?? "") {
+                guard !keywords.unicodeScalars.contains(where: { $0.value < 32 }) else {
+                    throw InvalidDraft(message: "Expected words must not contain control characters.")
+                }
+                let words = keywords.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                copy.expectedKeywords = words.isEmpty ? nil : words
+            }
+            if mode == .imageGeneration || mode == .videoGeneration {
+                var parameters = initialMedia ?? MediaParameters()
+                let stepValue = try integer(steps, "Steps", 1...100)
+                let seedValue = try integer(seed, "Seed", 0...4_294_967_295)
+                if steps != (initialMedia?.steps.map(String.init) ?? "") { parameters.steps = stepValue }
+                if seed != (initialMedia?.seed.map(String.init) ?? "") { parameters.seed = seedValue }
+                if mode == .imageGeneration {
+                    let side = try integer(size, "Image size", 256...2048)
+                    if let side, side % 16 != 0 { throw InvalidDraft(message: "Image size must be a multiple of 16 pixels.") }
+                    if size != (initialMedia?.size.map(String.init) ?? "") { parameters.size = side }
+                } else {
+                    let w = try integer(width, "Width", 64...1920), h = try integer(height, "Height", 64...1920)
+                    let frameValue = try integer(frames, "Frames", 1...241), fpsValue = try integer(fps, "Frame rate", 1...60)
+                    let dimensionsChanged = width != ((initialMedia?.width ?? initialMedia?.size).map(String.init) ?? "")
+                        || height != ((initialMedia?.height ?? initialMedia?.size).map(String.init) ?? "")
+                    if dimensionsChanged {
+                        parameters.width = w; parameters.height = h; parameters.size = nil
+                    }
+                    if frames != (initialMedia?.frames.map(String.init) ?? "") { parameters.frames = frameValue }
+                    if fps != (initialMedia?.fps.map(String.init) ?? "") { parameters.fps = fpsValue }
+                }
+                if parameters != (initialMedia ?? MediaParameters()) { copy.media = parameters }
+            }
+            return copy
+        }
+    }
+
+    let original: PromptSet?
+    private let newID = UUID().uuidString
+    var id: String { original?.id ?? newID }
+    let mode: ComparisonMode
+    var name: String
+    var prompts: [Prompt]
+
+    init(mode: ComparisonMode) {
+        original = nil; self.mode = mode; name = ""
+        prompts = [Self.newPrompt(mode: mode)]
+    }
+
+    init(set: PromptSet) throws {
+        guard set.origin == .userCreated, set.effectiveMode != .musicGeneration,
+              !set.prompts.isEmpty, !set.prompts.contains(where: { $0.id.isEmpty }),
+              Set(set.prompts.map(\.id)).count == set.prompts.count else {
+            throw InvalidDraft(message: "Select a saved prompt set with valid prompt identities.")
+        }
+        original = set; mode = set.effectiveMode; name = set.name
+        prompts = set.prompts.map { Prompt($0, mode: set.effectiveMode) }
+    }
+
+    private static func defaultParameters(for mode: ComparisonMode) -> MediaParameters? {
+        switch mode {
+        case .imageGeneration: MediaParameters(size: 512, steps: 20, seed: 42)
+        case .videoGeneration: ComparisonMediaFixtures.videoGenerationParameters
+        default: nil
+        }
+    }
+
+    private static func newPrompt(mode: ComparisonMode) -> Prompt {
+        Prompt(PromptEntry(id: UUID().uuidString, text: "", inputKind: mode.inputKind,
+            media: defaultParameters(for: mode)), mode: mode)
+    }
+
+    mutating func addPrompt() { prompts.append(Self.newPrompt(mode: mode)) }
+    mutating func removePrompt(id: String) {
+        guard prompts.count > 1 else { return }
+        prompts.removeAll { $0.id == id }
+    }
+
+    func promptSet() throws -> PromptSet {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !title.unicodeScalars.contains(where: { $0.value < 32 }) else {
+            throw InvalidDraft(message: "Enter a prompt set name without control characters.")
+        }
+        guard mode != .musicGeneration, !prompts.isEmpty,
+              !prompts.contains(where: { $0.id.isEmpty }), Set(prompts.map(\.id)).count == prompts.count else {
+            throw InvalidDraft(message: "At least one prompt with a unique identity is required.")
+        }
+        let entries = try prompts.enumerated().map { index, prompt in
+            do { return try prompt.entry(for: mode) }
+            catch { throw InvalidDraft(message: "Prompt \(index + 1): \(error.localizedDescription)") }
+        }
+        var set = original ?? PromptSet(id: id, name: title, useCase: nil, prompts: [], origin: .userCreated, mode: mode)
+        set.name = title; set.prompts = entries
+        return set
+    }
+}
+
 /// An editable, temporary copy of recorded music inputs. Never writes a preset
 /// or carries results, reviews or old model signatures into the next run.
 struct MusicComparisonSetup: Identifiable {

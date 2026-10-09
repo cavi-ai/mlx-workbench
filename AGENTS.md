@@ -210,7 +210,22 @@ from `mlx-agent` at runtime.
   draft-only, keeps stable prompt identities, and retains at least one prompt.
   Explicit Save validates all inputs and selects the set only after the existing
   prompt store accepts it. Invalid or failed saves keep the draft open; Cancel
-  never writes or generates. Other media modes retain their existing editor.
+  never writes or generates.
+  Other modes use `ComparisonPromptSetDraft` + `ComparisonPromptSetEditor` for
+  per-prompt text, input attachments, expected words and requested output tokens
+  where supported, square image size/steps/seed, and video dimensions/frames/fps/
+  steps/seed. Add/remove retains stable surviving prompt IDs and at least one
+  prompt. Drafts preserve unedited tool schemas, legacy mode/use-case metadata,
+  optional fields and effective generation defaults; unreadable input files and
+  invalid runtime parameter ranges are rejected at Save. Model-specific video
+  alignment/frame grouping remain the engine's authority. The shared saved-set
+  menu offers Edit/Rename/Remove in every mode, with built-in and active-run guards.
+  `createPromptSet`, `preparePromptSetEdit` and `savePromptSetEdits` use the existing
+  prompt store and action-scoped errors. Edits recheck the original durable
+  snapshot under `JSONStore.update` before publication; failure retains the draft.
+  Current measurements, task tradeoffs and measured alternative selection require
+  exact equality with the selected set's recorded prompt entries, not just its ID.
+  Past runs, quality reviews and output artifacts remain historical evidence.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.
