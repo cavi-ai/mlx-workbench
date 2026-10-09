@@ -562,6 +562,16 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(player.activeURL, second)
     }
 
+    func testSharedListeningIsAvailableOnlyForCompletedAudioOutputRuns() {
+        for mode in ComparisonMode.allCases {
+            var run = historyRun(mode, "Listening", at: 100)
+            XCTAssertEqual(ComparisonViewLogic.showsListening(run), mode == .textToSpeech || mode == .musicGeneration,
+                           "Only generated audio has a shared listening transport: \(mode)")
+            run.state = .running
+            XCTAssertFalse(ComparisonViewLogic.showsListening(run))
+        }
+    }
+
     @MainActor
     func testPauseResumeScrubSwitchAndStopKeepOneTransport() throws {
         let a = StubAudioPlayback(), b = StubAudioPlayback(duration: 3)
@@ -683,6 +693,73 @@ final class ComparisonMediaTests: XCTestCase {
         try FileManager.default.removeItem(at: clips[0].url)
         XCTAssertEqual(ComparisonViewLogic.audioClips(for: run, store: store).map(\.modelPath), ["/model/1"])
         XCTAssertTrue(ComparisonViewLogic.audioClips(for: run, store: store, promptID: "missing").isEmpty)
+    }
+
+    @MainActor
+    func testSpeechListeningRendersWithTaskRatingsAndStopsWhenLeavingCompare() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("speech-output"))
+        var run = historyRun(.textToSpeech, "Spoken sentences", at: 100, models: ["/speech/a", "/speech/b"])
+        run.promptEntries = [PromptEntry(id: "sentence", text: "The quick brown fox jumps over the lazy dog.")]
+        let directory = try store.createRunDirectory(run.id)
+        run.results = try ["a", "b"].enumerated().map { index, key in
+            let artifact = "\(key).wav"
+            try FileManager.default.copyItem(at: silentClip("speech-\(key)", seconds: index == 0 ? 5 : 3),
+                                            to: directory.appendingPathComponent(artifact))
+            return VariantResult(modelPath: "/speech/\(key)", modelSignature: nil, samples: [
+                ComparisonSample(promptID: "sentence", outputExcerpt: "", tokensPerSecond: nil,
+                    timeToFirstTokenSeconds: nil, error: nil, artifact: artifact, audioSeconds: index == 0 ? 5 : 3)],
+                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, aggregateMetric: index == 0 ? 1.2 : 0.9)
+        }
+        run.qualityReviews = ["/speech/a": ComparisonQualityReview(score: 4, rubricID: ComparisonQualityReview.taskOutcomeRubric,
+                                                                 reviewedAt: Date())]
+        let clips = ComparisonViewLogic.audioClips(for: run, store: store, promptID: "sentence")
+        XCTAssertEqual(clips.count, 2)
+        let player = AudioClipPlayer()
+        defer { player.stop() }
+        for width: CGFloat in [900, 600] {
+            func content(active: Bool) -> some View {
+                MediaRunResultsView(run: run, store: store, contentWidth: width - 40, isRouteActive: active,
+                    name: { $0 == "/speech/a" ? "Speech model A · 8-bit" : "Speech model B · 4-bit" },
+                    onReview: { _, _ in XCTFail("Listening must not write quality ratings") }, audio: player) { _ in EmptyView() }
+                    .padding(20).frame(width: width, height: 600)
+                    .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            }
+            let host = NSHostingView(rootView: content(active: true))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 600),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertNil(player.activeURL, "Opening speech results must not start playback")
+            player.select(clips[0].url, autoplay: false)
+            player.seek(to: 4)
+            player.select(clips[1].url, preservingPosition: true, autoplay: false)
+            XCTAssertEqual(player.position, 3, accuracy: 0.01)
+            XCTAssertFalse(player.isPlaying, "Switching while paused stays paused")
+            try await Task.sleep(for: .milliseconds(250))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Speech listening \(Int(width))"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_SPEECH_LISTENING_PROOF_DIR"] {
+                let output = URL(fileURLWithPath: path)
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                try png.write(to: output.appendingPathComponent("speech-listening-\(Int(width)).png"))
+            }
+            player.toggle(clips[0].url)
+            XCTAssertTrue(player.isPlaying)
+            host.rootView = content(active: false)
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertNil(player.activeURL, "Leaving the Compare route must release playback even when results remain mounted")
+            XCTAssertFalse(player.isPlaying)
+        }
+        try FileManager.default.removeItem(at: clips[0].url)
+        XCTAssertEqual(ComparisonViewLogic.audioClips(for: run, store: store).map(\.modelPath), ["/speech/b"])
+        XCTAssertNil(ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: "/speech/b", store: store))
+        XCTAssertNotNil(ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: "/speech/a", store: store))
+        XCTAssertEqual(run.qualityReviews?["/speech/a"]?.rubricID, ComparisonQualityReview.taskOutcomeRubric)
     }
 
     func testReuseOtherModesPreservesRecordedPromptsAndCreatesIndependentCopies() throws {

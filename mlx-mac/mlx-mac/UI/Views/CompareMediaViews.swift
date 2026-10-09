@@ -17,9 +17,9 @@ enum ComparisonViewLogic {
         var id: String { modelPath + "|" + promptID }
     }
 
-    /// Completed music runs offer A/B listening and a per-lane listening rating.
+    /// Completed generated-audio runs share one A/B transport; review rubrics stay task-specific.
     static func showsListening(_ run: ComparisonRun) -> Bool {
-        run.effectiveMode == .musicGeneration && run.state == .completed
+        run.effectiveMode.outputKind == .audio && run.state == .completed
     }
 
     /// New human judgments require the whole recorded cohort to be inspectable.
@@ -260,7 +260,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 grid(lanes: lanes, layout: layout)
             }
             if ComparisonViewLogic.showsListening(run) {
-                MusicListeningPanel(run: run, store: store, name: name, player: audio)
+                ComparisonListeningPanel(run: run, store: store, name: name, player: audio)
                     .id(run.id)
             }
         }
@@ -268,6 +268,9 @@ struct MediaRunResultsView<LaneActions: View>: View {
         .sheet(item: $preview) { item in ImagePreviewSheet(url: item.url) }
         .onDisappear { audio.stop() }
         .onChange(of: run.id) { _, _ in audio.stop() }
+        .onChange(of: isRouteActive) { _, active in
+            if !active { audio.stop() }
+        }
     }
 
     private func listeningReview(_ path: String) -> some View {
@@ -363,7 +366,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(ComparePresentation.laneAccessibilityLabel(lane, name: name(lane.path), metric: metric))
             laneActions(lane)
-            if ComparisonViewLogic.showsListening(run) {
+            if mode == .musicGeneration && run.state == .completed {
                 listeningReview(lane.path)
             } else if mode != .musicGeneration {
                 TaskQualityRating(run: run, modelPath: lane.path, modelName: name(lane.path), store: store, onReview: onReview)
@@ -809,7 +812,7 @@ struct AudioClipButton: View {
 
 /// One transport for the run. Switching variants keeps elapsed seconds,
 /// clamped to the shorter clip; separately generated phrases need not align.
-struct MusicListeningPanel: View {
+struct ComparisonListeningPanel: View {
     let run: ComparisonRun
     let store: ComparisonOutputStore
     let name: (String) -> String
@@ -879,6 +882,10 @@ struct MusicListeningPanel: View {
             if let failure = player.failure {
                 Text(failure).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
+            if run.effectiveMode == .textToSpeech {
+                Text("Switching preserves elapsed time. Different speaking rates mean words may not align.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
         }
         .padding(WorkbenchSpacing.sm)
         .background(WorkbenchColor.canvas)
@@ -916,7 +923,9 @@ struct MusicListeningPanel: View {
                     .foregroundStyle(selected ? WorkbenchColor.accent : WorkbenchColor.ink)
             }
             .buttonStyle(.bordered).controlSize(.small).disabled(clip == nil)
-            .help("Switch at the same elapsed time; shorter clips clamp to their end. Generated musical phrases may differ.")
+            .help(run.effectiveMode == .textToSpeech
+                ? "Switch at the same elapsed time; shorter clips clamp to their end. Spoken words may not align."
+                : "Switch at the same elapsed time; shorter clips clamp to their end. Generated musical phrases may differ.")
             Picker(title, selection: path) {
                 Text("Choose model…").tag(String?.none)
                 ForEach(clips.filter { $0.modelPath != excluding }) { candidate in
