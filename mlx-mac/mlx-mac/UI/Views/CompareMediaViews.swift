@@ -1124,6 +1124,7 @@ struct ComparisonPromptSetEditor: View {
 /// The same cards are used for new sets, saved-set edits and recorded-run reuse.
 private struct ComparisonPromptFields: View {
     @Binding var draft: ComparisonPromptSetDraft
+    @StateObject private var audio = AudioClipPlayer()
 
     var body: some View {
         ScrollView {
@@ -1132,10 +1133,12 @@ private struct ComparisonPromptFields: View {
                     ComparisonPromptCard(prompt: $prompt, mode: draft.mode,
                         number: (draft.prompts.firstIndex { $0.id == prompt.id } ?? 0) + 1,
                         canRemove: draft.prompts.count > 1,
+                        audio: audio,
                         onRemove: { draft.removePrompt(id: prompt.id) })
                 }
             }
         }.frame(maxHeight: WorkbenchSize.Compare.promptEditorHeight)
+        .onDisappear { audio.stop() }
     }
 }
 
@@ -1144,6 +1147,7 @@ private struct ComparisonPromptCard: View {
     let mode: ComparisonMode
     let number: Int
     let canRemove: Bool
+    let audio: AudioClipPlayer
     let onRemove: () -> Void
 
     private var textLabel: String {
@@ -1191,6 +1195,12 @@ private struct ComparisonPromptCard: View {
                         : "Input file unavailable · choose a replacement", systemImage: "exclamationmark.triangle")
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
                 }
+                if let url = prompt.inputPreviewURL {
+                    ComparisonPromptInputPreview(url: url, kind: kind, audio: audio)
+                } else if prompt.inputPath.isEmpty, prompt.builtinInput != nil {
+                    Text("Built-in input is created when the comparison runs.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
             }
             if mode == .vision || mode == .videoUnderstanding {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
@@ -1236,6 +1246,58 @@ private struct ComparisonPromptCard: View {
             Text(title).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             TextField(placeholder, text: value).accessibilityLabel("Prompt \(number) \(title.lowercased())")
         }.frame(maxWidth: .infinity)
+    }
+}
+
+/// Explicit previews share one audio player across the editor. Opening the editor
+/// never generates built-in fixtures or starts playback.
+struct ComparisonPromptInputPreview: View {
+    let url: URL
+    let kind: ComparisonMediaKind
+    @ObservedObject var audio: AudioClipPlayer
+    @State private var expanded: Bool
+    @State private var image: PreviewImage?
+
+    init(url: URL, kind: ComparisonMediaKind, audio: AudioClipPlayer, expanded: Bool = false) {
+        self.url = url; self.kind = kind; self.audio = audio
+        _expanded = State(initialValue: expanded)
+    }
+
+    var body: some View {
+        DisclosureGroup("Preview input", isExpanded: $expanded) {
+            if expanded {
+                switch kind {
+                case .image:
+                    ThumbnailView(url: url, size: CGSize(width: 160, height: 160)) {
+                        image = PreviewImage(url: url)
+                    }
+                    .accessibilityLabel("Preview input image; open a larger view")
+                case .audio:
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        AudioClipButton(url: url, label: "Play input", player: audio)
+                        if audio.activeURL == url {
+                            Slider(value: Binding(get: { audio.position }, set: { audio.seek(to: $0) }),
+                                in: 0...max(audio.duration, 0.001))
+                                .accessibilityLabel("Input audio position")
+                            Text(String(format: "%.1f / %.1f seconds", audio.position, audio.duration))
+                                .font(WorkbenchTypography.metadata.monospacedDigit()).foregroundStyle(WorkbenchColor.muted)
+                        }
+                    }.frame(maxWidth: 320, alignment: .leading)
+                case .video:
+                    ClipVideoView(url: url).frame(width: 280, height: 158)
+                }
+            }
+        }
+        .font(WorkbenchTypography.secondary)
+        .sheet(item: $image) { item in ImagePreviewSheet(url: item.url) }
+        .onChange(of: expanded) { _, open in
+            if !open, audio.activeURL == url { audio.stop() }
+        }
+        .onChange(of: url) { old, _ in
+            if audio.activeURL == old { audio.stop() }
+            expanded = false; image = nil
+        }
+        .onDisappear { if audio.activeURL == url { audio.stop() } }
     }
 }
 
