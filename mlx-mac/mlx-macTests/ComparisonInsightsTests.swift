@@ -642,6 +642,30 @@ final class ComparisonInsightsTests: XCTestCase {
         XCTAssertTrue(ComparisonInsights.superseded(models: mediaModels, runs: [], workflow: [left, right], environment: environment, protected: []).isEmpty)
     }
 
+    func testTaskQualityChampionsRequireEveryRatingAndShareTiesInEveryMode() throws {
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            let type: ModelTaskType = switch mode {
+            case .chat: .textLLM
+            case .vision, .videoUnderstanding: .visionLanguage
+            case .speechToText: .speechToText
+            case .textToSpeech: .textToSpeech
+            case .imageGeneration: .imageGeneration
+            default: .videoGeneration
+            }
+            let models = [model("/a", task: type), model("/b", task: type)]
+            var measured = run([result("/a", speed: 20, metric: mode.primaryMetric.higherIsBetter ? 20 : 1),
+                result("/b", speed: 40, metric: mode.primaryMetric.higherIsBetter ? 40 : 0.5)],
+                scores: ["/a": 5], mode: mode)
+            let partial = try XCTUnwrap(ComparisonInsights.champions(models: models, runs: [measured], environment: environment).first)
+            XCTAssertEqual(partial.performance.map(\.modelPath), ["/b"])
+            XCTAssertTrue(partial.quality.isEmpty)
+            measured.qualityReviews?["/b"] = ComparisonQualityReview(score: 4, rubricID: "task-outcome-v1", reviewedAt: Date())
+            XCTAssertEqual(ComparisonInsights.champions(models: models, runs: [measured], environment: environment).first?.quality.map(\.modelPath), ["/a"])
+            measured.qualityReviews?["/b"] = ComparisonQualityReview(score: 5, rubricID: "task-outcome-v1", reviewedAt: Date())
+            XCTAssertEqual(ComparisonInsights.champions(models: models, runs: [measured], environment: environment).first?.quality.map(\.modelPath), ["/a", "/b"])
+        }
+    }
+
     func testChampionsSeparateQualitySpeedAndShareTies() throws {
         let measured = run([result("/a", speed: 20), result("/b", speed: 40), result("/c", speed: 40)], scores: ["/a": 5, "/b": 4, "/c": 5])
         let award = try XCTUnwrap(ComparisonInsights.champions(models: [model("/a"), model("/b"), model("/c")], runs: [measured], environment: environment).first)

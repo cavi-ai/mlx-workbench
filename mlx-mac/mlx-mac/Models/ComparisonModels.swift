@@ -819,6 +819,31 @@ struct ComparisonQualityReview: Codable, Equatable, Sendable {
         }
     }
     static let rubric = "1 unusable · 2 major corrections · 3 usable with corrections · 4 minor corrections · 5 meets task without corrections"
+
+    static func taskScoreTitle(_ score: Int) -> String {
+        switch score {
+        case 1: "1 · Unusable"
+        case 2: "2 · Major corrections"
+        case 3: "3 · Usable with corrections"
+        case 4: "4 · Minor corrections"
+        case 5: "5 · Meets task without corrections"
+        default: "Not reviewed"
+        }
+    }
+
+    /// Task-specific inspection advice uses the existing task-outcome scale.
+    static func taskGuidance(for mode: ComparisonMode) -> String {
+        switch mode {
+        case .chat: "Check correctness, usefulness, instruction following and any requested tool calls."
+        case .vision: "Check whether the answer accurately describes the image and avoids invented details."
+        case .videoUnderstanding: "Check whether the answer captures events, motion and sequence accurately."
+        case .speechToText: "Compare the transcript with the audio for missing, substituted or invented words."
+        case .textToSpeech: "Listen for intelligibility, pronunciation, natural delivery and audible artifacts."
+        case .imageGeneration: "Inspect prompt match, visual coherence and unwanted artifacts."
+        case .videoGeneration: "Inspect prompt match, motion, continuity between frames and unwanted artifacts."
+        case .musicGeneration: musicRubric
+        }
+    }
 }
 
 // MARK: - Output diffs (phase 2)

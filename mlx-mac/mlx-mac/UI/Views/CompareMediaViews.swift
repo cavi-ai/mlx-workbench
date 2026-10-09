@@ -22,6 +22,28 @@ enum ComparisonViewLogic {
         run.effectiveMode == .musicGeneration && run.state == .completed
     }
 
+    /// New human judgments require the whole recorded cohort to be inspectable.
+    /// This does not erase reviews recorded while an output was still available.
+    static func qualityReviewUnavailableReason(_ run: ComparisonRun, modelPath: String, store: ComparisonOutputStore) -> String? {
+        guard run.state == .completed else { return "Wait for the comparison to finish before rating quality." }
+        guard run.variants.contains(modelPath), let result = run.results.first(where: { $0.modelPath == modelPath }),
+              result.error == nil, ComparisonInsights.fullCohort(result, run: run),
+              result.samples.allSatisfy({ $0.error == nil }) else {
+            return "A complete, successful set of outputs is needed to rate this model."
+        }
+        if run.effectiveMode.outputKind != .text {
+            for sample in result.samples {
+                var isDirectory: ObjCBool = false
+                guard let artifact = sample.artifact, let url = store.artifactURL(runID: run.id, artifact: artifact),
+                      FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                      !isDirectory.boolValue, FileManager.default.isReadableFile(atPath: url.path) else {
+                    return "Outputs are unavailable. Saved ratings are retained; generate a new run to rate fresh outputs."
+                }
+            }
+        }
+        return nil
+    }
+
     static func audioClips(for run: ComparisonRun, store: ComparisonOutputStore, promptID: String? = nil) -> [ListeningClip] {
         guard run.effectiveMode.outputKind == .audio else { return [] }
         return run.results.filter { $0.error == nil }.flatMap { result in
@@ -343,6 +365,8 @@ struct MediaRunResultsView<LaneActions: View>: View {
             laneActions(lane)
             if ComparisonViewLogic.showsListening(run) {
                 listeningReview(lane.path)
+            } else if mode != .musicGeneration {
+                TaskQualityRating(run: run, modelPath: lane.path, modelName: name(lane.path), store: store, onReview: onReview)
             }
         }
     }
@@ -523,6 +547,53 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(rate <= SpeechCanary.maxWordErrorRate ? WorkbenchColor.success : WorkbenchColor.warning)
         }
+    }
+}
+
+/// A compact explicit human judgment, independent of the speed and validation badges.
+private struct TaskQualityRating: View {
+    let run: ComparisonRun
+    let modelPath: String
+    let modelName: String
+    let store: ComparisonOutputStore
+    let onReview: (String, Int?) -> Void
+
+    private var score: Int? {
+        guard let review = run.qualityReviews?[modelPath], review.rubricID == ComparisonQualityReview.taskOutcomeRubric,
+              (1...5).contains(review.score) else { return nil }
+        return review.score
+    }
+
+    var body: some View {
+        let unavailable = ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: modelPath, store: store)
+        Menu {
+            ForEach(1...5, id: \.self) { value in
+                Button {
+                    guard ComparisonViewLogic.qualityReviewUnavailableReason(run, modelPath: modelPath, store: store) == nil else { return }
+                    onReview(modelPath, value)
+                } label: {
+                    if score == value { Label(ComparisonQualityReview.taskScoreTitle(value), systemImage: "checkmark") }
+                    else { Text(ComparisonQualityReview.taskScoreTitle(value)) }
+                }
+                .disabled(unavailable != nil)
+            }
+            if score != nil {
+                Divider()
+                Button("Clear rating") { onReview(modelPath, nil) }
+            }
+            if let unavailable { Text(unavailable) }
+        } label: {
+            Label(score.map { "Quality · \($0)/5" } ?? "Rate quality", systemImage: score == nil ? "star" : "star.fill")
+                .font(WorkbenchTypography.metadata)
+                .foregroundStyle(score == nil ? WorkbenchColor.muted : WorkbenchColor.accent)
+        }
+        .menuStyle(.borderlessButton).controlSize(.small).fixedSize()
+        .disabled(run.state != .completed)
+        .accessibilityLabel("Task quality for \(modelName)")
+        .accessibilityValue(score.map { "\($0) out of 5" } ?? "Not reviewed")
+        .help([ComparisonQualityReview.taskGuidance(for: run.effectiveMode), ComparisonQualityReview.rubric,
+               "Judge all prompts in this run. Speed and automated checks do not establish task quality.", unavailable]
+            .compactMap { $0 }.joined(separator: " "))
     }
 }
 
