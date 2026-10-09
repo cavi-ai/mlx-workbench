@@ -385,6 +385,7 @@ struct QuantView: View {
     @State private var mode: ComparisonMode = .chat
     @State private var showingSetEditor = false
     @State private var pendingPromptSetEdit: MusicPromptSetEdit?
+    @State private var pendingGeneralPromptSetEdit: ComparisonPromptSetDraft?
     @State private var pendingPromptSetRename: PromptSet?
     @State private var pendingPromptSetRemoval: PromptSet?
     @State private var pendingReuseSetup: MusicComparisonSetup?
@@ -467,7 +468,8 @@ struct QuantView: View {
                             models: ComparePresentation.variantPaths(variantSlots).compactMap { path in
                                 readyModels.first { $0.item.path == path }
                             },
-                            promptSetID: selectedPromptSet?.id ?? "", mode: mode, onReclaim: { onRouteSelection(.reclaim) },
+                            promptSetID: selectedPromptSet?.id ?? "", promptEntries: selectedPromptSet?.prompts ?? [],
+                            mode: mode, onReclaim: { onRouteSelection(.reclaim) },
                             onWire: { path in
                                 let endpoint = appHost.endpoint.config
                                 let port = endpoint.enabled && HFRepoID.matches(endpoint.modelPath, path) ? endpoint.port : nil
@@ -504,8 +506,8 @@ struct QuantView: View {
         }
         .onChange(of: appHost.workflowReportImportRequested) { _, _ in consumeImportRequest() }
         .sheet(item: $pendingPromptSetRename) { set in
-            MusicPromptSetRenameSheet(set: set) { name in
-                comparison.renameMusicPromptSet(id: set.id, name: name)
+            PromptSetRenameSheet(set: set) { name in
+                comparison.renamePromptSet(id: set.id, name: name)
                     ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be renamed.")
             }
         }
@@ -515,13 +517,19 @@ struct QuantView: View {
                     ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be saved.")
             }
         }
+        .sheet(item: $pendingGeneralPromptSetEdit) { edit in
+            ComparisonPromptSetEditor(draft: edit) { edited in
+                comparison.savePromptSetEdits(edited)
+                    ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be saved.")
+            }
+        }
         .alert("Remove saved prompt set?", isPresented: Binding(
             get: { pendingPromptSetRemoval != nil },
             set: { if !$0 { pendingPromptSetRemoval = nil } }), presenting: pendingPromptSetRemoval) { set in
                 Button("Remove", role: .destructive) { removePromptSet(set) }
                 Button("Cancel", role: .cancel) { }
             } message: { set in
-                Text("‘\(set.name)’ will be removed from the prompt set picker. Past runs, audio outputs and listening ratings will be kept.")
+                Text("‘\(set.name)’ will be removed from the prompt set picker. Past runs, saved outputs and quality reviews will be kept.")
             }
         .onChange(of: comparison.activeRunID) { _, newValue in
             if let newValue { selectedRunID = newValue }
@@ -726,9 +734,12 @@ struct QuantView: View {
                     return nil
                 }
             } else {
-                MediaPromptSetEditor(mode: mode) { set in
-                    comparison.savePromptSet(set)
+                ComparisonPromptSetEditor(draft: ComparisonPromptSetDraft(mode: mode)) { draft in
+                    guard let set = comparison.createPromptSet(draft) else {
+                        return comparison.promptSetManagementError ?? "Prompt set could not be created."
+                    }
                     selectedPromptSetID = set.id
+                    return nil
                 }
             }
         }
@@ -866,13 +877,11 @@ struct QuantView: View {
             }
             .font(WorkbenchTypography.emphasis)
             .frame(maxWidth: WorkbenchSize.Compare.promptSetMaximum, alignment: .leading)
-            if mode == .musicGeneration {
-                MusicPromptSetActions(name: selectedPromptSet?.name,
-                    isEnabled: comparison.activeRunID == nil && comparison.canManageMusicPromptSet(id: selectedPromptSetID),
-                    onEdit: openPromptSetEditor,
-                    onRename: { pendingPromptSetRename = selectedPromptSet },
-                    onRemove: { pendingPromptSetRemoval = selectedPromptSet })
-            }
+            PromptSetActions(name: selectedPromptSet?.name,
+                isEnabled: comparison.activeRunID == nil && comparison.canManagePromptSet(id: selectedPromptSetID),
+                onEdit: openPromptSetEditor,
+                onRename: { pendingPromptSetRename = selectedPromptSet },
+                onRemove: { pendingPromptSetRemoval = selectedPromptSet })
         }
     }
 
@@ -1189,7 +1198,10 @@ struct QuantView: View {
 
     private func applySuggestions() {
         guard !initializedSuggestions, comparison.activeRunID == nil, !readyModels.isEmpty else { return }
-        let suggestion = ComparisonInsights.suggestion(candidates: readyModels, lastServed: appHost.usage.lastServedByPath, selectedPath: appHost.selectedModelPath, runs: comparison.runs, mode: mode, environment: appHost.watch.currentFingerprintDescription, promptSetID: selectedPromptSet?.id)
+        let suggestion = ComparisonInsights.suggestion(candidates: readyModels, lastServed: appHost.usage.lastServedByPath,
+            selectedPath: appHost.selectedModelPath, runs: comparison.runs, mode: mode,
+            environment: appHost.watch.currentFingerprintDescription, promptSetID: selectedPromptSet?.id,
+            promptEntries: selectedPromptSet?.prompts)
         variantSlots = suggestion.paths
         selectionReason = suggestion.reason
         initializedSuggestions = true
@@ -1232,14 +1244,18 @@ struct QuantView: View {
     }
 
     private func removePromptSet(_ set: PromptSet) {
-        guard comparison.removeMusicPromptSet(id: set.id) else { return }
+        guard comparison.removePromptSet(id: set.id) else { return }
         if reusedPromptSet?.id == set.id { reusedPromptSet = nil }
         if selectedPromptSetID == set.id { selectedPromptSetID = modePromptSets.first?.id ?? "" }
     }
 
     private func openPromptSetEditor() {
         guard let set = selectedPromptSet else { return }
-        pendingPromptSetEdit = comparison.prepareMusicPromptSetEdit(id: set.id)
+        if set.effectiveMode == .musicGeneration {
+            pendingPromptSetEdit = comparison.prepareMusicPromptSetEdit(id: set.id)
+        } else {
+            pendingGeneralPromptSetEdit = comparison.preparePromptSetEdit(id: set.id)
+        }
     }
 
     private func applyReusedSetup(_ setup: MusicComparisonSetup, _ promptSet: PromptSet) {
