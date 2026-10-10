@@ -206,8 +206,8 @@ final class ComparisonCoordinator: ObservableObject {
 
     private func renameSavedPromptSet(id: String, name: String, requiredMode: ComparisonMode?) -> Bool {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !name.unicodeScalars.contains(where: { $0.value < 32 }) else {
-            promptSetManagementError = "Enter a prompt set name without control characters."
+        if let error = PromptSetNameValidation.error(for: name) {
+            promptSetManagementError = error
             return false
         }
         return changePromptSet(id: id, requiredMode: requiredMode) { set in
