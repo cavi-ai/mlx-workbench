@@ -281,6 +281,13 @@ from `mlx-agent` at runtime.
   set only on success. Non-music media uses independent durable input copies;
   source-set ownership metadata is not inherited. Built-ins remain immutable,
   and the copy action is disabled during active comparisons or input saves.
+  `ComparisonPromptSetPicker` replaces the flat set menu with a bounded popover
+  over the existing mode-filtered sets. `ComparisonPromptSetPickerLogic` groups
+  explicit temporary IDs first, then user-created sets and built-ins, retaining
+  source order and distinct identities even for duplicate names. Search matches
+  names, prompt text and tool names locally; rows show prompt counts and current
+  selection. Search/clear/open never selects, writes or starts a comparison;
+  only an explicit row action changes the selection and closes the popover.
   `createPromptSet`, `preparePromptSetEdit` and `savePromptSetEdits` use the existing
   prompt store and action-scoped errors. Edits recheck the original durable
   snapshot under `JSONStore.update` before publication; failure retains the draft.

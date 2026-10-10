@@ -900,12 +900,7 @@ struct QuantView: View {
 
     private var promptSetPicker: some View {
         HStack(spacing: WorkbenchSpacing.xs) {
-            Picker("Prompt set", selection: $selectedPromptSetID) {
-                ForEach(modePromptSets) { set in
-                    Text(set.name).tag(set.id)
-                }
-            }
-            .font(WorkbenchTypography.emphasis)
+            ComparisonPromptSetPicker(sets: modePromptSets, selection: $selectedPromptSetID, temporaryID: reusedPromptSet?.id)
             .frame(maxWidth: WorkbenchSize.Compare.promptSetMaximum, alignment: .leading)
             PromptSetActions(name: selectedPromptSet?.name,
                 isEnabled: comparison.activeRunID == nil && comparison.canManagePromptSet(id: selectedPromptSetID),
