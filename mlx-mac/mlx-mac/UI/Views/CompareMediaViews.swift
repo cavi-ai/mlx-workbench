@@ -1165,6 +1165,28 @@ private struct ComparisonPromptFields: View {
     }
 }
 
+private struct ComparisonPromptActions: View {
+    let number: Int
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let onDuplicate: () -> Void
+    let onMove: (ComparisonPromptMoveDirection) -> Void
+
+    var body: some View {
+        Menu {
+            Button(action: onDuplicate) { Label("Duplicate prompt", systemImage: "plus.square.on.square") }
+            Divider()
+            Button { onMove(.up) } label: { Label("Move up", systemImage: "arrow.up") }
+                .disabled(!canMoveUp)
+            Button { onMove(.down) } label: { Label("Move down", systemImage: "arrow.down") }
+                .disabled(!canMoveDown)
+        } label: { Image(systemName: "ellipsis") }
+            .menuStyle(.borderlessButton).fixedSize()
+            .accessibilityLabel("Actions for prompt \(number)")
+            .help("Duplicate this prompt or change its order")
+    }
+}
+
 private struct ComparisonPromptCard: View {
     @Binding var prompt: ComparisonPromptSetDraft.Prompt
     let mode: ComparisonMode
@@ -1192,17 +1214,8 @@ private struct ComparisonPromptCard: View {
                 Text("PROMPT \(number)").font(WorkbenchTypography.metadata.weight(.semibold))
                     .foregroundStyle(WorkbenchColor.accent)
                 Spacer()
-                Menu {
-                    Button(action: onDuplicate) { Label("Duplicate prompt", systemImage: "plus.square.on.square") }
-                    Divider()
-                    Button { onMove(.up) } label: { Label("Move up", systemImage: "arrow.up") }
-                        .disabled(!canMoveUp)
-                    Button { onMove(.down) } label: { Label("Move down", systemImage: "arrow.down") }
-                        .disabled(!canMoveDown)
-                } label: { Image(systemName: "ellipsis") }
-                    .menuStyle(.borderlessButton).fixedSize()
-                    .accessibilityLabel("Actions for prompt \(number)")
-                    .help("Duplicate this prompt or change its order")
+                ComparisonPromptActions(number: number, canMoveUp: canMoveUp, canMoveDown: canMoveDown,
+                    onDuplicate: onDuplicate, onMove: onMove)
                 Button(action: onRemove) { Image(systemName: "minus.circle") }
                     .buttonStyle(.borderless).disabled(!canRemove)
                     .accessibilityLabel("Remove prompt \(number)")
@@ -1449,14 +1462,19 @@ struct MusicPromptFields: View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 ForEach($prompts) { $prompt in
-                    let number = (prompts.firstIndex { $0.id == prompt.id } ?? 0) + 1
+                    let promptID = prompt.id
+                    let number = (prompts.firstIndex { $0.id == promptID } ?? 0) + 1
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                         HStack {
                             Text("PROMPT \(number)").font(WorkbenchTypography.metadata.weight(.semibold))
                                 .foregroundStyle(WorkbenchColor.accent)
                             Spacer()
+                            ComparisonPromptActions(number: number,
+                                canMoveUp: prompts.first?.id != promptID, canMoveDown: prompts.last?.id != promptID,
+                                onDuplicate: { prompts.duplicatePrompt(id: promptID) },
+                                onMove: { prompts.movePrompt(id: promptID, direction: $0) })
                             if let onRemove {
-                                Button { onRemove(prompt.id) } label: { Image(systemName: "minus.circle") }
+                                Button { onRemove(promptID) } label: { Image(systemName: "minus.circle") }
                                     .buttonStyle(.borderless)
                                     .disabled(prompts.count <= 1)
                                     .accessibilityLabel("Remove prompt \(number)")
