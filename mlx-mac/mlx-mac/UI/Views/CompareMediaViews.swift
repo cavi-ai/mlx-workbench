@@ -1082,6 +1082,9 @@ struct ComparisonPromptSetEditor: View {
                   systemImage: "slider.horizontal.3").font(WorkbenchTypography.cardTitle)
             if draft.original == nil {
                 TextField("Set name", text: $draft.name).accessibilityLabel("Prompt set name")
+                if let message = draft.nameValidationError, !draft.name.isEmpty {
+                    ComparisonDraftValidationMessage(message: message)
+                }
             } else {
                 Text(draft.name).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
@@ -1116,6 +1119,7 @@ struct ComparisonPromptSetEditor: View {
                 }
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
+                .disabled(draft.validationError != nil)
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -1162,6 +1166,16 @@ private struct ComparisonPromptFields: View {
             }
         }.frame(maxHeight: WorkbenchSize.Compare.promptEditorHeight)
         .onDisappear { audio.stop() }
+    }
+}
+
+private struct ComparisonDraftValidationMessage: View {
+    let message: String
+
+    var body: some View {
+        Label(message, systemImage: "exclamationmark.circle")
+            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -1240,7 +1254,7 @@ private struct ComparisonPromptCard: View {
                     Label("Saved input from this run", systemImage: "archivebox")
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.accent)
                 }
-                if prompt.inputFileUnavailable {
+                if prompt.inputFileUnavailable, prompt.validationError(for: mode) == nil {
                     Label(prompt.usesSavedInput ? "Saved input unavailable · choose a replacement"
                         : "Input file unavailable · choose a replacement", systemImage: "exclamationmark.triangle")
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
@@ -1285,6 +1299,10 @@ private struct ComparisonPromptCard: View {
                     parameter("Steps", placeholder: "Model default", value: $prompt.steps)
                     parameter("Seed", placeholder: "Default: 42", value: $prompt.seed)
                 }
+            }
+            if let message = prompt.validationError(for: mode) {
+                ComparisonDraftValidationMessage(message: message)
+                    .accessibilityLabel("Prompt \(number): \(message)")
             }
         }
         .padding(WorkbenchSpacing.md)
@@ -1400,7 +1418,12 @@ struct ComparisonRunSetupSheet: View {
             ErrorBanner(text: error)
             if showingSaveName {
                 HStack(spacing: WorkbenchSpacing.sm) {
-                    TextField("Prompt set name", text: $saveName).accessibilityLabel("Saved prompt set name")
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        TextField("Prompt set name", text: $saveName).accessibilityLabel("Saved prompt set name")
+                        if let message = setup.savedDraft(named: saveName).nameValidationError, !saveName.isEmpty {
+                            ComparisonDraftValidationMessage(message: message)
+                        }
+                    }
                     Button("Save") {
                         let copy = setup.savedDraft(named: saveName)
                         let title = saveName
@@ -1411,6 +1434,7 @@ struct ComparisonRunSetupSheet: View {
                             saving = false
                         }
                     }
+                    .disabled(setup.savedDraft(named: saveName).validationError != nil)
                     Button { showingSaveName = false; error = nil } label: { Image(systemName: "xmark") }
                         .buttonStyle(.borderless).help("Cancel saving the prompt set")
                         .accessibilityLabel("Cancel saving the prompt set")
@@ -1441,6 +1465,7 @@ struct ComparisonRunSetupSheet: View {
                     } catch { self.error = error.localizedDescription }
                 }
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent).keyboardShortcut(.defaultAction)
+                .disabled(setup.draft.validationError != nil)
             }
         }
         .textFieldStyle(.roundedBorder)

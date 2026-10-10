@@ -274,6 +274,11 @@ from `mlx-agent` at runtime.
   invalid runtime parameter ranges are rejected at Save. Model-specific video
   alignment/frame grouping remain the engine's authority. The shared saved-set
   menu offers Edit/Rename/Remove in every mode, with built-in and active-run guards.
+  Non-music draft validation also supplies a concise inline warning within each
+  prompt card and disables Save/Use for invalid values in new, edited, copied
+  and reused setups. View-time validation shares the entry rules but performs
+  no file availability probes; Save/Use still recheck readable inputs. File
+  availability warnings remain in the input section without duplicate warnings.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening

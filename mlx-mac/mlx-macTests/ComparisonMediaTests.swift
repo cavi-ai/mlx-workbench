@@ -2324,6 +2324,91 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertFalse(coordinator.removePromptSet(id: BuiltinPromptSets.coding.id))
     }
 
+    func testInlineDraftValidationTracksEachPromptAndClearsAfterCorrection() throws {
+        var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+        XCTAssertNotNil(draft.nameValidationError)
+        draft.name = "Images"
+        draft.prompts[0].text = "A forest"
+        XCTAssertNil(draft.validationError)
+        draft.duplicatePrompt(id: draft.prompts[0].id)
+        draft.prompts[1].steps = "101"
+        XCTAssertNil(draft.prompts[0].validationError(for: draft.mode))
+        XCTAssertEqual(draft.prompts[1].validationError(for: draft.mode), "Steps must be a whole number from 1 to 100.")
+        XCTAssertEqual(draft.validationError, "Prompt 2: Steps must be a whole number from 1 to 100.")
+        draft.prompts[1].steps = "10"
+        draft.prompts[1].size = "513"
+        XCTAssertEqual(draft.prompts[1].validationError(for: draft.mode), "Image size must be a multiple of 16 pixels.")
+        draft.prompts[1].size = "512"
+        XCTAssertNil(draft.validationError)
+        XCTAssertEqual(try draft.promptSet().prompts.count, 2)
+        draft.name = "bad\nname"
+        XCTAssertNotNil(draft.nameValidationError)
+        XCTAssertEqual(draft.validationError, draft.nameValidationError)
+        draft.name = "Images"
+        draft.prompts[1] = draft.prompts[0]
+        XCTAssertNotNil(draft.validationError)
+        XCTAssertThrowsError(try draft.promptSet())
+    }
+
+    func testInlineValidationChecksValuesWithoutReadingInputFilesAndSaveRechecksAvailability() throws {
+        for mode in [ComparisonMode.chat, .vision, .videoUnderstanding, .speechToText, .textToSpeech, .imageGeneration, .videoGeneration] {
+            var draft = ComparisonPromptSetDraft(mode: mode)
+            draft.name = "Suite"
+            draft.prompts[0].text = "Prompt"
+            if mode.inputKind != nil {
+                XCTAssertNotNil(draft.validationError)
+                draft.prompts[0].inputPath = root.appendingPathComponent("absent.wav").path
+                XCTAssertNil(draft.validationError, "Inline validation must not read the filesystem")
+                XCTAssertThrowsError(try draft.promptSet(), "Save must still refuse missing inputs")
+                draft.prompts[0].inputPath = "relative.wav"
+                XCTAssertNotNil(draft.validationError)
+                draft.prompts[0].inputPath = "/bad\npath.wav"
+                XCTAssertNotNil(draft.validationError)
+            } else {
+                XCTAssertNil(draft.validationError)
+                XCTAssertNoThrow(try draft.promptSet())
+            }
+        }
+        var video = ComparisonPromptSetDraft(mode: .videoGeneration)
+        video.name = "Video"; video.prompts[0].text = "Waves"
+        video.prompts[0].fps = "61"
+        XCTAssertNotNil(video.validationError)
+        video.prompts[0].fps = ""
+        XCTAssertNil(video.validationError, "Blank settings remain valid runtime defaults")
+        video.prompts = []
+        XCTAssertNotNil(video.validationError)
+    }
+
+    @MainActor
+    func testInlineValidationEditorsRenderIssuesAndCorrectedValuesWithoutSaving() async throws {
+        for invalid in [true, false] {
+            var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+            draft.name = "Landscape studies"; draft.prompts[0].text = "A mountain lake at sunrise"
+            draft.prompts[0].size = invalid ? "513" : "512"
+            let content = ComparisonPromptSetEditor(draft: draft) { _ in
+                XCTFail("Rendering validation must never save or generate"); return nil
+            }.background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let title = invalid ? "invalid" : "corrected"
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Inline prompt validation · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_INLINE_VALIDATION_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
     func testLegacyVideoDefaultsRemainExactUntilSettingsAreChanged() throws {
         let set = PromptSet(id: "legacy-video", name: "Legacy", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "A forest")], origin: .userCreated, mode: .videoGeneration)

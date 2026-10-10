@@ -164,8 +164,11 @@ struct ComparisonPromptSetDraft: Identifiable {
         }
         var inputFileUnavailable: Bool {
             guard !inputPath.isEmpty else { return usesSavedInput }
-            return !inputPath.hasPrefix("/") || inputPath.unicodeScalars.contains(where: { $0.value < 32 })
-                || !ComparisonOutputStore.isReadableRegularFile(URL(fileURLWithPath: inputPath))
+            return invalidInputPath || !ComparisonOutputStore.isReadableRegularFile(URL(fileURLWithPath: inputPath))
+        }
+        private var invalidInputPath: Bool {
+            inputPath.isEmpty || !inputPath.hasPrefix("/")
+                || inputPath.unicodeScalars.contains(where: { $0.value < 32 })
         }
 
         init(_ entry: PromptEntry, mode: ComparisonMode, savedInput: Bool = false) {
@@ -190,7 +193,18 @@ struct ComparisonPromptSetDraft: Identifiable {
             return copy
         }
 
+        /// Value-only feedback for view evaluation; availability is authoritative
+        /// only when saving/applying, where the same validator checks the file.
+        func validationError(for mode: ComparisonMode) -> String? {
+            do { _ = try validatedEntry(for: mode, checkInputAvailability: false); return nil }
+            catch { return error.localizedDescription }
+        }
+
         func entry(for mode: ComparisonMode) throws -> PromptEntry {
+            try validatedEntry(for: mode, checkInputAvailability: true)
+        }
+
+        private func validatedEntry(for mode: ComparisonMode, checkInputAvailability: Bool) throws -> PromptEntry {
             func integer(_ value: String, _ title: String, _ range: ClosedRange<Int>) throws -> Int? {
                 let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty { return nil }
@@ -218,7 +232,7 @@ struct ComparisonPromptSetDraft: Identifiable {
                 if inputPath.isEmpty, builtinInput != nil {
                     // Preserve a recorded built-in fixture without materializing it.
                 } else {
-                    guard !inputPath.isEmpty, !inputFileUnavailable else {
+                    guard !invalidInputPath, !(checkInputAvailability && inputFileUnavailable) else {
                         throw InvalidDraft(message: "Choose a readable \(kind.rawValue) file. The recorded file may have moved.")
                     }
                 }
@@ -332,15 +346,30 @@ struct ComparisonPromptSetDraft: Identifiable {
         prompts.removeAll { $0.id == id }
     }
 
-    func promptSet() throws -> PromptSet {
+    var nameValidationError: String? {
         let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, !title.unicodeScalars.contains(where: { $0.value < 32 }) else {
-            throw InvalidDraft(message: "Enter a prompt set name without control characters.")
+        return title.isEmpty || title.unicodeScalars.contains(where: { $0.value < 32 })
+            ? "Enter a prompt set name without control characters." : nil
+    }
+
+    private var metadataValidationError: String? {
+        if let error = nameValidationError { return error }
+        return mode == .musicGeneration || prompts.isEmpty || prompts.contains(where: { $0.id.isEmpty })
+            || Set(prompts.map(\.id)).count != prompts.count
+            ? "At least one prompt with a unique identity is required." : nil
+    }
+
+    var validationError: String? {
+        if let error = metadataValidationError { return error }
+        for (index, prompt) in prompts.enumerated() {
+            if let error = prompt.validationError(for: mode) { return "Prompt \(index + 1): \(error)" }
         }
-        guard mode != .musicGeneration, !prompts.isEmpty,
-              !prompts.contains(where: { $0.id.isEmpty }), Set(prompts.map(\.id)).count == prompts.count else {
-            throw InvalidDraft(message: "At least one prompt with a unique identity is required.")
-        }
+        return nil
+    }
+
+    func promptSet() throws -> PromptSet {
+        if let error = metadataValidationError { throw InvalidDraft(message: error) }
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let entries = try prompts.enumerated().map { index, prompt in
             do { return try prompt.entry(for: mode) }
             catch { throw InvalidDraft(message: "Prompt \(index + 1): \(error.localizedDescription)") }
