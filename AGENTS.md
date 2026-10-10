@@ -320,6 +320,11 @@ from `mlx-agent` at runtime.
   any subsequent name edit enables feedback, including clearing the field.
   Rename also validates its initial value. Field edits never persist or run
   comparisons; existing Save eligibility and cancellation guards apply.
+  comparisonPromptActionHint supplies matching hover and accessibility hints
+  for Save, Rename, Save-as and Use setup across both editor families. Hints
+  prefer existing validation errors, then unchanged/pending-name guidance,
+  then the action description. They do not change action eligibility or save
+  behavior.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening
