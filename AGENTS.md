@@ -263,6 +263,12 @@ from `mlx-agent` at runtime.
   reordered and newly duplicated prompts, but rejects empty or repeated IDs;
   the durable original-snapshot check still rejects concurrent edits. A shared
   `PromptEntry` copy operation preserves hidden metadata under a new identity.
+  Music Add/Remove controls also work in saved-set and reuse editors, through
+  the same array operations as creation. Removal retains at least one prompt;
+  new entries share the existing instrumental/15-second/30-step/seed-42
+  defaults and require a valid caption before Save/Use. Reuse revalidates
+  nonempty unique prompt identities after draft changes. Draft mutations never
+  save state or generate audio, and surviving entries retain their identities.
   Drafts preserve unedited tool schemas, legacy mode/use-case metadata,
   optional fields and effective generation defaults; unreadable input files and
   invalid runtime parameter ranges are rejected at Save. Model-specific video
