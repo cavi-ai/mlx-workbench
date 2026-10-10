@@ -1152,6 +1152,22 @@ struct ComparisonPromptSetEditor: View {
 
 enum ComparisonPromptScrollLogic {
     struct Anchor: Hashable { let promptID: String }
+    struct Issue: Equatable {
+        let promptID: String
+        let number: Int
+        let message: String
+    }
+
+    static func firstIssue<Prompt: Identifiable>(in prompts: [Prompt],
+        error: (Prompt) -> String?) -> Issue? where Prompt.ID == String {
+        guard prompts.count > 1 else { return nil }
+        for (index, prompt) in prompts.enumerated() {
+            if let message = error(prompt) {
+                return Issue(promptID: prompt.id, number: index + 1, message: message)
+            }
+        }
+        return nil
+    }
 
     static func insertedID(before: [String], after: [String]) -> String? {
         let previous = Set(before)
@@ -1162,21 +1178,37 @@ enum ComparisonPromptScrollLogic {
 struct ComparisonPromptList<Content: View>: View {
     let promptIDs: [String]
     let maximumHeight: CGFloat
+    let issue: ComparisonPromptScrollLogic.Issue?
     let content: Content
 
     init(promptIDs: [String], maximumHeight: CGFloat = WorkbenchSize.Compare.promptEditorHeight,
-         @ViewBuilder content: () -> Content) {
-        self.promptIDs = promptIDs; self.maximumHeight = maximumHeight; self.content = content()
+         issue: ComparisonPromptScrollLogic.Issue? = nil, @ViewBuilder content: () -> Content) {
+        self.promptIDs = promptIDs; self.maximumHeight = maximumHeight
+        self.issue = issue; self.content = content()
     }
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView { content }
-                .onChange(of: promptIDs) { before, after in
-                    if let id = ComparisonPromptScrollLogic.insertedID(before: before, after: after) {
-                        proxy.scrollTo(ComparisonPromptScrollLogic.Anchor(promptID: id), anchor: .top)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                ScrollView { content }
+                    .onChange(of: promptIDs) { before, after in
+                        if let id = ComparisonPromptScrollLogic.insertedID(before: before, after: after) {
+                            proxy.scrollTo(ComparisonPromptScrollLogic.Anchor(promptID: id), anchor: .top)
+                        }
                     }
+                if let issue {
+                    Button {
+                        proxy.scrollTo(ComparisonPromptScrollLogic.Anchor(promptID: issue.promptID), anchor: .top)
+                    } label: {
+                        Label("Fix prompt \(issue.number)", systemImage: "exclamationmark.circle")
+                            .font(WorkbenchTypography.label)
+                            .foregroundStyle(WorkbenchColor.warning)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(issue.message)
+                    .accessibilityHint(issue.message)
                 }
+            }
         }.frame(maxHeight: maximumHeight)
     }
 }
@@ -1187,7 +1219,8 @@ struct ComparisonPromptFields: View {
     @StateObject private var audio = AudioClipPlayer()
 
     var body: some View {
-        ComparisonPromptList(promptIDs: draft.prompts.map(\.id)) {
+        ComparisonPromptList(promptIDs: draft.prompts.map(\.id),
+            issue: ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: draft.mode) }) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 ForEach($draft.prompts) { $prompt in
                     ComparisonPromptCard(prompt: $prompt, mode: draft.mode,
@@ -1521,7 +1554,8 @@ struct MusicPromptFields: View {
     @Binding var prompts: [MusicComparisonSetup.Prompt]
 
     var body: some View {
-        ComparisonPromptList(promptIDs: prompts.map(\.id), maximumHeight: WorkbenchSize.Compare.musicPromptEditorHeight) {
+        ComparisonPromptList(promptIDs: prompts.map(\.id), maximumHeight: WorkbenchSize.Compare.musicPromptEditorHeight,
+            issue: ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError })) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 ForEach($prompts) { $prompt in
                     let promptID = prompt.id
