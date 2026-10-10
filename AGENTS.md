@@ -279,6 +279,15 @@ from `mlx-agent` at runtime.
   and reused setups. View-time validation shares the entry rules but performs
   no file availability probes; Save/Use still recheck readable inputs. File
   availability warnings remain in the input section without duplicate warnings.
+  Music uses the same card-level feedback through `MusicComparisonSetup.Prompt`
+  entry validation. A shared music array validator rejects invalid identities
+  and labels prompt errors by current position for creation, saved edits and
+  reuse; draft errors do not also appear in a global banner. Name checks share
+  the save rules, and creation/copy Save is disabled until the draft is valid.
+  Both shared prompt field views use `ComparisonPromptList` to reveal newly
+  inserted prompt identities after Add/Duplicate. Initial rendering and
+  unchanged, reordered or removed identities do not request a scroll; normal
+  draft editing remains value-only, with no saves or generation side effects.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening

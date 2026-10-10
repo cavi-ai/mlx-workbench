@@ -1144,13 +1144,44 @@ struct ComparisonPromptSetEditor: View {
     }
 }
 
+enum ComparisonPromptScrollLogic {
+    struct Anchor: Hashable { let promptID: String }
+
+    static func insertedID(before: [String], after: [String]) -> String? {
+        let previous = Set(before)
+        return after.first { !$0.isEmpty && !previous.contains($0) }
+    }
+}
+
+struct ComparisonPromptList<Content: View>: View {
+    let promptIDs: [String]
+    let maximumHeight: CGFloat
+    let content: Content
+
+    init(promptIDs: [String], maximumHeight: CGFloat = WorkbenchSize.Compare.promptEditorHeight,
+         @ViewBuilder content: () -> Content) {
+        self.promptIDs = promptIDs; self.maximumHeight = maximumHeight; self.content = content()
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView { content }
+                .onChange(of: promptIDs) { before, after in
+                    if let id = ComparisonPromptScrollLogic.insertedID(before: before, after: after) {
+                        proxy.scrollTo(ComparisonPromptScrollLogic.Anchor(promptID: id), anchor: .top)
+                    }
+                }
+        }.frame(maxHeight: maximumHeight)
+    }
+}
+
 /// The same cards are used for new sets, saved-set edits and recorded-run reuse.
-private struct ComparisonPromptFields: View {
+struct ComparisonPromptFields: View {
     @Binding var draft: ComparisonPromptSetDraft
     @StateObject private var audio = AudioClipPlayer()
 
     var body: some View {
-        ScrollView {
+        ComparisonPromptList(promptIDs: draft.prompts.map(\.id)) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 ForEach($draft.prompts) { $prompt in
                     ComparisonPromptCard(prompt: $prompt, mode: draft.mode,
@@ -1162,9 +1193,10 @@ private struct ComparisonPromptFields: View {
                         onDuplicate: { draft.duplicatePrompt(id: prompt.id) },
                         onMove: { draft.movePrompt(id: prompt.id, direction: $0) },
                         onRemove: { draft.removePrompt(id: prompt.id) })
+                        .id(ComparisonPromptScrollLogic.Anchor(promptID: prompt.id))
                 }
             }
-        }.frame(maxHeight: WorkbenchSize.Compare.promptEditorHeight)
+        }
         .onDisappear { audio.stop() }
     }
 }
@@ -1483,7 +1515,7 @@ struct MusicPromptFields: View {
     @Binding var prompts: [MusicComparisonSetup.Prompt]
 
     var body: some View {
-        ScrollView {
+        ComparisonPromptList(promptIDs: prompts.map(\.id), maximumHeight: WorkbenchSize.Compare.musicPromptEditorHeight) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 ForEach($prompts) { $prompt in
                     let promptID = prompt.id
@@ -1518,12 +1550,17 @@ struct MusicPromptFields: View {
                             parameter("Steps", defaultValue: "Default: 30", value: $prompt.steps)
                             parameter("Seed", defaultValue: "Default: 42", value: $prompt.seed)
                         }
+                        if let message = prompt.validationError {
+                            ComparisonDraftValidationMessage(message: message)
+                                .accessibilityLabel("Prompt \(number): \(message)")
+                        }
                     }
                     .padding(WorkbenchSpacing.md)
                     .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+                    .id(ComparisonPromptScrollLogic.Anchor(promptID: promptID))
                 }
             }
-        }.frame(maxHeight: WorkbenchSize.Compare.musicPromptEditorHeight)
+        }
     }
 
     private func parameter(_ title: String, defaultValue: String, value: Binding<String>) -> some View {
@@ -1545,10 +1582,13 @@ struct MusicPromptSetCreateSheet: View {
             Label("New music prompt set", systemImage: "music.note.list")
                 .font(WorkbenchTypography.cardTitle)
             TextField("Set name", text: $draft.name).accessibilityLabel("Music prompt set name")
+            if let message = draft.nameValidationError, !draft.name.isEmpty {
+                ComparisonDraftValidationMessage(message: message)
+            }
             MusicPromptFields(prompts: $draft.prompts)
             Text("Settings apply to each prompt. Duration is a maximum request. Blank settings use the current defaults. Saving does not generate audio.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            ErrorBanner(text: error)
+            ErrorBanner(text: error ?? draft.prompts.identityValidationError)
             HStack {
                 Button { draft.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
                 Spacer()
@@ -1559,6 +1599,7 @@ struct MusicPromptSetCreateSheet: View {
                 }
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
+                .disabled(draft.validationError != nil)
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -1617,7 +1658,7 @@ struct MusicPromptSetEditSheet: View {
             MusicPromptFields(prompts: $edit.prompts)
             Text("Save changes to this set. Blank settings use the current defaults. Past runs keep their recorded inputs, audio and ratings.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            ErrorBanner(text: error ?? edit.validationError)
+            ErrorBanner(text: error ?? edit.prompts.identityValidationError)
             HStack {
                 Button { edit.prompts.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
                 Spacer()
@@ -1720,13 +1761,18 @@ struct MusicComparisonSetupSheet: View {
             MusicPromptFields(prompts: $setup.prompts)
             Text("Temporary inputs for a new run. Blank settings use the current defaults. Saved results and listening ratings stay with the original run.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            ErrorBanner(text: applyError ?? setup.validationError)
+            ErrorBanner(text: applyError ?? setup.prompts.identityValidationError)
             if showingSaveName {
                 HStack(spacing: WorkbenchSpacing.sm) {
-                    TextField("Prompt set name", text: $saveName)
-                        .accessibilityLabel("Saved music prompt set name")
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        TextField("Prompt set name", text: $saveName)
+                            .accessibilityLabel("Saved music prompt set name")
+                        if let message = MusicComparisonSetup.nameValidationError(saveName), !saveName.isEmpty {
+                            ComparisonDraftValidationMessage(message: message)
+                        }
+                    }
                     Button("Save") { savePromptSet() }
-                        .disabled(saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || setup.validationError != nil)
+                        .disabled(MusicComparisonSetup.nameValidationError(saveName) != nil || setup.validationError != nil)
                     Button { showingSaveName = false; applyError = nil } label: { Image(systemName: "xmark") }
                         .buttonStyle(.borderless).help("Cancel saving the prompt set")
                         .accessibilityLabel("Cancel saving the prompt set")

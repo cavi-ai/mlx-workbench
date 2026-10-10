@@ -33,6 +33,37 @@ private struct PromptPreviewFixtureView: View {
 }
 
 @MainActor
+private final class PromptEditorScrollFixture: ObservableObject {
+    @Published var draft: ComparisonPromptSetDraft
+    @Published var music: [MusicComparisonSetup.Prompt]
+
+    init() {
+        var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+        draft.name = "Scenes"
+        for _ in 0..<3 { draft.addPrompt() }
+        for index in draft.prompts.indices { draft.prompts[index].text = "Landscape \(index + 1)" }
+        self.draft = draft
+        music = (1...4).map { MusicComparisonSetup.Prompt(PromptEntry(id: "music-\($0)", text: "Solo piano \($0)")) }
+    }
+}
+
+private struct PromptEditorScrollFixtureView: View {
+    @ObservedObject var fixture: PromptEditorScrollFixture
+    let music: Bool
+
+    var body: some View {
+        Group {
+            if music { MusicPromptFields(prompts: $fixture.music) }
+            else { ComparisonPromptFields(draft: $fixture.draft) }
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(width: 620, height: 440)
+        .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+    }
+}
+
+@MainActor
 private final class StubAudioPlayback: AudioClipPlayback {
     var currentTime: TimeInterval = 0
     let duration: TimeInterval
@@ -2401,6 +2432,172 @@ final class ComparisonMediaTests: XCTestCase {
             let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
             attachment.name = "Inline prompt validation · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
             if let path = ProcessInfo.processInfo.environment["MLX_INLINE_VALIDATION_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    func testMusicInlineValidationIdentifiesThePromptAcrossCreateEditAndReuse() throws {
+        var draft = MusicPromptSetDraft(); draft.name = "Instrumentals"
+        draft.prompts[0].caption = "Solo piano"
+        draft.addPrompt(); draft.prompts[1].caption = "Acoustic guitar"
+        let saved = try draft.promptSet()
+        draft.prompts[1].steps = "31"
+        let message = "Steps must be a whole number from 1 to 30."
+        XCTAssertNil(draft.prompts[0].validationError)
+        XCTAssertEqual(draft.prompts[1].validationError, message)
+        XCTAssertEqual(draft.validationError, "Prompt 2: \(message)")
+        var edit = try MusicPromptSetEdit(set: saved)
+        edit.prompts = draft.prompts
+        XCTAssertEqual(edit.validationError, draft.validationError)
+        var run = historyRun(.musicGeneration, saved.name, at: 100)
+        run.promptEntries = saved.prompts
+        var setup = try MusicComparisonSetup(run: run)
+        setup.prompts = draft.prompts
+        XCTAssertEqual(setup.validationError, draft.validationError)
+        setup.prompts.movePrompt(id: setup.prompts[1].id, direction: .up)
+        XCTAssertEqual(setup.validationError, "Prompt 1: \(message)")
+        draft.prompts[1].steps = "30"
+        XCTAssertNil(draft.validationError)
+        XCTAssertEqual(try draft.promptSet(), saved, "Correcting a value preserves identities and metadata")
+        for field in ["", "nan", "0", "361"] {
+            draft.prompts[1].duration = field
+            if field.isEmpty { XCTAssertNil(draft.validationError) }
+            else { XCTAssertNotNil(draft.prompts[1].validationError) }
+        }
+    }
+
+    func testMusicInlineValidationKeepsNamesAndDefaultsConsistentWithSave() throws {
+        var draft = MusicPromptSetDraft()
+        XCTAssertNotNil(draft.nameValidationError)
+        XCTAssertEqual(draft.validationError, draft.nameValidationError)
+        draft.name = "Solo"
+        XCTAssertNotNil(draft.prompts[0].validationError)
+        draft.prompts[0].caption = "Piano"
+        for name in ["", " \n ", "bad\nname", "bad\u{0}"] {
+            draft.name = name
+            XCTAssertNotNil(draft.nameValidationError)
+            XCTAssertThrowsError(try draft.promptSet())
+        }
+        draft.name = " Solo "
+        draft.prompts[0].lyrics = ""; draft.prompts[0].duration = ""
+        draft.prompts[0].steps = ""; draft.prompts[0].seed = ""
+        XCTAssertNil(draft.validationError)
+        XCTAssertEqual(try draft.promptSet().name, "Solo")
+        XCTAssertEqual(try draft.promptSet().prompts[0].media, MediaParameters())
+        draft.prompts[0].seed = "-1"
+        XCTAssertNotNil(draft.validationError)
+        draft.prompts[0].seed = ""
+        draft.prompts.append(draft.prompts[0])
+        XCTAssertNotNil(draft.validationError)
+        XCTAssertThrowsError(try draft.promptSet())
+        draft.prompts = []
+        XCTAssertNotNil(draft.validationError)
+    }
+
+    @MainActor
+    func testMusicInlineValidationRendersCreateEditAndReuseWithoutSavingOrGenerating() async throws {
+        for invalid in [true, false] {
+            var draft = MusicPromptSetDraft(); draft.name = "Instrumental studies"
+            draft.prompts[0].caption = "Warm solo piano, a gentle melody, no vocals"
+            draft.prompts[0].duration = invalid ? "361" : "15"
+            let set = PromptSet(id: "fixture", name: draft.name, useCase: nil,
+                prompts: [PromptEntry(id: "p", text: draft.prompts[0].caption)], origin: .userCreated, mode: .musicGeneration)
+            var edit = try MusicPromptSetEdit(set: set); edit.prompts = draft.prompts
+            var run = historyRun(.musicGeneration, draft.name, at: 100, models: ["/music/model"])
+            run.promptEntries = set.prompts
+            var setup = try MusicComparisonSetup(run: run); setup.prompts = draft.prompts
+            let fixtures: [(String, AnyView)] = [
+                ("create", AnyView(MusicPromptSetCreateSheet(draft: draft) { _ in
+                    XCTFail("Validation must not save or generate"); return nil
+                })),
+                ("edit", AnyView(MusicPromptSetEditSheet(edit: edit) { _ in
+                    XCTFail("Validation must not save edits or generate"); return nil
+                })),
+                ("reuse", AnyView(MusicComparisonSetupSheet(setup: setup, availablePaths: ["/music/model"],
+                    name: { _ in "Music model" }, onApply: { _, _ in XCTFail("Validation must not apply or generate") },
+                    onSave: { _ in XCTFail("Validation must not save") })))
+            ]
+            for (kind, content) in fixtures {
+                let host = NSHostingView(rootView: content.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 620),
+                    styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                try await Task.sleep(for: .milliseconds(150))
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                let title = "\(kind)-\(invalid ? "invalid" : "corrected")"
+                let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                attachment.name = "Music inline validation · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
+                if let path = ProcessInfo.processInfo.environment["MLX_MUSIC_INLINE_PROOF_DIR"] {
+                    try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
+                }
+                window.close()
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    func testPromptScrollTargetsOnlyNewIdentities() {
+        XCTAssertEqual(ComparisonPromptScrollLogic.insertedID(before: ["a", "b"], after: ["a", "b", "c"]), "c")
+        XCTAssertEqual(ComparisonPromptScrollLogic.insertedID(before: ["a", "b"], after: ["a", "copy", "b"]), "copy")
+        XCTAssertNil(ComparisonPromptScrollLogic.insertedID(before: ["a", "b"], after: ["b", "a"]))
+        XCTAssertNil(ComparisonPromptScrollLogic.insertedID(before: ["a", "b"], after: ["b"]))
+        XCTAssertNil(ComparisonPromptScrollLogic.insertedID(before: ["a", "b"], after: ["a", "b"]))
+        XCTAssertNil(ComparisonPromptScrollLogic.insertedID(before: ["a"], after: []))
+    }
+
+    @MainActor
+    func testPromptEditorsRevealAddedAndDuplicatedCardsWithoutSaving() async throws {
+        func scrollViews(in view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
+        }
+        for music in [false, true] {
+            let fixture = PromptEditorScrollFixture()
+            let host = NSHostingView(rootView: PromptEditorScrollFixtureView(fixture: fixture, music: music))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            let scroll = try XCTUnwrap(scrollViews(in: host).max {
+                ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0)
+            })
+            let initial = scroll.documentVisibleRect.minY
+            let initialDocumentHeight = try XCTUnwrap(scroll.documentView).bounds.height
+            if music { fixture.music.addPrompt() } else { fixture.draft.addPrompt() }
+            try await Task.sleep(for: .milliseconds(250))
+            host.layoutSubtreeIfNeeded()
+            let added = scroll.documentVisibleRect.minY
+            XCTAssertGreaterThan(abs(added - initial), 100, "Adding must reveal the new card")
+            if music { fixture.music.duplicatePrompt(id: fixture.music[0].id) }
+            else { fixture.draft.duplicatePrompt(id: fixture.draft.prompts[0].id) }
+            try await Task.sleep(for: .milliseconds(250))
+            host.layoutSubtreeIfNeeded()
+            let duplicated = scroll.documentVisibleRect.minY
+            XCTAssertGreaterThan(abs(duplicated - added), 100, "Duplicating must reveal the new adjacent card")
+            // The four initial fixture cards have identical heights. Prompt 2
+            // must start at the top, including its heading and action controls.
+            XCTAssertEqual(duplicated - initial, (initialDocumentHeight + WorkbenchSpacing.md) / 4,
+                accuracy: 2, "The new card's heading must not be clipped")
+            if music { fixture.music[1].caption = "Solo cello 1" }
+            else { fixture.draft.prompts[1].text = "Seascape 1" }
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(scroll.documentVisibleRect.minY, duplicated, accuracy: 2, "Typing must retain the scroll position")
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let title = music ? "music" : "image"
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Revealed duplicate · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_SCROLL_PROOF_DIR"] {
                 try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
             }
             window.close()
