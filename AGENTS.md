@@ -288,6 +288,10 @@ from `mlx-agent` at runtime.
   inserted prompt identities after Add/Duplicate. Initial rendering and
   unchanged, reordered or removed identities do not request a scroll; normal
   draft editing remains value-only, with no saves or generation side effects.
+  Multi-prompt field views show a shared Fix prompt N action below the scroll
+  area, targeting the first value-invalid card by current order and stable
+  identity. Validation is value-only and never requests an automatic jump;
+  clicking the action only scrolls, and single-card editors omit it.
   Saved non-music and music editors compare full prompt draft values to their
   immutable opened snapshot (`hasChanges`), including raw invalid input and
   identity/order changes. Save is disabled for unchanged drafts; Revert resets

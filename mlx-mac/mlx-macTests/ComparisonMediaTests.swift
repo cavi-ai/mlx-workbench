@@ -2553,6 +2553,106 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertNil(ComparisonPromptScrollLogic.insertedID(before: ["a"], after: []))
     }
 
+    func testPromptIssueNavigationTracksCurrentOrderAndRawValidation() throws {
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            var original = mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode)
+            original.origin = .userCreated
+            var draft = try ComparisonPromptSetDraft(set: original)
+            draft.duplicatePrompt(id: draft.prompts[0].id)
+            XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) })
+            let id = draft.prompts[1].id
+            draft.prompts[1].text = "\u{0001}"
+            let before = draft.prompts
+            let issue = try XCTUnwrap(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) })
+            XCTAssertEqual(issue.promptID, id)
+            XCTAssertEqual(issue.number, 2)
+            XCTAssertEqual(issue.message, draft.prompts[1].validationError(for: mode))
+            XCTAssertEqual(draft.prompts, before, "Navigation must not mutate draft values")
+            draft.movePrompt(id: id, direction: .up)
+            XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) }?.number, 1)
+            draft.prompts[0].text = "Corrected"
+            XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) })
+            draft.prompts[0].text = "\u{0001}"
+            draft.removePrompt(id: id)
+            XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) }, "Single-card editors need no jump action")
+        }
+        var prompts = (1...3).map { MusicComparisonSetup.Prompt(PromptEntry(id: "music-\($0)", text: "Piano")) }
+        prompts[1].duration = "invalid"
+        prompts[2].steps = "invalid"
+        XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError })?.promptID, "music-2")
+        prompts.movePrompt(id: "music-3", direction: .up)
+        XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError })?.promptID, "music-3")
+        prompts.removePrompt(id: "music-3")
+        XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError })?.number, 2)
+        prompts[1].duration = "15"
+        XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError }))
+        prompts[0].steps = "bad"
+        prompts.removePrompt(id: "music-2")
+        XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError }))
+    }
+
+    @MainActor
+    func testPromptEditorsJumpToHiddenInvalidCardOnlyOnRequest() async throws {
+        func scrollViews(in view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
+        }
+        func navigationButtons(in view: NSView) -> [NSButton] {
+            // Card controls are inside the scroll view; the compact issue action
+            // is the shared field view's only button outside that scroll area.
+            if view is NSScrollView { return [] }
+            if let button = view as? NSButton { return [button] }
+            return view.subviews.flatMap { navigationButtons(in: $0) }
+        }
+        for music in [false, true] {
+            let fixture = PromptEditorScrollFixture()
+            let host = NSHostingView(rootView: PromptEditorScrollFixtureView(fixture: fixture, music: music))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(200))
+            let scroll = try XCTUnwrap(scrollViews(in: host).max {
+                ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0)
+            })
+            let initial = scroll.documentVisibleRect.minY
+            if music { fixture.music[3].duration = "invalid" }
+            else { fixture.draft.prompts[3].steps = "invalid" }
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(scroll.documentVisibleRect.minY, initial, accuracy: 2, "Validation must not request an automatic jump")
+            let buttons = navigationButtons(in: host)
+            XCTAssertEqual(buttons.count, 1)
+            let button = try XCTUnwrap(buttons.first)
+            let draftBefore = fixture.draft.prompts
+            let musicBefore = fixture.music
+            button.performClick(nil)
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertGreaterThan(scroll.documentVisibleRect.minY - initial, 100, "The invalid card must be revealed")
+            XCTAssertEqual(fixture.draft.prompts, draftBefore)
+            XCTAssertEqual(fixture.music, musicBefore)
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let title = music ? "music" : "image"
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Revealed invalid prompt · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_ISSUE_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
+            }
+            let revealed = scroll.documentVisibleRect.minY
+            if music { fixture.music[3].duration = "15" }
+            else { fixture.draft.prompts[3].steps = "20" }
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertTrue(navigationButtons(in: host).isEmpty, "Correcting the error removes the action")
+            // Removing the footer may clamp the viewport, but must retain the corrected card.
+            XCTAssertGreaterThan(scroll.documentVisibleRect.minY - initial, 100)
+            XCTAssertLessThan(abs(scroll.documentVisibleRect.minY - revealed), 100)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
     @MainActor
     func testPromptEditorsRevealAddedAndDuplicatedCardsWithoutSaving() async throws {
         func scrollViews(in view: NSView) -> [NSScrollView] {
