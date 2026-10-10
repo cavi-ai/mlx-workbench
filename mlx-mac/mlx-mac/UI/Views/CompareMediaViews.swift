@@ -1545,21 +1545,31 @@ struct MusicPromptSetCreateSheet: View {
 struct PromptSetActions: View {
     let name: String?
     let isEnabled: Bool
+    var isCopyEnabled = false
     let onEdit: () -> Void
     let onRename: () -> Void
     let onRemove: () -> Void
+    var onCopy: (() -> Void)? = nil
 
     var body: some View {
         Menu {
-            Button("Edit…", systemImage: "slider.horizontal.3", action: onEdit)
-            Button("Rename…", systemImage: "pencil", action: onRename)
-            Button("Remove…", systemImage: "trash", role: .destructive, action: onRemove)
+            if let onCopy {
+                Button("Customize copy…", systemImage: "doc.on.doc", action: onCopy).disabled(!isCopyEnabled)
+            }
+            if isEnabled {
+                if onCopy != nil { Divider() }
+                Button("Edit…", systemImage: "slider.horizontal.3", action: onEdit)
+                Button("Rename…", systemImage: "pencil", action: onRename)
+                Button("Remove…", systemImage: "trash", role: .destructive, action: onRemove)
+            }
         } label: { Image(systemName: "ellipsis.circle") }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .disabled(!isEnabled)
+            .disabled(!isEnabled && !isCopyEnabled)
             .accessibilityLabel("Manage saved prompt set")
-            .help(isEnabled ? "Manage \(name ?? "prompt set")" : "Select a saved prompt set; built-ins and temporary setups cannot be changed.")
+            .help(isEnabled ? "Manage \(name ?? "prompt set")"
+                : isCopyEnabled ? "Customize a copy of \(name ?? "prompt set")"
+                : "Select a prompt set after the current save or comparison finishes.")
     }
 }
 

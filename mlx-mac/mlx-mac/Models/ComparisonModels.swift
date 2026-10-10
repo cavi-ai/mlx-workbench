@@ -292,6 +292,16 @@ struct ComparisonPromptSetDraft: Identifiable {
         prompts = set.prompts.map { Prompt($0, mode: set.effectiveMode) }
     }
 
+    init(copying set: PromptSet) throws {
+        self.init(mode: set.effectiveMode, useCase: set.useCase)
+        guard set.effectiveMode != .musicGeneration, !set.prompts.isEmpty,
+              !set.prompts.contains(where: { $0.id.isEmpty }), Set(set.prompts.map(\.id)).count == set.prompts.count else {
+            throw InvalidDraft(message: "Select a prompt set with valid prompt identities to copy.")
+        }
+        name = "\(set.name) copy"
+        prompts = set.prompts.map { Prompt($0, mode: set.effectiveMode) }
+    }
+
     private static func defaultParameters(for mode: ComparisonMode) -> MediaParameters? {
         switch mode {
         case .imageGeneration: MediaParameters(size: 512, steps: 20, seed: 42)
@@ -540,10 +550,22 @@ extension Array where Element == MusicComparisonSetup.Prompt {
 
 /// New music inputs stay in memory until an explicit save. Each prompt uses
 /// the same validation and generation fields as saved-set editing and reuse.
-struct MusicPromptSetDraft {
-    private let id = UUID().uuidString
+struct MusicPromptSetDraft: Identifiable {
+    let id = UUID().uuidString
+    private var copiedUseCase: UseCase? = nil
     var name = ""
     var prompts: [MusicComparisonSetup.Prompt] = [.newPrompt()]
+
+    init() {}
+    init(copying set: PromptSet) throws {
+        guard set.effectiveMode == .musicGeneration, !set.prompts.isEmpty,
+              !set.prompts.contains(where: { $0.id.isEmpty }), Set(set.prompts.map(\.id)).count == set.prompts.count else {
+            throw MusicComparisonSetup.InvalidSetup(message: "Select a music prompt set with valid prompt identities to copy.")
+        }
+        name = "\(set.name) copy"
+        copiedUseCase = set.useCase
+        prompts = set.prompts.map(MusicComparisonSetup.Prompt.init)
+    }
 
     mutating func addPrompt() { prompts.addPrompt() }
     mutating func removePrompt(id: String) { prompts.removePrompt(id: id) }
@@ -557,7 +579,7 @@ struct MusicPromptSetDraft {
               Set(prompts.map(\.id)).count == prompts.count else {
             throw MusicComparisonSetup.InvalidSetup(message: "At least one prompt with a unique identity is required.")
         }
-        return PromptSet(id: id, name: title, useCase: nil,
+        return PromptSet(id: id, name: title, useCase: copiedUseCase,
             prompts: try prompts.map { try $0.entry() }, origin: .userCreated, mode: .musicGeneration)
     }
 }

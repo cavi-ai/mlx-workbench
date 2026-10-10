@@ -2512,6 +2512,112 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
+    func testCustomizingBuiltinPromptSetsPreservesSettingsAndCreatesIndependentSetsInEveryMode() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        for mode in ComparisonMode.allCases {
+            var source: PromptSet
+            if mode == .chat { source = BuiltinPromptSets.toolCalling }
+            else { source = try XCTUnwrap(ComparisonMediaFixtures.all.first { $0.effectiveMode == mode }) }
+            if mode == .musicGeneration { source.useCase = .coding }
+            XCTAssertEqual(source.origin, .builtin)
+            let saved: PromptSet
+            if mode == .musicGeneration {
+                let draft = try MusicPromptSetDraft(copying: source)
+                saved = try XCTUnwrap(coordinator.createMusicPromptSet(draft))
+            } else {
+                let draft = try ComparisonPromptSetDraft(copying: source)
+                XCTAssertNil(draft.original)
+                let created = await coordinator.createPromptSetWithInputCopies(draft)
+                saved = try XCTUnwrap(created)
+            }
+            XCTAssertNotEqual(saved.id, source.id)
+            XCTAssertEqual(saved.name, "\(source.name) copy")
+            XCTAssertEqual(saved.prompts, source.prompts)
+            XCTAssertEqual(saved.useCase, source.useCase)
+            XCTAssertEqual(saved.effectiveMode, mode)
+            XCTAssertEqual(saved.origin, .userCreated)
+            XCTAssertTrue(coordinator.canManagePromptSet(id: saved.id))
+            XCTAssertFalse(coordinator.canManagePromptSet(id: source.id))
+            XCTAssertEqual(makeCoordinator(runner: runner).promptSets.first { $0.id == saved.id }, saved)
+        }
+        XCTAssertTrue(coordinator.runs.isEmpty)
+        let requests = await runner.requests
+        XCTAssertTrue(requests.isEmpty, "Copying or saving presets must not generate")
+        let malformed = PromptSet(id: "invalid", name: "Invalid", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "One"), PromptEntry(id: "p", text: "Two")], origin: .userCreated)
+        XCTAssertThrowsError(try ComparisonPromptSetDraft(copying: malformed))
+        var music = malformed; music.mode = .musicGeneration
+        XCTAssertThrowsError(try MusicPromptSetDraft(copying: music))
+        music.prompts = []
+        XCTAssertThrowsError(try MusicPromptSetDraft(copying: music))
+        XCTAssertThrowsError(try ComparisonPromptSetDraft(copying: promptSet(for: .musicGeneration)))
+        XCTAssertThrowsError(try MusicPromptSetDraft(copying: BuiltinPromptSets.coding))
+    }
+
+    @MainActor
+    func testCopiedSavedPromptSetOwnsInputsAndSurvivesRemovingItsSource() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        let input = root.appendingPathComponent("Bird reference.png")
+        try Data("reference input".utf8).write(to: input)
+        var draft = ComparisonPromptSetDraft(mode: .vision)
+        draft.name = "Bird suite"; draft.prompts[0].text = "Describe this bird"
+        draft.prompts[0].inputPath = input.path
+        let created = await coordinator.createPromptSetWithInputCopies(draft)
+        let source = try XCTUnwrap(created)
+        let setsURL = root.appendingPathComponent("sets.json"), before = try Data(contentsOf: setsURL)
+        var copy = try ComparisonPromptSetDraft(copying: source)
+        XCTAssertEqual(try Data(contentsOf: setsURL), before, "Opening a copy must not write")
+        copy.prompts[0].text = "What color is the bird?"
+        let savedCopy = await coordinator.createPromptSetWithInputCopies(copy)
+        let saved = try XCTUnwrap(savedCopy)
+        XCTAssertEqual(saved.prompts.count, 1)
+        XCTAssertEqual(saved.prompts.first?.inputDisplayName, "Bird reference.png")
+        XCTAssertNotEqual(saved.inputStorageID, source.inputStorageID)
+        let copiedPath = try XCTUnwrap(saved.prompts.first?.inputPath)
+        XCTAssertNotEqual(copiedPath, source.prompts[0].inputPath)
+        XCTAssertEqual(coordinator.promptSets.first { $0.id == source.id }, source)
+        XCTAssertTrue(coordinator.removePromptSet(id: source.id))
+        try FileManager.default.removeItem(at: input)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: copiedPath)), Data("reference input".utf8))
+        XCTAssertEqual(makeCoordinator(runner: runner).promptSets.first { $0.id == saved.id }, saved)
+        let requests = await runner.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    @MainActor
+    func testBuiltinCopyEditorsRenderRecordedSettingsWithoutSaving() async throws {
+        for mode in [ComparisonMode.chat, .musicGeneration] {
+            let content: AnyView
+            if mode == .chat {
+                content = AnyView(ComparisonPromptSetEditor(draft: try ComparisonPromptSetDraft(copying: BuiltinPromptSets.toolCalling)) { _ in
+                    XCTFail("Opening a preset copy must not save or run"); return nil
+                })
+            } else {
+                content = AnyView(MusicPromptSetCreateSheet(draft: try MusicPromptSetDraft(copying: promptSet(for: mode))) { _ in
+                    XCTFail("Opening a music preset copy must not save or generate"); return nil
+                })
+            }
+            let host = NSHostingView(rootView: content.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 600),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Customize \(mode.title) preset"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_COPY_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(mode.rawValue).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    @MainActor
     func testNewMusicPromptSetPersistsIndependentSettingsWithoutGenerating() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
         var draft = MusicPromptSetDraft()
