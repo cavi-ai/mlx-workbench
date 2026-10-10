@@ -1456,7 +1456,6 @@ struct ComparisonRunSetupSheet: View {
 /// Shared fields for creation, saved-set editing and recorded-run reuse.
 struct MusicPromptFields: View {
     @Binding var prompts: [MusicComparisonSetup.Prompt]
-    var onRemove: ((String) -> Void)?
 
     var body: some View {
         ScrollView {
@@ -1473,13 +1472,11 @@ struct MusicPromptFields: View {
                                 canMoveUp: prompts.first?.id != promptID, canMoveDown: prompts.last?.id != promptID,
                                 onDuplicate: { prompts.duplicatePrompt(id: promptID) },
                                 onMove: { prompts.movePrompt(id: promptID, direction: $0) })
-                            if let onRemove {
-                                Button { onRemove(promptID) } label: { Image(systemName: "minus.circle") }
-                                    .buttonStyle(.borderless)
-                                    .disabled(prompts.count <= 1)
-                                    .accessibilityLabel("Remove prompt \(number)")
-                                    .help("Remove this prompt; at least one prompt is required.")
-                            }
+                            Button { prompts.removePrompt(id: promptID) } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.borderless)
+                                .disabled(prompts.count <= 1)
+                                .accessibilityLabel("Remove prompt \(number)")
+                                .help("Remove this prompt; at least one prompt is required.")
                         }
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                             Text("Caption").font(WorkbenchTypography.label)
@@ -1523,7 +1520,7 @@ struct MusicPromptSetCreateSheet: View {
             Label("New music prompt set", systemImage: "music.note.list")
                 .font(WorkbenchTypography.cardTitle)
             TextField("Set name", text: $draft.name).accessibilityLabel("Music prompt set name")
-            MusicPromptFields(prompts: $draft.prompts, onRemove: { draft.removePrompt(id: $0) })
+            MusicPromptFields(prompts: $draft.prompts)
             Text("Settings apply to each prompt. Duration is a maximum request. Blank settings use the current defaults. Saving does not generate audio.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             ErrorBanner(text: error)
@@ -1587,6 +1584,7 @@ struct MusicPromptSetEditSheet: View {
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             ErrorBanner(text: error ?? edit.validationError)
             HStack {
+                Button { edit.prompts.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save changes") {
@@ -1704,6 +1702,7 @@ struct MusicComparisonSetupSheet: View {
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.success)
             }
             HStack {
+                Button { setup.prompts.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
                 Button("Save as prompt set…") {
                     saveName = "\(setup.sourceName) copy"
                     showingSaveName = true

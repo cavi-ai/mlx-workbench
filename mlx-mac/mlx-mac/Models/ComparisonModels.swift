@@ -415,6 +415,11 @@ struct MusicComparisonSetup: Identifiable {
             seed = entry.media?.seed.map { String($0) } ?? ""
         }
 
+        fileprivate static func newPrompt() -> Self {
+            Self(PromptEntry(id: UUID().uuidString, text: "",
+                media: MediaParameters(steps: 30, seed: 42, durationSeconds: 15, lyrics: "[instrumental]")))
+        }
+
         fileprivate func duplicated() -> Self {
             var copy = self
             copy.original = original.duplicated()
@@ -498,7 +503,10 @@ struct MusicComparisonSetup: Identifiable {
     }
 
     private func validatedPrompts() throws -> [PromptEntry] {
-        guard !prompts.isEmpty else { throw InvalidSetup(message: "At least one prompt is required.") }
+        guard !prompts.isEmpty, !prompts.contains(where: { $0.id.isEmpty }),
+              Set(prompts.map(\.id)).count == prompts.count else {
+            throw InvalidSetup(message: "At least one prompt with a unique identity is required.")
+        }
         return try prompts.map { try $0.entry() }
     }
 
@@ -513,6 +521,11 @@ struct MusicComparisonSetup: Identifiable {
 }
 
 extension Array where Element == MusicComparisonSetup.Prompt {
+    mutating func addPrompt() { append(.newPrompt()) }
+    mutating func removePrompt(id: String) {
+        guard count > 1 else { return }
+        removeAll { $0.id == id }
+    }
     mutating func duplicatePrompt(id: String) {
         guard let index = firstIndex(where: { $0.id == id }) else { return }
         insert(self[index].duplicated(), at: index + 1)
@@ -530,19 +543,10 @@ extension Array where Element == MusicComparisonSetup.Prompt {
 struct MusicPromptSetDraft {
     private let id = UUID().uuidString
     var name = ""
-    var prompts: [MusicComparisonSetup.Prompt] = [newPrompt()]
+    var prompts: [MusicComparisonSetup.Prompt] = [.newPrompt()]
 
-    private static func newPrompt() -> MusicComparisonSetup.Prompt {
-        MusicComparisonSetup.Prompt(PromptEntry(id: UUID().uuidString, text: "",
-            media: MediaParameters(steps: 30, seed: 42, durationSeconds: 15, lyrics: "[instrumental]")))
-    }
-
-    mutating func addPrompt() { prompts.append(Self.newPrompt()) }
-
-    mutating func removePrompt(id: String) {
-        guard prompts.count > 1 else { return }
-        prompts.removeAll { $0.id == id }
-    }
+    mutating func addPrompt() { prompts.addPrompt() }
+    mutating func removePrompt(id: String) { prompts.removePrompt(id: id) }
 
     func promptSet() throws -> PromptSet {
         let title = name.trimmingCharacters(in: .whitespacesAndNewlines)

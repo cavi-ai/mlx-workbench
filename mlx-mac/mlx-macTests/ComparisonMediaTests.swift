@@ -2442,6 +2442,76 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicEditAndReuseAddRemovePreservesDefaultsHistoryAndIndependentInputs() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        let original = PromptSet(id: "music-edit", name: "Instrumentals", useCase: .coding,
+            prompts: [PromptEntry(id: "one", text: "Piano", media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]")),
+                PromptEntry(id: "two", text: "Strings")], origin: .userCreated, mode: .musicGeneration)
+        XCTAssertTrue(coordinator.savePromptSet(original))
+        coordinator.start(variants: [("/music/a", nil)], promptSet: original)
+        await waitForRun(coordinator)
+        let runID = try XCTUnwrap(coordinator.runs.first?.id)
+        coordinator.reviewQuality(runID: runID, modelPath: "/music/a", score: 4)
+        let historical = try XCTUnwrap(coordinator.runs.first)
+        let historyURL = root.appendingPathComponent("runs.json"), historyBytes = try Data(contentsOf: historyURL)
+        let artifact = try XCTUnwrap(coordinator.outputStore?.artifactURL(runID: runID,
+            artifact: try XCTUnwrap(historical.results.first?.samples.first?.artifact)))
+        let audioBytes = try Data(contentsOf: artifact)
+        var edit = try XCTUnwrap(coordinator.prepareMusicPromptSetEdit(id: original.id))
+        edit.prompts.addPrompt()
+        guard edit.prompts.count == 3 else { XCTFail("Saved music editor must add a prompt"); return }
+        let newID = edit.prompts[2].id
+        XCTAssertFalse(original.prompts.map(\.id).contains(newID))
+        XCTAssertEqual(edit.prompts[2].caption, "")
+        XCTAssertEqual(edit.prompts[2].lyrics, "[instrumental]")
+        XCTAssertEqual(edit.prompts[2].duration, "15.0")
+        XCTAssertEqual(edit.prompts[2].steps, "30")
+        XCTAssertEqual(edit.prompts[2].seed, "42")
+        XCTAssertNotNil(edit.validationError, "A blank new caption must keep saving disabled")
+        edit.prompts[2].caption = "Rhodes and drums"
+        edit.prompts.removePrompt(id: "two")
+        XCTAssertTrue(coordinator.saveMusicPromptSetEdits(edit))
+        let saved = try XCTUnwrap(makeCoordinator(runner: runner).promptSets.first { $0.id == original.id })
+        XCTAssertEqual(saved.prompts.map(\.id), ["one", newID])
+        XCTAssertEqual(saved.prompts[0], original.prompts[0])
+        XCTAssertEqual(saved.prompts[1].media, MediaParameters(steps: 30, seed: 42, durationSeconds: 15, lyrics: "[instrumental]"))
+        XCTAssertEqual(saved.useCase, original.useCase)
+        XCTAssertEqual(try Data(contentsOf: historyURL), historyBytes)
+        XCTAssertEqual(try Data(contentsOf: artifact), audioBytes)
+        let savedBytes = try Data(contentsOf: root.appendingPathComponent("sets.json"))
+        var setup = try MusicComparisonSetup(run: historical)
+        setup.prompts.removePrompt(id: "two")
+        setup.prompts.addPrompt()
+        guard setup.prompts.count == 2 else { XCTFail("Reuse must support replacing a prompt"); return }
+        setup.prompts[1].caption = "Acoustic guitar"
+        let reused = try setup.promptSet(named: "New suite")
+        XCTAssertEqual(reused.prompts[0], original.prompts[0])
+        XCTAssertEqual(reused.prompts[1].media, saved.prompts[1].media)
+        XCTAssertNotEqual(reused.prompts[1].id, newID)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("sets.json")), savedBytes)
+        XCTAssertEqual(coordinator.runs.first { $0.id == runID }, historical)
+        let requests = await runner.requests
+        XCTAssertEqual(requests.count, 2, "Draft changes and saving must not generate audio")
+        setup.prompts.removePrompt(id: setup.prompts[1].id)
+        setup.prompts.removePrompt(id: "one")
+        setup.prompts.removePrompt(id: "missing")
+        XCTAssertEqual(setup.prompts.map(\.id), ["one"])
+        XCTAssertNil(setup.validationError)
+    }
+
+    func testReusedMusicSetupRejectsInvalidPromptIdentitiesAfterDraftChanges() throws {
+        var run = historyRun(.musicGeneration, "Music", at: 100, models: ["/music/a"])
+        run.promptEntries = [PromptEntry(id: "one", text: "Piano")]
+        var setup = try MusicComparisonSetup(run: run)
+        setup.prompts.append(setup.prompts[0])
+        XCTAssertNotNil(setup.validationError)
+        XCTAssertThrowsError(try setup.promptSet())
+        setup.prompts = [MusicComparisonSetup.Prompt(PromptEntry(id: "", text: "Strings"))]
+        XCTAssertNotNil(setup.validationError)
+        XCTAssertThrowsError(try setup.promptSet())
+    }
+
+    @MainActor
     func testNewMusicPromptSetPersistsIndependentSettingsWithoutGenerating() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
         var draft = MusicPromptSetDraft()
