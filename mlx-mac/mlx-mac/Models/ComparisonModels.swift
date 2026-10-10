@@ -126,6 +126,23 @@ struct PromptSet: Codable, Equatable, Identifiable, Sendable {
     var effectiveMode: ComparisonMode { mode ?? .chat }
 }
 
+/// In-memory cancellation baseline, independent of validation and Save eligibility.
+/// Successful reuse copies can retain their current raw values without changing the setup.
+struct ComparisonPromptDraftCheckpoint<Prompt: Equatable> {
+    private var retainedName: String
+    private var retainedPrompts: [Prompt]
+
+    init(name: String = "", prompts: [Prompt]) {
+        retainedName = name; retainedPrompts = prompts
+    }
+    func hasChanges(name: String = "", prompts: [Prompt]) -> Bool {
+        name != retainedName || prompts != retainedPrompts
+    }
+    mutating func retain(name: String = "", prompts: [Prompt]) {
+        retainedName = name; retainedPrompts = prompts
+    }
+}
+
 /// Value-only editor for the non-music modes. Copies preserve fields the mode
 /// does not edit (including tool schemas and legacy metadata).
 struct ComparisonPromptSetDraft: Identifiable {
