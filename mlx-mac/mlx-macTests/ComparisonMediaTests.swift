@@ -1770,6 +1770,114 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(current.prompts.first?.inputPath)))
     }
 
+    @MainActor
+    func testInputNamesSurviveOwnedCopiesEditsAndRecordedSetupReuse() async throws {
+        let source = root.appendingPathComponent("Bird in snow.png")
+        try Data("source image".utf8).write(to: source)
+        var draft = ComparisonPromptSetDraft(mode: .vision)
+        draft.name = "Readable inputs"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        let result = await coordinator.createPromptSetWithInputCopies(draft)
+        let set = try XCTUnwrap(result)
+        XCTAssertEqual(set.prompts[0].inputName, source.lastPathComponent)
+        XCTAssertEqual(set.prompts[0].inputDisplayName, "Bird in snow.png")
+        let ownedPath = try XCTUnwrap(set.prompts[0].inputPath)
+        XCTAssertNotEqual(URL(fileURLWithPath: ownedPath).lastPathComponent, "Bird in snow.png")
+        try FileManager.default.removeItem(at: source)
+        let restored = try XCTUnwrap(JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json")).load().first)
+        XCTAssertEqual(restored.prompts[0].inputDisplayName, "Bird in snow.png")
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id))
+        XCTAssertEqual(edit.prompts[0].inputDisplayName, "Bird in snow.png")
+        edit.prompts[0].text = "Describe the surroundings"
+        let edited = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        XCTAssertTrue(edited)
+        let textOnly = try XCTUnwrap(coordinator.promptSets.first { $0.id == set.id })
+        XCTAssertEqual(textOnly.prompts[0].inputName, "Bird in snow.png")
+        coordinator.start(variants: [("/vision/model", nil)], promptSet: textOnly)
+        await waitForRun(coordinator)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        let reuse = try ComparisonRunSetup(run: run, outputStore: coordinator.outputStore)
+        XCTAssertEqual(reuse.draft.prompts[0].inputDisplayName, "Bird in snow.png")
+        let reused = await coordinator.createPromptSetWithInputCopies(reuse.savedDraft(named: "Another copy"))
+        XCTAssertEqual(reused?.prompts[0].inputName, "Bird in snow.png")
+        XCTAssertNotEqual(reused?.prompts[0].inputPath, set.prompts[0].inputPath)
+        let replacement = root.appendingPathComponent("New bird.jpg")
+        try Data("replacement image".utf8).write(to: replacement)
+        edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id))
+        edit.prompts[0].inputPath = replacement.path
+        XCTAssertEqual(edit.prompts[0].inputDisplayName, "New bird.jpg")
+        XCTAssertNil(try edit.promptSet().prompts[0].inputName, "Changing files must clear the previous display name")
+        let replaced = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        XCTAssertTrue(replaced)
+        XCTAssertEqual(coordinator.promptSets.first { $0.id == set.id }?.prompts[0].inputName, "New bird.jpg")
+    }
+
+    func testInputNamesAreDisplayOnlyAndLegacyNamesAreNotInvented() throws {
+        var entry = PromptEntry(id: "p", text: "Describe", inputKind: .image,
+            inputPath: root.appendingPathComponent("actual.png").path)
+        let originalPath = entry.inputPath
+        XCTAssertEqual(entry.inputDisplayName, "actual.png")
+        for invalid in ["", ".", "..", "../other.png", "/private/other.png", "folder\\other.png", "name\n.png", "name\u{7f}.png", String(repeating: "a", count: 256)] {
+            entry.inputName = invalid
+            XCTAssertEqual(entry.inputDisplayName, "actual.png")
+            XCTAssertEqual(entry.inputPath, originalPath)
+        }
+        entry.inputName = "Readable source.png"
+        XCTAssertEqual(entry.inputDisplayName, "Readable source.png")
+        XCTAssertEqual(entry.inputPath, originalPath)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(entry)) as? [String: Any])
+        json.removeValue(forKey: "inputName")
+        let legacy = try JSONDecoder().decode(PromptEntry.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(legacy.inputName)
+        XCTAssertEqual(legacy.inputDisplayName, "actual.png")
+        var run = historyRun(.vision, "Legacy input", at: 100)
+        run.promptEntries = [legacy]; run.inputArtifacts = ["p": "missing.png"]
+        let setup = try ComparisonRunSetup(run: run, outputStore: ComparisonOutputStore(root: root))
+        XCTAssertEqual(setup.draft.prompts[0].inputDisplayName, "actual.png")
+        XCTAssertTrue(setup.draft.prompts[0].inputFileUnavailable)
+        XCTAssertNil(setup.draft.prompts[0].inputPreviewURL)
+        XCTAssertThrowsError(try setup.draft.promptSet(), "A name must never resolve an unavailable file")
+        entry.inputPath = nil; entry.inputName = nil
+        XCTAssertNil(entry.inputDisplayName)
+    }
+
+    @MainActor
+    func testReuseSheetShowsRecordedFilenameForSavedAndMissingCopies() async throws {
+        let store = ComparisonOutputStore(root: root.appendingPathComponent("name-proof"))
+        var run = historyRun(.vision, "Named inputs · fixture", at: 100, models: ["/vision/a"])
+        try store.createRunDirectory(run.id)
+        let imageEntry = PromptEntry(id: "fixture", text: "Describe", inputKind: .image, builtinInput: "red-circle")
+        let generated = try await ComparisonMediaFixtures.generateInput(for: imageEntry, into: root)
+        let artifact = try await store.snapshotInput(from: generated, runID: run.id)
+        run.promptEntries = [PromptEntry(id: "p", text: "Describe this bird and its surroundings", inputKind: .image,
+            inputPath: root.appendingPathComponent("unknown-storage-name.png").path,
+            inputName: "Bird photographs — winter reference.png")]
+        run.inputArtifacts = ["p": artifact]
+        for status in ["saved", "missing"] {
+            if status == "missing" { try FileManager.default.removeItem(at: XCTUnwrap(store.inputArtifactURL(runID: run.id, artifact: artifact))) }
+            let setup = try ComparisonRunSetup(run: run, outputStore: store)
+            XCTAssertEqual(setup.draft.prompts[0].inputDisplayName, "Bird photographs — winter reference.png")
+            let sheet = ComparisonRunSetupSheet(setup: setup, availablePaths: ["/vision/a"], name: { _ in "Vision model · fixture" },
+                onApply: { _, _ in XCTFail("Rendering must not run"); return nil },
+                onSave: { _ in XCTFail("Rendering must not save"); return nil })
+            let host = NSHostingView(rootView: sheet.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 720),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Input filename · \(status)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_INPUT_NAME_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("input-name-\(status).png"))
+            }
+            window.close()
+        }
+    }
+
     func testReuseOtherModesPreservesRecordedPromptsAndCreatesIndependentCopies() throws {
         let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
         let input = root.appendingPathComponent("reference.png")

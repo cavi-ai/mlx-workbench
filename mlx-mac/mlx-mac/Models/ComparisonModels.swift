@@ -57,6 +57,21 @@ struct PromptEntry: Codable, Equatable, Identifiable, Sendable {
     /// Words an answer must all contain (case-insensitive) to count as correct.
     var expectedKeywords: [String]?
     var media: MediaParameters?
+    /// Display-only source filename; never used to resolve a file or build argv.
+    var inputName: String?
+
+    var inputDisplayName: String? {
+        if let name = Self.readableInputName(inputName) { return name }
+        guard let inputPath, inputPath.hasPrefix("/") else { return nil }
+        return Self.readableInputName(URL(fileURLWithPath: inputPath).lastPathComponent)
+    }
+
+    static func readableInputName(_ value: String?) -> String? {
+        guard let value, !value.isEmpty, value != ".", value != "..", value.unicodeScalars.count <= 255,
+              !value.contains("/"), !value.contains("\\"),
+              !value.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { return nil }
+        return value
+    }
 
     init(
         id: String,
@@ -67,7 +82,8 @@ struct PromptEntry: Codable, Equatable, Identifiable, Sendable {
         inputPath: String? = nil,
         builtinInput: String? = nil,
         expectedKeywords: [String]? = nil,
-        media: MediaParameters? = nil
+        media: MediaParameters? = nil,
+        inputName: String? = nil
     ) {
         self.id = id
         self.text = text
@@ -78,6 +94,7 @@ struct PromptEntry: Codable, Equatable, Identifiable, Sendable {
         self.builtinInput = builtinInput
         self.expectedKeywords = expectedKeywords
         self.media = media
+        self.inputName = inputName
     }
 }
 
@@ -128,6 +145,11 @@ struct ComparisonPromptSetDraft: Identifiable {
         var toolName: String? { original.tool?.name }
         var builtinInput: String? { inputPath == (original.inputPath ?? "") ? original.builtinInput : nil }
         var usesSavedInput: Bool { savedInput && inputPath == (original.inputPath ?? "") }
+        var inputDisplayName: String? {
+            if inputPath == (original.inputPath ?? "") { return original.inputDisplayName }
+            guard !inputPath.isEmpty else { return nil }
+            return PromptEntry.readableInputName(URL(fileURLWithPath: inputPath).lastPathComponent)
+        }
         var inputPreviewURL: URL? {
             guard !inputPath.isEmpty, !inputFileUnavailable else { return nil }
             return URL(fileURLWithPath: inputPath)
@@ -190,6 +212,7 @@ struct ComparisonPromptSetDraft: Identifiable {
                 if inputPath != (original.inputPath ?? "") {
                     copy.inputPath = inputPath.isEmpty ? nil : inputPath
                     copy.builtinInput = nil
+                    copy.inputName = nil
                 }
             }
             if mode == .chat || mode == .vision || mode == .videoUnderstanding {
@@ -322,6 +345,7 @@ struct ComparisonRunSetup: Identifiable {
                 return ComparisonPromptSetDraft.Prompt(entry, mode: run.effectiveMode)
             }
             var copy = entry
+            copy.inputName = entry.inputDisplayName
             copy.inputPath = artifacts[entry.id].flatMap {
                 outputStore?.readableInputArtifactURL(runID: run.id, artifact: $0)?.path
             }

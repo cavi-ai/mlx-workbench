@@ -524,9 +524,10 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 .fixedSize(horizontal: false, vertical: true)
             if let kind = mode.inputKind {
                 let evidence = ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store)
-                Text(evidence.label).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Text(entry.inputDisplayName.map { "\(evidence.label) · \($0)" } ?? evidence.label)
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                    .help(entry.inputPath ?? "Inputs are retained with the newest media runs. Older original files may have changed since the run.")
+                    .help(evidence.url?.path ?? "Inputs are retained with the newest media runs. Older original files may have changed since the run.")
                 if let url = evidence.url {
                     switch kind {
                     case .image:
@@ -1198,9 +1199,8 @@ private struct ComparisonPromptCard: View {
                     Button("Choose \(kind.rawValue) file…") {
                         if let path = ComparisonPromptSetEditor.pick(kind) { prompt.inputPath = path }
                     }
-                    Text(prompt.inputPath.isEmpty
-                        ? (prompt.builtinInput == nil ? "No file chosen" : "Built-in \(kind.rawValue) fixture")
-                        : URL(fileURLWithPath: prompt.inputPath).lastPathComponent)
+                    Text(prompt.inputDisplayName
+                        ?? (prompt.builtinInput == nil ? "No file chosen" : "Built-in \(kind.rawValue) fixture"))
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         .lineLimit(1).truncationMode(.middle).help(prompt.inputPath)
                 }

@@ -59,7 +59,8 @@ struct TextComparisonEditor: View {
                 if run.effectiveMode.inputKind != nil {
                     let evidence = ComparisonViewLogic.inputEvidence(for: run, entry: entry, store: store)
                     HStack(spacing: WorkbenchSpacing.sm) {
-                        Text(evidence.label).font(WorkbenchTypography.metadata)
+                        Text(entry.inputDisplayName.map { "\(evidence.label) · \($0)" } ?? evidence.label)
+                            .font(WorkbenchTypography.metadata)
                             .foregroundStyle(evidence.url == nil ? WorkbenchColor.warning : WorkbenchColor.muted)
                             .fixedSize(horizontal: false, vertical: true)
                         if evidence.url != nil {
