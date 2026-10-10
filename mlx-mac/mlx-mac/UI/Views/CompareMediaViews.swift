@@ -1081,7 +1081,7 @@ struct ComparisonPromptCancelButton: View {
                     Button("Keep editing") { confirmingDiscard = false }
                         .keyboardShortcut(.cancelAction)
                     Button("Discard changes", role: .destructive, action: onDismiss)
-                        .help("Close without saving changes to this set.")
+                        .help("Close without keeping these draft changes.")
                 }
                 .controlSize(.small)
                 .accessibilityElement(children: .contain)
@@ -1102,9 +1102,20 @@ struct ComparisonPromptCancelButton: View {
 struct ComparisonPromptSetEditor: View {
     @State var draft: ComparisonPromptSetDraft
     let onSave: (ComparisonPromptSetDraft) async -> String?
+    @State private var checkpoint: ComparisonPromptDraftCheckpoint<ComparisonPromptSetDraft.Prompt>
     @State private var error: String?
     @State private var saving = false
     @Environment(\.dismiss) private var dismiss
+
+    init(draft: ComparisonPromptSetDraft, onSave: @escaping (ComparisonPromptSetDraft) async -> String?) {
+        _draft = State(initialValue: draft)
+        _checkpoint = State(initialValue: ComparisonPromptDraftCheckpoint(name: draft.name, prompts: draft.prompts))
+        self.onSave = onSave
+    }
+
+    private var hasUnsavedChanges: Bool {
+        draft.original != nil ? draft.hasChanges : checkpoint.hasChanges(name: draft.name, prompts: draft.prompts)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -1142,7 +1153,7 @@ struct ComparisonPromptSetEditor: View {
                         .help("Restore the set as it was when this editor opened.")
                 }
                 Spacer()
-                ComparisonPromptCancelButton(requiresConfirmation: draft.original != nil && draft.hasChanges) { dismiss() }
+                ComparisonPromptCancelButton(requiresConfirmation: hasUnsavedChanges) { dismiss() }
                 Button(draft.original == nil ? "Save prompt set" : "Save changes") {
                     let copy = draft
                     saving = true
@@ -1162,7 +1173,7 @@ struct ComparisonPromptSetEditor: View {
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: WorkbenchSize.Compare.promptEditorWidth)
         .disabled(saving)
-        .interactiveDismissDisabled(saving || (draft.original != nil && draft.hasChanges))
+        .interactiveDismissDisabled(saving || hasUnsavedChanges)
     }
 
     /// The open panel, filtered to the kind of file the mode takes.
@@ -1472,6 +1483,7 @@ struct ComparisonPromptInputPreview: View {
 
 struct ComparisonRunSetupSheet: View {
     @State var setup: ComparisonRunSetup
+    @State private var checkpoint: ComparisonPromptDraftCheckpoint<ComparisonPromptSetDraft.Prompt>
     let availablePaths: Set<String>
     let name: (String) -> String
     let onApply: (ComparisonRunSetup, PromptSet) -> String?
@@ -1482,6 +1494,19 @@ struct ComparisonRunSetupSheet: View {
     @State private var saveName = ""
     @State private var savedName: String?
     @State private var saving = false
+
+    init(setup: ComparisonRunSetup, availablePaths: Set<String>, name: @escaping (String) -> String,
+         onApply: @escaping (ComparisonRunSetup, PromptSet) -> String?,
+         onSave: @escaping (ComparisonPromptSetDraft) async -> String?) {
+        _setup = State(initialValue: setup)
+        _checkpoint = State(initialValue: ComparisonPromptDraftCheckpoint(prompts: setup.draft.prompts))
+        self.availablePaths = availablePaths; self.name = name; self.onApply = onApply; self.onSave = onSave
+    }
+
+    private var hasUnsavedChanges: Bool {
+        checkpoint.hasChanges(prompts: setup.draft.prompts)
+            || (showingSaveName && saveName != "\(setup.sourceName) copy")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -1531,7 +1556,10 @@ struct ComparisonRunSetupSheet: View {
                         saving = true
                         Task { @MainActor in
                             error = await onSave(copy)
-                            if error == nil { savedName = title; showingSaveName = false }
+                            if error == nil {
+                                checkpoint.retain(prompts: setup.draft.prompts)
+                                savedName = title; showingSaveName = false
+                            }
                             saving = false
                         }
                     }
@@ -1558,7 +1586,7 @@ struct ComparisonRunSetupSheet: View {
                 }
                 .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.accent).disabled(showingSaveName)
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                ComparisonPromptCancelButton(requiresConfirmation: hasUnsavedChanges) { dismiss() }
                 Button("Use setup") {
                     do {
                         error = onApply(setup, try setup.draft.promptSet())
@@ -1573,7 +1601,7 @@ struct ComparisonRunSetupSheet: View {
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: WorkbenchSize.Compare.promptEditorWidth)
         .disabled(saving)
-        .interactiveDismissDisabled(saving)
+        .interactiveDismissDisabled(saving || hasUnsavedChanges)
     }
 }
 
@@ -1642,10 +1670,19 @@ struct MusicPromptFields: View {
 }
 
 struct MusicPromptSetCreateSheet: View {
-    @State var draft = MusicPromptSetDraft()
+    @State var draft: MusicPromptSetDraft
+    @State private var checkpoint: ComparisonPromptDraftCheckpoint<MusicComparisonSetup.Prompt>
     let onSave: (MusicPromptSetDraft) -> String?
     @State private var error: String?
     @Environment(\.dismiss) private var dismiss
+
+    init(draft: MusicPromptSetDraft = MusicPromptSetDraft(), onSave: @escaping (MusicPromptSetDraft) -> String?) {
+        _draft = State(initialValue: draft)
+        _checkpoint = State(initialValue: ComparisonPromptDraftCheckpoint(name: draft.name, prompts: draft.prompts))
+        self.onSave = onSave
+    }
+
+    private var hasUnsavedChanges: Bool { checkpoint.hasChanges(name: draft.name, prompts: draft.prompts) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -1662,7 +1699,7 @@ struct MusicPromptSetCreateSheet: View {
             HStack {
                 Button { draft.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                ComparisonPromptCancelButton(requiresConfirmation: hasUnsavedChanges) { dismiss() }
                 Button("Save prompt set") {
                     error = onSave(draft)
                     if error == nil { dismiss() }
@@ -1675,6 +1712,7 @@ struct MusicPromptSetCreateSheet: View {
         .textFieldStyle(.roundedBorder)
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: WorkbenchSize.Compare.musicPromptEditorWidth)
+        .interactiveDismissDisabled(hasUnsavedChanges)
     }
 }
 
@@ -1797,6 +1835,7 @@ typealias MusicPromptSetRenameSheet = PromptSetRenameSheet
 
 struct MusicComparisonSetupSheet: View {
     @State var setup: MusicComparisonSetup
+    @State private var checkpoint: ComparisonPromptDraftCheckpoint<MusicComparisonSetup.Prompt>
     let availablePaths: Set<String>
     let name: (String) -> String
     let onApply: (MusicComparisonSetup, PromptSet) -> Void
@@ -1806,6 +1845,18 @@ struct MusicComparisonSetupSheet: View {
     @State private var showingSaveName = false
     @State private var saveName = ""
     @State private var savedName: String?
+
+    init(setup: MusicComparisonSetup, availablePaths: Set<String>, name: @escaping (String) -> String,
+         onApply: @escaping (MusicComparisonSetup, PromptSet) -> Void, onSave: @escaping (PromptSet) throws -> Void) {
+        _setup = State(initialValue: setup)
+        _checkpoint = State(initialValue: ComparisonPromptDraftCheckpoint(prompts: setup.prompts))
+        self.availablePaths = availablePaths; self.name = name; self.onApply = onApply; self.onSave = onSave
+    }
+
+    private var hasUnsavedChanges: Bool {
+        checkpoint.hasChanges(prompts: setup.prompts)
+            || (showingSaveName && saveName != "\(setup.sourceName) copy")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -1868,7 +1919,7 @@ struct MusicComparisonSetupSheet: View {
                 .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.accent)
                 .disabled(showingSaveName || setup.validationError != nil)
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                ComparisonPromptCancelButton(requiresConfirmation: hasUnsavedChanges) { dismiss() }
                 Button("Use setup") {
                     do { onApply(setup, try setup.promptSet()); dismiss() }
                     catch { applyError = error.localizedDescription }
@@ -1880,12 +1931,14 @@ struct MusicComparisonSetupSheet: View {
         .textFieldStyle(.roundedBorder)
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: WorkbenchSize.Compare.musicPromptEditorWidth)
+        .interactiveDismissDisabled(hasUnsavedChanges)
     }
 
     private func savePromptSet() {
         do {
             let set = try setup.promptSet(named: saveName)
             try onSave(set)
+            checkpoint.retain(prompts: setup.prompts)
             savedName = set.name
             showingSaveName = false
             applyError = nil

@@ -2753,6 +2753,63 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(try copy.promptSet(), before, "A new copy has no saved original to revert")
     }
 
+    func testNewAndCopiedDraftCheckpointsDetectRawEditsWithoutChangingSaveSemantics() throws {
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            let source = mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode)
+            for copied in [false, true] {
+                var draft = copied ? try ComparisonPromptSetDraft(copying: source) : ComparisonPromptSetDraft(mode: mode)
+                let checkpoint = ComparisonPromptDraftCheckpoint(name: draft.name, prompts: draft.prompts)
+                XCTAssertFalse(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts), "Opening alone must not require confirmation")
+                XCTAssertTrue(draft.hasChanges, "Independent creation must keep its Save semantics")
+                let name = draft.name
+                draft.name += "A new name"
+                XCTAssertTrue(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+                draft.name = name
+                draft.prompts[0].text += "\u{0001}"
+                XCTAssertTrue(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts), "Invalid raw values are still edits")
+                draft.prompts[0].text.removeLast()
+                XCTAssertFalse(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+                let originalID = draft.prompts[0].id
+                draft.duplicatePrompt(id: originalID)
+                XCTAssertTrue(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+                draft.removePrompt(id: draft.prompts[1].id)
+                XCTAssertFalse(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+            }
+        }
+        for copied in [false, true] {
+            var draft = copied ? try MusicPromptSetDraft(copying: promptSet(for: .musicGeneration)) : MusicPromptSetDraft()
+            let checkpoint = ComparisonPromptDraftCheckpoint(name: draft.name, prompts: draft.prompts)
+            XCTAssertFalse(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+            draft.prompts[0].duration = "invalid"
+            XCTAssertTrue(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+            draft.name += "Named copy"
+            XCTAssertTrue(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+        }
+    }
+
+    func testReuseCheckpointRetainsSuccessfulCopiesAndRearmsForFurtherEdits() throws {
+        var prompts = (1...2).map { MusicComparisonSetup.Prompt(PromptEntry(id: "p-\($0)", text: "Solo piano \($0)")) }
+        var checkpoint = ComparisonPromptDraftCheckpoint(prompts: prompts)
+        XCTAssertFalse(checkpoint.hasChanges(prompts: prompts))
+        prompts.movePrompt(id: "p-2", direction: .up)
+        XCTAssertTrue(checkpoint.hasChanges(prompts: prompts), "Recorded order is part of the draft")
+        // A failed save does not advance the checkpoint.
+        XCTAssertTrue(checkpoint.hasChanges(prompts: prompts))
+        checkpoint.retain(prompts: prompts)
+        XCTAssertFalse(checkpoint.hasChanges(prompts: prompts), "A successfully saved copy retains these inputs")
+        prompts[0].lyrics = "Edited lyrics"
+        XCTAssertTrue(checkpoint.hasChanges(prompts: prompts), "Further edits must require confirmation again")
+        var draft = try ComparisonPromptSetDraft(copying: BuiltinPromptSets.toolCalling)
+        var textCheckpoint = ComparisonPromptDraftCheckpoint(prompts: draft.prompts)
+        draft.prompts[0].maxTokens = "invalid"
+        XCTAssertTrue(textCheckpoint.hasChanges(prompts: draft.prompts))
+        draft.prompts[0].maxTokens = "128"
+        textCheckpoint.retain(prompts: draft.prompts)
+        XCTAssertFalse(textCheckpoint.hasChanges(prompts: draft.prompts))
+        draft.prompts[0].maxTokens = "256"
+        XCTAssertTrue(textCheckpoint.hasChanges(prompts: draft.prompts))
+    }
+
     func testSavedMusicDraftDetectsInvalidRawEditsAndRestoresMetadataAndOrder() throws {
         var original = promptSet(for: .musicGeneration); original.origin = .userCreated
         original.useCase = .coding

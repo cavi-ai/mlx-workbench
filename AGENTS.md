@@ -302,8 +302,13 @@ from `mlx-agent` at runtime.
   inline Keep editing / Discard changes, with Escape returning to editing.
   Unchanged or reverted drafts dismiss immediately. Interactive dismissal is
   disabled for dirty saved drafts, and async-save blocking remains in place.
-  Discard only dismisses; it never saves or mutates the opened snapshot. New
-  and reuse creation preserve their existing Cancel behavior.
+  Discard only dismisses; it never saves or mutates the opened snapshot.
+  New/copy and reuse editors compare raw names and prompts against an in-memory
+  ComparisonPromptDraftCheckpoint. Opening alone never requires confirmation;
+  invalid edits, identities and ordering count as changes. Reuse also guards
+  an edited visible Save-as name. Successful copy saves retain current prompts
+  as the checkpoint; failed saves leave it intact and later edits re-arm it.
+  Save eligibility and Apply behavior remain separate from cancellation.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening
