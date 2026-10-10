@@ -274,6 +274,13 @@ from `mlx-agent` at runtime.
   invalid runtime parameter ranges are rejected at Save. Model-specific video
   alignment/frame grouping remain the engine's authority. The shared saved-set
   menu offers Edit/Rename/Remove in every mode, with built-in and active-run guards.
+  Customize copy opens `ComparisonPromptSetDraft(copying:)` or
+  `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
+  with a fresh set identity, copied use case and recorded prompt fields. Opening
+  never writes; explicit Save uses existing creation paths and selects the new
+  set only on success. Non-music media uses independent durable input copies;
+  source-set ownership metadata is not inherited. Built-ins remain immutable,
+  and the copy action is disabled during active comparisons or input saves.
   `createPromptSet`, `preparePromptSetEdit` and `savePromptSetEdits` use the existing
   prompt store and action-scoped errors. Edits recheck the original durable
   snapshot under `JSONStore.update` before publication; failure retains the draft.

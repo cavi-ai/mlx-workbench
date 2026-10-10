@@ -386,6 +386,9 @@ struct QuantView: View {
     @State private var showingSetEditor = false
     @State private var pendingPromptSetEdit: MusicPromptSetEdit?
     @State private var pendingGeneralPromptSetEdit: ComparisonPromptSetDraft?
+    @State private var pendingMusicPromptSetCopy: MusicPromptSetDraft?
+    @State private var pendingGeneralPromptSetCopy: ComparisonPromptSetDraft?
+    @State private var promptSetCopyError: String?
     @State private var pendingPromptSetRename: PromptSet?
     @State private var pendingPromptSetRemoval: PromptSet?
     @State private var pendingReuseSetup: MusicComparisonSetup?
@@ -529,6 +532,24 @@ struct QuantView: View {
             ComparisonPromptSetEditor(draft: edit) { edited in
                 await comparison.savePromptSetEditsWithInputCopies(edited)
                     ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be saved.")
+            }
+        }
+        .sheet(item: $pendingMusicPromptSetCopy) { draft in
+            MusicPromptSetCreateSheet(draft: draft) { customized in
+                guard let set = comparison.createMusicPromptSet(customized) else {
+                    return comparison.promptSetManagementError ?? "Prompt set could not be created."
+                }
+                selectedPromptSetID = set.id
+                return nil
+            }
+        }
+        .sheet(item: $pendingGeneralPromptSetCopy) { draft in
+            ComparisonPromptSetEditor(draft: draft) { customized in
+                guard let set = await comparison.createPromptSetWithInputCopies(customized) else {
+                    return comparison.promptSetManagementError ?? "Prompt set could not be created."
+                }
+                selectedPromptSetID = set.id
+                return nil
             }
         }
         .alert("Remove saved prompt set?", isPresented: Binding(
@@ -731,6 +752,7 @@ struct QuantView: View {
             ErrorBanner(text: comparison.lastError)
             ErrorBanner(text: comparison.persistenceError)
             ErrorBanner(text: comparison.promptSetManagementError)
+            ErrorBanner(text: promptSetCopyError)
         }
         .sheet(isPresented: $showingSetEditor) {
             if mode == .musicGeneration {
@@ -887,9 +909,11 @@ struct QuantView: View {
             .frame(maxWidth: WorkbenchSize.Compare.promptSetMaximum, alignment: .leading)
             PromptSetActions(name: selectedPromptSet?.name,
                 isEnabled: comparison.activeRunID == nil && comparison.canManagePromptSet(id: selectedPromptSetID),
+                isCopyEnabled: selectedPromptSet != nil && comparison.activeRunID == nil && !comparison.savingPromptSet,
                 onEdit: openPromptSetEditor,
                 onRename: { pendingPromptSetRename = selectedPromptSet },
-                onRemove: { pendingPromptSetRemoval = selectedPromptSet })
+                onRemove: { pendingPromptSetRemoval = selectedPromptSet },
+                onCopy: openPromptSetCopy)
         }
     }
 
@@ -1198,6 +1222,18 @@ struct QuantView: View {
         guard comparison.removePromptSet(id: set.id) else { return }
         if reusedPromptSet?.id == set.id { reusedPromptSet = nil }
         if selectedPromptSetID == set.id { selectedPromptSetID = modePromptSets.first?.id ?? "" }
+    }
+
+    private func openPromptSetCopy() {
+        guard let set = selectedPromptSet, comparison.activeRunID == nil, !comparison.savingPromptSet else { return }
+        do {
+            if set.effectiveMode == .musicGeneration {
+                pendingMusicPromptSetCopy = try MusicPromptSetDraft(copying: set)
+            } else {
+                pendingGeneralPromptSetCopy = try ComparisonPromptSetDraft(copying: set)
+            }
+            promptSetCopyError = nil
+        } catch { promptSetCopyError = error.localizedDescription }
     }
 
     private func openPromptSetEditor() {
