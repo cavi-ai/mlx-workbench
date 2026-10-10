@@ -1152,7 +1152,11 @@ private struct ComparisonPromptFields: View {
                     ComparisonPromptCard(prompt: $prompt, mode: draft.mode,
                         number: (draft.prompts.firstIndex { $0.id == prompt.id } ?? 0) + 1,
                         canRemove: draft.prompts.count > 1,
+                        canMoveUp: draft.prompts.first?.id != prompt.id,
+                        canMoveDown: draft.prompts.last?.id != prompt.id,
                         audio: audio,
+                        onDuplicate: { draft.duplicatePrompt(id: prompt.id) },
+                        onMove: { draft.movePrompt(id: prompt.id, direction: $0) },
                         onRemove: { draft.removePrompt(id: prompt.id) })
                 }
             }
@@ -1166,7 +1170,11 @@ private struct ComparisonPromptCard: View {
     let mode: ComparisonMode
     let number: Int
     let canRemove: Bool
+    let canMoveUp: Bool
+    let canMoveDown: Bool
     let audio: AudioClipPlayer
+    let onDuplicate: () -> Void
+    let onMove: (ComparisonPromptSetDraft.MoveDirection) -> Void
     let onRemove: () -> Void
 
     private var textLabel: String {
@@ -1184,6 +1192,17 @@ private struct ComparisonPromptCard: View {
                 Text("PROMPT \(number)").font(WorkbenchTypography.metadata.weight(.semibold))
                     .foregroundStyle(WorkbenchColor.accent)
                 Spacer()
+                Menu {
+                    Button(action: onDuplicate) { Label("Duplicate prompt", systemImage: "plus.square.on.square") }
+                    Divider()
+                    Button { onMove(.up) } label: { Label("Move up", systemImage: "arrow.up") }
+                        .disabled(!canMoveUp)
+                    Button { onMove(.down) } label: { Label("Move down", systemImage: "arrow.down") }
+                        .disabled(!canMoveDown)
+                } label: { Image(systemName: "ellipsis") }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .accessibilityLabel("Actions for prompt \(number)")
+                    .help("Duplicate this prompt or change its order")
                 Button(action: onRemove) { Image(systemName: "minus.circle") }
                     .buttonStyle(.borderless).disabled(!canRemove)
                     .accessibilityLabel("Remove prompt \(number)")
