@@ -1069,6 +1069,12 @@ struct ClipVideoView: NSViewRepresentable {
 
 // MARK: - Media prompt sets
 
+private extension View {
+    func comparisonPromptActionHint(_ message: String) -> some View {
+        help(message).accessibilityHint(message)
+    }
+}
+
 struct ComparisonPromptCancelButton: View {
     let requiresConfirmation: Bool
     let onDismiss: () -> Void
@@ -1163,7 +1169,8 @@ struct ComparisonPromptSetEditor: View {
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(draft.validationError != nil || !draft.hasChanges)
-                .help(draft.hasChanges ? "Save this prompt set." : "No changes to save.")
+                .comparisonPromptActionHint(draft.validationError
+                    ?? (draft.hasChanges ? "Save this prompt set." : "No changes to save."))
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -1578,6 +1585,8 @@ struct ComparisonRunSetupSheet: View {
                         }
                     }
                     .disabled(setup.savedDraft(named: saveName).validationError != nil)
+                    .comparisonPromptActionHint(setup.savedDraft(named: saveName).validationError
+                        ?? "Save an independent copy of these prompts and inputs.")
                     Button { showingSaveName = false; error = nil } label: { Image(systemName: "xmark") }
                         .buttonStyle(.borderless).help("Cancel saving the prompt set")
                         .accessibilityLabel("Cancel saving the prompt set")
@@ -1599,6 +1608,8 @@ struct ComparisonRunSetupSheet: View {
                     saveName = "\(setup.sourceName) copy"; showingSaveName = true; savedName = nil; error = nil
                 }
                 .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.accent).disabled(showingSaveName)
+                .comparisonPromptActionHint(showingSaveName
+                    ? "Enter a name in the save field above." : "Name and save a copy of this setup.")
                 Spacer()
                 ComparisonPromptCancelButton(requiresConfirmation: hasUnsavedChanges) { dismiss() }
                 Button("Use setup") {
@@ -1609,6 +1620,8 @@ struct ComparisonRunSetupSheet: View {
                 }
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent).keyboardShortcut(.defaultAction)
                 .disabled(setup.draft.validationError != nil)
+                .comparisonPromptActionHint(setup.draft.validationError
+                    ?? "Use these prompts and model selections for a new comparison.")
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -1718,6 +1731,7 @@ struct MusicPromptSetCreateSheet: View {
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(draft.validationError != nil)
+                .comparisonPromptActionHint(draft.validationError ?? "Save this prompt set.")
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -1791,7 +1805,8 @@ struct MusicPromptSetEditSheet: View {
                 }
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction).disabled(edit.validationError != nil || !edit.hasChanges)
-                .help(edit.hasChanges ? "Save changes to this prompt set." : "No changes to save.")
+                .comparisonPromptActionHint(edit.validationError
+                    ?? (edit.hasChanges ? "Save changes to this prompt set." : "No changes to save."))
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -1833,6 +1848,8 @@ struct PromptSetRenameSheet: View {
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!draft.canRename)
+                .comparisonPromptActionHint(draft.validationError
+                    ?? (draft.canRename ? "Save this prompt set's new name." : "No name change to save."))
             }
         }
         .padding(WorkbenchSpacing.pageInset)
@@ -1906,6 +1923,8 @@ struct MusicComparisonSetupSheet: View {
                         accessibilityName: "Saved music prompt set name")
                     Button("Save") { savePromptSet() }
                         .disabled(MusicComparisonSetup.nameValidationError(saveName) != nil || setup.validationError != nil)
+                        .comparisonPromptActionHint(MusicComparisonSetup.nameValidationError(saveName)
+                            ?? setup.validationError ?? "Save an independent copy of these music prompts.")
                     Button { showingSaveName = false; applyError = nil } label: { Image(systemName: "xmark") }
                         .buttonStyle(.borderless).help("Cancel saving the prompt set")
                         .accessibilityLabel("Cancel saving the prompt set")
@@ -1925,6 +1944,8 @@ struct MusicComparisonSetupSheet: View {
                 }
                 .buttonStyle(.borderless).foregroundStyle(WorkbenchColor.accent)
                 .disabled(showingSaveName || setup.validationError != nil)
+                .comparisonPromptActionHint(setup.validationError ?? (showingSaveName
+                    ? "Enter a name in the save field above." : "Name and save a copy of this setup."))
                 Spacer()
                 ComparisonPromptCancelButton(requiresConfirmation: hasUnsavedChanges) { dismiss() }
                 Button("Use setup") {
@@ -1933,6 +1954,8 @@ struct MusicComparisonSetupSheet: View {
                 }
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction).disabled(setup.validationError != nil)
+                .comparisonPromptActionHint(setup.validationError
+                    ?? "Use these music prompts and model selections for a new comparison.")
             }
         }
         .textFieldStyle(.roundedBorder)
