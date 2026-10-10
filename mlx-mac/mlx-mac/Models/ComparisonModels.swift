@@ -134,7 +134,7 @@ struct ComparisonPromptSetDraft: Identifiable {
         var errorDescription: String? { message }
     }
 
-    struct Prompt: Identifiable {
+    struct Prompt: Identifiable, Equatable {
         private var original: PromptEntry
         private let initialMedia: MediaParameters?
         private let savedInput: Bool
@@ -346,6 +346,17 @@ struct ComparisonPromptSetDraft: Identifiable {
         prompts.removeAll { $0.id == id }
     }
 
+    var hasChanges: Bool {
+        guard let original else { return true }
+        return name != original.name || prompts != original.prompts.map { Prompt($0, mode: mode) }
+    }
+
+    mutating func revertChanges() {
+        guard let original else { return }
+        name = original.name
+        prompts = original.prompts.map { Prompt($0, mode: mode) }
+    }
+
     var nameValidationError: String? {
         let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
         return title.isEmpty || title.unicodeScalars.contains(where: { $0.value < 32 })
@@ -436,7 +447,7 @@ struct MusicComparisonSetup: Identifiable {
         var errorDescription: String? { message }
     }
 
-    struct Prompt: Identifiable {
+    struct Prompt: Identifiable, Equatable {
         private var original: PromptEntry
         var id: String { original.id }
         var caption: String
@@ -646,6 +657,12 @@ struct MusicPromptSetEdit: Identifiable {
         }
         original = set
         prompts = set.prompts.map(MusicComparisonSetup.Prompt.init)
+    }
+
+    var hasChanges: Bool { prompts != original.prompts.map(MusicComparisonSetup.Prompt.init) }
+
+    mutating func revertChanges() {
+        prompts = original.prompts.map(MusicComparisonSetup.Prompt.init)
     }
 
     var validationError: String? {

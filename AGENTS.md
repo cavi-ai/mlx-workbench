@@ -288,6 +288,12 @@ from `mlx-agent` at runtime.
   inserted prompt identities after Add/Duplicate. Initial rendering and
   unchanged, reordered or removed identities do not request a scroll; normal
   draft editing remains value-only, with no saves or generation side effects.
+  Saved non-music and music editors compare full prompt draft values to their
+  immutable opened snapshot (`hasChanges`), including raw invalid input and
+  identity/order changes. Save is disabled for unchanged drafts; Revert resets
+  the opened snapshot in memory and clears the local save error. It never
+  reloads stores or bypasses the existing stale-save check. New/copy creation
+  remains saveable after validation and has no saved snapshot to revert.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening
