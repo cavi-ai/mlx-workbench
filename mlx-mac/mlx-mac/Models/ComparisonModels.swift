@@ -38,6 +38,8 @@ struct MediaParameters: Codable, Equatable, Sendable {
     }
 }
 
+enum ComparisonPromptMoveDirection { case up, down }
+
 struct PromptEntry: Codable, Equatable, Identifiable, Sendable {
     let id: String
     /// Chat: the prompt. Vision and video understanding: the question.
@@ -95,6 +97,12 @@ struct PromptEntry: Codable, Equatable, Identifiable, Sendable {
         self.expectedKeywords = expectedKeywords
         self.media = media
         self.inputName = inputName
+    }
+
+    fileprivate func duplicated() -> Self {
+        Self(id: UUID().uuidString, text: text, maxTokens: maxTokens, tool: tool,
+            inputKind: inputKind, inputPath: inputPath, builtinInput: builtinInput,
+            expectedKeywords: expectedKeywords, media: media, inputName: inputName)
     }
 }
 
@@ -178,10 +186,7 @@ struct ComparisonPromptSetDraft: Identifiable {
 
         fileprivate func duplicated() -> Self {
             var copy = self
-            copy.original = PromptEntry(id: UUID().uuidString, text: original.text,
-                maxTokens: original.maxTokens, tool: original.tool, inputKind: original.inputKind,
-                inputPath: original.inputPath, builtinInput: original.builtinInput,
-                expectedKeywords: original.expectedKeywords, media: original.media, inputName: original.inputName)
+            copy.original = original.duplicated()
             return copy
         }
 
@@ -301,7 +306,7 @@ struct ComparisonPromptSetDraft: Identifiable {
     }
 
     mutating func addPrompt() { prompts.append(Self.newPrompt(mode: mode)) }
-    enum MoveDirection { case up, down }
+    typealias MoveDirection = ComparisonPromptMoveDirection
     mutating func duplicatePrompt(id: String) {
         guard let index = prompts.firstIndex(where: { $0.id == id }) else { return }
         prompts.insert(prompts[index].duplicated(), at: index + 1)
@@ -393,7 +398,7 @@ struct MusicComparisonSetup: Identifiable {
     }
 
     struct Prompt: Identifiable {
-        private let original: PromptEntry
+        private var original: PromptEntry
         var id: String { original.id }
         var caption: String
         var lyrics: String
@@ -408,6 +413,12 @@ struct MusicComparisonSetup: Identifiable {
             duration = entry.media?.durationSeconds.map { String($0) } ?? ""
             steps = entry.media?.steps.map { String($0) } ?? ""
             seed = entry.media?.seed.map { String($0) } ?? ""
+        }
+
+        fileprivate func duplicated() -> Self {
+            var copy = self
+            copy.original = original.duplicated()
+            return copy
         }
 
         func entry() throws -> PromptEntry {
@@ -501,6 +512,19 @@ struct MusicComparisonSetup: Identifiable {
     }
 }
 
+extension Array where Element == MusicComparisonSetup.Prompt {
+    mutating func duplicatePrompt(id: String) {
+        guard let index = firstIndex(where: { $0.id == id }) else { return }
+        insert(self[index].duplicated(), at: index + 1)
+    }
+    mutating func movePrompt(id: String, direction: ComparisonPromptMoveDirection) {
+        guard let index = firstIndex(where: { $0.id == id }) else { return }
+        let target = index + (direction == .up ? -1 : 1)
+        guard indices.contains(target) else { return }
+        swapAt(index, target)
+    }
+}
+
 /// New music inputs stay in memory until an explicit save. Each prompt uses
 /// the same validation and generation fields as saved-set editing and reuse.
 struct MusicPromptSetDraft {
@@ -557,8 +581,9 @@ struct MusicPromptSetEdit: Identifiable {
     }
 
     func updatedPromptSet() throws -> PromptSet {
-        guard prompts.map(\.id) == original.prompts.map(\.id) else {
-            throw MusicComparisonSetup.InvalidSetup(message: "The edited set must keep its original prompt identities.")
+        guard !prompts.isEmpty, !prompts.contains(where: { $0.id.isEmpty }),
+              Set(prompts.map(\.id)).count == prompts.count else {
+            throw MusicComparisonSetup.InvalidSetup(message: "At least one prompt with a unique identity is required.")
         }
         var updated = original
         updated.prompts = try prompts.map { try $0.entry() }

@@ -2364,6 +2364,83 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(try store.load()[0].prompts[0].media?.seed, 99)
     }
 
+    func testMusicDuplicationPreservesDraftAndAllRecordedMetadataWithNewIdentity() throws {
+        let entry = PromptEntry(id: "original", text: "Piano", maxTokens: 77,
+            tool: BuiltinPromptSets.toolCalling.prompts[0].tool, inputKind: .audio,
+            inputPath: "/recorded/input.wav", builtinInput: "fixture", expectedKeywords: ["piano"],
+            media: MediaParameters(size: 512, steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"),
+            inputName: "Piano reference.wav")
+        var prompts = [MusicComparisonSetup.Prompt(entry)]
+        prompts[0].caption = "Rhodes and bass"; prompts[0].lyrics = "[verse]\nA new day"
+        prompts[0].duration = "20"; prompts[0].steps = "8"; prompts[0].seed = "99"
+        prompts.duplicatePrompt(id: entry.id)
+        guard prompts.count == 2 else { XCTFail("Duplicate must insert a second music prompt"); return }
+        XCTAssertNotEqual(prompts[1].id, entry.id)
+        var expected = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(prompts[0].entry())) as? [String: Any])
+        let copied = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(prompts[1].entry())) as? [String: Any])
+        expected["id"] = prompts[1].id
+        XCTAssertEqual(NSDictionary(dictionary: copied), NSDictionary(dictionary: expected))
+        prompts[1].caption = "Strings"
+        XCTAssertEqual(prompts[0].caption, "Rhodes and bass")
+        prompts[1].duration = "unfinished"
+        prompts.duplicatePrompt(id: prompts[1].id)
+        XCTAssertEqual(prompts.last?.duration, "unfinished")
+        XCTAssertThrowsError(try prompts.last?.entry(), "Duplicating must not bypass validation")
+        XCTAssertEqual(entry.text, "Piano")
+    }
+
+    @MainActor
+    func testMusicArrangementPersistsAcrossCreateEditReuseAndRunnerWithHistoryIntact() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        var draft = MusicPromptSetDraft(); draft.name = "Music suite"
+        draft.prompts[0].caption = "Piano"; draft.prompts[0].seed = "7"
+        draft.addPrompt(); draft.prompts[1].caption = "Strings"; draft.prompts[1].seed = "99"
+        let first = draft.prompts[0].id, second = draft.prompts[1].id
+        draft.prompts.movePrompt(id: first, direction: .up)
+        draft.prompts.movePrompt(id: second, direction: .down)
+        draft.prompts.movePrompt(id: "missing", direction: .up)
+        draft.prompts.duplicatePrompt(id: "missing")
+        XCTAssertEqual(draft.prompts.map(\.id), [first, second])
+        let original = try XCTUnwrap(coordinator.createMusicPromptSet(draft))
+        coordinator.start(variants: [("/music/a", nil)], promptSet: original)
+        await waitForRun(coordinator)
+        let runID = try XCTUnwrap(coordinator.runs.first?.id)
+        coordinator.reviewQuality(runID: runID, modelPath: "/music/a", score: 4)
+        let historical = try XCTUnwrap(coordinator.runs.first)
+        let historyURL = root.appendingPathComponent("runs.json"), history = try Data(contentsOf: historyURL)
+        var edit = try XCTUnwrap(coordinator.prepareMusicPromptSetEdit(id: original.id))
+        edit.prompts.duplicatePrompt(id: first)
+        guard edit.prompts.count == 3 else { XCTFail("Music edit must allow duplication"); return }
+        let duplicate = edit.prompts[1].id
+        edit.prompts.movePrompt(id: second, direction: .up)
+        edit.prompts.movePrompt(id: second, direction: .up)
+        XCTAssertTrue(coordinator.saveMusicPromptSetEdits(edit))
+        let saved = try XCTUnwrap(makeCoordinator(runner: runner).promptSets.first { $0.id == original.id })
+        XCTAssertEqual(saved.prompts.map(\.id), [second, first, duplicate])
+        XCTAssertEqual(try Data(contentsOf: historyURL), history)
+        let beforeRun = await runner.requests
+        XCTAssertEqual(beforeRun.count, 2, "Arranging and saving must not generate audio")
+        coordinator.start(variants: [("/music/a", nil)], promptSet: saved)
+        await waitForRun(coordinator)
+        let requests = await runner.requests
+        XCTAssertEqual(requests.suffix(3).map(\.entry.id), [second, first, duplicate])
+        XCTAssertEqual(requests.suffix(3).map(\.entry.media?.seed), [99, 7, 7])
+        XCTAssertEqual(coordinator.runs.first { $0.id == runID }, historical)
+        var setup = try MusicComparisonSetup(run: historical)
+        setup.prompts.duplicatePrompt(id: second)
+        let reuseDuplicate = try XCTUnwrap(setup.prompts.last?.id)
+        setup.prompts.movePrompt(id: reuseDuplicate, direction: .up)
+        let reused = try setup.promptSet(named: "Rearranged reuse")
+        XCTAssertEqual(reused.prompts.map(\.id), [first, reuseDuplicate, second])
+        XCTAssertNotEqual(reused.id, original.id)
+        XCTAssertEqual(coordinator.runs.first { $0.id == runID }, historical)
+        var invalid = edit
+        invalid.prompts = [edit.prompts[0], edit.prompts[0]]
+        XCTAssertThrowsError(try invalid.updatedPromptSet())
+        invalid.prompts = []
+        XCTAssertThrowsError(try invalid.updatedPromptSet())
+    }
+
     @MainActor
     func testNewMusicPromptSetPersistsIndependentSettingsWithoutGenerating() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
