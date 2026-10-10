@@ -298,6 +298,12 @@ from `mlx-agent` at runtime.
   the opened snapshot in memory and clears the local save error. It never
   reloads stores or bypasses the existing stale-save check. New/copy creation
   remains saveable after validation and has no saved snapshot to revert.
+  Saved-set editors share ComparisonPromptCancelButton: dirty Cancel reveals
+  inline Keep editing / Discard changes, with Escape returning to editing.
+  Unchanged or reverted drafts dismiss immediately. Interactive dismissal is
+  disabled for dirty saved drafts, and async-save blocking remains in place.
+  Discard only dismisses; it never saves or mutates the opened snapshot. New
+  and reuse creation preserve their existing Cancel behavior.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening

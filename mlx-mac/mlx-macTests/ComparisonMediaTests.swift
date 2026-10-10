@@ -33,6 +33,24 @@ private struct PromptPreviewFixtureView: View {
 }
 
 @MainActor
+private final class PromptCancelFixture: ObservableObject {
+    @Published var requiresConfirmation: Bool
+    var dismissals = 0
+    init(requiresConfirmation: Bool) { self.requiresConfirmation = requiresConfirmation }
+}
+
+private struct PromptCancelFixtureView: View {
+    @ObservedObject var fixture: PromptCancelFixture
+    var body: some View {
+        ComparisonPromptCancelButton(requiresConfirmation: fixture.requiresConfirmation) { fixture.dismissals += 1 }
+            .buttonStyle(.borderless)
+            .padding(WorkbenchSpacing.pageInset)
+            .frame(width: 420, height: 90)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+    }
+}
+
+@MainActor
 private final class PromptEditorScrollFixture: ObservableObject {
     @Published var draft: ComparisonPromptSetDraft
     @Published var music: [MusicComparisonSetup.Prompt]
@@ -2754,6 +2772,74 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(edit.hasChanges)
         edit.prompts[0].caption = original.prompts[0].text
         XCTAssertFalse(edit.hasChanges)
+    }
+
+    @MainActor
+    func testPromptCancelKeepsDraftUntilExplicitDiscardAndClosesUnchangedImmediately() async throws {
+        func buttons(in view: NSView) -> [NSButton] {
+            if let button = view as? NSButton { return [button] }
+            return view.subviews.flatMap { buttons(in: $0) }
+        }
+        for dirty in [false, true] {
+            let fixture = PromptCancelFixture(requiresConfirmation: dirty)
+            let host = NSHostingView(rootView: PromptCancelFixtureView(fixture: fixture))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 90),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(150))
+            try XCTUnwrap(buttons(in: host).first).performClick(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            if !dirty {
+                XCTAssertEqual(fixture.dismissals, 1, "Unchanged drafts close immediately")
+                continue
+            }
+            XCTAssertEqual(fixture.dismissals, 0, "Cancel must not silently discard draft changes")
+            let choices = buttons(in: host)
+            XCTAssertEqual(choices.count, 2, "Offer Keep editing and Discard changes")
+            guard choices.count == 2 else { continue }
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Keep editing or discard · native control fixture"
+            attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_REVERT_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("discard-choices.png"))
+            }
+            choices[0].performClick(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertEqual(fixture.dismissals, 0, "Keep editing must retain the draft")
+            XCTAssertEqual(buttons(in: host).count, 1)
+            try XCTUnwrap(buttons(in: host).first).performClick(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            try XCTUnwrap(buttons(in: host).last).performClick(nil)
+            XCTAssertEqual(fixture.dismissals, 1, "Only explicit Discard closes an edited draft")
+        }
+    }
+
+    @MainActor
+    func testPromptCancelReturnsToImmediateCloseAfterDraftRevert() async throws {
+        func buttons(in view: NSView) -> [NSButton] {
+            if let button = view as? NSButton { return [button] }
+            return view.subviews.flatMap { buttons(in: $0) }
+        }
+        let fixture = PromptCancelFixture(requiresConfirmation: true)
+        let host = NSHostingView(rootView: PromptCancelFixtureView(fixture: fixture))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 90),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        try XCTUnwrap(buttons(in: host).first).performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(fixture.dismissals, 0)
+        fixture.requiresConfirmation = false
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(buttons(in: host).count, 1)
+        try XCTUnwrap(buttons(in: host).first).performClick(nil)
+        XCTAssertEqual(fixture.dismissals, 1)
     }
 
     @MainActor

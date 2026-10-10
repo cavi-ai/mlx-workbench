@@ -1069,6 +1069,36 @@ struct ClipVideoView: NSViewRepresentable {
 
 // MARK: - Media prompt sets
 
+struct ComparisonPromptCancelButton: View {
+    let requiresConfirmation: Bool
+    let onDismiss: () -> Void
+    @State private var confirmingDiscard = false
+
+    var body: some View {
+        Group {
+            if confirmingDiscard && requiresConfirmation {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Button("Keep editing") { confirmingDiscard = false }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Discard changes", role: .destructive, action: onDismiss)
+                        .help("Close without saving changes to this set.")
+                }
+                .controlSize(.small)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Unsaved prompt changes")
+            } else {
+                Button("Cancel") {
+                    if requiresConfirmation { confirmingDiscard = true }
+                    else { onDismiss() }
+                }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .onChange(of: requiresConfirmation) { _, required in
+            if !required { confirmingDiscard = false }
+        }
+    }
+}
+
 struct ComparisonPromptSetEditor: View {
     @State var draft: ComparisonPromptSetDraft
     let onSave: (ComparisonPromptSetDraft) async -> String?
@@ -1112,7 +1142,7 @@ struct ComparisonPromptSetEditor: View {
                         .help("Restore the set as it was when this editor opened.")
                 }
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                ComparisonPromptCancelButton(requiresConfirmation: draft.original != nil && draft.hasChanges) { dismiss() }
                 Button(draft.original == nil ? "Save prompt set" : "Save changes") {
                     let copy = draft
                     saving = true
@@ -1132,7 +1162,7 @@ struct ComparisonPromptSetEditor: View {
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: WorkbenchSize.Compare.promptEditorWidth)
         .disabled(saving)
-        .interactiveDismissDisabled(saving)
+        .interactiveDismissDisabled(saving || (draft.original != nil && draft.hasChanges))
     }
 
     /// The open panel, filtered to the kind of file the mode takes.
@@ -1705,7 +1735,7 @@ struct MusicPromptSetEditSheet: View {
                     .buttonStyle(.borderless).disabled(!edit.hasChanges)
                     .help("Restore the set as it was when this editor opened.")
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                ComparisonPromptCancelButton(requiresConfirmation: edit.hasChanges) { dismiss() }
                 Button("Save changes") {
                     error = onSave(edit)
                     if error == nil { dismiss() }
@@ -1718,6 +1748,7 @@ struct MusicPromptSetEditSheet: View {
         .textFieldStyle(.roundedBorder)
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: WorkbenchSize.Compare.musicPromptEditorWidth)
+        .interactiveDismissDisabled(edit.hasChanges)
     }
 }
 
