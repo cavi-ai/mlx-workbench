@@ -1106,6 +1106,11 @@ struct ComparisonPromptSetEditor: View {
             }
             HStack {
                 Button { draft.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
+                if draft.original != nil {
+                    Button("Revert changes") { draft.revertChanges(); error = nil }
+                        .buttonStyle(.borderless).disabled(!draft.hasChanges)
+                        .help("Restore the set as it was when this editor opened.")
+                }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(draft.original == nil ? "Save prompt set" : "Save changes") {
@@ -1119,7 +1124,8 @@ struct ComparisonPromptSetEditor: View {
                 }
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(draft.validationError != nil)
+                .disabled(draft.validationError != nil || !draft.hasChanges)
+                .help(draft.hasChanges ? "Save this prompt set." : "No changes to save.")
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -1661,6 +1667,9 @@ struct MusicPromptSetEditSheet: View {
             ErrorBanner(text: error ?? edit.prompts.identityValidationError)
             HStack {
                 Button { edit.prompts.addPrompt() } label: { Label("Add prompt", systemImage: "plus") }
+                Button("Revert changes") { edit.revertChanges(); error = nil }
+                    .buttonStyle(.borderless).disabled(!edit.hasChanges)
+                    .help("Restore the set as it was when this editor opened.")
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save changes") {
@@ -1668,7 +1677,8 @@ struct MusicPromptSetEditSheet: View {
                     if error == nil { dismiss() }
                 }
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
-                .keyboardShortcut(.defaultAction).disabled(edit.validationError != nil)
+                .keyboardShortcut(.defaultAction).disabled(edit.validationError != nil || !edit.hasChanges)
+                .help(edit.hasChanges ? "Save changes to this prompt set." : "No changes to save.")
             }
         }
         .textFieldStyle(.roundedBorder)

@@ -2606,6 +2606,101 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
     }
 
+    func testSavedPromptDraftDetectsRawEditsAndRevertsTheOpenedSnapshot() throws {
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            var original = mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode)
+            original.origin = .userCreated
+            original.inputStorageID = UUID()
+            var draft = try ComparisonPromptSetDraft(set: original)
+            XCTAssertFalse(draft.hasChanges)
+            draft.prompts[0].text += " edited"
+            XCTAssertTrue(draft.hasChanges)
+            draft.prompts[0].steps = "invalid raw value"
+            XCTAssertTrue(draft.hasChanges, "Invalid raw input is still an unsaved edit")
+            draft.duplicatePrompt(id: draft.prompts[0].id)
+            draft.movePrompt(id: draft.prompts.last!.id, direction: .up)
+            draft.removePrompt(id: draft.prompts[0].id)
+            draft.revertChanges()
+            XCTAssertFalse(draft.hasChanges)
+            XCTAssertEqual(try draft.promptSet(), original, "Revert must preserve original identities, metadata and input references")
+            let oldText = draft.prompts[0].text
+            draft.prompts[0].text = "Temporary"
+            draft.prompts[0].text = oldText
+            XCTAssertFalse(draft.hasChanges, "Manually restoring a field must clear dirty state")
+        }
+        var copy = try ComparisonPromptSetDraft(copying: BuiltinPromptSets.toolCalling)
+        let before = try copy.promptSet()
+        XCTAssertTrue(copy.hasChanges, "Independent new copies must still be saveable")
+        copy.revertChanges()
+        XCTAssertEqual(try copy.promptSet(), before, "A new copy has no saved original to revert")
+    }
+
+    func testSavedMusicDraftDetectsInvalidRawEditsAndRestoresMetadataAndOrder() throws {
+        var original = promptSet(for: .musicGeneration); original.origin = .userCreated
+        original.useCase = .coding
+        var edit = try MusicPromptSetEdit(set: original)
+        XCTAssertFalse(edit.hasChanges)
+        edit.prompts[0].duration = "invalid"
+        XCTAssertTrue(edit.hasChanges)
+        XCTAssertNotNil(edit.validationError)
+        edit.prompts.duplicatePrompt(id: edit.prompts[0].id)
+        edit.prompts.movePrompt(id: edit.prompts.last!.id, direction: .up)
+        edit.prompts.addPrompt()
+        edit.revertChanges()
+        XCTAssertFalse(edit.hasChanges)
+        XCTAssertNil(edit.validationError)
+        XCTAssertEqual(try edit.updatedPromptSet(), original)
+        edit.prompts[0].caption = "Changed caption"
+        XCTAssertTrue(edit.hasChanges)
+        edit.prompts[0].caption = original.prompts[0].text
+        XCTAssertFalse(edit.hasChanges)
+    }
+
+    @MainActor
+    func testSavedPromptEditorsRenderUnchangedAndEditedActionsWithoutWriting() async throws {
+        for music in [false, true] {
+            let original = PromptSet(id: "saved-fixture", name: music ? "Piano studies" : "Landscape studies", useCase: nil,
+                prompts: [PromptEntry(id: "p", text: music ? "Warm solo piano, a gentle melody, no vocals" : "A mountain lake at sunrise",
+                    media: music ? MediaParameters(steps: 30, seed: 42, durationSeconds: 15, lyrics: "[instrumental]")
+                        : MediaParameters(size: 512, steps: 20, seed: 42))], origin: .userCreated,
+                mode: music ? .musicGeneration : .imageGeneration)
+            for changed in [false, true] {
+                let content: AnyView
+                if music {
+                    var edit = try MusicPromptSetEdit(set: original)
+                    if changed { edit.prompts[0].steps = "10" }
+                    content = AnyView(MusicPromptSetEditSheet(edit: edit) { _ in
+                        XCTFail("Rendering draft actions must not save or generate"); return nil
+                    })
+                } else {
+                    var draft = try ComparisonPromptSetDraft(set: original)
+                    if changed { draft.prompts[0].steps = "10" }
+                    content = AnyView(ComparisonPromptSetEditor(draft: draft) { _ in
+                        XCTFail("Rendering draft actions must not save or generate"); return nil
+                    })
+                }
+                let host = NSHostingView(rootView: content.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 620),
+                    styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                try await Task.sleep(for: .milliseconds(150))
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                let title = "\(music ? "music" : "image")-\(changed ? "edited" : "unchanged")"
+                let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                attachment.name = "Saved draft actions · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
+                if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_REVERT_PROOF_DIR"] {
+                    try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
+                }
+                window.close()
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
     func testLegacyVideoDefaultsRemainExactUntilSettingsAreChanged() throws {
         let set = PromptSet(id: "legacy-video", name: "Legacy", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "A forest")], origin: .userCreated, mode: .videoGeneration)
