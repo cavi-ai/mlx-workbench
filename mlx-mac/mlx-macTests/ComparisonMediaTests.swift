@@ -2617,6 +2617,68 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
     }
 
+    func testPromptSetPickerGroupsByProvenanceAndSearchesNamesPromptsAndTools() throws {
+        let builtin = BuiltinPromptSets.toolCalling
+        let saved = PromptSet(id: "saved", name: "My workflow", useCase: builtin.useCase,
+            prompts: builtin.prompts, origin: .userCreated)
+        let temporary = PromptSet(id: "temporary", name: "Reused suite", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Review a billing ticket")], origin: .userCreated)
+        let inputs = [builtin, saved, temporary]
+        let groups = ComparisonPromptSetPickerLogic.groups(inputs, temporaryID: temporary.id, query: " \n ")
+        XCTAssertEqual(groups.map(\.section), [.temporary, .saved, .builtin])
+        XCTAssertEqual(groups.map { $0.sets.map(\.name) }, [[temporary.name], [saved.name], [builtin.name]])
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.groups(inputs, temporaryID: temporary.id, query: "my WORKFLOW").flatMap(\.sets), [saved])
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.groups(inputs, temporaryID: temporary.id, query: "billing").flatMap(\.sets), [temporary])
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.groups([builtin], temporaryID: nil, query: "get_current_weather").flatMap(\.sets), [builtin])
+        XCTAssertTrue(ComparisonPromptSetPickerLogic.groups(inputs, temporaryID: nil, query: "no match").isEmpty)
+        XCTAssertTrue(ComparisonPromptSetPickerLogic.groups([], temporaryID: nil, query: "").isEmpty)
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.promptCount(temporary), "1 prompt")
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.promptCount(builtin), "\(builtin.prompts.count) prompts")
+    }
+
+    func testPromptSetPickerKeepsDuplicateNamesDistinctAndPreservesSourceOrder() {
+        let first = PromptSet(id: "first", name: "Same name", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "First")], origin: .userCreated)
+        let second = PromptSet(id: "second", name: "Same name", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Second")], origin: .userCreated)
+        let groups = ComparisonPromptSetPickerLogic.groups([second, first], temporaryID: nil, query: "Same")
+        XCTAssertEqual(groups.flatMap(\.sets).map(\.id), ["second", "first"])
+        XCTAssertEqual(groups.map(\.section), [.saved])
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.groups([first], temporaryID: "missing", query: "").map(\.section), [.saved])
+        XCTAssertEqual(first.prompts[0].text, "First")
+    }
+
+    @MainActor
+    func testPromptSetPickerRendersGroupsAndSearchStatesWithoutSelectingOrWriting() async throws {
+        let saved = PromptSet(id: "saved", name: "Coding workflow · my prompts", useCase: .coding,
+            prompts: BuiltinPromptSets.coding.prompts, origin: .userCreated)
+        let temporary = PromptSet(id: "temporary", name: "Reused tool-calling setup", useCase: nil,
+            prompts: BuiltinPromptSets.toolCalling.prompts, origin: .userCreated)
+        let sets = [temporary, saved] + BuiltinPromptSets.all
+        for query in ["", "my prompts", "nothing matches"] {
+            let content = ComparisonPromptSetPanel(sets: sets, selection: saved.id, temporaryID: temporary.id,
+                onSelect: { _ in XCTFail("Rendering or searching must not select a set or run") }, query: query)
+            let host = NSHostingView(rootView: content.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 470),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let label = query.isEmpty ? "groups" : query == "my prompts" ? "filtered" : "empty"
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Prompt set picker · \(label)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_PICKER_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(label).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
     @MainActor
     func testNewMusicPromptSetPersistsIndependentSettingsWithoutGenerating() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
