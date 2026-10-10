@@ -315,6 +315,11 @@ from `mlx-agent` at runtime.
   new/copy/reuse name validation and the coordinator persistence boundary.
   Inline invalid-name feedback is separate from persistence errors; renaming
   preserves prompt identities, settings and historical run snapshots.
+  ComparisonPromptSetNameField supplies shared name feedback in new/copy,
+  reuse and Rename flows. Untouched blank new fields suppress validation;
+  any subsequent name edit enables feedback, including clearing the field.
+  Rename also validates its initial value. Field edits never persist or run
+  comparisons; existing Save eligibility and cancellation guards apply.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening

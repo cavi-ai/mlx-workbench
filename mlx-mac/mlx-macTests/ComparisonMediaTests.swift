@@ -3808,6 +3808,54 @@ final class ComparisonMediaTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testNewSetNameFeedbackAppearsAfterClearingEditedNameInEveryMode() async throws {
+        func fields(in view: NSView) -> [NSTextField] {
+            if let field = view as? NSTextField, field.isEditable { return [field] }
+            return view.subviews.flatMap { fields(in: $0) }
+        }
+        for mode in ComparisonMode.allCases {
+            let editor: AnyView
+            if mode == .musicGeneration {
+                editor = AnyView(MusicPromptSetCreateSheet { _ in
+                    XCTFail("Editing a name must not save or generate"); return nil
+                })
+            } else {
+                editor = AnyView(ComparisonPromptSetEditor(draft: ComparisonPromptSetDraft(mode: mode)) { _ in
+                    XCTFail("Editing a name must not save or run a comparison"); return nil
+                })
+            }
+            let host = NSHostingView(rootView: editor.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 700),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            let initialHeight = host.fittingSize.height
+            let field = try XCTUnwrap(fields(in: host).first)
+            XCTAssertEqual(field.stringValue, "")
+            for (name, state) in [("Studies", "valid"), ("", "cleared"), ("Études 🎹", "corrected")] {
+                field.stringValue = name
+                field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+                try await Task.sleep(for: .milliseconds(150))
+                host.layoutSubtreeIfNeeded()
+                if state == "cleared" {
+                    XCTAssertGreaterThan(host.fittingSize.height, initialHeight, "\(mode): edited blank names need feedback")
+                } else {
+                    XCTAssertEqual(host.fittingSize.height, initialHeight, accuracy: 1, "\(mode): valid names clear feedback")
+                }
+                if state == "cleared", let directory = ProcessInfo.processInfo.environment["MLX_NAME_FIELD_PROOF_DIR"] {
+                    window.setContentSize(host.fittingSize); host.layoutSubtreeIfNeeded()
+                    let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(mode.rawValue)-cleared.png"))
+                }
+            }
+        }
+    }
+
     func testRenameDraftValidationAndDiscardTrackingApplyToEveryMode() {
         for mode in ComparisonMode.allCases {
             let original = PromptSet(id: "saved", name: "Studies", useCase: .coding,

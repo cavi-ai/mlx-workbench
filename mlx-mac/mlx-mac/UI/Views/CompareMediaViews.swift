@@ -1122,10 +1122,7 @@ struct ComparisonPromptSetEditor: View {
             Label("\(draft.original == nil ? "New" : "Edit") \(draft.mode.title.lowercased()) prompt set",
                   systemImage: "slider.horizontal.3").font(WorkbenchTypography.cardTitle)
             if draft.original == nil {
-                TextField("Set name", text: $draft.name).accessibilityLabel("Prompt set name")
-                if let message = draft.nameValidationError, !draft.name.isEmpty {
-                    ComparisonDraftValidationMessage(message: message)
-                }
+                ComparisonPromptSetNameField(name: $draft.name)
             } else {
                 Text(draft.name).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
@@ -1278,6 +1275,27 @@ struct ComparisonPromptFields: View {
             }
         }
         .onDisappear { audio.stop() }
+    }
+}
+
+struct ComparisonPromptSetNameField: View {
+    @Binding var name: String
+    var placeholder = "Set name"
+    var accessibilityName = "Prompt set name"
+    var showInitialError = false
+    @State private var edited = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            TextField(placeholder, text: $name)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(accessibilityName)
+            if let message = PromptSetNameValidation.error(for: name),
+               showInitialError || edited || !name.isEmpty {
+                ComparisonDraftValidationMessage(message: message)
+            }
+        }
+        .onChange(of: name) { _, _ in edited = true }
     }
 }
 
@@ -1544,12 +1562,8 @@ struct ComparisonRunSetupSheet: View {
             ErrorBanner(text: error)
             if showingSaveName {
                 HStack(spacing: WorkbenchSpacing.sm) {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        TextField("Prompt set name", text: $saveName).accessibilityLabel("Saved prompt set name")
-                        if let message = setup.savedDraft(named: saveName).nameValidationError, !saveName.isEmpty {
-                            ComparisonDraftValidationMessage(message: message)
-                        }
-                    }
+                    ComparisonPromptSetNameField(name: $saveName, placeholder: "Prompt set name",
+                        accessibilityName: "Saved prompt set name")
                     Button("Save") {
                         let copy = setup.savedDraft(named: saveName)
                         let title = saveName
@@ -1688,10 +1702,7 @@ struct MusicPromptSetCreateSheet: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Label("New music prompt set", systemImage: "music.note.list")
                 .font(WorkbenchTypography.cardTitle)
-            TextField("Set name", text: $draft.name).accessibilityLabel("Music prompt set name")
-            if let message = draft.nameValidationError, !draft.name.isEmpty {
-                ComparisonDraftValidationMessage(message: message)
-            }
+            ComparisonPromptSetNameField(name: $draft.name, accessibilityName: "Music prompt set name")
             MusicPromptFields(prompts: $draft.prompts)
             Text("Settings apply to each prompt. Duration is a maximum request. Blank settings use the current defaults. Saving does not generate audio.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
@@ -1810,11 +1821,7 @@ struct PromptSetRenameSheet: View {
             Text("Only this saved set's name changes. Past runs keep their recorded names and inputs.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
-            TextField("Prompt set name", text: $draft.name).textFieldStyle(.roundedBorder)
-                .accessibilityLabel("Prompt set name")
-            if let message = draft.validationError {
-                ComparisonDraftValidationMessage(message: message)
-            }
+            ComparisonPromptSetNameField(name: $draft.name, placeholder: "Prompt set name", showInitialError: true)
             ErrorBanner(text: error)
             HStack {
                 Spacer()
@@ -1895,13 +1902,8 @@ struct MusicComparisonSetupSheet: View {
             ErrorBanner(text: applyError ?? setup.prompts.identityValidationError)
             if showingSaveName {
                 HStack(spacing: WorkbenchSpacing.sm) {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        TextField("Prompt set name", text: $saveName)
-                            .accessibilityLabel("Saved music prompt set name")
-                        if let message = MusicComparisonSetup.nameValidationError(saveName), !saveName.isEmpty {
-                            ComparisonDraftValidationMessage(message: message)
-                        }
-                    }
+                    ComparisonPromptSetNameField(name: $saveName, placeholder: "Prompt set name",
+                        accessibilityName: "Saved music prompt set name")
                     Button("Save") { savePromptSet() }
                         .disabled(MusicComparisonSetup.nameValidationError(saveName) != nil || setup.validationError != nil)
                     Button { showingSaveName = false; applyError = nil } label: { Image(systemName: "xmark") }
