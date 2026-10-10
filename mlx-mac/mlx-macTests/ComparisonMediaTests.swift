@@ -2156,6 +2156,73 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertThrowsError(try setup.promptSet(named: "Invalid settings"))
     }
 
+    func testPromptDuplicationPreservesEditedFieldsAndHiddenMetadataInEveryOtherMode() throws {
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            let entry = PromptEntry(id: "original", text: "Reference", maxTokens: 77,
+                tool: BuiltinPromptSets.toolCalling.prompts[0].tool, inputKind: mode.inputKind,
+                builtinInput: mode.inputKind == nil ? nil : "fixture", expectedKeywords: ["red"],
+                media: MediaParameters(size: 512, steps: 9, seed: 17, frames: 33, fps: 12))
+            let set = PromptSet(id: "set", name: "Suite", useCase: .coding, prompts: [entry], origin: .userCreated, mode: mode)
+            var draft = try ComparisonPromptSetDraft(set: set)
+            draft.prompts[0].text = "Edited reference"
+            draft.duplicatePrompt(id: entry.id)
+            guard draft.prompts.count == 2 else { XCTFail("Duplicate must insert a second prompt"); continue }
+            let copiedID = try XCTUnwrap(draft.prompts.last?.id)
+            XCTAssertNotEqual(copiedID, entry.id)
+            let saved = try draft.promptSet()
+            var expected = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved.prompts[0])) as? [String: Any])
+            let copied = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved.prompts[1])) as? [String: Any])
+            expected["id"] = copiedID
+            XCTAssertEqual(NSDictionary(dictionary: copied), NSDictionary(dictionary: expected))
+            XCTAssertEqual(saved.useCase, set.useCase)
+            draft.prompts[1].text = "Independent edit"
+            XCTAssertEqual(draft.prompts[0].text, "Edited reference")
+            draft.prompts[1].steps = "unfinished"
+            draft.duplicatePrompt(id: copiedID)
+            XCTAssertEqual(draft.prompts[2].steps, "unfinished", "Duplicate the draft, not only its last valid snapshot")
+            XCTAssertEqual(Set(draft.prompts.map(\.id)).count, 3)
+            XCTAssertEqual(set.prompts, [entry])
+        }
+    }
+
+    @MainActor
+    func testPromptOrderAndDuplicatesPersistAndReachRunnerWithoutChangingHistory() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+        draft.name = "Ordered suite"; draft.prompts[0].text = "First scene"
+        draft.prompts[0].seed = "7"
+        draft.addPrompt(); draft.prompts[1].text = "Second scene"; draft.prompts[1].seed = "99"
+        let first = draft.prompts[0].id, second = draft.prompts[1].id
+        draft.movePrompt(id: first, direction: .up)
+        draft.movePrompt(id: second, direction: .down)
+        draft.movePrompt(id: "missing", direction: .up)
+        draft.duplicatePrompt(id: "missing")
+        XCTAssertEqual(draft.prompts.map(\.id), [first, second])
+        draft.duplicatePrompt(id: first)
+        let duplicate = draft.prompts[1].id
+        draft.movePrompt(id: second, direction: .up)
+        draft.movePrompt(id: second, direction: .up)
+        XCTAssertEqual(draft.prompts.map(\.id), [second, first, duplicate])
+        let created = await coordinator.createPromptSetWithInputCopies(draft)
+        let set = try XCTUnwrap(created)
+        XCTAssertEqual(makeCoordinator(runner: runner).promptSets.first { $0.id == set.id }, set)
+        coordinator.start(variants: [("/image/a", nil)], promptSet: set)
+        await waitForRun(coordinator)
+        let requests = await runner.requests
+        XCTAssertEqual(requests.map(\.entry.id), [second, first, duplicate])
+        XCTAssertEqual(requests.map(\.entry.media?.seed), [99, 7, 7])
+        let historyURL = root.appendingPathComponent("runs.json")
+        let history = try Data(contentsOf: historyURL)
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id))
+        edit.movePrompt(id: duplicate, direction: .up)
+        edit.removePrompt(id: first)
+        let saved = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        XCTAssertTrue(saved)
+        XCTAssertEqual(coordinator.promptSets.first { $0.id == set.id }?.prompts.map(\.id), [second, duplicate])
+        XCTAssertEqual(try Data(contentsOf: historyURL), history)
+        XCTAssertEqual(coordinator.runs.first?.promptEntries, set.prompts)
+    }
+
     @MainActor
     func testOtherModePromptSettingsPersistPerPromptAndReachTheRunner() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)

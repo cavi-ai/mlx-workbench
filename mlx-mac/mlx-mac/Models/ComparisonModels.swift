@@ -127,7 +127,7 @@ struct ComparisonPromptSetDraft: Identifiable {
     }
 
     struct Prompt: Identifiable {
-        private let original: PromptEntry
+        private var original: PromptEntry
         private let initialMedia: MediaParameters?
         private let savedInput: Bool
         var id: String { original.id }
@@ -174,6 +174,15 @@ struct ComparisonPromptSetDraft: Identifiable {
             fps = initialMedia?.fps.map(String.init) ?? ""
             steps = initialMedia?.steps.map(String.init) ?? ""
             seed = initialMedia?.seed.map(String.init) ?? ""
+        }
+
+        fileprivate func duplicated() -> Self {
+            var copy = self
+            copy.original = PromptEntry(id: UUID().uuidString, text: original.text,
+                maxTokens: original.maxTokens, tool: original.tool, inputKind: original.inputKind,
+                inputPath: original.inputPath, builtinInput: original.builtinInput,
+                expectedKeywords: original.expectedKeywords, media: original.media, inputName: original.inputName)
+            return copy
         }
 
         func entry(for mode: ComparisonMode) throws -> PromptEntry {
@@ -292,6 +301,17 @@ struct ComparisonPromptSetDraft: Identifiable {
     }
 
     mutating func addPrompt() { prompts.append(Self.newPrompt(mode: mode)) }
+    enum MoveDirection { case up, down }
+    mutating func duplicatePrompt(id: String) {
+        guard let index = prompts.firstIndex(where: { $0.id == id }) else { return }
+        prompts.insert(prompts[index].duplicated(), at: index + 1)
+    }
+    mutating func movePrompt(id: String, direction: MoveDirection) {
+        guard let index = prompts.firstIndex(where: { $0.id == id }) else { return }
+        let target = index + (direction == .up ? -1 : 1)
+        guard prompts.indices.contains(target) else { return }
+        prompts.swapAt(index, target)
+    }
     mutating func removePrompt(id: String) {
         guard prompts.count > 1 else { return }
         prompts.removeAll { $0.id == id }
