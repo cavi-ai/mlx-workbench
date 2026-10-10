@@ -465,6 +465,11 @@ struct MusicComparisonSetup: Identifiable {
             return copy
         }
 
+        var validationError: String? {
+            do { _ = try entry(); return nil }
+            catch { return error.localizedDescription }
+        }
+
         func entry() throws -> PromptEntry {
             func validateText(_ text: String, name: String, limit: Int) throws {
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -542,24 +547,37 @@ struct MusicComparisonSetup: Identifiable {
     }
 
     private func validatedPrompts() throws -> [PromptEntry] {
-        guard !prompts.isEmpty, !prompts.contains(where: { $0.id.isEmpty }),
-              Set(prompts.map(\.id)).count == prompts.count else {
-            throw InvalidSetup(message: "At least one prompt with a unique identity is required.")
-        }
-        return try prompts.map { try $0.entry() }
+        try prompts.validatedEntries()
+    }
+
+    static func nameValidationError(_ name: String) -> String? {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty || title.unicodeScalars.contains(where: { $0.value < 32 })
+            ? "Enter a prompt set name without control characters." : nil
     }
 
     func promptSet(named name: String? = nil) throws -> PromptSet {
         let title = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "\(sourceName) · reused"
-        guard !title.isEmpty, !title.unicodeScalars.contains(where: { $0.value < 32 }) else {
-            throw InvalidSetup(message: "Enter a prompt set name without control characters.")
-        }
+        if let error = Self.nameValidationError(title) { throw InvalidSetup(message: error) }
         return PromptSet(id: UUID().uuidString, name: title, useCase: nil,
                          prompts: try validatedPrompts(), origin: .userCreated, mode: .musicGeneration)
     }
 }
 
 extension Array where Element == MusicComparisonSetup.Prompt {
+    var identityValidationError: String? {
+        isEmpty || contains(where: { $0.id.isEmpty }) || Set(map(\.id)).count != count
+            ? "At least one prompt with a unique identity is required." : nil
+    }
+
+    func validatedEntries() throws -> [PromptEntry] {
+        if let error = identityValidationError { throw MusicComparisonSetup.InvalidSetup(message: error) }
+        return try enumerated().map { index, prompt in
+            do { return try prompt.entry() }
+            catch { throw MusicComparisonSetup.InvalidSetup(message: "Prompt \(index + 1): \(error.localizedDescription)") }
+        }
+    }
+
     mutating func addPrompt() { append(.newPrompt()) }
     mutating func removePrompt(id: String) {
         guard count > 1 else { return }
@@ -599,17 +617,17 @@ struct MusicPromptSetDraft: Identifiable {
     mutating func addPrompt() { prompts.addPrompt() }
     mutating func removePrompt(id: String) { prompts.removePrompt(id: id) }
 
+    var nameValidationError: String? { MusicComparisonSetup.nameValidationError(name) }
+    var validationError: String? {
+        do { _ = try promptSet(); return nil }
+        catch { return error.localizedDescription }
+    }
+
     func promptSet() throws -> PromptSet {
         let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, !title.unicodeScalars.contains(where: { $0.value < 32 }) else {
-            throw MusicComparisonSetup.InvalidSetup(message: "Enter a prompt set name without control characters.")
-        }
-        guard !prompts.isEmpty, !prompts.contains(where: { $0.id.isEmpty }),
-              Set(prompts.map(\.id)).count == prompts.count else {
-            throw MusicComparisonSetup.InvalidSetup(message: "At least one prompt with a unique identity is required.")
-        }
+        if let error = nameValidationError { throw MusicComparisonSetup.InvalidSetup(message: error) }
         return PromptSet(id: id, name: title, useCase: copiedUseCase,
-            prompts: try prompts.map { try $0.entry() }, origin: .userCreated, mode: .musicGeneration)
+            prompts: try prompts.validatedEntries(), origin: .userCreated, mode: .musicGeneration)
     }
 }
 
@@ -636,12 +654,8 @@ struct MusicPromptSetEdit: Identifiable {
     }
 
     func updatedPromptSet() throws -> PromptSet {
-        guard !prompts.isEmpty, !prompts.contains(where: { $0.id.isEmpty }),
-              Set(prompts.map(\.id)).count == prompts.count else {
-            throw MusicComparisonSetup.InvalidSetup(message: "At least one prompt with a unique identity is required.")
-        }
         var updated = original
-        updated.prompts = try prompts.map { try $0.entry() }
+        updated.prompts = try prompts.validatedEntries()
         return updated
     }
 }
