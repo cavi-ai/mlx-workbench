@@ -126,6 +126,25 @@ struct PromptSet: Codable, Equatable, Identifiable, Sendable {
     var effectiveMode: ComparisonMode { mode ?? .chat }
 }
 
+enum PromptSetNameValidation {
+    static func error(for name: String) -> String? {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty || title.unicodeScalars.contains(where: { $0.value < 32 })
+            ? "Enter a prompt set name without control characters." : nil
+    }
+}
+
+/// Tracks raw rename edits separately from normalized persistence eligibility.
+struct PromptSetRenameDraft {
+    let original: PromptSet
+    var name: String
+    init(set: PromptSet) { original = set; name = set.name }
+    var normalizedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var hasChanges: Bool { name != original.name }
+    var validationError: String? { PromptSetNameValidation.error(for: name) }
+    var canRename: Bool { hasChanges && validationError == nil && normalizedName != original.name }
+}
+
 /// In-memory cancellation baseline, independent of validation and Save eligibility.
 /// Successful reuse copies can retain their current raw values without changing the setup.
 struct ComparisonPromptDraftCheckpoint<Prompt: Equatable> {
@@ -374,11 +393,7 @@ struct ComparisonPromptSetDraft: Identifiable {
         prompts = original.prompts.map { Prompt($0, mode: mode) }
     }
 
-    var nameValidationError: String? {
-        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty || title.unicodeScalars.contains(where: { $0.value < 32 })
-            ? "Enter a prompt set name without control characters." : nil
-    }
+    var nameValidationError: String? { PromptSetNameValidation.error(for: name) }
 
     private var metadataValidationError: String? {
         if let error = nameValidationError { return error }
@@ -579,9 +594,7 @@ struct MusicComparisonSetup: Identifiable {
     }
 
     static func nameValidationError(_ name: String) -> String? {
-        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty || title.unicodeScalars.contains(where: { $0.value < 32 })
-            ? "Enter a prompt set name without control characters." : nil
+        PromptSetNameValidation.error(for: name)
     }
 
     func promptSet(named name: String? = nil) throws -> PromptSet {

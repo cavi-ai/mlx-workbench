@@ -309,6 +309,12 @@ from `mlx-agent` at runtime.
   an edited visible Save-as name. Successful copy saves retain current prompts
   as the checkpoint; failed saves leave it intact and later edits re-arm it.
   Save eligibility and Apply behavior remain separate from cancellation.
+  PromptSetRenameSheet uses PromptSetRenameDraft in every mode: raw name edits
+  guard Cancel and interactive dismissal, while normalized unchanged names
+  cannot submit redundant writes. PromptSetNameValidation is shared by rename,
+  new/copy/reuse name validation and the coordinator persistence boundary.
+  Inline invalid-name feedback is separate from persistence errors; renaming
+  preserves prompt identities, settings and historical run snapshots.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening

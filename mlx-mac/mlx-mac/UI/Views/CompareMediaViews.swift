@@ -1793,39 +1793,44 @@ struct MusicPromptSetEditSheet: View {
 struct PromptSetRenameSheet: View {
     let set: PromptSet
     let onRename: (String) -> String?
-    @State private var name: String
+    @State private var draft: PromptSetRenameDraft
     @State private var error: String?
     @Environment(\.dismiss) private var dismiss
 
     init(set: PromptSet, onRename: @escaping (String) -> String?) {
         self.set = set
         self.onRename = onRename
-        _name = State(initialValue: set.name)
+        _draft = State(initialValue: PromptSetRenameDraft(set: set))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Label("Rename \(set.effectiveMode.title.lowercased()) prompt set", systemImage: "pencil")
-                .font(WorkbenchTypography.title)
+                .font(WorkbenchTypography.cardTitle)
             Text("Only this saved set's name changes. Past runs keep their recorded names and inputs.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            TextField("Prompt set name", text: $name).textFieldStyle(.roundedBorder)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("Prompt set name", text: $draft.name).textFieldStyle(.roundedBorder)
                 .accessibilityLabel("Prompt set name")
+            if let message = draft.validationError {
+                ComparisonDraftValidationMessage(message: message)
+            }
             ErrorBanner(text: error)
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                ComparisonPromptCancelButton(requiresConfirmation: draft.hasChanges) { dismiss() }
                 Button("Rename") {
-                    error = onRename(name)
+                    error = onRename(draft.normalizedName)
                     if error == nil { dismiss() }
                 }
                 .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!draft.canRename)
             }
         }
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: WorkbenchSize.Compare.promptSetRenameWidth)
+        .interactiveDismissDisabled(draft.hasChanges)
     }
 }
 

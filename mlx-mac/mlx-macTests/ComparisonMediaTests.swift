@@ -3764,6 +3764,79 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
+    func testRenameSheetShowsValidationWhileEditingWithoutSaving() async throws {
+        func fields(in view: NSView) -> [NSTextField] {
+            if let field = view as? NSTextField, field.isEditable { return [field] }
+            return view.subviews.flatMap { fields(in: $0) }
+        }
+        for mode in [ComparisonMode.chat, .musicGeneration] {
+            let set = PromptSet(id: "saved", name: "Studies", useCase: nil,
+                prompts: [PromptEntry(id: "p", text: "A prompt")], origin: .userCreated, mode: mode)
+            let content = PromptSetRenameSheet(set: set) { _ in
+                XCTFail("Editing must not save a rename"); return nil
+            }.background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 280),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(250))
+            host.layoutSubtreeIfNeeded()
+            let initialHeight = host.fittingSize.height
+            let field = try XCTUnwrap(fields(in: host).first)
+            for (name, state) in [("", "invalid"), ("New valid name", "valid")] {
+                field.stringValue = name
+                field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+                try await Task.sleep(for: .milliseconds(200))
+                host.layoutSubtreeIfNeeded()
+                if state == "invalid" {
+                    XCTAssertGreaterThan(host.fittingSize.height, initialHeight, "Invalid names reveal inline validation")
+                } else {
+                    XCTAssertEqual(host.fittingSize.height, initialHeight, accuracy: 1, "Valid names clear the warning")
+                }
+                window.setContentSize(host.fittingSize)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                attachment.name = "Rename \(mode.rawValue) \(state)"; attachment.lifetime = .keepAlways; add(attachment)
+                if let directory = ProcessInfo.processInfo.environment["MLX_RENAME_PROOF_DIR"] {
+                    try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(mode.rawValue)-\(state).png"))
+                }
+            }
+        }
+    }
+
+    func testRenameDraftValidationAndDiscardTrackingApplyToEveryMode() {
+        for mode in ComparisonMode.allCases {
+            let original = PromptSet(id: "saved", name: "Studies", useCase: .coding,
+                prompts: [PromptEntry(id: "p", text: "A prompt")], origin: .userCreated, mode: mode)
+            var draft = PromptSetRenameDraft(set: original)
+            XCTAssertFalse(draft.hasChanges)
+            XCTAssertFalse(draft.canRename, "Opening must not submit an unchanged name")
+            draft.name = "  Studies  "
+            XCTAssertTrue(draft.hasChanges, "Cancellation still tracks raw edits")
+            XCTAssertFalse(draft.canRename, "Whitespace alone must not cause a redundant write")
+            for invalid in ["", " \n ", "A\u{0000}B", "A\nB"] {
+                draft.name = invalid
+                XCTAssertTrue(draft.hasChanges)
+                XCTAssertNotNil(draft.validationError)
+                XCTAssertFalse(draft.canRename)
+            }
+            draft.name = "  Études 🎹  "
+            XCTAssertTrue(draft.hasChanges)
+            XCTAssertNil(draft.validationError)
+            XCTAssertTrue(draft.canRename)
+            XCTAssertEqual(draft.normalizedName, "Études 🎹")
+            XCTAssertEqual(draft.original, original, "Draft editing must preserve identity, prompts and metadata")
+            draft.name = "Studies"
+            XCTAssertFalse(draft.hasChanges)
+            XCTAssertFalse(draft.canRename)
+        }
+    }
+
+    @MainActor
     func testTaskQualityRatingsRenderWithOutputsWithoutSaving() async throws {
         let store = ComparisonOutputStore(root: root.appendingPathComponent("rating-proof"))
         for mode in [ComparisonMode.chat, .imageGeneration] {
