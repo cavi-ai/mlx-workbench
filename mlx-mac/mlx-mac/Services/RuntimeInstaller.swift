@@ -40,13 +40,30 @@ final class RuntimeInstaller: ObservableObject {
         }
     }
 
-    func install() async {
+    func install(labAgentPath: String? = nil, inference: Bool = false) async {
         guard let repoRoot, state != .running else { return }
         state = .running
         logTail = []
 
         do {
-            try await Self.runMakeInstall(repoRoot: repoRoot) { [weak self] line in
+            let executable: URL
+            let arguments: [String]
+            if let labAgentPath {
+                guard let python = WorkbenchPython.preferredExecutable(repoRoot: repoRoot) else {
+                    throw BridgeError.skillUnavailable
+                }
+                let requirements = URL(fileURLWithPath: labAgentPath).appendingPathComponent(
+                    inference ? "requirements-lab-inference.txt" : "requirements-lab.txt")
+                guard FileManager.default.fileExists(atPath: requirements.path) else {
+                    throw BridgeError.skillOutputUnreadable
+                }
+                executable = python
+                arguments = ["-m", "pip", "install", "-r", requirements.path]
+            } else {
+                executable = URL(fileURLWithPath: "/usr/bin/make")
+                arguments = ["install"]
+            }
+            try await Self.runInstall(repoRoot: repoRoot, executable: executable, arguments: arguments) { [weak self] line in
                 guard let self else { return }
                 Task { @MainActor in
                     self.logTail.append(line)
@@ -67,10 +84,18 @@ final class RuntimeInstaller: ObservableObject {
         repoRoot: URL,
         onLine: @escaping @Sendable (String) -> Void
     ) async throws {
+        try await runInstall(repoRoot: repoRoot, executable: URL(fileURLWithPath: "/usr/bin/make"),
+                             arguments: ["install"], onLine: onLine)
+    }
+
+    nonisolated static func runInstall(
+        repoRoot: URL, executable: URL, arguments: [String],
+        onLine: @escaping @Sendable (String) -> Void
+    ) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/make")
-            process.arguments = ["install"]
+            process.executableURL = executable
+            process.arguments = arguments
             process.currentDirectoryURL = repoRoot
 
             let pipe = Pipe()
@@ -108,7 +133,7 @@ final class RuntimeInstaller: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .exited(let code): return "make install exited with status \(code)."
+            case .exited(let code): return "Runtime installation exited with status \(code)."
             }
         }
     }

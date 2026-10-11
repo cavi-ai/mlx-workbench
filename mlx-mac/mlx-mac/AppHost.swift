@@ -30,6 +30,7 @@ class AppHost: ObservableObject {
     let verification: VerificationCoordinator
     /// Measured Comparisons (prompt-set replay across variants).
     let comparison: ComparisonCoordinator
+    let lab: LabCoordinator
     /// Cross-client wiring transactions (premium spec 02).
     let wiring: WiringCoordinator
     /// Always-on endpoint supervisor (premium spec 06).
@@ -111,6 +112,7 @@ class AppHost: ObservableObject {
         self.config = loadedConfig
         let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
         self.api = api
+        self.lab = LabCoordinator(api: api)
         self.resources = SystemResourceMonitor(statusProvider: { try await api.serveStatus() })
         self.modelWorkflow = ModelWorkflowCoordinator(
             api: modelWorkflowAPI ?? .live(api: api),
