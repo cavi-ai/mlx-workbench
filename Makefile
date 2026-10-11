@@ -12,13 +12,8 @@ PYTHON   := $(shell if [ -x "$(VENV_PY)" ]; then echo "$(VENV_PY)"; else echo py
 # Homebrew python3 is often 3.14; torch needs 3.12 on Mac right now.
 VENV_PYTHON ?= 3.12
 
-HOST     ?= 127.0.0.1
-PORT     ?= 8765
-RUN_DIR  := .run
-PID_FILE := $(RUN_DIR)/mlx-workbench.pid
-LOG_FILE := $(RUN_DIR)/mlx-workbench.log
+RUN_DIR := .run
 LAUNCHER := scripts/mlx-workbench
-URL      := http://$(HOST):$(PORT)/
 # transformers 5 writes nested rope_parameters; mlx-lm 0.31 expects the
 # top-level rope_theta key in GGUF→HF intermediates. Pin transformers 4.
 # Exact pins live in requirements.txt (versions validated together on
@@ -32,7 +27,7 @@ DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
 DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert pip-audit _audit_pkgs deps \
-	start stop restart status run test test-js test-live-scan test-swift test-native-ui test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
+	start run test test-live-scan test-swift test-native-ui test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
 	docs-test docs-build docs-verify docs-release version-bump dmg build-swift-dist build-swift-devid
 
 help:
@@ -47,14 +42,10 @@ help:
 	row "make install" "submodule + .venv + torch/transformers/gguf/mlx-lm/accelerate"; \
 	row "make check" "verify mlx-agent + .venv"; \
 	hdr "Run"; \
-	row "make start" "background UI"; \
-	row "make stop" "stop background UI"; \
-	row "make restart" "stop then start"; \
-	row "make status" "running?"; \
-	row "make run" "foreground UI"; \
-	row "make open" "open $(URL)"; \
+	row "make start" "build and open the SwiftUI application"; \
+	row "make run" "build and open the SwiftUI application"; \
 	hdr "Test"; \
-	row "make test" "unittest suite + static JS tests"; \
+	row "make test" "Python compatibility and contract tests"; \
 	row "make test-swift" "unit tests for Swift app"; \
 	row "make test-native-ui" "isolated macOS VM UI tests; NATIVE_UI_BASE_VM names a prepared Tart VM"; \
 	row "make test-live-scan" "validate live model bytes against configured filesystem paths"; \
@@ -179,78 +170,10 @@ check-convert: mac-only
 	fi
 	@"$(VENV_PY)" -c "from mlx_workbench import deps; r=deps.runtime_report(); print(r['convert']['message']); print(r['serve']['message']); raise SystemExit(0 if r['convert']['ok'] else 1)"
 
-start: check
-	@mkdir -p $(RUN_DIR); \
-	if [ -f $(PID_FILE) ] && kill -0 $$(tr -d '[:space:]' < $(PID_FILE)) 2>/dev/null; then \
-		echo "already running (pid $$(tr -d '[:space:]' < $(PID_FILE))) → $(URL)"; \
-		exit 0; \
-	fi; \
-	rm -f $(PID_FILE); \
-	$(PYTHON) $(LAUNCHER) --host $(HOST) --port $(PORT) --no-open --pid-file $(PID_FILE) \
-		>> $(LOG_FILE) 2>&1 & \
-	for i in 1 2 3 4 5 6 7 8 9 10; do \
-		if [ -f $(PID_FILE) ] && kill -0 $$(tr -d '[:space:]' < $(PID_FILE)) 2>/dev/null; then \
-			echo "mlx-workbench started (pid $$(tr -d '[:space:]' < $(PID_FILE))) → $(URL)"; \
-			echo "log: $(LOG_FILE)"; \
-			exit 0; \
-		fi; \
-		sleep 0.2; \
-	done; \
-	echo "failed to start; see $(LOG_FILE)" >&2; \
-	tail -n 40 $(LOG_FILE) >&2 || true; \
-	exit 1
-
-stop:
-	@stopped=0; \
-	if [ -f $(PID_FILE) ]; then \
-		pid=$$(tr -d '[:space:]' < $(PID_FILE)); \
-		if [ -z "$$pid" ]; then \
-			echo "stale empty pid file; removing"; \
-		elif kill -0 $$pid 2>/dev/null; then \
-			kill $$pid; \
-			for i in 1 2 3 4 5 6 7 8 9 10; do \
-				kill -0 $$pid 2>/dev/null || break; \
-				sleep 0.2; \
-			done; \
-			if kill -0 $$pid 2>/dev/null; then \
-				kill -9 $$pid 2>/dev/null || true; \
-			fi; \
-			echo "stopped pid $$pid"; \
-			stopped=1; \
-		else \
-			echo "stale pid file ($$pid); removing"; \
-		fi; \
-		rm -f $(PID_FILE); \
-	fi; \
-	listeners=$$(lsof -nP -t -iTCP:$(PORT) -sTCP:LISTEN 2>/dev/null || true); \
-	if [ -n "$$listeners" ]; then \
-		echo "refusing to stop unowned listener(s) on :$(PORT): $$listeners" >&2; \
-		exit 1; \
-	fi; \
-	if [ "$$stopped" -eq 0 ]; then \
-		echo "not running"; \
-	fi
-
-restart: stop start
-
-status:
-	@if [ -f $(PID_FILE) ] && kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
-		echo "running (pid $$(cat $(PID_FILE))) → $(URL)"; \
-	else \
-		echo "not running"; \
-		[ -f $(PID_FILE) ] && echo "stale pid file: $(PID_FILE)"; \
-		exit 1; \
-	fi
-
-run: check
-	$(PYTHON) $(LAUNCHER) --host $(HOST) --port $(PORT)
+start run open: run-swift
 
 test:
 	$(PYTHON) -m unittest discover -s tests -t .
-	$(MAKE) --no-print-directory test-js
-
-test-js:
-	@node --test tests/static_*.test.js
 
 test-live-scan:
 	MLX_WORKBENCH_LIVE_SCAN=1 $(PYTHON) -m unittest tests.test_live_scan_e2e -v
@@ -296,9 +219,7 @@ version-bump:
 	esac
 	@$(PYTHON) scripts/version_bump.py "$(V)"
 
-open:
-	@$(PYTHON) -c "import webbrowser; webbrowser.open('$(URL)')"
-	@echo $(URL)
+
 
 doctor: check
 	@$(MAKE) --no-print-directory check-convert || true
@@ -311,7 +232,7 @@ clean-venv:
 
 # Swift build targets (mlx-mac sibling project)
 
-MLX_SWIFT_DD ?= /tmp/mlx-mac-build
+MLX_SWIFT_DD ?= $(RUN_DIR)/swift-build
 MLX_SWIFT_APP = $(MLX_SWIFT_DD)/Build/Products/Release/mlx-workbench.app
 
 build-swift:

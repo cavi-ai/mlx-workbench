@@ -2,9 +2,9 @@
 
 Local UI for the [mlx-agent](https://github.com/cavi-ai/mlx-agent) model lifecycle on Apple Silicon.
 
-This app is a browser front end. Conversion, discovery, doctor, and serve logic live in mlx-agent; workbench shells out to `scripts/mlx-agent` with `--json` and renders what comes back. The two repositories stay independently versioned: no Python imports from mlx-agent, one subprocess boundary.
+MLX Workbench is a native SwiftUI application. Model management, conversion, serving, generation, controlled experiments, and text training use the shared mlx-agent engine through a subprocess boundary.
 
-The workbench package itself is stdlib-only (no pip deps for the UI server). `make install` creates a local `.venv` and adds convert/serve packages (`torch`, `transformers` 4.x, `gguf`, `mlx-lm`, `accelerate`). The HTTP server binds loopback only. Child mlx-agent commands may contact the Hugging Face Hub (Scout / Doctor).
+The Python package supplies configuration and compatibility utilities. `make install` creates a local Python 3.12 environment for the selected engine. The application has no web server.
 
 ## Requirements
 
@@ -25,9 +25,9 @@ That is the whole setup. `make install` creates a project `.venv` (not Homebrew 
 
 The default agent path is `vendor/mlx-agent` (pinned release). Override with Settings, or `$MLX_AGENT_HOME`, for a local mlx-agent checkout. `make install` and `make check` use that resolved configured path first, and initialize the vendored submodule only when no usable agent is configured.
 
-## Native macOS app
+## Native workflows
 
-`mlx-mac/` is a native SwiftUI app over the same agent boundary — same preview/confirm discipline, same receipts — plus a lifecycle layer the web UI does not have:
+`mlx-mac/` is a native SwiftUI app over the same agent boundary — same preview/confirm discipline, same receipts — with these lifecycle workflows:
 
 - **Conversion Quality Gate**: every conversion output is served on an ephemeral loopback port and probed with a canary suite before it is marked verified.
 - **Measured Comparisons**: replay prompt sets (built-in or imported from your opencode history) across variants; measured tok/s and TTFT feed the recommendation engine.
@@ -62,7 +62,7 @@ The default agent path is `vendor/mlx-agent` (pinned release). Override with Set
 - **Compare decisions on this Mac**: start with the last intentionally served compatible model and nearby alternatives. Compare local task outcomes, speed, first-token latency, disk size, and estimated memory fit at the chosen context. Workflow reports can be imported explicitly from local JSON and exported with machine and evidence context for an agent; missing or stale measurements stay visible. Reclaim suggestions require comparable task evidence and keep the existing preview/confirm boundary. See the [native Compare guide](mlx-mac/README.md#compare-decisions-and-workflow-evidence).
 - **Cross-client Wiring**: point opencode, Continue, Zed, or Aider at a running local server with atomic config writes, backups, and rollback.
 - **Always-on Endpoint**: a stable loopback port with crash-loop-guarded supervision, optional login item, and a menu-bar status item.
-- **Disk Pressure Advisor**: task-scoped replacement chains show the retained model and reviewed alternatives. Exact duplicate and stale GGUF files can be quarantined after preview. In the native Reclaim tab, **Review model folder…** (also available on replacement candidates) previews a local MLX folder's path, file count and size before quarantine. Put back restores the whole folder; Move to Trash requires another preview. Empty Trash in Finder to free disk space. Folder moves require the same volume, configured MLX roots, independent regular files and a recognized MLX config/weights; active/preferred models, retained chain keepers, shared HF cache snapshots, links and scan roots themselves are protected. Contents and current protection/configuration are rechecked at confirmation. Folder records remain visible in the web UI with a native-app review hint.
+- **Disk Pressure Advisor**: task-scoped replacement chains show the retained model and reviewed alternatives. Exact duplicate and stale GGUF files can be quarantined after preview. In the native Reclaim tab, **Review model folder…** (also available on replacement candidates) previews a local MLX folder's path, file count and size before quarantine. Put back restores the whole folder; Move to Trash requires another preview. Empty Trash in Finder to free disk space. Folder moves require the same volume, configured MLX roots, independent regular files and a recognized MLX config/weights; active/preferred models, retained chain keepers, shared HF cache snapshots, links and scan roots themselves are protected. Contents and current protection/configuration are rechecked at confirmation. Folder records remain visible in native Reclaim history.
 - **Model Lineage**: a per-model provenance timeline (source → converted → verified → benchmarked → served → wired), exportable as Markdown or JSON.
 - **Watch & Regression Alerts**: upstream Hugging Face digests and macOS/MLX environment-drift re-verification prompts.
 - **Memory-fit Advisor**: fits/tight/won't-fit verdict with a suggested max context before serving.
@@ -100,51 +100,34 @@ without the build machine's source path.
 ## Run
 
 ```bash
-make start     # background; logs in .run/mlx-workbench.log
-make status
-make open      # browser → http://127.0.0.1:8765/
-make stop
-
-# foreground (dev)
-make run
-# launcher prefers .venv when present
-python3 scripts/mlx-workbench
+make start     # build and open the SwiftUI application
+make test      # Python compatibility and contract tests
+make test-swift
 ```
 
-`make start` / `make run` accept `PORT=9876` and `HOST=127.0.0.1`. The server prints its URL and the resolved mlx-agent path. `--config` and `--no-open` are available on the Python launcher.
+Quit through the application's menu. The former HTTP launcher and browser assets have been removed.
 
-## What it shows
+## Controlled experiments and training
 
-| Tab | Role |
-| --- | --- |
-| **Models** | Local `.gguf` inventory via `convert scan`: pending, converted, companion, shard; multi-select queue |
-| **Convert** | HF-cache convert via `convert start --repo` (local cache only; never downloads) |
-| **Duplicates** | Exact vs variant groups; quarantine moves (never deletes) |
-| **Scout** | `discover` — Hub candidates by role (table + Serve shortcuts) |
-| **Doctor** | `doctor models` — findings + incomplete-cache prune |
-| **Serve** | Preview/confirm `serve start`; servers table with Stop |
-| **Training Studio** | LoRA train + fuse (preview/confirm) |
-| **Compare Conversions** | `quant profile` — quantization plan previews across target formats |
-| **Model Arch** | Scan-reported architecture metadata for one local GGUF |
-| **Jobs** | Convert / serve / lora / fuse receipts + log tail; workbench convert queue |
-| **Settings** | Scan roots, output dir, agent path, quarantine, quantization |
+**Compare → Controlled studies** authors a frozen A/B recipe, queues generation, and retains durable artifacts. Blind review uses shared play/pause, seeking, and frame controls. Scores and preferences become immutable receipts before authorized reveal. Adaptive studies retain progression and stopping evidence.
 
-The web UI covers the core loop only. Adopt, Wire, and other lifecycle
-operations live in the native macOS app (`mlx-mac/`).
+**Activity** shows experiment, conversion, serving, and text training jobs. Queued conversions from an earlier installation can be explicitly imported after the former server is stopped; the source and an exact backup are preserved.
+
+**Training** validates complete bounded JSONL datasets and previews configuration before launch. Each run pins its cached base model, copies reviewed dataset bytes, records the actual process result, and verifies adapter content. Completed jobs can run a matched base-versus-adapter evaluation. Outputs and frozen recipes are retained in the shared experiment store and remain accessible in evaluation history. Text LoRA training does not establish media training qualification.
+
+**Workspace…** previews adoption of an existing experiment database and artifact store into a new destination. It preserves IDs, hashes, reviews, and sealed assignments, refuses active work or an occupied destination, and leaves the source untouched.
+
+The experiment runtime requires the selected agent's `requirements-lab.txt`. Optional MPS generation uses `requirements-lab-inference.txt`; install it through **Controlled studies → Install runtime…**. Existing model-management, serving, wiring, and cleanup workflows retain their runtime requirements.
 
 ## Converting
 
-Every conversion is previewed before it runs: command, output path, and preview hash. Only a reviewed plan can be confirmed. The job runs detached under mlx-agent receipts; open **Jobs** for state and log tail.
+Every conversion is previewed before it runs. Confirm the command, output path, and preview hash in Prepare. Detached jobs use mlx-agent receipts; Activity shows state and logs.
 
-mlx-agent allows one live convert at a time. Every confirmed plan is persisted before launch; extra plans remain FIFO in the workbench **queue**, auto-start when the live job finishes, and resume automatically after a server restart. Once launched, mlx-agent receipts remain the authority for process state and handoff recovery.
+Imported queued conversions keep their reviewed plans. **Run next** reconciles receipts and starts one pending item when compute is available. Failed launches retain their error and remediation. Retry reuses the reviewed plan; moving queued items does not approve a new plan.
 
-Terminal launch failures remain in **Jobs** with their classified error and remediation, survive a restart, and do not block later pending work. **Retry** reuses the original reviewed plan and places it at the pending tail; it never creates or approves a replacement preview. **Up** and **Down** move pending items one step at a time, while starting handoffs stay pinned until receipt reconciliation finishes.
+The shared queue lives beside the mlx-agent compute state on macOS. Earlier Workbench queue files remain import sources until explicitly adopted. Source files and an exact backup are preserved.
 
-By default the queue is stored at `$XDG_STATE_HOME/mlx-workbench/convert-queue.json`, or `~/.local/state/mlx-workbench/convert-queue.json` when `XDG_STATE_HOME` is unset. An explicitly selected config profile keeps `convert-queue.json` beside that config. Invalid saved state is preserved as a numbered `convert-queue.json.N.corrupt` file and reported in **Jobs** instead of being overwritten silently.
-
-**GGUF** sources come from **Models** (single Convert or multi-select Queue selected). **HF-cache** sources use the **Convert** tab (`publisher/model` already present under the local Hugging Face cache). Convert itself never downloads from the Hub; in the native app, **Add from Hugging Face** downloads first, as an explicit confirmed step.
-
-Quality is capped by the source: a Q4 GGUF converted to MLX 4-bit has been quantized twice. Prefer original fp16 weights when you have them.
+Conversion uses local source weights. **Add from Hugging Face** is a separate confirmed download. Prefer original floating-point weights when available; conversion cannot recover information removed by prior quantization.
 
 ## Add from Hugging Face
 
@@ -176,9 +159,7 @@ mlx-agent also ships MLX ports of architectures the pinned backends lack, so the
   "mlx_agent_path": "",
   "quarantine_dir": "/Users/you/.local/share/mlx-workbench/quarantine",
   "q_bits": 4,
-  "signatures": true,
-  "host": "127.0.0.1",
-  "port": 8765
+  "signatures": true
 }
 ```
 
@@ -186,7 +167,7 @@ Leave `mlx_agent_path` empty to use the vendored submodule (or env / sibling dis
 
 ## Security
 
-Loopback bind only, same-origin checks, and a per-process session token on every API call. The server refuses a non-loopback bind. Quarantine moves are restricted to `.gguf` files inside a configured root. Agent arguments are argv tokens — never a shell string. Job logs are readable only when advertised by convert/serve status.
+Serving endpoints remain loopback-only. Agent commands use argv tokens rather than shell strings. Preview hashes bind reviewed inputs before conversion and training. Experiment media is integrity-checked and reviewer-scoped; sealed variant assignments are revealed only after an accepted review. Quarantine and cleanup retain native preview, protection, and confirmation checks.
 
 ## Updating the mlx-agent pin
 
@@ -215,12 +196,7 @@ make test-swift-live-scan
 | Target | Action |
 | --- | --- |
 | `make install` | Submodule + `.venv` + convert/serve packages |
-| `make start` | Background UI (pid/log under `.run/`) |
-| `make stop` | Stop background UI |
-| `make restart` | `stop` then `start` |
-| `make status` | Running? |
-| `make run` | Foreground UI |
-| `make open` | Open the loopback URL |
+| `make start` / `make run` / `make open` | Build and open the SwiftUI application |
 | `make test` | Unittest suite |
 | `make test-live-scan` | Opt-in, read-only local E2E scan; verifies reported model bytes against the filesystem |
 | `make test-swift-live-scan` | Opt-in, read-only native-app E2E scan; verifies reported model bytes against the filesystem |

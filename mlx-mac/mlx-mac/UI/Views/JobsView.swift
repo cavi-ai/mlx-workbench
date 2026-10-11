@@ -110,6 +110,9 @@ struct JobsView: View {
     @State private var selectedLog: LogSelection?
     @State private var webQueue = WebConvertQueue.Snapshot(items: [], path: "", problem: nil)
     @State private var isCompact = false
+    @State private var trainingJobs: [TrainingJob] = []
+    @State private var queueBusy = false
+    @State private var queueImport: QueueImport?
     @State private var verificationStatuses: [UUID: VerificationStatus] = [:]
     @State private var expandedRows: Set<UUID> = []
     @State private var expandedServers: Set<String> = []
@@ -155,11 +158,35 @@ struct JobsView: View {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                     ErrorBanner(text: statusError)
                     ErrorBanner(text: modelWorkflow.persistenceError)
+                    WorkbenchSurface {
+                        VStack(alignment: .leading) {
+                            Text("Experiment jobs").font(WorkbenchTypography.cardTitle)
+                            LabJobRows(lab: appHost.lab)
+                        }
+                    }
+                    WorkbenchSurface {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                            Text("Training jobs").font(WorkbenchTypography.cardTitle)
+                            ForEach(trainingJobs) { job in
+                                HStack {
+                                    Text(job.repo + " · " + job.state).font(WorkbenchTypography.secondary)
+                                    Spacer()
+                                    if job.state == "running" {
+                                        Button("Cancel training") {
+                                            Task {
+                                                do { _ = try await appHost.api.trainingStop(pid: job.pid); await refresh() }
+                                                catch { statusError = AppHost.render(error) }
+                                            }
+                                        }
+                                    }
+                                    Button("Open Training") { onRouteSelection(.training) }
+                                }
+                            }
+                        }
+                    }
                     conversions(page)
                     serversSection
-                    if !webQueue.items.isEmpty || webQueue.problem != nil {
-                        ActivityWebQueueView(snapshot: webQueue, isCompact: isCompact)
-                    }
+                    queueSection
                 }
                 .frame(maxWidth: WorkbenchSize.Run.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
@@ -171,6 +198,22 @@ struct JobsView: View {
             }
         }
         .sheet(item: $selectedLog) { LogSheet(path: $0.path) }
+        .sheet(item: $queueImport) { plan in
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                Text("Import queued conversions").font(WorkbenchTypography.title)
+                Text("Stop the old web server before importing. The source remains untouched and an exact backup is retained.")
+                Text(plan.source).textSelection(.enabled)
+                Text("\(plan.count) queued records · SHA-256 \(plan.digest)").textSelection(.enabled)
+                HStack {
+                    Button("Cancel") { queueImport = nil }
+                    Button("Import") {
+                        queueImport = nil
+                        queueAction(["operation": .string("adopt"), "source": .string(plan.source),
+                                     "preview_hash": .string(plan.hash)])
+                    }
+                }
+            }.padding(WorkbenchSpacing.pageInset).frame(width: 560)
+        }
         .toolbar {
             if isRouteActive {
                 ToolbarItem(placement: .primaryAction) {
@@ -311,11 +354,92 @@ struct JobsView: View {
         verificationStatuses = next
     }
 
+    private struct QueueImport: Identifiable {
+        let id = UUID()
+        let source: String
+        let hash: String
+        let digest: String
+        let count: Int
+    }
+
+    private var queueSection: some View {
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                HStack {
+                    Text("Conversion queue").font(WorkbenchTypography.cardTitle)
+                    Spacer()
+                    Button("Import existing queue") { importQueue() }.disabled(queueBusy)
+                    Button("Run next") { queueAction(["operation": .string("run")]) }
+                        .disabled(queueBusy || !webQueue.items.contains { $0.state == .queued || $0.state == .starting })
+                }
+                Text("Reviewed conversion plans are retained by mlx-agent. Run next starts one plan; refresh reconciles its receipt.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                if let problem = webQueue.problem { Text(problem).foregroundStyle(WorkbenchColor.failure) }
+                ForEach(webQueue.items) { item in
+                    Divider()
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(item.label).font(WorkbenchTypography.cardTitle)
+                            Text("\(item.state.rawValue) · q\(item.qBits) · \(item.path ?? item.repo ?? "")").font(WorkbenchTypography.metadata)
+                            if let failure = item.failure { Text(failure.message + " " + failure.remediation).foregroundStyle(WorkbenchColor.failure) }
+                        }
+                        Spacer()
+                        if item.state == .queued {
+                            Button("↑") { queueAction(["operation": .string("move"), "id": .string(item.id), "direction": .string("up")]) }
+                            Button("↓") { queueAction(["operation": .string("move"), "id": .string(item.id), "direction": .string("down")]) }
+                        }
+                        if item.state == .failed {
+                            Button("Retry") { queueAction(["operation": .string("retry"), "id": .string(item.id)]) }
+                        }
+                        if item.state != .starting {
+                            Button("Remove") { queueAction(["operation": .string("cancel"), "id": .string(item.id)]) }
+                        }
+                    }.disabled(queueBusy)
+                }
+            }
+        }
+    }
+
+    private func queueAction(_ fields: [String: LabValue]) {
+        guard !queueBusy else { return }
+        queueBusy = true
+        Task {
+            defer { queueBusy = false }
+            do {
+                webQueue = try await appHost.api.conversionQueue(.object(fields)).snapshot()
+                statusError = nil
+            } catch { statusError = AppHost.render(error) }
+        }
+    }
+
+    private func importQueue() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let source = panel.url else { return }
+        queueBusy = true
+        Task {
+            defer { queueBusy = false }
+            do {
+                let result = try await appHost.api.conversionQueue(.object([
+                    "operation": .string("adopt-preview"), "source": .string(source.path)]))
+                guard let hash = result.previewHash, let digest = result.sourceDigest, let count = result.itemCount else {
+                    throw WebConvertQueue.LoadError.invalidSchema("Queue import preview is incomplete.")
+                }
+                queueImport = QueueImport(source: source.path, hash: hash, digest: digest, count: count)
+            } catch { statusError = AppHost.render(error) }
+        }
+    }
+
     private func refresh() async {
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
-        webQueue = WebConvertQueue.loadDefault()
+        await appHost.lab.refresh()
+        do { trainingJobs = try await appHost.api.trainingStatus().jobs }
+        catch { statusError = AppHost.render(error) }
+        do { webQueue = try await appHost.api.conversionQueue(.object(["operation": .string("snapshot")])).snapshot() }
+        catch { webQueue = .init(items: webQueue.items, path: webQueue.path, problem: AppHost.render(error)) }
         do {
             let jobs = try await appHost.api.convertStatus()
             statusError = nil

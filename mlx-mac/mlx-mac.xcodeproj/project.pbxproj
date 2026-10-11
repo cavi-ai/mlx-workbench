@@ -216,6 +216,11 @@
 		A6C0100000000000000000B04 /* ComparisonInsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F04; };
 		A6C0100000000000000000B05 /* ComparisonInsightsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F05; };
 		A6C0100000000000000000B06 /* WorkflowEvidenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F06; };
+		6C7A0C52AA77A71EA41F6133 /* LabWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9CB1A694F41D8E826B681FE; };
+		CB2380DF8ECDC3072CE227AB /* LabModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4761F36CE14D0095A922997; };
+		876242A70DBBF73ACD2AC44F /* LabCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4341FC77B8D7EDF0C8F28D87; };
+		C33AF97B1AA1B312EB6F02BF /* LabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB6BA6036AACD20164BB94B; };
+26UIBLD201 /* UnifiedWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF201 /* UnifiedWorkflowUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -439,6 +444,11 @@
 		A6C0100000000000000000F04 /* ComparisonInsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonInsightsView.swift; path = UI/Views/ComparisonInsightsView.swift; sourceTree = "<group>"; };
 		A6C0100000000000000000F05 /* ComparisonInsightsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonInsightsTests.swift; path = ComparisonInsightsTests.swift; sourceTree = "<group>"; };
 		A6C0100000000000000000F06 /* WorkflowEvidenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkflowEvidenceTests.swift; path = WorkflowEvidenceTests.swift; sourceTree = "<group>"; };
+		E9CB1A694F41D8E826B681FE /* LabWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabWorkspaceTests.swift; sourceTree = "<group>"; };
+		D4761F36CE14D0095A922997 /* LabModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabModels.swift; path = Models/LabModels.swift; sourceTree = "<group>"; };
+		4341FC77B8D7EDF0C8F28D87 /* LabCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabCoordinator.swift; path = Services/LabCoordinator.swift; sourceTree = "<group>"; };
+		4CB6BA6036AACD20164BB94B /* LabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabView.swift; path = UI/Views/LabView.swift; sourceTree = "<group>"; };
+26UIREF201 /* UnifiedWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedWorkflowUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -554,6 +564,9 @@
 				24FREF065 /* PromptHistoryImport.swift */,
 				26WQREF001 /* WebConvertQueue.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
+				4CB6BA6036AACD20164BB94B /* LabView.swift */,
+				4341FC77B8D7EDF0C8F28D87 /* LabCoordinator.swift */,
+				D4761F36CE14D0095A922997 /* LabModels.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
 				24FREF028 /* RecommendationEngine.swift */,
@@ -621,6 +634,7 @@
 			isa = PBXGroup;
 			children = (
 				24FREF01A /* AppHostHealthTests.swift */,
+				E9CB1A694F41D8E826B681FE /* LabWorkspaceTests.swift */,
 				24FREF027 /* CatalogStoreTests.swift */,
 				24FREF01F /* LibraryDomainTests.swift */,
 				24FREF024 /* LibraryViewTests.swift */,
@@ -691,6 +705,7 @@
 			children = (
 				26UIREF001 /* GGUFToRunRealDataUITests.swift */,
 				26UIREF101 /* SetupAssistantUITests.swift */,
+                26UIREF201 /* UnifiedWorkflowUITests.swift */,
 			);
 			path = "mlx-macUITests";
 			sourceTree = "<group>";
@@ -840,6 +855,7 @@
 			files = (
 				26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */,
 				26UIBLD101 /* SetupAssistantUITests.swift in Sources */,
+                26UIBLD201 /* UnifiedWorkflowUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -854,6 +870,9 @@
 				24BBLD000004 /* x */,
 				24BBLD000005 /* x */,
 				24BBLD000006 /* x */,
+				CB2380DF8ECDC3072CE227AB /* LabModels.swift in Sources */,
+				876242A70DBBF73ACD2AC44F /* LabCoordinator.swift in Sources */,
+				C33AF97B1AA1B312EB6F02BF /* LabView.swift in Sources */,
 				24BBLD000007 /* x */,
 				24BBLD000008 /* x */,
 				24BBLD000009 /* x */,
@@ -977,6 +996,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				24BBLD020 /* AppHostHealthTests.swift in Sources */,
+				6C7A0C52AA77A71EA41F6133 /* LabWorkspaceTests.swift in Sources */,
 				24BBLD033 /* CatalogStoreTests.swift in Sources */,
 				24BBLD025 /* LibraryDomainTests.swift in Sources */,
 				24BBLD030 /* LibraryViewTests.swift in Sources */,

@@ -51,6 +51,31 @@ actor WorkbenchAPI {
         return cli.agentHealth(agentPath: agentPath)
     }
 
+    /// Experiment operations share the agent's durable store and sealed projections.
+    func labWorkspace(request: LabRequest, store: URL, reviewer: String) async throws -> LabResponse {
+        let requestDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: requestDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: requestDirectory) }
+        let file = requestDirectory.appendingPathComponent("request.json")
+        try JSONEncoder().encode(request).write(to: file, options: .atomic)
+        return try await runOffActor(LabResponse.self, [
+            "lab", "--database", store.appendingPathComponent("experiments.sqlite3").path,
+            "--artifacts", store.appendingPathComponent("artifacts").path,
+            "--reviewer-id", reviewer, "workspace", "--request", file.path
+        ], timeout: ["run", "training-evaluate", "study-run"].contains(request.operation) ? 86_400 : 300)
+    }
+
+    func conversionQueue(_ request: LabValue) async throws -> QueueResponse {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("request.json")
+        try JSONEncoder().encode(request).write(to: file, options: .atomic)
+        return try await runOffActor(QueueResponse.self, [
+            "lab", "queue", "--receipts-dir", receiptDirectory, "--request", file.path
+        ], timeout: 300)
+    }
+
     // MARK: - Scan
 
     func scan(ggufRoots: [String], mlxRoots: [String], signatures: Bool,
@@ -505,7 +530,7 @@ actor WorkbenchAPI {
     // MARK: - LoRA / Fuse
 
     func loraPreview(repo: String, data: String, iters: Int?, out: String?) throws -> [String: Any] {
-        var argv = ["lora", "start", "--repo", repo, "--data", data]
+        var argv = ["lora", "start", "--repo", repo, "--data", data, "--receipts-dir", receiptDirectory]
         if let iters { argv.append(contentsOf: ["--iters", String(iters)]) }
         if let out { argv.append(contentsOf: ["--out", out]) }
         return Self.unwrapPlan(try raw(argv))
@@ -514,12 +539,20 @@ actor WorkbenchAPI {
     func loraStart(repo: String, data: String, previewHash: String,
                    iters: Int?, out: String?) throws -> [String: Any] {
         var argv = [
-            "lora", "start", "--repo", repo, "--data", data,
+            "lora", "start", "--repo", repo, "--data", data, "--receipts-dir", receiptDirectory,
             "--confirm", "--preview-hash", previewHash,
         ]
         if let iters { argv.append(contentsOf: ["--iters", String(iters)]) }
         if let out { argv.append(contentsOf: ["--out", out]) }
         return try raw(argv)
+    }
+
+    func trainingStatus() async throws -> TrainingSnapshot {
+        try await runOffActor(TrainingSnapshot.self, ["lora", "status", "--receipts-dir", receiptDirectory], timeout: 30)
+    }
+
+    func trainingStop(pid: Int) throws -> [String: Any] {
+        try raw(["lora", "stop", "--pid", String(pid), "--receipts-dir", receiptDirectory])
     }
 
     func fusePreview(repo: String, adapter: String, out: String?) throws -> [String: Any] {

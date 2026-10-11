@@ -376,6 +376,7 @@ extension ComparePresentation {
 }
 
 struct QuantView: View {
+    @State private var showsControlledStudies = false
     @ObservedObject var appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
     private let onRouteSelection: (AppRoute) -> Void
@@ -449,6 +450,13 @@ struct QuantView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                Picker("Workflow", selection: $showsControlledStudies) {
+                    Text("Quick comparison").tag(false)
+                    Text("Controlled studies").tag(true)
+                }.pickerStyle(.segmented)
+                if showsControlledStudies {
+                    LabPanel(lab: appHost.lab, installer: appHost.runtimeInstaller, agentPath: appHost.config.mlxAgentPath)
+                } else {
                 resultsArea
                 WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
                     environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile,
@@ -483,6 +491,7 @@ struct QuantView: View {
                 }
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
+                }
             }
             .frame(maxWidth: 1100, alignment: .leading)
             .frame(maxWidth: .infinity)

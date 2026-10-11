@@ -119,6 +119,11 @@ final class TrainingSession: ObservableObject {
 struct TrainingView: View {
     @ObservedObject var appHost: AppHost
     @StateObject private var session: TrainingSession
+    @State private var evaluationJob: TrainingJob?
+    @State private var jobs: [TrainingJob] = []
+    @State private var evaluations: [LabValue] = []
+    @State private var retainedEvaluation: LabResponse?
+    @State private var errorMessage: String?
 
     init(appHost: AppHost) {
         self.appHost = appHost
@@ -139,6 +144,9 @@ struct TrainingView: View {
                 if let preview = session.preview {
                     planSection(preview)
                 }
+                trainingJobs
+                evaluationHistory
+                ErrorBanner(text: errorMessage)
                 ErrorBanner(text: session.errorMessage)
                 if let notice = session.notice {
                     Text(notice).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
@@ -148,6 +156,83 @@ struct TrainingView: View {
             .padding(WorkbenchSpacing.pageInset)
             .frame(maxWidth: .infinity, alignment: .top)
         }
+        .sheet(item: $evaluationJob) { job in TrainingEvaluationSheet(lab: appHost.lab, job: job) }
+        .task { await refreshTraining() }
+    }
+
+    private var trainingJobs: some View {
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                HStack {
+                    Text("Training jobs").font(WorkbenchTypography.cardTitle)
+                    Spacer()
+                    Button("Refresh") { Task { await refreshTraining() } }
+                }
+                ForEach(jobs) { job in
+                    Divider()
+                    Text(job.repo + " · " + job.state).font(WorkbenchTypography.cardTitle)
+                    Text(job.out).font(WorkbenchTypography.metadata).textSelection(.enabled)
+                    if let identity = job.adapterIdentity {
+                        Text("Adapter content identity").font(WorkbenchTypography.metadata)
+                        Text(identity.jsonText).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                    }
+                    HStack {
+                        if job.state == "done", job.adapterIdentity != nil {
+                            Button("Compare with base") { evaluationJob = job }
+                        }
+                        if let log = job.logPath {
+                            Button("Open log") { NSWorkspace.shared.open(URL(fileURLWithPath: log)) }
+                        }
+                        if job.state == "running" {
+                            Button("Cancel training") {
+                                Task {
+                                    do { _ = try await appHost.api.trainingStop(pid: job.pid); await refreshTraining() }
+                                    catch { errorMessage = AppHost.render(error) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var evaluationHistory: some View {
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                Text("Retained training evaluations").font(WorkbenchTypography.cardTitle)
+                ForEach(Array(evaluations.enumerated()), id: \.offset) { _, evaluation in
+                    if let record = evaluation.object, let identity = record["id"]?.text {
+                        Button(identity) {
+                            Task {
+                                do {
+                                    retainedEvaluation = try await appHost.lab.request(
+                                        LabRequest(operation: "training-inspect", evaluationID: identity))
+                                } catch { errorMessage = AppHost.render(error) }
+                            }
+                        }
+                        Text(record["created_at"]?.text ?? "").font(WorkbenchTypography.metadata)
+                    }
+                }
+                if let retainedEvaluation, let report = retainedEvaluation.report {
+                    DisclosureGroup("Evaluation outputs and frozen recipe") {
+                        ScrollView {
+                            Text(report.jsonText).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                        }.frame(maxHeight: 240)
+                    }
+                    Text("SHA-256: " + (retainedEvaluation.artifactSHA256 ?? ""))
+                        .font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private func refreshTraining() async {
+        do {
+            jobs = try await appHost.api.trainingStatus().jobs
+            evaluations = try await appHost.lab.request(LabRequest(operation: "training-history")).evaluations ?? []
+        }
+        catch { errorMessage = AppHost.render(error) }
     }
 
     private var formSection: some View {
@@ -236,7 +321,7 @@ struct TrainingView: View {
                 }
                 HStack {
                     Spacer(minLength: 0)
-                    Button(session.operation == .submitting ? "Submitting…" : "Confirm & Train") { session.confirmTraining() }
+                    Button(session.operation == .submitting ? "Submitting…" : "Confirm & Train") { confirmTraining() }
                         .buttonStyle(.borderedProminent)
                         .disabled(!session.canConfirm)
                         .help("Submit the captured training request shown above.")
@@ -323,6 +408,14 @@ struct TrainingView: View {
         }
     }
 
+    private func confirmTraining() {
+        guard let task = session.confirmTraining() else { return }
+        Task {
+            await task.value
+            await refreshTraining()
+        }
+    }
+
     private func chooseDataset() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -334,6 +427,68 @@ struct TrainingView: View {
         }
         if panel.runModal() == .OK, let url = panel.url {
             session.draft.data = url.path
+        }
+    }
+}
+
+
+private struct TrainingEvaluationSheet: View {
+    @ObservedObject var lab: LabCoordinator
+    let job: TrainingJob
+    @Environment(\.dismiss) private var dismiss
+    @State private var prompt = ""
+    @State private var preview: LabValue?
+    @State private var result: LabResponse?
+    @State private var busy = false
+    @State private var error: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Evaluate trained adapter").font(WorkbenchTypography.title)
+            Text("Use the same prompt, seed, token limit, and sampling settings for the cached base model and this adapter.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            Text(job.repo).font(WorkbenchTypography.cardTitle)
+            TextField("Evaluation prompt", text: $prompt, axis: .vertical).lineLimit(3...6)
+                .onChange(of: prompt) { preview = nil; result = nil }
+            if let error { Text(error).foregroundStyle(WorkbenchColor.failure) }
+            if let preview {
+                DisclosureGroup("Reviewed evaluation recipe") {
+                    ScrollView { Text(preview.jsonText).font(WorkbenchTypography.compactValue).textSelection(.enabled) }.frame(maxHeight: 180)
+                }
+            }
+            if let result, let report = result.report?.object {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading) {
+                        Text("Base model").font(WorkbenchTypography.cardTitle)
+                        Text(report["outputs"]?.object?["baseline"]?.text ?? "").textSelection(.enabled)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading) {
+                        Text("Trained adapter").font(WorkbenchTypography.cardTitle)
+                        Text(report["outputs"]?.object?["adapter"]?.text ?? "").textSelection(.enabled)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Text("Retained evaluation SHA-256: " + (result.artifactSHA256 ?? "")).accessibilityIdentifier("training-evaluation-evidence").font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                Text("These outputs provide comparison evidence. No quality judgment has been recorded.").font(WorkbenchTypography.metadata)
+            }
+            HStack {
+                Button("Close") { dismiss() }.disabled(busy)
+                Spacer()
+                Button("Preview") { perform("training-preview") }.disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
+                Button("Run comparison") { perform("training-evaluate") }
+                    .disabled(preview?.object?["preview_hash"]?.text == nil || busy)
+            }
+        }.padding(WorkbenchSpacing.pageInset).frame(width: 740)
+    }
+    private func perform(_ operation: String) {
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let response = try await lab.request(LabRequest(operation: operation, receipt: job.receipt,
+                    prompt: prompt, maxTokens: 128, previewHash: preview?.object?["preview_hash"]?.text))
+                if operation == "training-preview" { preview = response.plan }
+                else { result = response }
+                error = nil
+            } catch { self.error = AppHost.render(error) }
         }
     }
 }
