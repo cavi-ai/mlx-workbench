@@ -126,6 +126,42 @@ struct PromptSet: Codable, Equatable, Identifiable, Sendable {
     var effectiveMode: ComparisonMode { mode ?? .chat }
 }
 
+enum PromptSetNameValidation {
+    static func error(for name: String) -> String? {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty || title.unicodeScalars.contains(where: { $0.value < 32 })
+            ? "Enter a prompt set name without control characters." : nil
+    }
+}
+
+/// Tracks raw rename edits separately from normalized persistence eligibility.
+struct PromptSetRenameDraft {
+    let original: PromptSet
+    var name: String
+    init(set: PromptSet) { original = set; name = set.name }
+    var normalizedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var hasChanges: Bool { name != original.name }
+    var validationError: String? { PromptSetNameValidation.error(for: name) }
+    var canRename: Bool { hasChanges && validationError == nil && normalizedName != original.name }
+}
+
+/// In-memory cancellation baseline, independent of validation and Save eligibility.
+/// Successful reuse copies can retain their current raw values without changing the setup.
+struct ComparisonPromptDraftCheckpoint<Prompt: Equatable> {
+    private var retainedName: String
+    private var retainedPrompts: [Prompt]
+
+    init(name: String = "", prompts: [Prompt]) {
+        retainedName = name; retainedPrompts = prompts
+    }
+    func hasChanges(name: String = "", prompts: [Prompt]) -> Bool {
+        name != retainedName || prompts != retainedPrompts
+    }
+    mutating func retain(name: String = "", prompts: [Prompt]) {
+        retainedName = name; retainedPrompts = prompts
+    }
+}
+
 /// Value-only editor for the non-music modes. Copies preserve fields the mode
 /// does not edit (including tool schemas and legacy metadata).
 struct ComparisonPromptSetDraft: Identifiable {
@@ -134,7 +170,7 @@ struct ComparisonPromptSetDraft: Identifiable {
         var errorDescription: String? { message }
     }
 
-    struct Prompt: Identifiable {
+    struct Prompt: Identifiable, Equatable {
         private var original: PromptEntry
         private let initialMedia: MediaParameters?
         private let savedInput: Bool
@@ -151,6 +187,8 @@ struct ComparisonPromptSetDraft: Identifiable {
         var steps: String
         var seed: String
         var toolName: String? { original.tool?.name }
+        var hasInputChanges: Bool { inputPath != (original.inputPath ?? "") }
+        mutating func revertInput() { inputPath = original.inputPath ?? "" }
         var builtinInput: String? { inputPath == (original.inputPath ?? "") ? original.builtinInput : nil }
         var usesSavedInput: Bool { savedInput && inputPath == (original.inputPath ?? "") }
         var inputDisplayName: String? {
@@ -164,8 +202,11 @@ struct ComparisonPromptSetDraft: Identifiable {
         }
         var inputFileUnavailable: Bool {
             guard !inputPath.isEmpty else { return usesSavedInput }
-            return !inputPath.hasPrefix("/") || inputPath.unicodeScalars.contains(where: { $0.value < 32 })
-                || !ComparisonOutputStore.isReadableRegularFile(URL(fileURLWithPath: inputPath))
+            return invalidInputPath || !ComparisonOutputStore.isReadableRegularFile(URL(fileURLWithPath: inputPath))
+        }
+        private var invalidInputPath: Bool {
+            inputPath.isEmpty || !inputPath.hasPrefix("/")
+                || inputPath.unicodeScalars.contains(where: { $0.value < 32 })
         }
 
         init(_ entry: PromptEntry, mode: ComparisonMode, savedInput: Bool = false) {
@@ -190,7 +231,18 @@ struct ComparisonPromptSetDraft: Identifiable {
             return copy
         }
 
+        /// Value-only feedback for view evaluation; availability is authoritative
+        /// only when saving/applying, where the same validator checks the file.
+        func validationError(for mode: ComparisonMode) -> String? {
+            do { _ = try validatedEntry(for: mode, checkInputAvailability: false); return nil }
+            catch { return error.localizedDescription }
+        }
+
         func entry(for mode: ComparisonMode) throws -> PromptEntry {
+            try validatedEntry(for: mode, checkInputAvailability: true)
+        }
+
+        private func validatedEntry(for mode: ComparisonMode, checkInputAvailability: Bool) throws -> PromptEntry {
             func integer(_ value: String, _ title: String, _ range: ClosedRange<Int>) throws -> Int? {
                 let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty { return nil }
@@ -218,7 +270,7 @@ struct ComparisonPromptSetDraft: Identifiable {
                 if inputPath.isEmpty, builtinInput != nil {
                     // Preserve a recorded built-in fixture without materializing it.
                 } else {
-                    guard !inputPath.isEmpty, !inputFileUnavailable else {
+                    guard !invalidInputPath, !(checkInputAvailability && inputFileUnavailable) else {
                         throw InvalidDraft(message: "Choose a readable \(kind.rawValue) file. The recorded file may have moved.")
                     }
                 }
@@ -332,15 +384,37 @@ struct ComparisonPromptSetDraft: Identifiable {
         prompts.removeAll { $0.id == id }
     }
 
+    var hasChanges: Bool {
+        guard let original else { return true }
+        return name != original.name || prompts != original.prompts.map { Prompt($0, mode: mode) }
+    }
+
+    mutating func revertChanges() {
+        guard let original else { return }
+        name = original.name
+        prompts = original.prompts.map { Prompt($0, mode: mode) }
+    }
+
+    var nameValidationError: String? { PromptSetNameValidation.error(for: name) }
+
+    private var metadataValidationError: String? {
+        if let error = nameValidationError { return error }
+        return mode == .musicGeneration || prompts.isEmpty || prompts.contains(where: { $0.id.isEmpty })
+            || Set(prompts.map(\.id)).count != prompts.count
+            ? "At least one prompt with a unique identity is required." : nil
+    }
+
+    var validationError: String? {
+        if let error = metadataValidationError { return error }
+        for (index, prompt) in prompts.enumerated() {
+            if let error = prompt.validationError(for: mode) { return "Prompt \(index + 1): \(error)" }
+        }
+        return nil
+    }
+
     func promptSet() throws -> PromptSet {
+        if let error = metadataValidationError { throw InvalidDraft(message: error) }
         let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, !title.unicodeScalars.contains(where: { $0.value < 32 }) else {
-            throw InvalidDraft(message: "Enter a prompt set name without control characters.")
-        }
-        guard mode != .musicGeneration, !prompts.isEmpty,
-              !prompts.contains(where: { $0.id.isEmpty }), Set(prompts.map(\.id)).count == prompts.count else {
-            throw InvalidDraft(message: "At least one prompt with a unique identity is required.")
-        }
         let entries = try prompts.enumerated().map { index, prompt in
             do { return try prompt.entry(for: mode) }
             catch { throw InvalidDraft(message: "Prompt \(index + 1): \(error.localizedDescription)") }
@@ -407,7 +481,7 @@ struct MusicComparisonSetup: Identifiable {
         var errorDescription: String? { message }
     }
 
-    struct Prompt: Identifiable {
+    struct Prompt: Identifiable, Equatable {
         private var original: PromptEntry
         var id: String { original.id }
         var caption: String
@@ -434,6 +508,11 @@ struct MusicComparisonSetup: Identifiable {
             var copy = self
             copy.original = original.duplicated()
             return copy
+        }
+
+        var validationError: String? {
+            do { _ = try entry(); return nil }
+            catch { return error.localizedDescription }
         }
 
         func entry() throws -> PromptEntry {
@@ -513,24 +592,35 @@ struct MusicComparisonSetup: Identifiable {
     }
 
     private func validatedPrompts() throws -> [PromptEntry] {
-        guard !prompts.isEmpty, !prompts.contains(where: { $0.id.isEmpty }),
-              Set(prompts.map(\.id)).count == prompts.count else {
-            throw InvalidSetup(message: "At least one prompt with a unique identity is required.")
-        }
-        return try prompts.map { try $0.entry() }
+        try prompts.validatedEntries()
+    }
+
+    static func nameValidationError(_ name: String) -> String? {
+        PromptSetNameValidation.error(for: name)
     }
 
     func promptSet(named name: String? = nil) throws -> PromptSet {
         let title = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "\(sourceName) · reused"
-        guard !title.isEmpty, !title.unicodeScalars.contains(where: { $0.value < 32 }) else {
-            throw InvalidSetup(message: "Enter a prompt set name without control characters.")
-        }
+        if let error = Self.nameValidationError(title) { throw InvalidSetup(message: error) }
         return PromptSet(id: UUID().uuidString, name: title, useCase: nil,
                          prompts: try validatedPrompts(), origin: .userCreated, mode: .musicGeneration)
     }
 }
 
 extension Array where Element == MusicComparisonSetup.Prompt {
+    var identityValidationError: String? {
+        isEmpty || contains(where: { $0.id.isEmpty }) || Set(map(\.id)).count != count
+            ? "At least one prompt with a unique identity is required." : nil
+    }
+
+    func validatedEntries() throws -> [PromptEntry] {
+        if let error = identityValidationError { throw MusicComparisonSetup.InvalidSetup(message: error) }
+        return try enumerated().map { index, prompt in
+            do { return try prompt.entry() }
+            catch { throw MusicComparisonSetup.InvalidSetup(message: "Prompt \(index + 1): \(error.localizedDescription)") }
+        }
+    }
+
     mutating func addPrompt() { append(.newPrompt()) }
     mutating func removePrompt(id: String) {
         guard count > 1 else { return }
@@ -570,17 +660,17 @@ struct MusicPromptSetDraft: Identifiable {
     mutating func addPrompt() { prompts.addPrompt() }
     mutating func removePrompt(id: String) { prompts.removePrompt(id: id) }
 
+    var nameValidationError: String? { MusicComparisonSetup.nameValidationError(name) }
+    var validationError: String? {
+        do { _ = try promptSet(); return nil }
+        catch { return error.localizedDescription }
+    }
+
     func promptSet() throws -> PromptSet {
         let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, !title.unicodeScalars.contains(where: { $0.value < 32 }) else {
-            throw MusicComparisonSetup.InvalidSetup(message: "Enter a prompt set name without control characters.")
-        }
-        guard !prompts.isEmpty, !prompts.contains(where: { $0.id.isEmpty }),
-              Set(prompts.map(\.id)).count == prompts.count else {
-            throw MusicComparisonSetup.InvalidSetup(message: "At least one prompt with a unique identity is required.")
-        }
+        if let error = nameValidationError { throw MusicComparisonSetup.InvalidSetup(message: error) }
         return PromptSet(id: id, name: title, useCase: copiedUseCase,
-            prompts: try prompts.map { try $0.entry() }, origin: .userCreated, mode: .musicGeneration)
+            prompts: try prompts.validatedEntries(), origin: .userCreated, mode: .musicGeneration)
     }
 }
 
@@ -601,18 +691,20 @@ struct MusicPromptSetEdit: Identifiable {
         prompts = set.prompts.map(MusicComparisonSetup.Prompt.init)
     }
 
+    var hasChanges: Bool { prompts != original.prompts.map(MusicComparisonSetup.Prompt.init) }
+
+    mutating func revertChanges() {
+        prompts = original.prompts.map(MusicComparisonSetup.Prompt.init)
+    }
+
     var validationError: String? {
         do { _ = try updatedPromptSet(); return nil }
         catch { return error.localizedDescription }
     }
 
     func updatedPromptSet() throws -> PromptSet {
-        guard !prompts.isEmpty, !prompts.contains(where: { $0.id.isEmpty }),
-              Set(prompts.map(\.id)).count == prompts.count else {
-            throw MusicComparisonSetup.InvalidSetup(message: "At least one prompt with a unique identity is required.")
-        }
         var updated = original
-        updated.prompts = try prompts.map { try $0.entry() }
+        updated.prompts = try prompts.validatedEntries()
         return updated
     }
 }

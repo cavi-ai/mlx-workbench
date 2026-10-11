@@ -33,6 +33,72 @@ private struct PromptPreviewFixtureView: View {
 }
 
 @MainActor
+private final class PromptCancelFixture: ObservableObject {
+    @Published var requiresConfirmation: Bool
+    var dismissals = 0
+    init(requiresConfirmation: Bool) { self.requiresConfirmation = requiresConfirmation }
+}
+
+private struct PromptCancelFixtureView: View {
+    @ObservedObject var fixture: PromptCancelFixture
+    var body: some View {
+        ComparisonPromptCancelButton(requiresConfirmation: fixture.requiresConfirmation) { fixture.dismissals += 1 }
+            .buttonStyle(.borderless)
+            .padding(WorkbenchSpacing.pageInset)
+            .frame(width: 420, height: 90)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+    }
+}
+
+@MainActor
+private final class PromptRemoveFixture: ObservableObject {
+    @Published var canRemove = true
+    var removals = 0
+}
+
+private struct PromptRemoveFixtureView: View {
+    @ObservedObject var fixture: PromptRemoveFixture
+    var body: some View {
+        ComparisonPromptRemoveButton(number: 2, canRemove: fixture.canRemove) { fixture.removals += 1 }
+            .buttonStyle(.borderless)
+            .padding(WorkbenchSpacing.pageInset)
+            .frame(width: 420, height: 90)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+    }
+}
+
+@MainActor
+private final class PromptEditorScrollFixture: ObservableObject {
+    @Published var draft: ComparisonPromptSetDraft
+    @Published var music: [MusicComparisonSetup.Prompt]
+
+    init() {
+        var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+        draft.name = "Scenes"
+        for _ in 0..<3 { draft.addPrompt() }
+        for index in draft.prompts.indices { draft.prompts[index].text = "Landscape \(index + 1)" }
+        self.draft = draft
+        music = (1...4).map { MusicComparisonSetup.Prompt(PromptEntry(id: "music-\($0)", text: "Solo piano \($0)")) }
+    }
+}
+
+private struct PromptEditorScrollFixtureView: View {
+    @ObservedObject var fixture: PromptEditorScrollFixture
+    let music: Bool
+
+    var body: some View {
+        Group {
+            if music { MusicPromptFields(prompts: $fixture.music) }
+            else { ComparisonPromptFields(draft: $fixture.draft) }
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(width: 620, height: 440)
+        .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+    }
+}
+
+@MainActor
 private final class StubAudioPlayback: AudioClipPlayback {
     var currentTime: TimeInterval = 0
     let duration: TimeInterval
@@ -1386,6 +1452,98 @@ final class ComparisonMediaTests: XCTestCase {
         }
     }
 
+    func testRevertInputPreservesOtherEditsAndRestoresOpenedSourceInEveryInputMode() throws {
+        for mode in [ComparisonMode.vision, .videoUnderstanding, .speechToText] {
+            let file = root.appendingPathComponent("\(mode.rawValue)-source.bin")
+            let bytes = Data("source input".utf8)
+            try bytes.write(to: file)
+            for entry in [
+                PromptEntry(id: "empty", text: "Original prompt", inputKind: mode.inputKind),
+                PromptEntry(id: "builtin", text: "Original prompt", inputKind: mode.inputKind, builtinInput: "fixture"),
+                PromptEntry(id: "saved", text: "Original prompt", inputKind: mode.inputKind, inputPath: file.path)
+            ] {
+                var prompt = ComparisonPromptSetDraft.Prompt(entry, mode: mode, savedInput: entry.id == "saved")
+                XCTAssertFalse(prompt.hasInputChanges)
+                prompt.text = "Edited text"; prompt.keywords = "red|blue"; prompt.maxTokens = "invalid typed value"
+                for replacement in ["/replacement", "relative path", " \n "] {
+                    prompt.inputPath = replacement
+                    XCTAssertTrue(prompt.hasInputChanges)
+                    var expected = prompt; expected.inputPath = entry.inputPath ?? ""
+                    prompt.revertInput()
+                    XCTAssertEqual(prompt, expected, "Only the input choice may revert")
+                    XCTAssertFalse(prompt.hasInputChanges)
+                    XCTAssertEqual(prompt.builtinInput, entry.builtinInput)
+                    XCTAssertEqual(prompt.usesSavedInput, entry.id == "saved")
+                }
+            }
+            XCTAssertEqual(try Data(contentsOf: file), bytes, "Revert must not mutate input files")
+            var missing = ComparisonPromptSetDraft.Prompt(
+                PromptEntry(id: "missing", text: "Describe this", inputKind: mode.inputKind, inputPath: file.path),
+                mode: mode, savedInput: true)
+            try FileManager.default.removeItem(at: file)
+            missing.inputPath = "/replacement"; missing.revertInput()
+            XCTAssertTrue(missing.usesSavedInput)
+            XCTAssertTrue(missing.inputFileUnavailable, "Missing opened inputs must remain unavailable")
+            XCTAssertNil(missing.inputPreviewURL)
+            XCTAssertThrowsError(try missing.entry(for: mode), "The save boundary must refuse unavailable inputs")
+        }
+    }
+
+    @MainActor
+    func testRevertInputButtonRestoresBuiltinWithoutSavingOrChangingFiles() async throws {
+        func buttons(in view: NSView) -> [NSButton] {
+            if let button = view as? NSButton { return [button] }
+            return view.subviews.flatMap { buttons(in: $0) }
+        }
+        func scrollViews(in view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
+        }
+        let entry = PromptEntry(id: "p", text: "Describe the circle", inputKind: .image, builtinInput: "red-circle")
+        let replacement = try await ComparisonMediaFixtures.generateInput(for: entry, into: root)
+        let bytes = try Data(contentsOf: replacement)
+        let set = PromptSet(id: "vision-revert", name: "Vision", useCase: nil,
+            prompts: [entry], origin: .userCreated, mode: .vision)
+        var draft = try ComparisonPromptSetDraft(set: set)
+        draft.prompts[0].inputPath = replacement.path
+        draft.prompts[0].text = "Edited question"; draft.prompts[0].maxTokens = "128"
+        let editor = ComparisonPromptSetEditor(draft: draft) { _ in
+            XCTFail("Reverting input must not save"); return nil
+        }.background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: editor)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 620),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        let scroll = try XCTUnwrap(scrollViews(in: host).max {
+            ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0)
+        })
+        // AppKit titles are empty. This single card exposes its menu, minus
+        // control and then Revert input as native buttons in content order.
+        XCTAssertEqual(buttons(in: scroll).count, 3)
+        let revert = try XCTUnwrap(buttons(in: scroll).last)
+        for state in ["replaced", "reverted"] {
+            if state == "reverted" {
+                revert.performClick(nil)
+                try await Task.sleep(for: .milliseconds(200))
+                XCTAssertEqual(buttons(in: scroll).count, 2, "Only Revert input disappears after restoring the opened input")
+            }
+            host.layoutSubtreeIfNeeded(); window.setContentSize(host.fittingSize); host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Vision input \(state)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_INPUT_REVERT_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(state).png"))
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: replacement), bytes)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
     func testReuseMissingSavedInputsNeverFallsBackAndAcceptsExplicitReplacement() throws {
         let store = ComparisonOutputStore(root: root.appendingPathComponent("missing-reuse"))
         var run = historyRun(.vision, "Saved inputs", at: 100)
@@ -2324,6 +2482,626 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertFalse(coordinator.removePromptSet(id: BuiltinPromptSets.coding.id))
     }
 
+    func testInlineDraftValidationTracksEachPromptAndClearsAfterCorrection() throws {
+        var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+        XCTAssertNotNil(draft.nameValidationError)
+        draft.name = "Images"
+        draft.prompts[0].text = "A forest"
+        XCTAssertNil(draft.validationError)
+        draft.duplicatePrompt(id: draft.prompts[0].id)
+        draft.prompts[1].steps = "101"
+        XCTAssertNil(draft.prompts[0].validationError(for: draft.mode))
+        XCTAssertEqual(draft.prompts[1].validationError(for: draft.mode), "Steps must be a whole number from 1 to 100.")
+        XCTAssertEqual(draft.validationError, "Prompt 2: Steps must be a whole number from 1 to 100.")
+        draft.prompts[1].steps = "10"
+        draft.prompts[1].size = "513"
+        XCTAssertEqual(draft.prompts[1].validationError(for: draft.mode), "Image size must be a multiple of 16 pixels.")
+        draft.prompts[1].size = "512"
+        XCTAssertNil(draft.validationError)
+        XCTAssertEqual(try draft.promptSet().prompts.count, 2)
+        draft.name = "bad\nname"
+        XCTAssertNotNil(draft.nameValidationError)
+        XCTAssertEqual(draft.validationError, draft.nameValidationError)
+        draft.name = "Images"
+        draft.prompts[1] = draft.prompts[0]
+        XCTAssertNotNil(draft.validationError)
+        XCTAssertThrowsError(try draft.promptSet())
+    }
+
+    func testInlineValidationChecksValuesWithoutReadingInputFilesAndSaveRechecksAvailability() throws {
+        for mode in [ComparisonMode.chat, .vision, .videoUnderstanding, .speechToText, .textToSpeech, .imageGeneration, .videoGeneration] {
+            var draft = ComparisonPromptSetDraft(mode: mode)
+            draft.name = "Suite"
+            draft.prompts[0].text = "Prompt"
+            if mode.inputKind != nil {
+                XCTAssertNotNil(draft.validationError)
+                draft.prompts[0].inputPath = root.appendingPathComponent("absent.wav").path
+                XCTAssertNil(draft.validationError, "Inline validation must not read the filesystem")
+                XCTAssertThrowsError(try draft.promptSet(), "Save must still refuse missing inputs")
+                draft.prompts[0].inputPath = "relative.wav"
+                XCTAssertNotNil(draft.validationError)
+                draft.prompts[0].inputPath = "/bad\npath.wav"
+                XCTAssertNotNil(draft.validationError)
+            } else {
+                XCTAssertNil(draft.validationError)
+                XCTAssertNoThrow(try draft.promptSet())
+            }
+        }
+        var video = ComparisonPromptSetDraft(mode: .videoGeneration)
+        video.name = "Video"; video.prompts[0].text = "Waves"
+        video.prompts[0].fps = "61"
+        XCTAssertNotNil(video.validationError)
+        video.prompts[0].fps = ""
+        XCTAssertNil(video.validationError, "Blank settings remain valid runtime defaults")
+        video.prompts = []
+        XCTAssertNotNil(video.validationError)
+    }
+
+    @MainActor
+    func testInlineValidationEditorsRenderIssuesAndCorrectedValuesWithoutSaving() async throws {
+        for invalid in [true, false] {
+            var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+            draft.name = "Landscape studies"; draft.prompts[0].text = "A mountain lake at sunrise"
+            draft.prompts[0].size = invalid ? "513" : "512"
+            let content = ComparisonPromptSetEditor(draft: draft) { _ in
+                XCTFail("Rendering validation must never save or generate"); return nil
+            }.background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let title = invalid ? "invalid" : "corrected"
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Inline prompt validation · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_INLINE_VALIDATION_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    func testMusicInlineValidationIdentifiesThePromptAcrossCreateEditAndReuse() throws {
+        var draft = MusicPromptSetDraft(); draft.name = "Instrumentals"
+        draft.prompts[0].caption = "Solo piano"
+        draft.addPrompt(); draft.prompts[1].caption = "Acoustic guitar"
+        let saved = try draft.promptSet()
+        draft.prompts[1].steps = "31"
+        let message = "Steps must be a whole number from 1 to 30."
+        XCTAssertNil(draft.prompts[0].validationError)
+        XCTAssertEqual(draft.prompts[1].validationError, message)
+        XCTAssertEqual(draft.validationError, "Prompt 2: \(message)")
+        var edit = try MusicPromptSetEdit(set: saved)
+        edit.prompts = draft.prompts
+        XCTAssertEqual(edit.validationError, draft.validationError)
+        var run = historyRun(.musicGeneration, saved.name, at: 100)
+        run.promptEntries = saved.prompts
+        var setup = try MusicComparisonSetup(run: run)
+        setup.prompts = draft.prompts
+        XCTAssertEqual(setup.validationError, draft.validationError)
+        setup.prompts.movePrompt(id: setup.prompts[1].id, direction: .up)
+        XCTAssertEqual(setup.validationError, "Prompt 1: \(message)")
+        draft.prompts[1].steps = "30"
+        XCTAssertNil(draft.validationError)
+        XCTAssertEqual(try draft.promptSet(), saved, "Correcting a value preserves identities and metadata")
+        for field in ["", "nan", "0", "361"] {
+            draft.prompts[1].duration = field
+            if field.isEmpty { XCTAssertNil(draft.validationError) }
+            else { XCTAssertNotNil(draft.prompts[1].validationError) }
+        }
+    }
+
+    func testMusicInlineValidationKeepsNamesAndDefaultsConsistentWithSave() throws {
+        var draft = MusicPromptSetDraft()
+        XCTAssertNotNil(draft.nameValidationError)
+        XCTAssertEqual(draft.validationError, draft.nameValidationError)
+        draft.name = "Solo"
+        XCTAssertNotNil(draft.prompts[0].validationError)
+        draft.prompts[0].caption = "Piano"
+        for name in ["", " \n ", "bad\nname", "bad\u{0}"] {
+            draft.name = name
+            XCTAssertNotNil(draft.nameValidationError)
+            XCTAssertThrowsError(try draft.promptSet())
+        }
+        draft.name = " Solo "
+        draft.prompts[0].lyrics = ""; draft.prompts[0].duration = ""
+        draft.prompts[0].steps = ""; draft.prompts[0].seed = ""
+        XCTAssertNil(draft.validationError)
+        XCTAssertEqual(try draft.promptSet().name, "Solo")
+        XCTAssertEqual(try draft.promptSet().prompts[0].media, MediaParameters())
+        draft.prompts[0].seed = "-1"
+        XCTAssertNotNil(draft.validationError)
+        draft.prompts[0].seed = ""
+        draft.prompts.append(draft.prompts[0])
+        XCTAssertNotNil(draft.validationError)
+        XCTAssertThrowsError(try draft.promptSet())
+        draft.prompts = []
+        XCTAssertNotNil(draft.validationError)
+    }
+
+    @MainActor
+    func testMusicInlineValidationRendersCreateEditAndReuseWithoutSavingOrGenerating() async throws {
+        for invalid in [true, false] {
+            var draft = MusicPromptSetDraft(); draft.name = "Instrumental studies"
+            draft.prompts[0].caption = "Warm solo piano, a gentle melody, no vocals"
+            draft.prompts[0].duration = invalid ? "361" : "15"
+            let set = PromptSet(id: "fixture", name: draft.name, useCase: nil,
+                prompts: [PromptEntry(id: "p", text: draft.prompts[0].caption)], origin: .userCreated, mode: .musicGeneration)
+            var edit = try MusicPromptSetEdit(set: set); edit.prompts = draft.prompts
+            var run = historyRun(.musicGeneration, draft.name, at: 100, models: ["/music/model"])
+            run.promptEntries = set.prompts
+            var setup = try MusicComparisonSetup(run: run); setup.prompts = draft.prompts
+            let fixtures: [(String, AnyView)] = [
+                ("create", AnyView(MusicPromptSetCreateSheet(draft: draft) { _ in
+                    XCTFail("Validation must not save or generate"); return nil
+                })),
+                ("edit", AnyView(MusicPromptSetEditSheet(edit: edit) { _ in
+                    XCTFail("Validation must not save edits or generate"); return nil
+                })),
+                ("reuse", AnyView(MusicComparisonSetupSheet(setup: setup, availablePaths: ["/music/model"],
+                    name: { _ in "Music model" }, onApply: { _, _ in XCTFail("Validation must not apply or generate") },
+                    onSave: { _ in XCTFail("Validation must not save") })))
+            ]
+            for (kind, content) in fixtures {
+                let host = NSHostingView(rootView: content.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 620),
+                    styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                try await Task.sleep(for: .milliseconds(150))
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                let title = "\(kind)-\(invalid ? "invalid" : "corrected")"
+                let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                attachment.name = "Music inline validation · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
+                if let path = ProcessInfo.processInfo.environment["MLX_MUSIC_INLINE_PROOF_DIR"] {
+                    try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
+                }
+                window.close()
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    func testPromptScrollTargetsOnlyNewIdentities() {
+        XCTAssertEqual(ComparisonPromptScrollLogic.insertedID(before: ["a", "b"], after: ["a", "b", "c"]), "c")
+        XCTAssertEqual(ComparisonPromptScrollLogic.insertedID(before: ["a", "b"], after: ["a", "copy", "b"]), "copy")
+        XCTAssertNil(ComparisonPromptScrollLogic.insertedID(before: ["a", "b"], after: ["b", "a"]))
+        XCTAssertNil(ComparisonPromptScrollLogic.insertedID(before: ["a", "b"], after: ["b"]))
+        XCTAssertNil(ComparisonPromptScrollLogic.insertedID(before: ["a", "b"], after: ["a", "b"]))
+        XCTAssertNil(ComparisonPromptScrollLogic.insertedID(before: ["a"], after: []))
+    }
+
+    func testPromptIssueNavigationTracksCurrentOrderAndRawValidation() throws {
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            var original = mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode)
+            original.origin = .userCreated
+            var draft = try ComparisonPromptSetDraft(set: original)
+            draft.duplicatePrompt(id: draft.prompts[0].id)
+            XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) })
+            let id = draft.prompts[1].id
+            draft.prompts[1].text = "\u{0001}"
+            let before = draft.prompts
+            let issue = try XCTUnwrap(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) })
+            XCTAssertEqual(issue.promptID, id)
+            XCTAssertEqual(issue.number, 2)
+            XCTAssertEqual(issue.message, draft.prompts[1].validationError(for: mode))
+            XCTAssertEqual(draft.prompts, before, "Navigation must not mutate draft values")
+            draft.movePrompt(id: id, direction: .up)
+            XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) }?.number, 1)
+            draft.prompts[0].text = "Corrected"
+            XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) })
+            draft.prompts[0].text = "\u{0001}"
+            draft.removePrompt(id: id)
+            XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) }, "Single-card editors need no jump action")
+        }
+        var prompts = (1...3).map { MusicComparisonSetup.Prompt(PromptEntry(id: "music-\($0)", text: "Piano")) }
+        prompts[1].duration = "invalid"
+        prompts[2].steps = "invalid"
+        XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError })?.promptID, "music-2")
+        prompts.movePrompt(id: "music-3", direction: .up)
+        XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError })?.promptID, "music-3")
+        prompts.removePrompt(id: "music-3")
+        XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError })?.number, 2)
+        prompts[1].duration = "15"
+        XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError }))
+        prompts[0].steps = "bad"
+        prompts.removePrompt(id: "music-2")
+        XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError }))
+    }
+
+    @MainActor
+    func testPromptEditorsJumpToHiddenInvalidCardOnlyOnRequest() async throws {
+        func scrollViews(in view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
+        }
+        func navigationButtons(in view: NSView) -> [NSButton] {
+            // Card controls are inside the scroll view; the compact issue action
+            // is the shared field view's only button outside that scroll area.
+            if view is NSScrollView { return [] }
+            if let button = view as? NSButton { return [button] }
+            return view.subviews.flatMap { navigationButtons(in: $0) }
+        }
+        for music in [false, true] {
+            let fixture = PromptEditorScrollFixture()
+            let host = NSHostingView(rootView: PromptEditorScrollFixtureView(fixture: fixture, music: music))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(200))
+            let scroll = try XCTUnwrap(scrollViews(in: host).max {
+                ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0)
+            })
+            let initial = scroll.documentVisibleRect.minY
+            if music { fixture.music[3].duration = "invalid" }
+            else { fixture.draft.prompts[3].steps = "invalid" }
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(scroll.documentVisibleRect.minY, initial, accuracy: 2, "Validation must not request an automatic jump")
+            let buttons = navigationButtons(in: host)
+            XCTAssertEqual(buttons.count, 1)
+            let button = try XCTUnwrap(buttons.first)
+            let draftBefore = fixture.draft.prompts
+            let musicBefore = fixture.music
+            button.performClick(nil)
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertGreaterThan(scroll.documentVisibleRect.minY - initial, 100, "The invalid card must be revealed")
+            XCTAssertEqual(fixture.draft.prompts, draftBefore)
+            XCTAssertEqual(fixture.music, musicBefore)
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let title = music ? "music" : "image"
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Revealed invalid prompt · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_ISSUE_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
+            }
+            let revealed = scroll.documentVisibleRect.minY
+            if music { fixture.music[3].duration = "15" }
+            else { fixture.draft.prompts[3].steps = "20" }
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertTrue(navigationButtons(in: host).isEmpty, "Correcting the error removes the action")
+            // Removing the footer may clamp the viewport, but must retain the corrected card.
+            XCTAssertGreaterThan(scroll.documentVisibleRect.minY - initial, 100)
+            XCTAssertLessThan(abs(scroll.documentVisibleRect.minY - revealed), 100)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    @MainActor
+    func testPromptEditorsRevealAddedAndDuplicatedCardsWithoutSaving() async throws {
+        func scrollViews(in view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
+        }
+        for music in [false, true] {
+            let fixture = PromptEditorScrollFixture()
+            let host = NSHostingView(rootView: PromptEditorScrollFixtureView(fixture: fixture, music: music))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            let scroll = try XCTUnwrap(scrollViews(in: host).max {
+                ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0)
+            })
+            let initial = scroll.documentVisibleRect.minY
+            let initialDocumentHeight = try XCTUnwrap(scroll.documentView).bounds.height
+            if music { fixture.music.addPrompt() } else { fixture.draft.addPrompt() }
+            try await Task.sleep(for: .milliseconds(250))
+            host.layoutSubtreeIfNeeded()
+            let added = scroll.documentVisibleRect.minY
+            XCTAssertGreaterThan(abs(added - initial), 100, "Adding must reveal the new card")
+            if music { fixture.music.duplicatePrompt(id: fixture.music[0].id) }
+            else { fixture.draft.duplicatePrompt(id: fixture.draft.prompts[0].id) }
+            try await Task.sleep(for: .milliseconds(250))
+            host.layoutSubtreeIfNeeded()
+            let duplicated = scroll.documentVisibleRect.minY
+            XCTAssertGreaterThan(abs(duplicated - added), 100, "Duplicating must reveal the new adjacent card")
+            // The four initial fixture cards have identical heights. Prompt 2
+            // must start at the top, including its heading and action controls.
+            XCTAssertEqual(duplicated - initial, (initialDocumentHeight + WorkbenchSpacing.md) / 4,
+                accuracy: 2, "The new card's heading must not be clipped")
+            if music { fixture.music[1].caption = "Solo cello 1" }
+            else { fixture.draft.prompts[1].text = "Seascape 1" }
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(scroll.documentVisibleRect.minY, duplicated, accuracy: 2, "Typing must retain the scroll position")
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let title = music ? "music" : "image"
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Revealed duplicate · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_SCROLL_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    func testSavedPromptDraftDetectsRawEditsAndRevertsTheOpenedSnapshot() throws {
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            var original = mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode)
+            original.origin = .userCreated
+            original.inputStorageID = UUID()
+            var draft = try ComparisonPromptSetDraft(set: original)
+            XCTAssertFalse(draft.hasChanges)
+            draft.prompts[0].text += " edited"
+            XCTAssertTrue(draft.hasChanges)
+            draft.prompts[0].steps = "invalid raw value"
+            XCTAssertTrue(draft.hasChanges, "Invalid raw input is still an unsaved edit")
+            draft.duplicatePrompt(id: draft.prompts[0].id)
+            draft.movePrompt(id: draft.prompts.last!.id, direction: .up)
+            draft.removePrompt(id: draft.prompts[0].id)
+            draft.revertChanges()
+            XCTAssertFalse(draft.hasChanges)
+            XCTAssertEqual(try draft.promptSet(), original, "Revert must preserve original identities, metadata and input references")
+            let oldText = draft.prompts[0].text
+            draft.prompts[0].text = "Temporary"
+            draft.prompts[0].text = oldText
+            XCTAssertFalse(draft.hasChanges, "Manually restoring a field must clear dirty state")
+        }
+        var copy = try ComparisonPromptSetDraft(copying: BuiltinPromptSets.toolCalling)
+        let before = try copy.promptSet()
+        XCTAssertTrue(copy.hasChanges, "Independent new copies must still be saveable")
+        copy.revertChanges()
+        XCTAssertEqual(try copy.promptSet(), before, "A new copy has no saved original to revert")
+    }
+
+    func testNewAndCopiedDraftCheckpointsDetectRawEditsWithoutChangingSaveSemantics() throws {
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            let source = mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode)
+            for copied in [false, true] {
+                var draft = copied ? try ComparisonPromptSetDraft(copying: source) : ComparisonPromptSetDraft(mode: mode)
+                let checkpoint = ComparisonPromptDraftCheckpoint(name: draft.name, prompts: draft.prompts)
+                XCTAssertFalse(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts), "Opening alone must not require confirmation")
+                XCTAssertTrue(draft.hasChanges, "Independent creation must keep its Save semantics")
+                let name = draft.name
+                draft.name += "A new name"
+                XCTAssertTrue(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+                draft.name = name
+                draft.prompts[0].text += "\u{0001}"
+                XCTAssertTrue(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts), "Invalid raw values are still edits")
+                draft.prompts[0].text.removeLast()
+                XCTAssertFalse(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+                let originalID = draft.prompts[0].id
+                draft.duplicatePrompt(id: originalID)
+                XCTAssertTrue(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+                draft.removePrompt(id: draft.prompts[1].id)
+                XCTAssertFalse(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+            }
+        }
+        for copied in [false, true] {
+            var draft = copied ? try MusicPromptSetDraft(copying: promptSet(for: .musicGeneration)) : MusicPromptSetDraft()
+            let checkpoint = ComparisonPromptDraftCheckpoint(name: draft.name, prompts: draft.prompts)
+            XCTAssertFalse(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+            draft.prompts[0].duration = "invalid"
+            XCTAssertTrue(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+            draft.name += "Named copy"
+            XCTAssertTrue(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
+        }
+    }
+
+    func testReuseCheckpointRetainsSuccessfulCopiesAndRearmsForFurtherEdits() throws {
+        var prompts = (1...2).map { MusicComparisonSetup.Prompt(PromptEntry(id: "p-\($0)", text: "Solo piano \($0)")) }
+        var checkpoint = ComparisonPromptDraftCheckpoint(prompts: prompts)
+        XCTAssertFalse(checkpoint.hasChanges(prompts: prompts))
+        prompts.movePrompt(id: "p-2", direction: .up)
+        XCTAssertTrue(checkpoint.hasChanges(prompts: prompts), "Recorded order is part of the draft")
+        // A failed save does not advance the checkpoint.
+        XCTAssertTrue(checkpoint.hasChanges(prompts: prompts))
+        checkpoint.retain(prompts: prompts)
+        XCTAssertFalse(checkpoint.hasChanges(prompts: prompts), "A successfully saved copy retains these inputs")
+        prompts[0].lyrics = "Edited lyrics"
+        XCTAssertTrue(checkpoint.hasChanges(prompts: prompts), "Further edits must require confirmation again")
+        var draft = try ComparisonPromptSetDraft(copying: BuiltinPromptSets.toolCalling)
+        var textCheckpoint = ComparisonPromptDraftCheckpoint(prompts: draft.prompts)
+        draft.prompts[0].maxTokens = "invalid"
+        XCTAssertTrue(textCheckpoint.hasChanges(prompts: draft.prompts))
+        draft.prompts[0].maxTokens = "128"
+        textCheckpoint.retain(prompts: draft.prompts)
+        XCTAssertFalse(textCheckpoint.hasChanges(prompts: draft.prompts))
+        draft.prompts[0].maxTokens = "256"
+        XCTAssertTrue(textCheckpoint.hasChanges(prompts: draft.prompts))
+    }
+
+    func testSavedMusicDraftDetectsInvalidRawEditsAndRestoresMetadataAndOrder() throws {
+        var original = promptSet(for: .musicGeneration); original.origin = .userCreated
+        original.useCase = .coding
+        var edit = try MusicPromptSetEdit(set: original)
+        XCTAssertFalse(edit.hasChanges)
+        edit.prompts[0].duration = "invalid"
+        XCTAssertTrue(edit.hasChanges)
+        XCTAssertNotNil(edit.validationError)
+        edit.prompts.duplicatePrompt(id: edit.prompts[0].id)
+        edit.prompts.movePrompt(id: edit.prompts.last!.id, direction: .up)
+        edit.prompts.addPrompt()
+        edit.revertChanges()
+        XCTAssertFalse(edit.hasChanges)
+        XCTAssertNil(edit.validationError)
+        XCTAssertEqual(try edit.updatedPromptSet(), original)
+        edit.prompts[0].caption = "Changed caption"
+        XCTAssertTrue(edit.hasChanges)
+        edit.prompts[0].caption = original.prompts[0].text
+        XCTAssertFalse(edit.hasChanges)
+    }
+
+    @MainActor
+    func testPromptCancelKeepsDraftUntilExplicitDiscardAndClosesUnchangedImmediately() async throws {
+        func buttons(in view: NSView) -> [NSButton] {
+            if let button = view as? NSButton { return [button] }
+            return view.subviews.flatMap { buttons(in: $0) }
+        }
+        for dirty in [false, true] {
+            let fixture = PromptCancelFixture(requiresConfirmation: dirty)
+            let host = NSHostingView(rootView: PromptCancelFixtureView(fixture: fixture))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 90),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(150))
+            try XCTUnwrap(buttons(in: host).first).performClick(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            if !dirty {
+                XCTAssertEqual(fixture.dismissals, 1, "Unchanged drafts close immediately")
+                continue
+            }
+            XCTAssertEqual(fixture.dismissals, 0, "Cancel must not silently discard draft changes")
+            let choices = buttons(in: host)
+            XCTAssertEqual(choices.count, 2, "Offer Keep editing and Discard changes")
+            guard choices.count == 2 else { continue }
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Keep editing or discard · native control fixture"
+            attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_REVERT_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("discard-choices.png"))
+            }
+            choices[0].performClick(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertEqual(fixture.dismissals, 0, "Keep editing must retain the draft")
+            XCTAssertEqual(buttons(in: host).count, 1)
+            try XCTUnwrap(buttons(in: host).first).performClick(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            try XCTUnwrap(buttons(in: host).last).performClick(nil)
+            XCTAssertEqual(fixture.dismissals, 1, "Only explicit Discard closes an edited draft")
+        }
+    }
+
+    @MainActor
+    func testPromptRemovalRequiresConfirmationAndRespectsLastPromptGuard() async throws {
+        func buttons(in view: NSView) -> [NSButton] {
+            if let button = view as? NSButton { return [button] }
+            return view.subviews.flatMap { buttons(in: $0) }
+        }
+        let fixture = PromptRemoveFixture()
+        let host = NSHostingView(rootView: PromptRemoveFixtureView(fixture: fixture))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 90),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        try XCTUnwrap(buttons(in: host).first).performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(fixture.removals, 0, "The minus button must not immediately discard a prompt")
+        let choices = buttons(in: host)
+        XCTAssertEqual(choices.count, 2, "Offer Keep prompt and Remove prompt")
+        guard choices.count == 2 else { return }
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "Keep prompt or remove · native control"; attachment.lifetime = .keepAlways; add(attachment)
+        if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_REMOVE_PROOF_PATH"] {
+            try png.write(to: URL(fileURLWithPath: path))
+        }
+        choices[0].performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(fixture.removals, 0)
+        XCTAssertEqual(buttons(in: host).count, 1)
+        try XCTUnwrap(buttons(in: host).first).performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        fixture.canRemove = false
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(buttons(in: host).count, 1, "Losing permission must clear the pending confirmation")
+        let disabled = try XCTUnwrap(buttons(in: host).first)
+        XCTAssertFalse(disabled.isEnabled, "The final prompt cannot be removed")
+        disabled.performClick(nil)
+        XCTAssertEqual(fixture.removals, 0)
+        fixture.canRemove = true
+        try await Task.sleep(for: .milliseconds(150))
+        try XCTUnwrap(buttons(in: host).first).performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        try XCTUnwrap(buttons(in: host).last).performClick(nil)
+        XCTAssertEqual(fixture.removals, 1, "Only explicit Remove invokes the removal callback")
+    }
+
+    @MainActor
+    func testPromptCancelReturnsToImmediateCloseAfterDraftRevert() async throws {
+        func buttons(in view: NSView) -> [NSButton] {
+            if let button = view as? NSButton { return [button] }
+            return view.subviews.flatMap { buttons(in: $0) }
+        }
+        let fixture = PromptCancelFixture(requiresConfirmation: true)
+        let host = NSHostingView(rootView: PromptCancelFixtureView(fixture: fixture))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 90),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        try XCTUnwrap(buttons(in: host).first).performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(fixture.dismissals, 0)
+        fixture.requiresConfirmation = false
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(buttons(in: host).count, 1)
+        try XCTUnwrap(buttons(in: host).first).performClick(nil)
+        XCTAssertEqual(fixture.dismissals, 1)
+    }
+
+    @MainActor
+    func testSavedPromptEditorsRenderUnchangedAndEditedActionsWithoutWriting() async throws {
+        for music in [false, true] {
+            let original = PromptSet(id: "saved-fixture", name: music ? "Piano studies" : "Landscape studies", useCase: nil,
+                prompts: [PromptEntry(id: "p", text: music ? "Warm solo piano, a gentle melody, no vocals" : "A mountain lake at sunrise",
+                    media: music ? MediaParameters(steps: 30, seed: 42, durationSeconds: 15, lyrics: "[instrumental]")
+                        : MediaParameters(size: 512, steps: 20, seed: 42))], origin: .userCreated,
+                mode: music ? .musicGeneration : .imageGeneration)
+            for changed in [false, true] {
+                let content: AnyView
+                if music {
+                    var edit = try MusicPromptSetEdit(set: original)
+                    if changed { edit.prompts[0].steps = "10" }
+                    content = AnyView(MusicPromptSetEditSheet(edit: edit) { _ in
+                        XCTFail("Rendering draft actions must not save or generate"); return nil
+                    })
+                } else {
+                    var draft = try ComparisonPromptSetDraft(set: original)
+                    if changed { draft.prompts[0].steps = "10" }
+                    content = AnyView(ComparisonPromptSetEditor(draft: draft) { _ in
+                        XCTFail("Rendering draft actions must not save or generate"); return nil
+                    })
+                }
+                let host = NSHostingView(rootView: content.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 620),
+                    styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                try await Task.sleep(for: .milliseconds(150))
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                let title = "\(music ? "music" : "image")-\(changed ? "edited" : "unchanged")"
+                let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                attachment.name = "Saved draft actions · \(title)"; attachment.lifetime = .keepAlways; add(attachment)
+                if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_REVERT_PROOF_DIR"] {
+                    try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
+                }
+                window.close()
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
     func testLegacyVideoDefaultsRemainExactUntilSettingsAreChanged() throws {
         let set = PromptSet(id: "legacy-video", name: "Legacy", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "A forest")], origin: .userCreated, mode: .videoGeneration)
@@ -2610,6 +3388,68 @@ final class ComparisonMediaTests: XCTestCase {
             attachment.name = "Customize \(mode.title) preset"; attachment.lifetime = .keepAlways; add(attachment)
             if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_COPY_PROOF_DIR"] {
                 try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(mode.rawValue).png"))
+            }
+            window.close()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    func testPromptSetPickerGroupsByProvenanceAndSearchesNamesPromptsAndTools() throws {
+        let builtin = BuiltinPromptSets.toolCalling
+        let saved = PromptSet(id: "saved", name: "My workflow", useCase: builtin.useCase,
+            prompts: builtin.prompts, origin: .userCreated)
+        let temporary = PromptSet(id: "temporary", name: "Reused suite", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Review a billing ticket")], origin: .userCreated)
+        let inputs = [builtin, saved, temporary]
+        let groups = ComparisonPromptSetPickerLogic.groups(inputs, temporaryID: temporary.id, query: " \n ")
+        XCTAssertEqual(groups.map(\.section), [.temporary, .saved, .builtin])
+        XCTAssertEqual(groups.map { $0.sets.map(\.name) }, [[temporary.name], [saved.name], [builtin.name]])
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.groups(inputs, temporaryID: temporary.id, query: "my WORKFLOW").flatMap(\.sets), [saved])
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.groups(inputs, temporaryID: temporary.id, query: "billing").flatMap(\.sets), [temporary])
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.groups([builtin], temporaryID: nil, query: "get_current_weather").flatMap(\.sets), [builtin])
+        XCTAssertTrue(ComparisonPromptSetPickerLogic.groups(inputs, temporaryID: nil, query: "no match").isEmpty)
+        XCTAssertTrue(ComparisonPromptSetPickerLogic.groups([], temporaryID: nil, query: "").isEmpty)
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.promptCount(temporary), "1 prompt")
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.promptCount(builtin), "\(builtin.prompts.count) prompts")
+    }
+
+    func testPromptSetPickerKeepsDuplicateNamesDistinctAndPreservesSourceOrder() {
+        let first = PromptSet(id: "first", name: "Same name", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "First")], origin: .userCreated)
+        let second = PromptSet(id: "second", name: "Same name", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Second")], origin: .userCreated)
+        let groups = ComparisonPromptSetPickerLogic.groups([second, first], temporaryID: nil, query: "Same")
+        XCTAssertEqual(groups.flatMap(\.sets).map(\.id), ["second", "first"])
+        XCTAssertEqual(groups.map(\.section), [.saved])
+        XCTAssertEqual(ComparisonPromptSetPickerLogic.groups([first], temporaryID: "missing", query: "").map(\.section), [.saved])
+        XCTAssertEqual(first.prompts[0].text, "First")
+    }
+
+    @MainActor
+    func testPromptSetPickerRendersGroupsAndSearchStatesWithoutSelectingOrWriting() async throws {
+        let saved = PromptSet(id: "saved", name: "Coding workflow · my prompts", useCase: .coding,
+            prompts: BuiltinPromptSets.coding.prompts, origin: .userCreated)
+        let temporary = PromptSet(id: "temporary", name: "Reused tool-calling setup", useCase: nil,
+            prompts: BuiltinPromptSets.toolCalling.prompts, origin: .userCreated)
+        let sets = [temporary, saved] + BuiltinPromptSets.all
+        for query in ["", "my prompts", "nothing matches"] {
+            let content = ComparisonPromptSetPanel(sets: sets, selection: saved.id, temporaryID: temporary.id,
+                onSelect: { _ in XCTFail("Rendering or searching must not select a set or run") }, query: query)
+            let host = NSHostingView(rootView: content.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 470),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let label = query.isEmpty ? "groups" : query == "my prompts" ? "filtered" : "empty"
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Prompt set picker · \(label)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_PICKER_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(label).png"))
             }
             window.close()
         }
@@ -3079,6 +3919,127 @@ final class ComparisonMediaTests: XCTestCase {
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = "Rename saved music prompt set"; attachment.lifetime = .keepAlways; add(attachment)
         if let path = ProcessInfo.processInfo.environment["MLX_MUSIC_MANAGE_PROOF_PATH"] { try png.write(to: URL(fileURLWithPath: path)) }
+    }
+
+    @MainActor
+    func testRenameSheetShowsValidationWhileEditingWithoutSaving() async throws {
+        func fields(in view: NSView) -> [NSTextField] {
+            if let field = view as? NSTextField, field.isEditable { return [field] }
+            return view.subviews.flatMap { fields(in: $0) }
+        }
+        for mode in [ComparisonMode.chat, .musicGeneration] {
+            let set = PromptSet(id: "saved", name: "Studies", useCase: nil,
+                prompts: [PromptEntry(id: "p", text: "A prompt")], origin: .userCreated, mode: mode)
+            let content = PromptSetRenameSheet(set: set) { _ in
+                XCTFail("Editing must not save a rename"); return nil
+            }.background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 280),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(250))
+            host.layoutSubtreeIfNeeded()
+            let initialHeight = host.fittingSize.height
+            let field = try XCTUnwrap(fields(in: host).first)
+            for (name, state) in [("", "invalid"), ("New valid name", "valid")] {
+                field.stringValue = name
+                field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+                try await Task.sleep(for: .milliseconds(200))
+                host.layoutSubtreeIfNeeded()
+                if state == "invalid" {
+                    XCTAssertGreaterThan(host.fittingSize.height, initialHeight, "Invalid names reveal inline validation")
+                } else {
+                    XCTAssertEqual(host.fittingSize.height, initialHeight, accuracy: 1, "Valid names clear the warning")
+                }
+                window.setContentSize(host.fittingSize)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                attachment.name = "Rename \(mode.rawValue) \(state)"; attachment.lifetime = .keepAlways; add(attachment)
+                if let directory = ProcessInfo.processInfo.environment["MLX_RENAME_PROOF_DIR"] {
+                    try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(mode.rawValue)-\(state).png"))
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func testNewSetNameFeedbackAppearsAfterClearingEditedNameInEveryMode() async throws {
+        func fields(in view: NSView) -> [NSTextField] {
+            if let field = view as? NSTextField, field.isEditable { return [field] }
+            return view.subviews.flatMap { fields(in: $0) }
+        }
+        for mode in ComparisonMode.allCases {
+            let editor: AnyView
+            if mode == .musicGeneration {
+                editor = AnyView(MusicPromptSetCreateSheet { _ in
+                    XCTFail("Editing a name must not save or generate"); return nil
+                })
+            } else {
+                editor = AnyView(ComparisonPromptSetEditor(draft: ComparisonPromptSetDraft(mode: mode)) { _ in
+                    XCTFail("Editing a name must not save or run a comparison"); return nil
+                })
+            }
+            let host = NSHostingView(rootView: editor.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 700),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            let initialHeight = host.fittingSize.height
+            let field = try XCTUnwrap(fields(in: host).first)
+            XCTAssertEqual(field.stringValue, "")
+            for (name, state) in [("Studies", "valid"), ("", "cleared"), ("Études 🎹", "corrected")] {
+                field.stringValue = name
+                field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+                try await Task.sleep(for: .milliseconds(150))
+                host.layoutSubtreeIfNeeded()
+                if state == "cleared" {
+                    XCTAssertGreaterThan(host.fittingSize.height, initialHeight, "\(mode): edited blank names need feedback")
+                } else {
+                    XCTAssertEqual(host.fittingSize.height, initialHeight, accuracy: 1, "\(mode): valid names clear feedback")
+                }
+                if state == "cleared", let directory = ProcessInfo.processInfo.environment["MLX_NAME_FIELD_PROOF_DIR"] {
+                    window.setContentSize(host.fittingSize); host.layoutSubtreeIfNeeded()
+                    let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(mode.rawValue)-cleared.png"))
+                }
+            }
+        }
+    }
+
+    func testRenameDraftValidationAndDiscardTrackingApplyToEveryMode() {
+        for mode in ComparisonMode.allCases {
+            let original = PromptSet(id: "saved", name: "Studies", useCase: .coding,
+                prompts: [PromptEntry(id: "p", text: "A prompt")], origin: .userCreated, mode: mode)
+            var draft = PromptSetRenameDraft(set: original)
+            XCTAssertFalse(draft.hasChanges)
+            XCTAssertFalse(draft.canRename, "Opening must not submit an unchanged name")
+            draft.name = "  Studies  "
+            XCTAssertTrue(draft.hasChanges, "Cancellation still tracks raw edits")
+            XCTAssertFalse(draft.canRename, "Whitespace alone must not cause a redundant write")
+            for invalid in ["", " \n ", "A\u{0000}B", "A\nB"] {
+                draft.name = invalid
+                XCTAssertTrue(draft.hasChanges)
+                XCTAssertNotNil(draft.validationError)
+                XCTAssertFalse(draft.canRename)
+            }
+            draft.name = "  Études 🎹  "
+            XCTAssertTrue(draft.hasChanges)
+            XCTAssertNil(draft.validationError)
+            XCTAssertTrue(draft.canRename)
+            XCTAssertEqual(draft.normalizedName, "Études 🎹")
+            XCTAssertEqual(draft.original, original, "Draft editing must preserve identity, prompts and metadata")
+            draft.name = "Studies"
+            XCTAssertFalse(draft.hasChanges)
+            XCTAssertFalse(draft.canRename)
+        }
     }
 
     @MainActor

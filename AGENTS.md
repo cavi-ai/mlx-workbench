@@ -274,6 +274,68 @@ from `mlx-agent` at runtime.
   invalid runtime parameter ranges are rejected at Save. Model-specific video
   alignment/frame grouping remain the engine's authority. The shared saved-set
   menu offers Edit/Rename/Remove in every mode, with built-in and active-run guards.
+  Non-music draft validation also supplies a concise inline warning within each
+  prompt card and disables Save/Use for invalid values in new, edited, copied
+  and reused setups. View-time validation shares the entry rules but performs
+  no file availability probes; Save/Use still recheck readable inputs. File
+  availability warnings remain in the input section without duplicate warnings.
+  Music uses the same card-level feedback through `MusicComparisonSetup.Prompt`
+  entry validation. A shared music array validator rejects invalid identities
+  and labels prompt errors by current position for creation, saved edits and
+  reuse; draft errors do not also appear in a global banner. Name checks share
+  the save rules, and creation/copy Save is disabled until the draft is valid.
+  Both shared prompt field views use `ComparisonPromptList` to reveal newly
+  inserted prompt identities after Add/Duplicate. Initial rendering and
+  unchanged, reordered or removed identities do not request a scroll; normal
+  draft editing remains value-only, with no saves or generation side effects.
+  Multi-prompt field views show a shared Fix prompt N action below the scroll
+  area, targeting the first value-invalid card by current order and stable
+  identity. Validation is value-only and never requests an automatic jump;
+  clicking the action only scrolls, and single-card editors omit it.
+  Saved non-music and music editors compare full prompt draft values to their
+  immutable opened snapshot (`hasChanges`), including raw invalid input and
+  identity/order changes. Save is disabled for unchanged drafts; Revert resets
+  the opened snapshot in memory and clears the local save error. It never
+  reloads stores or bypasses the existing stale-save check. New/copy creation
+  remains saveable after validation and has no saved snapshot to revert.
+  Saved-set editors share ComparisonPromptCancelButton: dirty Cancel reveals
+  inline Keep editing / Discard changes, with Escape returning to editing.
+  Unchanged or reverted drafts dismiss immediately. Interactive dismissal is
+  disabled for dirty saved drafts, and async-save blocking remains in place.
+  Discard only dismisses; it never saves or mutates the opened snapshot.
+  New/copy and reuse editors compare raw names and prompts against an in-memory
+  ComparisonPromptDraftCheckpoint. Opening alone never requires confirmation;
+  invalid edits, identities and ordering count as changes. Reuse also guards
+  an edited visible Save-as name. Successful copy saves retain current prompts
+  as the checkpoint; failed saves leave it intact and later edits re-arm it.
+  Save eligibility and Apply behavior remain separate from cancellation.
+  PromptSetRenameSheet uses PromptSetRenameDraft in every mode: raw name edits
+  guard Cancel and interactive dismissal, while normalized unchanged names
+  cannot submit redundant writes. PromptSetNameValidation is shared by rename,
+  new/copy/reuse name validation and the coordinator persistence boundary.
+  Inline invalid-name feedback is separate from persistence errors; renaming
+  preserves prompt identities, settings and historical run snapshots.
+  ComparisonPromptSetNameField supplies shared name feedback in new/copy,
+  reuse and Rename flows. Untouched blank new fields suppress validation;
+  any subsequent name edit enables feedback, including clearing the field.
+  Rename also validates its initial value. Field edits never persist or run
+  comparisons; existing Save eligibility and cancellation guards apply.
+  comparisonPromptActionHint supplies matching hover and accessibility hints
+  for Save, Rename, Save-as and Use setup across both editor families. Hints
+  prefer existing validation errors, then unchanged/pending-name guidance,
+  then the action description. They do not change action eligibility or save
+  behavior.
+  ComparisonPromptRemoveButton is shared by non-music and music prompt cards
+  in new/copy, edit and reuse editors. The minus button opens inline Keep
+  prompt / Remove prompt choices; only explicit Remove invokes the existing
+  draft mutation. Removal remains disabled for the final prompt, and losing
+  eligibility clears pending confirmation. No saved set or run is mutated
+  by the control itself.
+  Media input cards offer Revert input when Prompt.hasInputChanges is true.
+  Prompt.revertInput restores only the opened PromptEntry inputPath, leaving
+  all other raw edits intact. Existing derived builtin/saved provenance and
+  availability guards apply again; missing inputs never gain a fallback.
+  Revert changes no files and invokes no save, fixture generation or runner.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening
@@ -281,6 +343,13 @@ from `mlx-agent` at runtime.
   set only on success. Non-music media uses independent durable input copies;
   source-set ownership metadata is not inherited. Built-ins remain immutable,
   and the copy action is disabled during active comparisons or input saves.
+  `ComparisonPromptSetPicker` replaces the flat set menu with a bounded popover
+  over the existing mode-filtered sets. `ComparisonPromptSetPickerLogic` groups
+  explicit temporary IDs first, then user-created sets and built-ins, retaining
+  source order and distinct identities even for duplicate names. Search matches
+  names, prompt text and tool names locally; rows show prompt counts and current
+  selection. Search/clear/open never selects, writes or starts a comparison;
+  only an explicit row action changes the selection and closes the popover.
   `createPromptSet`, `preparePromptSetEdit` and `savePromptSetEdits` use the existing
   prompt store and action-scoped errors. Edits recheck the original durable
   snapshot under `JSONStore.update` before publication; failure retains the draft.
