@@ -3,6 +3,20 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum LibraryLoadState: Equatable {
+    case snapshot
+    case scanning
+    case failed(String)
+    case empty
+
+    static func derive(hasSnapshot: Bool, isScanning: Bool, error: String?) -> Self {
+        if hasSnapshot { return .snapshot }
+        if isScanning { return .scanning }
+        if let error, !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .failed(error) }
+        return .empty
+    }
+}
+
 struct LibraryGroupViewModel: Identifiable, Equatable, Hashable {
     let sourceGroup: ModelGroup
     let variants: [LibraryModel]
@@ -218,6 +232,10 @@ struct LibraryView: View {
         appHost.librarySnapshot
     }
 
+    private var loadState: LibraryLoadState {
+        .derive(hasSnapshot: snapshot != nil, isScanning: appHost.isScanning, error: appHost.lastError)
+    }
+
     private var groups: [LibraryGroupViewModel] {
         guard let snapshot else { return [] }
         return LibraryPresentation.filteredGroups(
@@ -343,9 +361,21 @@ struct LibraryView: View {
                 Divider()
                 footer(LibraryPresentation.summary(for: snapshot, familyCount: Set(snapshot.models.map(ComparePresentation.familyLabel)).count))
             }
-        } else if appHost.isScanning {
+        } else if loadState == .scanning {
             ProgressView("Scanning local library…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        } else if case .failed(let error) = loadState {
+            ContentUnavailableView {
+                Label("Library scan failed", systemImage: "exclamationmark.triangle")
+            } description: {
+                FailureNotice(error: error, details: .whenDifferent)
+            } actions: {
+                Button("Retry scan") { appHost.requestRescan() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(appHost.isScanning)
+                Button("Open Settings") { onRouteSelection(.settings) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ContentUnavailableView {
                 Label("No local library snapshot yet", systemImage: "books.vertical")

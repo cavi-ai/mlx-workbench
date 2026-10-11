@@ -4,6 +4,18 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryViewTests: XCTestCase {
+    func testFirstScanFailurePreservesActualErrorAndRetryLoadingState() {
+        let detail = "Scan failed: configured checkout is missing.\n/path/to/agent"
+        XCTAssertEqual(LibraryLoadState.derive(hasSnapshot: false, isScanning: false, error: detail), .failed(detail))
+        XCTAssertEqual(LibraryLoadState.derive(hasSnapshot: false, isScanning: true, error: detail), .scanning)
+        XCTAssertEqual(LibraryLoadState.derive(hasSnapshot: false, isScanning: false, error: " \n"), .empty)
+    }
+
+    func testRefreshFailureKeepsExistingSnapshotVisible() {
+        XCTAssertEqual(LibraryLoadState.derive(hasSnapshot: true, isScanning: false, error: "refresh failed"), .snapshot)
+        XCTAssertEqual(LibraryLoadState.derive(hasSnapshot: true, isScanning: true, error: nil), .snapshot)
+    }
+
     func testSummaryDescribesTheSnapshot() {
         let summary = LibraryPresentation.summary(for: makeSnapshot())
 

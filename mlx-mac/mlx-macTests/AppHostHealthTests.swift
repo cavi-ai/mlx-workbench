@@ -392,6 +392,70 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertEqual(Config.discoverGgufRoots(home: home), [hiddenModels.path])
     }
 
+    func testDoctorDoesNotClaimCleanInventoryBeforeSuccessfulRun() {
+        XCTAssertFalse(DoctorCheckState.notRun.isClean)
+        XCTAssertFalse(DoctorCheckState.running.isClean)
+        XCTAssertFalse(DoctorCheckState.failed("fixture request failed").isClean)
+        XCTAssertTrue(DoctorCheckState.notRun.message.contains("has not been checked"))
+
+        let result = DoctorResult(findings: [], prune_count: 0, preview_hash: nil, reclaimedBytes: nil, removed: nil)
+        let state = DoctorCheckState.completed(result)
+        XCTAssertTrue(state.isClean)
+        XCTAssertTrue(state.message.contains("latest doctor run"))
+    }
+
+    func testDoctorPrunableItemsPreventCleanInventoryMessage() {
+        let result = DoctorResult(findings: [], prune_count: 2, preview_hash: nil, reclaimedBytes: nil, removed: nil)
+        let state = DoctorCheckState.completed(result)
+        XCTAssertFalse(state.isClean)
+        XCTAssertEqual(state.pruneCount, 2)
+        XCTAssertTrue(state.message.contains("inventory issues"))
+    }
+
+    func testDoctorPendingFailedAndClearedStatesDoNotExposeEarlierFindings() {
+        let finding = DoctorFinding(path: "/models/incomplete", kind: "incomplete", message: "missing weights", size: nil)
+        var state = DoctorCheckState.completed(DoctorResult(findings: [finding], prune_count: 1, preview_hash: nil, reclaimedBytes: nil, removed: nil))
+        XCTAssertEqual(state.findings, [finding])
+
+        state = .running
+        XCTAssertTrue(state.findings.isEmpty)
+        XCTAssertEqual(state.pruneCount, 0)
+        state = .failed("fixture request failed")
+        XCTAssertTrue(state.findings.isEmpty)
+        XCTAssertTrue(state.message.contains("fixture request failed"))
+        state = .notRun
+        XCTAssertFalse(state.isClean)
+        XCTAssertEqual(state.pruneCount, 0)
+    }
+
+    func testDiscoveryEmptySuccessUsesFilterRecoveryInsteadOfFailure() {
+        let empty = DiscoveryState.completed([])
+        XCTAssertTrue(empty.message.contains("No candidates matched"))
+        XCTAssertTrue(empty.message.contains("another role"))
+        XCTAssertFalse(empty.message.contains("failed"))
+        XCTAssertNotEqual(empty, .notRun)
+        XCTAssertTrue(DiscoveryState.failed("fixture unavailable").message.contains("fixture unavailable"))
+    }
+
+    func testLMStudioEmptySuccessHasDirectoryRecoveryInsteadOfInitialInstruction() {
+        let empty = LMStudioScanState.completed([])
+        XCTAssertTrue(empty.message.contains("No GGUF files found"))
+        XCTAssertTrue(empty.message.contains("another source directory"))
+        XCTAssertNotEqual(empty, .notRun)
+        XCTAssertFalse(empty.message.contains("failed"))
+    }
+
+    func testLMStudioExplicitMissingSourceReportsUnavailableDirectory() async {
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("missing-mlx-source-\(UUID().uuidString)").path
+        do {
+            _ = try await LMStudioView.discoverLMStudio(sourceDir: missing)
+            XCTFail("An explicit unavailable source must not look like a successful empty scan")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("source directory is unavailable or unreadable"))
+            XCTAssertTrue(error.localizedDescription.contains(missing))
+        }
+    }
+
     private func makeTempDirectory() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-tests-\(UUID().uuidString)")

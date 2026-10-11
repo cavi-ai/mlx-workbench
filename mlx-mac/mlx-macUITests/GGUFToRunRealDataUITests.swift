@@ -26,6 +26,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
     private var ownedServer: ServerReceiptEvidence?
 
     override func setUpWithError() throws {
+        try NativeUITestEnvironment.requireIsolatedAquaSession()
         continueAfterFailure = false
         runtimeManifest = loadRuntimeManifest()
 

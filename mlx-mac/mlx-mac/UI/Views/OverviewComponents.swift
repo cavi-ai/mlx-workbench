@@ -442,6 +442,7 @@ struct ModelBudgetInstrument: View {
     let reserveGB: Double
     let model: LibraryModel?
     let hardware: HardwareProfile
+    let availableWidth: CGFloat
 
     private var presentation: ModelBudgetPresentation {
         ModelBudgetPresentation(
@@ -463,20 +464,13 @@ struct ModelBudgetInstrument: View {
                     .foregroundStyle(WorkbenchColor.muted)
                     .symbolRenderingMode(.hierarchical)
                 lead(budget)
-                ViewThatFits(in: .horizontal) {
-                    Text(budget.caption)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Text(budget.compactCaption)
-                }
+                Text(OverviewLayoutMode.showsBarLabels(instrumentWidth: availableWidth) ? budget.caption : budget.compactCaption)
+                .fixedSize(horizontal: false, vertical: true)
                 .font(WorkbenchTypography.metadata)
                 .foregroundStyle(WorkbenchColor.muted)
                 CapacityBar(presentation: budget)
-                if budget.reading != .unavailable {
-                    ViewThatFits(in: .horizontal) {
-                        segmentValues(budget)
-                            .frame(minWidth: WorkbenchSize.barLabelsMinimum - WorkbenchSpacing.surfaceInset * 2, alignment: .leading)
-                        EmptyView()
-                    }
+                if budget.reading != .unavailable && OverviewLayoutMode.showsBarLabels(instrumentWidth: availableWidth) {
+                    segmentValues(budget)
                 }
                 verdictLine(budget)
             }

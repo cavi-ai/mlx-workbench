@@ -24,10 +24,57 @@ local models live behind the `mlx-workbench-real-data-e2e` scheme and require
 runtime values (`TASK6_*` environment or manifest) — they are not part of the
 default test action.
 
+## Isolated native UI tests
+
+Native UI automation runs inside a disposable macOS Tart VM. The UI test
+classes reject physical-host execution before creating fixtures or launching
+the app. The VM must have Xcode, the Tart guest agent and a logged-in graphical
+session belonging to its non-root test user.
+
+Prepare a local base VM using the [Tart setup guide](https://tart.run/quick-start/),
+then run:
+
+```bash
+make test-native-ui NATIVE_UI_BASE_VM=mlx-workbench-ui-base
+```
+
+`scripts/native_ui_vm.py` also accepts `--tart`, `--vm-home` and an optional
+`--baseline-app` for matched before/after captures. VM storage defaults to
+`.build/native-ui-vms`. Provisioning is explicit; the test command never
+downloads an image implicitly.
+
+Each run clones the prepared base, snapshots the current source and records
+file hashes. The VM receives a read-only source share and a separate artifact
+share. It opens no host window, shares no clipboard or audio, and uses host-only
+networking. Appearance changes, app launches and window resizing happen only
+inside the guest. Completion, failure and interruption stop and delete only
+that run's clone; the base VM remains available.
+
+The runner runs the native unit suite, builds the UI runner and executes
+deterministic presentation and interaction tests in light and dark appearance.
+Before testing, it verifies console ownership, the Aqua session and actual
+foreground activation through Launch Services inside the guest.
+It stops at the first failed gate, rejects zero-test or skipped UI results, and
+preserves logs, result bundles, source hashes and screenshots under
+`.build/native-ui/runs/<run-id>/output`.
+
+`--preflight-only` checks the guest without running tests. `--unit-test` runs
+one named XCTest for diagnosis; its result is not full-suite acceptance.
+`--ui-test` builds and runs one named UI test without the complete unit gate,
+so a specific interaction or layout failure can be diagnosed first. A focused
+result does not replace the default command's complete gates.
+
+These UI fixtures test navigation, field validation, preview identity and
+recovery behavior. They do not certify conversion quality, model inference or
+GPU performance. Real-model acceptance still requires its explicit runtime
+manifest and a separately provisioned compatible runtime; it is not selected
+by `make test-native-ui`.
+
 ## Opt-in GGUF-to-Run acceptance
 
 The existing native real-data harness can be launched through one guarded
-Make target:
+Make target inside the provisioned guest. Physical-host execution is rejected
+before the UI harness launches the app:
 
 ```bash
 make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/to/runtime.json
