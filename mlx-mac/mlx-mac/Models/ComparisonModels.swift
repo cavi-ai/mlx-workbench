@@ -187,6 +187,8 @@ struct ComparisonPromptSetDraft: Identifiable {
         var steps: String
         var seed: String
         var toolName: String? { original.tool?.name }
+        var hasInputChanges: Bool { inputPath != (original.inputPath ?? "") }
+        mutating func revertInput() { inputPath = original.inputPath ?? "" }
         var builtinInput: String? { inputPath == (original.inputPath ?? "") ? original.builtinInput : nil }
         var usesSavedInput: Bool { savedInput && inputPath == (original.inputPath ?? "") }
         var inputDisplayName: String? {
