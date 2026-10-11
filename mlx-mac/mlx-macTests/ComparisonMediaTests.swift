@@ -51,6 +51,23 @@ private struct PromptCancelFixtureView: View {
 }
 
 @MainActor
+private final class PromptRemoveFixture: ObservableObject {
+    @Published var canRemove = true
+    var removals = 0
+}
+
+private struct PromptRemoveFixtureView: View {
+    @ObservedObject var fixture: PromptRemoveFixture
+    var body: some View {
+        ComparisonPromptRemoveButton(number: 2, canRemove: fixture.canRemove) { fixture.removals += 1 }
+            .buttonStyle(.borderless)
+            .padding(WorkbenchSpacing.pageInset)
+            .frame(width: 420, height: 90)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+    }
+}
+
+@MainActor
 private final class PromptEditorScrollFixture: ObservableObject {
     @Published var draft: ComparisonPromptSetDraft
     @Published var music: [MusicComparisonSetup.Prompt]
@@ -2874,6 +2891,55 @@ final class ComparisonMediaTests: XCTestCase {
             try XCTUnwrap(buttons(in: host).last).performClick(nil)
             XCTAssertEqual(fixture.dismissals, 1, "Only explicit Discard closes an edited draft")
         }
+    }
+
+    @MainActor
+    func testPromptRemovalRequiresConfirmationAndRespectsLastPromptGuard() async throws {
+        func buttons(in view: NSView) -> [NSButton] {
+            if let button = view as? NSButton { return [button] }
+            return view.subviews.flatMap { buttons(in: $0) }
+        }
+        let fixture = PromptRemoveFixture()
+        let host = NSHostingView(rootView: PromptRemoveFixtureView(fixture: fixture))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 90),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        try XCTUnwrap(buttons(in: host).first).performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(fixture.removals, 0, "The minus button must not immediately discard a prompt")
+        let choices = buttons(in: host)
+        XCTAssertEqual(choices.count, 2, "Offer Keep prompt and Remove prompt")
+        guard choices.count == 2 else { return }
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "Keep prompt or remove · native control"; attachment.lifetime = .keepAlways; add(attachment)
+        if let path = ProcessInfo.processInfo.environment["MLX_PROMPT_REMOVE_PROOF_PATH"] {
+            try png.write(to: URL(fileURLWithPath: path))
+        }
+        choices[0].performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(fixture.removals, 0)
+        XCTAssertEqual(buttons(in: host).count, 1)
+        try XCTUnwrap(buttons(in: host).first).performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        fixture.canRemove = false
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(buttons(in: host).count, 1, "Losing permission must clear the pending confirmation")
+        let disabled = try XCTUnwrap(buttons(in: host).first)
+        XCTAssertFalse(disabled.isEnabled, "The final prompt cannot be removed")
+        disabled.performClick(nil)
+        XCTAssertEqual(fixture.removals, 0)
+        fixture.canRemove = true
+        try await Task.sleep(for: .milliseconds(150))
+        try XCTUnwrap(buttons(in: host).first).performClick(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        try XCTUnwrap(buttons(in: host).last).performClick(nil)
+        XCTAssertEqual(fixture.removals, 1, "Only explicit Remove invokes the removal callback")
     }
 
     @MainActor

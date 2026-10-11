@@ -1316,6 +1316,43 @@ private struct ComparisonDraftValidationMessage: View {
     }
 }
 
+struct ComparisonPromptRemoveButton: View {
+    let number: Int
+    let canRemove: Bool
+    let onRemove: () -> Void
+    @State private var confirmingRemoval = false
+
+    var body: some View {
+        Group {
+            if confirmingRemoval && canRemove {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Button("Keep prompt") { confirmingRemoval = false }
+                        .comparisonPromptActionHint("Keep this prompt in the draft.")
+                    Button("Remove prompt", role: .destructive) {
+                        guard canRemove else { return }
+                        confirmingRemoval = false
+                        onRemove()
+                    }
+                    .comparisonPromptActionHint("Remove prompt \(number) from this draft.")
+                }
+                .controlSize(.small)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Removal choices for prompt \(number)")
+            } else {
+                Button { confirmingRemoval = true } label: { Image(systemName: "minus.circle") }
+                    .disabled(!canRemove)
+                    .accessibilityLabel("Remove prompt \(number)")
+                    .comparisonPromptActionHint(canRemove
+                        ? "Review removal of this prompt." : "At least one prompt is required.")
+            }
+        }
+        .buttonStyle(.borderless)
+        .onChange(of: canRemove) { _, allowed in
+            if !allowed { confirmingRemoval = false }
+        }
+    }
+}
+
 private struct ComparisonPromptActions: View {
     let number: Int
     let canMoveUp: Bool
@@ -1367,10 +1404,7 @@ private struct ComparisonPromptCard: View {
                 Spacer()
                 ComparisonPromptActions(number: number, canMoveUp: canMoveUp, canMoveDown: canMoveDown,
                     onDuplicate: onDuplicate, onMove: onMove)
-                Button(action: onRemove) { Image(systemName: "minus.circle") }
-                    .buttonStyle(.borderless).disabled(!canRemove)
-                    .accessibilityLabel("Remove prompt \(number)")
-                    .help("Remove this prompt; at least one prompt is required.")
+                ComparisonPromptRemoveButton(number: number, canRemove: canRemove, onRemove: onRemove)
             }
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                 Text(textLabel).font(WorkbenchTypography.label)
@@ -1654,11 +1688,9 @@ struct MusicPromptFields: View {
                                 canMoveUp: prompts.first?.id != promptID, canMoveDown: prompts.last?.id != promptID,
                                 onDuplicate: { prompts.duplicatePrompt(id: promptID) },
                                 onMove: { prompts.movePrompt(id: promptID, direction: $0) })
-                            Button { prompts.removePrompt(id: promptID) } label: { Image(systemName: "minus.circle") }
-                                .buttonStyle(.borderless)
-                                .disabled(prompts.count <= 1)
-                                .accessibilityLabel("Remove prompt \(number)")
-                                .help("Remove this prompt; at least one prompt is required.")
+                            ComparisonPromptRemoveButton(number: number, canRemove: prompts.count > 1) {
+                                prompts.removePrompt(id: promptID)
+                            }
                         }
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                             Text("Caption").font(WorkbenchTypography.label)
