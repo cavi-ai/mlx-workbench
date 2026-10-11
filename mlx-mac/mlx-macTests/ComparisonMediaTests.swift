@@ -1452,6 +1452,98 @@ final class ComparisonMediaTests: XCTestCase {
         }
     }
 
+    func testRevertInputPreservesOtherEditsAndRestoresOpenedSourceInEveryInputMode() throws {
+        for mode in [ComparisonMode.vision, .videoUnderstanding, .speechToText] {
+            let file = root.appendingPathComponent("\(mode.rawValue)-source.bin")
+            let bytes = Data("source input".utf8)
+            try bytes.write(to: file)
+            for entry in [
+                PromptEntry(id: "empty", text: "Original prompt", inputKind: mode.inputKind),
+                PromptEntry(id: "builtin", text: "Original prompt", inputKind: mode.inputKind, builtinInput: "fixture"),
+                PromptEntry(id: "saved", text: "Original prompt", inputKind: mode.inputKind, inputPath: file.path)
+            ] {
+                var prompt = ComparisonPromptSetDraft.Prompt(entry, mode: mode, savedInput: entry.id == "saved")
+                XCTAssertFalse(prompt.hasInputChanges)
+                prompt.text = "Edited text"; prompt.keywords = "red|blue"; prompt.maxTokens = "invalid typed value"
+                for replacement in ["/replacement", "relative path", " \n "] {
+                    prompt.inputPath = replacement
+                    XCTAssertTrue(prompt.hasInputChanges)
+                    var expected = prompt; expected.inputPath = entry.inputPath ?? ""
+                    prompt.revertInput()
+                    XCTAssertEqual(prompt, expected, "Only the input choice may revert")
+                    XCTAssertFalse(prompt.hasInputChanges)
+                    XCTAssertEqual(prompt.builtinInput, entry.builtinInput)
+                    XCTAssertEqual(prompt.usesSavedInput, entry.id == "saved")
+                }
+            }
+            XCTAssertEqual(try Data(contentsOf: file), bytes, "Revert must not mutate input files")
+            var missing = ComparisonPromptSetDraft.Prompt(
+                PromptEntry(id: "missing", text: "Describe this", inputKind: mode.inputKind, inputPath: file.path),
+                mode: mode, savedInput: true)
+            try FileManager.default.removeItem(at: file)
+            missing.inputPath = "/replacement"; missing.revertInput()
+            XCTAssertTrue(missing.usesSavedInput)
+            XCTAssertTrue(missing.inputFileUnavailable, "Missing opened inputs must remain unavailable")
+            XCTAssertNil(missing.inputPreviewURL)
+            XCTAssertThrowsError(try missing.entry(for: mode), "The save boundary must refuse unavailable inputs")
+        }
+    }
+
+    @MainActor
+    func testRevertInputButtonRestoresBuiltinWithoutSavingOrChangingFiles() async throws {
+        func buttons(in view: NSView) -> [NSButton] {
+            if let button = view as? NSButton { return [button] }
+            return view.subviews.flatMap { buttons(in: $0) }
+        }
+        func scrollViews(in view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
+        }
+        let entry = PromptEntry(id: "p", text: "Describe the circle", inputKind: .image, builtinInput: "red-circle")
+        let replacement = try await ComparisonMediaFixtures.generateInput(for: entry, into: root)
+        let bytes = try Data(contentsOf: replacement)
+        let set = PromptSet(id: "vision-revert", name: "Vision", useCase: nil,
+            prompts: [entry], origin: .userCreated, mode: .vision)
+        var draft = try ComparisonPromptSetDraft(set: set)
+        draft.prompts[0].inputPath = replacement.path
+        draft.prompts[0].text = "Edited question"; draft.prompts[0].maxTokens = "128"
+        let editor = ComparisonPromptSetEditor(draft: draft) { _ in
+            XCTFail("Reverting input must not save"); return nil
+        }.background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: editor)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 620),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        let scroll = try XCTUnwrap(scrollViews(in: host).max {
+            ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0)
+        })
+        // AppKit titles are empty. This single card exposes its menu, minus
+        // control and then Revert input as native buttons in content order.
+        XCTAssertEqual(buttons(in: scroll).count, 3)
+        let revert = try XCTUnwrap(buttons(in: scroll).last)
+        for state in ["replaced", "reverted"] {
+            if state == "reverted" {
+                revert.performClick(nil)
+                try await Task.sleep(for: .milliseconds(200))
+                XCTAssertEqual(buttons(in: scroll).count, 2, "Only Revert input disappears after restoring the opened input")
+            }
+            host.layoutSubtreeIfNeeded(); window.setContentSize(host.fittingSize); host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Vision input \(state)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_INPUT_REVERT_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(state).png"))
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: replacement), bytes)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
     func testReuseMissingSavedInputsNeverFallsBackAndAcceptsExplicitReplacement() throws {
         let store = ComparisonOutputStore(root: root.appendingPathComponent("missing-reuse"))
         var run = historyRun(.vision, "Saved inputs", at: 100)

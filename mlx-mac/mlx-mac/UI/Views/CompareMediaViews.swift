@@ -1420,6 +1420,12 @@ private struct ComparisonPromptCard: View {
                         ?? (prompt.builtinInput == nil ? "No file chosen" : "Built-in \(kind.rawValue) fixture"))
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         .lineLimit(1).truncationMode(.middle).help(prompt.inputPath)
+                    if prompt.hasInputChanges {
+                        Button("Revert input") { prompt.revertInput() }
+                            .buttonStyle(.borderless)
+                            .comparisonPromptActionHint("Restore the input from when this editor opened; keep other prompt edits.")
+                            .accessibilityLabel("Revert input for prompt \(number)")
+                    }
                 }
                 if prompt.usesSavedInput, !prompt.inputFileUnavailable {
                     Label("Saved input from this run", systemImage: "archivebox")

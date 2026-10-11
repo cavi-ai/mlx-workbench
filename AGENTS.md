@@ -331,6 +331,11 @@ from `mlx-agent` at runtime.
   draft mutation. Removal remains disabled for the final prompt, and losing
   eligibility clears pending confirmation. No saved set or run is mutated
   by the control itself.
+  Media input cards offer Revert input when Prompt.hasInputChanges is true.
+  Prompt.revertInput restores only the opened PromptEntry inputPath, leaving
+  all other raw edits intact. Existing derived builtin/saved provenance and
+  availability guards apply again; missing inputs never gain a fallback.
+  Revert changes no files and invokes no save, fixture generation or runner.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening
