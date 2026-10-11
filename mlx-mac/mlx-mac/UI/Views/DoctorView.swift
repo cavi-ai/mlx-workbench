@@ -5,14 +5,55 @@ import SwiftUI
 // Health: environment/runtime status plus the doctor findings inventory.
 // Prune actions live in Reclaim, which owns the authoritative prune flow.
 
+enum DoctorCheckState: Equatable {
+    case notRun
+    case running
+    case completed(DoctorResult)
+    case failed(String)
+
+    var isRunning: Bool { if case .running = self { return true }; return false }
+    var isFailed: Bool { if case .failed = self { return true }; return false }
+    var findings: [DoctorFinding] {
+        if case .completed(let result) = self { return result.findings ?? [] }
+        return []
+    }
+    var pruneCount: Int {
+        if case .completed(let result) = self { return result.prune_count ?? 0 }
+        return 0
+    }
+    var isClean: Bool {
+        if case .completed = self { return findings.isEmpty && pruneCount == 0 }
+        return false
+    }
+    var symbol: String {
+        switch self {
+        case .notRun: return "stethoscope"
+        case .running: return "magnifyingglass"
+        case .completed: return isClean ? "checkmark.circle" : "exclamationmark.triangle"
+        case .failed: return "exclamationmark.triangle"
+        }
+    }
+    var message: String {
+        switch self {
+        case .notRun: return "Inventory has not been checked. Run doctor to check local model files."
+        case .running: return "Checking local model files for inventory issues…"
+        case .completed:
+            return isClean ? "No inventory issues found in the latest doctor run."
+                : "The latest doctor run found inventory issues. Review the findings below."
+        case .failed(let message): return "Inventory check failed. \(message) Retry Run doctor after resolving the issue."
+        }
+    }
+}
+
 struct DoctorView: View {
     @ObservedObject var appHost: AppHost
     private let onRouteSelection: (AppRoute) -> Void
 
-    @State private var isRunning = false
-    @State private var findings: [DoctorFinding] = []
-    @State private var pruneCount = 0
-    @State private var errorMessage: String?
+    @State private var checkState: DoctorCheckState = .notRun
+
+    private var isRunning: Bool { checkState.isRunning }
+    private var findings: [DoctorFinding] { checkState.findings }
+    private var pruneCount: Int { checkState.pruneCount }
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -34,29 +75,22 @@ struct DoctorView: View {
 
     private var environmentSection: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            SectionTitle(text: "Environment")
-            agentRow
+            SectionTitle(text: "Runtime readiness")
             runtimeRow("Prepare runtime", ok: appHost.runtimeReport.convert.ok,
                        message: appHost.runtimeReport.convert.message)
             runtimeRow("Run runtime", ok: appHost.runtimeReport.serve.ok,
                        message: appHost.runtimeReport.serve.message)
+            Divider()
+            agentRow
             if !appHost.runtimeReport.ok {
-                HStack(spacing: WorkbenchSpacing.sm) {
-                    Text(appHost.runtimeReport.install)
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.warning)
-                        .textSelection(.enabled)
-                    Button("Copy command") {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(appHost.runtimeReport.install, forType: .string)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    Spacer()
-                    Button("Open Settings") { onRouteSelection(.settings) }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                Text(appHost.runtimeReport.install)
+                    .font(WorkbenchTypography.value)
+                    .foregroundStyle(WorkbenchColor.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.sm) { runtimeRecoveryActions }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { runtimeRecoveryActions }
                 }
                 RuntimeInstallView(installer: appHost.runtimeInstaller) {
                     appHost.refreshRuntimeReport()
@@ -67,6 +101,20 @@ struct DoctorView: View {
                 .controlSize(.small)
         }
         .formSection {}
+    }
+
+    @ViewBuilder
+    private var runtimeRecoveryActions: some View {
+        Button("Copy command") {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(appHost.runtimeReport.install, forType: .string)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        Button("Open Settings") { onRouteSelection(.settings) }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
     }
 
     @ViewBuilder
@@ -88,19 +136,22 @@ struct DoctorView: View {
     }
 
     private func healthRow(_ label: String, ok: Bool, message: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
-            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundStyle(ok ? WorkbenchColor.success : WorkbenchColor.failure)
-            Text(label)
-                .font(WorkbenchTypography.body)
-                .frame(width: 130, alignment: .leading)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
+                Label(label, systemImage: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .font(WorkbenchTypography.emphasis)
+                    .symbolRenderingMode(.hierarchical)
+                Spacer()
+                Text(ok ? "Ready" : "Needs setup")
+                    .font(WorkbenchTypography.label)
+                    .foregroundStyle(ok ? WorkbenchColor.success : WorkbenchColor.failure)
+            }
             Text(message)
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
                 .textSelection(.enabled)
-                .lineLimit(2)
-                .truncationMode(.middle)
-            Spacer()
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -111,8 +162,8 @@ struct DoctorView: View {
             HStack {
                 SectionTitle(text: "Model inventory findings")
                 Spacer()
-                if !findings.isEmpty {
-                    Button("Clear") { findings = [] }
+                if checkState != .notRun, !isRunning {
+                    Button("Clear") { checkState = .notRun }
                         .controlSize(.small)
                 }
                 Button(isRunning ? "Checking…" : "Run doctor") { runDoctor() }
@@ -123,13 +174,22 @@ struct DoctorView: View {
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
 
-            if isRunning {
-                ProgressView()
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, WorkbenchSpacing.xs)
+            HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
+                if isRunning {
+                    ProgressView().controlSize(.small)
+                        .accessibilityLabel("Checking inventory")
+                } else {
+                    Image(systemName: checkState.symbol)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(checkState.isFailed ? WorkbenchColor.failure : checkState.isClean ? WorkbenchColor.success : WorkbenchColor.muted)
+                        .accessibilityHidden(true)
+                }
+                Text(checkState.message)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(checkState.isFailed ? WorkbenchColor.failure : checkState.isClean ? WorkbenchColor.success : WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
-
-            ErrorBanner(text: errorMessage)
 
             if pruneCount > 0 {
                 HStack(spacing: WorkbenchSpacing.sm) {
@@ -143,50 +203,40 @@ struct DoctorView: View {
                 }
             }
 
-            if findings.isEmpty, !isRunning, errorMessage == nil {
-                Text("No findings from the latest doctor run.")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
-            } else {
-                ForEach(findings) { finding in
-                    HStack(alignment: .top) {
-                        StatusPill(state: finding.kind ?? "issue")
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                            Text(finding.path).font(WorkbenchTypography.secondary)
-                                .textSelection(.enabled)
-                            if let message = finding.message {
-                                Text(message).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                            }
-                        }
-                        Spacer()
-                        if let size = finding.size {
-                            Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                                .font(WorkbenchTypography.secondary)
-                                .foregroundStyle(WorkbenchColor.muted)
+            ForEach(findings) { finding in
+                HStack(alignment: .top) {
+                    StatusPill(state: finding.kind ?? "issue")
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                        Text(finding.path).font(WorkbenchTypography.secondary)
+                            .textSelection(.enabled)
+                        if let message = finding.message {
+                            Text(message).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         }
                     }
-                    .padding(.vertical, WorkbenchSpacing.xxxs)
+                    Spacer()
+                    if let size = finding.size {
+                        Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.muted)
+                    }
                 }
+                .padding(.vertical, WorkbenchSpacing.xxxs)
             }
         }
         .formSection {}
     }
 
     private func runDoctor() {
-        errorMessage = nil
-        isRunning = true
+        guard !isRunning else { return }
+        checkState = .running
         Task {
-            defer { isRunning = false }
             do {
                 let result = try await appHost.api.doctor(wiredRoots: [], hfCache: nil)
-                findings = result.findings ?? []
-                pruneCount = result.prune_count ?? 0
+                checkState = .completed(result)
             } catch let error as BridgeError {
-                findings = []
-                errorMessage = error.errorDescription
+                checkState = .failed(error.errorDescription ?? error.localizedDescription)
             } catch {
-                findings = []
-                errorMessage = error.localizedDescription
+                checkState = .failed(error.localizedDescription)
             }
         }
     }

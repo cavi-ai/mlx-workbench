@@ -32,7 +32,7 @@ DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
 DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert pip-audit _audit_pkgs deps \
-	start stop restart status run test test-js test-live-scan test-swift test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
+	start stop restart status run test test-js test-live-scan test-swift test-native-ui test-swift-live-scan accept-native-gguf open check check-convert doctor clean clean-venv \
 	docs-test docs-build docs-verify docs-release version-bump dmg build-swift-dist build-swift-devid
 
 help:
@@ -56,6 +56,7 @@ help:
 	hdr "Test"; \
 	row "make test" "unittest suite + static JS tests"; \
 	row "make test-swift" "unit tests for Swift app"; \
+	row "make test-native-ui" "isolated macOS VM UI tests; NATIVE_UI_BASE_VM names a prepared Tart VM"; \
 	row "make test-live-scan" "validate live model bytes against configured filesystem paths"; \
 	row "make test-swift-live-scan" "validate native app scan bytes against configured filesystem paths"; \
 	row "make accept-native-gguf" "RUNTIME_MANIFEST=/absolute/path/runtime.json — opt-in native GGUF-to-Run acceptance"; \
@@ -258,6 +259,10 @@ test-swift:
 	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Debug -destination 'platform=macOS' \
 		-derivedDataPath $(MLX_SWIFT_DD) test
+
+test-native-ui:
+	@test -n "$(NATIVE_UI_BASE_VM)" || { echo "NATIVE_UI_BASE_VM must name a prepared local Tart VM" >&2; exit 2; }
+	@$(PYTHON) scripts/native_ui_vm.py --base-vm "$(NATIVE_UI_BASE_VM)"
 
 test-swift-live-scan:
 	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \

@@ -1166,6 +1166,14 @@ final class ComparisonMediaTests: XCTestCase {
 
     @MainActor
     func testImageComparisonViewerRendersAndNativeZoomControlsDoNotWriteRatings() async throws {
+        let probe = Process(), output = Pipe()
+        probe.executableURL = URL(fileURLWithPath: "/usr/sbin/sysctl")
+        probe.arguments = ["-n", "hw.model"]; probe.standardOutput = output
+        try probe.run(); probe.waitUntilExit()
+        let model = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard probe.terminationStatus == 0, model.hasPrefix("VirtualMac") else {
+            XCTFail("Keyboard presentation tests require an isolated VM; no test window was opened."); return
+        }
         let store = ComparisonOutputStore(root: root.appendingPathComponent("image-viewer-proof"))
         var run = historyRun(.imageGeneration, "Shapes", at: 100, models: ["/image/a", "/image/b"])
         run.promptEntries = [PromptEntry(id: "shapes", text: "Simple geometric shapes on a white background")]
@@ -1189,7 +1197,22 @@ final class ComparisonMediaTests: XCTestCase {
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
             defer { window.close() }
+            let focus = XCTAttachment(string: "Before keyboard preflight: active=\(NSApp.isActive), key=\(window.isKeyWindow), policy=\(NSApp.activationPolicy().rawValue), canBecomeKey=\(window.canBecomeKey), finishedLaunching=\(NSRunningApplication.current.isFinishedLaunching), running=\(NSApp.isRunning), bundle=\(NSRunningApplication.current.bundleIdentifier ?? "none")")
+            focus.name = "Image inspection keyboard preflight"; focus.lifetime = .keepAlways; add(focus)
+            if !NSApp.isActive {
+                let configuration = NSWorkspace.OpenConfiguration()
+                configuration.activates = true
+                let activated = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL,
+                                                                            configuration: configuration)
+                XCTAssertEqual(activated.processIdentifier, ProcessInfo.processInfo.processIdentifier,
+                               "Keyboard proof must activate this exact test host")
+                window.makeKeyAndOrderFront(nil)
+            }
             try await Task.sleep(for: .milliseconds(400))
+            guard NSApp.isActive, window.isKeyWindow else {
+                XCTFail("Keyboard delivery unavailable: active=\(NSApp.isActive), key=\(window.isKeyWindow), policy=\(NSApp.activationPolicy().rawValue)")
+                return
+            }
             host.layoutSubtreeIfNeeded()
             let initialBitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: initialBitmap)

@@ -48,7 +48,12 @@ struct HomeNextAction: Equatable {
             return .init(kind: .prepare(source.item.path), title: "Prepare a GGUF model", reason: "The latest Library snapshot contains a GGUF source that needs MLX conversion.", route: AppRoute.prepare.rawValue)
         }
         if reclaimableBytes >= ReclaimAdvisor.badgeThresholdBytes, let free = diskFreeFraction, free < 0.15 { let amount = ByteCountFormatter.string(fromByteCount: reclaimableBytes, countStyle: .file); return .init(kind: .library, title: "Reclaim " + amount + " of disk", reason: "Reclaim opportunities exceed the threshold and the disk is under 15% free. Reclaim ranks evidence; quarantine moves, never deletes.", route: AppRoute.reclaim.rawValue) }
-        return .init(kind: .library, title: "Review the model library", reason: snapshot.models.isEmpty ? "The latest scan found no local models." : "The latest scan found models, but none are currently ready to run or prepare.", route: AppRoute.library.rawValue)
+        let reason: String
+        if snapshot.models.isEmpty { reason = "The latest scan found no local models." }
+        else if snapshot.models.contains(where: { $0.readiness == .ready }) {
+            reason = "The latest scan found ready models. Choose one in Library to see its available actions."
+        } else { reason = "The latest scan found models, but none are currently ready to run or prepare." }
+        return .init(kind: .library, title: "Review the model library", reason: reason, route: AppRoute.library.rawValue)
     }
 }
 
@@ -206,16 +211,15 @@ struct HomeView: View {
     }
 
     var body: some View {
-        ScrollView {
-            regions
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(key: OverviewContentWidthKey.self, value: proxy.size.width)
-                    }
-                }
-                .frame(maxWidth: WorkbenchSize.contentMaxWidth)
-                .padding(WorkbenchSpacing.pageInset)
-                .frame(maxWidth: .infinity)
+        GeometryReader { proxy in
+            let width = min(WorkbenchSize.contentMaxWidth, max(0, proxy.size.width - WorkbenchSpacing.pageInset * 2))
+            ScrollView {
+                regions
+                    .frame(width: width, alignment: .leading)
+                    .padding(WorkbenchSpacing.pageInset)
+                    .frame(maxWidth: .infinity)
+            }
+            .preference(key: OverviewContentWidthKey.self, value: width)
         }
         .onPreferenceChange(OverviewContentWidthKey.self) { contentWidth = $0 }
         .onAppear { appHost.analyzeReclaim() }
@@ -247,24 +251,29 @@ struct HomeView: View {
         }
     }
 
+    @ViewBuilder
     private var hero: some View {
         let action = nextAction
+        let nextStepWidth = min(WorkbenchSize.nextStepMaximum, max(WorkbenchSize.nextStepMinimum, contentWidth * 0.4))
+        let instrumentWidth = layoutMode.heroIsSideBySide
+            ? contentWidth - nextStepWidth - WorkbenchSpacing.md : contentWidth
         let instrument = ModelBudgetInstrument(
             resources: appHost.resources,
             reserveGB: appHost.config.fitReserveGB,
             model: selectedModel,
-            hardware: appHost.hardwareProfile
+            hardware: appHost.hardwareProfile,
+            availableWidth: instrumentWidth
         )
         let nextStep = NextStepPanel(action: action) { perform(action) }
-        return ViewThatFits(in: .horizontal) {
+        if layoutMode.heroIsSideBySide {
             HStack(alignment: .top, spacing: WorkbenchSpacing.md) {
                 instrument
-                    .frame(minWidth: WorkbenchSize.instrumentMinimum, idealWidth: WorkbenchSize.instrumentMinimum, maxWidth: .infinity)
+                    .frame(width: instrumentWidth)
                 nextStep
-                    .frame(minWidth: WorkbenchSize.nextStepMinimum, idealWidth: WorkbenchSize.nextStepMinimum, maxWidth: WorkbenchSize.nextStepMaximum)
+                    .frame(width: nextStepWidth)
             }
             .fixedSize(horizontal: false, vertical: true)
-            .frame(minWidth: WorkbenchSize.heroRowMinimum)
+        } else {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 instrument
                 nextStep

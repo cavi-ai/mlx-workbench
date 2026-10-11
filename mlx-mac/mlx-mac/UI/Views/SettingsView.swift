@@ -53,6 +53,7 @@ struct SettingsView: View {
                 .padding(WorkbenchSpacing.pageInset)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .disabled(isSaving)
 
             Divider()
                 .overlay(WorkbenchColor.hairline)
@@ -67,16 +68,14 @@ struct SettingsView: View {
 
     private var statusCard: some View {
         SettingsCard(title: "Engine status", subtitle: "Live health of the local agent and runtime.") {
-            HStack(spacing: WorkbenchSpacing.sm) {
-                agentStatusBadge
-                Spacer()
-                Text(appHost.configPath)
-                    .font(WorkbenchTypography.value)
-                    .foregroundStyle(WorkbenchColor.muted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(appHost.configPath)
-            }
+            agentStatusBadge
+            Text(appHost.configPath)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .help(appHost.configPath)
             if !appHost.runtimeReport.ok {
                 Text(appHost.runtimeReport.install)
                     .font(WorkbenchTypography.body)
@@ -98,12 +97,28 @@ struct SettingsView: View {
             Label("Agent not usable — \(reason)", systemImage: "xmark.circle.fill")
                 .foregroundStyle(WorkbenchColor.failure)
         case .notFound(let path, _):
-            Label("Agent missing at \(path)", systemImage: "xmark.circle.fill")
-                .foregroundStyle(WorkbenchColor.failure)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                Label("Agent missing", systemImage: "xmark.circle.fill")
+                    .foregroundStyle(WorkbenchColor.failure)
+                agentPath(path)
+            }
         case .ready(let path, _):
-            Label("Agent ready — \(path)", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(WorkbenchColor.success)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                Label("Agent ready", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(WorkbenchColor.success)
+                agentPath(path)
+            }
         }
+    }
+
+    private func agentPath(_ path: String) -> some View {
+        Text(path)
+            .font(WorkbenchTypography.secondary)
+            .foregroundStyle(WorkbenchColor.muted)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .textSelection(.enabled)
+            .help(path)
     }
 
     private var engineCard: some View {
@@ -240,10 +255,12 @@ struct SettingsView: View {
                 SettingsField(label: "Host", error: hostError, width: 200) {
                     TextField("127.0.0.1", text: $host)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Workbench API host")
                 }
                 SettingsField(label: "Port", error: portError, width: 120) {
                     TextField("8765", text: $portText)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Workbench API port")
                 }
             }
         }
@@ -278,6 +295,7 @@ struct SettingsView: View {
                 SettingsField(label: "Fit reserve (GB)", error: fitReserveError, width: 120) {
                     TextField("4", text: $fitReserveText)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Fit reserve in gigabytes")
                 }
                 fieldHint("Memory kept free for the system when judging fit.")
             }
@@ -285,6 +303,7 @@ struct SettingsView: View {
                 SettingsField(label: "Stale after (days)", error: staleDaysError, width: 120) {
                     TextField("60", text: $staleDaysText)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Stale after days")
                 }
                 fieldHint("Reclaim advisor flags models unused this long.")
             }
@@ -292,6 +311,7 @@ struct SettingsView: View {
                 SettingsField(label: "Comparison max tokens", error: comparisonTokensError, width: 120) {
                     TextField("512", text: $comparisonMaxTokensText)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Comparison maximum tokens")
                 }
                 fieldHint("Per-prompt cap during measured comparisons.")
             }
@@ -442,7 +462,7 @@ struct SettingsView: View {
     }
 
     private func save() {
-        guard isValid else { return }
+        guard isValid, !isSaving else { return }
         isSaving = true
         notice = nil
         noticeIsError = true
@@ -472,13 +492,9 @@ struct SettingsView: View {
         )
         Task {
             defer { isSaving = false }
-            _ = appHost.saveConfig(newConfig)
-            if let error = appHost.lastError {
-                notice = error
+            guard await appHost.saveSettingsConfig(newConfig) else {
+                notice = appHost.lastError ?? "Settings could not be saved."
                 return
-            }
-            if appHost.config.mlxAgentPath != newConfig.mlxAgentPath {
-                _ = await appHost.setAgentPath(newConfig.mlxAgentPath)
             }
             noticeIsError = false
             notice = "Saved to \(appHost.configPath)"
@@ -560,6 +576,7 @@ struct SettingsPathRow: View {
             HStack(spacing: WorkbenchSpacing.xs) {
                 TextField(placeholder, text: $text)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(label)
                 Button("Choose…") { chooseDirectory() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)

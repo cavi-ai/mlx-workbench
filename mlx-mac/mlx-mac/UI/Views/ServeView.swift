@@ -1,5 +1,27 @@
 import SwiftUI
 
+enum RunPortInput: Equatable {
+    case automatic
+    case explicit(Int)
+    case invalid
+
+    init(_ text: String) {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty { self = .automatic }
+        else if let port = Int(value), (1...65535).contains(port) { self = .explicit(port) }
+        else { self = .invalid }
+    }
+
+    var port: Int? {
+        if case .explicit(let port) = self { return port }
+        return nil
+    }
+
+    var error: String? {
+        self == .invalid ? "Enter a port between 1 and 65535, or leave it blank for automatic selection." : nil
+    }
+}
+
 struct ServeView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
@@ -54,7 +76,7 @@ struct ServeView: View {
     }
 
     private var layout: RunLayout { RunLayout(viewportWidth: viewportWidth) }
-    private var port: Int? { Int(portText.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    private var portInput: RunPortInput { RunPortInput(portText) }
     private var innerWidth: CGFloat { layout.innerWidth }
     private var isCompact: Bool { layout.isCompact }
     private var isTwoLine: Bool { layout.isTwoLine }
@@ -362,6 +384,9 @@ struct ServeView: View {
                 serveActions(presentation)
             }
         }
+        if let error = portInput.error {
+            Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+        }
     }
 
     @ViewBuilder
@@ -386,6 +411,7 @@ struct ServeView: View {
             TextField("Port", text: $portText, prompt: Text("Optional"))
                 .textFieldStyle(.roundedBorder)
                 .frame(width: WorkbenchSize.Run.portField)
+                .accessibilityLabel("Serving port")
             RunContextControl(
                 resources: appHost.resources,
                 model: selectedModel,
@@ -401,10 +427,16 @@ struct ServeView: View {
     }
 
     private func previewServeAction() {
+        guard portInput.error == nil else { return }
+        let port = portInput.port
+        let runtime = runtime
         Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
     }
 
     private func confirmServeAction() {
+        guard portInput.error == nil else { return }
+        let port = portInput.port
+        let runtime = runtime
         Task {
             await modelWorkflow.confirmServe(runtime: runtime, port: port)
             if modelWorkflow.workflow.serveState == .running { onRouteSelection(.activity) }
@@ -413,7 +445,7 @@ struct ServeView: View {
 
     @ViewBuilder
     private func serveActions(_ presentation: RunPresentation) -> some View {
-        let busy = modelWorkflow.isServeSubmissionInFlight
+        let busy = modelWorkflow.isServeSubmissionInFlight || portInput.error != nil
         // Exactly one action is armed at a time: preview until the intent is
         // ready to confirm, then confirm.
         if presentation.canConfirm {

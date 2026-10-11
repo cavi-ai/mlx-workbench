@@ -111,6 +111,16 @@ final class HomeNextActionTests: XCTestCase {
         XCTAssertEqual(action.title, "Repair the Prepare runtime")
     }
 
+    func testIdleReadyInventoryOpensLibraryWithoutClaimingModelsAreUnavailable() {
+        for type in [ModelTaskType.textLLM, .imageGeneration] {
+            let model = makeModel(path: "/models/ready", readiness: .ready, type: type)
+            let action = derive(snapshot: snapshot(with: [model]))
+            XCTAssertEqual(action.kind, .library)
+            XCTAssertEqual(action.route, AppRoute.library.rawValue)
+            XCTAssertEqual(action.reason, "The latest scan found ready models. Choose one in Library to see its available actions.")
+        }
+    }
+
     // MARK: - Disk pressure escalation
 
     func testReclaimOnlyEscalatesAboveThresholdAndBelowFreeFloor() {

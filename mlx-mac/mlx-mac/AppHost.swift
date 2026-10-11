@@ -440,6 +440,24 @@ class AppHost: ObservableObject {
         }
     }
 
+    /// Persist settings before changing the execution checkout or publishing the new configuration.
+    func saveSettingsConfig(_ newConfig: Config) async -> Bool {
+        do {
+            let normalized = try Self.normalizeAndValidateForSave(newConfig)
+            let saved = try configModule.save(normalized)
+            await api.setAgentPath(saved.mlxAgentPath)
+            config = saved
+            agentHealth = Self.checkAgentHealth(path: saved.mlxAgentPath, cli: cli)
+            runtimeReport = RuntimeChecker.report()
+            lastError = nil
+            applyFeatureToggles()
+            return true
+        } catch {
+            lastError = Self.render(error)
+            return false
+        }
+    }
+
     /// Re-probe the convert/serve runtime (e.g. after a guided install).
     func refreshRuntimeReport() {
         runtimeReport = RuntimeChecker.report()

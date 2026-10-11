@@ -5,6 +5,60 @@ import XCTest
 
 @MainActor
 final class PremiumSettingsTests: XCTestCase {
+    func testSettingsSaveUpdatesPersistedConfigAndExecutionCheckoutTogether() async throws {
+        let url = temporaryConfigURL()
+        let module = ConfigModule(pathOverride: url.path)
+        let host = makeHost(configModule: module)
+        var config = host.config
+        config.mlxAgentPath = "/fixtures/new-agent"
+        config.host = " localhost "
+        let saved = await host.saveSettingsConfig(config)
+        let executionPath = await host.api.resolvedAgentPath
+        XCTAssertTrue(saved)
+        XCTAssertEqual(module.load().mlxAgentPath, config.mlxAgentPath)
+        XCTAssertEqual(host.config.mlxAgentPath, config.mlxAgentPath)
+        XCTAssertEqual(executionPath, config.mlxAgentPath)
+        XCTAssertEqual(host.config.host, "localhost")
+        XCTAssertNil(host.lastError)
+    }
+
+    func testSettingsWriteFailurePreservesPublishedConfigAndExecutionCheckout() async throws {
+        let url = temporaryConfigURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("corrupt config".utf8).write(to: url)
+        let host = makeHost(configModule: ConfigModule(pathOverride: url.path))
+        let original = host.config
+        let originalPath = await host.api.resolvedAgentPath
+        var config = original
+        config.mlxAgentPath = "/fixtures/new-agent"
+        config.fitReserveGB = 8
+        let saved = await host.saveSettingsConfig(config)
+        let executionPath = await host.api.resolvedAgentPath
+        XCTAssertFalse(saved)
+        XCTAssertEqual(host.config.mlxAgentPath, original.mlxAgentPath)
+        XCTAssertEqual(host.config.fitReserveGB, original.fitReserveGB)
+        XCTAssertEqual(executionPath, originalPath)
+        XCTAssertNotNil(host.lastError)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "corrupt config")
+    }
+
+    func testSettingsSavePreservesUnmanagedSharedKeys() async throws {
+        let url = temporaryConfigURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original: [String: Any] = ["future_feature": ["enabled": true, "level": 3], "web_option": "keep", "q_bits": 4]
+        try JSONSerialization.data(withJSONObject: original).write(to: url)
+        let module = ConfigModule(pathOverride: url.path)
+        let host = makeHost(configModule: module)
+        var config = host.config
+        config.qBits = 8
+        let saved = await host.saveSettingsConfig(config)
+        XCTAssertTrue(saved)
+        let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        XCTAssertEqual(raw["web_option"] as? String, "keep")
+        XCTAssertEqual(raw["future_feature"] as? NSDictionary, original["future_feature"] as? NSDictionary)
+        XCTAssertEqual(raw["q_bits"] as? Int, 8)
+    }
+
     // MARK: - Config defaults and coercion
 
     func testDefaultsEnablePremiumFeatures() {
@@ -114,7 +168,7 @@ final class PremiumSettingsTests: XCTestCase {
 
     /// Every live service is a fake or a temp-file store, so starting them
     /// never touches the user's endpoints, watch state, or model roots.
-    private func makeHost(scanned: XCTestExpectation? = nil) -> AppHost {
+    private func makeHost(scanned: XCTestExpectation? = nil, configModule: ConfigModule? = nil) -> AppHost {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-settings-\(UUID().uuidString)", isDirectory: true)
         let api = ModelWorkflowAPI(
@@ -127,7 +181,7 @@ final class PremiumSettingsTests: XCTestCase {
             serveStop: { _ in [:] }
         )
         return AppHost(
-            configModule: ConfigModule(pathOverride: temporaryConfigURL().path),
+            configModule: configModule ?? ConfigModule(pathOverride: temporaryConfigURL().path),
             config: Config.defaults(),
             scanOperation: { _, _, _, _ in
                 scanned?.fulfill()

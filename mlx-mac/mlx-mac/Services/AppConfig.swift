@@ -196,9 +196,16 @@ struct ConfigModule {
             at: location.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
-        let data = try encoder.encode(merged)
+        var persisted: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: location.path) {
+            let existing = try JSONSerialization.jsonObject(with: Data(contentsOf: location))
+            guard let dictionary = existing as? [String: Any] else {
+                throw CocoaError(.propertyListReadCorrupt)
+            }
+            persisted = dictionary
+        }
+        persisted.merge(encode(merged)) { _, managed in managed }
+        let data = try JSONSerialization.data(withJSONObject: persisted, options: [.sortedKeys, .prettyPrinted])
         // Unique temp + replace-on-existing: re-saving a config that already
         // exists must succeed (moveItem refuses to overwrite), and a stale
         // temp from a crashed save can never block the next one.

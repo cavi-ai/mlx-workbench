@@ -104,6 +104,123 @@ private enum Fixture {
 
 @MainActor
 final class RunRemodelTests: XCTestCase {
+    func testOptionalPortDistinguishesAutomaticValidAndInvalidInput() {
+        XCTAssertEqual(RunPortInput(" \n"), .automatic)
+        XCTAssertNil(RunPortInput("").error)
+        for port in [1, 8765, 65535] {
+            XCTAssertEqual(RunPortInput(" \(port)\n").port, port)
+            XCTAssertNil(RunPortInput(String(port)).error)
+        }
+        for invalid in ["abc", "0", "-1", "65536", "9.5", "999999999999999999999999999"] {
+            XCTAssertEqual(RunPortInput(invalid), .invalid, invalid)
+            XCTAssertNotNil(RunPortInput(invalid).error, invalid)
+        }
+    }
+
+    func testTrainingRejectsInvalidIterationsWithoutPreviewCalls() {
+        var calls = 0
+        let session = TrainingSession(preview: { _ in calls += 1; return [:] }, start: { _, _ in })
+        session.draft.repo = "org/model"
+        session.draft.data = "/data"
+        for value in ["", " ", "abc", "0", "-1", "2.5", "999999999999999999999999999"] {
+            session.draft.iterations = value
+            XCTAssertNotNil(session.draft.iterationsError)
+            XCTAssertFalse(session.canPreview)
+            XCTAssertNil(session.previewTraining())
+        }
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testTrainingPreviewCapturesRequestAndEditsInvalidateConfirmation() async {
+        var requested: [TrainingRequest] = []
+        let session = TrainingSession(preview: { requested.append($0); return ["preview_hash": "h"] }, start: { _, _ in XCTFail("Must preview edited fields again") })
+        let original = TrainingDraft(repo: " org/model ", data: " /data ", iterations: " 100 ", output: " /out ")
+        session.draft = original
+        await session.previewTraining()?.value
+        XCTAssertEqual(session.preview?.request, TrainingRequest(repo: "org/model", data: "/data", iterations: 100, output: "/out"))
+        XCTAssertTrue(session.canConfirm)
+        for field in [\TrainingDraft.repo, \.data, \.iterations, \.output] {
+            session.draft = original
+            await session.previewTraining()?.value
+            session.draft[keyPath: field] += "1"
+            XCTAssertNil(session.preview)
+            XCTAssertFalse(session.canConfirm)
+            XCTAssertNil(session.confirmTraining())
+        }
+        XCTAssertEqual(requested.count, 5)
+    }
+
+    func testTrainingFencesDelayedPreviewAndLocksDuplicateActionsSynchronously() async {
+        var continuation: CheckedContinuation<[String: Any], Never>?
+        let started = expectation(description: "preview started")
+        var calls = 0
+        let session = TrainingSession(preview: { _ in
+            calls += 1
+            return await withCheckedContinuation { continuation = $0; started.fulfill() }
+        }, start: { _, _ in XCTFail("No confirmation before preview finishes") })
+        session.draft = TrainingDraft(repo: "org/model", data: "/data")
+        let task = session.previewTraining()
+        XCTAssertTrue(session.isBusy)
+        XCTAssertNil(session.previewTraining())
+        XCTAssertNil(session.confirmTraining())
+        await fulfillment(of: [started], timeout: 1)
+        session.draft.output = "/new-output"
+        continuation?.resume(returning: ["preview_hash": "old"])
+        await task?.value
+        XCTAssertEqual(calls, 1)
+        XCTAssertNil(session.preview)
+        XCTAssertFalse(session.canConfirm)
+        XCTAssertTrue(session.canPreview)
+    }
+
+    func testTrainingConfirmationUsesCapturedPlanAndFailureCanRetry() async {
+        struct Rejected: LocalizedError { var errorDescription: String? { "training rejected" } }
+        var starts: [(TrainingRequest, String)] = []
+        let session = TrainingSession(preview: { _ in ["plan": ["preview_hash": "captured-hash"]] }, start: { request, hash in
+            starts.append((request, hash))
+            if starts.count == 1 { throw Rejected() }
+        })
+        session.draft = TrainingDraft(repo: "org/model", data: "/data", iterations: "300", output: "/out")
+        await session.previewTraining()?.value
+        let request = session.preview?.request
+        let first = session.confirmTraining()
+        XCTAssertTrue(session.isBusy)
+        XCTAssertNil(session.confirmTraining())
+        XCTAssertNil(session.previewTraining())
+        await first?.value
+        XCTAssertEqual(session.errorMessage, "training rejected")
+        XCTAssertTrue(session.canConfirm)
+        await session.confirmTraining()?.value
+        XCTAssertEqual(starts.count, 2)
+        XCTAssertEqual(starts[0].0, request)
+        XCTAssertEqual(starts[1].0, request)
+        XCTAssertEqual(starts.map { $0.1 }, ["captured-hash", "captured-hash"])
+        XCTAssertNil(session.preview)
+        XCTAssertFalse(session.isBusy)
+        XCTAssertEqual(session.notice, "Training submitted. See Activity.")
+    }
+
+    func testTrainingMissingHashAndPreviewFailureRemainRetryable() async {
+        struct Offline: LocalizedError { var errorDescription: String? { "offline" } }
+        var attempts = 0
+        let session = TrainingSession(preview: { _ in
+            attempts += 1
+            if attempts == 1 { throw Offline() }
+            if attempts == 2 { return [:] }
+            return ["preview_hash": "h"]
+        }, start: { _, _ in })
+        session.draft = TrainingDraft(repo: "org/model", data: "/data")
+        await session.previewTraining()?.value
+        XCTAssertEqual(session.errorMessage, "offline")
+        XCTAssertTrue(session.canPreview)
+        await session.previewTraining()?.value
+        XCTAssertNil(session.preview)
+        XCTAssertNotNil(session.errorMessage)
+        await session.previewTraining()?.value
+        XCTAssertNil(session.errorMessage)
+        XCTAssertTrue(session.canConfirm)
+    }
+
     private var gb: Int64 { Fixture.gb }
     private var path: String { "/models/atlas-mlx" }
 
