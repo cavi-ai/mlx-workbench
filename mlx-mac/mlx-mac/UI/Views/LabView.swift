@@ -272,7 +272,10 @@ struct LabReviewSheet: View {
                 Text(receipt ?? "").textSelection(.enabled)
                 if let reveal {
                     Text("Left: " + (reveal.canonicalByDisplay?["left"] ?? "") + " · Right: " + (reveal.canonicalByDisplay?["right"] ?? ""))
-                    Text((reveal.variablePath ?? "") + ": " + (reveal.baselineValue?.jsonText ?? "") + " → " + (reveal.alternateValue?.jsonText ?? ""))
+                    let variable = reveal.variablePath ?? ""
+                    let baseline = reveal.baselineValue?.jsonText ?? ""
+                    let alternate = reveal.alternateValue?.jsonText ?? ""
+                    Text("\(variable): \(baseline) → \(alternate)")
                     DisclosureGroup("Frozen manifests") {
                         ForEach((reveal.manifests ?? [:]).keys.sorted(), id: \.self) { key in
                             Text(key + "\n" + (reveal.manifests?[key]?.jsonText ?? "")).font(WorkbenchTypography.compactValue).textSelection(.enabled)
