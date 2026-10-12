@@ -380,6 +380,22 @@ struct AdoptResult: Codable, Equatable {
     let status: String?
     let message: String?
     let manager: String?
+    let workflowID: String?
+    let phase: String?
+    let evidenceStrength: String?
+
+    init(state: String?, role: String?, model: String?, status: String?, message: String?, manager: String?,
+         workflowID: String? = nil, phase: String? = nil, evidenceStrength: String? = nil) {
+        self.state = state
+        self.role = role
+        self.model = model
+        self.status = status
+        self.message = message
+        self.manager = manager
+        self.workflowID = workflowID
+        self.phase = phase
+        self.evidenceStrength = evidenceStrength
+    }
 }
 
 // MARK: - WireResult
