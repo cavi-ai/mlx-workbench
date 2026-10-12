@@ -7,6 +7,7 @@ struct TrainingRawDisclosure: View {
     var maxHeight: CGFloat = WorkbenchSize.Training.evidenceMaxHeight
     /// Lets the owner open the disclosure; without it the disclosure keeps its own state.
     var expanded: Binding<Bool>?
+    var textIdentifier: String?
     @State private var ownExpanded = false
 
     var body: some View {
@@ -16,6 +17,7 @@ struct TrainingRawDisclosure: View {
                     .font(WorkbenchTypography.compactValue)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier(textIdentifier ?? "")
             }
             .frame(maxHeight: maxHeight)
             .padding(.top, WorkbenchSpacing.xxs)
@@ -31,14 +33,18 @@ struct TrainingRawDisclosure: View {
 struct TrainingLoadFailure: View {
     let sentence: String
     let detail: String
+    var identifier: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            Text(sentence)
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.failure)
-                .fixedSize(horizontal: false, vertical: true)
-            TrainingRawDisclosure(title: "Agent output", text: detail)
+            HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
+                Image(systemName: "exclamationmark.triangle").accessibilityHidden(true)
+                Text(sentence)
+                    .font(WorkbenchTypography.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(identifier ?? "")
+            }.foregroundStyle(WorkbenchColor.failure)
+            TrainingRawDisclosure(title: "Agent output", text: detail, textIdentifier: identifier.map { $0 + "-detail" })
         }
     }
 }
@@ -47,6 +53,7 @@ struct TrainingJobActions {
     let compare: (TrainingJobRow) -> Void
     let openLog: (String) -> Void
     let cancel: (TrainingJobRow) -> Void
+    var cancelingPIDs: Set<Int> = []
 }
 
 struct TrainingJobRowView: View {
@@ -83,7 +90,9 @@ struct TrainingJobRowView: View {
                         Button("Open log") { actions.openLog(log) }.buttonStyle(.bordered).controlSize(.small)
                     }
                     if row.canCancel {
-                        Button("Cancel training", role: .destructive) { actions.cancel(row) }.buttonStyle(.bordered).controlSize(.small)
+                        Button(actions.cancelingPIDs.contains(row.pid) ? "Canceling…" : "Cancel training", role: .destructive) { actions.cancel(row) }
+                            .buttonStyle(.bordered).controlSize(.small)
+                            .disabled(actions.cancelingPIDs.contains(row.pid))
                     }
                 }
             }
@@ -108,15 +117,18 @@ struct TrainingJobsCard: View {
                     Text("Training jobs").font(WorkbenchTypography.cardTitle)
                     Spacer()
                     Button("Refresh", action: refresh).buttonStyle(.bordered).controlSize(.small)
+                        .disabled(presentation.jobsLoading).accessibilityIdentifier("training-refresh-jobs")
+                }
+                if presentation.jobsLoading || (!presentation.jobsLoaded && presentation.jobsError == nil) {
+                    TrainingCollectionLoading(text: presentation.jobsLoaded ? "Refreshing training jobs…" : "Loading training jobs…", identifier: "training-jobs-loading")
                 }
                 if let error = presentation.jobsError {
-                    TrainingLoadFailure(sentence: TrainingPresentation.jobsFailureSentence, detail: error)
+                    TrainingLoadFailure(sentence: TrainingPresentation.jobsFailureSentence, detail: error, identifier: "training-jobs-error")
+                    Text(presentation.jobsLoaded ? "Showing the last loaded results. Refresh to retry." : "Refresh to retry.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 }
                 if presentation.showsNoJobs {
-                    Text(TrainingPresentation.noJobsSentence)
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                    TrainingCollectionEmpty(text: TrainingPresentation.noJobsSentence, symbol: "list.bullet.rectangle", identifier: "training-jobs-empty")
                 } else {
                     ForEach(presentation.jobs) { row in
                         Divider()
@@ -143,19 +155,30 @@ struct TrainingEvaluationsCard: View {
     let inspectingID: String?
     @Binding var retainedExpanded: Bool
     let inspect: (String) -> Void
+    var refresh: (() -> Void)? = nil
+    var inspectionError: String? = nil
 
     var body: some View {
         WorkbenchSurface {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                Text("Retained training evaluations").font(WorkbenchTypography.cardTitle)
+                HStack {
+                    Text("Retained training evaluations").font(WorkbenchTypography.cardTitle)
+                    Spacer()
+                    if let refresh {
+                        Button("Refresh", action: refresh).buttonStyle(.bordered).controlSize(.small)
+                            .disabled(presentation.historyLoading).accessibilityIdentifier("training-refresh-history")
+                    }
+                }
+                if presentation.historyLoading || (!presentation.historyLoaded && presentation.historyError == nil) {
+                    TrainingCollectionLoading(text: presentation.historyLoaded ? "Refreshing training evaluations…" : "Loading training evaluations…", identifier: "training-history-loading")
+                }
                 if let error = presentation.historyError {
-                    TrainingLoadFailure(sentence: TrainingPresentation.evaluationsFailureSentence, detail: error)
+                    TrainingLoadFailure(sentence: TrainingPresentation.evaluationsFailureSentence, detail: error, identifier: "training-history-error")
+                    Text(presentation.historyLoaded ? "Showing the last loaded results. Refresh to retry." : "Refresh to retry.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 }
                 if presentation.showsNoEvaluations {
-                    Text(TrainingPresentation.noEvaluationsSentence)
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                    TrainingCollectionEmpty(text: TrainingPresentation.noEvaluationsSentence, symbol: "doc.text.magnifyingglass", identifier: "training-history-empty")
                 } else {
                     let rows = presentation.evaluations
                     ForEach(rows) { row in
@@ -177,12 +200,22 @@ struct TrainingEvaluationsCard: View {
                             Button("Inspect") { inspect(row.id) }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
-                                .disabled(inspectingID == row.id)
+                                .disabled(inspectingID != nil)
+                                .accessibilityIdentifier("training-inspect-" + row.id)
                         }
                     }
                 }
+                if let inspectingID {
+                    TrainingCollectionLoading(text: "Inspecting \(inspectingID)…", identifier: "training-inspection-loading")
+                }
+                if let inspectionError {
+                    TrainingLoadFailure(sentence: "Evaluation couldn't be inspected.", detail: inspectionError, identifier: "training-inspection-error")
+                }
                 if let retained {
                     Divider()
+                    Text("Retained evaluation: \(retained.evaluationID)")
+                        .font(WorkbenchTypography.emphasis).textSelection(.enabled)
+                        .accessibilityIdentifier("training-retained-evaluation")
                     TrainingRawDisclosure(
                         title: "Evaluation \(retained.shortID): outputs and frozen recipe",
                         text: retained.reportText + "\n\nSHA-256: " + retained.sha256,
@@ -191,5 +224,34 @@ struct TrainingEvaluationsCard: View {
                 }
             }
         }
+    }
+}
+
+
+private struct TrainingCollectionLoading: View {
+    let text: String
+    let identifier: String
+
+    var body: some View {
+        HStack(spacing: WorkbenchSpacing.xs) {
+            ProgressView().controlSize(.small)
+            Text(text).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                .accessibilityIdentifier(identifier)
+        }
+    }
+}
+
+private struct TrainingCollectionEmpty: View {
+    let text: String
+    let symbol: String
+    let identifier: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
+            Image(systemName: symbol).accessibilityHidden(true)
+            Text(text).font(WorkbenchTypography.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(identifier)
+        }.foregroundStyle(WorkbenchColor.muted)
     }
 }
