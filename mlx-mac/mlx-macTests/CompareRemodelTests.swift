@@ -109,6 +109,25 @@ final class CompareRemodelTests: XCTestCase {
         }
     }
 
+    func testRunGuidanceBlocksPendingSavesAndEmptySetsUntilTheyBecomeRunnable() {
+        let slots: [String?] = ["/a", nil]
+        let available: Set<String> = ["/a"]
+        XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: slots, activeRunID: nil,
+            availablePaths: available, savingPromptSet: true), "Wait for the prompt set save to finish.")
+        XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: slots, activeRunID: nil,
+            availablePaths: available, hasPrompts: false), "Choose a prompt set with at least one prompt.")
+        XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: slots, activeRunID: nil,
+            availablePaths: available, hasPromptSet: false, savingPromptSet: true, hasPrompts: false),
+            "Wait for the prompt set save to finish.")
+        XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: slots, activeRunID: UUID(),
+            availablePaths: available, savingPromptSet: true, hasPrompts: false),
+            "Wait for the current comparison to finish.")
+        XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: slots, activeRunID: nil,
+            availablePaths: available, hasPromptSet: false, hasPrompts: false), "Choose a prompt set.")
+        XCTAssertNil(ComparePresentation.runUnavailableReason(slots: slots, activeRunID: nil,
+            availablePaths: available, savingPromptSet: false, hasPrompts: true))
+    }
+
     @MainActor
     func testNativeRunGuidanceTransitionsNeverStartAComparisonWithoutAClick() async throws {
         func button(in view: NSView) -> NSButton? {
@@ -123,7 +142,11 @@ final class CompareRemodelTests: XCTestCase {
         defer { window.close() }
         for (index, reason) in [String?.some("Choose at least one model."),
             "Model B is unavailable. Replace it or choose None.", nil,
-            "Wait for the current comparison to finish."].enumerated() {
+            "Wait for the current comparison to finish.",
+            ComparePresentation.runUnavailableReason(slots: ["/a"], activeRunID: nil, savingPromptSet: true),
+            ComparePresentation.runUnavailableReason(slots: ["/a"], activeRunID: nil, hasPrompts: false),
+            ComparePresentation.runUnavailableReason(slots: ["/a"], activeRunID: nil,
+                savingPromptSet: false, hasPrompts: true)].enumerated() {
             fixture.reason = reason
             try await Task.sleep(for: .milliseconds(150))
             host.layoutSubtreeIfNeeded()

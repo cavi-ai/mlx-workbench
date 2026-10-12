@@ -326,10 +326,11 @@ from `mlx-agent` at runtime.
   then the action description. They do not change action eligibility or save
   behavior.
   ComparePresentation.runUnavailableReason is the shared Run comparison
-  eligibility explanation: an active run takes precedence over a missing
-  prompt set, no selected model, or the first unavailable slot. canRun
-  delegates to this model-only decision with prompt presence assumed, while
-  QuantView includes prompt-set presence for both its button and live
+  eligibility explanation: an active run takes precedence over a pending
+  prompt-set save, a missing or empty prompt set, no selected model, or the
+  first unavailable slot. canRun delegates to this model-only decision with
+  prompt readiness assumed, while QuantView includes save state and prompt-set
+  presence/content for both its button and live
   startRun guard. ComparisonRunButton shares hover/accessibility guidance;
   ComparisonRunGuidance shows one idle setup message in place of the old
   unavailable-model list. Active runs retain their existing progress display.
