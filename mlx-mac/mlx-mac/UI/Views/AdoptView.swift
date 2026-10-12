@@ -32,6 +32,7 @@ struct AdoptView: View {
     @State private var workflow: WorkflowContext?
     @State private var errorMessage: String?
     @State private var isLastKnownState = false
+    @State private var libraryModels: [String: LibraryModel] = [:]
 
     /// `resources` and the seed let a render hold the page at a fixed budget and result.
     init(
@@ -55,34 +56,41 @@ struct AdoptView: View {
     private var isBusy: Bool { operation != nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-            controls
-            ScrollView {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                    AdoptRecommendationView(
-                        resources: resources,
-                        intake: appHost.intake,
-                        requestedRole: workflow?.requestedRole,
-                        response: workflow?.response,
-                        isLastKnown: isLastKnownState,
-                        library: appHost.librarySnapshot,
-                        reserveGB: appHost.config.fitReserveGB,
-                        hardware: appHost.hardwareProfile,
-                        onRun: run,
-                        onAdd: addFromHuggingFace
-                    )
-                    ErrorBanner(text: errorMessage)
-                    if let workflow {
-                        workflowDetails(workflow)
+        ScrollView {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                WorkbenchSurface {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                        controls
+                        Divider()
+                        AdoptRecommendationView(
+                            resources: resources,
+                            intake: appHost.intake,
+                            draftRole: role,
+                            requestedRole: workflow?.requestedRole,
+                            response: workflow?.response,
+                            isLastKnown: isLastKnownState,
+                            libraryModels: libraryModels,
+                            reserveGB: appHost.config.fitReserveGB,
+                            hardware: appHost.hardwareProfile,
+                            onRun: run,
+                            onAdd: addFromHuggingFace
+                        )
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, WorkbenchSpacing.pageInset)
+                ErrorBanner(text: errorMessage)
+                if let workflow {
+                    workflowDetails(workflow)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, WorkbenchSpacing.pageInset)
         }
         .frame(maxWidth: WorkbenchSize.contentMaxWidth)
         .padding(WorkbenchSpacing.pageInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onChange(of: appHost.librarySnapshot?.generatedAt, initial: true) {
+            libraryModels = DiscoverPresentation.libraryModels(in: appHost.librarySnapshot)
+        }
     }
 
     private var controls: some View {
@@ -99,33 +107,36 @@ struct AdoptView: View {
                 .pickerStyle(.menu)
                 .fixedSize()
                 .disabled(isBusy)
+                .controlRow()
                 .accessibilityIdentifier("adopt-role")
                 Toggle("Fast", isOn: $fast)
                     .help("Heuristic-only discovery enrichment")
                     .disabled(isBusy)
+                    .controlRow()
                 Toggle("Offline", isOn: $offline)
                     .help("Cached discovery; no metadata network requests")
                     .disabled(isBusy)
+                    .controlRow()
                 Button("Start") { startAdopt() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(isRouteActive ? .defaultAction : nil)
                     .disabled(!isRouteActive || isBusy || !AdoptRole.choices.contains(role))
                     .help("Start adoption in a new state file for the selected role.")
+                    .controlRow()
                     .accessibilityIdentifier("adopt-start")
                 Button("Refresh") { refreshStatus() }
                     .buttonStyle(.bordered)
                     .disabled(isBusy || workflow == nil)
                     .help(workflow == nil ? "Start adoption before refreshing its status." : "Refresh the captured workflow's state file.")
+                    .controlRow()
                     .accessibilityIdentifier("adopt-refresh")
-            }
-            HStack {
                 if let operation {
                     ProgressView(operation.label)
                         .controlSize(.small)
+                        .controlRow()
                         .accessibilityIdentifier("adopt-progress")
                 }
             }
-            .frame(minHeight: WorkbenchSpacing.lg, alignment: .leading)
         }
     }
 
@@ -209,6 +220,13 @@ struct AdoptView: View {
     }
 }
 
+private extension View {
+    /// Centers a control on the shared row height so mixed controls share a midline.
+    func controlRow() -> some View {
+        frame(minHeight: WorkbenchSize.controlRowHeight, alignment: .center)
+    }
+}
+
 // MARK: - Recommendation
 
 /// The requested role, the reported repository and what to do with it. Observes the
@@ -216,22 +234,29 @@ struct AdoptView: View {
 struct AdoptRecommendationView: View {
     let resources: SystemResourceMonitor
     @ObservedObject var intake: IntakeCoordinator
+    let draftRole: String
     let requestedRole: String?
     let response: AdoptResult?
     let isLastKnown: Bool
-    let library: LibrarySnapshot?
+    let libraryModels: [String: LibraryModel]
     let reserveGB: Double
     let hardware: HardwareProfile
     let onRun: (LibraryModel) -> Void
     let onAdd: (String) -> Void
 
     private var state: AdoptRecommendationState {
-        AdoptRecommendationState.make(response: response, library: library, intakeIsBusy: intake.isBusy)
+        AdoptRecommendationState.make(response: response, libraryModels: libraryModels, intakeIsBusy: intake.isBusy)
     }
 
     var body: some View {
         let state = state
-        WorkbenchSurface {
+        if requestedRole == nil {
+            Text(AdoptRecommendationState.idleSentence(role: draftRole))
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("adopt-model")
+        } else {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 if isLastKnown {
                     Label("Last known state", systemImage: "clock.arrow.circlepath")
@@ -272,7 +297,7 @@ struct AdoptRecommendationView: View {
             Text("Requested role")
                 .font(WorkbenchTypography.metadata)
                 .foregroundStyle(WorkbenchColor.muted)
-            Text(requestedRole.map(AdoptRole.title) ?? "No role requested")
+            Text(AdoptRole.title(requestedRole ?? draftRole))
                 .font(WorkbenchTypography.section)
                 .accessibilityIdentifier("adopt-requested-role")
         }
@@ -286,7 +311,7 @@ struct AdoptRecommendationView: View {
             Group {
                 switch state {
                 case .idle:
-                    Text(AdoptRecommendationState.idleSentence)
+                    Text(AdoptRecommendationState.pendingSentence)
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(WorkbenchColor.muted)
                 case .noRecommendation:

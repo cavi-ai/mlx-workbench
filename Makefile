@@ -17,8 +17,10 @@ LAUNCHER := scripts/mlx-workbench
 # transformers 5 writes nested rope_parameters; mlx-lm 0.31 expects the
 # top-level rope_theta key in GGUF→HF intermediates. Pin transformers 4.
 # Exact pins live in requirements.txt (versions validated together on
-# Apple Silicon); `make install` installs from that file.
-CONVERT_PKGS := -r requirements.txt
+# Apple Silicon); `make install` installs from that file plus the agent's
+# lab requirements, which the native app's Training and lab operations import.
+LAB_REQUIREMENTS := vendor/mlx-agent/requirements-lab.txt
+CONVERT_PKGS := -r requirements.txt -r $(LAB_REQUIREMENTS)
 CONVERT_PKGS_LOOSE := torch 'transformers<5' gguf mlx-lm accelerate
 DOCS_VERSION := $(shell $(PYTHON) -c 'from mlx_workbench import __version__; print(__version__)')
 DOCS_TAG     := v$(DOCS_VERSION)
@@ -133,7 +135,7 @@ pip-audit: venv
 		$(MAKE) --no-print-directory _audit_pkgs; \
 	fi
 	@"$(VENV_PY)" -m pip_audit --version
-	@"$(VENV_PY)" -m pip_audit --no-deps -r requirements.txt --progress-spinner off \
+	@"$(VENV_PY)" -m pip_audit --no-deps -r requirements.txt -r $(LAB_REQUIREMENTS) --progress-spinner off \
 		$(PIP_AUDIT_IGNORES)
 	@for lock in $(BACKEND_LOCKS); do \
 		echo "pip-audit $$lock"; \

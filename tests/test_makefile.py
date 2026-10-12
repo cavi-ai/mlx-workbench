@@ -70,6 +70,19 @@ class MakefileStopTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("mlx-agent already configured: {0}".format(agent), result.stdout)
 
+    def test_install_and_audit_cover_the_agent_lab_requirements(self):
+        lab = "-r vendor/mlx-agent/requirements-lab.txt"
+        for target in ("_pkgs", "pip-audit"):
+            result = subprocess.run(
+                ["make", "-n", target, "VENV_PY=/nonexistent/python"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(lab, result.stdout, target)
+
 
 if __name__ == "__main__":
     unittest.main()

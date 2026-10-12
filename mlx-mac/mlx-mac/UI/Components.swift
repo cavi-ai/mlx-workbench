@@ -89,6 +89,7 @@ struct WorkbenchStatus: Equatable {
     static let running = WorkbenchStatus(label: "Running", tone: .information, isLive: true)
     static let ready = WorkbenchStatus(label: "Ready", tone: .information)
     static let completed = WorkbenchStatus(label: "Completed", tone: .information)
+    static let succeeded = WorkbenchStatus(label: "Completed", tone: .success)
     static let converted = WorkbenchStatus(label: "Converted", tone: .information)
     static let verified = WorkbenchStatus(label: "Verified", tone: .success)
     static let enabled = WorkbenchStatus(label: "Enabled", tone: .success)
@@ -202,13 +203,17 @@ struct WorkbenchStatus: Equatable {
 /// the status is live; relabels cross-fade.
 struct StatusBadge: View {
     let status: WorkbenchStatus
+    /// False while the owning route is hidden, so live badges hold still.
+    let pulses: Bool
 
-    init(status: WorkbenchStatus) {
+    init(status: WorkbenchStatus, pulses: Bool = true) {
         self.status = status
+        self.pulses = pulses
     }
 
     init(state: String) {
         self.status = WorkbenchStatus(rawValue: state)
+        self.pulses = true
     }
 
     var body: some View {
@@ -216,7 +221,7 @@ struct StatusBadge: View {
             Circle()
                 .fill(status.color)
                 .frame(width: 6, height: 6)
-                .livePulse(status.isLive)
+                .livePulse(status.isLive && pulses)
             Text(status.label)
                 .font(WorkbenchTypography.label)
                 .lineLimit(1)

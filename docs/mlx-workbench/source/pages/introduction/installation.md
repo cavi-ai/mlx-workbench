@@ -17,7 +17,9 @@ make install
 
 `make install` verifies the platform, initializes `vendor/mlx-agent`, creates
 `.venv`, and installs the conversion and serving packages from the pinned
-`requirements.txt`. The UI server itself uses only the Python standard
+`requirements.txt` plus the agent's lab packages from
+`vendor/mlx-agent/requirements-lab.txt`, which the native app's Training
+screen needs. The UI server itself uses only the Python standard
 library. Re-run the target after changing the pinned submodule or local
 environment. `make pip-audit` checks the installed packages against the OSV
 vulnerability database.
