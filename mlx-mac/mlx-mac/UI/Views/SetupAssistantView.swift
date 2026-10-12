@@ -23,7 +23,6 @@ struct SetupAssistantView: View {
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: 560)
         .frame(minHeight: 380)
-        .background(WorkbenchColor.canvas)
     }
 
     private var header: some View {

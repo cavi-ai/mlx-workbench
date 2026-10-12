@@ -11,6 +11,8 @@ struct ContentView: View {
     @ObservedObject private var verification: VerificationCoordinator
     /// Persisted across launches; legacy/unknown values resolve to Overview.
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
+    /// The workflow outcome last seen on Prepare or Activity; a failure stays in the toolbar until then.
+    @AppStorage(Self.acknowledgedOutcomeStorageKey) private var acknowledgedOutcome = ""
     @State private var visitedRoutes: Set<AppRoute> = []
 
     init(appHost: AppHost) {
@@ -60,9 +62,14 @@ struct ContentView: View {
         .background { routeShortcutButtons }
         .onChange(of: selectedRouteID) { _, _ in
             visitedRoutes.insert(selectedRoute)
+            acknowledgeOutcomeOnItsPage()
+        }
+        .onChange(of: Self.outcomeKey(modelWorkflow.workflow)) { _, _ in
+            acknowledgeOutcomeOnItsPage()
         }
         .onAppear {
             visitedRoutes.insert(selectedRoute)
+            acknowledgeOutcomeOnItsPage()
         }
         .sheet(isPresented: $setup.isPresented) {
             SetupAssistantView(appHost: appHost, coordinator: setup)
@@ -108,7 +115,6 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(WorkbenchColor.canvas)
     }
 
     @ViewBuilder
@@ -182,9 +188,23 @@ struct ContentView: View {
         return HFRepoID.forPath(path) ?? URL(fileURLWithPath: path).lastPathComponent
     }
 
-    /// Prepare and Activity show the workflow state on the page; the toolbar badge would repeat it.
-    static func showsWorkflowBadge(route: AppRoute, state: ConversionWorkflowState) -> Bool {
-        state != .idle && route != .prepare && route != .activity
+    static let acknowledgedOutcomeStorageKey = "acknowledgedWorkflowOutcome"
+
+    /// One key per workflow and state, so a new failure is unacknowledged even for the same workflow.
+    static func outcomeKey(_ workflow: ConversionWorkflow) -> String {
+        "\(workflow.id.uuidString)-\(workflow.state.rawValue)"
+    }
+
+    /// In-flight conversions and unacknowledged failures ride in the toolbar off Prepare and Activity;
+    /// successes stay on Overview, Prepare and Activity.
+    static func showsWorkflowBadge(route: AppRoute, state: ConversionWorkflowState, acknowledged: Bool) -> Bool {
+        guard route != .prepare, route != .activity else { return false }
+        return state.isInFlight || (!acknowledged && (state == .failed || state == .verificationFailed))
+    }
+
+    private func acknowledgeOutcomeOnItsPage() {
+        guard selectedRoute == .prepare || selectedRoute == .activity else { return }
+        acknowledgedOutcome = Self.outcomeKey(modelWorkflow.workflow)
     }
 
     /// Lifecycle and endpoint state ride in the toolbar only while they carry
@@ -196,7 +216,8 @@ struct ContentView: View {
                 await appHost.unloadServing(server)
             })
         }
-        if Self.showsWorkflowBadge(route: selectedRoute, state: modelWorkflow.workflow.state) {
+        if Self.showsWorkflowBadge(route: selectedRoute, state: modelWorkflow.workflow.state,
+                                   acknowledged: acknowledgedOutcome == Self.outcomeKey(modelWorkflow.workflow)) {
             ToolbarItem(placement: .automatic) {
                 Button {
                     navigate(to: .activity)

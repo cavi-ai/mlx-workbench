@@ -124,7 +124,6 @@ struct ImageComparisonSheet: View {
         }
         .padding(WorkbenchSpacing.pageInset)
         .frame(minWidth: 760, idealWidth: 1000, minHeight: 620, idealHeight: 720)
-        .background(WorkbenchColor.canvas)
         .onChange(of: promptID) { _, _ in
             viewport.reset()
             if !clips.contains(where: { $0.modelPath == leftPath }) { leftPath = clips.first?.modelPath }

@@ -256,7 +256,6 @@ struct VideoComparisonSheet: View {
         }
         .padding(WorkbenchSpacing.pageInset)
         .frame(minWidth: 760, idealWidth: 1000, minHeight: 600, idealHeight: 680)
-        .background(WorkbenchColor.canvas)
         .task(id: PlaybackSelection(promptID: promptID, urls: selected.map(\.url))) {
             await transport.load(selected.map(\.url))
         }

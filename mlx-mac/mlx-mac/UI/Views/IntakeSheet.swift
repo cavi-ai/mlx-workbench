@@ -102,7 +102,6 @@ struct IntakeSheet: View {
         }
         .padding(WorkbenchSpacing.lg)
         .frame(minWidth: 640, idealWidth: 720, minHeight: 480, idealHeight: 640)
-        .background(WorkbenchColor.canvas)
     }
 
     @ViewBuilder

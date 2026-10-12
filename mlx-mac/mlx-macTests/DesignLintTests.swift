@@ -29,6 +29,10 @@ final class DesignLintTests: XCTestCase {
         Rule(pattern: ".kerning(", reason: "letter-spaced text; use sentence case with the type token"),
         Rule(pattern: "onRouteSelection(\"", reason: "route passed as a string; use AppRoute"),
         Rule(pattern: "AnyView(", reason: "type erasure in the view tree; use @ViewBuilder"),
+        Rule(pattern: #"\.background\(WorkbenchColor\.canvas(\)|, ignoresSafeAreaEdges)"#,
+             reason: "painted canvas; the window and sheets draw their own background", isRegex: true),
+        Rule(pattern: #"\.background\s*\{\s*WorkbenchColor\.canvas"#,
+             reason: "painted canvas; the window and sheets draw their own background", isRegex: true),
     ]
 
     private static func violations(in line: String, file: String) -> [String] {
@@ -94,6 +98,9 @@ final class DesignLintTests: XCTestCase {
             "static let note = Font.footnote.monospaced()",
             "Text(\"SERVING MODELS\").tracking(1)",
             "Text(title).font(WorkbenchTypography.metadata).kerning(0.5)",
+            ".background(WorkbenchColor.canvas)",
+            ".background(WorkbenchColor.canvas, ignoresSafeAreaEdges: .all)",
+            ".background { WorkbenchColor.canvas }",
         ]
         for line in flagged {
             XCTAssertFalse(Self.violations(in: line, file: "Sample.swift").isEmpty, "expected a violation: \(line)")
@@ -114,6 +121,7 @@ final class DesignLintTests: XCTestCase {
             "static let metadata = Font.subheadline",
             "Text(\"Serving models\").font(WorkbenchTypography.metadata.weight(.semibold))",
             "let trackingRate = measuredTrackingRate",
+            ".background(WorkbenchColor.canvas, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))",
         ]
         for line in clean {
             XCTAssertEqual(Self.violations(in: line, file: "Sample.swift"), [], "unexpected violation: \(line)")
