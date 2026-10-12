@@ -532,6 +532,17 @@ final class WorkbenchReviewUITests: XCTestCase {
                 XCTAssertTrue(app.windows.firstMatch.frame.contains(save.frame))
             }
             capture("Settings-\(appearance)-save-failed-narrow")
+            if !before {
+                resizeWindow(width: 740, height: 560)
+                XCTAssertEqual(app.windows.firstMatch.frame.width, 740, accuracy: 2)
+                XCTAssertEqual(app.windows.firstMatch.frame.height, 560, accuracy: 2)
+                XCTAssertEqual(feedbackText("settings-save-error"), expectedFailure)
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(app.staticTexts["settings-save-error"].frame))
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(save.frame))
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(app.buttons["settings-discard"].frame))
+                XCTAssertTrue(save.isHittable)
+                capture("Settings-\(appearance)-save-failed-minimum")
+            }
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
             XCTAssertEqual(try Data(contentsOf: configURL), savedBytes, "Failed Save must not write")
             save.click()
