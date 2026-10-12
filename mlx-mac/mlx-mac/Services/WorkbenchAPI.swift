@@ -6,16 +6,22 @@ import Foundation
 // runs one mlx-agent subcommand, then decodes the unwrapped `data` payload.
 
 actor WorkbenchAPI {
+    /// One blocking mlx-agent invocation returning the unwrapped `data` payload.
+    typealias AgentCommand = @Sendable (_ agentPath: String, _ argv: [String], _ isScout: Bool, _ timeout: TimeInterval?) throws -> [String: Any]
+
     private let cli: CLIProcess
+    private let command: AgentCommand
     private var agentPath: String
     private let receiptDirectory: String
 
     init(
         cli: CLIProcess,
         agentPath: String,
-        receiptDirectory: String = WorkbenchStatePaths.applicationSupport().path
+        receiptDirectory: String = WorkbenchStatePaths.applicationSupport().path,
+        command: AgentCommand? = nil
     ) {
         self.cli = cli
+        self.command = command ?? { try cli.run(agentPath: $0, argv: $1, isScout: $2, timeout: $3) }
         self.agentPath = agentPath
         self.receiptDirectory = receiptDirectory
     }
@@ -28,23 +34,22 @@ actor WorkbenchAPI {
 
     // MARK: - Raw
 
-    func raw(_ argv: [String], isScout: Bool = false, timeout: TimeInterval? = nil) throws -> [String: Any] {
-        return try cli.run(agentPath: agentPath, argv: argv, isScout: isScout, timeout: timeout)
-    }
-
     /// Blocking subprocess waits belong on a dispatch worker, not Swift's cooperative pool.
     /// Suspending this actor also lets serve status, scan and endpoint reconciliation proceed.
-    private func runOffActor<T: Decodable & Sendable>(_ type: T.Type, _ argv: [String], timeout: TimeInterval) async throws -> T {
-        let cli = self.cli
+    func raw(_ argv: [String], isScout: Bool = false, timeout: TimeInterval? = nil) async throws -> [String: Any] {
+        let command = self.command
         let agentPath = self.agentPath
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    let data = try cli.run(agentPath: agentPath, argv: argv, timeout: timeout)
-                    continuation.resume(returning: try Self.decode(type, from: data))
+                    continuation.resume(returning: try command(agentPath, argv, isScout, timeout))
                 } catch { continuation.resume(throwing: error) }
             }
         }
+    }
+
+    private func runOffActor<T: Decodable & Sendable>(_ type: T.Type, _ argv: [String], timeout: TimeInterval) async throws -> T {
+        try Self.decode(type, from: await raw(argv, timeout: timeout))
     }
 
     func health() -> (ok: Bool, path: String, cli: String, message: String) {
@@ -79,7 +84,7 @@ actor WorkbenchAPI {
     // MARK: - Scan
 
     func scan(ggufRoots: [String], mlxRoots: [String], signatures: Bool,
-              limit: Int? = nil) throws -> ScanResult {
+              limit: Int? = nil) async throws -> ScanResult {
         var argv = ["convert", "scan"]
         for root in ggufRoots {
             argv.append(contentsOf: ["--gguf-root", root])
@@ -93,7 +98,7 @@ actor WorkbenchAPI {
         if let limit {
             argv.append(contentsOf: ["--limit", String(limit)])
         }
-        let data = try raw(argv)
+        let data = try await raw(argv)
         return try Self.decodeScan(data)
     }
 
@@ -110,15 +115,15 @@ actor WorkbenchAPI {
         return data
     }
 
-    func convertPreview(ggufPath: String, qBits: Int, out: String?) throws -> [String: Any] {
+    func convertPreview(ggufPath: String, qBits: Int, out: String?) async throws -> [String: Any] {
         var argv = ["convert", "start", "--gguf", ggufPath, "--q-bits", String(qBits)]
         if let out { argv.append(contentsOf: ["--out", out]) }
-        return Self.unwrapPlan(try raw(argv))
+        return Self.unwrapPlan(try await raw(argv))
     }
 
     func convertRepoPreview(repo: String, qBits: Int, out: String?,
                             hfCache: String?, backend: String? = nil, modelType: String? = nil,
-                            subfolder: String? = nil, sourcePath: String? = nil) throws -> [String: Any] {
+                            subfolder: String? = nil, sourcePath: String? = nil) async throws -> [String: Any] {
         var argv = ["convert", "start", "--repo", repo, "--q-bits", String(qBits)]
         if let out { argv.append(contentsOf: ["--out", out]) }
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
@@ -126,11 +131,11 @@ actor WorkbenchAPI {
         if let modelType { argv.append(contentsOf: ["--model-type", modelType]) }
         if let subfolder { argv.append(contentsOf: ["--subfolder", subfolder]) }
         if let sourcePath { argv.append(contentsOf: ["--source-path", sourcePath]) }
-        return Self.unwrapPlan(try raw(argv))
+        return Self.unwrapPlan(try await raw(argv))
     }
 
     func convertStart(ggufPath: String, qBits: Int, out: String?,
-                      previewHash: String) throws -> [String: Any] {
+                      previewHash: String) async throws -> [String: Any] {
         var argv = [
             "convert", "start", "--gguf", ggufPath, "--q-bits", String(qBits),
             "--confirm", "--preview-hash", previewHash,
@@ -139,12 +144,12 @@ actor WorkbenchAPI {
             "--receipts-dir", receiptDirectory,
         ]
         if let out { argv.append(contentsOf: ["--out", out]) }
-        return try raw(argv)
+        return try await raw(argv)
     }
 
     func convertRepoStart(repo: String, qBits: Int, out: String?,
                           hfCache: String?, previewHash: String,
-                          backend: String? = nil, modelType: String? = nil, subfolder: String? = nil, sourcePath: String? = nil) throws -> [String: Any] {
+                          backend: String? = nil, modelType: String? = nil, subfolder: String? = nil, sourcePath: String? = nil) async throws -> [String: Any] {
         var argv = [
             "convert", "start", "--repo", repo, "--q-bits", String(qBits),
             "--confirm", "--preview-hash", previewHash,
@@ -156,7 +161,7 @@ actor WorkbenchAPI {
         if let modelType { argv.append(contentsOf: ["--model-type", modelType]) }
         if let subfolder { argv.append(contentsOf: ["--subfolder", subfolder]) }
         if let sourcePath { argv.append(contentsOf: ["--source-path", sourcePath]) }
-        return try raw(argv)
+        return try await raw(argv)
     }
 
     // MARK: - Intake
@@ -249,21 +254,21 @@ actor WorkbenchAPI {
         )
     }
 
-    func intakeResolve(source: String) throws -> IntakeResolution {
-        try Self.decode(IntakeResolution.self, from: raw(["intake", "resolve", source], timeout: 45))
+    func intakeResolve(source: String) async throws -> IntakeResolution {
+        try Self.decode(IntakeResolution.self, from: await raw(["intake", "resolve", source], timeout: 45))
     }
 
-    func backendList() throws -> BackendList {
-        try Self.decode(BackendList.self, from: raw(["backend", "list", "--receipts-dir", receiptDirectory]))
+    func backendList() async throws -> BackendList {
+        try Self.decode(BackendList.self, from: await raw(["backend", "list", "--receipts-dir", receiptDirectory]))
     }
 
-    func backendInstallPreview(id: String) throws -> [String: Any] {
-        Self.unwrapPlan(try raw(["backend", "install", id, "--receipts-dir", receiptDirectory]))
+    func backendInstallPreview(id: String) async throws -> [String: Any] {
+        Self.unwrapPlan(try await raw(["backend", "install", id, "--receipts-dir", receiptDirectory]))
     }
 
-    func backendInstallStart(id: String, previewHash: String) throws -> [String: Any] {
-        try raw(["backend", "install", id, "--confirm", "--preview-hash", previewHash,
-                 "--receipts-dir", receiptDirectory])
+    func backendInstallStart(id: String, previewHash: String) async throws -> [String: Any] {
+        try await raw(["backend", "install", id, "--confirm", "--preview-hash", previewHash,
+                       "--receipts-dir", receiptDirectory])
     }
 
     private static func fetchArguments(_ request: IntakeFetchRequest) -> [String] {
@@ -274,27 +279,27 @@ actor WorkbenchAPI {
         return argv
     }
 
-    func intakeFetchPreview(_ request: IntakeFetchRequest) throws -> [String: Any] {
-        Self.unwrapPlan(try raw(Self.fetchArguments(request) + ["--receipts-dir", receiptDirectory]))
+    func intakeFetchPreview(_ request: IntakeFetchRequest) async throws -> [String: Any] {
+        Self.unwrapPlan(try await raw(Self.fetchArguments(request) + ["--receipts-dir", receiptDirectory]))
     }
 
-    func intakeFetchStart(_ request: IntakeFetchRequest, previewHash: String) throws -> [String: Any] {
-        try raw(Self.fetchArguments(request) + ["--confirm", "--preview-hash", previewHash,
-                                                "--receipts-dir", receiptDirectory])
+    func intakeFetchStart(_ request: IntakeFetchRequest, previewHash: String) async throws -> [String: Any] {
+        try await raw(Self.fetchArguments(request) + ["--confirm", "--preview-hash", previewHash,
+                                                      "--receipts-dir", receiptDirectory])
     }
 
-    func intakeStatus() throws -> [FetchJob] {
-        let data = try raw(["intake", "status", "--receipts-dir", receiptDirectory])
+    func intakeStatus() async throws -> [FetchJob] {
+        let data = try await raw(["intake", "status", "--receipts-dir", receiptDirectory])
         let jobs = (data["jobs"] as? [[String: Any]]) ?? []
         return try jobs.map { try Self.decode(FetchJob.self, from: $0) }
     }
 
-    func portAnalysis(source: String) throws -> PortAnalysis {
-        try Self.decode(PortAnalysis.self, from: raw(["intake", "port-analysis", source], timeout: 90))
+    func portAnalysis(source: String) async throws -> PortAnalysis {
+        try Self.decode(PortAnalysis.self, from: await raw(["intake", "port-analysis", source], timeout: 90))
     }
 
-    func portPlan(source: String, endpoint: String, model: String) throws -> PortPlanResult {
-        try Self.decode(PortPlanResult.self, from: raw(
+    func portPlan(source: String, endpoint: String, model: String) async throws -> PortPlanResult {
+        try Self.decode(PortPlanResult.self, from: await raw(
             ["intake", "port-plan", source, "--endpoint", endpoint, "--model", model],
             timeout: 960
         ))
@@ -302,19 +307,19 @@ actor WorkbenchAPI {
 
     // MARK: - Jobs
 
-    func convertStatus() throws -> [Job] {
-        let data = try raw(["convert", "status", "--receipts-dir", receiptDirectory])
+    func convertStatus() async throws -> [Job] {
+        let data = try await raw(["convert", "status", "--receipts-dir", receiptDirectory])
         return Self.jobs(from: data) ?? []
     }
 
-    func serveStatus() throws -> [ServerInfo] {
-        let data = try raw(["serve", "status", "--receipts-dir", receiptDirectory])
+    func serveStatus() async throws -> [ServerInfo] {
+        let data = try await raw(["serve", "status", "--receipts-dir", receiptDirectory])
         return Self.servers(from: data) ?? []
     }
 
     /// Removal cannot treat an unreadable status response as an empty fleet.
-    func servingPathsForRemoval() throws -> [String] {
-        try Self.servingPathsForRemoval(from: raw(["serve", "status", "--receipts-dir", receiptDirectory]))
+    func servingPathsForRemoval() async throws -> [String] {
+        try Self.servingPathsForRemoval(from: await raw(["serve", "status", "--receipts-dir", receiptDirectory]))
     }
 
     static func servingPathsForRemoval(from data: [String: Any]) throws -> [String] {
@@ -324,49 +329,49 @@ actor WorkbenchAPI {
         return servers.map(\.modelIdentity)
     }
 
-    func allJobs() throws -> [Job] {
-        let data = try raw(["convert", "status", "--receipts-dir", receiptDirectory])
+    func allJobs() async throws -> [Job] {
+        let data = try await raw(["convert", "status", "--receipts-dir", receiptDirectory])
         return Self.jobs(from: data, key: "jobs") ?? []
     }
 
     // MARK: - Discover
 
-    func discover(role: String?, limit: Int?, fast: Bool, new: Bool) throws -> DiscoverResult {
+    func discover(role: String?, limit: Int?, fast: Bool, new: Bool) async throws -> DiscoverResult {
         var argv = ["discover"]
         if let role { argv.append(contentsOf: ["--role", role]) }
         if let limit { argv.append(contentsOf: ["--limit", String(limit)]) }
         if fast { argv.append("--fast") }
         if new { argv.append("--new") }
-        let data = try raw(argv, isScout: true)
+        let data = try await raw(argv, isScout: true)
         return DiscoverResult(candidates: Self.candidates(from: data))
     }
 
     // MARK: - Doctor
 
-    func doctor(wiredRoots: [String], hfCache: String?) throws -> DoctorResult {
+    func doctor(wiredRoots: [String], hfCache: String?) async throws -> DoctorResult {
         var argv = ["doctor", "models"]
         for root in wiredRoots {
             argv.append(contentsOf: ["--wired-root", root])
         }
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
-        let data = try raw(argv)
+        let data = try await raw(argv)
         return Self.doctor(from: data)
     }
 
-    func doctorPrunePreview(hfCache: String?) throws -> DoctorResult {
+    func doctorPrunePreview(hfCache: String?) async throws -> DoctorResult {
         var argv = ["doctor", "models", "--prune"]
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
-        let data = try raw(argv)
+        let data = try await raw(argv)
         return Self.doctor(from: data)
     }
 
-    func doctorPruneConfirm(previewHash: String, hfCache: String?) throws -> DoctorResult {
+    func doctorPruneConfirm(previewHash: String, hfCache: String?) async throws -> DoctorResult {
         var argv = [
             "doctor", "models", "--prune",
             "--confirm", "--preview-hash", previewHash,
         ]
         if let hfCache { argv.append(contentsOf: ["--hf-cache", hfCache]) }
-        let data = try raw(argv)
+        let data = try await raw(argv)
         return Self.doctor(from: data)
     }
 
@@ -374,7 +379,7 @@ actor WorkbenchAPI {
 
     static let supportedAdoptionRoles = ["vision", "embedding", "coding", "reasoning", "general", "tool-use"]
 
-    func adoptStart(role: String?, state: String, fast: Bool, offline: Bool) throws -> AdoptResult {
+    func adoptStart(role: String?, state: String, fast: Bool, offline: Bool) async throws -> AdoptResult {
         let parent = URL(fileURLWithPath: state).deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         var argv = ["adopt", "start"]
@@ -382,12 +387,12 @@ actor WorkbenchAPI {
         argv.append(contentsOf: ["--state", state])
         if fast { argv.append("--fast") }
         if offline { argv.append("--offline") }
-        let data = try raw(argv, isScout: true)
+        let data = try await raw(argv, isScout: true)
         return Self.adopt(from: data, statePath: state)
     }
 
-    func adoptStatus(state: String) throws -> AdoptResult {
-        let data = try raw(["adopt", "status", "--state", state])
+    func adoptStatus(state: String) async throws -> AdoptResult {
+        let data = try await raw(["adopt", "status", "--state", state])
         return Self.adopt(from: data, statePath: state)
     }
 
@@ -414,8 +419,8 @@ actor WorkbenchAPI {
 
     // MARK: - Wire
 
-    func wirePreview(model: String, path: String, target: String) throws -> WireResult {
-        let data = try raw(["wire", "apply", model, "--path", path, "--target", target])
+    func wirePreview(model: String, path: String, target: String) async throws -> WireResult {
+        let data = try await raw(["wire", "apply", model, "--path", path, "--target", target])
         let preview = (data["preview"] as? [String: Any]) ?? data
         return WireResult(preview_hash: preview.string("preview_hash"),
                           config: preview["config"] as? [String: Any]
@@ -424,8 +429,8 @@ actor WorkbenchAPI {
     }
 
     func wireApply(model: String, path: String, previewHash: String,
-                   target: String) throws -> WireResult {
-        let data = try raw([
+                   target: String) async throws -> WireResult {
+        let data = try await raw([
             "wire", "apply", model, "--path", path, "--target", target,
             "--confirm", "--preview-hash", previewHash,
         ])
@@ -443,21 +448,21 @@ actor WorkbenchAPI {
     /// Requires an mlx-agent with `--port-map` support (fleet ≥ the
     /// port-map change); older agents fail the call with a classified
     /// argparse error the UI surfaces as "update mlx-agent".
-    func fleetRender(path: String, assignments: [(role: String, repo: String, port: Int)]) throws -> [String: Any] {
-        try raw(fleetArgv("render", path: path, assignments: assignments))
+    func fleetRender(path: String, assignments: [(role: String, repo: String, port: Int)]) async throws -> [String: Any] {
+        try await raw(fleetArgv("render", path: path, assignments: assignments))
     }
 
     /// Preview the router-config write (no --confirm): data carries
     /// `preview.preview_hash` and `preview.diff` for review.
-    func fleetApplyPreview(path: String, assignments: [(role: String, repo: String, port: Int)]) throws -> [String: Any] {
-        try raw(fleetArgv("apply", path: path, assignments: assignments))
+    func fleetApplyPreview(path: String, assignments: [(role: String, repo: String, port: Int)]) async throws -> [String: Any] {
+        try await raw(fleetArgv("apply", path: path, assignments: assignments))
     }
 
     /// Apply a previously reviewed preview; the hash must match exactly.
     func fleetApplyConfirm(path: String, assignments: [(role: String, repo: String, port: Int)],
-                           previewHash: String) throws -> [String: Any] {
-        try raw(fleetArgv("apply", path: path, assignments: assignments,
-                          extra: ["--confirm", "--preview-hash", previewHash]))
+                           previewHash: String) async throws -> [String: Any] {
+        try await raw(fleetArgv("apply", path: path, assignments: assignments,
+                                extra: ["--confirm", "--preview-hash", previewHash]))
     }
 
     private func fleetArgv(_ action: String, path: String,
@@ -488,17 +493,17 @@ actor WorkbenchAPI {
         return ["--repo", model]
     }
 
-    func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil) throws -> [String: Any] {
+    func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil) async throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + ["--runtime", runtime, "--receipts-dir", receiptDirectory]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
-        return Self.unwrapPlan(try raw(argv))
+        return Self.unwrapPlan(try await raw(argv))
     }
 
     func serveStart(repo: String, runtime: String, port: Int?,
-                    previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil) throws -> [String: Any] {
+                    previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil) async throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + [
@@ -508,75 +513,75 @@ actor WorkbenchAPI {
             ]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
-        return try raw(argv)
+        return try await raw(argv)
     }
 
-    func serveStop(port: Int) throws -> [String: Any] {
-        return try raw([
+    func serveStop(port: Int) async throws -> [String: Any] {
+        return try await raw([
             "serve", "stop", "--port", String(port),
             "--receipts-dir", receiptDirectory,
         ])
     }
 
-    func serveUnload(port: Int, expectedPID: Int) throws -> [String: Any] {
-        try raw(["serve", "unload", "--port", String(port), "--expected-pid", String(expectedPID),
-                 "--receipts-dir", receiptDirectory])
+    func serveUnload(port: Int, expectedPID: Int) async throws -> [String: Any] {
+        try await raw(["serve", "unload", "--port", String(port), "--expected-pid", String(expectedPID),
+                       "--receipts-dir", receiptDirectory])
     }
 
-    func serveMemoryPolicy(port: Int, expectedPID: Int, policy: EndpointMemoryPolicy) throws -> [String: Any] {
-        try raw(["serve", "policy", "--port", String(port), "--expected-pid", String(expectedPID),
-                 "--receipts-dir", receiptDirectory] + policy.arguments)
+    func serveMemoryPolicy(port: Int, expectedPID: Int, policy: EndpointMemoryPolicy) async throws -> [String: Any] {
+        try await raw(["serve", "policy", "--port", String(port), "--expected-pid", String(expectedPID),
+                       "--receipts-dir", receiptDirectory] + policy.arguments)
     }
 
     // MARK: - LoRA / Fuse
 
-    func loraPreview(repo: String, data: String, iters: Int?, out: String?) throws -> [String: Any] {
+    func loraPreview(repo: String, data: String, iters: Int?, out: String?) async throws -> [String: Any] {
         var argv = ["lora", "start", "--repo", repo, "--data", data, "--receipts-dir", receiptDirectory]
         if let iters { argv.append(contentsOf: ["--iters", String(iters)]) }
         if let out { argv.append(contentsOf: ["--out", out]) }
-        return Self.unwrapPlan(try raw(argv))
+        return Self.unwrapPlan(try await raw(argv))
     }
 
     func loraStart(repo: String, data: String, previewHash: String,
-                   iters: Int?, out: String?) throws -> [String: Any] {
+                   iters: Int?, out: String?) async throws -> [String: Any] {
         var argv = [
             "lora", "start", "--repo", repo, "--data", data, "--receipts-dir", receiptDirectory,
             "--confirm", "--preview-hash", previewHash,
         ]
         if let iters { argv.append(contentsOf: ["--iters", String(iters)]) }
         if let out { argv.append(contentsOf: ["--out", out]) }
-        return try raw(argv)
+        return try await raw(argv)
     }
 
     func trainingStatus() async throws -> TrainingSnapshot {
         try await runOffActor(TrainingSnapshot.self, ["lora", "status", "--receipts-dir", receiptDirectory], timeout: 30)
     }
 
-    func trainingStop(pid: Int) throws -> [String: Any] {
-        try raw(["lora", "stop", "--pid", String(pid), "--receipts-dir", receiptDirectory])
+    func trainingStop(pid: Int) async throws -> [String: Any] {
+        try await raw(["lora", "stop", "--pid", String(pid), "--receipts-dir", receiptDirectory])
     }
 
-    func fusePreview(repo: String, adapter: String, out: String?) throws -> [String: Any] {
+    func fusePreview(repo: String, adapter: String, out: String?) async throws -> [String: Any] {
         var argv = ["fuse", "start", "--repo", repo, "--adapter", adapter]
         if let out { argv.append(contentsOf: ["--out", out]) }
-        return Self.unwrapPlan(try raw(argv))
+        return Self.unwrapPlan(try await raw(argv))
     }
 
     func fuseStart(repo: String, adapter: String, previewHash: String,
-                   out: String?) throws -> [String: Any] {
+                   out: String?) async throws -> [String: Any] {
         var argv = [
             "fuse", "start", "--repo", repo, "--adapter", adapter,
             "--confirm", "--preview-hash", previewHash,
         ]
         if let out { argv.append(contentsOf: ["--out", out]) }
-        return try raw(argv)
+        return try await raw(argv)
     }
 
     // MARK: - Generic
 
-    func runCLI(_ argv: [String]) throws -> [String: Any] {
+    func runCLI(_ argv: [String]) async throws -> [String: Any] {
         guard !argv.isEmpty else { throw BridgeError.skillFailed }
-        return try raw(argv)
+        return try await raw(argv)
     }
 
     // MARK: - Decoders

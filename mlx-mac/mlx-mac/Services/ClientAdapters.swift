@@ -86,6 +86,10 @@ enum ClientAdapters {
         }
     ) { before, endpoint in
         var config = try parseOrEmpty(before)
+        // opencode rewrites a loaded config without `$schema`; writing it keeps a created file unchanged for rollback.
+        if config["$schema"] == nil || (config["$schema"] as? String)?.isEmpty == true {
+            config["$schema"] = "https://opencode.ai/config.json"
+        }
         var provider = (config["provider"] as? [String: Any]) ?? [:]
         provider[providerID] = [
             "npm": "@ai-sdk/openai-compatible",

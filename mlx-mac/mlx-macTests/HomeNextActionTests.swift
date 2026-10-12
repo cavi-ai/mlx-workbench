@@ -65,7 +65,7 @@ final class HomeNextActionTests: XCTestCase {
             serveRuntimeReady: false
         )
         XCTAssertEqual(action.kind, .configure)
-        XCTAssertEqual(action.route, AppRoute.settings.rawValue)
+        XCTAssertEqual(action.route, AppRoute.health.rawValue)
     }
 
     // MARK: - Configuration ladder

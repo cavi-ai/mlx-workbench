@@ -29,7 +29,8 @@ and is versioned independently; submodule bumps are recorded here.
 ### Fixed
 
 - Clients: Roll back last wiring moves a config file the wiring created to the
-  Trash, unless it changed after the write.
+  Trash, unless it changed after the write. Wiring writes `$schema` into
+  opencode configs that lack one.
 - Compare results grid: headers, prompts and outputs share one left edge;
   images fill their column and keep their size while loading; a model name
   stays on one line (full path on hover); text outputs take their own height
@@ -41,6 +42,8 @@ and is versioned independently; submodule bumps are recorded here.
 - Re-running a conversion to the same destination updates only the new
   attempt: earlier attempts keep their outcome and do not show the new run's
   log, and verification starts once.
+- Serving status in Clients, Run, Activity and the toolbar no longer waits
+  behind a long agent call such as the daily watch check.
 
 ## [0.4.0] - 2026-10-08
 ### Added

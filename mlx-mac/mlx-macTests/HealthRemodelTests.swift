@@ -185,6 +185,12 @@ final class HealthChainTests: XCTestCase {
         XCTAssertEqual(chain.actions.prominentCount, 1)
     }
 
+    func testRuntimeOnlyBrokenDoesNotOfferOpenSettings() {
+        let chain = Fixture.chain(Fixture.agentReady, Fixture.report(missingPrepare: ["torch"]))
+        XCTAssertFalse(chain.actions.showsOpenSettings)
+        XCTAssertTrue(chain.actions.showsInstallCommand)
+    }
+
     func testReadyAppearsIffAgentReadyAndReportOK() {
         let pythons: [String?] = ["/venv/bin/python", nil]
         for agent in Fixture.agents {
@@ -235,7 +241,7 @@ final class HealthChainTests: XCTestCase {
                     XCTAssertEqual(actions.showsInstall, broken && installAvailable)
                     var agentReady = false
                     if case .ready = agent { agentReady = true }
-                    XCTAssertEqual(actions.showsOpenSettings, broken || !agentReady)
+                    XCTAssertEqual(actions.showsOpenSettings, !agentReady)
                     if !agentReady && !actions.showsInstall {
                         XCTAssertTrue(actions.openSettingsIsProminent, "Open Settings leads when it is the only fix")
                     }
@@ -553,7 +559,9 @@ final class HealthSpawnSafetyTests: XCTestCase {
 
     func testRuntimeReportIsProducedOnlyByAppHost() throws {
         let host = try Fixture.source("AppHost.swift")
-        XCTAssertEqual(host.components(separatedBy: "RuntimeChecker.report()").count - 1, 5)
+        XCTAssertEqual(host.components(separatedBy: "RuntimeChecker.report()").count - 1, 4)
+        // The initializer probes once; a property default would probe again on every construction.
+        XCTAssertTrue(host.contains("@Published var runtimeReport: RuntimeReport\n"))
         var others: [String] = []
         let enumerator = FileManager.default.enumerator(at: Fixture.sourceDirectory, includingPropertiesForKeys: nil)
         for case let url as URL in enumerator?.allObjects ?? [] where url.pathExtension == "swift" {
