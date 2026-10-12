@@ -6,13 +6,15 @@ import Foundation
 class AppHost: ObservableObject {
     @Published var config: Config = Config.defaults()
     @Published var agentHealth: AgentHealth = .notConfigured
-    @Published var runtimeReport: RuntimeReport = RuntimeChecker.report()
+    @Published var runtimeReport: RuntimeReport
     @Published var discoveredRoots: [String] = []
     @Published var vendorAgentPath: String = ""
     @Published var configPath: String = ""
     @Published var isScanning = false
     @Published var scanResult: ScanResult?
     @Published var librarySnapshot: LibrarySnapshot?
+    /// The effective roots `librarySnapshot` was scanned from; nil until a scan succeeds.
+    @Published var scannedRoots: ScanRoots?
     @Published var catalog: CatalogState
     @Published var isRefreshingCatalog = false
     @Published var selectedModelPath: String?
@@ -393,14 +395,16 @@ class AppHost: ObservableObject {
 
         do {
             let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
+            let mlxRoots = Self.scanMLXRoots(config, ggufRoots: roots)
             let scan = try await scanOperation(
                 roots,
-                Self.scanMLXRoots(config, ggufRoots: roots),
+                mlxRoots,
                 config.signatures,
                 limit
             )
             let snapshot = ModelLibraryBuilder.build(scan: scan, hardware: hardwareProfile, now: now())
             scanResult = scan
+            scannedRoots = ScanRoots(gguf: roots, mlx: mlxRoots)
             librarySnapshot = snapshot
             lastError = nil
             if reconcileWorkflow {

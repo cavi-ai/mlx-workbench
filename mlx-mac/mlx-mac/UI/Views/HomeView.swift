@@ -12,7 +12,7 @@ struct HomeNextAction: Equatable {
     /// The verb phrase for the one button; mirrors what `HomeView.perform` does.
     var buttonTitle: String {
         switch kind {
-        case .configure: return "Open Settings"
+        case .configure: return route == AppRoute.health.rawValue ? "Open Health" : "Open Settings"
         case .scan: return "Open Library"
         case .activity: return "Open Activity"
         case .prepare: return "Prepare"
@@ -36,7 +36,7 @@ struct HomeNextAction: Equatable {
                     : "Conversion completed; \(type.title.lowercased()) models are used from the Library inspector, not served."
                 return .init(kind: .library, title: "Open the completed model", reason: reason, route: AppRoute.library.rawValue)
             }
-            guard agentReady && serveRuntimeReady else { return .init(kind: .configure, title: "Repair the Run runtime", reason: "The model is complete, but the agent or serving runtime is unavailable.", route: AppRoute.settings.rawValue) }
+            guard agentReady && serveRuntimeReady else { return .init(kind: .configure, title: "Repair the Run runtime", reason: "The model is complete, but the agent or serving runtime is unavailable. Health shows which link is broken.", route: AppRoute.health.rawValue) }
             return .init(kind: .run(path), title: "Run completed model", reason: "Conversion completed and the selected MLX output is ready for a serve preview.", route: AppRoute.run.rawValue)
         }
         guard rootsConfigured else { return .init(kind: .configure, title: "Configure model roots", reason: "No GGUF or MLX roots are configured, so the library has nowhere to scan.", route: AppRoute.settings.rawValue) }
@@ -44,7 +44,7 @@ struct HomeNextAction: Equatable {
         if let error = lastError?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty { return .init(kind: .scan, title: "Resolve the library scan", reason: error, route: AppRoute.library.rawValue) }
         guard let snapshot else { return .init(kind: .scan, title: isScanning ? "View library scan" : "Scan the model library", reason: isScanning ? "The first authoritative library scan is in progress." : "No successful library snapshot exists yet.", route: AppRoute.library.rawValue) }
         if let source = snapshot.models.first(where: { $0.readiness == .needsConversion }) {
-            guard convertRuntimeReady else { return .init(kind: .configure, title: "Repair the Prepare runtime", reason: "A GGUF source needs conversion, but the conversion runtime is unavailable.", route: AppRoute.settings.rawValue) }
+            guard convertRuntimeReady else { return .init(kind: .configure, title: "Repair the Prepare runtime", reason: "A GGUF source needs conversion, but the conversion runtime is unavailable. Health shows which link is broken.", route: AppRoute.health.rawValue) }
             return .init(kind: .prepare(source.item.path), title: "Prepare a GGUF model", reason: "The latest Library snapshot contains a GGUF source that needs MLX conversion.", route: AppRoute.prepare.rawValue)
         }
         if reclaimableBytes >= ReclaimAdvisor.badgeThresholdBytes, let free = diskFreeFraction, free < 0.15 { let amount = ByteCountFormatter.string(fromByteCount: reclaimableBytes, countStyle: .file); return .init(kind: .library, title: "Reclaim " + amount + " of disk", reason: "Reclaim opportunities exceed the threshold and the disk is under 15% free. Reclaim ranks evidence; quarantine moves, never deletes.", route: AppRoute.reclaim.rawValue) }
