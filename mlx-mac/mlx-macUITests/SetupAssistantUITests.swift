@@ -262,7 +262,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let element: XCUIElement
         if let title = titles[route] { element = app.staticTexts[title].firstMatch }
         else if route == "Settings" { element = app.staticTexts["Engine status"].firstMatch }
-        else if route == "LM Studio" { element = app.buttons["Scan LM Studio"] }
+        else if route == "LM Studio" { element = app.buttons["Scan Again"] }
         else if route == "Overview" { element = app.buttons["Open Health"] }
         else { element = app.buttons["New set…"] }
         XCTAssertTrue(element.waitForExistence(timeout: 20), "Missing \(route) content")
@@ -354,10 +354,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Discover-failed-recovery")
 
         select("LM Studio")
-        replace(app.textFields.firstMatch, with: root.appendingPathComponent("missing").path)
-        app.buttons["Scan LM Studio"].click()
-        XCTAssertTrue(text(containing: "Scan failed").waitForExistence(timeout: 15))
-        capture("LMStudio-invalid-source-recovery")
+        XCTAssertTrue(app.buttons["Scan Again"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.textFields.firstMatch.exists, "The shelf reads LM Studio's folders; it takes no typed path")
+        capture("LMStudio-shelf")
     }
 
     func testTrainingEditsRequireNewPreview() throws {

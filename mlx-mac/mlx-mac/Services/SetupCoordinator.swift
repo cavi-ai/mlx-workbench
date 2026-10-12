@@ -23,6 +23,8 @@ final class SetupCoordinator: ObservableObject {
             case .done: return "Ready"
             }
         }
+
+        var progressLabel: String { "Step \(rawValue + 1) of \(Self.allCases.count)" }
     }
 
     /// Persistence key for "the assistant has been completed once".

@@ -112,8 +112,8 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(AdoptResult.self, from: JSONEncoder().encode(legacy)), legacy)
     }
 
-    func testSupportedAdoptionRolesMatchTheAgentRoles() {
-        XCTAssertEqual(WorkbenchAPI.supportedAdoptionRoles, ["vision", "embedding", "coding", "reasoning", "general", "tool-use"])
+    func testAdoptionRolesAreTheDiscoveryRoles() {
+        XCTAssertEqual(AdoptRole.choices, WorkbenchAPI.discoveryRoleOrder)
     }
 
     func testScanRunsFixtureAgentAndPreservesReportedBytes() async throws {

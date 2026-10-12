@@ -119,15 +119,20 @@ final class TrainingSession: ObservableObject {
 struct TrainingView: View {
     @ObservedObject var appHost: AppHost
     @StateObject private var session: TrainingSession
+    @StateObject private var loader: TrainingLoader
     @State private var evaluationJob: TrainingJob?
-    @State private var jobs: [TrainingJob] = []
-    @State private var evaluations: [LabValue] = []
     @State private var retainedEvaluation: LabResponse?
-    @State private var errorMessage: String?
+    @State private var actionError: String?
+    @State private var choosesCustomRepo = false
+    @Environment(\.isRouteActive) private var isRouteActive
 
-    init(appHost: AppHost) {
+    init(appHost: AppHost, loader: TrainingLoader? = nil, session: TrainingSession? = nil) {
         self.appHost = appHost
-        _session = StateObject(wrappedValue: TrainingSession(
+        _loader = StateObject(wrappedValue: loader ?? TrainingLoader(
+            jobs: { try await appHost.api.trainingStatus().jobs },
+            history: { try await appHost.lab.request(LabRequest(operation: "training-history")).evaluations ?? [] }
+        ))
+        _session = StateObject(wrappedValue: session ?? TrainingSession(
             preview: { request in
                 try await appHost.api.loraPreview(repo: request.repo, data: request.data, iters: request.iterations, out: request.output)
             },
@@ -144,95 +149,67 @@ struct TrainingView: View {
                 if let preview = session.preview {
                     planSection(preview)
                 }
-                trainingJobs
-                evaluationHistory
-                ErrorBanner(text: errorMessage)
                 ErrorBanner(text: session.errorMessage)
                 if let notice = session.notice {
                     Text(notice).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
                 }
+                ErrorBanner(text: actionError)
+                ErrorBanner(text: loader.jobsError)
+                trainingJobs
+                ErrorBanner(text: loader.historyError)
+                evaluationHistory
             }
             .frame(maxWidth: WorkbenchSize.contentMaxWidth, alignment: .leading)
             .padding(WorkbenchSpacing.pageInset)
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .sheet(item: $evaluationJob) { job in TrainingEvaluationSheet(lab: appHost.lab, job: job) }
-        .task { await refreshTraining() }
+        .task(id: isRouteActive) {
+            guard isRouteActive else { return }
+            await loader.refresh()
+        }
+    }
+
+    private var presentation: TrainingPresentation {
+        TrainingPresentation.make(jobs: loader.jobs, evaluations: loader.evaluations)
     }
 
     private var trainingJobs: some View {
-        WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                HStack {
-                    Text("Training jobs").font(WorkbenchTypography.cardTitle)
-                    Spacer()
-                    Button("Refresh") { Task { await refreshTraining() } }
-                }
-                ForEach(jobs) { job in
-                    Divider()
-                    Text(job.repo + " · " + job.state).font(WorkbenchTypography.cardTitle)
-                    Text(job.out).font(WorkbenchTypography.metadata).textSelection(.enabled)
-                    if let identity = job.adapterIdentity {
-                        Text("Adapter content identity").font(WorkbenchTypography.metadata)
-                        Text(identity.jsonText).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                    }
-                    HStack {
-                        if job.state == "done", job.adapterIdentity != nil {
-                            Button("Compare with base") { evaluationJob = job }
-                        }
-                        if let log = job.logPath {
-                            Button("Open log") { NSWorkspace.shared.open(URL(fileURLWithPath: log)) }
-                        }
-                        if job.state == "running" {
-                            Button("Cancel training") {
-                                Task {
-                                    do { _ = try await appHost.api.trainingStop(pid: job.pid); await refreshTraining() }
-                                    catch { errorMessage = AppHost.render(error) }
-                                }
-                            }
-                        }
+        TrainingJobsCard(
+            rows: presentation.jobs, pulses: isRouteActive,
+            refresh: { Task { await loader.refresh() } },
+            actions: TrainingJobActions(
+                compare: { row in evaluationJob = loader.jobs.first { $0.id == row.id } },
+                openLog: { NSWorkspace.shared.open(URL(fileURLWithPath: $0)) },
+                cancel: { row in
+                    Task {
+                        do {
+                            _ = try await appHost.api.trainingStop(pid: row.pid)
+                            actionError = nil
+                            await loader.refresh()
+                        } catch { actionError = AppHost.render(error) }
                     }
                 }
-            }
-        }
+            )
+        )
     }
 
     private var evaluationHistory: some View {
-        WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                Text("Retained training evaluations").font(WorkbenchTypography.cardTitle)
-                ForEach(Array(evaluations.enumerated()), id: \.offset) { _, evaluation in
-                    if let record = evaluation.object, let identity = record["id"]?.text {
-                        Button(identity) {
-                            Task {
-                                do {
-                                    retainedEvaluation = try await appHost.lab.request(
-                                        LabRequest(operation: "training-inspect", evaluationID: identity))
-                                } catch { errorMessage = AppHost.render(error) }
-                            }
-                        }
-                        Text(record["created_at"]?.text ?? "").font(WorkbenchTypography.metadata)
-                    }
-                }
-                if let retainedEvaluation, let report = retainedEvaluation.report {
-                    DisclosureGroup("Evaluation outputs and frozen recipe") {
-                        ScrollView {
-                            Text(report.jsonText).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                        }.frame(maxHeight: 240)
-                    }
-                    Text("SHA-256: " + (retainedEvaluation.artifactSHA256 ?? ""))
-                        .font(WorkbenchTypography.compactValue).textSelection(.enabled)
+        TrainingEvaluationsCard(
+            rows: presentation.evaluations,
+            retained: retainedEvaluation?.report.map {
+                TrainingRetainedEvidence(reportText: $0.jsonText, sha256: retainedEvaluation?.artifactSHA256 ?? "")
+            },
+            inspect: { identity in
+                Task {
+                    do {
+                        retainedEvaluation = try await appHost.lab.request(
+                            LabRequest(operation: "training-inspect", evaluationID: identity))
+                        actionError = nil
+                    } catch { actionError = AppHost.render(error) }
                 }
             }
-        }
-    }
-
-    private func refreshTraining() async {
-        do {
-            jobs = try await appHost.api.trainingStatus().jobs
-            evaluations = try await appHost.lab.request(LabRequest(operation: "training-history")).evaluations ?? []
-        }
-        catch { errorMessage = AppHost.render(error) }
+        )
     }
 
     private var formSection: some View {
@@ -244,19 +221,21 @@ struct TrainingView: View {
                     .foregroundStyle(WorkbenchColor.muted)
             }
             if !cachedRepoIdentities.isEmpty {
-                Picker("Cached base model", selection: cachedRepoSelection) {
+                Picker("Base model", selection: cachedRepoSelection) {
                     Text("Custom repo id…").tag("")
                     ForEach(cachedRepoIdentities, id: \.self) { identity in
                         Text(identity).tag(identity)
                     }
                 }
-                .frame(maxWidth: 420, alignment: .leading)
+                .frame(maxWidth: WorkbenchSize.Training.baseModelMenuWidth, alignment: .leading)
             }
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                Text("Base model repo id").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
-                TextField("Base model repo id", text: $session.draft.repo)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Base model repo id")
+            if showsCustomRepoField {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Text("Base model repo id").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+                    TextField("Base model repo id", text: $session.draft.repo)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Base model repo id")
+                }
             }
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                 Text("Dataset path").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
@@ -297,9 +276,18 @@ struct TrainingView: View {
 
     private var cachedRepoSelection: Binding<String> {
         Binding(
-            get: { cachedRepoIdentities.contains(session.draft.repo) ? session.draft.repo : "" },
-            set: { session.draft.repo = $0 }
+            get: { cachedRepoIdentities.contains(session.draft.repo) && !choosesCustomRepo ? session.draft.repo : "" },
+            set: { identity in
+                choosesCustomRepo = identity.isEmpty
+                session.draft.repo = identity
+            }
         )
+    }
+
+    /// The field is the only way in when the Library has no repo ids, and the
+    /// "Custom repo id…" choice reveals it otherwise.
+    private var showsCustomRepoField: Bool {
+        cachedRepoIdentities.isEmpty || choosesCustomRepo || !cachedRepoIdentities.contains(session.draft.repo)
     }
 
     private func planSection(_ preview: TrainingPreview) -> some View {
@@ -353,7 +341,7 @@ struct TrainingView: View {
             Text("Iterations").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
             TextField("Iterations", text: $session.draft.iterations)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 120)
+                .frame(width: WorkbenchSize.Training.iterationsWidth)
                 .accessibilityLabel("Iterations")
             if let error = session.draft.iterationsError {
                 Text(error)
@@ -412,7 +400,7 @@ struct TrainingView: View {
         guard let task = session.confirmTraining() else { return }
         Task {
             await task.value
-            await refreshTraining()
+            await loader.refresh()
         }
     }
 
@@ -451,9 +439,9 @@ private struct TrainingEvaluationSheet: View {
                 .onChange(of: prompt) { preview = nil; result = nil }
             if let error { Text(error).foregroundStyle(WorkbenchColor.failure) }
             if let preview {
-                DisclosureGroup("Reviewed evaluation recipe") {
-                    ScrollView { Text(preview.jsonText).font(WorkbenchTypography.compactValue).textSelection(.enabled) }.frame(maxHeight: 180)
-                }
+                TrainingRawDisclosure(
+                    title: "Reviewed evaluation recipe", text: preview.jsonText, maxHeight: WorkbenchSize.Training.recipeMaxHeight
+                )
             }
             if let result, let report = result.report?.object {
                 HStack(alignment: .top) {
