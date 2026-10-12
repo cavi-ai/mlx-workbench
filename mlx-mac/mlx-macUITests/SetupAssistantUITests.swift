@@ -618,7 +618,15 @@ final class WorkbenchReviewUITests: XCTestCase {
             for _ in 0..<6 where !advanced.isHittable { scroll.scroll(byDeltaX: 0, deltaY: -300) }
             XCTAssertTrue(advanced.isHittable)
             capture("ManualWire-\(appearance)-collapsed-standard")
-            advanced.click()
+            // The native disclosure's accessibility frame includes the scroll
+            // page inset. Only its leading arrow toggles the section on macOS.
+            let window = app.windows.firstMatch
+            let frame = advanced.frame.intersection(scroll.frame)
+            XCTAssertFalse(frame.isNull)
+            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: frame.minX + 24 + frame.height / 4 - window.frame.minX,
+                dy: frame.midY - window.frame.minY
+            )).click()
             XCTAssertEqual(advanced.value as? Int, 1)
             var model: XCUIElement { app.textFields[before ? "Model repo id" : "manual-wire-model"] }
             var path: XCUIElement { app.textFields[before ? "Config file path" : "manual-wire-path"] }
