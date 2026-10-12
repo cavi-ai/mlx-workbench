@@ -425,7 +425,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             try write("training-history.json", [])
             launch(appearance: appearance, route: "training-studio", isolatedHome: true)
             resizeWindow(width: 1024, height: 680)
-            let scroll = app.scrollViews.firstMatch
+            let scroll = app.scrollViews.containing(.textField, identifier: "Base model repo id").firstMatch
             func reveal(_ element: XCUIElement) {
                 XCTAssertTrue(element.waitForExistence(timeout: 10))
                 for _ in 0..<10 where !scroll.frame.contains(element.frame) || !element.isHittable {
