@@ -1,8 +1,7 @@
-import AppKit
 import SwiftUI
 
 // MARK: - DoctorView
-// Health: environment/runtime status plus the doctor findings inventory.
+// Health: the readiness chain plus the doctor findings inventory.
 // Prune actions live in Reclaim, which owns the authoritative prune flow.
 
 enum DoctorCheckState: Equatable {
@@ -47,13 +46,14 @@ enum DoctorCheckState: Equatable {
 
 struct DoctorView: View {
     @ObservedObject var appHost: AppHost
+    @Environment(\.isRouteActive) private var isRouteActive
     private let onRouteSelection: (AppRoute) -> Void
 
     @State private var checkState: DoctorCheckState = .notRun
+    @State private var lastCheckedAt: Date?
+    @State private var layout = HealthLayout()
 
     private var isRunning: Bool { checkState.isRunning }
-    private var findings: [DoctorFinding] { checkState.findings }
-    private var pruneCount: Int { checkState.pruneCount }
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -61,169 +61,142 @@ struct DoctorView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                environmentSection
-                findingsSection
-                Spacer()
-            }
-            .padding(WorkbenchSpacing.pageInset)
-        }
-    }
-
-    // MARK: - Environment
-
-    private var environmentSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            SectionTitle(text: "Runtime readiness")
-            runtimeRow("Prepare runtime", ok: appHost.runtimeReport.convert.ok,
-                       message: appHost.runtimeReport.convert.message)
-            runtimeRow("Run runtime", ok: appHost.runtimeReport.serve.ok,
-                       message: appHost.runtimeReport.serve.message)
-            Divider()
-            agentRow
-            if !appHost.runtimeReport.ok {
-                Text(appHost.runtimeReport.install)
-                    .font(WorkbenchTypography.value)
-                    .foregroundStyle(WorkbenchColor.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: WorkbenchSpacing.sm) { runtimeRecoveryActions }
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { runtimeRecoveryActions }
+        let fingerprint = appHost.watch.currentFingerprint
+        let chain = HealthPresentation.chain(
+            agent: appHost.agentHealth,
+            report: appHost.runtimeReport,
+            fingerprint: fingerprint,
+            installAvailable: appHost.runtimeInstaller.repoRoot != nil
+        )
+        GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                    HealthHeroView(
+                        chain: chain,
+                        fingerprint: fingerprint,
+                        forkMode: layout.forkMode,
+                        isRouteActive: isRouteActive,
+                        installCommand: appHost.runtimeReport.install,
+                        installer: appHost.runtimeInstaller,
+                        verification: appHost.verification,
+                        onRuntimeInstalled: { appHost.refreshRuntimeReport() },
+                        onOpenSettings: { onRouteSelection(.settings) },
+                        onReviewOnOverview: { onRouteSelection(.overview) }
+                    )
+                    findingsSection
                 }
-                RuntimeInstallView(installer: appHost.runtimeInstaller) {
-                    appHost.refreshRuntimeReport()
+                .frame(maxWidth: WorkbenchSize.Health.contentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(WorkbenchSpacing.pageInset)
+            }
+            .defaultScrollAnchor(.top)
+            .onChange(of: viewport.size.width, initial: true) { _, width in
+                layout = HealthLayout(viewportWidth: width, previous: layout)
+            }
+        }
+        .toolbar {
+            if isRouteActive {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { appHost.setup.presentAgain() } label: {
+                        Label("Setup Assistant…", systemImage: "wand.and.stars")
+                    }
+                    .help("Setup Assistant…")
                 }
             }
-            Button("Run setup assistant again") { appHost.setup.presentAgain() }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-        }
-        .formSection {}
-    }
-
-    @ViewBuilder
-    private var runtimeRecoveryActions: some View {
-        Button("Copy command") {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(appHost.runtimeReport.install, forType: .string)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        Button("Open Settings") { onRouteSelection(.settings) }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-    }
-
-    @ViewBuilder
-    private var agentRow: some View {
-        switch appHost.agentHealth {
-        case .notConfigured:
-            healthRow("mlx-agent", ok: false, message: "Not configured. Set the checkout path in Settings.")
-        case .notUsable(_, _, let reason):
-            healthRow("mlx-agent", ok: false, message: reason)
-        case .notFound(let path, _):
-            healthRow("mlx-agent", ok: false, message: "Not found at \(path).")
-        case .ready(let path, _):
-            healthRow("mlx-agent", ok: true, message: path)
-        }
-    }
-
-    private func runtimeRow(_ label: String, ok: Bool, message: String) -> some View {
-        healthRow(label, ok: ok, message: message)
-    }
-
-    private func healthRow(_ label: String, ok: Bool, message: String) -> some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
-                Label(label, systemImage: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .font(WorkbenchTypography.emphasis)
-                    .symbolRenderingMode(.hierarchical)
-                Spacer()
-                Text(ok ? "Ready" : "Needs setup")
-                    .font(WorkbenchTypography.label)
-                    .foregroundStyle(ok ? WorkbenchColor.success : WorkbenchColor.failure)
-            }
-            Text(message)
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     // MARK: - Findings
 
     private var findingsSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            HStack {
-                SectionTitle(text: "Model inventory findings")
-                Spacer()
-                if checkState != .notRun, !isRunning {
-                    Button("Clear") { checkState = .notRun }
-                        .controlSize(.small)
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                findingsHeader
+                stateBlock
+                ForEach(
+                    HealthDoctor.groups(
+                        findings: checkState.findings,
+                        prunableCount: checkState.pruneCount,
+                        models: appHost.librarySnapshot?.models ?? []
+                    )
+                ) { group in
+                    HealthFindingGroupView(
+                        group: group,
+                        isCompact: layout.compactFindings,
+                        wrapsHeader: layout.wrapsHeader,
+                        onOpenReclaim: { onRouteSelection(.reclaim) }
+                    )
                 }
-                Button(isRunning ? "Checking…" : "Run doctor") { runDoctor() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isRunning)
-            }
-            Text("Checks local model files for incomplete caches, unreadable files, and other inventory issues.")
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
-
-            HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
-                if isRunning {
-                    ProgressView().controlSize(.small)
-                        .accessibilityLabel("Checking inventory")
-                } else {
-                    Image(systemName: checkState.symbol)
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(checkState.isFailed ? WorkbenchColor.failure : checkState.isClean ? WorkbenchColor.success : WorkbenchColor.muted)
-                        .accessibilityHidden(true)
-                }
-                Text(checkState.message)
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(checkState.isFailed ? WorkbenchColor.failure : checkState.isClean ? WorkbenchColor.success : WorkbenchColor.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            }
-
-            if pruneCount > 0 {
-                HStack(spacing: WorkbenchSpacing.sm) {
-                    Text("The doctor found \(pruneCount) prunable cache item(s).")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.warning)
-                    Spacer()
-                    Button("Open Reclaim") { onRouteSelection(.reclaim) }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                }
-            }
-
-            ForEach(findings) { finding in
-                HStack(alignment: .top) {
-                    StatusPill(state: finding.kind ?? "issue")
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                        Text(finding.path).font(WorkbenchTypography.secondary)
-                            .textSelection(.enabled)
-                        if let message = finding.message {
-                            Text(message).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                        }
-                    }
-                    Spacer()
-                    if let size = finding.size {
-                        Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(WorkbenchColor.muted)
-                    }
-                }
-                .padding(.vertical, WorkbenchSpacing.xxxs)
             }
         }
-        .formSection {}
+    }
+
+    @ViewBuilder
+    private var findingsHeader: some View {
+        if layout.wrapsHeader {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                SectionTitle(text: "Model inventory findings")
+                HStack(spacing: WorkbenchSpacing.sm) { findingsControls }
+            }
+        } else {
+            HStack(spacing: WorkbenchSpacing.sm) {
+                SectionTitle(text: "Model inventory findings")
+                Spacer()
+                findingsControls
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var findingsControls: some View {
+        if checkState != .notRun, !isRunning {
+            Button("Clear") {
+                checkState = .notRun
+                lastCheckedAt = nil
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+        }
+        Button(isRunning ? "Checking…" : "Run doctor") { runDoctor() }
+            .buttonStyle(.borderedProminent)
+            .disabled(isRunning)
+    }
+
+    private var stateBlock: some View {
+        let tone = HealthDoctor.tone(checkState).color
+        return HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
+            Image(systemName: checkState.symbol)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(tone)
+                .contentTransition(isRouteActive ? .symbolEffect(.replace) : .identity)
+                .workbenchAnimation(value: checkState.symbol)
+                .livePulse(isRouteActive && isRunning)
+                .accessibilityLabel("Checking inventory")
+                .accessibilityHidden(!isRunning)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                Text(checkState.message)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(tone)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                if case .completed(let result) = checkState {
+                    if checkState.isClean {
+                        ForEach(HealthDoctor.cleanLines(result.summary), id: \.self) { line in
+                            Text(line)
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
+                        }
+                    }
+                    if let checkedAt = lastCheckedAt {
+                        TimelineView(.everyMinute) { context in
+                            Text(HealthDoctor.checkedText(checkedAt, now: context.date))
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func runDoctor() {
@@ -232,6 +205,7 @@ struct DoctorView: View {
         Task {
             do {
                 let result = try await appHost.api.doctor(wiredRoots: [], hfCache: nil)
+                lastCheckedAt = Date()
                 checkState = .completed(result)
             } catch let error as BridgeError {
                 checkState = .failed(error.errorDescription ?? error.localizedDescription)

@@ -487,12 +487,17 @@ final class ReclaimCoordinator: ObservableObject {
         cacheFindings.reduce(0) { $0 + ($1.size ?? 0) }
     }
 
+    /// Wiring drift is not reclaimable; only cache findings count here.
+    static func cacheFindings(in result: DoctorResult) -> [DoctorFinding] {
+        (result.findings ?? []).filter { !$0.isDrift }
+    }
+
     /// Scan for incomplete-cache reclaim candidates (read-only).
     func checkCache() async {
         guard let doctorScan else { return }
         do {
             let result = try await doctorScan()
-            cacheFindings = result.findings ?? []
+            cacheFindings = Self.cacheFindings(in: result)
             cachePruneNote = nil
         } catch {
             lastError = AppHost.render(error)
@@ -526,7 +531,7 @@ final class ReclaimCoordinator: ObservableObject {
             let result = try await doctorPruneConfirm(hash)
             let removed = (result.removed ?? []).filter { $0.removed == true }.count
             cachePruneNote = "Pruned \(removed) cache item(s)."
-            cacheFindings = result.findings ?? []
+            cacheFindings = Self.cacheFindings(in: result)
             cachePruneHash = nil
             return true
         } catch {

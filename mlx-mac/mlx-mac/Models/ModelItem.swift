@@ -333,6 +333,16 @@ struct DoctorResult: Codable, Equatable {
     let preview_hash: String?
     let reclaimedBytes: Int64?
     let removed: [PrunedItem]?
+    var summary: DoctorSummary? = nil
+}
+
+/// The doctor report's own tally: models counts Hugging Face cache repos plus
+/// models listed by running local runtimes.
+struct DoctorSummary: Codable, Equatable {
+    let models: Int?
+    let hfCacheBytes: Int64?
+    let wiredConfigs: Int?
+    let findings: Int?
 }
 
 struct PrunedItem: Codable, Equatable, Identifiable {
@@ -348,8 +358,17 @@ struct DoctorFinding: Codable, Equatable, Identifiable {
     let kind: String?
     let message: String?
     let size: Int64?
+    var model: String? = nil
 
     var id: String { path }
+
+    static let incompleteDownloadCode = "hf_cache_incomplete"
+
+    /// The one owner of "incomplete download": the only finding the prune flow removes.
+    var isIncompleteDownload: Bool { kind == Self.incompleteDownloadCode }
+
+    /// Wiring drift is reported, never pruned.
+    var isDrift: Bool { kind?.hasPrefix("drift_") == true }
 }
 
 // MARK: - AdoptResult
