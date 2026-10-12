@@ -589,8 +589,9 @@ final class WorkbenchReviewUITests: XCTestCase {
             let picker = app.popUpButtons["adopt-role"]
             XCTAssertTrue(picker.waitForExistence(timeout: 10))
             picker.click()
-            picker.typeKey("c", modifierFlags: [])
-            picker.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+            app.typeKey(XCUIKeyboardKey.upArrow, modifierFlags: [])
+            app.typeKey(XCUIKeyboardKey.upArrow, modifierFlags: [])
+            app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
             XCTAssertEqual(picker.value as? String, "Coding")
             let fast = app.checkBoxes["Fast"]
             fast.click()
@@ -626,8 +627,8 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: firstPath))
 
             picker.click()
-            picker.typeKey("r", modifierFlags: [])
-            picker.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+            app.typeKey(XCUIKeyboardKey.downArrow, modifierFlags: [])
+            app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
             XCTAssertEqual(picker.value as? String, "Reasoning")
             XCTAssertTrue(text(containing: repository).exists, "Draft edits retain the recorded recommendation")
             let recordedRole = app.staticTexts["adopt-requested-role"]
