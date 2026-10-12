@@ -397,7 +397,7 @@ final class WorkbenchReviewUITests: XCTestCase {
 
     func testSettingsValidationRecoveryAndSaveFeedback() throws {
         let before = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
-        let configURL = root.appendingPathComponent(String(repeating: "settings-", count: 24) + "config.json")
+        let configURL = root.appendingPathComponent(String(repeating: "settings-", count: 18) + "config.json")
         var initial = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("config.json"))) as? [String: Any])
         initial["future_feature"] = "preserve-me"
         let original = try JSONSerialization.data(withJSONObject: initial)
