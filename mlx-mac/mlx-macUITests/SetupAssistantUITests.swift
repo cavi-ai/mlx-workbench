@@ -453,7 +453,15 @@ final class WorkbenchReviewUITests: XCTestCase {
             } else {
                 let fix = app.buttons["settings-fix-field"]
                 let guidance = app.staticTexts["settings-save-guidance"]
-                XCTAssertTrue(app.windows.firstMatch.frame.contains(guidance.frame), "Feedback must remain inside the window")
+                let windowFrame = app.windows.firstMatch.frame
+                let guidanceFrame = guidance.frame
+                if !windowFrame.contains(guidanceFrame) {
+                    let hierarchy = XCTAttachment(string: app.debugDescription)
+                    hierarchy.name = "Settings feedback layout"
+                    hierarchy.lifetime = .keepAlways
+                    add(hierarchy)
+                }
+                XCTAssertTrue(windowFrame.contains(guidanceFrame), "Feedback \(guidanceFrame) must remain inside window \(windowFrame); Save \(save.frame)")
                 XCTAssertTrue(app.windows.firstMatch.frame.contains(save.frame), "Save must remain inside the window")
                 XCTAssertTrue(fix.isHittable, "Recovery must remain visible in the pinned bar")
                 XCTAssertTrue(feedbackText("settings-save-guidance").contains("Host"))

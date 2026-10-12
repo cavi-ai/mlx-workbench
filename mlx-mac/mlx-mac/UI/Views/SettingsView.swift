@@ -134,9 +134,9 @@ struct SettingsView: View {
     @FocusState private var focusedField: SettingsInputValidation.Field?
 
     var body: some View {
-        ScrollViewReader { proxy in
-            VStack(spacing: 0) {
-                GeometryReader { viewport in
+        GeometryReader { viewport in
+            ScrollViewReader { proxy in
+                VStack(spacing: 0) {
                     ScrollView {
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                             engineSection
@@ -152,16 +152,17 @@ struct SettingsView: View {
                         .padding(WorkbenchSpacing.pageInset)
                     }
                     .defaultScrollAnchor(.top)
-                    .onChange(of: viewport.size.width, initial: true) { _, width in
-                        layout = SettingsLayout(viewportWidth: width, previous: layout)
-                    }
+                    .disabled(isSaving)
+
+                    Divider()
+                        .overlay(WorkbenchColor.hairline)
+
+                    saveBar(proxy: proxy)
                 }
-                .disabled(isSaving)
-
-                Divider()
-                    .overlay(WorkbenchColor.hairline)
-
-                saveBar(proxy: proxy)
+                .frame(width: viewport.size.width, height: viewport.size.height)
+            }
+            .onChange(of: viewport.size.width, initial: true) { _, width in
+                layout = SettingsLayout(viewportWidth: width, previous: layout)
             }
         }
         .onAppear { loadFromConfig() }
