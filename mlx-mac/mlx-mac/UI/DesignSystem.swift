@@ -378,6 +378,33 @@ extension WorkbenchSize {
     }
 }
 
+extension WorkbenchSize {
+    /// Settings route dimensions. Row and ledger thresholds are measured against the
+    /// width inside a group (the offered width less page insets and group padding).
+    enum Settings {
+        static let contentMaxWidth: CGFloat = 720
+        static let groupPadding: CGFloat = WorkbenchSpacing.md
+        static let rowVerticalPadding: CGFloat = WorkbenchSpacing.sm
+        static let hysteresis: CGFloat = Library.tierHysteresis
+
+        static let labelColumn: CGFloat = 168
+        static let labelGap: CGFloat = 12
+        /// A label column, the gap and a control of at least 340.
+        static let rowThreshold: CGFloat = 520
+        static let ledgerThreshold: CGFloat = 480
+        static let figuresWidth: CGFloat = 150
+        static let symbolColumn: CGFloat = Health.symbolColumn
+        static let removeColumn: CGFloat = 20
+        static let pathMinimum: CGFloat = 200
+
+        static let fieldNarrow: CGFloat = 120
+        static let fieldMedium: CGFloat = 200
+        static let bitsPickerWidth: CGFloat = 180
+        static let channelPickerMaximum: CGFloat = 320
+        static let updateLogMaxHeight: CGFloat = 160
+    }
+}
+
 enum WorkbenchRadius {
     /// Small chips and swatches.
     static let chip: CGFloat = 4

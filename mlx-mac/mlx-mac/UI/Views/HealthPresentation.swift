@@ -183,7 +183,7 @@ enum HealthPresentation {
             actions: HealthActions(
                 showsInstall: showsInstall,
                 showsInstallCommand: !report.ok,
-                showsOpenSettings: !report.ok || !agentReady,
+                showsOpenSettings: !agentReady,
                 openSettingsIsProminent: !agentReady && !showsInstall
             )
         )

@@ -318,9 +318,9 @@ struct ServeView: View {
                 case .runtimeMissing:
                     InlineMessage(
                         kind: .error,
-                        text: "Run runtime unavailable: \(presentation.remediation ?? "unknown"). Open Settings after installing the required runtime."
+                        text: "Run runtime unavailable: \(presentation.remediation ?? "unknown"). Health installs the required runtime."
                     )
-                    Button("Open Settings") { onRouteSelection(.settings) }
+                    Button("Open Health") { onRouteSelection(.health) }
                         .buttonStyle(.bordered)
                 default:
                     serveControls(presentation)

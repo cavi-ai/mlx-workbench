@@ -141,7 +141,7 @@ struct ContentView: View {
         case .adopt:
             AdoptView(appHost: appHost)
         case .settings:
-            SettingsView(appHost: appHost)
+            SettingsView(appHost: appHost, onRouteSelection: navigate)
         }
     }
 
