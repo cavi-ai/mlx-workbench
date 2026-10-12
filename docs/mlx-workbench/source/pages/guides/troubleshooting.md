@@ -1,76 +1,81 @@
 # Troubleshooting
 
-## The server does not start
+## The native app does not open
 
-Run `make status`, then inspect `.run/mlx-workbench.log`. A stale PID file is
-reported by `make status`; `make stop` removes stale state without killing an
-unowned listener. If the configured port is occupied, choose another loopback
-port with `make start PORT=9876`.
+Source builds require Xcode: run `make build-swift` and inspect its error.
+The release DMG supplies the app without a source build. Copy the app to
+Applications before opening it. Browser UI and UI-server controls have been
+removed.
 
-## MLX Agent is missing
+## MLX Agent or its runtime is missing
 
-Run `git submodule update --init --recursive`, then `make check`. Confirm that
-`vendor/mlx-agent/scripts/mlx-agent` exists, or set `MLX_AGENT_HOME` to a
-compatible pinned checkout. Do not point the setting at an individual script;
-it expects the checkout root.
+Settings expects a checkout containing `scripts/mlx-agent`. In the matching
+Workbench checkout, run:
 
-## Conversion or serving dependencies are missing
+```bash
+git submodule update --init --recursive
+make install
+make check
+make doctor
+```
 
-Run `make install` and `make doctor`. Confirm that the project `.venv` uses
-Python 3.12. The foreground command `make run` exposes startup diagnostics.
+Distribution apps use that checkout's `.venv` when the engine is its
+`vendor/mlx-agent`. A different engine needs its corresponding runtime.
+Python 3.12 is supported.
 
-## GGUF conversions fail at the quantization step
+## Training or controlled studies cannot load
 
-The converter dequantizes GGUF weights with `transformers` and then invokes
-`mlx_lm.convert`. Two known environment failures:
+Re-run `make install` for the engine's `requirements-lab.txt`.
+Optional inference dependencies install separately through
+**Controlled studies → Install runtime…**. Inspect errors and receipts
+before retrying.
 
-- `accelerate is required when loading a GGUF file` — run `make install`;
-  `accelerate` is part of the convert package set.
-- `ModelArgs.__init__() missing ... 'rope_theta'` — `transformers` 5.x writes
-  nested rope parameters that the pinned `mlx-lm` does not read. The workbench
-  pins `transformers<5`; re-run `make install` to align an older environment.
+## Conversion fails
 
-If conversion still fails, confirm that `mlx_lm.convert` resolves to the
-project `.venv` (`make run` logs the environment). A separately installed
-mlx-lm earlier on `PATH` (for example a uv tool) can shadow the project copy.
+Inspect Activity's error and log. `make install` restores the pinned
+`requirements.txt`, including `accelerate` and `transformers<5`.
+Unsupported architectures, missing backends, and non-servable tasks have
+different remedies; follow the plan's reason instead of forcing execution.
 
-## A GGUF conversion is refused as unsupported
+## An earlier queue cannot be imported
 
-Confirm reads the GGUF header's `general.architecture` before launch and
-refuses an architecture the installed `transformers` cannot load with
-`architecture_unsupported` (HTTP 422), naming the architecture.
+Stop the former Workbench server first. Choose the exact earlier
+`convert-queue.json`; import preserves the source and an exact backup.
+Invalid state is refused. Resolve the error without deleting the only copy
+of queued work. Launched work is reconciled from engine receipts.
 
-## A queue file is invalid
+## A reclaimed model is needed again
 
-Invalid persisted queue state is preserved rather than overwritten. Open
-**Jobs**, note the numbered `convert-queue.json.N.corrupt` recovery path,
-inspect that file, and submit the affected conversions again. Launched work is
-recovered from MLX Agent receipts, not guessed from queue state.
+Use the guarded recovery action in Reclaim or source-cleanup history.
+Preview the original destination; changed items or occupied destinations
+can refuse restore. Files moved to Trash retain disk space until Trash is
+emptied. Rescan Library after recovery.
 
-## A quarantined weight is needed again
+## An update is unavailable or refused
 
-Quarantine moves files; it never deletes them. **Delete permanently** in the
-Quarantine Area moves a quarantined file to the macOS Trash and marks its
-ledger entry `deleted_at`. Read
-`quarantine-ledger.jsonl` in the configured quarantine directory, find the
-recorded `from` and `to` paths, stop active jobs using the file, and move it
-back deliberately. Rescan Models afterward.
+v0.4.0 DMG installations need a manual upgrade: quit the old app and install
+the new DMG. They do not contain the release installer.
 
-## Reported model size is zero or incorrect
+In this release, **Settings → Updates** requires a published DMG with a
+GitHub sha256 digest and a notarized Developer ID signature for MLX Workbench.
+Mounted, translocated, or unwritable installations cannot replace themselves;
+copy the app to Applications first. Replaced apps go to Trash. Keep the
+previous copy until the new app has been checked.
 
-Run the read-only local inventory regression to compare every scanned model's
-reported byte count with its file on disk:
+## Hub-backed operations fail
 
-```sh
+Check network access and Hugging Face Hub credentials. Local serving does not
+prevent discovery and downloads from contacting the Hub.
+
+## Reported model size is incorrect
+
+The opt-in read-only inventory checks compare reported bytes with the
+configured filesystem paths:
+
+```bash
 make test-live-scan
 make test-swift-live-scan
 ```
 
-If it fails, the output identifies the model path. Update the configured
-`mlx-agent` checkout and retry; do not start a conversion until the scan is
-accurate.
-
-## Hub-backed commands fail
-
-Check network access and Hugging Face Hub credentials. Loopback UI operation
-does not prevent child commands from accessing the Hub.
+Resolve a reported mismatch before converting that model. These checks do
+not certify conversion quality or inference.

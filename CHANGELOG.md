@@ -11,7 +11,19 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-10-12
 ### Added
+
+- Controlled studies with frozen recipes, queued generation, blind reviews,
+  durable artifacts, and workspace adoption through the shared mlx-agent engine.
+- Text LoRA dataset validation, reviewed training jobs, adapter verification,
+  and matched base-versus-adapter evaluation history.
+- Compare music generation, synchronized A/B audio and video playback, image
+  inspection, and text-output differences with separate task-quality reviews.
+- Prompt-set creation, copying, editing, reordering, and run-setup reuse in
+  every comparison mode, with owned input copies and explicit save, discard,
+  removal, and revert controls.
 
 - Native app installed from the DMG updates itself from **Settings →
   Updates**: Releases installs the latest published release, Nightly (main)
@@ -26,7 +38,26 @@ and is versioned independently; submodule bumps are recorded here.
   prerelease from `main` if the app's sources changed since the last one;
   signing uses an App Store Connect API key.
 
+### Changed
+
+- MLX Workbench uses the native SwiftUI application. The browser UI, HTTP
+  routes, and UI-server controls have been removed. Earlier conversion queues
+  can be explicitly imported after the old server is stopped; their source
+  and an exact backup are preserved.
+- Native Library, Prepare, Run, Compare, Activity, Reclaim, Clients, Health,
+  Settings, and adoption workflows have updated layouts and action guidance.
+- Vendored mlx-agent advances from `b95e972` to `fe315aa`, adding local music
+  generation, architecture-selected serving backends, Prism support, and
+  shared experiment workflows.
+- v0.4.0 DMG installations require a manual DMG upgrade; this release adds
+  the installed application's release updater for subsequent upgrades.
+
 ### Fixed
+
+- Release DMGs attached before publication are verified and reused instead
+  of rebuilt. Downloads must match the published checksum; the application
+  must match the release version, commit, channel, Developer ID team, and
+  notarization ticket. Conflicting release assets are not overwritten.
 
 - `make install` installs the agent's lab requirements and `make pip-audit` audits them, so the native app's Training screen loads jobs and evaluations.
 - Native app: with no GGUF folders configured, the Library scans the downloads
@@ -378,7 +409,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.5.0
 [0.4.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.4.0
 [0.3.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.2.0

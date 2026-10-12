@@ -9,8 +9,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.4.0"
-TAG = "v0.4.0"
+VERSION = "0.5.0"
+TAG = "v0.5.0"
 SLUG = "mlx-workbench"
 REPOSITORY = "cavi-ai/mlx-workbench"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -326,33 +326,51 @@ class ReleaseDocsContractTests(unittest.TestCase):
             "Python 3.12",
             "make install",
             "make start",
-            "make status",
-            "make stop",
+            "make build-swift",
+            "Settings",
+            "Applications",
             "scripts/mlx-agent",
             "--json",
             "127.0.0.1",
-            "same-origin",
-            "session token",
+            "Developer ID",
+            "sha256",
             "quarantine",
             "Hugging Face Hub",
             "convert-queue.json",
             "not a promise of network isolation",
-            # Hardened runtime surface (P0-P3) must be documented, not just
-            # implemented: the security model page pins these guarantees.
-            "server_busy",
-            "frame-ancestors",
-            "X-Frame-Options",
             "process group",
-            "allowlist",
-            "fsync",
-            "audit.jsonl",
+            "preview",
+            "receipts",
             "requirements.txt",
             "make pip-audit",
-            "Symbolic links are refused",
-            "closed",
+            "symbolic links",
         )
         for phrase in required:
             self.assertIn(phrase, text)
+
+    def test_release_guides_do_not_describe_the_removed_http_application(self):
+        pages = ROOT / "docs" / SLUG / "source" / "pages"
+        text = "\n".join(path.read_text() for path in sorted(pages.rglob("*.md")))
+        for obsolete in (
+            "make status", "make stop", "PORT=9876", "127.0.0.1:8765",
+            "X-MLX-Workbench-Token", "server_busy", "local browser interface",
+        ):
+            self.assertNotIn(obsolete, text)
+
+    def test_documented_make_commands_exist(self):
+        pages = ROOT / "docs" / SLUG / "source" / "pages"
+        text = "\n".join(path.read_text() for path in sorted(pages.rglob("*.md")))
+        result = subprocess.run(
+            ["make", "-pRrn", "-f", str(ROOT / "Makefile"), "help"],
+            cwd=ROOT, check=True, text=True, capture_output=True,
+        )
+        targets = set()
+        for line in result.stdout.splitlines():
+            if re.match(r"^[a-z][a-z0-9_-]*(?: [a-z][a-z0-9_-]*)*:", line):
+                targets.update(line.split(":", 1)[0].split())
+        commands = set(re.findall(r"\bmake ([a-z][a-z0-9_-]*)", text))
+        self.assertTrue(commands)
+        self.assertEqual(commands - targets, set())
 
     def test_release_workflow_runs_full_gate_and_dispatches_after_publication(self):
         workflow = (ROOT / ".github" / "workflows" / "publish-docs.yml").read_text()

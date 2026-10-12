@@ -1,35 +1,37 @@
 # Configuration
 
-The default configuration file is:
+The native application reads `~/.config/mlx-workbench/config.json`.
+`XDG_CONFIG_HOME` changes the configuration base;
+`MLX_WORKBENCH_CONFIG` selects an explicit file. Settings manages model
+roots, output and quarantine paths, runtime, and native options. Saving
+overlays managed values while preserving other persisted keys.
 
-```text
-~/.config/mlx-workbench/config.json
-```
-
-Set `MLX_WORKBENCH_CONFIG` to select another configuration file. Set
-`MLX_AGENT_HOME` to override agent discovery with a checkout containing
-`scripts/mlx-agent`. The Settings tab writes the same schema.
+Common fields:
 
 ```json
 {
-  "gguf_roots": ["/Users/you/.lmstudio/models"],
-  "mlx_roots": [],
+  "gguf_roots": ["/Users/you/models/gguf"],
+  "mlx_roots": ["/Users/you/models/mlx"],
   "output_dir": "/Users/you/models/mlx",
-  "mlx_agent_path": "",
+  "mlx_agent_path": "/Users/you/mlx-workbench/vendor/mlx-agent",
   "quarantine_dir": "/Users/you/.local/share/mlx-workbench/quarantine",
   "q_bits": 4,
-  "signatures": true,
-  "host": "127.0.0.1",
-  "port": 8765
+  "signatures": true
 }
 ```
 
-An empty `mlx_agent_path` selects `MLX_AGENT_HOME`, the pinned vendor
-submodule, or a recognized sibling checkout in that order. Host values are
-limited to `127.0.0.1`, `localhost`, or `::1`.
+An engine path is a checkout containing `scripts/mlx-agent`, not the script
+itself. `MLX_AGENT_HOME` supplies discovery for an unconfigured app.
+Source builds can discover their vendor checkout; distribution builds
+have no embedded checkout path and need explicit configuration.
 
-The default durable queue is
-`$XDG_STATE_HOME/mlx-workbench/convert-queue.json`, falling back to
-`~/.local/state/mlx-workbench/convert-queue.json`. When `--config` selects a
-profile, `convert-queue.json` is stored beside that profile. The quarantine
-default follows `XDG_DATA_HOME` or `~/.local/share/mlx-workbench/quarantine`.
+Native JSON state and receipts use
+`~/Library/Application Support/mlx-workbench`. Controlled experiments
+default to `~/Library/Application Support/mlx-agent/lab`;
+**Workspace…** previews adoption into another destination.
+
+Earlier `convert-queue.json` files remain explicit import sources. They may
+be beside a former configuration profile or under
+`$XDG_STATE_HOME/mlx-workbench` (default `~/.local/state/mlx-workbench`).
+The engine owns the shared conversion queue. Stop the former server before
+importing; the source and an exact backup are preserved.

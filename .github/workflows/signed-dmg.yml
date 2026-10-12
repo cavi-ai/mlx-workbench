@@ -78,8 +78,28 @@ jobs:
           fi
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
 
+      - name: Use an existing release disk image
+        id: existing
+        if: env.CHANNEL == 'release'
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="$(python3 -c 'from mlx_workbench import __version__; print(__version__)')"
+          test "$TAG" = "v$version"
+          name="mlx-workbench-$version.dmg"
+          digest="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq ".assets[] | select(.name == \"$name\") | .digest // \"missing\"")"
+          if [[ -n "$digest" ]]; then
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+            dmg="$RUNNER_TEMP/$name"
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --output "$dmg"
+            test "$(shasum -a 256 "$dmg" | cut -d' ' -f1)" = "${digest#sha256:}"
+            echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Write the App Store Connect API key
-        if: steps.skip.outputs.skip != 'true'
+        if: steps.skip.outputs.skip != 'true' && steps.existing.outputs.dmg == ''
         env:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
@@ -92,7 +112,7 @@ jobs:
           printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
 
       - name: Build, sign and notarize
-        if: steps.skip.outputs.skip != 'true'
+        if: steps.skip.outputs.skip != 'true' && steps.existing.outputs.dmg == ''
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -105,21 +125,27 @@ jobs:
       - name: Verify the disk image
         if: steps.skip.outputs.skip != 'true'
         id: verify
+        env:
+          EXISTING_DMG: ${{ steps.existing.outputs.dmg }}
         run: |
           set -euo pipefail
-          dmg="$(ls .release/*.dmg)"
+          dmg="${EXISTING_DMG:-$(ls .release/*.dmg)}"
           mount="$RUNNER_TEMP/dmg-mount"
           hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount" >/dev/null 2>&1 || true' EXIT
           app="$mount/MLX Workbench.app"
           requirement='identifier "com.cavi.mlxworkbench" and anchor apple generic and certificate leaf[subject.OU] = "'"$DEVELOPER_TEAM"'" and notarized'
           codesign --verify --deep --strict -R "=$requirement" "$app"
           xcrun stapler validate "$app"
           test "$(plutil -extract MLXWorkbenchChannel raw "$app/Contents/Info.plist")" = "$CHANNEL"
+          test "$(plutil -extract MLXWorkbenchCommit raw "$app/Contents/Info.plist")" = "$(git rev-parse --short=12 HEAD)"
+          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$(python3 -c 'from mlx_workbench import __version__; print(__version__)')"
           hdiutil detach "$mount"
+          trap - EXIT
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
 
       - name: Publish
-        if: steps.skip.outputs.skip != 'true'
+        if: steps.skip.outputs.skip != 'true' && steps.existing.outputs.dmg == ''
         env:
           DMG: ${{ steps.verify.outputs.dmg }}
           TAG: ${{ steps.target.outputs.tag }}
@@ -127,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$CHANNEL" == "release" ]]; then
-            gh release upload "$TAG" "$DMG" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" "$DMG" --repo "$GITHUB_REPOSITORY"
           else
             gh release delete nightly --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
             gh release create nightly "$DMG" --prerelease --target "$(git rev-parse HEAD)" \

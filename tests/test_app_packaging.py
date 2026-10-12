@@ -131,7 +131,7 @@ class DmgTargetTests(unittest.TestCase):
             'xcrun stapler validate "$app"',
             "gh release create nightly",
             "--prerelease",
-            'gh release upload "$TAG" "$DMG" --clobber',
+            'gh release upload "$TAG" "$DMG" --repo',
             'capture("^mlx-workbench-nightly-(?<c>[0-9a-f]+)[.]dmg$")',
         ):
             self.assertIn(phrase, workflow)
