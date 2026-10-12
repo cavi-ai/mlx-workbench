@@ -120,6 +120,8 @@
 		TRNVWSB1 /* TrainingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNVWSF1 /* TrainingViews.swift */; };
 		ADPRMDB1 /* AdoptRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADPRMDF1 /* AdoptRemodelTests.swift */; };
 		ADPPRSB1 /* AdoptPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADPPRSF1 /* AdoptPresentation.swift */; };
+		INTPRSB1 /* IntakePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = INTPRSF1 /* IntakePresentation.swift */; };
+		INTRMDB1 /* IntakeRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = INTRMDF1 /* IntakeRemodelTests.swift */; };
 		TRNRMDB1 /* TrainingRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNRMDF1 /* TrainingRemodelTests.swift */; };
 		ACTRMDB1 /* ActivityRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACTRMDF1 /* ActivityRemodelTests.swift */; };
 		RCLRMDB1 /* ReclaimRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCLRMDF1 /* ReclaimRemodelTests.swift */; };
@@ -350,6 +352,8 @@
 		TRNVWSF1 /* TrainingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingViews.swift; path = UI/Views/TrainingViews.swift; sourceTree = "<group>"; };
 		ADPRMDF1 /* AdoptRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdoptRemodelTests.swift; path = AdoptRemodelTests.swift; sourceTree = "<group>"; };
 		ADPPRSF1 /* AdoptPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdoptPresentation.swift; path = UI/Views/AdoptPresentation.swift; sourceTree = "<group>"; };
+		INTPRSF1 /* IntakePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakePresentation.swift; path = UI/Views/IntakePresentation.swift; sourceTree = "<group>"; };
+		INTRMDF1 /* IntakeRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeRemodelTests.swift; path = IntakeRemodelTests.swift; sourceTree = "<group>"; };
 		TRNRMDF1 /* TrainingRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingRemodelTests.swift; path = TrainingRemodelTests.swift; sourceTree = "<group>"; };
 		HLTRMDF1 /* HealthRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HealthRemodelTests.swift; path = HealthRemodelTests.swift; sourceTree = "<group>"; };
 		RCLVWSF1 /* ReclaimViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimViews.swift; path = UI/Views/ReclaimViews.swift; sourceTree = "<group>"; };
@@ -658,6 +662,7 @@
 				LMSVWSF1 /* LMStudioShelfViews.swift */,
 				TRNPRSF1 /* TrainingPresentation.swift */,
 				ADPPRSF1 /* AdoptPresentation.swift */,
+				INTPRSF1 /* IntakePresentation.swift */,
 				TRNVWSF1 /* TrainingViews.swift */,
 				24FREF000013 /* HomeView.swift */,
 				28OVWF01 /* OverviewComponents.swift */,
@@ -705,6 +710,7 @@
 				LMSRMDF1 /* LMStudioRemodelTests.swift */,
 				TRNRMDF1 /* TrainingRemodelTests.swift */,
 				ADPRMDF1 /* AdoptRemodelTests.swift */,
+				INTRMDF1 /* IntakeRemodelTests.swift */,
 				24FREF0LR /* LibraryRemodelTests.swift */,
 				24FREF021 /* ModelLibraryBuilderTests.swift */,
 				24FREF029 /* RecommendationEngineTests.swift */,
@@ -969,6 +975,7 @@
 				LMSVWSB1 /* LMStudioShelfViews.swift in Sources */,
 				TRNPRSB1 /* TrainingPresentation.swift in Sources */,
 				ADPPRSB1 /* AdoptPresentation.swift in Sources */,
+				INTPRSB1 /* IntakePresentation.swift in Sources */,
 				TRNVWSB1 /* TrainingViews.swift in Sources */,
 				24BBLD000013 /* x */,
 				28OVWB01 /* OverviewComponents.swift in Sources */,
@@ -1088,6 +1095,7 @@
 				LMSRMDB1 /* LMStudioRemodelTests.swift in Sources */,
 				TRNRMDB1 /* TrainingRemodelTests.swift in Sources */,
 				ADPRMDB1 /* AdoptRemodelTests.swift in Sources */,
+				INTRMDB1 /* IntakeRemodelTests.swift in Sources */,
 				24BBLD0LR /* LibraryRemodelTests.swift in Sources */,
 				24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */,
 				24BBLD035 /* RecommendationEngineTests.swift in Sources */,

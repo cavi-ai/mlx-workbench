@@ -432,6 +432,14 @@ extension WorkbenchSize {
         static let placeholderRows = 4
     }
 
+    /// Add from Hugging Face window dimensions.
+    enum Intake {
+        static let minWidth: CGFloat = 560
+        static let idealWidth: CGFloat = 720
+        static let minHeight: CGFloat = 480
+        static let idealHeight: CGFloat = 640
+    }
+
     /// Training route dimensions.
     enum Training {
         static let baseModelMenuWidth: CGFloat = 420
