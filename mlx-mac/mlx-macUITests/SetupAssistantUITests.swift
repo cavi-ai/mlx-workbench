@@ -595,9 +595,11 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertEqual(picker.value as? String, "Coding")
             let fast = app.checkBoxes["Fast"]
             fast.click()
+            XCTAssertEqual(fast.value as? Int, 1)
             fast.typeKey(" ", modifierFlags: [])
+            XCTAssertEqual(fast.value as? Int, 0)
             fast.typeKey(" ", modifierFlags: [])
-            XCTAssertEqual(fast.value as? String, "1")
+            XCTAssertEqual(fast.value as? Int, 1)
             app.checkBoxes["Offline"].click()
             let start = app.buttons["adopt-start"]
             let refresh = app.buttons["adopt-refresh"]
@@ -648,7 +650,8 @@ final class WorkbenchReviewUITests: XCTestCase {
 
             try Data().write(to: root.appendingPathComponent("fail-adopt-status"))
             refresh.click()
-            XCTAssertTrue(app.staticTexts["adopt-last-known"].waitForExistence(timeout: 15))
+            XCTAssertTrue(text(containing: "Fixture adoption status failed").waitForExistence(timeout: 15))
+            XCTAssertTrue(app.descendants(matching: .any)["adopt-last-known"].exists)
             XCTAssertTrue(text(containing: repository).exists)
             capture("Adopt-\(appearance)-refresh-error")
             resizeWindow(width: 740, height: 680)
@@ -658,7 +661,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(picker.isHittable)
             capture("Adopt-\(appearance)-recommendation-narrow")
             app.staticTexts["Workflow details"].click()
-            app.scrollViews.firstMatch.swipeUp()
+            app.scrollViews.containing(.staticText, identifier: "adopt-model").firstMatch.swipeUp()
             XCTAssertTrue(app.staticTexts["adopt-state-path"].waitForExistence(timeout: 5))
             capture("Adopt-\(appearance)-details-scrolled")
             app.staticTexts["Workflow details"].click()
