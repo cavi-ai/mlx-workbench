@@ -823,14 +823,17 @@ final class ModelWorkflowCoordinator: ObservableObject {
         if !records.contains(where: { $0.id == workflow.id }), workflow.jobReceipt != nil {
             records.append(workflow)
         }
+        let owners = Job.owners(of: jobs, among: records)
         for record in records {
             guard let receipt = record.jobReceipt, !receipt.isEmpty else { continue }
-            guard let job = jobs.first(where: { $0.receipt == receipt }) else {
+            guard jobs.contains(where: { $0.receipt == receipt }) else {
                 if record.id == workflow.id {
                     preserveLastKnownState(message: "Conversion receipt \(receipt) was not present in authoritative status.")
                 }
                 continue
             }
+            // A finished record keeps its outcome; a job moves only the newest record holding its receipt.
+            guard !record.state.isTerminal, let job = owners[record.id] else { continue }
 
             let agentState = job.state.lowercased()
             switch agentState {
@@ -842,13 +845,12 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 replace(updatedRecord(from: record, state: .running, message: "Conversion running.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
             case "done", "completed", "complete", "succeeded", "success":
                 // Once the scan confirmed the output, later refreshes of the same done job change nothing.
-                guard ![.completed, .verifying, .verified, .verificationFailed].contains(record.state) else { continue }
+                guard record.state != .verifying else { continue }
                 completionRescanRequested = true
                 pendingCompletionRecordIDs.insert(record.id)
                 replace(updatedRecord(from: record, state: .running, message: "Conversion completed; waiting for a fresh library scan to confirm its MLX output.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
             case "failed", "error", "cancelled", "canceled":
                 let message = "Conversion \(job.state)."
-                guard !record.reflects(state: .failed, message: message, errorMessage: message, agentState: job.state) else { continue }
                 replace(updatedRecord(from: record, state: .failed, message: message, errorMessage: .some(message), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
             default:
                 if record.id == workflow.id {
