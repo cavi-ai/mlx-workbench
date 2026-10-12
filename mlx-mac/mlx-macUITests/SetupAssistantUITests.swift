@@ -596,6 +596,9 @@ final class WorkbenchReviewUITests: XCTestCase {
             let fast = app.checkBoxes["Fast"]
             fast.click()
             XCTAssertEqual(fast.value as? Int, 1)
+            // A pointer click does not move macOS keyboard focus to a checkbox.
+            // Move from the role picker through the native key-view order.
+            picker.typeKey(XCUIKeyboardKey.tab, modifierFlags: [])
             fast.typeKey(" ", modifierFlags: [])
             XCTAssertEqual(fast.value as? Int, 0)
             fast.typeKey(" ", modifierFlags: [])
