@@ -111,6 +111,8 @@
 		ACTPRSB1 /* ActivityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACTPRSF1 /* ActivityPresentation.swift */; };
 		ACTVWSB1 /* ActivityViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACTVWSF1 /* ActivityViews.swift */; };
 		FAILNTB1 /* FailureNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAILNTF1 /* FailureNotice.swift */; };
+		DSCPRSB1 /* DiscoverPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCPRSF1 /* DiscoverPresentation.swift */; };
+		DSCVWSB1 /* DiscoverViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCVWSF1 /* DiscoverViews.swift */; };
 		ACTRMDB1 /* ActivityRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACTRMDF1 /* ActivityRemodelTests.swift */; };
 		RCLRMDB1 /* ReclaimRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCLRMDF1 /* ReclaimRemodelTests.swift */; };
 		RCLPRSB1 /* ReclaimPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCLPRSF1 /* ReclaimPresentation.swift */; };
@@ -123,6 +125,7 @@
 		STGPRSB1 /* SettingsPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGPRSF1 /* SettingsPresentation.swift */; };
 		STGPRBB1 /* SettingsDirectoryProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGPRBF1 /* SettingsDirectoryProbe.swift */; };
 		STGRMDB1 /* SettingsRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGRMDF1 /* SettingsRemodelTests.swift */; };
+		DSCRMDB1 /* DiscoverRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCRMDF1 /* DiscoverRemodelTests.swift */; };
 		RCLVWSB1 /* ReclaimViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCLVWSF1 /* ReclaimViews.swift */; };
 		24BBLD0LR /* LibraryRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF0LR /* LibraryRemodelTests.swift */; };
 		24BBLD031 /* CatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF025 /* CatalogClient.swift */; };
@@ -316,6 +319,8 @@
 		ACTPRSF1 /* ActivityPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ActivityPresentation.swift; path = UI/Views/ActivityPresentation.swift; sourceTree = "<group>"; };
 		ACTVWSF1 /* ActivityViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ActivityViews.swift; path = UI/Views/ActivityViews.swift; sourceTree = "<group>"; };
 		FAILNTF1 /* FailureNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FailureNotice.swift; path = UI/Views/FailureNotice.swift; sourceTree = "<group>"; };
+		DSCPRSF1 /* DiscoverPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverPresentation.swift; path = UI/Views/DiscoverPresentation.swift; sourceTree = "<group>"; };
+		DSCVWSF1 /* DiscoverViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverViews.swift; path = UI/Views/DiscoverViews.swift; sourceTree = "<group>"; };
 		ACTRMDF1 /* ActivityRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ActivityRemodelTests.swift; path = ActivityRemodelTests.swift; sourceTree = "<group>"; };
 		RCLRMDF1 /* ReclaimRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimRemodelTests.swift; path = ReclaimRemodelTests.swift; sourceTree = "<group>"; };
 		RCLPRSF1 /* ReclaimPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimPresentation.swift; path = UI/Views/ReclaimPresentation.swift; sourceTree = "<group>"; };
@@ -327,6 +332,7 @@
 		STGPRSF1 /* SettingsPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsPresentation.swift; path = UI/Views/SettingsPresentation.swift; sourceTree = "<group>"; };
 		STGPRBF1 /* SettingsDirectoryProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsDirectoryProbe.swift; path = UI/Views/SettingsDirectoryProbe.swift; sourceTree = "<group>"; };
 		STGRMDF1 /* SettingsRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsRemodelTests.swift; path = SettingsRemodelTests.swift; sourceTree = "<group>"; };
+		DSCRMDF1 /* DiscoverRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverRemodelTests.swift; path = DiscoverRemodelTests.swift; sourceTree = "<group>"; };
 		HLTRMDF1 /* HealthRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HealthRemodelTests.swift; path = HealthRemodelTests.swift; sourceTree = "<group>"; };
 		RCLVWSF1 /* ReclaimViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimViews.swift; path = UI/Views/ReclaimViews.swift; sourceTree = "<group>"; };
 		24FREF0LR /* LibraryRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryRemodelTests.swift; path = LibraryRemodelTests.swift; sourceTree = "<group>"; };
@@ -627,6 +633,8 @@
 				RCLVWSF1 /* ReclaimViews.swift */,
 				ACTVWSF1 /* ActivityViews.swift */,
 				FAILNTF1 /* FailureNotice.swift */,
+				DSCPRSF1 /* DiscoverPresentation.swift */,
+				DSCVWSF1 /* DiscoverViews.swift */,
 				24FREF000013 /* HomeView.swift */,
 				28OVWF01 /* OverviewComponents.swift */,
 				24FREF000014 /* ScoutView.swift */,
@@ -669,6 +677,7 @@
 				HLTRMDF1 /* HealthRemodelTests.swift */,
 				CLNRMDF1 /* ClientsRemodelTests.swift */,
 				STGRMDF1 /* SettingsRemodelTests.swift */,
+				DSCRMDF1 /* DiscoverRemodelTests.swift */,
 				24FREF0LR /* LibraryRemodelTests.swift */,
 				24FREF021 /* ModelLibraryBuilderTests.swift */,
 				24FREF029 /* RecommendationEngineTests.swift */,
@@ -927,6 +936,8 @@
 				RCLVWSB1 /* ReclaimViews.swift in Sources */,
 				ACTVWSB1 /* ActivityViews.swift in Sources */,
 				FAILNTB1 /* FailureNotice.swift in Sources */,
+				DSCPRSB1 /* DiscoverPresentation.swift in Sources */,
+				DSCVWSB1 /* DiscoverViews.swift in Sources */,
 				24BBLD000013 /* x */,
 				28OVWB01 /* OverviewComponents.swift in Sources */,
 				24BBLD000014 /* x */,
@@ -1040,6 +1051,7 @@
 				HLTRMDB1 /* HealthRemodelTests.swift in Sources */,
 				CLNRMDB1 /* ClientsRemodelTests.swift in Sources */,
 				STGRMDB1 /* SettingsRemodelTests.swift in Sources */,
+				DSCRMDB1 /* DiscoverRemodelTests.swift in Sources */,
 				24BBLD0LR /* LibraryRemodelTests.swift in Sources */,
 				24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */,
 				24BBLD035 /* RecommendationEngineTests.swift in Sources */,
