@@ -105,7 +105,12 @@ final class WorkbenchReviewUITests: XCTestCase {
                 sys.exit(2)
             data = {'servers': json.loads((root / 'servers.json').read_text())}
         elif args[:2] == ['lora', 'status']:
-            time.sleep(2 if (root / 'slow-training-status').exists() else 0.3)
+            deadline = time.monotonic() + 20
+            while (root / 'slow-training-status').exists():
+                if time.monotonic() > deadline:
+                    print('Training status fixture was not released.', file=sys.stderr)
+                    sys.exit(2)
+                time.sleep(0.05)
             if (root / 'fail-training-status').exists():
                 print('Fixture training jobs unavailable: receipt directory is unreadable.', file=sys.stderr)
                 sys.exit(2)
@@ -114,7 +119,12 @@ final class WorkbenchReviewUITests: XCTestCase {
             request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
             operation = request['operation']
             if operation == 'training-history':
-                time.sleep(2 if (root / 'slow-training-history').exists() else 0.3)
+                deadline = time.monotonic() + 20
+                while (root / 'slow-training-history').exists():
+                    if time.monotonic() > deadline:
+                        print('Training history fixture was not released.', file=sys.stderr)
+                        sys.exit(2)
+                    time.sleep(0.05)
                 if (root / 'fail-training-history').exists():
                     print('Fixture training evaluations unavailable: history is unreadable.', file=sys.stderr)
                     sys.exit(2)
@@ -428,8 +438,11 @@ final class WorkbenchReviewUITests: XCTestCase {
             let scroll = app.scrollViews.containing(.textField, identifier: "Base model repo id").firstMatch
             func reveal(_ element: XCUIElement) {
                 XCTAssertTrue(element.waitForExistence(timeout: 10))
-                for _ in 0..<10 where !scroll.frame.contains(element.frame) || !element.isHittable {
-                    scroll.scroll(byDeltaX: 0, deltaY: element.frame.minY < scroll.frame.minY ? 280 : -280)
+                for _ in 0..<10 {
+                    let viewport = scroll.frame
+                    let frame = element.frame
+                    if viewport.contains(frame) && element.isHittable { return }
+                    scroll.scroll(byDeltaX: 0, deltaY: frame.minY < viewport.minY ? 280 : -280)
                 }
                 XCTAssertTrue(scroll.frame.contains(element.frame), "Element must be visible before interaction")
                 XCTAssertTrue(element.isHittable)
@@ -529,16 +542,16 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["training-jobs-loading"].waitForExistence(timeout: 5))
             XCTAssertFalse(refreshJobs.isEnabled)
             capture("Training-\(appearance)-jobs-loading")
-            XCTAssertTrue(app.buttons["Compare with base"].waitForExistence(timeout: 15))
             try flag("slow-training-status", false)
+            XCTAssertTrue(app.buttons["Compare with base"].waitForExistence(timeout: 15))
             try flag("slow-training-history", true)
             reveal(refreshHistory); refreshHistory.click()
             XCTAssertTrue(app.staticTexts["training-history-loading"].waitForExistence(timeout: 5))
             XCTAssertFalse(refreshHistory.isEnabled)
             capture("Training-\(appearance)-history-loading")
+            try flag("slow-training-history", false)
             let evaluation = app.buttons["fixture-evaluation"]
             XCTAssertTrue(evaluation.waitForExistence(timeout: 15))
-            try flag("slow-training-history", false)
             reveal(evaluation); evaluation.click()
             XCTAssertTrue(text(containing: "fixture-evaluation-sha256").waitForExistence(timeout: 15))
             reveal(text(containing: "fixture-evaluation-sha256"))
