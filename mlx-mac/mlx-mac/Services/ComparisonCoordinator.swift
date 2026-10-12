@@ -377,7 +377,7 @@ final class ComparisonCoordinator: ObservableObject {
     }
 
     /// Opt-in: import the user's real opencode prompts as a comparison
-    /// prompt set. Returns the created set, or nil when no history exists.
+    /// prompt set. Returns the durably saved set, or nil when import or saving fails.
     /// The button press is the consent; import only happens here.
     @discardableResult
     func importHistory(databasePath: String? = PromptHistoryImport.defaultDatabasePath()) -> PromptSet? {
@@ -396,9 +396,14 @@ final class ComparisonCoordinator: ObservableObject {
             prompts: result.prompts.map { PromptEntry(id: UUID().uuidString, text: $0) },
             origin: .userCreated
         )
-        savePromptSet(set)
-        lastError = nil
-        return set
+        do {
+            try persistNewPromptSet(set)
+            lastError = nil
+            return set
+        } catch {
+            lastError = "Prompts could not be imported: \(AppHost.render(error))"
+            return nil
+        }
     }
 
     /// Start a comparison run. One run at a time; variants are measured

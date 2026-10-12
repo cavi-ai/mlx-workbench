@@ -336,6 +336,10 @@ from `mlx-agent` at runtime.
   unavailable-model list. Active runs retain their existing progress display.
   Guidance performs no I/O, persistence or generation and does not change
   model eligibility, deduplication or filter behavior.
+  OpenCode prompt imports use persistNewPromptSet and return a set only after
+  the durable store accepts it. Failed writes leave the current set selection
+  and existing sets unchanged; lastError reports the failed import and clears
+  after a successful retry. Import never starts a comparison.
   ComparisonPromptRemoveButton is shared by non-music and music prompt cards
   in new/copy, edit and reuse editors. The minus button opens inline Keep
   prompt / Remove prompt choices; only explicit Remove invokes the existing
