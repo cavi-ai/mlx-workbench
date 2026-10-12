@@ -586,6 +586,14 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Adopt-\(appearance)-idle-standard")
             if before { app.terminate(); continue }
 
+            let callsURL = root.appendingPathComponent("calls.jsonl")
+            func calls() throws -> [[String]] {
+                guard FileManager.default.fileExists(atPath: callsURL.path) else { return [] }
+                return try String(contentsOf: callsURL).split(separator: "\n").map {
+                    try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String]
+                }.filter { $0.first == "adopt" }
+            }
+
             let picker = app.popUpButtons["adopt-role"]
             XCTAssertTrue(picker.waitForExistence(timeout: 10))
             picker.click()
@@ -596,17 +604,15 @@ final class WorkbenchReviewUITests: XCTestCase {
             let fast = app.checkBoxes["Fast"]
             fast.click()
             XCTAssertEqual(fast.value as? Int, 1)
-            // A pointer click does not move macOS keyboard focus to a checkbox.
-            // Move from the role picker through the native key-view order.
-            picker.typeKey(XCUIKeyboardKey.tab, modifierFlags: [])
-            fast.typeKey(" ", modifierFlags: [])
-            XCTAssertEqual(fast.value as? Int, 0)
-            fast.typeKey(" ", modifierFlags: [])
-            XCTAssertEqual(fast.value as? Int, 1)
             app.checkBoxes["Offline"].click()
             let start = app.buttons["adopt-start"]
             let refresh = app.buttons["adopt-refresh"]
-            start.click()
+            let callsBeforeHiddenReturn = try calls()
+            select("Library")
+            app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+            select("Adopt")
+            XCTAssertEqual(try calls(), callsBeforeHiddenReturn, "A hidden Adopt route must not handle Return")
+            start.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
             XCTAssertTrue(app.descendants(matching: .any)["adopt-progress"].waitForExistence(timeout: 5))
             XCTAssertFalse(start.isEnabled)
             XCTAssertFalse(picker.isEnabled)
@@ -617,12 +623,6 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Adopt-\(appearance)-recommendation-standard")
             XCTAssertTrue(refresh.isEnabled)
 
-            let callsURL = root.appendingPathComponent("calls.jsonl")
-            func calls() throws -> [[String]] {
-                try String(contentsOf: callsURL).split(separator: "\n").map {
-                    try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String]
-                }.filter { $0.first == "adopt" }
-            }
             let firstStart = try XCTUnwrap(calls().last { $0.prefix(2) == ["adopt", "start"] })
             XCTAssertTrue(firstStart.contains("--fast"))
             XCTAssertTrue(firstStart.contains("--offline"))

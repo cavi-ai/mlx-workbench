@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AdoptView: View {
     @ObservedObject var appHost: AppHost
+    @Environment(\.isRouteActive) private var isRouteActive
 
     private struct WorkflowContext {
         let requestedRole: String
@@ -84,7 +85,8 @@ struct AdoptView: View {
             HStack(spacing: WorkbenchSpacing.sm) {
                 Button("Start") { startAdopt() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isBusy || !WorkbenchAPI.supportedAdoptionRoles.contains(role))
+                    .keyboardShortcut(isRouteActive ? .defaultAction : nil)
+                    .disabled(!isRouteActive || isBusy || !WorkbenchAPI.supportedAdoptionRoles.contains(role))
                     .help("Start adoption in a new state file for the selected role.")
                     .accessibilityIdentifier("adopt-start")
                 Button("Refresh") { refreshStatus() }
@@ -256,7 +258,7 @@ struct AdoptView: View {
     }
 
     private func startAdopt() {
-        guard !isBusy, WorkbenchAPI.supportedAdoptionRoles.contains(role) else { return }
+        guard isRouteActive, !isBusy, WorkbenchAPI.supportedAdoptionRoles.contains(role) else { return }
         let statePath = URL(fileURLWithPath: appHost.configPath)
             .deletingLastPathComponent()
             .appendingPathComponent("adoptions", isDirectory: true)
