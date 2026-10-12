@@ -674,15 +674,23 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Adopt-\(appearance)-recommendation-narrow")
             var outcome: XCUIElement { app.scrollViews.containing(.staticText, identifier: "adopt-model").firstMatch }
             var details: XCUIElement { app.disclosureTriangles["Workflow details"] }
+            func toggleDetails(expectedValue: Int) {
+                let frame = details.frame.intersection(outcome.frame)
+                XCTAssertFalse(frame.isNull)
+                XCTAssertTrue(details.isHittable)
+                let window = app.windows.firstMatch
+                window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                    dx: frame.minX + frame.height / 4 - window.frame.minX,
+                    dy: frame.midY - window.frame.minY
+                )).click()
+                XCTAssertEqual(details.value as? Int, expectedValue)
+            }
             outcome.scroll(byDeltaX: 0, deltaY: -outcome.frame.height)
-            XCTAssertTrue(details.isHittable)
-            details.click()
+            toggleDetails(expectedValue: 1)
             outcome.scroll(byDeltaX: 0, deltaY: -outcome.frame.height)
             XCTAssertTrue(app.staticTexts["adopt-state-path"].waitForExistence(timeout: 5))
             capture("Adopt-\(appearance)-details-scrolled")
-            outcome.scroll(byDeltaX: 0, deltaY: outcome.frame.height)
-            XCTAssertTrue(details.isHittable)
-            details.click()
+            toggleDetails(expectedValue: 0)
             outcome.scroll(byDeltaX: 0, deltaY: outcome.frame.height)
             try FileManager.default.removeItem(at: root.appendingPathComponent("fail-adopt-status"))
             resizeWindow(width: 1024, height: 680)
