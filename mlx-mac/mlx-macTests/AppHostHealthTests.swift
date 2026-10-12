@@ -437,25 +437,6 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertTrue(DiscoveryState.failed("fixture unavailable").message.contains("fixture unavailable"))
     }
 
-    func testLMStudioEmptySuccessHasDirectoryRecoveryInsteadOfInitialInstruction() {
-        let empty = LMStudioScanState.completed([])
-        XCTAssertTrue(empty.message.contains("No GGUF files found"))
-        XCTAssertTrue(empty.message.contains("another source directory"))
-        XCTAssertNotEqual(empty, .notRun)
-        XCTAssertFalse(empty.message.contains("failed"))
-    }
-
-    func testLMStudioExplicitMissingSourceReportsUnavailableDirectory() async {
-        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("missing-mlx-source-\(UUID().uuidString)").path
-        do {
-            _ = try await LMStudioView.discoverLMStudio(sourceDir: missing)
-            XCTFail("An explicit unavailable source must not look like a successful empty scan")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.contains("source directory is unavailable or unreadable"))
-            XCTAssertTrue(error.localizedDescription.contains(missing))
-        }
-    }
-
     private func makeTempDirectory() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-tests-\(UUID().uuidString)")

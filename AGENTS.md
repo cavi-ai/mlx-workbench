@@ -439,6 +439,15 @@ from `mlx-agent` at runtime.
   failed writes retain published reviews and successful retries clear the error.
   Quality awards retain the existing all-entrants-reviewed, same-rubric,
   current-identity/environment guards and share ties.
+- The LM Studio route lists LM Studio's models from the Library snapshot, not a scan of its own.
+  `LMStudioShelfResolver` (off the main actor) reads `downloadsFolder` from `~/.lmstudio/settings.json`
+  (the default and older folders only when settings name none), and states per format whether the last
+  Library scan reaches each folder (skipping hidden and agent-skipped directories, as the agent does);
+  the settings folder alone decides the missing and not-scanned states. `LMStudioShelfPresentation`
+  builds an MLX lane (Run) and a GGUF lane (Prepare, or Run for a converted output) ranked by fit, with
+  split-GGUF sizes summed and projector companions attached as tags; path math is string-only
+  (`LMStudioPathMath`) and the row grouping is built once per snapshot into `LMStudioShelfIndex`; the
+  screen never writes config. `LMStudioShelf` is the only LM Studio view observing `SystemResourceMonitor`.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.
