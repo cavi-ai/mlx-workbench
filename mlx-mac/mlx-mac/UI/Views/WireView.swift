@@ -44,6 +44,7 @@ struct WireView: View {
         runningServers.first { $0.id == selectedServerID }
     }
     private var selectedEndpoint: WireEndpoint? { selectedServer.flatMap { WireEndpoint(server: $0) } }
+    private var hasCurrentClientPreview: Bool { wiring.previewMatches(server: selectedServer) }
     private var wiredTransaction: WiringTransaction? {
         wiring.transactions.first { $0.id == wiredTransactionID && $0.rolledBackAt == nil && !$0.receipts.isEmpty }
     }
@@ -115,6 +116,8 @@ struct WireView: View {
                     }
                 }
                 .frame(width: 340)
+                .accessibilityLabel("Endpoint")
+                .accessibilityIdentifier("client-wiring-endpoint")
                 .disabled(isRefreshingServer || wiring.isCheckingServer || wiring.isApplying)
             }
             if let selectedEndpoint {
@@ -156,6 +159,22 @@ struct WireView: View {
             if !wiring.plans.isEmpty, let hash = wiring.previewHash {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                     SectionTitle(text: "Wiring preview")
+                    if let reviewed = wiring.reviewedEndpoint {
+                        Text(reviewed.modelName)
+                            .font(WorkbenchTypography.emphasis)
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("client-wiring-reviewed-model")
+                        Text(reviewed.baseURL)
+                            .font(WorkbenchTypography.value)
+                            .foregroundStyle(WorkbenchColor.muted)
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("client-wiring-reviewed-endpoint")
+                    }
+                    if !hasCurrentClientPreview {
+                        Label("Endpoint changed. Preview client wiring again.", systemImage: "arrow.clockwise")
+                            .font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.warning)
+                    }
                     ForEach(wiring.plans) { plan in
                         DisclosureGroup {
                             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
@@ -204,7 +223,8 @@ struct WireView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(wiring.isApplying || wiring.isCheckingServer || isRefreshingServer || selectedServer == nil)
+                    .disabled(wiring.isApplying || wiring.isCheckingServer || isRefreshingServer || !hasCurrentClientPreview)
+                    .help(hasCurrentClientPreview ? "Apply the reviewed changes to the listed client configs." : "Preview the selected endpoint before confirming.")
                 }
                 .formSection {}
             }
@@ -257,7 +277,19 @@ struct WireView: View {
 
     @ViewBuilder
     private var wiringActions: some View {
-        Button("Preview client wiring") {
+        if hasCurrentClientPreview {
+            clientPreviewButton.buttonStyle(.bordered)
+        } else {
+            clientPreviewButton.buttonStyle(.borderedProminent)
+        }
+        if wiring.rollbackAvailable {
+            Button("Roll back last wiring") { wiring.rollback() }
+                .buttonStyle(.bordered).disabled(wiring.isApplying || wiring.isCheckingServer || isRefreshingServer)
+        }
+    }
+
+    private var clientPreviewButton: some View {
+        Button(hasCurrentClientPreview ? "Refresh preview" : "Preview client wiring") {
             Task { @MainActor in
                 let chosen = selectedServer
                 await refreshServers()
@@ -268,12 +300,8 @@ struct WireView: View {
                 wiring.preview(server: current)
             }
         }
-        .buttonStyle(.borderedProminent)
         .disabled(selectedEndpoint == nil || isRefreshingServer || wiring.isCheckingServer || wiring.isApplying || wiring.installations.allSatisfy(\.advisoryOnly))
-        if wiring.rollbackAvailable {
-            Button("Roll back last wiring") { wiring.rollback() }
-                .buttonStyle(.bordered).disabled(wiring.isApplying || wiring.isCheckingServer || isRefreshingServer)
-        }
+        .help("Review proposed client config changes before applying them.")
     }
 
     private func refreshServers() async {

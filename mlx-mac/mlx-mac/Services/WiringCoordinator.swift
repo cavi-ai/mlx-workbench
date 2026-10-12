@@ -52,6 +52,15 @@ final class WiringCoordinator: ObservableObject {
     private var previewedEndpoint: WireEndpoint?
     private var previewedServer: ServerInfo?
 
+    /// The endpoint captured with the server-backed preview, independent of current selection.
+    var reviewedEndpoint: WireEndpoint? { previewedServer.flatMap { WireEndpoint(server: $0) } }
+
+    func previewMatches(server: ServerInfo?) -> Bool {
+        guard let server, let reviewed = previewedServer,
+              previewHash != nil, !plans.isEmpty else { return false }
+        return ClientWiringSelection.sameServer(reviewed, server)
+    }
+
     init(
         adapters: [ClientAdapter] = ClientAdapters.all,
         home: URL = URL(fileURLWithPath: NSHomeDirectory()),

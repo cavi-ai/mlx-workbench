@@ -543,6 +543,96 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         XCTAssertTrue(recorder.states.isEmpty)
     }
 
+    func testPreparingToServeAVerifiedRecordKeepsItVerified() async throws {
+        let store = makeStore()
+        let snapshot = snapshotWithEquivalentMLX()
+        let model = try XCTUnwrap(snapshot.models.first)
+        let path = existingMLXPath
+        let started = FlagBox()
+        let host = await makeHost(
+            snapshot: snapshot,
+            onServeStart: { _, _ in await started.set(true) },
+            dynamicServers: {
+                await started.value ? [ServerInfo(path: path, runtime: "mlx_lm", port: 8080, pid: 1, state: "running")] : []
+            },
+            store: store
+        )
+        let recorder = TerminalStateRecorder()
+        let record = makeWorkflow(
+            state: .verified,
+            receipt: "receipt-1",
+            completedModelPath: path,
+            message: "Verification passed. canary ok",
+            reclaimSourceAfterVerification: true
+        )
+
+        await MainActor.run {
+            host.modelWorkflow.onTerminalState = { recorder.states.append($0.state) }
+            host.modelWorkflow.restore(record)
+            host.modelWorkflow.prepareServe(model: model, exactPath: path)
+            XCTAssertEqual(host.modelWorkflow.workflow, record)
+            XCTAssertEqual(host.modelWorkflow.history.first { $0.id == record.id }, record)
+        }
+        XCTAssertTrue(recorder.states.isEmpty)
+        XCTAssertTrue(try store.load().isEmpty)
+
+        await host.modelWorkflow.previewServe(runtime: "mlx_lm", port: 8080)
+        await host.modelWorkflow.confirmServe(runtime: "mlx_lm", port: 8080)
+
+        let served = await MainActor.run { host.modelWorkflow.workflow }
+        XCTAssertEqual(served.serveState, .running)
+        XCTAssertEqual(served.state, .verified)
+        XCTAssertEqual(try store.load().map(\.state), [.verified])
+        XCTAssertTrue(recorder.states.isEmpty)
+    }
+
+    func testPreparingToServeACompletedRecordKeepsItCompleted() async throws {
+        let store = makeStore()
+        let snapshot = snapshotWithEquivalentMLX()
+        let model = try XCTUnwrap(snapshot.models.first)
+        let path = existingMLXPath
+        let host = await makeHost(snapshot: snapshot, store: store)
+        let recorder = TerminalStateRecorder()
+        let record = makeWorkflow(
+            state: .completed,
+            receipt: "receipt-1",
+            completedModelPath: path,
+            message: "Conversion completed and the MLX output was confirmed by a fresh scan."
+        )
+
+        await MainActor.run {
+            host.modelWorkflow.onTerminalState = { recorder.states.append($0.state) }
+            host.modelWorkflow.restore(record)
+            host.modelWorkflow.prepareServe(model: model, exactPath: path)
+            XCTAssertEqual(host.modelWorkflow.workflow, record)
+            XCTAssertEqual(host.modelWorkflow.history.first { $0.id == record.id }, record)
+        }
+        XCTAssertTrue(recorder.states.isEmpty)
+        XCTAssertTrue(try store.load().isEmpty)
+    }
+
+    func testPreparingToServeAnotherModelLeavesTheCurrentConversionAlone() async throws {
+        let store = makeStore()
+        let snapshot = snapshotWithEquivalentMLX()
+        let model = try XCTUnwrap(snapshot.models.first)
+        let path = existingMLXPath
+        let host = await makeHost(snapshot: snapshot, store: store)
+        let recorder = TerminalStateRecorder()
+        let record = makeWorkflow(state: .running, receipt: "receipt-1")
+
+        await MainActor.run {
+            host.modelWorkflow.onTerminalState = { recorder.states.append($0.state) }
+            host.modelWorkflow.restore(record)
+            host.modelWorkflow.prepareServe(model: model)
+            XCTAssertEqual(host.modelWorkflow.history.first { $0.id == record.id }, record)
+            XCTAssertNotEqual(host.modelWorkflow.workflow.id, record.id)
+            XCTAssertEqual(host.modelWorkflow.workflow.state, .completed)
+            XCTAssertEqual(host.modelWorkflow.workflow.completedModelPath, path)
+        }
+        XCTAssertTrue(recorder.states.isEmpty)
+        XCTAssertTrue(try store.load().isEmpty)
+    }
+
     private func makeStore() -> ModelWorkflowStore {
         ModelWorkflowStore(fileURL: temporaryURL("workflows.json"))
     }
@@ -561,9 +651,10 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         message: String? = nil,
         errorMessage: String? = nil,
         agentState: String? = nil,
-        createdAt: Date = Date(timeIntervalSinceReferenceDate: 10)
+        createdAt: Date = Date(timeIntervalSinceReferenceDate: 10),
+        reclaimSourceAfterVerification: Bool? = nil
     ) -> ConversionWorkflow {
-        ConversionWorkflow(
+        var record = ConversionWorkflow(
             id: workflowID(id),
             sourcePath: "/Models/source.gguf",
             sourceModelKey: "source-model",
@@ -580,6 +671,8 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             updatedAt: Date(timeIntervalSinceReferenceDate: 20),
             lastKnownAgentState: agentState
         )
+        record.reclaimSourceAfterVerification = reclaimSourceAfterVerification
+        return record
     }
 
     private func workflowID(_ value: String) -> UUID {
@@ -664,7 +757,8 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         onServeStart: (@Sendable (String, Int?) async -> Void)? = nil,
         servers: [ServerInfo] = [],
         dynamicServers: (@Sendable () async -> [ServerInfo])? = nil,
-        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil
+        scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil,
+        store: ModelWorkflowStore? = nil
     ) async -> AppHost {
         let api = ModelWorkflowAPI(
             convertPreview: { _, _, _ in preview },
@@ -685,7 +779,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             },
             serveStop: { _ in [:] }
         )
-        let store = makeStore()
+        let store = store ?? makeStore()
         return await MainActor.run {
             let host = AppHost(
                 config: Config.defaults(),

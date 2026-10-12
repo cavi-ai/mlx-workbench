@@ -325,6 +325,16 @@ from `mlx-agent` at runtime.
   prefer existing validation errors, then unchanged/pending-name guidance,
   then the action description. They do not change action eligibility or save
   behavior.
+  ComparePresentation.runUnavailableReason is the shared Run comparison
+  eligibility explanation: an active run takes precedence over a missing
+  prompt set, no selected model, or the first unavailable slot. canRun
+  delegates to this model-only decision with prompt presence assumed, while
+  QuantView includes prompt-set presence for both its button and live
+  startRun guard. ComparisonRunButton shares hover/accessibility guidance;
+  ComparisonRunGuidance shows one idle setup message in place of the old
+  unavailable-model list. Active runs retain their existing progress display.
+  Guidance performs no I/O, persistence or generation and does not change
+  model eligibility, deduplication or filter behavior.
   ComparisonPromptRemoveButton is shared by non-music and music prompt cards
   in new/copy, edit and reuse editors. The minus button opens inline Keep
   prompt / Remove prompt choices; only explicit Remove invokes the existing
@@ -597,7 +607,10 @@ from `mlx-agent` at runtime.
   fires once when a workflow enters a terminal state (completed / verified /
   verificationFailed / failed) and AppHost wires it to `AlertNotifier`
   (Notification Center; silent when permission is denied). Restores and
-  launch-loads never notify — only live transitions.
+  launch-loads never notify — only live transitions. `prepareServe` never
+  changes a record's lifecycle: a completed or verified record of the chosen
+  model is served unchanged; any other model gets a separate unsaved serve
+  target, leaving the current record untouched.
 - `SetupCoordinator` provides the **first-launch Setup Assistant**: a guided
   sheet over the app's existing probes (agent health, runtime report,
   discovered roots) with the RuntimeInstaller for one-click runtime setup.

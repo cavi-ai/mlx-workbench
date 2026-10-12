@@ -681,7 +681,8 @@ actor WorkbenchAPI {
                 kind: r.string("code") ?? r.string("kind"),
                 message: r.string("message") ?? r.string("remediation"),
                 size: r.int("size").map(Int64.init)
-                    ?? r.int("bytes").map(Int64.init)
+                    ?? r.int("bytes").map(Int64.init),
+                model: r.string("model") ?? r.string("repo")
             )
         }
     }
@@ -692,7 +693,16 @@ actor WorkbenchAPI {
         let findings = Self.findings(from: plan)
             ?? Self.findings(from: plan, key: "models")
         let candidates = (plan["candidates"] as? [[String: Any]]) ?? []
-        let pruneCount = plan.int("prune_count") ?? (findings?.count ?? candidates.count)
+        let pruneCount = plan.int("prune_count")
+            ?? (findings.map { $0.filter(\.isIncompleteDownload).count } ?? candidates.count)
+        let summary = (plan["summary"] as? [String: Any]).map { raw in
+            DoctorSummary(
+                models: raw.int("models"),
+                hfCacheBytes: raw.int("hf_cache_bytes").map(Int64.init),
+                wiredConfigs: raw.int("wired_configs"),
+                findings: raw.int("findings")
+            )
+        }
         var reclaimed: Int64?
         if let bytes = plan.int("total_bytes") {
             reclaimed = Int64(bytes)
@@ -709,7 +719,8 @@ actor WorkbenchAPI {
             prune_count: pruneCount,
             preview_hash: plan.string("preview_hash"),
             reclaimedBytes: reclaimed,
-            removed: removedItems
+            removed: removedItems,
+            summary: summary
         )
     }
 

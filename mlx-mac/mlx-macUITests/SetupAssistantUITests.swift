@@ -97,6 +97,12 @@ final class WorkbenchReviewUITests: XCTestCase {
                 print('Fixture discovery failed: catalog unavailable.', file=sys.stderr)
                 sys.exit(2)
             data = {'candidates': []}
+        elif args[:2] == ['serve', 'status'] and (root / 'servers.json').exists():
+            time.sleep(2 if (root / 'slow-server-status').exists() else 0.3)
+            if (root / 'fail-server-status').exists():
+                print('Fixture server status failed.', file=sys.stderr)
+                sys.exit(2)
+            data = {'servers': json.loads((root / 'servers.json').read_text())}
         elif args[:2] == ['lora', 'start'] and '--confirm' not in args:
             time.sleep(0.5)
             data = {'preview_hash': 'fixture-training-preview'}
@@ -119,7 +125,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         if let root { try? FileManager.default.removeItem(at: root) }
     }
 
-    private func launch(appearance: String, route: String = "doctor") {
+    private func launch(appearance: String, route: String = "doctor", isolatedHome: Bool = false) {
         if appearance == "Light" || appearance == "Dark" {
             let requested: XCUIDevice.Appearance = appearance == "Dark" ? .dark : .light
             XCUIDevice.shared.appearance = requested
@@ -129,6 +135,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = root.appendingPathComponent("config.json").path
         app.launchEnvironment["XDG_STATE_HOME"] = root.appendingPathComponent("state").path
         app.launchEnvironment["MLX_WORKBENCH_PYTHON"] = "/usr/bin/python3"
+        if isolatedHome { app.launchEnvironment["CFFIXED_USER_HOME"] = root.path }
         // NSArgumentDomain overrides writes to AppStorage. A mutable route
         // must be selected through the UI rather than forced as a launch default.
         app.launchArguments = ["-mlx-workbench.setupCompleted.v1", "YES"]
@@ -317,6 +324,117 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(field.isHittable, label)
         }
         capture("Settings-scrolled-semantic-inputs")
+    }
+
+    func testClientWiringPreviewAndEndpointSelection() throws {
+        let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = Data("{\"theme\":\"dark\"}".utf8)
+        try original.write(to: config)
+        let servers: [[String: Any]] = [
+            ["repo": "org/Qwen-first", "runtime": "mlx_lm", "port": 8766, "pid": 123, "state": "running"],
+            ["repo": "org/Qwen-second", "runtime": "mlx_lm", "port": 8767, "pid": 456, "state": "running"]
+        ]
+        try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
+        let isBeforeCapture = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
+        for appearance in ["Light", "Dark"] {
+            try original.write(to: config)
+            launch(appearance: appearance, isolatedHome: true)
+            select("Clients")
+            // The preserved app exposes its endpoint picker without an AX label.
+            let endpoint = isBeforeCapture ? app.popUpButtons.firstMatch : app.popUpButtons["client-wiring-endpoint"].firstMatch
+            XCTAssertTrue(endpoint.waitForExistence(timeout: 10))
+            endpoint.click()
+            app.menuItems["Qwen-first :8766"].click()
+            XCTAssertFalse(app.buttons["Confirm client wiring"].exists)
+            capture("Clients-\(appearance)-before-preview")
+            app.buttons["Preview client wiring"].click()
+            let confirm = app.buttons["Confirm client wiring"]
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+            XCTAssertTrue(confirm.isEnabled)
+            if isBeforeCapture {
+                XCTAssertEqual(try Data(contentsOf: config), original)
+                capture("Clients-\(appearance)-matching-preview")
+                resizeWindow(width: 740, height: 680)
+                for _ in 0..<6 where !confirm.isHittable {
+                    app.scrollViews.allElementsBoundByIndex.last?.scroll(byDeltaX: 0, deltaY: -220)
+                }
+                XCTAssertTrue(confirm.isHittable)
+                capture("Clients-\(appearance)-matching-preview-narrow")
+                app.terminate()
+                continue
+            }
+            let refreshPreview = app.buttons["Refresh preview"]
+            XCTAssertTrue(refreshPreview.exists)
+            XCTAssertFalse(app.buttons["Preview client wiring"].exists)
+            let reviewedModel = app.staticTexts["client-wiring-reviewed-model"]
+            let reviewedEndpoint = app.staticTexts["client-wiring-reviewed-endpoint"]
+            XCTAssertEqual(reviewedModel.value as? String, "org/Qwen-first")
+            XCTAssertEqual(reviewedEndpoint.value as? String, "http://127.0.0.1:8766/v1")
+            XCTAssertEqual(try Data(contentsOf: config), original, "Preview must not write a client config")
+            capture("Clients-\(appearance)-matching-preview")
+
+            try Data().write(to: root.appendingPathComponent("slow-server-status"))
+            refreshPreview.click()
+            XCTAssertTrue(app.buttons["Refreshing servers…"].waitForExistence(timeout: 10))
+            XCTAssertFalse(confirm.isEnabled)
+            XCTAssertFalse(refreshPreview.isEnabled)
+            capture("Clients-\(appearance)-refreshing-preview")
+            try FileManager.default.removeItem(at: root.appendingPathComponent("slow-server-status"))
+            XCTAssertTrue(app.buttons["Refresh servers"].waitForExistence(timeout: 10))
+            XCTAssertEqual(try Data(contentsOf: config), original, "Refreshing a preview must not write")
+
+            endpoint.click()
+            app.menuItems["Qwen-second :8767"].click()
+            XCTAssertFalse(confirm.isEnabled)
+            XCTAssertEqual(reviewedModel.value as? String, "org/Qwen-first")
+            XCTAssertEqual(reviewedEndpoint.value as? String, "http://127.0.0.1:8766/v1")
+            XCTAssertTrue(text(containing: "Endpoint changed. Preview client wiring again.").exists)
+            capture("Clients-\(appearance)-changed-endpoint")
+            app.buttons["Preview client wiring"].click()
+            XCTAssertTrue(app.buttons["Refresh preview"].waitForExistence(timeout: 10))
+            XCTAssertEqual(reviewedModel.value as? String, "org/Qwen-second")
+            XCTAssertEqual(reviewedEndpoint.value as? String, "http://127.0.0.1:8767/v1")
+            resizeWindow(width: 740, height: 680)
+            for _ in 0..<6 where !confirm.isHittable {
+                app.scrollViews.allElementsBoundByIndex.last?.scroll(byDeltaX: 0, deltaY: -220)
+            }
+            XCTAssertTrue(confirm.isHittable)
+            capture("Clients-\(appearance)-matching-preview-narrow")
+
+            confirm.click()
+            XCTAssertTrue(text(containing: "Wired 1 client(s) to org/Qwen-second.").waitForExistence(timeout: 10))
+            let landed = try JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any]
+            let provider = landed?["provider"] as? [String: Any]
+            let local = provider?["mlx-local"] as? [String: Any]
+            XCTAssertEqual((local?["options"] as? [String: Any])?["baseURL"] as? String, "http://127.0.0.1:8767/v1")
+            XCTAssertEqual(landed?["theme"] as? String, "dark")
+            XCTAssertFalse(confirm.exists)
+            capture("Clients-\(appearance)-confirmed")
+            app.buttons["Roll back last wiring"].click()
+            XCTAssertEqual(try Data(contentsOf: config), original)
+
+            app.buttons["Preview client wiring"].click()
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+            let externalEdit = Data("{\"theme\":\"light\"}".utf8)
+            try externalEdit.write(to: config)
+            confirm.click()
+            XCTAssertTrue(text(containing: "config file changed after the preview").waitForExistence(timeout: 10))
+            XCTAssertEqual(try Data(contentsOf: config), externalEdit, "Failed confirmation must retain external edits")
+            capture("Clients-\(appearance)-confirmation-file-drift")
+
+            app.buttons["Preview client wiring"].click()
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+            try Data().write(to: root.appendingPathComponent("fail-server-status"))
+            app.buttons["Refresh servers"].click()
+            XCTAssertTrue(text(containing: "Server status unavailable.").waitForExistence(timeout: 10))
+            XCTAssertFalse(confirm.isEnabled)
+            XCTAssertEqual(reviewedModel.value as? String, "org/Qwen-second")
+            XCTAssertEqual(try Data(contentsOf: config), externalEdit)
+            capture("Clients-\(appearance)-status-unavailable")
+            try FileManager.default.removeItem(at: root.appendingPathComponent("fail-server-status"))
+            app.terminate()
+        }
     }
 
     func testRouteCaptures() throws {

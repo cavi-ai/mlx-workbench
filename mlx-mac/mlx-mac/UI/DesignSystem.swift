@@ -316,6 +316,34 @@ extension WorkbenchSize {
     }
 }
 
+extension WorkbenchSize {
+    /// Health route dimensions. Fork thresholds are measured against the page
+    /// content width, header and finding thresholds against the width inside a surface.
+    enum Health {
+        static let contentMaxWidth: CGFloat = Run.contentMaxWidth
+        static let surfaceChrome: CGFloat = Run.surfaceChrome
+        static let hysteresis: CGFloat = Library.tierHysteresis
+
+        static let linkMinimum: CGFloat = 224
+        static let symbolColumn: CGFloat = 24
+        static let linkSymbolGap: CGFloat = 10
+        static let forkGap: CGFloat = 12
+        static let connectorWidth: CGFloat = 56
+        static let partGlyph: CGFloat = 14
+
+        /// A foundation column, the connector and a capability column in one row.
+        static let forkRowThreshold: CGFloat = linkMinimum * 2 + connectorWidth + forkGap * 2
+        /// Two links side by side.
+        static let forkStackThreshold: CGFloat = linkMinimum * 2 + forkGap
+
+        static let headerThreshold: CGFloat = 400
+        static let findingThreshold: CGFloat = 400
+        static let findingSymbol: CGFloat = 20
+        static let findingNameMinimum: CGFloat = 240
+        static let findingSizeColumn: CGFloat = 88
+    }
+}
+
 enum WorkbenchRadius {
     /// Small chips and swatches.
     static let chip: CGFloat = 4

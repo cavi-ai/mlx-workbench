@@ -33,6 +33,9 @@ and is versioned independently; submodule bumps are recorded here.
   stays on one line (full path on hover); text outputs take their own height
   up to a scrolling 140 points; the mode's metric leads each cell and the
   other metrics wrap only between metrics; cards of one prompt share a height.
+- Run keeps a verified conversion verified, keeps its status message and posts
+  no completion notification; running another model leaves the current
+  conversion record unchanged.
 - Re-running a conversion to the same destination updates only the new
   attempt: earlier attempts keep their outcome and do not show the new run's
   log, and verification starts once.

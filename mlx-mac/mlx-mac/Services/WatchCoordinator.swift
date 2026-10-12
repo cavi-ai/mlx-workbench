@@ -73,6 +73,11 @@ final class WatchCoordinator: ObservableObject {
         alerts.filter { $0.isActive(at: now()) }
     }
 
+    /// The current environment fingerprint; the mlx-lm version reads the prewarmed cache and is nil until it is warm.
+    var currentFingerprint: EnvironmentFingerprint {
+        fingerprint()
+    }
+
     /// The current environment fingerprint, recorded on verification reports.
     var currentFingerprintDescription: String {
         fingerprint().description

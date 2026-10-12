@@ -97,6 +97,58 @@ final class WiringCoordinatorTests: XCTestCase {
 
     // MARK: - Coordinator flow
 
+    func testReviewedServerPreviewDoesNotFollowSelectionOrAReplacementProcess() async throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = Data("{\"theme\":\"dark\"}".utf8)
+        try original.write(to: config)
+        let coordinator = makeCoordinator(home: home)
+        let server = ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8766, pid: 123,
+                                state: "running", startedAt: "first", receipt: "receipt-a")
+        XCTAssertFalse(coordinator.previewMatches(server: server))
+        coordinator.preview(server: server)
+        XCTAssertTrue(coordinator.previewMatches(server: server))
+        let reviewed = try XCTUnwrap(coordinator.reviewedEndpoint)
+        for changed in [
+            ServerInfo(repo: "org/other", runtime: "mlx_lm", port: 8766, pid: 123, state: "running", startedAt: "first", receipt: "receipt-a"),
+            ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8767, pid: 123, state: "running", startedAt: "first", receipt: "receipt-a"),
+            ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8766, pid: 456, state: "running", startedAt: "first", receipt: "receipt-a"),
+            ServerInfo(repo: "org/model", runtime: "mlx_vlm", port: 8766, pid: 123, state: "running", startedAt: "first", receipt: "receipt-a"),
+            ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8766, pid: 123, state: "running", startedAt: "second", receipt: "receipt-a"),
+            ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8766, pid: 123, state: "running", startedAt: "first", receipt: "receipt-b"),
+            ServerInfo(repo: "org/model", runtime: "mlx_lm", port: 8766, pid: 123, state: "stopped", startedAt: "first", receipt: "receipt-a")
+        ] {
+            XCTAssertFalse(coordinator.previewMatches(server: changed))
+            XCTAssertEqual(coordinator.reviewedEndpoint, reviewed, "Selection must not relabel a frozen preview")
+            let transaction = await coordinator.confirm(server: changed, previewHash: try XCTUnwrap(coordinator.previewHash),
+                currentServers: { [changed] })
+            XCTAssertNil(transaction)
+            XCTAssertEqual(try Data(contentsOf: config), original)
+        }
+        XCTAssertFalse(coordinator.previewMatches(server: nil))
+        let transaction = await coordinator.confirm(server: server, previewHash: try XCTUnwrap(coordinator.previewHash),
+            currentServers: { [] })
+        XCTAssertNil(transaction)
+        XCTAssertNil(coordinator.reviewedEndpoint)
+        XCTAssertFalse(coordinator.previewMatches(server: server))
+        XCTAssertEqual(try Data(contentsOf: config), original)
+    }
+
+    func testEmptyOrEndpointOnlyPreviewCannotEnableServerConfirmation() throws {
+        let home = try makeHome()
+        let coordinator = makeCoordinator(home: home)
+        let server = ServerInfo(repo: "org/model", port: 8766, pid: 123, state: "running")
+        coordinator.preview(server: server)
+        XCTAssertTrue(coordinator.plans.isEmpty)
+        XCTAssertFalse(coordinator.previewMatches(server: server))
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".config/opencode"), withIntermediateDirectories: true)
+        coordinator.preview(endpoint: try XCTUnwrap(WireEndpoint(server: server)))
+        XCTAssertFalse(coordinator.plans.isEmpty)
+        XCTAssertNil(coordinator.reviewedEndpoint)
+        XCTAssertFalse(coordinator.previewMatches(server: server))
+    }
+
     func testLocalDirectoryServerCanBeWiredAndRolledBack() async throws {
         let home = try makeHome()
         let config = home.appendingPathComponent(".config/opencode/opencode.jsonc")

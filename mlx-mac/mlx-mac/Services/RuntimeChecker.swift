@@ -12,19 +12,25 @@ struct RuntimeChecker {
     private static let installHint = "make install"
 
     static func report() -> RuntimeReport {
-        let convert = checkConvert()
-        let serve = checkServe()
+        report(python: pythonPath())
+    }
+
+    /// Every probe runs under `python`, and the report records the same interpreter.
+    static func report(python: URL?) -> RuntimeReport {
+        let convert = checkConvert(python: python)
+        let serve = checkServe(python: python)
         return RuntimeReport(
             convert: convert,
             serve: serve,
             install: installHint,
-            ok: convert.ok && serve.ok
+            ok: convert.ok && serve.ok,
+            python: python?.path
         )
     }
 
-    private static func checkConvert() -> ConvertStatus {
-        let modules = modulePresence(convertModules)
-        let executables = executablePresence(convertExecutables)
+    private static func checkConvert(python: URL?) -> ConvertStatus {
+        let modules = modulePresence(convertModules, python: python)
+        let executables = executablePresence(convertExecutables, python: python)
         let missingModules = convertModules.filter { modules[$0] != true }
         let missingExecutables = convertExecutables.filter { executables[$0] != true }
         let ok = missingModules.isEmpty && missingExecutables.isEmpty
@@ -50,8 +56,8 @@ struct RuntimeChecker {
         )
     }
 
-    private static func checkServe() -> ServeStatus {
-        let executables = executablePresence(serveExecutables)
+    private static func checkServe(python: URL?) -> ServeStatus {
+        let executables = executablePresence(serveExecutables, python: python)
         let missing = serveExecutables.filter { executables[$0] != true }
         let ok = missing.isEmpty
         let message = ok
@@ -69,34 +75,34 @@ struct RuntimeChecker {
 
     // MARK: - Probes
 
-    private static func modulePresence(_ names: [String]) -> [String: Bool] {
+    private static func modulePresence(_ names: [String], python: URL?) -> [String: Bool] {
         guard !names.isEmpty else { return [:] }
         var result: [String: Bool] = [:]
         for name in names {
-            result[name] = pythonModulePresent(name)
+            result[name] = pythonModulePresent(name, python: python)
         }
         return result
     }
 
-    private static func pythonModulePresent(_ name: String) -> Bool {
+    private static func pythonModulePresent(_ name: String, python: URL?) -> Bool {
         let script = """
         import importlib.util
         print(importlib.util.find_spec("\(name)") is not None)
         """
-        guard let output = pythonOutput(script) else { return false }
+        guard let output = pythonOutput(script, python: python) else { return false }
         return output.trimmingCharacters(in: .whitespacesAndNewlines) == "True"
     }
 
-    private static func executablePresence(_ names: [String]) -> [String: Bool] {
+    private static func executablePresence(_ names: [String], python: URL?) -> [String: Bool] {
         var result: [String: Bool] = [:]
         for name in names {
-            result[name] = isExecutableOnPath(name) || isPythonModuleExecutable(name)
+            result[name] = isExecutableOnPath(name) || isPythonModuleExecutable(name, python: python)
         }
         return result
     }
 
     /// Look for a `python -m ...` style entry point the way mlx_lm ships it.
-    private static func isPythonModuleExecutable(_ name: String) -> Bool {
+    private static func isPythonModuleExecutable(_ name: String, python: URL?) -> Bool {
         let parts = name.split(separator: ".")
         guard parts.count == 2 else { return false }
         let module = "\(parts[0]).\(parts[1])"
@@ -108,7 +114,7 @@ struct RuntimeChecker {
         except Exception:
             print(False)
         """
-        guard let output = pythonOutput(script) else { return false }
+        guard let output = pythonOutput(script, python: python) else { return false }
         return output.trimmingCharacters(in: .whitespacesAndNewlines) == "True"
     }
 
@@ -119,8 +125,8 @@ struct RuntimeChecker {
         }
     }
 
-    private static func pythonOutput(_ script: String) -> String? {
-        guard let python = pythonPath() else { return nil }
+    private static func pythonOutput(_ script: String, python: URL?) -> String? {
+        guard let python else { return nil }
         let process = Process()
         process.executableURL = python
         process.arguments = ["-c", script]
@@ -156,6 +162,8 @@ struct RuntimeReport: Codable, Equatable {
     let serve: ServeStatus
     let install: String
     let ok: Bool
+    /// The interpreter every probe in this report ran under; nil when none resolved.
+    var python: String? = nil
 }
 
 struct ConvertStatus: Codable, Equatable {
