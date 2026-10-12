@@ -81,6 +81,41 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(result.generationTokens, 4)
     }
 
+    func testABlockedWatchDiffDoesNotHoldServeStatus() async throws {
+        let calls = AgentCallRecorder()
+        let release = DispatchSemaphore(value: 0)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture/agent", receiptDirectory: "/fixture/receipts") { path, argv, isScout, timeout in
+            calls.record(path: path, argv: argv, isScout: isScout, timeout: timeout)
+            guard argv.first == "watch" else { return ["servers": []] }
+            calls.mark(.started)
+            _ = release.wait(timeout: .now() + 5)
+            calls.mark(.finished)
+            return ["findings": []]
+        }
+        defer { release.signal() }
+
+        let watch = Task { try await api.raw(["watch", "diff", "--state-dir", "/fixture/watch"], isScout: true) }
+        for _ in 0..<500 where !calls.has(.started) {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertTrue(calls.has(.started), "watch diff reached the runner")
+
+        let servers = try await api.serveStatus()
+        XCTAssertFalse(calls.has(.finished), "serve status returned while watch diff was still blocked")
+        XCTAssertTrue(servers.isEmpty)
+
+        release.signal()
+        let findings = try await watch.value
+        XCTAssertNotNil(findings["findings"])
+        XCTAssertEqual(calls.values.map(\.argv), [
+            ["watch", "diff", "--state-dir", "/fixture/watch"],
+            ["serve", "status", "--receipts-dir", "/fixture/receipts"],
+        ])
+        XCTAssertEqual(calls.values.map(\.isScout), [true, false])
+        XCTAssertEqual(calls.values.map(\.timeout), [nil, nil])
+        XCTAssertEqual(Set(calls.values.map(\.path)), ["/fixture/agent"])
+    }
+
     func testConfiguredScanMatchesFilesystemBytesWhenEnabled() async throws {
 #if !MLX_WORKBENCH_LIVE_SCAN
         throw XCTSkip("run make test-swift-live-scan to validate the configured local inventory")
@@ -415,6 +450,40 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         let url = directory.appendingPathComponent(name).appendingPathExtension("json")
         let data = try Data(contentsOf: url)
         return try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    }
+}
+
+/// Agent invocations and blocked-call stages seen by an injected runner.
+private final class AgentCallRecorder: @unchecked Sendable {
+    enum Stage { case started, finished }
+    struct Call { let path: String; let argv: [String]; let isScout: Bool; let timeout: TimeInterval? }
+
+    private let lock = NSLock()
+    private var calls: [Call] = []
+    private var stages: Set<Stage> = []
+
+    var values: [Call] {
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
+    }
+
+    func record(path: String, argv: [String], isScout: Bool, timeout: TimeInterval?) {
+        lock.lock()
+        calls.append(Call(path: path, argv: argv, isScout: isScout, timeout: timeout))
+        lock.unlock()
+    }
+
+    func mark(_ stage: Stage) {
+        lock.lock()
+        stages.insert(stage)
+        lock.unlock()
+    }
+
+    func has(_ stage: Stage) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stages.contains(stage)
     }
 }
 
