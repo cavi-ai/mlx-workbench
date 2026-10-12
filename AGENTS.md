@@ -480,7 +480,9 @@ from `mlx-agent` at runtime.
   config with per-file backups, drift re-checks, and rollback. Rollback
   restores backups and moves configs the wiring created to the Trash only
   while they still hold the written contents (receipt `createdFileSHA256`;
-  receipts without it keep created files). Client write
+  receipts without it keep created files). The opencode adapter writes
+  opencode's `$schema` when missing or empty, since opencode rewrites a loaded
+  config without one. Client write
   targets are a fixed allowlist of well-known config paths.
   Model guidance's **Wire into clients** hands off a one-shot model/port
   request. Clients preselects only a matching running endpoint, supports repo

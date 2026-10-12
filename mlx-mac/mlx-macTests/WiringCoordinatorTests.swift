@@ -53,6 +53,28 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertEqual(parsed["model"] as? String, "mlx-local/qwen3-8b")
     }
 
+    func testOpencodePlanAddsSchemaOnlyWhenMissingOrEmpty() throws {
+        for before in [nil, "{\"$schema\": \"\"}"] {
+            let parsed = try JSONCTolerant.parse(ClientAdapters.opencode.plan(before, endpoint))
+            XCTAssertEqual(parsed["$schema"] as? String, "https://opencode.ai/config.json")
+        }
+        let custom = try JSONCTolerant.parse(
+            ClientAdapters.opencode.plan("{\"$schema\": \"https://example.com/opencode.json\"}", endpoint))
+        XCTAssertEqual(custom["$schema"] as? String, "https://example.com/opencode.json")
+        let null = try JSONCTolerant.parse(ClientAdapters.opencode.plan("{\"$schema\": null}", endpoint))
+        XCTAssertTrue(null["$schema"] is NSNull)
+    }
+
+    func testOpencodeLoadMirrorInsertsSchemaOnlyWhenMissing() throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent("opencode.jsonc")
+        try "{\"a\":1}".write(to: config, atomically: true, encoding: .utf8)
+        try loadAsOpencode(config)
+        XCTAssertEqual(try String(contentsOf: config), "{\n  \"$schema\": \"https://opencode.ai/config.json\",\"a\":1}")
+        try loadAsOpencode(config)
+        XCTAssertEqual(try String(contentsOf: config), "{\n  \"$schema\": \"https://opencode.ai/config.json\",\"a\":1}")
+    }
+
     func testContinuePlanReplacesSameTitledEntry() throws {
         let before = "{\"models\": [{\"title\": \"qwen3-8b\", \"provider\": \"openai\", \"model\": \"old\", \"apiBase\": \"http://old\"}]}"
         let after = try ClientAdapters.continue_.plan(before, endpoint)
@@ -452,6 +474,31 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertFalse(reloaded.rollbackAvailable)
     }
 
+    func testRollbackMovesCreatedOpencodeConfigToTrashAfterOpencodeLoadsIt() throws {
+        let home = try makeHome()
+        let directory = home.appendingPathComponent(".config/opencode")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let existing = directory.appendingPathComponent("opencode.json")
+        let original = "{\"theme\": \"dark\"}"
+        try original.write(to: existing, atomically: true, encoding: .utf8)
+        let created = directory.appendingPathComponent("opencode.jsonc")
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint)
+        XCTAssertEqual(coordinator.plans.map(\.configPath), [created.path])
+        XCTAssertNotNil(coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash)))
+        let written = try String(contentsOf: created)
+        try loadAsOpencode(created)
+        XCTAssertEqual(try String(contentsOf: created), written)
+
+        coordinator.rollback()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: created.path))
+        XCTAssertEqual(try String(contentsOf: trash(home).appendingPathComponent("opencode.jsonc")), written)
+        XCTAssertEqual(try String(contentsOf: existing), original)
+        XCTAssertEqual(coordinator.transactions.first?.failures, [])
+        XCTAssertNil(coordinator.lastError)
+    }
+
     func testRollbackKeepsCreatedConfigWhenTrashFails() throws {
         let home = try makeHome()
         let config = home.appendingPathComponent(".config/zed/settings.json")
@@ -667,6 +714,15 @@ final class WiringCoordinatorTests: XCTestCase {
                 try FileManager.default.moveItem(at: url, to: trashDirectory.appendingPathComponent(url.lastPathComponent))
             }
         )
+    }
+
+    /// Mirrors opencode loading a config: one without a `$schema` is rewritten with it inserted first.
+    private func loadAsOpencode(_ url: URL) throws {
+        let text = try String(contentsOf: url, encoding: .utf8)
+        guard (try JSONCTolerant.parse(text)["$schema"] as? String ?? "").isEmpty,
+              let brace = text.range(of: #"^\s*\{"#, options: .regularExpression) else { return }
+        try text.replacingCharacters(in: brace, with: "{\n  \"$schema\": \"https://opencode.ai/config.json\",")
+            .write(to: url, atomically: true, encoding: .utf8)
     }
 
     /// Stands in for the macOS Trash so tests never touch the user's real one.
