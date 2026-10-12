@@ -594,7 +594,7 @@ final class WorkbenchReviewUITests: XCTestCase {
                 }.filter { $0.first == "adopt" }
             }
 
-            let picker = app.popUpButtons["adopt-role"]
+            var picker: XCUIElement { app.popUpButtons["adopt-role"] }
             XCTAssertTrue(picker.waitForExistence(timeout: 10))
             picker.click()
             let coding = picker.menuItems["Coding"]
@@ -605,8 +605,8 @@ final class WorkbenchReviewUITests: XCTestCase {
             fast.click()
             XCTAssertEqual(fast.value as? Int, 1)
             app.checkBoxes["Offline"].click()
-            let start = app.buttons["adopt-start"]
-            let refresh = app.buttons["adopt-refresh"]
+            var start: XCUIElement { app.buttons["adopt-start"] }
+            var refresh: XCUIElement { app.buttons["adopt-refresh"] }
             let callsBeforeHiddenReturn = try calls()
             select("Library")
             app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
