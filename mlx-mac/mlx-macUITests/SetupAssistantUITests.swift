@@ -556,7 +556,18 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(text(containing: "fixture-evaluation-sha256").waitForExistence(timeout: 15))
             reveal(text(containing: "fixture-evaluation-sha256"))
             let report = app.disclosureTriangles["Evaluation outputs and frozen recipe"]
-            if report.exists { reveal(report); report.click() }
+            if report.exists {
+                reveal(report)
+                // Native disclosure frames include the label; click the leading arrow.
+                let window = app.windows.firstMatch
+                let frame = report.frame.intersection(scroll.frame)
+                XCTAssertFalse(frame.isNull)
+                window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                    dx: frame.minX + frame.height / 4 - window.frame.minX,
+                    dy: frame.midY - window.frame.minY
+                )).click()
+                XCTAssertEqual(report.value as? Int, 1)
+            }
             else {
                 let disclosure = app.buttons["Evaluation outputs and frozen recipe"]
                 reveal(disclosure); disclosure.click()
