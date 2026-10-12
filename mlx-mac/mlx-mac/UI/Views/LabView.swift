@@ -16,44 +16,45 @@ struct LabPanel: View {
         WorkbenchCard("Controlled studies", systemImage: "square.split.2x1") {
             Text("Compare one change at a time, then review the clips without seeing candidate identities.")
                 .foregroundStyle(WorkbenchColor.muted)
-            HStack {
-                Button("New experiment…") { authoring = true }.buttonStyle(.borderedProminent)
-                Button("Import workspace…") { adopting = true }
-                Button("Recover interrupted jobs") { Task { await lab.recover() } }.disabled(lab.runningJobID != nil)
-                Button("Refresh") { Task { await lab.refresh() } }.disabled(lab.isRefreshing)
-                if lab.isRefreshing { ProgressView().controlSize(.small) }
-            }
-            HStack {
-                Text(lab.store.path).font(WorkbenchTypography.metadata).textSelection(.enabled)
-                Spacer()
-                Button("Workspace…") { Task { await lab.chooseStore() } }.disabled(lab.runningJobID != nil)
-            }
+            LabHeaderView(
+                storePath: LabPresentation.storePath(lab.store.path),
+                isRefreshing: lab.isRefreshing,
+                canChangeWorkspace: lab.runningJobID == nil,
+                actions: LabHeaderActions(
+                    create: { authoring = true },
+                    importWorkspace: { adopting = true },
+                    recover: { Task { await lab.recover() } },
+                    refresh: { Task { await lab.refresh() } },
+                    chooseWorkspace: { Task { await lab.chooseStore() } },
+                    reveal: { NSWorkspace.shared.activateFileViewerSelecting([lab.store]) },
+                    copyPath: {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(lab.store.path, forType: .string)
+                    }
+                )
+            )
             DisclosureGroup("Runtime setup") {
-                Text("Study tools are lightweight. Video generation adds the optional Torch runtime.").font(WorkbenchTypography.metadata)
-                HStack {
-                    Button("Install study tools") { Task { await installer.install(labAgentPath: agentPath); await lab.refresh() } }
-                    Button("Install video runtime") { Task { await installer.install(labAgentPath: agentPath, inference: true); await lab.refresh() } }
-                }.disabled(!installer.canInstall)
-                Text(installer.summary).font(WorkbenchTypography.metadata)
-                ForEach(Array(installer.logTail.suffix(5).enumerated()), id: \.offset) { _, line in
-                    Text(line).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("Study tools are lightweight. Video generation adds the optional Torch runtime.")
+                        .font(WorkbenchTypography.metadata)
+                        .foregroundStyle(WorkbenchColor.muted)
+                    HStack {
+                        Button("Install study tools") { Task { await installer.install(labAgentPath: agentPath); await lab.refresh() } }
+                        Button("Install video runtime") { Task { await installer.install(labAgentPath: agentPath, inference: true); await lab.refresh() } }
+                    }.disabled(!installer.canInstall)
+                    if !installer.summary.isEmpty {
+                        Text(installer.summary).font(WorkbenchTypography.metadata)
+                    }
+                    if !installer.logTail.isEmpty {
+                        TrainingRawDisclosure(title: "Installer log", text: installer.logTail.suffix(20).joined(separator: "\n"))
+                    }
                 }
             }
             ErrorBanner(text: lab.error)
             if let notice = lab.notice { Text(notice).font(WorkbenchTypography.secondary) }
             if let history = lab.snapshot.history {
-                if history.items.isEmpty { Text("No controlled experiments in this workspace.").foregroundStyle(WorkbenchColor.muted) }
-                ForEach(history.items) { item in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(item.id).font(WorkbenchTypography.compactValue)
-                            Text(item.states.joined(separator: " · ")).font(WorkbenchTypography.secondary)
-                        }
-                        Spacer()
-                        Text(item.sealed ? "Identity sealed" : "Reviewed").foregroundStyle(WorkbenchColor.muted)
-                        Button("Blind review…") { Task { await openReview(item.id, reviewed: !item.sealed) } }
-                            .disabled(isOpeningReview || !item.states.allSatisfy { $0 == "completed" })
-                    }
+                LabExperimentList(rows: history.items.map(LabExperimentRow.init), isOpeningReview: isOpeningReview) { row in
+                    Task { await openReview(row.id, reviewed: row.reviewed) }
                 }
             }
             AdaptiveStudiesPanel(lab: lab)
@@ -77,25 +78,153 @@ struct LabPanel: View {
     }
 }
 
-struct LabJobRows: View {
-    @ObservedObject var lab: LabCoordinator
+// MARK: - Header
+
+struct LabHeaderActions {
+    let create: () -> Void
+    let importWorkspace: () -> Void
+    let recover: () -> Void
+    let refresh: () -> Void
+    let chooseWorkspace: () -> Void
+    let reveal: () -> Void
+    let copyPath: () -> Void
+}
+
+/// One primary action, the rest in a menu, and the workspace as a short path.
+struct LabHeaderView: View {
+    let storePath: String
+    let isRefreshing: Bool
+    let canChangeWorkspace: Bool
+    let actions: LabHeaderActions
+
     var body: some View {
-        ForEach(lab.snapshot.queue ?? []) { job in
-            HStack {
-                Text(job.id).font(WorkbenchTypography.compactValue)
-                Text(job.state).foregroundStyle(WorkbenchColor.muted)
-                Spacer()
-                if job.state == "queued" {
-                    Button("Run") { Task { await lab.run(job) } }.disabled(lab.runningJobID != nil)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            HStack(spacing: WorkbenchSpacing.xs) {
+                Button("New experiment…", action: actions.create).buttonStyle(.borderedProminent)
+                Menu {
+                    Button("Import workspace…", action: actions.importWorkspace)
+                    Button("Recover interrupted jobs", action: actions.recover).disabled(!canChangeWorkspace)
+                    Button("Refresh", action: actions.refresh).disabled(isRefreshing)
+                    Divider()
+                    Button("Workspace…", action: actions.chooseWorkspace).disabled(!canChangeWorkspace)
+                } label: {
+                    Label("More actions", systemImage: "ellipsis.circle")
                 }
-                if !["completed", "failed", "cancelled"].contains(job.state) {
-                    Button("Cancel") { Task { await lab.cancel(job) } }
-                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                if isRefreshing { ProgressView().controlSize(.small) }
             }
-            if let error = job.error { Text(error).foregroundStyle(WorkbenchColor.failure).font(WorkbenchTypography.metadata) }
+            HStack(spacing: WorkbenchSpacing.xxs) {
+                Image(systemName: "folder").foregroundStyle(WorkbenchColor.muted)
+                Text(storePath)
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(storePath)
+                    .contextMenu {
+                        Button("Reveal in Finder", action: actions.reveal)
+                        Button("Copy Path", action: actions.copyPath)
+                    }
+            }
+            .frame(maxWidth: WorkbenchSize.Lab.storePathMaxWidth, alignment: .leading)
         }
     }
 }
+
+// MARK: - Experiments
+
+struct LabExperimentList: View {
+    let rows: [LabExperimentRow]
+    let isOpeningReview: Bool
+    let review: (LabExperimentRow) -> Void
+
+    var body: some View {
+        if rows.isEmpty {
+            Text(LabPresentation.emptySentence)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+        }
+        ForEach(rows) { row in
+            Divider()
+            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                    Text(row.title).font(WorkbenchTypography.emphasis)
+                    Text(row.evidenceTag)
+                        .font(WorkbenchTypography.metadata)
+                        .foregroundStyle(WorkbenchColor.muted)
+                }
+                .help(row.id)
+                .contextMenu { Button("Copy Experiment ID") { copy(row.id) } }
+                Spacer(minLength: WorkbenchSpacing.xs)
+                StatusBadge(status: row.status)
+                Button("Blind review…") { review(row) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("Blind review…")
+                    .disabled(isOpeningReview || !row.canReview)
+            }
+        }
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+// MARK: - Jobs
+
+struct LabJobRowView: View {
+    let row: LabJobRow
+    let runDisabled: Bool
+    let run: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Text("Job " + row.shortID)
+                    .font(WorkbenchTypography.emphasis)
+                    .help(row.id)
+                StatusBadge(status: row.status)
+                Spacer(minLength: WorkbenchSpacing.xs)
+                if row.canRun {
+                    Button("Run", action: run).buttonStyle(.bordered).controlSize(.small).disabled(runDisabled)
+                }
+                if row.canCancel {
+                    Button("Cancel", action: cancel).buttonStyle(.bordered).controlSize(.small)
+                }
+            }
+            if let failure = row.failure {
+                Label(failure, systemImage: "xmark.octagon.fill")
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.failure)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+struct LabJobRows: View {
+    @ObservedObject var lab: LabCoordinator
+    var body: some View {
+        ForEach((lab.snapshot.queue ?? []).map(LabJobRow.init)) { row in
+            LabJobRowView(row: row, runDisabled: lab.runningJobID != nil,
+                          run: { run(row.id) }, cancel: { cancel(row.id) })
+        }
+    }
+    private func run(_ id: String) {
+        guard let job = lab.snapshot.queue?.first(where: { $0.id == id }) else { return }
+        Task { await lab.run(job) }
+    }
+    private func cancel(_ id: String) {
+        guard let job = lab.snapshot.queue?.first(where: { $0.id == id }) else { return }
+        Task { await lab.cancel(job) }
+    }
+}
+
+// MARK: - Author sheet
 
 struct LabAuthorSheet: View {
     @ObservedObject var lab: LabCoordinator
@@ -126,7 +255,7 @@ struct LabAuthorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text("New controlled experiment").font(WorkbenchTypography.title)
+            Text("New controlled experiment").font(WorkbenchTypography.section)
             Button(recipeName.isEmpty ? "Choose generation recipe…" : recipeName) { chooseRecipe() }
             Text("Use a frozen recipe from the engine. Model and runtime identities stay attached to both candidates.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -148,7 +277,9 @@ struct LabAuthorSheet: View {
                     .disabled(previewed == nil || previewed != fingerprint || busy)
             }
             if busy { ProgressView() }
-        }.padding(WorkbenchSpacing.pageInset).frame(minWidth: 540, idealWidth: 620)
+        }
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(minWidth: WorkbenchSize.Lab.authorMinWidth, idealWidth: WorkbenchSize.Lab.authorIdealWidth)
     }
     private func chooseRecipe() {
         let panel = NSOpenPanel()
@@ -181,6 +312,8 @@ struct LabAuthorSheet: View {
         } catch { self.error = AppHost.render(error) }
     }
 }
+
+// MARK: - Review sheet
 
 struct LabReviewContext: Identifiable {
     let id: String
@@ -223,12 +356,12 @@ struct LabReviewSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text("Blind video review").font(WorkbenchTypography.title)
+            Text("Blind video review").font(WorkbenchTypography.section)
             Text(context.prompt)
             HStack {
                 VStack { Text("Left"); LabVideoSurface(player: leftPlayer) }
                 VStack { Text("Right"); LabVideoSurface(player: rightPlayer) }
-            }.frame(height: 260)
+            }.frame(height: WorkbenchSize.Lab.videoHeight)
             HStack {
                 Button("Play together") {
                     let start = CMTime(seconds: position, preferredTimescale: 600)
@@ -276,11 +409,7 @@ struct LabReviewSheet: View {
                     let baseline = reveal.baselineValue?.jsonText ?? ""
                     let alternate = reveal.alternateValue?.jsonText ?? ""
                     Text("\(variable): \(baseline) → \(alternate)")
-                    DisclosureGroup("Frozen manifests") {
-                        ForEach((reveal.manifests ?? [:]).keys.sorted(), id: \.self) { key in
-                            Text(key + "\n" + (reveal.manifests?[key]?.jsonText ?? "")).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                        }
-                    }
+                    TrainingRawDisclosure(title: "Frozen manifests", text: manifestText(reveal))
                 } else {
                     Button("Reveal candidate identities") { Task { await showReveal() } }.disabled(busy || context.studyID != nil)
                 }
@@ -295,7 +424,9 @@ struct LabReviewSheet: View {
                         .disabled(preference.isEmpty || (context.studyID == nil && scores.contains(0)) || busy)
                 }
             }
-        }.padding(WorkbenchSpacing.pageInset).frame(minWidth: 700, idealWidth: 900)
+        }
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(minWidth: WorkbenchSize.Lab.reviewMinWidth, idealWidth: WorkbenchSize.Lab.reviewIdealWidth)
         .task {
             leftPlayer.replaceCurrentItem(with: AVPlayerItem(url: context.left))
             rightPlayer.replaceCurrentItem(with: AVPlayerItem(url: context.right))
@@ -313,6 +444,11 @@ struct LabReviewSheet: View {
         }
         .onDisappear { leftPlayer.pause(); rightPlayer.pause() }
     }
+    private func manifestText(_ reveal: LabResponse) -> String {
+        (reveal.manifests ?? [:]).keys.sorted()
+            .map { $0 + "\n" + (reveal.manifests?[$0]?.jsonText ?? "") }
+            .joined(separator: "\n\n")
+    }
     private func stepFrame(_ direction: Double) {
         leftPlayer.pause(); rightPlayer.pause()
         position = min(duration, max(0, leftPlayer.currentTime().seconds + direction / frameRate))
@@ -324,7 +460,7 @@ struct LabReviewSheet: View {
         Picker(labels[index % 5], selection: $scores[index]) {
             Text("—").tag(0)
             ForEach(1...5, id: \.self) { score in Text(String(score)).tag(score) }
-        }.labelsHidden().frame(width: 80)
+        }.labelsHidden().frame(width: WorkbenchSize.Lab.scoreControlWidth)
     }
     private func showReveal() async {
         busy = true; defer { busy = false }
@@ -354,6 +490,8 @@ struct LabReviewSheet: View {
     }
 }
 
+// MARK: - Adopt sheet
+
 struct LabAdoptSheet: View {
     @ObservedObject var lab: LabCoordinator
     @Environment(\.dismiss) private var dismiss
@@ -369,7 +507,7 @@ struct LabAdoptSheet: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text("Import a Video Lab workspace").font(WorkbenchTypography.title)
+            Text("Import a Video Lab workspace").font(WorkbenchTypography.section)
             Text("Stop the source workspace before importing. The import preserves identities, videos and review history and retains an exact database backup.")
             HStack {
                 TextField("Source SQLite database", text: $database).textFieldStyle(.roundedBorder)
@@ -385,8 +523,10 @@ struct LabAdoptSheet: View {
             }
             if let preview {
                 Text("\(preview.artifactCount ?? 0) artifacts · \(ByteCountFormatter.string(fromByteCount: preview.artifactBytes ?? 0, countStyle: .file))")
-                Text("Source database: " + (preview.sourceDatabaseDigest ?? "")).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                Text("Backup: " + destination + "/before-adoption.sqlite3").font(WorkbenchTypography.metadata).textSelection(.enabled)
+                TrainingRawDisclosure(
+                    title: "Import evidence",
+                    text: "Source database: " + (preview.sourceDatabaseDigest ?? "") + "\nBackup: " + destination + "/before-adoption.sqlite3"
+                )
             }
             ErrorBanner(text: error)
             HStack {
@@ -398,7 +538,9 @@ struct LabAdoptSheet: View {
                     .disabled(busy || previewed == nil || previewed != (try? JSONEncoder().encode(request)))
                 if busy { ProgressView().controlSize(.small) }
             }
-        }.padding(WorkbenchSpacing.pageInset).frame(width: 740)
+        }
+        .padding(WorkbenchSpacing.pageInset)
+        .frame(minWidth: WorkbenchSize.Lab.adoptMinWidth, idealWidth: WorkbenchSize.Lab.adoptIdealWidth)
     }
     private func chooseDatabase() {
         let panel = NSOpenPanel()
@@ -446,6 +588,50 @@ struct LabAdoptSheet: View {
     }
 }
 
+// MARK: - Adaptive studies
+
+struct LabStudyRowView: View {
+    let row: LabStudyRow
+    let busy: Bool
+    let generationBlocked: Bool
+    let perform: (String) -> Void
+    let review: (LabStudyRow, String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
+                Text("Study " + row.shortID)
+                    .font(WorkbenchTypography.emphasis)
+                    .help(row.id)
+                if let status = row.status { StatusBadge(status: status) }
+                Spacer(minLength: WorkbenchSpacing.xs)
+                switch row.action {
+                case .resume:
+                    Button("Continue") { perform("study-resume") }.buttonStyle(.bordered).controlSize(.small).disabled(busy)
+                case .generate:
+                    Button("Generate pair") { perform("study-run") }.buttonStyle(.bordered).controlSize(.small)
+                        .disabled(busy || generationBlocked)
+                case .review(let session):
+                    Button("Blind review") { review(row, session) }.buttonStyle(.bordered).controlSize(.small).disabled(busy)
+                case .none:
+                    EmptyView()
+                }
+            }
+            if !row.progress.isEmpty {
+                HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
+                    ForEach(row.progress, id: \.label) { item in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                            Text(item.value).font(WorkbenchTypography.tabular)
+                            Text(item.label).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        }
+                        .frame(minWidth: WorkbenchSize.Lab.progressFigureMinimum, alignment: .leading)
+                    }
+                }
+            }
+            TrainingRawDisclosure(title: row.retainsEvidence ? "Retained study evidence" : "Study record", text: row.rawText)
+        }
+    }
+}
 
 private struct AdaptiveStudiesPanel: View {
     @ObservedObject var lab: LabCoordinator
@@ -457,36 +643,18 @@ private struct AdaptiveStudiesPanel: View {
             HStack {
                 Text("Adaptive guidance studies").font(WorkbenchTypography.cardTitle)
                 Spacer()
-                Button("Import frozen recipe…") { importRecipe() }.disabled(busy)
-                Button("Refresh studies") { Task { await refresh() } }.disabled(busy)
+                Button("Import frozen recipe…") { importRecipe() }.buttonStyle(.bordered).controlSize(.small).disabled(busy)
+                Button("Refresh studies") { Task { await refresh() } }.buttonStyle(.bordered).controlSize(.small).disabled(busy)
             }
             Text("Each study keeps its prompt and seed fixed. Human preferences guide the next pair; the engine retains the search budget and stopping evidence.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            ForEach(Array(studies.enumerated()), id: \.offset) { _, value in
-                if let item = value.object, let id = item["study_id"]?.text {
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(id).font(WorkbenchTypography.compactValue)
-                            Text(item["state"]?.text ?? "").font(WorkbenchTypography.metadata)
-                            Text(item["progress"]?.jsonText ?? "").font(WorkbenchTypography.metadata)
-                        }
-                        Spacer()
-                        let action = item["next_action"]?.text ?? "none"
-                        if action == "resume" {
-                            Button("Continue") { perform("study-resume", id: id) }.disabled(busy)
-                        } else if action == "complete_generation" {
-                            Button("Generate pair") { perform("study-run", id: id) }.disabled(busy || lab.runningJobID != nil)
-                        } else if action == "record_preference", let session = item["review_id"]?.text {
-                            Button("Blind review") { openReview(id, session: session, prompt: item["prompt"]?.text ?? "") }.disabled(busy)
-                        }
-                    }
-                    if item["next_action"]?.text == "none" {
-                        DisclosureGroup("Retained study evidence") {
-                            Text(value.jsonText).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                        }
-                    }
-                    Divider()
-                }
+            ForEach(studies.compactMap(LabStudyRow.init(value:))) { row in
+                Divider()
+                LabStudyRowView(
+                    row: row, busy: busy, generationBlocked: lab.runningJobID != nil,
+                    perform: { perform($0, id: row.id) },
+                    review: { openReview($0.id, session: $1, prompt: $0.prompt) }
+                )
             }
         }
         .task { await refresh() }

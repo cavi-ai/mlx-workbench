@@ -117,6 +117,8 @@
 		LMSPRSB1 /* LMStudioShelfPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSPRSF1 /* LMStudioShelfPresentation.swift */; };
 		LMSVWSB1 /* LMStudioShelfViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSVWSF1 /* LMStudioShelfViews.swift */; };
 		TRNPRSB1 /* TrainingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNPRSF1 /* TrainingPresentation.swift */; };
+		LABPRSB1 /* LabPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = LABPRSF1 /* LabPresentation.swift */; };
+		LABRMDB1 /* LabRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LABRMDF1 /* LabRemodelTests.swift */; };
 		TRNVWSB1 /* TrainingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNVWSF1 /* TrainingViews.swift */; };
 		ADPRMDB1 /* AdoptRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADPRMDF1 /* AdoptRemodelTests.swift */; };
 		ADPPRSB1 /* AdoptPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADPPRSF1 /* AdoptPresentation.swift */; };
@@ -348,6 +350,8 @@
 		STGRMDF1 /* SettingsRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsRemodelTests.swift; path = SettingsRemodelTests.swift; sourceTree = "<group>"; };
 		DSCRMDF1 /* DiscoverRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverRemodelTests.swift; path = DiscoverRemodelTests.swift; sourceTree = "<group>"; };
 		LMSRMDF1 /* LMStudioRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LMStudioRemodelTests.swift; path = LMStudioRemodelTests.swift; sourceTree = "<group>"; };
+		LABPRSF1 /* LabPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabPresentation.swift; path = UI/Views/LabPresentation.swift; sourceTree = "<group>"; };
+		LABRMDF1 /* LabRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabRemodelTests.swift; path = LabRemodelTests.swift; sourceTree = "<group>"; };
 		TRNPRSF1 /* TrainingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingPresentation.swift; path = UI/Views/TrainingPresentation.swift; sourceTree = "<group>"; };
 		TRNVWSF1 /* TrainingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingViews.swift; path = UI/Views/TrainingViews.swift; sourceTree = "<group>"; };
 		ADPRMDF1 /* AdoptRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdoptRemodelTests.swift; path = AdoptRemodelTests.swift; sourceTree = "<group>"; };
@@ -661,6 +665,7 @@
 				LMSPRSF1 /* LMStudioShelfPresentation.swift */,
 				LMSVWSF1 /* LMStudioShelfViews.swift */,
 				TRNPRSF1 /* TrainingPresentation.swift */,
+				LABPRSF1 /* LabPresentation.swift */,
 				ADPPRSF1 /* AdoptPresentation.swift */,
 				INTPRSF1 /* IntakePresentation.swift */,
 				TRNVWSF1 /* TrainingViews.swift */,
@@ -709,6 +714,7 @@
 				DSCRMDF1 /* DiscoverRemodelTests.swift */,
 				LMSRMDF1 /* LMStudioRemodelTests.swift */,
 				TRNRMDF1 /* TrainingRemodelTests.swift */,
+				LABRMDF1 /* LabRemodelTests.swift */,
 				ADPRMDF1 /* AdoptRemodelTests.swift */,
 				INTRMDF1 /* IntakeRemodelTests.swift */,
 				24FREF0LR /* LibraryRemodelTests.swift */,
@@ -974,6 +980,7 @@
 				LMSPRSB1 /* LMStudioShelfPresentation.swift in Sources */,
 				LMSVWSB1 /* LMStudioShelfViews.swift in Sources */,
 				TRNPRSB1 /* TrainingPresentation.swift in Sources */,
+				LABPRSB1 /* LabPresentation.swift in Sources */,
 				ADPPRSB1 /* AdoptPresentation.swift in Sources */,
 				INTPRSB1 /* IntakePresentation.swift in Sources */,
 				TRNVWSB1 /* TrainingViews.swift in Sources */,
@@ -1094,6 +1101,7 @@
 				DSCRMDB1 /* DiscoverRemodelTests.swift in Sources */,
 				LMSRMDB1 /* LMStudioRemodelTests.swift in Sources */,
 				TRNRMDB1 /* TrainingRemodelTests.swift in Sources */,
+				LABRMDB1 /* LabRemodelTests.swift in Sources */,
 				ADPRMDB1 /* AdoptRemodelTests.swift in Sources */,
 				INTRMDB1 /* IntakeRemodelTests.swift in Sources */,
 				24BBLD0LR /* LibraryRemodelTests.swift in Sources */,
