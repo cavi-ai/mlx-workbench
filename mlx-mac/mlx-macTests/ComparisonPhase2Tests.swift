@@ -55,6 +55,37 @@ final class ComparisonPhase2Tests: XCTestCase {
         XCTAssertNotNil(coordinator.lastError)
     }
 
+    func testImportSaveFailurePreservesSetsAndAllowsRetryAfterStoreRepair() throws {
+        let db = try makeFixtureDatabase()
+        let coordinator = makeCoordinator()
+        let original = coordinator.promptSets
+        let invalidStore = Data("not valid JSON".utf8)
+        try FileManager.default.createDirectory(at: promptSetStoreURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try invalidStore.write(to: promptSetStoreURL)
+        defer { try? FileManager.default.removeItem(at: promptSetStoreURL.deletingLastPathComponent()) }
+
+        XCTAssertNil(coordinator.importHistory(databasePath: nil))
+        XCTAssertNotNil(coordinator.lastError)
+        XCTAssertNil(coordinator.importHistory(databasePath: db.path), "An unsaved import must not be selected")
+        XCTAssertEqual(coordinator.promptSets, original)
+        XCTAssertNil(coordinator.persistenceError, "Import errors belong to the current action")
+        XCTAssertTrue(coordinator.lastError?.hasPrefix("Prompts could not be imported:") == true,
+            "A save failure must replace the earlier history error")
+        XCTAssertEqual(try Data(contentsOf: promptSetStoreURL), invalidStore)
+        XCTAssertTrue(coordinator.runs.isEmpty)
+        XCTAssertNil(coordinator.activeRunID)
+
+        try JSONStore<PromptSet>(fileURL: promptSetStoreURL).replaceAll([])
+        let saved = try XCTUnwrap(coordinator.importHistory(databasePath: db.path))
+        XCTAssertEqual(saved.prompts.count, 2)
+        XCTAssertEqual(coordinator.promptSets.filter { $0.origin == .userCreated }.map(\.id), [saved.id])
+        XCTAssertEqual(try JSONStore<PromptSet>(fileURL: promptSetStoreURL).load(), [saved])
+        XCTAssertNil(coordinator.lastError)
+        XCTAssertTrue(coordinator.runs.isEmpty)
+        XCTAssertNil(coordinator.activeRunID)
+    }
+
     // MARK: - Sample metrics threading
 
     func testAggregationMapsPromptTokensPrefillAndToolCalls() {
