@@ -28,6 +28,9 @@ and is versioned independently; submodule bumps are recorded here.
 
 ### Fixed
 
+- Native app: with no GGUF folders configured, the Library scans the downloads
+  folder set in LM Studio's settings and Settings suggests it; a folder inside
+  another detected folder, or a second spelling of one, is listed once.
 - Clients: Roll back last wiring moves a config file the wiring created to the
   Trash, unless it changed after the write. Wiring writes `$schema` into
   opencode configs that lack one.

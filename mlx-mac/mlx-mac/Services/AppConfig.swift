@@ -54,10 +54,11 @@ struct Config: Codable, Equatable {
         case comparisonMaxTokens = "comparison_max_tokens"
     }
 
-    static func defaults() -> Config {
+    /// `ggufRoots` nil discovers the default folders.
+    static func defaults(ggufRoots: [String]? = nil) -> Config {
         return Config(
             schemaVersion: SCHEMA_VERSION,
-            ggufRoots: discoverGgufRoots(),
+            ggufRoots: ggufRoots ?? discoverGgufRoots(),
             mlxRoots: [],
             outputDir: Path.home().appendingPathComponent("models/mlx").path,
             mlxAgentPath: discoverAgentPath(),
@@ -74,7 +75,9 @@ struct Config: Codable, Equatable {
         )
     }
 
-    static func discoverGgufRoots(home: URL = Path.home()) -> [String] {
+    /// Existing default model folders, then LM Studio's configured downloads folder;
+    /// a folder at or inside an earlier one is skipped.
+    static func discoverGgufRoots(home: URL = WorkbenchStatePaths.userHome()) -> [String] {
         let candidates = [
             home.appendingPathComponent(".cache/huggingface/hub"),
             home.appendingPathComponent(".cache/lm-studio/models"),
@@ -82,11 +85,17 @@ struct Config: Codable, Equatable {
             home.appendingPathComponent(".models"),
             home.appendingPathComponent("models"),
             home.appendingPathComponent("Models"),
-        ]
+        ] + [LMStudioShelfResolver.downloadsFolder(home: home)].compactMap { $0 }
         let fm = FileManager.default
-        return candidates
-            .filter { var isDir: ObjCBool = false; return fm.fileExists(atPath: $0.path, isDirectory: &isDir) && isDir.boolValue }
-            .map { $0.path }
+        var roots: [String] = []
+        for candidate in candidates {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: candidate.path, isDirectory: &isDir), isDir.boolValue,
+                  !roots.contains(where: { AppHost.isPath(candidate.path, within: $0, fileIdentity: AppHost.fileIdentity) })
+            else { continue }
+            roots.append(candidate.path)
+        }
+        return roots
     }
 
     static func defaultQuarantineDir() -> String {
@@ -229,8 +238,8 @@ struct ConfigModule {
         return merged
     }
 
-    func scanRoots(value: Config) -> [String] {
-        return value.ggufRoots.isEmpty ? Config.discoverGgufRoots() : value.ggufRoots
+    func scanRoots(value: Config, home: URL = WorkbenchStatePaths.userHome()) -> [String] {
+        return value.ggufRoots.isEmpty ? Config.discoverGgufRoots(home: home) : value.ggufRoots
     }
 
     func discoverGgufRoots() -> [String] {
@@ -240,21 +249,22 @@ struct ConfigModule {
 
 // MARK: - Coercion
 
-private func coerce(_ dict: [String: Any]) -> Config {
-    var merged = Config.defaults()
-
+/// GGUF roots are discovered only when `dict` holds no valid `gguf_roots` list.
+func coerce(_ dict: [String: Any], discoverGgufRoots: () -> [String] = { Config.discoverGgufRoots() }) -> Config {
     func expand(_ value: String) -> String {
         return value.hasPrefix("~") ? NSString(string: value).expandingTildeInPath : value
     }
 
+    var storedGgufRoots: [String]?
     if let ggufRoots = dict["gguf_roots"] as? [String] {
         let cleaned = ggufRoots
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             .map { expand($0) }
         if cleaned.count <= Config.MAX_ROOTS {
-            merged.ggufRoots = cleaned
+            storedGgufRoots = cleaned
         }
     }
+    var merged = Config.defaults(ggufRoots: storedGgufRoots ?? discoverGgufRoots())
 
     if let mlxRoots = dict["mlx_roots"] as? [String] {
         let cleaned = mlxRoots

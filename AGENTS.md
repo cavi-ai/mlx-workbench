@@ -448,6 +448,12 @@ from `mlx-agent` at runtime.
   split-GGUF sizes summed and projector companions attached as tags; path math is string-only
   (`LMStudioPathMath`) and the row grouping is built once per snapshot into `LMStudioShelfIndex`; the
   screen never writes config. `LMStudioShelf` is the only LM Studio view observing `SystemResourceMonitor`.
+  `Config.discoverGgufRoots` appends that `downloadsFolder` after its default folders and skips any folder
+  at or inside an earlier one (`AppHost.isPath`); `LMStudioShelfResolver.downloadsFolder` opens only a regular
+  `settings.json` within 1 MiB, so the read is safe on the main actor. Config coercion discovers only when
+  no valid `gguf_roots` list is stored; `AppHost.discoveredRoots` (Settings and Setup suggestions) is
+  discovered off the main actor by `startLiveServices()`. Discovery and the LM Studio page default to
+  `WorkbenchStatePaths.userHome()`, so hosted unit tests never read the user's `~/.lmstudio`.
 - Python resolution is centralized in `Services/WorkbenchPython.swift`
   (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
   `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.
@@ -478,8 +484,8 @@ from `mlx-agent` at runtime.
   `make test-swift` runs inside the app (TEST_HOST = mlx-workbench.app).
   `AppHost.startLiveServices()` (WindowGroup `onAppear`)
   owns all launch-time live work: quality-gate attach, watch and endpoint
-  supervision, resource sampling, and the first scan with workflow
-  reconciliation. It returns early when `XCTestConfigurationFilePath` is set,
+  supervision, resource sampling, GGUF folder discovery, and the first scan
+  with workflow reconciliation. It returns early when `XCTestConfigurationFilePath` is set,
   so the suite never starts or stops real servers. UI tests launch a separate
   app process without that variable and keep live behavior. Keep new
   launch-time live work behind this method. Default state locations resolve
