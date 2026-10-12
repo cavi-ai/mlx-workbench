@@ -336,6 +336,13 @@ from `mlx-agent` at runtime.
   all other raw edits intact. Existing derived builtin/saved provenance and
   availability guards apply again; missing inputs never gain a fallback.
   Revert changes no files and invokes no save, fixture generation or runner.
+  ComparisonPromptActions retains each card's initial raw prompt in SwiftUI
+  state, keyed by its existing prompt identity. Its shared Revert prompt
+  action restores only that binding, is disabled for unchanged or mismatched
+  identities, and preserves other cards and order in every comparison mode.
+  Newly added and duplicated cards capture their own initial raw values.
+  Revert performs no validation, save, generation or file mutation; restored
+  inputs remain subject to the existing availability guards.
   Customize copy opens `ComparisonPromptSetDraft(copying:)` or
   `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening
