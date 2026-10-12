@@ -595,12 +595,25 @@ final class WorkbenchReviewUITests: XCTestCase {
             }
 
             var picker: XCUIElement { app.popUpButtons["adopt-role"] }
-            XCTAssertTrue(picker.waitForExistence(timeout: 10))
-            picker.click()
-            let coding = picker.menuItems["Coding"]
-            XCTAssertTrue(coding.waitForExistence(timeout: 5))
-            coding.click()
-            XCTAssertEqual(picker.value as? String, "Coding")
+            func chooseRole(_ title: String) {
+                XCTAssertTrue(picker.waitForExistence(timeout: 10))
+                XCTAssertTrue(picker.isEnabled)
+                let frame = picker.frame
+                XCTAssertTrue(frame.midX.isFinite && frame.midY.isFinite && frame.width > 0 && frame.height > 0)
+                let control = XCTAttachment(string: "Role picker: frame=\(frame), enabled=\(picker.isEnabled), hittable=\(picker.isHittable)")
+                control.name = "Adopt-\(appearance)-role-\(title)-bounds"
+                control.lifetime = .keepAlways
+                add(control)
+                let window = app.windows.firstMatch
+                window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                    dx: frame.midX - window.frame.minX, dy: frame.midY - window.frame.minY
+                )).click()
+                let item = picker.menuItems[title]
+                XCTAssertTrue(item.waitForExistence(timeout: 5))
+                item.click()
+                XCTAssertEqual(picker.value as? String, title)
+            }
+            chooseRole("Coding")
             let fast = app.checkBoxes["Fast"]
             fast.click()
             XCTAssertEqual(fast.value as? Int, 1)
@@ -631,11 +644,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(firstPath.hasPrefix(root.path))
             XCTAssertTrue(FileManager.default.fileExists(atPath: firstPath))
 
-            picker.click()
-            let reasoning = picker.menuItems["Reasoning"]
-            XCTAssertTrue(reasoning.waitForExistence(timeout: 5))
-            reasoning.click()
-            XCTAssertEqual(picker.value as? String, "Reasoning")
+            chooseRole("Reasoning")
             XCTAssertTrue(text(containing: repository).exists, "Draft edits retain the recorded recommendation")
             let recordedRole = app.staticTexts["adopt-requested-role"]
             XCTAssertEqual(recordedRole.value as? String ?? recordedRole.label, "Coding")
