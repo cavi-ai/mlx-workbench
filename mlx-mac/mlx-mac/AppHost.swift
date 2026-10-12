@@ -368,25 +368,49 @@ class AppHost: ObservableObject {
         return roots
     }
 
-    /// True when `path` is `root` or lies under it: by file identity where the
-    /// directories exist (a case-variant or symlinked spelling of a root is that
-    /// root), by standardized path otherwise.
+    /// True when the agent's walk of `root` reaches `path`: it lies at or under `root`
+    /// (see `components(of:within:fileIdentity:)`) below no hidden or skipped folder.
     nonisolated static func isPath(_ path: String, within root: String, fileIdentity: (String) -> NSObject?) -> Bool {
+        components(of: path, within: root, fileIdentity: fileIdentity).map { !LMStudioShelfResolver.isSkipped($0) } ?? false
+    }
+
+    /// Names from `root` down to where `path` resolves, or nil when that is not `root` or under it.
+    /// Symlinks in `path` are followed, as the agent's walk never descends a symlinked folder;
+    /// the root matches by file identity where it exists (a case-variant or symlinked spelling
+    /// is that folder), by standardized path otherwise.
+    nonisolated static func components(of path: String, within root: String, fileIdentity: (String) -> NSObject?) -> [String]? {
         let standardized = { (value: String) in URL(fileURLWithPath: NSString(string: value).expandingTildeInPath).standardizedFileURL }
         let rootURL = standardized(root)
+        let rootPaths: Set<String> = [rootURL.path, resolvingSymlinks(rootURL).path]
         let rootIdentity = fileIdentity(rootURL.path)
-        var candidate = standardized(path)
+        var names: [String] = []
+        var candidate = resolvingSymlinks(standardized(path))
         while true {
-            if candidate.path == rootURL.path { return true }
-            if let rootIdentity, let identity = fileIdentity(candidate.path), identity.isEqual(rootIdentity) { return true }
+            if rootPaths.contains(candidate.path) { return names }
+            if let rootIdentity, let identity = fileIdentity(candidate.path), identity.isEqual(rootIdentity) { return names }
             let parent = candidate.deletingLastPathComponent()
-            if parent.path == candidate.path { return false }
+            if parent.path == candidate.path { return nil }
+            names.insert(candidate.lastPathComponent, at: 0)
             candidate = parent
         }
     }
 
+    /// `url` with symlinks resolved through its deepest existing folder, keeping the missing names below it.
+    private nonisolated static func resolvingSymlinks(_ url: URL) -> URL {
+        var existing = url
+        var missing: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path) {
+            let parent = existing.deletingLastPathComponent()
+            if parent.path == existing.path { return url }
+            missing.insert(existing.lastPathComponent, at: 0)
+            existing = parent
+        }
+        return missing.reduce(existing.resolvingSymlinksInPath()) { $0.appendingPathComponent($1) }
+    }
+
+    /// Identity of the file `path` names after following symlinks; nil when there is none.
     nonisolated static func fileIdentity(_ path: String) -> NSObject? {
-        (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.fileResourceIdentifierKey]))?.fileResourceIdentifier as? NSObject
+        (try? URL(fileURLWithPath: path).resolvingSymlinksInPath().resourceValues(forKeys: [.fileResourceIdentifierKey]))?.fileResourceIdentifier as? NSObject
     }
 
     private func rescan(limit: Int?, reconcileWorkflow: Bool) async -> LibrarySnapshot? {

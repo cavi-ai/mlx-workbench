@@ -67,7 +67,7 @@ from `mlx-agent` at runtime.
   `backend list|install|remove`. Repo conversions run through
   `ModelWorkflowCoordinator.inspect(intake:…)` with `ConversionWorkflow.sourceRepo/backend/modelType/subfolder/allowedBits` (`modelType` → `convert start --model-type`, which runs a port's own converter; `subfolder` → `--subfolder` and an `org/name/folder` fetch, for checkpoints below the repo root such as Laya's `multilingual`; `allowedBits` from intake's `q_bits` limits Prepare's bit picker, e.g. Laya is 8-bit only);
   the Quality Gate canary runs only for `ModelTaskType.hasCanary` types (chat models: served canary prompts; speech-to-text: a `say`-synthesized sentence transcribed through `mlx-agent convert transcribe`, passing at ≤25% word error; classification: `DecisionCanary`, a billing ticket answered through `mlx-agent convert decide` that must route to billing and read as a refund request; image generation: `ImageCanary`, a fixed prompt rendered at 512² through `mlx-agent convert generate` that must write a non-blank image), and Run/Compare refuse
-  non-servable types, and Prepare/Activity do not offer Run for them. `config.outputDir` is scanned as an MLX root unless a root already contains it (by file identity).
+  non-servable types, and Prepare/Activity do not offer Run for them. `config.outputDir` is scanned as an MLX root unless a root's scan already reaches it (`AppHost.isPath`: its symlink-resolved location lies under the root by file identity, below no hidden or skipped folder).
   Prepare refreshes conversion status while a job is in flight and shows a progress ring (bytes
   written against the intake estimate; indeterminate while the converter loads) with the job log in a
   collapsible section; its bit picker re-targets repo
