@@ -29,14 +29,15 @@ struct SetupAssistantView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SetupStepTrack(step: coordinator.step)
             HStack(alignment: .firstTextBaseline) {
-                Text(coordinator.step.title).font(WorkbenchTypography.section)
+                Text(coordinator.step.title)
+                    .font(WorkbenchTypography.section)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Text(coordinator.step.progressLabel)
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
             }
         }
-        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder

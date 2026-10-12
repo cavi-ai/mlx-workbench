@@ -121,13 +121,22 @@ struct TrainingView: View {
     @StateObject private var session: TrainingSession
     @StateObject private var loader: TrainingLoader
     @State private var evaluationJob: TrainingJob?
-    @State private var retainedEvaluation: LabResponse?
+    @State private var retained: TrainingRetainedEvidence?
+    @State private var retainedExpanded = false
+    @State private var inspectingID: String?
     @State private var actionError: String?
-    @State private var choosesCustomRepo = false
+    @State private var baseChoice = TrainingBaseModelChoice()
+    @State private var baseModels: [String] = []
     @Environment(\.isRouteActive) private var isRouteActive
 
-    init(appHost: AppHost, loader: TrainingLoader? = nil, session: TrainingSession? = nil) {
+    /// `seedRetained` lets a render hold the page with an inspected evaluation open.
+    init(
+        appHost: AppHost, loader: TrainingLoader? = nil, session: TrainingSession? = nil,
+        seedRetained: TrainingRetainedEvidence? = nil
+    ) {
         self.appHost = appHost
+        _retained = State(initialValue: seedRetained)
+        _retainedExpanded = State(initialValue: seedRetained != nil)
         _loader = StateObject(wrappedValue: loader ?? TrainingLoader(
             jobs: { try await appHost.api.trainingStatus().jobs },
             history: { try await appHost.lab.request(LabRequest(operation: "training-history")).evaluations ?? [] }
@@ -154,9 +163,7 @@ struct TrainingView: View {
                     Text(notice).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
                 }
                 ErrorBanner(text: actionError)
-                ErrorBanner(text: loader.jobsError)
                 trainingJobs
-                ErrorBanner(text: loader.historyError)
                 evaluationHistory
             }
             .frame(maxWidth: WorkbenchSize.contentMaxWidth, alignment: .leading)
@@ -164,6 +171,9 @@ struct TrainingView: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .sheet(item: $evaluationJob) { job in TrainingEvaluationSheet(lab: appHost.lab, job: job) }
+        .onChange(of: appHost.librarySnapshot?.generatedAt, initial: true) {
+            baseModels = TrainingPresentation.baseModels(appHost.librarySnapshot)
+        }
         .task(id: isRouteActive) {
             guard isRouteActive else { return }
             await loader.refresh()
@@ -171,12 +181,15 @@ struct TrainingView: View {
     }
 
     private var presentation: TrainingPresentation {
-        TrainingPresentation.make(jobs: loader.jobs, evaluations: loader.evaluations)
+        TrainingPresentation.make(
+            jobs: loader.jobs, evaluations: loader.evaluations,
+            jobsError: loader.jobsError, historyError: loader.historyError
+        )
     }
 
     private var trainingJobs: some View {
         TrainingJobsCard(
-            rows: presentation.jobs, pulses: isRouteActive,
+            presentation: presentation, pulses: isRouteActive,
             refresh: { Task { await loader.refresh() } },
             actions: TrainingJobActions(
                 compare: { row in evaluationJob = loader.jobs.first { $0.id == row.id } },
@@ -196,16 +209,24 @@ struct TrainingView: View {
 
     private var evaluationHistory: some View {
         TrainingEvaluationsCard(
-            rows: presentation.evaluations,
-            retained: retainedEvaluation?.report.map {
-                TrainingRetainedEvidence(reportText: $0.jsonText, sha256: retainedEvaluation?.artifactSHA256 ?? "")
-            },
+            presentation: presentation,
+            retained: retained,
+            inspectingID: inspectingID,
+            retainedExpanded: $retainedExpanded,
             inspect: { identity in
+                guard inspectingID == nil else { return }
+                inspectingID = identity
                 Task {
+                    defer { inspectingID = nil }
                     do {
-                        retainedEvaluation = try await appHost.lab.request(
+                        let response = try await appHost.lab.request(
                             LabRequest(operation: "training-inspect", evaluationID: identity))
                         actionError = nil
+                        if let report = response.report {
+                            retained = TrainingRetainedEvidence(
+                                evaluationID: identity, reportText: report.jsonText, sha256: response.artifactSHA256 ?? "")
+                            retainedExpanded = true
+                        }
                     } catch { actionError = AppHost.render(error) }
                 }
             }
@@ -220,10 +241,10 @@ struct TrainingView: View {
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
             }
-            if !cachedRepoIdentities.isEmpty {
+            if !baseModels.isEmpty {
                 Picker("Base model", selection: cachedRepoSelection) {
                     Text("Custom repo id…").tag("")
-                    ForEach(cachedRepoIdentities, id: \.self) { identity in
+                    ForEach(baseModels, id: \.self) { identity in
                         Text(identity).tag(identity)
                     }
                 }
@@ -259,35 +280,17 @@ struct TrainingView: View {
         .disabled(session.isBusy)
     }
 
-    /// Hugging Face repo ids for models already in the local cache, so the
-    /// base model can be picked instead of typed.
-    private var cachedRepoIdentities: [String] {
-        let models = appHost.librarySnapshot?.models ?? []
-        var identities: Set<String> = []
-        for model in models {
-            for path in [model.item.path] + model.outputPaths {
-                if let repoID = HFRepoID.forPath(path) {
-                    identities.insert(repoID)
-                }
-            }
-        }
-        return identities.sorted()
-    }
-
     private var cachedRepoSelection: Binding<String> {
         Binding(
-            get: { cachedRepoIdentities.contains(session.draft.repo) && !choosesCustomRepo ? session.draft.repo : "" },
-            set: { identity in
-                choosesCustomRepo = identity.isEmpty
-                session.draft.repo = identity
-            }
+            get: { baseChoice.selection(repo: session.draft.repo, cached: baseModels) },
+            set: { session.draft.repo = baseChoice.select($0) }
         )
     }
 
-    /// The field is the only way in when the Library has no repo ids, and the
-    /// "Custom repo id…" choice reveals it otherwise.
+    /// The field is the only way in when the Library has no repo ids; with
+    /// some, it shows until a cached model is picked and stays while typing.
     private var showsCustomRepoField: Bool {
-        cachedRepoIdentities.isEmpty || choosesCustomRepo || !cachedRepoIdentities.contains(session.draft.repo)
+        baseChoice.showsField(cached: baseModels)
     }
 
     private func planSection(_ preview: TrainingPreview) -> some View {

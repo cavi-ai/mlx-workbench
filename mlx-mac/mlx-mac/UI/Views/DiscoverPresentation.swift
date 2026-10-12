@@ -252,7 +252,23 @@ struct DiscoverPresentation: Equatable {
     /// Repo ids of Library models whose path is in the Hugging Face cache layout.
     /// Positive-only: a model stored elsewhere, a conversion or another quantization never matches.
     static func libraryRepos(in snapshot: LibrarySnapshot?) -> Set<String> {
-        Set(snapshot?.models.compactMap { HFRepoID.forPath($0.item.path) } ?? [])
+        Set(libraryModels(in: snapshot).keys)
+    }
+
+    /// The first Library model for each cached repo id, built once per snapshot.
+    static func libraryModels(in snapshot: LibrarySnapshot?) -> [String: LibraryModel] {
+        var models: [String: LibraryModel] = [:]
+        for model in snapshot?.models ?? [] {
+            if let repo = HFRepoID.forPath(model.item.path), models[repo] == nil {
+                models[repo] = model
+            }
+        }
+        return models
+    }
+
+    /// The Library model cached under `repo`, if any.
+    static func libraryModel(for repo: String, in models: [String: LibraryModel]) -> LibraryModel? {
+        models[repo]
     }
 
     static func make(

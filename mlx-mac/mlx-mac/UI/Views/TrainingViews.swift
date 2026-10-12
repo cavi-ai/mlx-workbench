@@ -5,9 +5,12 @@ struct TrainingRawDisclosure: View {
     let title: String
     let text: String
     var maxHeight: CGFloat = WorkbenchSize.Training.evidenceMaxHeight
+    /// Lets the owner open the disclosure; without it the disclosure keeps its own state.
+    var expanded: Binding<Bool>?
+    @State private var ownExpanded = false
 
     var body: some View {
-        DisclosureGroup {
+        DisclosureGroup(isExpanded: expanded ?? $ownExpanded) {
             ScrollView {
                 Text(text)
                     .font(WorkbenchTypography.compactValue)
@@ -24,27 +27,19 @@ struct TrainingRawDisclosure: View {
     }
 }
 
-/// Status capsule that pulses only while its route is the one shown.
-struct TrainingStatusBadge: View {
-    let status: WorkbenchStatus
-    let pulses: Bool
+/// One failed request: a single sentence, with the agent's own output one click away.
+struct TrainingLoadFailure: View {
+    let sentence: String
+    let detail: String
 
     var body: some View {
-        HStack(spacing: WorkbenchSpacing.xxs) {
-            Circle()
-                .fill(status.color)
-                .frame(width: 6, height: 6)
-                .livePulse(status.isLive && pulses)
-            Text(status.label)
-                .font(WorkbenchTypography.label)
-                .lineLimit(1)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text(sentence)
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.failure)
+                .fixedSize(horizontal: false, vertical: true)
+            TrainingRawDisclosure(title: "Agent output", text: detail)
         }
-        .padding(.horizontal, WorkbenchSpacing.xs)
-        .padding(.vertical, WorkbenchSpacing.xxxs)
-        .foregroundStyle(status.color)
-        .background(status.color.opacity(.fill), in: Capsule())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(status.label)
     }
 }
 
@@ -77,18 +72,18 @@ struct TrainingJobRowView: View {
                         .help(row.outputPath)
                 }
                 Spacer(minLength: WorkbenchSpacing.xs)
-                TrainingStatusBadge(status: row.status, pulses: pulses)
+                StatusBadge(status: row.status, pulses: pulses)
             }
             if row.canCompare || row.logPath != nil || row.canCancel {
                 ReclaimFlowLayout(spacing: WorkbenchSpacing.xs, lineSpacing: WorkbenchSpacing.xs) {
                     if row.canCompare {
-                        Button("Compare with base") { actions.compare(row) }.buttonStyle(.bordered)
+                        Button("Compare with base") { actions.compare(row) }.buttonStyle(.bordered).controlSize(.small)
                     }
                     if let log = row.logPath {
-                        Button("Open log") { actions.openLog(log) }.buttonStyle(.bordered)
+                        Button("Open log") { actions.openLog(log) }.buttonStyle(.bordered).controlSize(.small)
                     }
                     if row.canCancel {
-                        Button("Cancel training", role: .destructive) { actions.cancel(row) }.buttonStyle(.bordered)
+                        Button("Cancel training", role: .destructive) { actions.cancel(row) }.buttonStyle(.bordered).controlSize(.small)
                     }
                 }
             }
@@ -101,7 +96,7 @@ struct TrainingJobRowView: View {
 }
 
 struct TrainingJobsCard: View {
-    let rows: [TrainingJobRow]
+    let presentation: TrainingPresentation
     let pulses: Bool
     let refresh: () -> Void
     let actions: TrainingJobActions
@@ -114,13 +109,16 @@ struct TrainingJobsCard: View {
                     Spacer()
                     Button("Refresh", action: refresh).buttonStyle(.bordered).controlSize(.small)
                 }
-                if rows.isEmpty {
+                if let error = presentation.jobsError {
+                    TrainingLoadFailure(sentence: TrainingPresentation.jobsFailureSentence, detail: error)
+                }
+                if presentation.showsNoJobs {
                     Text(TrainingPresentation.noJobsSentence)
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(WorkbenchColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    ForEach(rows) { row in
+                    ForEach(presentation.jobs) { row in
                         Divider()
                         TrainingJobRowView(row: row, pulses: pulses, actions: actions)
                     }
@@ -130,26 +128,36 @@ struct TrainingJobsCard: View {
     }
 }
 
+/// The report the last Inspect returned, tagged with the evaluation it belongs to.
 struct TrainingRetainedEvidence: Equatable {
+    let evaluationID: String
     let reportText: String
     let sha256: String
+
+    var shortID: String { String(evaluationID.prefix(TrainingPresentation.shortIDLength)) }
 }
 
 struct TrainingEvaluationsCard: View {
-    let rows: [TrainingEvaluationRow]
+    let presentation: TrainingPresentation
     let retained: TrainingRetainedEvidence?
+    let inspectingID: String?
+    @Binding var retainedExpanded: Bool
     let inspect: (String) -> Void
 
     var body: some View {
         WorkbenchSurface {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                 Text("Retained training evaluations").font(WorkbenchTypography.cardTitle)
-                if rows.isEmpty {
+                if let error = presentation.historyError {
+                    TrainingLoadFailure(sentence: TrainingPresentation.evaluationsFailureSentence, detail: error)
+                }
+                if presentation.showsNoEvaluations {
                     Text(TrainingPresentation.noEvaluationsSentence)
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(WorkbenchColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
+                    let rows = presentation.evaluations
                     ForEach(rows) { row in
                         Divider()
                         HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
@@ -163,15 +171,22 @@ struct TrainingEvaluationsCard: View {
                                     .foregroundStyle(WorkbenchColor.muted)
                             }
                             Spacer(minLength: WorkbenchSpacing.xs)
-                            Button("Inspect") { inspect(row.id) }.buttonStyle(.bordered).controlSize(.small)
+                            if inspectingID == row.id {
+                                ProgressView().controlSize(.small)
+                            }
+                            Button("Inspect") { inspect(row.id) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(inspectingID == row.id)
                         }
                     }
                 }
                 if let retained {
                     Divider()
                     TrainingRawDisclosure(
-                        title: "Evaluation outputs and frozen recipe",
-                        text: retained.reportText + "\n\nSHA-256: " + retained.sha256
+                        title: "Evaluation \(retained.shortID): outputs and frozen recipe",
+                        text: retained.reportText + "\n\nSHA-256: " + retained.sha256,
+                        expanded: $retainedExpanded
                     )
                 }
             }

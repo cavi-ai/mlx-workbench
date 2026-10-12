@@ -40,6 +40,8 @@ final class TrainingPresentationTests: XCTestCase {
         let done = TrainingJobRow(job: try TF.job("done"), home: TF.home).status
         XCTAssertEqual(done.label, "Completed")
         XCTAssertFalse(done.isLive)
+        XCTAssertEqual(done.tone, .success)
+        XCTAssertNotEqual(done.tone, running.tone)
         let failed = TrainingJobRow(job: try TF.job("failed"), home: TF.home).status
         XCTAssertEqual(failed.label, "Failed")
         XCTAssertEqual(failed.tone, .failure)
@@ -68,6 +70,58 @@ final class TrainingPresentationTests: XCTestCase {
         )
         XCTAssertFalse(filled.showsNoJobs)
         XCTAssertFalse(filled.showsNoEvaluations)
+    }
+
+    func testALoadFailureReplacesTheEmptySentenceWithItsOwn() throws {
+        let failed = TrainingPresentation.make(jobs: [], evaluations: [], jobsError: "usage: mlx-agent", historyError: "usage: mlx-agent", home: TF.home, now: TF.now)
+        XCTAssertFalse(failed.showsNoJobs)
+        XCTAssertFalse(failed.showsNoEvaluations)
+        XCTAssertEqual(failed.jobsError, "usage: mlx-agent")
+        XCTAssertEqual(TrainingPresentation.jobsFailureSentence, "Training jobs couldn't load.")
+        XCTAssertEqual(TrainingPresentation.evaluationsFailureSentence, "Evaluations couldn't load.")
+        let historyOnly = TrainingPresentation.make(jobs: [], evaluations: [], historyError: "boom", home: TF.home, now: TF.now)
+        XCTAssertTrue(historyOnly.showsNoJobs)
+        XCTAssertFalse(historyOnly.showsNoEvaluations)
+    }
+
+    func testBaseModelsAreTheSortedCachedRepoIDs() {
+        func model(_ path: String) -> LibraryModel {
+            let item = ModelItem(
+                path: path, name: "m", bytes: 1, modifiedAt: nil, shard: nil, modelKey: "m", architecture: nil,
+                quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil, readable: true,
+                status: "ready", outputs: [], tensorCount: nil, error: nil, task: nil
+            )
+            return LibraryModel(item: item, readiness: .ready)
+        }
+        let snapshot = LibrarySnapshot(
+            models: [
+                model("/c/models--org--zeta/snapshots/a"), model("/c/models--org--alpha/snapshots/b"),
+                model("/c/models--org--alpha/snapshots/c"), model("/models/local-mlx"),
+            ],
+            groups: [], hardware: HardwareProfile(chip: "Test", model: nil, memoryBytes: 0, macOSVersion: nil),
+            generatedAt: TF.now
+        )
+        XCTAssertEqual(TrainingPresentation.baseModels(snapshot), ["org/alpha", "org/zeta"])
+        XCTAssertEqual(TrainingPresentation.baseModels(nil), [])
+    }
+
+    func testTypingACachedIDKeepsTheFieldAndPickingItHidesTheField() {
+        let cached = ["org/alpha", "org/zeta"]
+        var choice = TrainingBaseModelChoice()
+        XCTAssertTrue(choice.showsField(cached: cached))
+        XCTAssertEqual(choice.selection(repo: "org/alpha", cached: cached), "")
+        XCTAssertTrue(choice.showsField(cached: cached), "typing a cached id must not hide the focused field")
+        XCTAssertEqual(choice.select("org/alpha"), "org/alpha")
+        XCTAssertFalse(choice.showsField(cached: cached))
+        XCTAssertEqual(choice.selection(repo: "org/alpha", cached: cached), "org/alpha")
+        XCTAssertEqual(choice.select(""), "")
+        XCTAssertTrue(choice.showsField(cached: cached))
+        XCTAssertTrue(TrainingBaseModelChoice().showsField(cached: []))
+    }
+
+    func testRetainedEvidenceCarriesTheInspectedShortID() {
+        let evidence = TrainingRetainedEvidence(evaluationID: "0123456789abcdef", reportText: "{}", sha256: "ff")
+        XCTAssertEqual(evidence.shortID, "01234567")
     }
 
     func testJobRowValuesAndActionsFollowTheState() throws {
@@ -160,6 +214,46 @@ final class TrainingLoaderTests: XCTestCase {
         await loader.refresh()
         XCTAssertNil(loader.jobsError)
     }
+
+    private func yieldUntil(_ condition: () -> Bool) async {
+        for _ in 0..<1_000 where !condition() { await Task.yield() }
+    }
+
+    func testHistoryPublishesWhileJobsAreStillLoading() async throws {
+        let evaluation = try TF.evaluation("e1", created: nil)
+        var release: CheckedContinuation<[TrainingJob], Never>?
+        let loader = TrainingLoader(
+            jobs: { await withCheckedContinuation { release = $0 } }, history: { [evaluation] },
+            render: { $0.localizedDescription }
+        )
+        let refresh = Task { await loader.refresh() }
+        await yieldUntil { !loader.evaluations.isEmpty }
+        XCTAssertEqual(loader.evaluations, [evaluation])
+        XCTAssertTrue(loader.jobs.isEmpty)
+        release?.resume(returning: [try TF.job("running")])
+        await refresh.value
+        XCTAssertEqual(loader.jobs.map(\.id), ["r1"])
+    }
+
+    func testAStaleRefreshNeverOverwritesANewerOne() async throws {
+        let stale = try TF.job("running", receipt: "stale"), fresh = try TF.job("done", receipt: "fresh")
+        var calls = 0
+        var release: CheckedContinuation<[TrainingJob], Never>?
+        let loader = TrainingLoader(
+            jobs: {
+                calls += 1
+                if calls == 1 { return await withCheckedContinuation { release = $0 } }
+                return [fresh]
+            }, history: { [] }, render: { $0.localizedDescription }
+        )
+        let first = Task { await loader.refresh() }
+        await yieldUntil { release != nil }
+        await loader.refresh()
+        XCTAssertEqual(loader.jobs.map(\.id), ["fresh"])
+        release?.resume(returning: [stale])
+        await first.value
+        XCTAssertEqual(loader.jobs.map(\.id), ["fresh"])
+    }
 }
 
 // MARK: - Source
@@ -187,6 +281,28 @@ final class TrainingSourceTests: XCTestCase {
         let text = try source("TrainingView.swift")
         XCTAssertTrue(text.contains(".task(id: isRouteActive)"))
         XCTAssertTrue(text.contains("guard isRouteActive else { return }"))
+    }
+
+    func testEveryBorderedButtonIsSmall() throws {
+        let lines = try source("TrainingViews.swift").components(separatedBy: "\n")
+        for (index, line) in lines.enumerated() where line.contains(".buttonStyle(.bordered)") {
+            let nearby = lines[index...].prefix(2).joined()
+            XCTAssertTrue(nearby.contains(".controlSize(.small)"), "line \(index + 1) is not small")
+        }
+    }
+
+    func testThereIsOneStatusBadge() throws {
+        let ui = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("mlx-mac/UI")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: ui, includingPropertiesForKeys: nil))
+        var declarations = 0
+        for case let url as URL in files where url.pathExtension == "swift" {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            declarations += text.components(separatedBy: "\n").filter {
+                $0.range(of: #"^\s*(private |fileprivate )?struct \w*StatusBadge\b"#, options: .regularExpression) != nil
+            }.count
+        }
+        XCTAssertEqual(declarations, 1)
     }
 
     func testUITestAnchorsStay() throws {
@@ -247,11 +363,11 @@ final class TrainingRenderTests: XCTestCase {
         add(attachment)
     }
 
-    private func loader(jobs: [TrainingJob], evaluations: [LabValue], jobsError: String? = nil) -> TrainingLoader {
-        let jobsError = jobsError
+    private func loader(jobs: [TrainingJob], evaluations: [LabValue], jobsError: String? = nil, historyError: String? = nil) -> TrainingLoader {
+        func failure(_ text: String) -> NSError { NSError(domain: "fixture", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }
         return TrainingLoader(
-            jobs: { if let jobsError { throw NSError(domain: "fixture", code: 1, userInfo: [NSLocalizedDescriptionKey: jobsError]) }; return jobs },
-            history: { evaluations },
+            jobs: { if let jobsError { throw failure(jobsError) }; return jobs },
+            history: { if let historyError { throw failure(historyError) }; return evaluations },
             render: { $0.localizedDescription },
             seededJobs: jobs, seededEvaluations: evaluations
         )
@@ -273,14 +389,24 @@ final class TrainingRenderTests: XCTestCase {
             let name: String
             let loader: TrainingLoader
             var planned = false
+            var retained: TrainingRetainedEvidence?
         }
+        let report = #"{"adapter":"qwen","outputs":[{"prompt":"hello","base":"hi","tuned":"hello there"}],"recipe":{"iters":100}}"#
         let scenarios = [
             Scenario(name: "empty", loader: loader(jobs: [], evaluations: [])),
             Scenario(name: "jobs", loader: loader(jobs: jobs, evaluations: evaluations)),
-            Scenario(name: "jobs-error", loader: loader(jobs: jobs, evaluations: evaluations, jobsError: "The agent exited with status 2.")),
+            Scenario(name: "jobs-error", loader: loader(jobs: [], evaluations: evaluations, jobsError: "usage: mlx-agent train status [-h] --json\nmlx-agent: error: unrecognized arguments")),
+            Scenario(name: "history-error", loader: loader(jobs: jobs, evaluations: [], historyError: "usage: mlx-agent lab [-h] operation\nmlx-agent: error: the following arguments are required")),
+            Scenario(
+                name: "inspected", loader: loader(jobs: jobs, evaluations: evaluations),
+                retained: TrainingRetainedEvidence(evaluationID: "0123456789abcdef", reportText: report, sha256: "9f2c4e7a1b0d")
+            ),
             Scenario(name: "plan", loader: loader(jobs: jobs, evaluations: evaluations), planned: true),
         ]
         for scenario in scenarios {
+            await scenario.loader.refresh()
+            if scenario.name == "jobs-error" { XCTAssertNotNil(scenario.loader.jobsError) }
+            if scenario.name == "history-error" { XCTAssertNotNil(scenario.loader.historyError) }
             for dark in [true, false] {
                 for width in [CGFloat(1220), 824, 514] {
                     let session = TrainingSession(preview: { _ in ["preview_hash": "h"] }, start: { _, _ in })
@@ -288,7 +414,7 @@ final class TrainingRenderTests: XCTestCase {
                         session.draft = TrainingDraft(repo: "org/base-model", data: "/Users/fixture/data", iterations: "100", output: "")
                         await session.previewTraining()?.value
                     }
-                    let view = TrainingView(appHost: host(), loader: scenario.loader, session: session)
+                    let view = TrainingView(appHost: host(), loader: scenario.loader, session: session, seedRetained: scenario.retained)
                     try await attach(view.environment(\.isRouteActive, false), name: "training-\(scenario.name)", viewport: width, dark: dark)
                 }
             }
