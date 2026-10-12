@@ -3,6 +3,24 @@ import XCTest
 
 @testable import mlx_workbench
 
+private final class LockedRoots: @unchecked Sendable {
+    private let lock = NSLock()
+    private var roots: [String]?
+
+    var value: [String]? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return roots
+        }
+        set {
+            lock.lock()
+            roots = newValue
+            lock.unlock()
+        }
+    }
+}
+
 final class AppHostHealthTests: XCTestCase {
     func testNormalizeAgentPathTrimsWhitespace() async {
         let result = await MainActor.run { AppHost.normalizeAgentPath("  /tmp/mlx ") }
@@ -392,6 +410,87 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertEqual(Config.discoverGgufRoots(home: home), [hiddenModels.path])
     }
 
+    func testDiscoverGgufRootsAppendsLMStudiosDownloadsFolderAfterItsOwnCandidates() throws {
+        let home = try makeTempDirectory().standardizedFileURL
+        defer { cleanup(home) }
+        let hub = try makeDirectory(".cache/huggingface/hub", in: home)
+        let models = try makeDirectory("models", in: home)
+        let shelf = try makeDirectory("Volumes/External/lms", in: home)
+        try writeLMStudioSettings(#"{"downloadsFolder": "\#(shelf.path)"}"#, in: home)
+
+        XCTAssertEqual(Config.discoverGgufRoots(home: home), [hub.path, models.path, shelf.path])
+    }
+
+    func testDiscoverGgufRootsSkipsAnLMStudioFolderInsideADiscoveredRoot() throws {
+        let home = try makeTempDirectory().standardizedFileURL
+        defer { cleanup(home) }
+        let hidden = try makeDirectory(".models", in: home)
+        _ = try makeDirectory(".models/lmstudio", in: home)
+        try writeLMStudioSettings(#"{"downloadsFolder": "~/.models/lmstudio"}"#, in: home)
+        XCTAssertEqual(Config.discoverGgufRoots(home: home), [hidden.path])
+
+        let models = try makeDirectory("models", in: home)
+        _ = try makeDirectory("models/lms", in: home)
+        try writeLMStudioSettings(#"{"downloadsFolder": "~/MODELS/lms"}"#, in: home)
+        XCTAssertEqual(Config.discoverGgufRoots(home: home), [hidden.path, models.path], "a case-variant spelling is the same folder")
+    }
+
+    func testDiscoverGgufRootsIgnoresAMissingOrOversizedLMStudioSetting() throws {
+        let home = try makeTempDirectory().standardizedFileURL
+        defer { cleanup(home) }
+        let shelf = try makeDirectory("lms", in: home)
+        try writeLMStudioSettings(#"{"downloadsFolder": "~/gone"}"#, in: home)
+        XCTAssertEqual(Config.discoverGgufRoots(home: home), [])
+
+        let padding = String(repeating: "x", count: LMStudioShelfResolver.settingsByteLimit)
+        try writeLMStudioSettings(#"{"downloadsFolder": "\#(shelf.path)", "pad": ""# + padding + #""}"#, in: home)
+        XCTAssertEqual(Config.discoverGgufRoots(home: home), [])
+    }
+
+    func testCoercionDiscoversGGUFRootsOnlyWithoutAValidStoredList() throws {
+        let unexpected = { () -> [String] in
+            XCTFail("a stored gguf_roots list is not rediscovered")
+            return []
+        }
+        XCTAssertEqual(coerce(["gguf_roots": ["/models/a"]], discoverGgufRoots: unexpected).ggufRoots, ["/models/a"])
+        XCTAssertEqual(coerce(["gguf_roots": [String]()], discoverGgufRoots: unexpected).ggufRoots, [])
+        XCTAssertEqual(coerce([:], discoverGgufRoots: { ["/found"] }).ggufRoots, ["/found"])
+        XCTAssertEqual(coerce(["gguf_roots": 7], discoverGgufRoots: { ["/found"] }).ggufRoots, ["/found"])
+        let tooMany = Array(repeating: "/r", count: Config.MAX_ROOTS + 1)
+        XCTAssertEqual(coerce(["gguf_roots": tooMany], discoverGgufRoots: { ["/found"] }).ggufRoots, ["/found"])
+
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("mlx-mac/Services/AppConfig.swift"),
+            encoding: .utf8
+        )
+        let start = try XCTUnwrap(source.range(of: "func coerce("))
+        let end = try XCTUnwrap(source.range(of: "private func encode("))
+        XCTAssertFalse(source[start.lowerBound..<end.lowerBound].contains("Config.defaults()"))
+    }
+
+    func testDiscoverGgufRootsDoesNotOpenANonRegularLMStudioSettingsFile() throws {
+        let home = try makeTempDirectory().standardizedFileURL
+        defer { cleanup(home) }
+        let settings = home.appendingPathComponent(".lmstudio/settings.json")
+        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+        XCTAssertEqual(mkfifo(settings.path, 0o600), 0)
+        defer {
+            // Releases a reader blocked opening the pipe.
+            let writer = open(settings.path, O_WRONLY | O_NONBLOCK)
+            if writer >= 0 { close(writer) }
+        }
+
+        let finished = expectation(description: "discovery returns")
+        let roots = LockedRoots()
+        DispatchQueue.global().async {
+            roots.value = Config.discoverGgufRoots(home: home)
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 5)
+        XCTAssertEqual(roots.value, [])
+    }
+
     func testDoctorDoesNotClaimCleanInventoryBeforeSuccessfulRun() {
         XCTAssertFalse(DoctorCheckState.notRun.isClean)
         XCTAssertFalse(DoctorCheckState.running.isClean)
@@ -446,6 +545,18 @@ final class AppHostHealthTests: XCTestCase {
 
     private func cleanup(_ directory: URL) {
         try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func makeDirectory(_ relative: String, in home: URL) throws -> URL {
+        let url = home.appendingPathComponent(relative, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func writeLMStudioSettings(_ json: String, in home: URL) throws {
+        let url = home.appendingPathComponent(".lmstudio/settings.json")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: url)
     }
 
     private func makeOperationalWorkflow(

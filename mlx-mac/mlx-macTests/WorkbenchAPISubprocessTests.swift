@@ -237,7 +237,7 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         let config = ConfigModule(pathOverride: ConfigModule().configPath(environment: environment)).load()
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: config.mlxAgentPath)
         let result = try await api.scan(
-            ggufRoots: ConfigModule().scanRoots(value: config),
+            ggufRoots: ConfigModule().scanRoots(value: config, home: URL(fileURLWithPath: NSHomeDirectory())),
             mlxRoots: config.mlxRoots,
             signatures: config.signatures
         )

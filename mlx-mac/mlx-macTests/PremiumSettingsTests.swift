@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import XCTest
 
@@ -137,9 +138,10 @@ final class PremiumSettingsTests: XCTestCase {
         XCTAssertFalse(WorkbenchStatePaths.isHostedUnitTest([:]))
     }
 
-    func testUnitTestHostSkipsLiveServices() async {
+    func testUnitTestHostSkipsLiveServices() async throws {
         let scanned = expectation(description: "launch scan")
         scanned.isInverted = true
+        _ = try makeHostedLMStudioFolder()
         let host = makeHost(scanned: scanned)
 
         host.startLiveServices(environment: ["XCTestConfigurationFilePath": "/tmp/session.xctestconfiguration"])
@@ -149,6 +151,24 @@ final class PremiumSettingsTests: XCTestCase {
         XCTAssertFalse(host.watch.isMonitoring)
         XCTAssertFalse(host.endpoint.isMonitoring)
         XCTAssertFalse(host.resources.isMonitoring)
+        XCTAssertEqual(host.discoveredRoots, [])
+    }
+
+    func testNormalLaunchDiscoversGGUFFoldersAfterCreatingTheHost() async throws {
+        let folder = try makeHostedLMStudioFolder()
+        let host = makeHost()
+        XCTAssertEqual(host.discoveredRoots, [])
+        let discovered = expectation(description: "discovered roots published")
+        let subscription = host.$discoveredRoots.sink { roots in
+            if roots == [folder] { discovered.fulfill() }
+        }
+
+        host.startLiveServices(environment: [:])
+        await fulfillment(of: [discovered], timeout: 5)
+
+        subscription.cancel()
+        host.watch.stopMonitoring()
+        host.endpoint.stopMonitoring()
     }
 
     func testNormalLaunchStartsLiveServices() async {
@@ -203,6 +223,17 @@ final class PremiumSettingsTests: XCTestCase {
                 stateStore: JSONStore<WatchState>(fileURL: root.appendingPathComponent("watch-state.json"))
             )
         )
+    }
+
+    /// An LM Studio downloads folder beneath the hosted test home, named by its settings.
+    private func makeHostedLMStudioFolder() throws -> String {
+        let home = WorkbenchStatePaths.userHome()
+        let folder = home.appendingPathComponent("Volumes/External/lms", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let settings = home.appendingPathComponent(".lmstudio/settings.json")
+        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"downloadsFolder": "~/Volumes/External/lms"}"#.utf8).write(to: settings)
+        return URL(fileURLWithPath: folder.path).standardizedFileURL.path
     }
 
     private func temporaryConfigURL() -> URL {

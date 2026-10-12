@@ -52,7 +52,7 @@ struct LMStudioView: View {
     init(
         appHost: AppHost,
         resources: SystemResourceMonitor? = nil,
-        home: URL = Path.home(),
+        home: URL = WorkbenchStatePaths.userHome(),
         resolution: LMStudioShelfResolver.Resolution? = nil,
         onRouteSelection: @escaping (AppRoute) -> Void = { _ in }
     ) {

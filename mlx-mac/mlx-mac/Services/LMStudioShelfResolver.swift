@@ -1,7 +1,8 @@
 import Foundation
 
 /// Finds the folders LM Studio keeps its models in and states, per format, whether the
-/// Library scan reaches each one. The only file access is `resolve`, which callers run off the main actor.
+/// Library scan reaches each one. `resolve` walks the folders and runs off the main actor;
+/// `downloadsFolder` reads only a regular `settings.json` within `settingsByteLimit` and may run on it.
 enum LMStudioShelfResolver {
     enum Source: Equatable {
         case settings, `default`, legacy
@@ -60,6 +61,12 @@ enum LMStudioShelfResolver {
         return URL(fileURLWithPath: expanded).standardizedFileURL
     }
 
+    /// LM Studio's downloads folder from `<home>/.lmstudio/settings.json`, a regular file of at most `settingsByteLimit` bytes.
+    static func downloadsFolder(home: URL) -> URL? {
+        readSettings(at: home.appendingPathComponent(".lmstudio/settings.json"))
+            .flatMap { parseDownloadsFolder(settingsJSON: $0, home: home) }
+    }
+
     /// True when the path from a scan root down to the folder holds a name the agent skips.
     static func isSkipped(_ components: [String]) -> Bool {
         components.contains { $0.hasPrefix(".") || agentSkippedNames.contains($0) }
@@ -109,8 +116,7 @@ enum LMStudioShelfResolver {
         fileIdentity: (String) -> NSObject? = AppHost.fileIdentity
     ) -> Resolution {
         let lmstudio = home.appendingPathComponent(".lmstudio")
-        let settings = readSettings(at: lmstudio.appendingPathComponent("settings.json"))
-            .flatMap { parseDownloadsFolder(settingsJSON: $0, home: home) }
+        let settings = downloadsFolder(home: home)
         // LM Studio reads only its configured folder; the default and older folders apply when none is set.
         var candidates: [(URL, Source)] = []
         if let settings {
@@ -143,8 +149,13 @@ enum LMStudioShelfResolver {
         return Resolution(installed: installed, folders: folders)
     }
 
+    /// Opens only a regular file within the limit, so a pipe or device is never opened.
     private static func readSettings(at url: URL) -> Data? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        let file = url.resolvingSymlinksInPath()
+        guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, let size = values.fileSize, size <= settingsByteLimit,
+              let handle = try? FileHandle(forReadingFrom: file)
+        else { return nil }
         defer { try? handle.close() }
         return try? handle.read(upToCount: settingsByteLimit + 1)
     }

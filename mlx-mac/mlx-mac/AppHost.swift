@@ -4,7 +4,7 @@ import Foundation
 
 @MainActor
 class AppHost: ObservableObject {
-    @Published var config: Config = Config.defaults()
+    @Published var config: Config = Config.defaults(ggufRoots: [])
     @Published var agentHealth: AgentHealth = .notConfigured
     @Published var runtimeReport: RuntimeReport
     @Published var discoveredRoots: [String] = []
@@ -184,7 +184,7 @@ class AppHost: ObservableObject {
             stateStore: JSONStore<WatchState>(fileURL: JSONStore<WatchState>.defaultFileURL("watch-state.json")),
             notify: AlertNotifier.post
         )
-        self.discoveredRoots = discoveredRoots ?? Config.discoverGgufRoots()
+        self.discoveredRoots = discoveredRoots ?? []
         self.configPath = configPath ?? configModule.configPath()
         self.vendorAgentPath = vendorAgentPath ?? configModule.vendorAgentPath()
         self.agentHealth = agentHealth ?? Self.checkAgentHealth(path: loadedConfig.mlxAgentPath, cli: cli)
@@ -824,15 +824,21 @@ class AppHost: ObservableObject {
     }
 
     /// Launch-time live work against the user's real config and state: the
-    /// quality gate, watch and endpoint supervision, resource sampling, and
-    /// the first scan with workflow reconciliation. Skipped in a hosted
-    /// unit-test process so the suite never starts or stops real servers.
+    /// quality gate, watch and endpoint supervision, resource sampling, GGUF
+    /// folder discovery, and the first scan with workflow reconciliation. Skipped
+    /// in a hosted unit-test process so the suite never starts or stops real servers.
     func startLiveServices(environment: [String: String] = ProcessInfo.processInfo.environment) {
         guard !WorkbenchStatePaths.isHostedUnitTest(environment) else { return }
         applyFeatureToggles()
         endpoint.startMonitoring()
         resources.startMonitoring()
+        Task { await self.refreshDiscoveredRoots() }
         requestRescan()
+    }
+
+    /// Default GGUF folders that Settings and Setup suggest, discovered off the main actor.
+    func refreshDiscoveredRoots() async {
+        discoveredRoots = await Task.detached(priority: .utility) { Config.discoverGgufRoots() }.value
     }
 
     /// Recompute Disk Pressure Advisor opportunities from the latest

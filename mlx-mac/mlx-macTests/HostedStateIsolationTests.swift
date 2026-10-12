@@ -47,6 +47,24 @@ final class HostedStateIsolationTests: XCTestCase {
         XCTAssertEqual(usage.map(\.path), ["/models/winner"])
     }
 
+    func testDefaultGGUFDiscoveryReadsLMStudioSettingsBeneathTheHostedHome() async throws {
+        let home = WorkbenchStatePaths.userHome()
+        XCTAssertTrue(Self.isWithin(home, WorkbenchStatePaths.hostedTestRoot))
+        let shelf = home.appendingPathComponent("Volumes/External/lms", isDirectory: true)
+        try FileManager.default.createDirectory(at: shelf, withIntermediateDirectories: true)
+        let settings = home.appendingPathComponent(".lmstudio/settings.json")
+        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"downloadsFolder": "~/Volumes/External/lms"}"#.utf8).write(to: settings)
+        let expected = URL(fileURLWithPath: shelf.path).standardizedFileURL.path
+
+        XCTAssertEqual(Config.discoverGgufRoots(), [expected])
+        XCTAssertEqual(Config.defaults().ggufRoots, [expected])
+        let host = AppHost(config: Config.defaults())
+        XCTAssertEqual(host.discoveredRoots, [], "creating the host does not discover")
+        await host.refreshDiscoveredRoots()
+        XCTAssertEqual(host.discoveredRoots, [expected], "Settings suggests discovered roots")
+    }
+
     private func userStateDirectories() -> [URL] {
         let environment = ProcessInfo.processInfo.environment
         let home = FileManager.default.homeDirectoryForCurrentUser

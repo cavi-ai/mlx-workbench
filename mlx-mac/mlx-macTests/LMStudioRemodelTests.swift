@@ -267,6 +267,20 @@ final class LMStudioResolverTests: XCTestCase {
         XCTAssertEqual(resolution.folders.map(\.source), [.settings])
     }
 
+    func testTheDownloadsFolderFollowsASymlinkedSettingsFileAndSkipsOtherFileTypes() throws {
+        let home = try makeHome()
+        let real = home.appendingPathComponent("dotfiles/lmstudio-settings.json")
+        try write(#"{"downloadsFolder": "~/lms"}"#, to: real)
+        let settings = home.appendingPathComponent(".lmstudio/settings.json")
+        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: settings, withDestinationURL: real)
+        XCTAssertEqual(LMStudioShelfResolver.downloadsFolder(home: home)?.path, home.appendingPathComponent("lms").path)
+
+        try FileManager.default.removeItem(at: settings)
+        try FileManager.default.createDirectory(at: settings, withIntermediateDirectories: true)
+        XCTAssertNil(LMStudioShelfResolver.downloadsFolder(home: home))
+    }
+
     func testNothingInstalledResolvesToNoFolders() throws {
         let home = try makeHome()
         let resolution = LMStudioShelfResolver.resolve(home: home, scannedRoots: nil, configGGUFRoots: [], configMLXRoots: [])
@@ -734,6 +748,28 @@ final class LMStudioSourceTests: XCTestCase {
         XCTAssertTrue(page.contains(".task(id: resolveKey)"))
         XCTAssertTrue(page.contains("guard fixedResolution == nil else"))
         XCTAssertTrue(page.contains("loader.load(isActive: isRouteActive)"))
+    }
+
+    func testSettingsDiscoveryNeverSpawnsProcesses() throws {
+        let services = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("mlx-mac/Services")
+        let resolver = try String(contentsOf: services.appendingPathComponent("LMStudioShelfResolver.swift"), encoding: .utf8)
+        let config = try String(contentsOf: services.appendingPathComponent("AppConfig.swift"), encoding: .utf8)
+        let start = try XCTUnwrap(config.range(of: "static func discoverGgufRoots("))
+        let end = try XCTUnwrap(config.range(of: "static func defaultQuarantineDir("))
+        for (name, text) in [("LMStudioShelfResolver.swift", resolver), ("discoverGgufRoots", String(config[start.lowerBound..<end.lowerBound]))] {
+            for banned in ["Process(", "URLSession", "enumerator("] {
+                XCTAssertFalse(text.contains(banned), "\(name) contains \(banned)")
+            }
+        }
+        XCTAssertTrue(String(config[start.lowerBound..<end.lowerBound]).contains("LMStudioShelfResolver.downloadsFolder(home: home)"))
+    }
+
+    func testThePageDefaultsToTheHostedSafeHome() throws {
+        let page = try source("LMStudioView.swift")
+        XCTAssertTrue(page.contains("home: URL = WorkbenchStatePaths.userHome()"))
+        XCTAssertFalse(page.contains("Path.home()"))
     }
 
     func testRemovedSurfacesStayRemoved() throws {
