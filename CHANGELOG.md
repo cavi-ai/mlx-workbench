@@ -36,6 +36,9 @@ and is versioned independently; submodule bumps are recorded here.
 - Run keeps a verified conversion verified, keeps its status message and posts
   no completion notification; running another model leaves the current
   conversion record unchanged.
+- Re-running a conversion to the same destination updates only the new
+  attempt: earlier attempts keep their outcome and do not show the new run's
+  log, and verification starts once.
 
 ## [0.4.0] - 2026-10-08
 ### Added

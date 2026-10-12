@@ -564,8 +564,7 @@ struct ConvertView: View {
     }
 
     private var currentJob: Job? {
-        guard let receipt = modelWorkflow.workflow.jobReceipt else { return nil }
-        return modelWorkflow.jobs.first { $0.receipt == receipt }
+        Job.owners(of: modelWorkflow.jobs, among: modelWorkflow.history + [modelWorkflow.workflow])[modelWorkflow.workflow.id]
     }
 
     /// Reads the destination size and log tail off the main thread.

@@ -326,15 +326,20 @@ from `mlx-agent` at runtime.
   then the action description. They do not change action eligibility or save
   behavior.
   ComparePresentation.runUnavailableReason is the shared Run comparison
-  eligibility explanation: an active run takes precedence over a missing
-  prompt set, no selected model, or the first unavailable slot. canRun
-  delegates to this model-only decision with prompt presence assumed, while
-  QuantView includes prompt-set presence for both its button and live
+  eligibility explanation: an active run takes precedence over a pending
+  prompt-set save, a missing or empty prompt set, no selected model, or the
+  first unavailable slot. canRun delegates to this model-only decision with
+  prompt readiness assumed, while QuantView includes save state and prompt-set
+  presence/content for both its button and live
   startRun guard. ComparisonRunButton shares hover/accessibility guidance;
   ComparisonRunGuidance shows one idle setup message in place of the old
   unavailable-model list. Active runs retain their existing progress display.
   Guidance performs no I/O, persistence or generation and does not change
   model eligibility, deduplication or filter behavior.
+  OpenCode prompt imports use persistNewPromptSet and return a set only after
+  the durable store accepts it. Failed writes leave the current set selection
+  and existing sets unchanged; lastError reports the failed import and clears
+  after a successful retry. Import never starts a comparison.
   ComparisonPromptRemoveButton is shared by non-music and music prompt cards
   in new/copy, edit and reuse editors. The minus button opens inline Keep
   prompt / Remove prompt choices; only explicit Remove invokes the existing
@@ -481,6 +486,9 @@ from `mlx-agent` at runtime.
   fresh authoritative status before any file write and refuses stopped,
   replaced or ambiguous servers. Existing config drift and rollback guards
   remain unchanged. Server refreshes run asynchronously on route activation.
+  The Clients board reads each writable client's allowlisted config off the main actor (route
+  activation, Refresh servers, each confirm or rollback outcome) and draws what that file points at
+  against running servers; the reading is read-only and exposes only URL parts and model names.
 - The Run tab hosts the **Always-on Endpoint**: `EndpointSupervisor` keeps a
   chosen verified model serving on a stable loopback port by reconciling
   desired state against authoritative serve status (crash-loop guarded;

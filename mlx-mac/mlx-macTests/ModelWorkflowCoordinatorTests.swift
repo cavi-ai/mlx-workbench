@@ -437,6 +437,71 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         }
     }
 
+    /// Receipts are named by destination, so a re-run reuses the older record's receipt.
+    func testDoneJobReconcilesOnlyTheNewestRecordSharingItsReceipt() async {
+        let doneJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "done")
+        let output = MLXOutput(path: "/Models/source", name: "source", modelKey: "source-model", quantization: nil, provenance: "signature-1")
+        let scans = ScanSequence([scanResult(outputs: []), scanResult(outputs: [output])])
+        let host = await makeHost(jobs: [doneJob], scanOperation: { _, _, _, _ in try await scans.next() })
+        let older = makeWorkflow(id: "old", state: .failed, receipt: "receipt-1", message: "Conversion failed.", errorMessage: "Conversion failed.", agentState: "failed")
+        let newer = makeWorkflow(state: .running, receipt: "receipt-1", agentState: "running", createdAt: Date(timeIntervalSinceReferenceDate: 30))
+        let verifier = await MainActor.run { () -> StubCompletionVerifier in
+            let verifier = StubCompletionVerifier()
+            host.modelWorkflow.restore(older)
+            host.modelWorkflow.restore(newer)
+            host.modelWorkflow.completionVerifier = verifier
+            return verifier
+        }
+
+        await host.rescan()
+
+        await MainActor.run {
+            XCTAssertEqual(verifier.calls.map { $0.0 }, [newer.id])
+            XCTAssertEqual(host.modelWorkflow.history.first { $0.id == newer.id }?.state, .verifying)
+            XCTAssertEqual(host.modelWorkflow.history.first { $0.id == older.id }, older)
+        }
+    }
+
+    func testNewerRunNeverRewritesAnOlderFailedRecord() async {
+        for agentState in ["queued", "running", "done", "cancelled"] {
+            let job = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: agentState)
+            let host = await makeHost(jobs: [job])
+            let failed = makeWorkflow(state: .failed, receipt: "receipt-1", message: "Conversion failed.", errorMessage: "Conversion failed.", agentState: "failed")
+            let recorder = TerminalStateRecorder()
+            await MainActor.run {
+                host.modelWorkflow.onTerminalState = { recorder.states.append($0.state) }
+                host.modelWorkflow.restore(failed)
+            }
+
+            await host.modelWorkflow.reconcile(snapshot: nil, jobs: [job])
+
+            await MainActor.run {
+                XCTAssertEqual(host.modelWorkflow.history.first { $0.id == failed.id }, failed, agentState)
+                XCTAssertEqual(host.modelWorkflow.workflow, failed, agentState)
+                XCTAssertFalse(host.modelWorkflow.consumeCompletionRescanRequest(), agentState)
+            }
+            XCTAssertEqual(recorder.states, [], agentState)
+        }
+    }
+
+    func testJobOfANewerRunLeavesAnOlderInFlightRecordAlone() async {
+        let failedJob = Job(receipt: "receipt-1", repo: nil, source: nil, qBits: 4, out: "/Models/source", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "failed")
+        let host = await makeHost(jobs: [failedJob])
+        let older = makeWorkflow(id: "old", state: .running, receipt: "receipt-1", agentState: "running")
+        let newer = makeWorkflow(state: .failed, receipt: "receipt-1", message: "Conversion failed.", errorMessage: "Conversion failed.", agentState: "failed", createdAt: Date(timeIntervalSinceReferenceDate: 30))
+        await MainActor.run {
+            host.modelWorkflow.restore(older)
+            host.modelWorkflow.restore(newer)
+        }
+
+        await host.modelWorkflow.reconcile(snapshot: nil, jobs: [failedJob])
+
+        await MainActor.run {
+            XCTAssertEqual(host.modelWorkflow.history.first { $0.id == older.id }, older)
+            XCTAssertEqual(host.modelWorkflow.history.first { $0.id == newer.id }, newer)
+        }
+    }
+
     func testVerificationResolutionNotifiesTheTerminalOutcome() async {
         let host = await makeHost()
         let recorder = TerminalStateRecorder()
@@ -584,6 +649,9 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         receipt: String?,
         completedModelPath: String? = nil,
         message: String? = nil,
+        errorMessage: String? = nil,
+        agentState: String? = nil,
+        createdAt: Date = Date(timeIntervalSinceReferenceDate: 10),
         reclaimSourceAfterVerification: Bool? = nil
     ) -> ConversionWorkflow {
         var record = ConversionWorkflow(
@@ -598,10 +666,10 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             state: state,
             serveState: .idle,
             message: message,
-            errorMessage: nil,
-            createdAt: Date(timeIntervalSinceReferenceDate: 10),
+            errorMessage: errorMessage,
+            createdAt: createdAt,
             updatedAt: Date(timeIntervalSinceReferenceDate: 20),
-            lastKnownAgentState: nil
+            lastKnownAgentState: agentState
         )
         record.reclaimSourceAfterVerification = reclaimSourceAfterVerification
         return record

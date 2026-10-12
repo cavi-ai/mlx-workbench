@@ -166,9 +166,12 @@ enum ComparePresentation {
     }
 
     static func runUnavailableReason(slots: [String?], activeRunID: UUID?,
-                                     availablePaths: Set<String>? = nil, hasPromptSet: Bool = true) -> String? {
+                                     availablePaths: Set<String>? = nil, hasPromptSet: Bool = true,
+                                     savingPromptSet: Bool = false, hasPrompts: Bool = true) -> String? {
         if activeRunID != nil { return "Wait for the current comparison to finish." }
+        if savingPromptSet { return "Wait for the prompt set save to finish." }
         if !hasPromptSet { return "Choose a prompt set." }
+        if !hasPrompts { return "Choose a prompt set with at least one prompt." }
         if variantPaths(slots).isEmpty { return "Choose at least one model." }
         if let availablePaths, let index = slots.firstIndex(where: { path in
             path.map { !availablePaths.contains($0) } ?? false
@@ -737,7 +740,8 @@ struct QuantView: View {
 
     private var runUnavailableReason: String? {
         ComparePresentation.runUnavailableReason(slots: variantSlots, activeRunID: comparison.activeRunID,
-            availablePaths: Set(readyModels.map { $0.item.path }), hasPromptSet: selectedPromptSet != nil)
+            availablePaths: Set(readyModels.map { $0.item.path }), hasPromptSet: selectedPromptSet != nil,
+            savingPromptSet: comparison.savingPromptSet, hasPrompts: selectedPromptSet?.prompts.isEmpty == false)
     }
 
     private var selectedPromptSet: PromptSet? {

@@ -101,3 +101,17 @@ struct ConversionWorkflow: Codable, Equatable, Identifiable {
             && lastKnownAgentState == agentState
     }
 }
+
+extension Job {
+    /// Receipts are named by destination and rewritten by every run, so a job belongs to the newest record holding its receipt.
+    static func owners(of jobs: [Job], among records: [ConversionWorkflow]) -> [UUID: Job] {
+        var owners: [UUID: Job] = [:]
+        for job in jobs {
+            guard let receipt = job.receipt, !receipt.isEmpty,
+                  let owner = records.filter({ $0.jobReceipt == receipt }).max(by: { $0.createdAt < $1.createdAt })
+            else { continue }
+            owners[owner.id] = owners[owner.id] ?? job
+        }
+        return owners
+    }
+}

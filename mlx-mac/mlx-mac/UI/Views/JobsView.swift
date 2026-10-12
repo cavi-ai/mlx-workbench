@@ -84,12 +84,12 @@ enum ActivityPresentation {
                 records.append(workflow)
             }
         }
+        let owners = Job.owners(of: jobs, among: records)
         return records.sorted { $0.updatedAt > $1.updatedAt }.map { record in
-            let job = jobs.first { $0.receipt == record.jobReceipt && record.jobReceipt != nil }
             let source = scanModels.first(where: { $0.path == record.sourcePath })
             return ActivityWorkflowCardPresentation(
                 workflow: record,
-                job: job,
+                job: owners[record.id],
                 snapshot: snapshot,
                 sourceEvidence: source,
                 agentReady: agentReady,
