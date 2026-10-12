@@ -179,14 +179,14 @@ final class WorkbenchReviewUITests: XCTestCase {
         if let root { try? FileManager.default.removeItem(at: root) }
     }
 
-    private func launch(appearance: String, route: String = "doctor", isolatedHome: Bool = false) {
+    private func launch(appearance: String, route: String = "doctor", isolatedHome: Bool = false, configURL: URL? = nil) {
         if appearance == "Light" || appearance == "Dark" {
             let requested: XCUIDevice.Appearance = appearance == "Dark" ? .dark : .light
             XCUIDevice.shared.appearance = requested
             XCTAssertEqual(XCUIDevice.shared.appearance, requested, "Guest appearance did not change")
         }
         app = XCUIApplication()
-        app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = root.appendingPathComponent("config.json").path
+        app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = (configURL ?? root.appendingPathComponent("config.json")).path
         app.launchEnvironment["XDG_STATE_HOME"] = root.appendingPathComponent("state").path
         app.launchEnvironment["MLX_WORKBENCH_PYTHON"] = "/usr/bin/python3"
         if isolatedHome { app.launchEnvironment["CFFIXED_USER_HOME"] = root.path }
@@ -393,6 +393,129 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(field.isHittable, label)
         }
         capture("Settings-scrolled-semantic-inputs")
+    }
+
+    func testSettingsValidationRecoveryAndSaveFeedback() throws {
+        let before = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
+        let configURL = root.appendingPathComponent(String(repeating: "settings-", count: 24) + "config.json")
+        var initial = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("config.json"))) as? [String: Any])
+        initial["future_feature"] = "preserve-me"
+        let original = try JSONSerialization.data(withJSONObject: initial)
+        for appearance in ["Light", "Dark"] {
+            try original.write(to: configURL)
+            launch(appearance: appearance, route: "settings", isolatedHome: true, configURL: configURL)
+            resizeWindow(width: 1024, height: 680)
+            capture("Settings-\(appearance)-clean")
+            let host = app.textFields["Workbench API host"]
+            let port = app.textFields["Workbench API port"]
+            let reserve = app.textFields["Fit reserve in gigabytes"]
+            let scroll = app.scrollViews.containing(.textField, identifier: "Workbench API host").firstMatch
+            func reveal(_ field: XCUIElement) {
+                XCTAssertTrue(field.waitForExistence(timeout: 10))
+                for _ in 0..<8 where !field.isHittable {
+                    scroll.scroll(byDeltaX: 0, deltaY: field.frame.minY < scroll.frame.minY ? 300 : -300)
+                }
+                XCTAssertTrue(field.isHittable)
+            }
+            func focusedReplace(_ value: String) {
+                app.typeKey("a", modifierFlags: .command)
+                app.typeText(value)
+            }
+            reveal(host)
+            replace(host, with: "example.com")
+            reveal(port)
+            replace(port, with: "abc")
+            reveal(reserve)
+            replace(reserve, with: "invalid")
+            app.typeText("!")
+            XCTAssertEqual(reserve.value as? String, "invalid!", "Validation feedback must not steal input focus")
+            XCTAssertEqual(host.value as? String, "example.com")
+            XCTAssertFalse(host.isHittable, "Editing a later field must not jump to the first invalid input")
+            let save = before ? app.buttons["Save"].firstMatch : app.buttons["settings-save"]
+            XCTAssertFalse(save.isEnabled)
+            XCTAssertEqual(try Data(contentsOf: configURL), original)
+            capture("Settings-\(appearance)-multiple-invalid")
+            resizeWindow(width: 740, height: 680)
+            XCTAssertEqual(app.windows.firstMatch.frame.width, 740, accuracy: 2)
+            XCTAssertEqual(app.windows.firstMatch.frame.height, 680, accuracy: 2)
+            capture("Settings-\(appearance)-multiple-invalid-narrow")
+            if before {
+                reveal(host); replace(host, with: "localhost")
+                reveal(port); replace(port, with: "8788 ")
+                reveal(reserve); replace(reserve, with: "8")
+            } else {
+                let fix = app.buttons["settings-fix-field"]
+                let guidance = app.staticTexts["settings-save-guidance"]
+                XCTAssertTrue(guidance.label.contains("Host"))
+                fix.click()
+                XCTAssertTrue(host.isHittable)
+                XCTAssertEqual(host.value as? String, "example.com")
+                XCTAssertEqual(port.value as? String, "abc")
+                XCTAssertEqual(reserve.value as? String, "invalid!")
+                XCTAssertEqual(try Data(contentsOf: configURL), original)
+                focusedReplace("localhos")
+                app.typeText("t")
+                XCTAssertEqual(host.value as? String, "localhost", "Fix field must focus the actual input")
+                XCTAssertTrue(guidance.label.contains("Port"))
+                fix.click()
+                focusedReplace("8788")
+                app.typeText(" ")
+                XCTAssertEqual(port.value as? String, "8788 ")
+                XCTAssertTrue(guidance.label.contains("Fit reserve"))
+                fix.click()
+                focusedReplace("8")
+                XCTAssertEqual(reserve.value as? String, "8")
+                XCTAssertFalse(fix.exists)
+            }
+            XCTAssertTrue(save.isEnabled)
+            XCTAssertEqual(try Data(contentsOf: configURL), original, "Recovery must not save the draft")
+            capture("Settings-\(appearance)-valid-draft-narrow")
+            save.click()
+            XCTAssertTrue(text(containing: "Saved to").waitForExistence(timeout: 10))
+            let savedBytes = try Data(contentsOf: configURL)
+            let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: savedBytes) as? [String: Any])
+            XCTAssertEqual(saved["host"] as? String, "localhost")
+            XCTAssertEqual(saved["port"] as? Int, 8788)
+            XCTAssertEqual(saved["fit_reserve_gb"] as? Double, 8)
+            XCTAssertEqual(saved["future_feature"] as? String, "preserve-me")
+            capture("Settings-\(appearance)-saved-narrow")
+            resizeWindow(width: 1024, height: 680)
+            capture("Settings-\(appearance)-saved")
+            reveal(port)
+            replace(port, with: "abc")
+            if !before {
+                XCTAssertTrue(app.staticTexts["settings-save-guidance"].label.contains("Port"), "A prior success must not obscure validation")
+            }
+            replace(port, with: "8789")
+            // A real read failure on a test-owned config exercises the existing
+            // persistence boundary without a production error-injection seam.
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: configURL.path)
+            let expectedFailure: String
+            do {
+                _ = try Data(contentsOf: configURL)
+                XCTFail("The owned config must be unreadable")
+                return
+            } catch { expectedFailure = error.localizedDescription }
+            XCTAssertGreaterThan(expectedFailure.count, 180)
+            save.click()
+            XCTAssertTrue(text(containing: expectedFailure).waitForExistence(timeout: 10))
+            if !before {
+                XCTAssertEqual(app.staticTexts["settings-save-error"].label, expectedFailure)
+            }
+            XCTAssertEqual(port.value as? String, "8789", "Save failure must retain the draft")
+            XCTAssertTrue(save.isEnabled)
+            capture("Settings-\(appearance)-save-failed")
+            resizeWindow(width: 740, height: 680)
+            capture("Settings-\(appearance)-save-failed-narrow")
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+            XCTAssertEqual(try Data(contentsOf: configURL), savedBytes, "Failed Save must not write")
+            save.click()
+            XCTAssertTrue(text(containing: "Saved to").waitForExistence(timeout: 10))
+            let retried = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
+            XCTAssertEqual(retried["port"] as? Int, 8789)
+            XCTAssertEqual(retried["future_feature"] as? String, "preserve-me")
+            app.terminate()
+        }
     }
 
     func testClientWiringPreviewAndEndpointSelection() throws {

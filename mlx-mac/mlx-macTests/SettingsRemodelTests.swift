@@ -604,6 +604,89 @@ final class SettingsRouteTests: XCTestCase {
     }
 }
 
+// MARK: - Save validation
+
+final class SettingsInputValidationTests: XCTestCase {
+    func testFirstInvalidFieldFollowsScreenOrderAndAdvancesAfterCorrection() {
+        var validation = SettingsInputValidation(host: "remote", port: "0", fitReserve: "17",
+            staleDays: "1", comparisonTokens: "63")
+        let fields = SettingsInputValidation.Field.allCases
+        XCTAssertEqual(fields, [.host, .port, .fitReserve, .staleDays, .comparisonTokens])
+        let corrections: [(WritableKeyPath<SettingsInputValidation, String>, String)] = [
+            (\.host, "localhost"), (\.port, "8765"), (\.fitReserve, "4"),
+            (\.staleDays, "60"), (\.comparisonTokens, "512"),
+        ]
+        for (index, correction) in corrections.enumerated() {
+            let invalid = validation.firstInvalid
+            XCTAssertEqual(invalid?.field, fields[index])
+            XCTAssertEqual(invalid?.guidance, fields[index].label + ": " + (invalid?.instruction ?? ""))
+            validation[keyPath: correction.0] = correction.1
+        }
+        XCTAssertNil(validation.firstInvalid)
+    }
+
+    func testEachFieldNamesItsExistingValidationInstruction() {
+        let cases: [(SettingsInputValidation.Field, WritableKeyPath<SettingsInputValidation, String>, String)] = [
+            (.host, \.host, "Loopback only: 127.0.0.1, localhost, or ::1."),
+            (.port, \.port, "Enter an integer between 1 and 65535."),
+            (.fitReserve, \.fitReserve, "Enter a number between 0 and 16."),
+            (.staleDays, \.staleDays, "Enter an integer between 2 and 365."),
+            (.comparisonTokens, \.comparisonTokens, "Enter an integer between 64 and 4096."),
+        ]
+        for (field, key, instruction) in cases {
+            var validation = SettingsInputValidation()
+            validation[keyPath: key] = "invalid"
+            XCTAssertEqual(validation.firstInvalid, .init(field: field, instruction: instruction))
+            XCTAssertEqual(validation.firstInvalid?.guidance, field.label + ": " + instruction)
+        }
+    }
+
+    func testHostRetainsLoopbackWhitespaceAndEmptyDefaultRules() {
+        for host in ["", " \n ", "127.0.0.1", " localhost\n", " ::1 "] {
+            let validation = SettingsInputValidation(host: host)
+            XCTAssertNil(validation.firstInvalid, host)
+            XCTAssertEqual(validation.host, host, "Reading guidance must preserve raw input")
+        }
+        for host in ["0.0.0.0", "example.com", "LOCALHOST", "http://localhost", "127.0.0.2"] {
+            XCTAssertEqual(SettingsInputValidation(host: host).firstInvalid?.field, .host, host)
+        }
+    }
+
+    func testNumericBoundsAndWhitespaceRemainAccepted() {
+        let cases: [(WritableKeyPath<SettingsInputValidation, String>, [String])] = [
+            (\.port, ["1", "65535", " 8765\n"]),
+            (\.fitReserve, ["0", "16", " 4.5\n"]),
+            (\.staleDays, ["2", "365", " 60\n"]),
+            (\.comparisonTokens, ["64", "4096", " 512\n"]),
+        ]
+        for (key, values) in cases {
+            for value in values {
+                var validation = SettingsInputValidation()
+                validation[keyPath: key] = value
+                XCTAssertNil(validation.firstInvalid, value)
+                XCTAssertEqual(validation[keyPath: key], value)
+            }
+        }
+    }
+
+    func testNumericOutOfRangeMalformedAndNonfiniteInputsRemainRejected() {
+        let cases: [(SettingsInputValidation.Field, WritableKeyPath<SettingsInputValidation, String>, [String])] = [
+            (.port, \.port, ["", "abc", "0", "65536", "2.5", "999999999999999999999999999"]),
+            (.fitReserve, \.fitReserve, ["", "abc", "-0.1", "16.1", "nan", "inf", "-inf"]),
+            (.staleDays, \.staleDays, ["", "abc", "1", "366", "2.5", "999999999999999999999999999"]),
+            (.comparisonTokens, \.comparisonTokens, ["", "abc", "63", "4097", "64.5", "999999999999999999999999999"]),
+        ]
+        for (field, key, values) in cases {
+            for value in values {
+                var validation = SettingsInputValidation()
+                validation[keyPath: key] = value
+                XCTAssertEqual(validation.firstInvalid?.field, field, value)
+                XCTAssertEqual(validation[keyPath: key], value)
+            }
+        }
+    }
+}
+
 // MARK: - Source contract (AC6, AC7, AC11)
 
 final class SettingsSourceContractTests: XCTestCase {
@@ -621,7 +704,9 @@ final class SettingsSourceContractTests: XCTestCase {
                         "conversionSection", "advisorsSection", "updatesSection"]
         let body = try XCTUnwrap(text.range(of: "var body: some View"))
         let bodyOrder = try sections.map {
-            try XCTUnwrap(text.range(of: "\n                        \($0)\n", range: body.lowerBound..<text.endIndex)?.lowerBound, $0)
+            let pattern = #"(?m)^\s+"# + NSRegularExpression.escapedPattern(for: $0) + #"\s*$"#
+            return try XCTUnwrap(text.range(of: pattern, options: .regularExpression,
+                range: body.lowerBound..<text.endIndex)?.lowerBound, $0)
         }
         XCTAssertEqual(bodyOrder, bodyOrder.sorted())
         let definitionOrder = try sections.map { try XCTUnwrap(text.range(of: "private var \($0): some View")?.lowerBound, $0) }
@@ -640,7 +725,9 @@ final class SettingsSourceContractTests: XCTestCase {
     func testNoNestedScrollContainersOrFormControls() throws {
         let text = try source("SettingsView.swift")
         XCTAssertEqual(text.components(separatedBy: "ScrollView {").count - 1, 2, "the page and the update log")
-        XCTAssertEqual(text.components(separatedBy: "ScrollView").count - 1, 2)
+        let containers = text.replacingOccurrences(of: "ScrollViewReader", with: "")
+            .replacingOccurrences(of: "ScrollViewProxy", with: "")
+        XCTAssertEqual(containers.components(separatedBy: "ScrollView").count - 1, 2)
         for banned in ["Form {", "List(", "List {", "Table(", "TextEditor", ".animation("] {
             XCTAssertFalse(text.contains(banned), banned)
         }

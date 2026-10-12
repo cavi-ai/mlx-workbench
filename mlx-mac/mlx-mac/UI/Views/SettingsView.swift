@@ -1,6 +1,88 @@
 import AppKit
 import SwiftUI
 
+struct SettingsInputValidation {
+    enum Field: String, CaseIterable, Hashable {
+        case host, port, fitReserve, staleDays, comparisonTokens
+
+        var label: String {
+            switch self {
+            case .host: return "Host"
+            case .port: return "Port"
+            case .fitReserve: return "Fit reserve"
+            case .staleDays: return "Stale after"
+            case .comparisonTokens: return "Comparison max tokens"
+            }
+        }
+
+        var accessibilityIdentifier: String { "settings-field-" + rawValue }
+    }
+
+    struct InvalidField: Equatable {
+        let field: Field
+        let instruction: String
+        var guidance: String { field.label + ": " + instruction }
+    }
+
+    var host = "127.0.0.1"
+    var port = "8765"
+    var fitReserve = "4"
+    var staleDays = "60"
+    var comparisonTokens = "512"
+
+    var hostError: String? {
+        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effective = trimmed.isEmpty ? "127.0.0.1" : trimmed
+        guard Config.LOOPBACK_HOSTS.contains(effective) else {
+            return "Loopback only: 127.0.0.1, localhost, or ::1."
+        }
+        return nil
+    }
+
+    var portError: String? {
+        let trimmed = port.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let port = Int(trimmed), (1...65535).contains(port) else {
+            return "Enter an integer between 1 and 65535."
+        }
+        return nil
+    }
+
+    var fitReserveError: String? {
+        let trimmed = fitReserve.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let reserve = Double(trimmed), Config.FIT_RESERVE_RANGE.contains(reserve) else {
+            return "Enter a number between 0 and 16."
+        }
+        return nil
+    }
+
+    var staleDaysError: String? {
+        let trimmed = staleDays.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let days = Int(trimmed), Config.STALE_DAYS_RANGE.contains(days) else {
+            return "Enter an integer between 2 and 365."
+        }
+        return nil
+    }
+
+    var comparisonTokensError: String? {
+        let trimmed = comparisonTokens.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let tokens = Int(trimmed), Config.COMPARISON_MAX_TOKENS_RANGE.contains(tokens) else {
+            return "Enter an integer between 64 and 4096."
+        }
+        return nil
+    }
+
+    var firstInvalid: InvalidField? {
+        let errors: [(Field, String?)] = [
+            (.host, hostError), (.port, portError), (.fitReserve, fitReserveError),
+            (.staleDays, staleDaysError), (.comparisonTokens, comparisonTokensError),
+        ]
+        for (field, instruction) in errors {
+            if let instruction { return InvalidField(field: field, instruction: instruction) }
+        }
+        return nil
+    }
+}
+
 // MARK: - SettingsView
 // Edit the local mlx-workbench config: roots, agent path, output, quarantine, qbits.
 //
@@ -49,35 +131,38 @@ struct SettingsView: View {
     @State private var loadedSignature = ""
     @State private var layout = SettingsLayout()
     @State private var directories: [String: SettingsDirectoryState] = [:]
+    @FocusState private var focusedField: SettingsInputValidation.Field?
 
     var body: some View {
-        VStack(spacing: 0) {
-            GeometryReader { viewport in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                        engineSection
-                        locationsSection
-                        storageSection
-                        integrationSection
-                        conversionSection
-                        advisorsSection
-                        updatesSection
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                GeometryReader { viewport in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                            engineSection
+                            locationsSection
+                            storageSection
+                            integrationSection
+                            conversionSection
+                            advisorsSection
+                            updatesSection
+                        }
+                        .frame(maxWidth: WorkbenchSize.Settings.contentMaxWidth, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(WorkbenchSpacing.pageInset)
                     }
-                    .frame(maxWidth: WorkbenchSize.Settings.contentMaxWidth, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(WorkbenchSpacing.pageInset)
+                    .defaultScrollAnchor(.top)
+                    .onChange(of: viewport.size.width, initial: true) { _, width in
+                        layout = SettingsLayout(viewportWidth: width, previous: layout)
+                    }
                 }
-                .defaultScrollAnchor(.top)
-                .onChange(of: viewport.size.width, initial: true) { _, width in
-                    layout = SettingsLayout(viewportWidth: width, previous: layout)
-                }
+                .disabled(isSaving)
+
+                Divider()
+                    .overlay(WorkbenchColor.hairline)
+
+                saveBar(proxy: proxy)
             }
-            .disabled(isSaving)
-
-            Divider()
-                .overlay(WorkbenchColor.hairline)
-
-            saveBar
         }
         .onAppear { loadFromConfig() }
         .task(id: probeKey) { await runProbe() }
@@ -247,6 +332,9 @@ struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
                     .accessibilityLabel("Workbench API host")
+                    .accessibilityIdentifier(SettingsInputValidation.Field.host.accessibilityIdentifier)
+                    .id(SettingsInputValidation.Field.host)
+                    .focused($focusedField, equals: .host)
                     .frame(width: WorkbenchSize.Settings.fieldMedium, alignment: .leading)
             }
             SettingsSeparator()
@@ -255,6 +343,9 @@ struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
                     .accessibilityLabel("Workbench API port")
+                    .accessibilityIdentifier(SettingsInputValidation.Field.port.accessibilityIdentifier)
+                    .id(SettingsInputValidation.Field.port)
+                    .focused($focusedField, equals: .port)
                     .frame(width: WorkbenchSize.Settings.fieldNarrow, alignment: .leading)
             }
         } footer: {
@@ -297,7 +388,7 @@ struct SettingsView: View {
                 message: fitReserveError, stacked: layout.stacksRows
             ) {
                 unitField(
-                    "Fit reserve in gigabytes", prompt: "4", text: $fitReserveText, unit: "GB"
+                    "Fit reserve in gigabytes", prompt: "4", text: $fitReserveText, unit: "GB", field: .fitReserve
                 )
             }
             SettingsSeparator()
@@ -305,26 +396,31 @@ struct SettingsView: View {
                 label: "Stale after", hint: "Reclaim advisor flags models unused this long.",
                 message: staleDaysError, stacked: layout.stacksRows
             ) {
-                unitField("Stale after days", prompt: "60", text: $staleDaysText, unit: "days")
+                unitField("Stale after days", prompt: "60", text: $staleDaysText, unit: "days", field: .staleDays)
             }
             SettingsSeparator()
             SettingsRow(
                 label: "Comparison max tokens", hint: "Per-prompt cap during measured comparisons.",
                 message: comparisonTokensError, stacked: layout.stacksRows
             ) {
-                unitField("Comparison maximum tokens", prompt: "512", text: $comparisonMaxTokensText, unit: "tokens")
+                unitField("Comparison maximum tokens", prompt: "512", text: $comparisonMaxTokensText, unit: "tokens", field: .comparisonTokens)
             }
         } footer: {
             Text("Quality gate, watch alerts, and advisor tuning.")
         }
     }
 
-    private func unitField(_ label: String, prompt: String, text: Binding<String>, unit: String) -> some View {
+    private func unitField(
+        _ label: String, prompt: String, text: Binding<String>, unit: String, field: SettingsInputValidation.Field
+    ) -> some View {
         HStack(spacing: WorkbenchSpacing.xs) {
             TextField(label, text: text, prompt: Text(prompt))
                 .textFieldStyle(.roundedBorder)
                 .labelsHidden()
                 .accessibilityLabel(label)
+                .accessibilityIdentifier(field.accessibilityIdentifier)
+                .id(field)
+                .focused($focusedField, equals: field)
                 .frame(width: WorkbenchSize.Settings.fieldNarrow, alignment: .leading)
             Text(unit)
                 .font(WorkbenchTypography.secondary)
@@ -425,33 +521,54 @@ struct SettingsView: View {
 
     // MARK: - Save bar
 
-    private var saveBar: some View {
-        HStack(spacing: WorkbenchSpacing.sm) {
-            if let notice {
-                Label(notice, systemImage: noticeIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+    private func saveBar(proxy: ScrollViewProxy) -> some View {
+        let invalid = validation.firstInvalid
+        let failure = noticeIsError ? notice : nil
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if let invalid {
+                Label {
+                    Text(invalid.guidance).accessibilityIdentifier("settings-save-guidance")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                }
                     .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(noticeIsError ? WorkbenchColor.failure : WorkbenchColor.success)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            } else if isDirty {
-                Text("Unsaved changes")
+                    .foregroundStyle(WorkbenchColor.failure)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let failure {
+                Label {
+                    Text(failure).accessibilityIdentifier("settings-save-error")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                }
                     .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.warning)
-            } else {
-                Text("All changes saved")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
+                    .foregroundStyle(WorkbenchColor.failure)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Spacer()
+            HStack(spacing: WorkbenchSpacing.sm) {
+                if invalid != nil {
+                    Button("Fix field") { fixField(proxy: proxy) }
+                        .buttonStyle(.bordered)
+                        .disabled(isSaving)
+                        .accessibilityIdentifier("settings-fix-field")
+                } else if failure == nil {
+                    saveStateFeedback
+                }
 
-            Button("Discard") { loadFromConfig() }
-                .buttonStyle(.bordered)
-                .disabled(!isDirty || isSaving)
-            Button("Save") { save() }
-                .buttonStyle(.borderedProminent)
-                .disabled(!isDirty || !isValid || isSaving)
-                .keyboardShortcut(.defaultAction)
+                Spacer()
+
+                Button("Discard") { loadFromConfig() }
+                    .buttonStyle(.bordered)
+                    .disabled(!isDirty || isSaving)
+                    .accessibilityIdentifier("settings-discard")
+                Button("Save") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!isDirty || !isValid || isSaving)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("settings-save")
+            }
         }
         .padding(.horizontal, WorkbenchSpacing.pageInset)
         .padding(.vertical, WorkbenchSpacing.sm)
@@ -459,53 +576,51 @@ struct SettingsView: View {
         .overlay(alignment: .top) { Divider() }
     }
 
+    @ViewBuilder
+    private var saveStateFeedback: some View {
+        if let notice {
+            Label {
+                Text(notice).accessibilityIdentifier("settings-save-success")
+            } icon: {
+                Image(systemName: "checkmark.circle.fill")
+            }
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.success)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if isDirty {
+            Text("Unsaved changes")
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.warning)
+        } else {
+            Text("All changes saved")
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+        }
+    }
+
+    private func fixField(proxy: ScrollViewProxy) {
+        guard !isSaving, let invalid = validation.firstInvalid else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo(invalid.field, anchor: .center)
+            focusedField = invalid.field
+        }
+    }
+
     // MARK: - Validation
 
-    private var portError: String? {
-        let trimmed = portText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let port = Int(trimmed), (1...65535).contains(port) else {
-            return "Enter an integer between 1 and 65535."
-        }
-        return nil
+    private var validation: SettingsInputValidation {
+        SettingsInputValidation(host: host, port: portText, fitReserve: fitReserveText,
+            staleDays: staleDaysText, comparisonTokens: comparisonMaxTokensText)
     }
 
-    private var hostError: String? {
-        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effective = trimmed.isEmpty ? "127.0.0.1" : trimmed
-        guard Config.LOOPBACK_HOSTS.contains(effective) else {
-            return "Loopback only: 127.0.0.1, localhost, or ::1."
-        }
-        return nil
-    }
-
-    private var fitReserveError: String? {
-        let trimmed = fitReserveText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let reserve = Double(trimmed), Config.FIT_RESERVE_RANGE.contains(reserve) else {
-            return "Enter a number between 0 and 16."
-        }
-        return nil
-    }
-
-    private var staleDaysError: String? {
-        let trimmed = staleDaysText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let days = Int(trimmed), Config.STALE_DAYS_RANGE.contains(days) else {
-            return "Enter an integer between 2 and 365."
-        }
-        return nil
-    }
-
-    private var comparisonTokensError: String? {
-        let trimmed = comparisonMaxTokensText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let tokens = Int(trimmed), Config.COMPARISON_MAX_TOKENS_RANGE.contains(tokens) else {
-            return "Enter an integer between 64 and 4096."
-        }
-        return nil
-    }
-
-    private var isValid: Bool {
-        portError == nil && hostError == nil && fitReserveError == nil
-            && staleDaysError == nil && comparisonTokensError == nil
-    }
+    private var hostError: String? { validation.hostError }
+    private var portError: String? { validation.portError }
+    private var fitReserveError: String? { validation.fitReserveError }
+    private var staleDaysError: String? { validation.staleDaysError }
+    private var comparisonTokensError: String? { validation.comparisonTokensError }
+    private var isValid: Bool { validation.firstInvalid == nil }
 
     /// The probe's non-blocking warning for a draft path; nil until the probe has answered.
     private func pathWarning(_ path: String) -> String? {
