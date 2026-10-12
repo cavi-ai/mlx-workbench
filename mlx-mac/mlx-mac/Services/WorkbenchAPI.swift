@@ -643,13 +643,18 @@ actor WorkbenchAPI {
         return row.string("state")
     }
 
+    /// The agent's discovery roles in its own order; buckets merge in this order, unknown roles after, alphabetically.
+    static let discoveryRoleOrder = ["vision", "embedding", "coding", "reasoning", "general", "tool-use"]
+
     static func candidates(from data: [String: Any], key: String = "candidates") -> [DiscoverCandidate]? {
         var raw: [[String: Any]] = []
         if let list = data[key] as? [[String: Any]] {
             raw = list
         } else if let roles = data["roles"] as? [String: Any] {
-            for (_, value) in roles {
-                if let items = value as? [[String: Any]] {
+            let order = discoveryRoleOrder
+            let rank: (String) -> Int = { order.firstIndex(of: $0) ?? order.count }
+            for role in roles.keys.sorted(by: { (rank($0), $0) < (rank($1), $1) }) {
+                if let items = roles[role] as? [[String: Any]] {
                     raw.append(contentsOf: items)
                 }
             }

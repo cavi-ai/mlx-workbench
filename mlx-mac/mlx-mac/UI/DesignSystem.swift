@@ -405,6 +405,32 @@ extension WorkbenchSize {
     }
 }
 
+extension WorkbenchSize {
+    /// Discover route dimensions. Thresholds are measured against the page content
+    /// width (the offered width less page insets, capped at the Run content width).
+    enum Discover {
+        static let contentMaxWidth: CGFloat = Run.contentMaxWidth
+        static let hysteresis: CGFloat = Library.tierHysteresis
+
+        static let headerThreshold: CGFloat = 720
+        static let headerStackThreshold: CGFloat = 420
+        static let legendThreshold: CGFloat = 520
+
+        static let symbolColumn: CGFloat = Health.symbolColumn
+        static let barWidth: CGFloat = 220
+        static let barHeight: CGFloat = WorkbenchSize.stageTrack * 3
+        static let figuresWidth: CGFloat = 120
+        /// Wide rows keep a full Hugging Face repo id on one line.
+        static let nameMinimum: CGFloat = barWidth + figuresWidth
+        static let actionWidth: CGFloat = 190
+        static let columnGap: CGFloat = WorkbenchSpacing.sm
+        /// The symbol, name, bar, figures and action columns with the gaps between them.
+        static let rowThreshold: CGFloat = symbolColumn + nameMinimum + barWidth + figuresWidth + actionWidth + columnGap * 4
+
+        static let placeholderRows = 4
+    }
+}
+
 enum WorkbenchRadius {
     /// Small chips and swatches.
     static let chip: CGFloat = 4

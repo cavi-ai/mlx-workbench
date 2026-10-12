@@ -35,54 +35,60 @@ enum DiscoveryState: Equatable {
 
 struct ScoutView: View {
     @ObservedObject var appHost: AppHost
+    private let resources: SystemResourceMonitor
 
     @State private var role = ""
-    @State private var roleChoices = ["", "coding", "writing", "reading", "terminal", "agent"]
-    @State private var limitText = "10"
+    @State private var limit = DiscoverLimit.initial
     @State private var fast = false
-    @State private var discoveryState: DiscoveryState = .notRun
+    /// The Fast setting the current or last discovery was started with.
+    @State private var runIsFast = false
+    @State private var discoveryState: DiscoveryState
+    @State private var resultToken = 0
     @State private var showsCatalogDetails = false
+    @State private var layout = DiscoverLayout()
 
-    private var isScouting: Bool { discoveryState.isRunning }
-    private var candidates: [DiscoverCandidate] { discoveryState.candidates }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                formSection
-                if !candidates.isEmpty {
-                    resultsSection
-                } else {
-                    discoveryNotice
-                }
-                catalogSection
-                Spacer()
-            }
-            .padding(WorkbenchSpacing.pageInset)
-        }
+    /// `resources` and `initialState` let a render hold the page at a fixed budget and result.
+    init(appHost: AppHost, resources: SystemResourceMonitor? = nil, initialState: DiscoveryState = .notRun) {
+        self.appHost = appHost
+        self.resources = resources ?? appHost.resources
+        _discoveryState = State(initialValue: initialState)
     }
 
-    private var discoveryNotice: some View {
-        HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
-            if isScouting {
-                ProgressView().controlSize(.small)
-                    .accessibilityLabel("Discovering models")
-            } else {
-                Image(systemName: discoveryState.symbol)
-                    .symbolRenderingMode(.hierarchical)
-                    .accessibilityHidden(true)
+    private var isScouting: Bool { discoveryState.isRunning }
+
+    var body: some View {
+        GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                    header
+                    DiscoverFitField(
+                        resources: resources,
+                        intake: appHost.intake,
+                        state: discoveryState,
+                        resultToken: resultToken,
+                        reserveGB: appHost.config.fitReserveGB,
+                        hardware: appHost.hardwareProfile,
+                        library: appHost.librarySnapshot,
+                        layout: layout,
+                        fast: runIsFast,
+                        onClear: { discoveryState = .notRun }
+                    )
+                    catalogSection
+                }
+                .frame(maxWidth: WorkbenchSize.Discover.contentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(WorkbenchSpacing.pageInset)
             }
-            Text(discoveryState.message)
-                .font(WorkbenchTypography.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            .defaultScrollAnchor(.top)
+            .onChange(of: viewport.size.width, initial: true) { _, width in
+                layout = DiscoverLayout(viewportWidth: width, previous: layout)
+            }
         }
-        .foregroundStyle(discoveryState.isFailed ? WorkbenchColor.failure : WorkbenchColor.muted)
-        .padding(.top, WorkbenchSpacing.sm)
     }
 
     private var catalogSection: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Divider()
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) { catalogHeader }
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { catalogHeader }
@@ -96,7 +102,6 @@ struct ScoutView: View {
             }
             .font(WorkbenchTypography.secondary)
         }
-        .formSection {}
     }
 
     private var catalogDetails: some View {
@@ -140,32 +145,69 @@ struct ScoutView: View {
         .disabled(appHost.isRefreshingCatalog)
     }
 
-    private var formSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            SectionTitle(text: "Discovery")
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { discoveryControls }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { discoveryControls }
+    private var header: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Text("Discovery")
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.muted)
+            switch layout.headerMode {
+            case .oneLine:
+                HStack(alignment: .center, spacing: WorkbenchSpacing.sm) {
+                    roleControl
+                    limitControl
+                    fastControl
+                    Spacer(minLength: WorkbenchSpacing.xs)
+                    discoverButton
+                }
+            case .roleOwnLine:
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    roleControl
+                    HStack(alignment: .center, spacing: WorkbenchSpacing.sm) {
+                        limitControl
+                        fastControl
+                        Spacer(minLength: WorkbenchSpacing.xs)
+                        discoverButton
+                    }
+                }
+            case .stacked:
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    roleControl
+                    limitControl
+                    fastControl
+                    discoverButton
+                }
             }
         }
-        .formSection {}
     }
 
-    @ViewBuilder
-    private var discoveryControls: some View {
+    private var roleControl: some View {
         Picker("Role", selection: $role) {
-            ForEach(roleChoices, id: \.self) { choice in
-                Text(choice.isEmpty ? "Any" : choice).tag(choice)
+            ForEach(DiscoverRole.choices, id: \.self) { choice in
+                Text(DiscoverRole.title(choice)).tag(choice)
             }
         }
-        .frame(maxWidth: 180, alignment: .leading)
+        .pickerStyle(.menu)
+        .fixedSize()
         .disabled(isScouting)
-        TextField("Limit", text: $limitText)
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 80)
-            .disabled(isScouting)
+    }
+
+    private var limitControl: some View {
+        Stepper(value: $limit, in: DiscoverLimit.range) {
+            Text("Per role: \(limit)")
+                .font(WorkbenchTypography.secondaryTabular)
+        }
+        .fixedSize()
+        .help("Candidates requested for each role; with Any the total can be several times this.")
+        .disabled(isScouting)
+    }
+
+    private var fastControl: some View {
         Toggle("Fast", isOn: $fast)
+            .help("Skips repository inspection: quicker, but sizes may be missing.")
             .disabled(isScouting)
+    }
+
+    private var discoverButton: some View {
         Button("Discover") { discover() }
             .buttonStyle(.borderedProminent)
             .disabled(isScouting)
@@ -210,61 +252,17 @@ struct ScoutView: View {
         }
     }
 
-    private var resultsSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            HStack {
-                SectionTitle(text: "Candidates (\(candidates.count))")
-                Spacer()
-                Button("Clear") { discoveryState = .notRun }
-            }
-            List(candidates) { candidate in
-                HStack {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                        Text(candidate.repo).font(WorkbenchTypography.body)
-                        HStack(spacing: WorkbenchSpacing.xs) {
-                            if let roles = candidate.roles, !roles.isEmpty {
-                                Text(roles.joined(separator: ", "))
-                                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                            }
-                            if let ram = candidate.paramsText {
-                                Text(ram).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                            }
-                        }
-                    }
-                    Spacer()
-                    if let license = candidate.license {
-                        Text(license).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                    }
-                    Button("Copy repo id") {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(candidate.repo, forType: .string)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    Button("Open on Hugging Face") {
-                        if let url = URL(string: "https://huggingface.co/\(candidate.repo)") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-            .frame(height: 380)
-        }
-        .formSection {}
-    }
-
     private func discover() {
         guard !isScouting else { return }
+        runIsFast = fast
         discoveryState = .running
         let r = role.isEmpty ? nil : role
-        let l = Int(limitText.trimmingCharacters(in: .whitespaces)) ?? nil
+        let l = DiscoverLimit.clamped(limit)
         let isFast = fast
         Task {
             do {
                 let result = try await appHost.api.discover(role: r, limit: l, fast: isFast, new: false)
+                resultToken += 1
                 discoveryState = .completed(result.candidates ?? [])
             } catch let error as BridgeError {
                 discoveryState = .failed(error.errorDescription ?? error.localizedDescription)
