@@ -325,6 +325,16 @@ from `mlx-agent` at runtime.
   prefer existing validation errors, then unchanged/pending-name guidance,
   then the action description. They do not change action eligibility or save
   behavior.
+  ComparePresentation.runUnavailableReason is the shared Run comparison
+  eligibility explanation: an active run takes precedence over a missing
+  prompt set, no selected model, or the first unavailable slot. canRun
+  delegates to this model-only decision with prompt presence assumed, while
+  QuantView includes prompt-set presence for both its button and live
+  startRun guard. ComparisonRunButton shares hover/accessibility guidance;
+  ComparisonRunGuidance shows one idle setup message in place of the old
+  unavailable-model list. Active runs retain their existing progress display.
+  Guidance performs no I/O, persistence or generation and does not change
+  model eligibility, deduplication or filter behavior.
   ComparisonPromptRemoveButton is shared by non-music and music prompt cards
   in new/copy, edit and reuse editors. The minus button opens inline Keep
   prompt / Remove prompt choices; only explicit Remove invokes the existing
