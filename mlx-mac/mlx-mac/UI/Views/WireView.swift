@@ -22,6 +22,7 @@ struct WireView: View {
     @State private var wiringResult: String?
     @State private var wiringResultHasIssues = false
     @State private var isRefreshingServer = false
+    @State private var hasServerStatus = false
     @State private var serverMessage: String?
     @State private var wiredServer: ServerInfo?
     @State private var wiredTransactionID: UUID?
@@ -29,6 +30,7 @@ struct WireView: View {
     @State private var importAfterCapture = false
     @State private var isPreparingCapture = false
     @State private var captureError: String?
+    @State private var layout = ClientsLayout()
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -49,34 +51,69 @@ struct WireView: View {
         wiring.transactions.first { $0.id == wiredTransactionID && $0.rolledBackAt == nil && !$0.receipts.isEmpty }
     }
 
+    private var presentation: ClientsPresentation {
+        ClientsPresentation.make(
+            installations: wiring.installations,
+            readings: wiring.readings,
+            servers: appHost.modelWorkflow.servers,
+            selectedServerID: selectedServerID,
+            pendingTargetID: hasCurrentClientPreview ? selectedServer?.id : nil,
+            plannedClientIDs: Set(wiring.plans.map(\.clientID)),
+            hasServerStatus: hasServerStatus
+        )
+    }
+
+    private var showsPreview: Bool { !wiring.plans.isEmpty && wiring.previewHash != nil }
+
+    private var prominence: ClientsProminence {
+        ClientsProminence.make(
+            showsPreview: showsPreview, hasCurrentPreview: hasCurrentClientPreview, showsMeasurement: wiredTransaction != nil
+        )
+    }
+
+    private var notices: [ClientsNotice] {
+        ClientsNotice.make(
+            serverMessage: serverMessage, lastError: wiring.lastError, persistenceError: wiring.persistenceError,
+            captureError: wiredTransaction != nil ? captureError : nil
+        )
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                clientWiringSection
-                formSection
-                ErrorBanner(text: errorMessage)
-                if let result {
-                    Text(result).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
-                }
-                if let preview {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        HStack {
-                            SectionTitle(text: "Preview")
-                            Spacer()
-                            Button("Apply Wiring") {
-                                apply()
-                            }
-                            .disabled(previewHash == nil)
-                        }
-                        RawJSONDisclosure("Raw wiring payload", value: preview)
+        GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                    clientWiringSection
+                    formSection
+                    ErrorBanner(text: errorMessage)
+                    if let result {
+                        Text(result).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
                     }
-                    .formSection {}
+                    if let preview {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            HStack {
+                                SectionTitle(text: "Preview")
+                                Spacer()
+                                Button("Apply Wiring") {
+                                    apply()
+                                }
+                                .disabled(previewHash == nil)
+                            }
+                            RawJSONDisclosure("Raw wiring payload", value: preview)
+                        }
+                        .formSection {}
+                    }
                 }
-                Spacer()
+                .frame(maxWidth: WorkbenchSize.Clients.contentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(WorkbenchSpacing.pageInset)
             }
-            .padding(WorkbenchSpacing.pageInset)
+            .defaultScrollAnchor(.top)
+            .onChange(of: viewport.size.width, initial: true) { _, width in
+                layout = ClientsLayout(viewportWidth: width, previous: layout)
+            }
         }
         .task(id: isRouteActive) {
+            hasServerStatus = false
             guard isRouteActive else { return }
             wiring.detect()
             await refreshServers()
@@ -93,164 +130,193 @@ struct WireView: View {
     // MARK: - Cross-client wiring
 
     private var clientWiringSection: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            boardHeader
+            ClientsBoardView(
+                presentation: presentation, mode: layout.boardMode,
+                isRefreshing: isRefreshingServer, isRouteActive: isRouteActive,
+                onOpenRun: { onRouteSelection(.run) },
+                picker: { endpointPicker }
+            )
+            actionRow
+            noticeViews(.actions)
+            if showsPreview, let hash = wiring.previewHash { previewSurface(hash: hash) }
+            if wiringResult != nil || wiredTransaction != nil {
+                ClientsOutcomeView(
+                    result: wiringResult, hasIssues: wiringResultHasIssues, prominence: prominence,
+                    showsMeasurement: wiredTransaction != nil, isPreparing: isPreparingCapture,
+                    isMeasureDisabled: isPreparingCapture || isRefreshingServer || wiring.isApplying || wiring.isCheckingServer,
+                    onMeasure: { Task { await prepareCapture() } }, onReview: reviewReport
+                ) { noticeViews(.measurement) }
+            }
+        }
+    }
+
+    // MARK: Header
+
+    private var refreshButton: some View {
+        Button(isRefreshingServer ? "Refreshing servers…" : "Refresh servers") {
+            Task { await refreshServers() }
+        }
+        .frame(minWidth: WorkbenchSize.Clients.refreshWidth, alignment: .trailing)
+        .disabled(isRefreshingServer || wiring.isCheckingServer || wiring.isApplying)
+    }
+
+    @ViewBuilder
+    private var endpointPicker: some View {
+        if !runningServers.isEmpty {
+            Picker("Endpoint", selection: $selectedServerID) {
+                Text("Choose a running server…").tag(String?.none)
+                ForEach(runningServers) { server in
+                    Text("\(URL(fileURLWithPath: server.modelIdentity).lastPathComponent) :\(server.port.map(String.init) ?? "?")")
+                        .tag(String?.some(server.id))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("Endpoint")
+            .accessibilityIdentifier("client-wiring-endpoint")
+            .disabled(isRefreshingServer || wiring.isCheckingServer || wiring.isApplying)
+        }
+    }
+
+    private var boardHeader: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            SectionTitle(text: "Client wiring")
+            HStack(spacing: WorkbenchSpacing.sm) {
+                SectionTitle(text: "Client wiring")
+                Spacer()
+                refreshButton
+            }
             Text("Point installed clients at a running local server. Each client's own config is written atomically with backup and rollback.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
-            if let serverMessage { Text(serverMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
-            Button(isRefreshingServer ? "Refreshing servers…" : "Refresh servers") {
-                Task { await refreshServers() }
-            }.disabled(isRefreshingServer || wiring.isCheckingServer || wiring.isApplying)
-
-            if runningServers.isEmpty {
-                Text("No authoritative running server. Start one in Run first.")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
-            } else {
-                Picker("Endpoint", selection: $selectedServerID) {
-                    Text("Choose a running server…").tag(String?.none)
-                    ForEach(runningServers) { server in
-                        Text("\(URL(fileURLWithPath: server.modelIdentity).lastPathComponent) :\(server.port.map(String.init) ?? "?")")
-                            .tag(String?.some(server.id))
-                    }
-                }
-                .frame(width: 340)
-                .accessibilityLabel("Endpoint")
-                .accessibilityIdentifier("client-wiring-endpoint")
-                .disabled(isRefreshingServer || wiring.isCheckingServer || wiring.isApplying)
-            }
-            if let selectedEndpoint {
-                Text(selectedEndpoint.modelName).font(WorkbenchTypography.compactValue).foregroundStyle(WorkbenchColor.muted).textSelection(.enabled)
-            }
-
-            if wiring.installations.isEmpty {
-                Text("No supported clients detected (opencode, Continue, Zed, Aider).")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
-            } else {
-                ForEach(wiring.installations, id: \.clientID) { installation in
-                    HStack {
-                        Text(installation.displayName).font(WorkbenchTypography.secondary)
-                        Spacer()
-                        if installation.advisoryOnly {
-                            Text(installation.advisoryNote ?? "Advisory only")
-                                .font(WorkbenchTypography.secondary)
-                                .foregroundStyle(WorkbenchColor.muted)
-                        } else {
-                            Text(installation.configPath ?? "")
-                                .font(WorkbenchTypography.secondary)
-                                .foregroundStyle(WorkbenchColor.muted)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                }
-            }
-
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { wiringActions }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { wiringActions }
-            }
-
-            ErrorBanner(text: wiring.lastError)
-            ErrorBanner(text: wiring.persistenceError)
-
-            if !wiring.plans.isEmpty, let hash = wiring.previewHash {
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                    SectionTitle(text: "Wiring preview")
-                    if let reviewed = wiring.reviewedEndpoint {
-                        Text(reviewed.modelName)
-                            .font(WorkbenchTypography.emphasis)
-                            .textSelection(.enabled)
-                            .accessibilityIdentifier("client-wiring-reviewed-model")
-                        Text(reviewed.baseURL)
-                            .font(WorkbenchTypography.value)
-                            .foregroundStyle(WorkbenchColor.muted)
-                            .textSelection(.enabled)
-                            .accessibilityIdentifier("client-wiring-reviewed-endpoint")
-                    }
-                    if !hasCurrentClientPreview {
-                        Label("Endpoint changed. Preview client wiring again.", systemImage: "arrow.clockwise")
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(WorkbenchColor.warning)
-                    }
-                    ForEach(wiring.plans) { plan in
-                        DisclosureGroup {
-                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                                ForEach(Array(plan.redactedDiff.enumerated()), id: \.offset) { _, line in
-                                    Text(diffText(line))
-                                        .font(WorkbenchTypography.value)
-                                        .foregroundStyle(diffColor(line.kind))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .textSelection(.enabled)
-                                }
-                            }
-                            .padding(.top, WorkbenchSpacing.xxs)
-                        } label: {
-                            HStack {
-                                Text(plan.displayName).font(WorkbenchTypography.emphasis)
-                                if plan.rewritesFile {
-                                    Text("reformats file").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
-                                }
-                                Spacer()
-                                Text(plan.summary).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                            }
-                        }
-                    }
-                    Button("Confirm client wiring") {
-                        if let server = selectedServer {
-                            Task { @MainActor in
-                                let transaction = await wiring.confirm(server: server, previewHash: hash, currentServers: {
-                                    guard await appHost.modelWorkflow.refreshServingStatus() else {
-                                        throw WorkflowEvidenceError.invalid("Could not establish current server status.")
-                                    }
-                                    return appHost.modelWorkflow.servers
-                                })
-                                if let transaction {
-                                    wiredServer = server
-                                    wiredTransactionID = transaction.id
-                                    captureError = nil
-                                    wiringResultHasIssues = !transaction.failures.isEmpty
-                                    wiringResult = transaction.failures.isEmpty
-                                        ? "Wired \(transaction.receipts.count) client(s) to \(transaction.modelName)."
-                                        : "Wired with issues: \(transaction.failures.joined(separator: "; "))"
-                                } else {
-                                    wiringResult = nil
-                                    wiringResultHasIssues = false
-                                }
-                            }
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(wiring.isApplying || wiring.isCheckingServer || isRefreshingServer || !hasCurrentClientPreview)
-                    .help(hasCurrentClientPreview ? "Apply the reviewed changes to the listed client configs." : "Preview the selected endpoint before confirming.")
-                }
-                .formSection {}
-            }
-
-            if let wiringResult {
-                Text(wiringResult)
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(wiringResultHasIssues ? WorkbenchColor.failure : WorkbenchColor.success)
-            }
-            if wiredTransaction != nil {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: WorkbenchSpacing.xs) { measurementActions }
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { measurementActions }
-                }
-                ErrorBanner(text: captureError)
-            }
+            noticeViews(.header)
         }
-        .formSection {}
     }
 
-    @ViewBuilder private var measurementActions: some View {
-        Button(isPreparingCapture ? "Checking endpoint…" : "Measure this workflow…") {
-            Task { await prepareCapture() }
-        }.buttonStyle(.borderedProminent)
-            .disabled(isPreparingCapture || isRefreshingServer || wiring.isApplying || wiring.isCheckingServer)
-        Button("Review report in Compare…", action: reviewReport).buttonStyle(.bordered)
+    @ViewBuilder
+    private func noticeViews(_ slot: ClientsNotice.Slot) -> some View {
+        ForEach(notices.filter { $0.slot == slot }) { notice in
+            if notice.isError {
+                ErrorBanner(text: notice.text)
+            } else {
+                Text(notice.text).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var actionRow: some View {
+        if layout.wrapsActions {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { wiringActions }
+        } else {
+            HStack(spacing: WorkbenchSpacing.xs) { wiringActions }
+        }
+    }
+
+    // MARK: Preview
+
+    @ViewBuilder
+    private func previewSurface(hash: String) -> some View {
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                if layout.wrapsPreviewHeader {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        SectionTitle(text: "Wiring preview")
+                        staleWarning
+                    }
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
+                        SectionTitle(text: "Wiring preview")
+                        staleWarning
+                    }
+                }
+                if let reviewed = wiring.reviewedEndpoint {
+                    Text(reviewed.modelName)
+                        .font(WorkbenchTypography.emphasis)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("client-wiring-reviewed-model")
+                    Text(reviewed.baseURL)
+                        .font(WorkbenchTypography.value)
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("client-wiring-reviewed-endpoint")
+                }
+                ForEach(wiring.plans) { plan in
+                    DisclosureGroup {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                            ForEach(Array(plan.redactedDiff.enumerated()), id: \.offset) { _, line in
+                                Text(diffText(line))
+                                    .font(WorkbenchTypography.value)
+                                    .foregroundStyle(diffColor(line.kind))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .padding(.top, WorkbenchSpacing.xxs)
+                    } label: {
+                        planLabel(plan)
+                    }
+                }
+                Button("Confirm client wiring") {
+                    if let server = selectedServer {
+                        Task { @MainActor in
+                            let transaction = await wiring.confirm(server: server, previewHash: hash, currentServers: {
+                                guard await appHost.modelWorkflow.refreshServingStatus() else {
+                                    throw WorkflowEvidenceError.invalid("Could not establish current server status.")
+                                }
+                                return appHost.modelWorkflow.servers
+                            })
+                            if let transaction {
+                                wiredServer = server
+                                wiredTransactionID = transaction.id
+                                captureError = nil
+                                wiringResultHasIssues = !transaction.failures.isEmpty
+                                wiringResult = transaction.failures.isEmpty
+                                    ? "Wired \(transaction.receipts.count) client(s) to \(transaction.modelName)."
+                                    : "Wired with issues: \(transaction.failures.joined(separator: "; "))"
+                            } else {
+                                wiringResult = nil
+                                wiringResultHasIssues = false
+                            }
+                        }
+                    }
+                }
+                .clientsProminence(prominence.confirm)
+                .disabled(wiring.isApplying || wiring.isCheckingServer || isRefreshingServer || !hasCurrentClientPreview)
+                .help(hasCurrentClientPreview ? "Apply the reviewed changes to the listed client configs." : "Preview the selected endpoint before confirming.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var staleWarning: some View {
+        if !hasCurrentClientPreview {
+            Label("Endpoint changed. Preview client wiring again.", systemImage: "arrow.clockwise")
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.warning)
+        }
+    }
+
+    @ViewBuilder
+    private func planLabel(_ plan: ClientEditPlan) -> some View {
+        if layout.wrapsPreviewHeader {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                Text(plan.displayName).font(WorkbenchTypography.emphasis)
+                Text(plan.summary).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                if plan.rewritesFile {
+                    Text("reformats file").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                }
+            }
+        } else {
+            HStack {
+                Text(plan.displayName).font(WorkbenchTypography.emphasis)
+                if plan.rewritesFile {
+                    Text("reformats file").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                }
+                Spacer()
+                Text(plan.summary).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+        }
     }
 
     private func prepareCapture() async {
@@ -277,11 +343,7 @@ struct WireView: View {
 
     @ViewBuilder
     private var wiringActions: some View {
-        if hasCurrentClientPreview {
-            clientPreviewButton.buttonStyle(.bordered)
-        } else {
-            clientPreviewButton.buttonStyle(.borderedProminent)
-        }
+        clientPreviewButton.clientsProminence(prominence.preview)
         if wiring.rollbackAvailable {
             Button("Roll back last wiring") { wiring.rollback() }
                 .buttonStyle(.bordered).disabled(wiring.isApplying || wiring.isCheckingServer || isRefreshingServer)
@@ -304,11 +366,22 @@ struct WireView: View {
         .help("Review proposed client config changes before applying them.")
     }
 
+    private func readConfigs() async {
+        if isRouteActive { await wiring.refreshReadings() }
+    }
+
+    private func readServingStatus() async -> Bool {
+        let ok = await appHost.modelWorkflow.refreshServingStatus()
+        hasServerStatus = true
+        return ok
+    }
+
     private func refreshServers() async {
         guard !isRefreshingServer else { return }
         isRefreshingServer = true
         defer { isRefreshingServer = false }
-        guard await appHost.modelWorkflow.refreshServingStatus() else {
+        let status = await ClientsRefresh.run(readConfigs: readConfigs, readStatus: readServingStatus)
+        guard status else {
             selectedServerID = nil; serverMessage = "Server status unavailable. Refresh before previewing client wiring."
             return
         }
@@ -379,7 +452,6 @@ struct WireView: View {
                 .font(WorkbenchTypography.label)
                 .foregroundStyle(WorkbenchColor.muted)
         }
-        .formSection {}
     }
 
     private func previewWire() {

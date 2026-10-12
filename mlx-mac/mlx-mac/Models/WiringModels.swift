@@ -54,6 +54,75 @@ struct ClientInstallation: Equatable, Sendable {
     let advisoryNote: String?
 }
 
+// MARK: - Current endpoint reading
+
+/// A local endpoint one client config points at: the base URL and the model names beside it.
+struct ClientConfigEntry: Equatable, Sendable {
+    let baseURL: String
+    let models: [String]
+}
+
+/// What one client's allowlisted config file says, never what the client uses.
+/// Only scheme, host, port, path and model names leave the reader.
+enum ClientConfigReading: Equatable, Sendable {
+    case fileAbsent
+    case unreadable(String)
+    case noWorkbenchEntry
+    case entries([ClientConfigEntry])
+    /// A Workbench entry exists but the client's default model selects another provider.
+    case notDefault([ClientConfigEntry])
+}
+
+struct ClientConfigStatus: Equatable, Sendable {
+    let reading: ClientConfigReading
+    /// The config path is a symbolic link; a read follows it, a write refuses it.
+    let isLinked: Bool
+}
+
+enum ClientEndpointURL {
+    /// The port of a base URL a Workbench server can serve: http, 127.0.0.1 or localhost,
+    /// an explicit port, path /v1 or /v1/, and no query, fragment or userinfo.
+    static func port(of baseURL: String) -> Int? {
+        guard let parts = URLComponents(string: baseURL),
+              parts.scheme == "http",
+              let host = parts.host, host == "127.0.0.1" || host == "localhost",
+              parts.user == nil, parts.password == nil,
+              parts.query == nil, parts.fragment == nil,
+              parts.path == "/v1" || parts.path == "/v1/",
+              let port = parts.port, (1...65535).contains(port) else { return nil }
+        return port
+    }
+}
+
+/// How one config entry relates to the running Workbench servers.
+enum ClientEndpointMatch: Equatable, Sendable {
+    case live(port: Int, model: String)
+    case noWorkbenchServer(port: Int)
+    case otherModel(port: Int, configured: String, serving: String)
+    case ambiguous(port: Int)
+
+    var port: Int {
+        switch self {
+        case .live(let port, _), .noWorkbenchServer(let port),
+             .otherModel(let port, _, _), .ambiguous(let port): return port
+        }
+    }
+
+    /// Exactly one running server on the entry's port serving a model the entry names is live.
+    static func match(_ entry: ClientConfigEntry, servers: [ServerInfo]) -> ClientEndpointMatch? {
+        guard let port = ClientEndpointURL.port(of: entry.baseURL) else { return nil }
+        let running = servers.filter { $0.state?.lowercased() == "running" && $0.port == port }
+        switch running.count {
+        case 0: return .noWorkbenchServer(port: port)
+        case 1:
+            let serving = running[0].modelIdentity
+            if entry.models.contains(serving) { return .live(port: port, model: serving) }
+            return .otherModel(port: port, configured: entry.models.first ?? "", serving: serving)
+        default: return .ambiguous(port: port)
+        }
+    }
+}
+
 struct ClientEditPlan: Equatable, Identifiable, Sendable {
     let clientID: String
     let displayName: String

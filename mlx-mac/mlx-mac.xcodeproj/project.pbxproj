@@ -117,6 +117,9 @@
 		HLTPRSB1 /* HealthPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = HLTPRSF1 /* HealthPresentation.swift */; };
 		HLTVWSB1 /* HealthViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = HLTVWSF1 /* HealthViews.swift */; };
 		HLTRMDB1 /* HealthRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HLTRMDF1 /* HealthRemodelTests.swift */; };
+		CLNPRSB1 /* ClientsPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = CLNPRSF1 /* ClientsPresentation.swift */; };
+		CLNVWSB1 /* ClientsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CLNVWSF1 /* ClientsViews.swift */; };
+		CLNRMDB1 /* ClientsRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CLNRMDF1 /* ClientsRemodelTests.swift */; };
 		RCLVWSB1 /* ReclaimViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCLVWSF1 /* ReclaimViews.swift */; };
 		24BBLD0LR /* LibraryRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF0LR /* LibraryRemodelTests.swift */; };
 		24BBLD031 /* CatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF025 /* CatalogClient.swift */; };
@@ -315,6 +318,9 @@
 		RCLPRSF1 /* ReclaimPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimPresentation.swift; path = UI/Views/ReclaimPresentation.swift; sourceTree = "<group>"; };
 		HLTPRSF1 /* HealthPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HealthPresentation.swift; path = UI/Views/HealthPresentation.swift; sourceTree = "<group>"; };
 		HLTVWSF1 /* HealthViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HealthViews.swift; path = UI/Views/HealthViews.swift; sourceTree = "<group>"; };
+		CLNPRSF1 /* ClientsPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ClientsPresentation.swift; path = UI/Views/ClientsPresentation.swift; sourceTree = "<group>"; };
+		CLNVWSF1 /* ClientsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ClientsViews.swift; path = UI/Views/ClientsViews.swift; sourceTree = "<group>"; };
+		CLNRMDF1 /* ClientsRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ClientsRemodelTests.swift; path = ClientsRemodelTests.swift; sourceTree = "<group>"; };
 		HLTRMDF1 /* HealthRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HealthRemodelTests.swift; path = HealthRemodelTests.swift; sourceTree = "<group>"; };
 		RCLVWSF1 /* ReclaimViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReclaimViews.swift; path = UI/Views/ReclaimViews.swift; sourceTree = "<group>"; };
 		24FREF0LR /* LibraryRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LibraryRemodelTests.swift; path = LibraryRemodelTests.swift; sourceTree = "<group>"; };
@@ -608,6 +614,8 @@
 				RCLPRSF1 /* ReclaimPresentation.swift */,
 				HLTPRSF1 /* HealthPresentation.swift */,
 				HLTVWSF1 /* HealthViews.swift */,
+				CLNPRSF1 /* ClientsPresentation.swift */,
+				CLNVWSF1 /* ClientsViews.swift */,
 				RCLVWSF1 /* ReclaimViews.swift */,
 				ACTVWSF1 /* ActivityViews.swift */,
 				FAILNTF1 /* FailureNotice.swift */,
@@ -651,6 +659,7 @@
 				ACTRMDF1 /* ActivityRemodelTests.swift */,
 				RCLRMDF1 /* ReclaimRemodelTests.swift */,
 				HLTRMDF1 /* HealthRemodelTests.swift */,
+				CLNRMDF1 /* ClientsRemodelTests.swift */,
 				24FREF0LR /* LibraryRemodelTests.swift */,
 				24FREF021 /* ModelLibraryBuilderTests.swift */,
 				24FREF029 /* RecommendationEngineTests.swift */,
@@ -902,6 +911,8 @@
 				RCLPRSB1 /* ReclaimPresentation.swift in Sources */,
 				HLTPRSB1 /* HealthPresentation.swift in Sources */,
 				HLTVWSB1 /* HealthViews.swift in Sources */,
+				CLNPRSB1 /* ClientsPresentation.swift in Sources */,
+				CLNVWSB1 /* ClientsViews.swift in Sources */,
 				RCLVWSB1 /* ReclaimViews.swift in Sources */,
 				ACTVWSB1 /* ActivityViews.swift in Sources */,
 				FAILNTB1 /* FailureNotice.swift in Sources */,
@@ -1016,6 +1027,7 @@
 				ACTRMDB1 /* ActivityRemodelTests.swift in Sources */,
 				RCLRMDB1 /* ReclaimRemodelTests.swift in Sources */,
 				HLTRMDB1 /* HealthRemodelTests.swift in Sources */,
+				CLNRMDB1 /* ClientsRemodelTests.swift in Sources */,
 				24BBLD0LR /* LibraryRemodelTests.swift in Sources */,
 				24BBLD027 /* ModelLibraryBuilderTests.swift in Sources */,
 				24BBLD035 /* RecommendationEngineTests.swift in Sources */,
