@@ -267,6 +267,63 @@ final class LMStudioResolverTests: XCTestCase {
         XCTAssertEqual(resolution.folders.map(\.source), [.settings])
     }
 
+    func testADefaultAndALegacyFolderSymlinkedToItAreListedOnce() throws {
+        let home = try makeHome()
+        let models = home.appendingPathComponent(".lmstudio/models")
+        let legacy = home.appendingPathComponent(".cache/lm-studio/models")
+        try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: legacy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: legacy, withDestinationURL: models)
+        let resolution = LMStudioShelfResolver.resolve(home: home, scannedRoots: nil, configGGUFRoots: [], configMLXRoots: [])
+        XCTAssertEqual(resolution.folders.map(\.source), [.default])
+    }
+
+    func testAFolderSpelledThroughASymlinkIsScannedUnderTheRootsSpelling() throws {
+        let home = try makeHome()
+        let drive = home.appendingPathComponent("drive")
+        let shelf = drive.appendingPathComponent("lms")
+        try FileManager.default.createDirectory(at: shelf, withIntermediateDirectories: true)
+        let alias = home.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: drive)
+        let settings = home.appendingPathComponent(".lmstudio/settings.json")
+        try write(#"{"downloadsFolder": "~/alias/lms"}"#, to: settings)
+        var folder = try XCTUnwrap(LMStudioShelfResolver.resolve(
+            home: home, scannedRoots: ScanRoots(gguf: [drive.path], mlx: [alias.path]), configGGUFRoots: [], configMLXRoots: []
+        ).folders.first)
+        XCTAssertEqual(folder.gguf, .scanned(root: drive.path, folder: shelf.path))
+        XCTAssertEqual(folder.mlx, .scanned(root: alias.path, folder: alias.appendingPathComponent("lms").path))
+
+        let link = home.appendingPathComponent("shelf")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: shelf)
+        try write(#"{"downloadsFolder": "~/shelf"}"#, to: settings)
+        folder = try XCTUnwrap(LMStudioShelfResolver.resolve(
+            home: home, scannedRoots: ScanRoots(gguf: [drive.path], mlx: []), configGGUFRoots: [], configMLXRoots: [alias.path]
+        ).folders.first)
+        XCTAssertEqual(folder.gguf, .scanned(root: drive.path, folder: shelf.path))
+        XCTAssertEqual(folder.mlx, .configuredNotScanned)
+    }
+
+    func testAFolderReachedOnlyThroughASymlinkedFolderBelowTheRootIsNotScanned() throws {
+        let home = try makeHome()
+        let drive = home.appendingPathComponent("drive")
+        let elsewhere = home.appendingPathComponent("elsewhere/lms")
+        try FileManager.default.createDirectory(at: drive.appendingPathComponent("lms"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: drive.appendingPathComponent(".stash"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: drive.appendingPathComponent("link"), withDestinationURL: elsewhere)
+        try FileManager.default.createSymbolicLink(at: drive.appendingPathComponent(".stash/lnk"), withDestinationURL: drive.appendingPathComponent("lms"))
+        let settings = home.appendingPathComponent(".lmstudio/settings.json")
+        let roots = ScanRoots(gguf: [drive.path], mlx: [])
+
+        try write(#"{"downloadsFolder": "~/drive/link"}"#, to: settings)
+        var folder = try XCTUnwrap(LMStudioShelfResolver.resolve(home: home, scannedRoots: roots, configGGUFRoots: [], configMLXRoots: []).folders.first)
+        XCTAssertEqual(folder.gguf, .notConfigured)
+
+        try write(#"{"downloadsFolder": "~/drive/.stash/lnk"}"#, to: settings)
+        folder = try XCTUnwrap(LMStudioShelfResolver.resolve(home: home, scannedRoots: roots, configGGUFRoots: [], configMLXRoots: []).folders.first)
+        XCTAssertEqual(folder.gguf, .scanned(root: drive.path, folder: drive.appendingPathComponent("lms").path))
+    }
+
     func testTheDownloadsFolderFollowsASymlinkedSettingsFileAndSkipsOtherFileTypes() throws {
         let home = try makeHome()
         let real = home.appendingPathComponent("dotfiles/lmstudio-settings.json")

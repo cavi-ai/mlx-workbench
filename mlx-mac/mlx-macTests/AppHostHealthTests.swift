@@ -435,6 +435,37 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertEqual(Config.discoverGgufRoots(home: home), [hidden.path, models.path], "a case-variant spelling is the same folder")
     }
 
+    func testDiscoverGgufRootsSkipsAnLMStudioFolderSpelledThroughASymlinkIntoADiscoveredRoot() throws {
+        let home = try makeTempDirectory().standardizedFileURL
+        defer { cleanup(home) }
+        let hidden = try makeDirectory(".models", in: home)
+        let shelf = try makeDirectory(".models/lmstudio", in: home)
+        try FileManager.default.createSymbolicLink(at: home.appendingPathComponent("lms"), withDestinationURL: shelf)
+        try writeLMStudioSettings(#"{"downloadsFolder": "~/lms"}"#, in: home)
+        XCTAssertEqual(Config.discoverGgufRoots(home: home), [hidden.path], "a symlink to a folder inside a discovered root")
+
+        try FileManager.default.createSymbolicLink(at: home.appendingPathComponent("alias"), withDestinationURL: hidden)
+        try writeLMStudioSettings(#"{"downloadsFolder": "~/alias/lmstudio"}"#, in: home)
+        XCTAssertEqual(Config.discoverGgufRoots(home: home), [hidden.path], "a folder spelled through a symlink to a discovered root")
+    }
+
+    func testDiscoverGgufRootsKeepsAnLMStudioFolderTheRootsScanDoesNotReach() throws {
+        let home = try makeTempDirectory().standardizedFileURL
+        defer { cleanup(home) }
+        let hidden = try makeDirectory(".models", in: home)
+        let stashed = try makeDirectory(".models/.stash/lms", in: home)
+        let link = home.appendingPathComponent("lms")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: stashed)
+        try writeLMStudioSettings(#"{"downloadsFolder": "~/lms"}"#, in: home)
+        XCTAssertEqual(Config.discoverGgufRoots(home: home), [hidden.path, link.path], "a symlink into a hidden folder below a discovered root")
+
+        let drive = try makeDirectory("drive/lms", in: home)
+        let linked = hidden.appendingPathComponent("linked")
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: drive)
+        try writeLMStudioSettings(#"{"downloadsFolder": "~/.models/linked"}"#, in: home)
+        XCTAssertEqual(Config.discoverGgufRoots(home: home), [hidden.path, linked.path], "a symlinked folder below a discovered root")
+    }
+
     func testDiscoverGgufRootsIgnoresAMissingOrOversizedLMStudioSetting() throws {
         let home = try makeTempDirectory().standardizedFileURL
         defer { cleanup(home) }
