@@ -75,7 +75,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("models"), withIntermediateDirectories: true)
         let python = """
-        import json, pathlib, sys, time
+        import hashlib, json, pathlib, sys, time
         root = pathlib.Path(__file__).resolve().parents[2]
         args = sys.argv[1:]
         with (root / 'calls.jsonl').open('a') as f:
@@ -107,6 +107,29 @@ final class WorkbenchReviewUITests: XCTestCase {
         elif args[:2] == ['lora', 'start'] and '--confirm' not in args:
             time.sleep(0.5)
             data = {'preview_hash': 'fixture-training-preview'}
+        elif args[:2] == ['wire', 'apply']:
+            time.sleep(1.5)
+            model = args[2]
+            config_path = pathlib.Path(args[args.index('--path') + 1])
+            assert config_path.is_absolute() and root in config_path.parents
+            target = args[args.index('--target') + 1]
+            original = config_path.read_text()
+            digest = hashlib.sha256(json.dumps([model, str(config_path), target, original]).encode()).hexdigest()
+            preview = {'preview_hash': digest, 'diff': 'Configure ' + model + ' for ' + target}
+            confirming = '--confirm' in args
+            if (root / ('fail-wire-apply' if confirming else 'fail-wire-preview')).exists():
+                print('Fixture manual wiring failed: inspect the config file and preview again.', file=sys.stderr)
+                sys.exit(2)
+            if confirming:
+                assert args[args.index('--preview-hash') + 1] == digest
+                applied = not (root / 'false-wire-apply').exists()
+                if applied:
+                    config_path.write_text(json.dumps({'model': model, 'target': target}))
+                data = {'preview': preview, 'applied': applied}
+            else:
+                if (root / 'missing-wire-hash').exists():
+                    preview.pop('preview_hash')
+                data = {'preview': preview, 'requires_confirmation': True}
         elif args[:2] in (['adopt', 'start'], ['adopt', 'status']):
             time.sleep(1.5)
             if '--state' not in args:
@@ -567,6 +590,118 @@ final class WorkbenchReviewUITests: XCTestCase {
                 XCTAssertFalse(app.buttons["Measure this workflow…"].exists)
             }
             capture("Clients-\(appearance)-new-preview")
+            app.terminate()
+        }
+    }
+
+    func testManualWiringRequiresCurrentReview() throws {
+        let before = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
+        let config = root.appendingPathComponent("manual-runtime-configuration-with-a-long-filename.json")
+        let original = Data("{}".utf8)
+        for appearance in ["Light", "Dark"] {
+            for flag in ["fail-wire-preview", "fail-wire-apply", "false-wire-apply", "missing-wire-hash"] {
+                try? FileManager.default.removeItem(at: root.appendingPathComponent(flag))
+            }
+            try original.write(to: config)
+            let installed = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+            try FileManager.default.createDirectory(at: installed.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: installed)
+            let servers: [[String: Any]] = [["repo": "fixture/ReviewedModel", "runtime": "mlx_lm", "port": 8766, "pid": 123, "state": "running"]]
+            try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
+            launch(appearance: appearance, isolatedHome: true)
+            select("Clients")
+            resizeWindow(width: 1024, height: 680)
+            XCTAssertEqual(app.windows.firstMatch.frame.width, 1024, accuracy: 2)
+            XCTAssertEqual(app.windows.firstMatch.frame.height, 680, accuracy: 2)
+            var scroll: XCUIElement { app.scrollViews.containing(.disclosureTriangle, identifier: "Advanced: manual single-file wiring").firstMatch }
+            var advanced: XCUIElement { app.disclosureTriangles["Advanced: manual single-file wiring"] }
+            for _ in 0..<6 where !advanced.isHittable { scroll.scroll(byDeltaX: 0, deltaY: -300) }
+            XCTAssertTrue(advanced.isHittable)
+            let window = app.windows.firstMatch
+            let frame = advanced.frame.intersection(scroll.frame)
+            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: frame.minX + frame.height / 4 - window.frame.minX, dy: frame.midY - window.frame.minY
+            )).click()
+            XCTAssertEqual(advanced.value as? Int, 1)
+            var model: XCUIElement { app.textFields[before ? "Model repo id" : "manual-wire-model"] }
+            var path: XCUIElement { app.textFields[before ? "Config file path" : "manual-wire-path"] }
+            func reveal(_ element: XCUIElement) {
+                XCTAssertTrue(element.waitForExistence(timeout: 10))
+                for _ in 0..<6 where !element.isHittable {
+                    let above = element.frame.midY < scroll.frame.minY
+                    scroll.scroll(byDeltaX: 0, deltaY: above ? 300 : -300)
+                }
+                XCTAssertTrue(element.isHittable)
+            }
+            reveal(model)
+            replace(model, with: "fixture/ReviewedModel")
+            reveal(path)
+            replace(path, with: config.path)
+            capture("ManualWire-\(appearance)-unreviewed-standard")
+            var preview: XCUIElement { before ? app.buttons["Preview Wire"] : app.buttons["manual-wire-preview"] }
+            var confirm: XCUIElement { before ? app.buttons["Apply Wiring"] : app.buttons["manual-wire-confirm"] }
+            reveal(preview)
+            preview.click()
+            if !before {
+                XCTAssertTrue(app.descendants(matching: .any)["manual-wire-progress"].waitForExistence(timeout: 5))
+                XCTAssertFalse(preview.isEnabled)
+                capture("ManualWire-\(appearance)-previewing")
+            }
+            reveal(confirm)
+            XCTAssertTrue(confirm.isEnabled)
+            XCTAssertEqual(try Data(contentsOf: config), original)
+            capture("ManualWire-\(appearance)-reviewed-standard")
+            resizeWindow(width: 740, height: 680)
+            XCTAssertEqual(app.windows.firstMatch.frame.width, 740, accuracy: 2)
+            XCTAssertEqual(app.windows.firstMatch.frame.height, 680, accuracy: 2)
+            reveal(confirm)
+            capture("ManualWire-\(appearance)-reviewed-scrolled-narrow")
+            if before { app.terminate(); continue }
+
+            let capturedPath = app.staticTexts["manual-wire-reviewed-path"]
+            XCTAssertTrue(capturedPath.exists)
+            reveal(model)
+            replace(model, with: "fixture/ChangedModel")
+            XCTAssertTrue(!confirm.exists || !confirm.isEnabled)
+            capture("ManualWire-\(appearance)-edited-review-invalidated")
+            reveal(preview)
+            preview.click()
+            reveal(confirm)
+            XCTAssertTrue(confirm.isEnabled)
+            try Data().write(to: root.appendingPathComponent("false-wire-apply"))
+            confirm.click()
+            XCTAssertTrue(app.descendants(matching: .any)["manual-wire-progress"].waitForExistence(timeout: 5))
+            XCTAssertFalse(preview.isEnabled)
+            capture("ManualWire-\(appearance)-applying")
+            XCTAssertTrue(text(containing: "Wiring was not applied.").waitForExistence(timeout: 15))
+            expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: preview)
+            waitForExpectations(timeout: 15)
+            XCTAssertEqual(try Data(contentsOf: config), original)
+            XCTAssertFalse(text(containing: "Wiring applied.").exists)
+            XCTAssertTrue(!confirm.exists || !confirm.isEnabled)
+            capture("ManualWire-\(appearance)-not-applied")
+            try FileManager.default.removeItem(at: root.appendingPathComponent("false-wire-apply"))
+            reveal(preview)
+            preview.click()
+            reveal(confirm)
+            confirm.click()
+            XCTAssertTrue(text(containing: "Wiring applied.").waitForExistence(timeout: 15))
+            XCTAssertTrue(!confirm.exists || !confirm.isEnabled)
+            let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: config)) as! [String: String]
+            XCTAssertEqual(saved["model"], "fixture/ChangedModel")
+            XCTAssertEqual(saved["target"], "mlx_lm")
+            let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl")).split(separator: "\n")
+                .map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String] }
+                .filter { $0.prefix(2) == ["wire", "apply"] && $0.contains("--confirm") }
+            XCTAssertEqual(calls.count, appearance == "Light" ? 2 : 4)
+            XCTAssertTrue(calls.allSatisfy { $0[2] == "fixture/ChangedModel" && $0.contains(config.path) })
+            capture("ManualWire-\(appearance)-applied")
+
+            try Data().write(to: root.appendingPathComponent("fail-wire-preview"))
+            reveal(preview)
+            preview.click()
+            XCTAssertTrue(text(containing: "Fixture manual wiring failed").waitForExistence(timeout: 15))
+            capture("ManualWire-\(appearance)-preview-error")
             app.terminate()
         }
     }
