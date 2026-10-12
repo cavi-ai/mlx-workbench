@@ -1,7 +1,39 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 
 @testable import mlx_workbench
+
+@MainActor
+private final class ComparisonRunFixture: ObservableObject {
+    @Published var reason: String? = "Choose at least one model."
+    var requests = 0
+}
+
+private struct ComparisonRunFixtureView: View {
+    @ObservedObject var fixture: ComparisonRunFixture
+    var styled = false
+
+    @ViewBuilder private var runButton: some View {
+        if styled {
+            ComparisonRunButton(unavailableReason: fixture.reason) { fixture.requests += 1 }
+                .buttonStyle(.borderedProminent)
+        } else {
+            ComparisonRunButton(unavailableReason: fixture.reason) { fixture.requests += 1 }
+                .buttonStyle(.borderless)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            runButton
+            ComparisonRunGuidance(reason: fixture.reason)
+        }
+        .padding(WorkbenchSpacing.md).frame(width: 560, height: 130, alignment: .leading)
+        .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+    }
+}
 
 final class CompareRemodelTests: XCTestCase {
     private let base = Date(timeIntervalSince1970: 1_791_388_800)
@@ -47,6 +79,78 @@ final class CompareRemodelTests: XCTestCase {
         XCTAssertTrue(ComparePresentation.canRun(slots: ["/a", "/b"], activeRunID: nil, availablePaths: available))
         XCTAssertTrue(ComparePresentation.canRun(slots: ["/a", nil], activeRunID: nil, availablePaths: available))
         XCTAssertFalse(ComparePresentation.canRun(slots: ["/a", "/b"], activeRunID: UUID(), availablePaths: available))
+    }
+
+    func testRunGuidanceIdentifiesTheFirstBlockerWithoutChangingModelEligibility() {
+        let available: Set<String> = ["/a", "/b"]
+        XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: [nil, nil], activeRunID: UUID(),
+            availablePaths: available, hasPromptSet: false), "Wait for the current comparison to finish.")
+        XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: [nil, nil], activeRunID: nil,
+            availablePaths: available, hasPromptSet: false), "Choose a prompt set.")
+        XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: [nil, nil], activeRunID: nil,
+            availablePaths: available), "Choose at least one model.")
+        XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: ["/a", nil, "/missing", "/also-missing"],
+            activeRunID: nil, availablePaths: available), "Model C is unavailable. Replace it or choose None.")
+        XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: [nil, "/missing"],
+            activeRunID: nil, availablePaths: available), "Model B is unavailable. Replace it or choose None.")
+        XCTAssertNil(ComparePresentation.runUnavailableReason(slots: ["/a", nil], activeRunID: nil, availablePaths: available))
+        XCTAssertNil(ComparePresentation.runUnavailableReason(slots: ["/a", "/a"], activeRunID: nil, availablePaths: available))
+        XCTAssertNil(ComparePresentation.runUnavailableReason(slots: ["/unknown", nil], activeRunID: nil))
+        let slotCases: [[String?]] = [[nil, nil], ["/a", nil], ["/a", "/a"], ["/a", "/missing"], [nil, "/b"]]
+        for slots in slotCases {
+            for active in [UUID?.none, UUID?.some(UUID())] {
+                let originalEligibility = !ComparePresentation.variantPaths(slots).isEmpty && active == nil
+                    && ComparePresentation.variantPaths(slots).allSatisfy(available.contains)
+                XCTAssertEqual(ComparePresentation.runUnavailableReason(slots: slots, activeRunID: active,
+                    availablePaths: available) == nil, originalEligibility)
+                XCTAssertEqual(ComparePresentation.canRun(slots: slots, activeRunID: active,
+                    availablePaths: available), originalEligibility)
+            }
+        }
+    }
+
+    @MainActor
+    func testNativeRunGuidanceTransitionsNeverStartAComparisonWithoutAClick() async throws {
+        func button(in view: NSView) -> NSButton? {
+            if let button = view as? NSButton { return button }
+            return view.subviews.compactMap { button(in: $0) }.first
+        }
+        let fixture = ComparisonRunFixture()
+        let host = NSHostingView(rootView: ComparisonRunFixtureView(fixture: fixture))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 130),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        for (index, reason) in [String?.some("Choose at least one model."),
+            "Model B is unavailable. Replace it or choose None.", nil,
+            "Wait for the current comparison to finish."].enumerated() {
+            fixture.reason = reason
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let run = try XCTUnwrap(button(in: host))
+            XCTAssertEqual(run.isEnabled, reason == nil)
+            XCTAssertEqual(fixture.requests, 0, "Guidance and availability changes must never start a run")
+            if reason != nil { run.performClick(nil); XCTAssertEqual(fixture.requests, 0) }
+            // Check action dispatch with the native-backed style above, then
+            // capture the same control with the comparison page's style.
+            let styled = NSHostingView(rootView: ComparisonRunFixtureView(fixture: fixture, styled: true))
+            window.contentView = styled
+            try await Task.sleep(for: .milliseconds(100))
+            styled.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(styled.bitmapImageRepForCachingDisplay(in: styled.bounds))
+            styled.cacheDisplay(in: styled.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "Comparison run availability \(index)"; attachment.lifetime = .keepAlways; add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["MLX_RUN_GUIDANCE_PROOF_DIR"] {
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(index).png"))
+            }
+            window.contentView = host
+        }
+        fixture.reason = nil
+        try await Task.sleep(for: .milliseconds(150))
+        try XCTUnwrap(button(in: host)).performClick(nil)
+        XCTAssertEqual(fixture.requests, 1, "Only the explicit enabled action requests a run")
     }
 
     func testSixLaneStates() {

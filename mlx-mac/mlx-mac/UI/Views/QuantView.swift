@@ -162,9 +162,20 @@ enum ComparePresentation {
     }
 
     static func canRun(slots: [String?], activeRunID: UUID?, availablePaths: Set<String>? = nil) -> Bool {
-        let paths = variantPaths(slots)
-        return !paths.isEmpty && activeRunID == nil
-            && (availablePaths.map { available in paths.allSatisfy { available.contains($0) } } ?? true)
+        runUnavailableReason(slots: slots, activeRunID: activeRunID, availablePaths: availablePaths) == nil
+    }
+
+    static func runUnavailableReason(slots: [String?], activeRunID: UUID?,
+                                     availablePaths: Set<String>? = nil, hasPromptSet: Bool = true) -> String? {
+        if activeRunID != nil { return "Wait for the current comparison to finish." }
+        if !hasPromptSet { return "Choose a prompt set." }
+        if variantPaths(slots).isEmpty { return "Choose at least one model." }
+        if let availablePaths, let index = slots.firstIndex(where: { path in
+            path.map { !availablePaths.contains($0) } ?? false
+        }) {
+            return "Model \(letter(index)) is unavailable. Replace it or choose None."
+        }
+        return nil
     }
 
     /// A readable label for a model path recorded in a run: the Library's
@@ -178,6 +189,35 @@ enum ComparePresentation {
             return repoID
         }
         return URL(fileURLWithPath: path).lastPathComponent
+    }
+}
+
+struct ComparisonRunButton: View {
+    let unavailableReason: String?
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            guard unavailableReason == nil else { return }
+            action()
+        } label: { Label("Run comparison", systemImage: "play.fill") }
+        .tint(WorkbenchColor.accent)
+        .font(WorkbenchTypography.emphasis).controlSize(.large)
+        .disabled(unavailableReason != nil)
+        .help(unavailableReason ?? "Run the selected prompt set against these models.")
+        .accessibilityHint(unavailableReason ?? "Run the selected prompt set against these models.")
+    }
+}
+
+struct ComparisonRunGuidance: View {
+    let reason: String?
+
+    var body: some View {
+        if let reason {
+            Label(reason, systemImage: "info.circle")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -695,8 +735,9 @@ struct QuantView: View {
         return reusedPromptSet.map { $0.effectiveMode == mode ? [$0] + stored : stored } ?? stored
     }
 
-    private var unavailableSelections: [String] {
-        ComparePresentation.variantPaths(variantSlots).filter { path in !readyModels.contains { $0.item.path == path } }
+    private var runUnavailableReason: String? {
+        ComparePresentation.runUnavailableReason(slots: variantSlots, activeRunID: comparison.activeRunID,
+            availablePaths: Set(readyModels.map { $0.item.path }), hasPromptSet: selectedPromptSet != nil)
     }
 
     private var selectedPromptSet: PromptSet? {
@@ -752,10 +793,8 @@ struct QuantView: View {
                 Text("Reused setup · temporary. Change models below, then run a new comparison.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
-            if !unavailableSelections.isEmpty {
-                Label("Replace or remove unavailable models before running: \(unavailableSelections.map(shortName).joined(separator: ", ")).",
-                      systemImage: "exclamationmark.triangle")
-                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+            if comparison.activeRunID == nil {
+                ComparisonRunGuidance(reason: runUnavailableReason)
             }
             ErrorBanner(text: reuseError)
             ErrorBanner(text: comparison.lastError)
@@ -940,13 +979,8 @@ struct QuantView: View {
     }
 
     private var runButton: some View {
-        Button { startRun() } label: { Label("Run comparison", systemImage: "play.fill") }
+        ComparisonRunButton(unavailableReason: runUnavailableReason, action: startRun)
             .buttonStyle(.borderedProminent)
-            .tint(WorkbenchColor.accent)
-            .font(WorkbenchTypography.emphasis)
-            .controlSize(.large)
-            .disabled(selectedPromptSet == nil || !ComparePresentation.canRun(slots: variantSlots,
-                activeRunID: comparison.activeRunID, availablePaths: Set(readyModels.map { $0.item.path })))
     }
 
     @ViewBuilder private var inlineControls: some View {
@@ -1213,8 +1247,7 @@ struct QuantView: View {
 
     private func startRun() {
         guard let promptSet = selectedPromptSet,
-              ComparePresentation.canRun(slots: variantSlots, activeRunID: comparison.activeRunID,
-                availablePaths: Set(readyModels.map { $0.item.path })) else { return }
+              runUnavailableReason == nil else { return }
         let variants = ComparePresentation.variantPaths(variantSlots).compactMap { path in
             readyModels.first { $0.item.path == path }
                 .map { (path: $0.item.path, signature: $0.item.signature) }
