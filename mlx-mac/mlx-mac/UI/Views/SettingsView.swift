@@ -570,6 +570,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-save")
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, WorkbenchSpacing.pageInset)
         .padding(.vertical, WorkbenchSpacing.sm)
         .background(.bar)

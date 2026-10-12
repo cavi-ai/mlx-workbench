@@ -421,6 +421,11 @@ final class WorkbenchReviewUITests: XCTestCase {
                 app.typeKey("a", modifierFlags: .command)
                 app.typeText(value)
             }
+            func feedbackText(_ identifier: String) -> String {
+                let element = app.staticTexts[identifier]
+                XCTAssertTrue(element.waitForExistence(timeout: 5))
+                return element.value as? String ?? element.label
+            }
             reveal(host)
             replace(host, with: "example.com")
             reveal(port)
@@ -438,6 +443,8 @@ final class WorkbenchReviewUITests: XCTestCase {
             resizeWindow(width: 740, height: 680)
             XCTAssertEqual(app.windows.firstMatch.frame.width, 740, accuracy: 2)
             XCTAssertEqual(app.windows.firstMatch.frame.height, 680, accuracy: 2)
+            reveal(reserve)
+            XCTAssertFalse(host.isHittable, "Recovery must begin with the first invalid input offscreen")
             capture("Settings-\(appearance)-multiple-invalid-narrow")
             if before {
                 reveal(host); replace(host, with: "localhost")
@@ -446,7 +453,10 @@ final class WorkbenchReviewUITests: XCTestCase {
             } else {
                 let fix = app.buttons["settings-fix-field"]
                 let guidance = app.staticTexts["settings-save-guidance"]
-                XCTAssertTrue(guidance.label.contains("Host"))
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(guidance.frame), "Feedback must remain inside the window")
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(save.frame), "Save must remain inside the window")
+                XCTAssertTrue(fix.isHittable, "Recovery must remain visible in the pinned bar")
+                XCTAssertTrue(feedbackText("settings-save-guidance").contains("Host"))
                 fix.click()
                 XCTAssertTrue(host.isHittable)
                 XCTAssertEqual(host.value as? String, "example.com")
@@ -456,12 +466,12 @@ final class WorkbenchReviewUITests: XCTestCase {
                 focusedReplace("localhos")
                 app.typeText("t")
                 XCTAssertEqual(host.value as? String, "localhost", "Fix field must focus the actual input")
-                XCTAssertTrue(guidance.label.contains("Port"))
+                XCTAssertTrue(feedbackText("settings-save-guidance").contains("Port"))
                 fix.click()
                 focusedReplace("8788")
                 app.typeText(" ")
                 XCTAssertEqual(port.value as? String, "8788 ")
-                XCTAssertTrue(guidance.label.contains("Fit reserve"))
+                XCTAssertTrue(feedbackText("settings-save-guidance").contains("Fit reserve"))
                 fix.click()
                 focusedReplace("8")
                 XCTAssertEqual(reserve.value as? String, "8")
@@ -484,7 +494,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             reveal(port)
             replace(port, with: "abc")
             if !before {
-                XCTAssertTrue(app.staticTexts["settings-save-guidance"].label.contains("Port"), "A prior success must not obscure validation")
+                XCTAssertTrue(feedbackText("settings-save-guidance").contains("Port"), "A prior success must not obscure validation")
             }
             replace(port, with: "8789")
             // A real read failure on a test-owned config exercises the existing
@@ -500,12 +510,18 @@ final class WorkbenchReviewUITests: XCTestCase {
             save.click()
             XCTAssertTrue(text(containing: expectedFailure).waitForExistence(timeout: 10))
             if !before {
-                XCTAssertEqual(app.staticTexts["settings-save-error"].label, expectedFailure)
+                XCTAssertEqual(feedbackText("settings-save-error"), expectedFailure)
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(app.staticTexts["settings-save-error"].frame))
             }
             XCTAssertEqual(port.value as? String, "8789", "Save failure must retain the draft")
             XCTAssertTrue(save.isEnabled)
             capture("Settings-\(appearance)-save-failed")
             resizeWindow(width: 740, height: 680)
+            if !before {
+                XCTAssertEqual(feedbackText("settings-save-error"), expectedFailure)
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(app.staticTexts["settings-save-error"].frame))
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(save.frame))
+            }
             capture("Settings-\(appearance)-save-failed-narrow")
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
             XCTAssertEqual(try Data(contentsOf: configURL), savedBytes, "Failed Save must not write")
