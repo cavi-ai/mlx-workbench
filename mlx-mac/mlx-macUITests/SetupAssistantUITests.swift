@@ -672,11 +672,18 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(start.isHittable)
             XCTAssertTrue(picker.isHittable)
             capture("Adopt-\(appearance)-recommendation-narrow")
-            app.staticTexts["Workflow details"].click()
-            app.scrollViews.containing(.staticText, identifier: "adopt-model").firstMatch.swipeUp()
+            var outcome: XCUIElement { app.scrollViews.containing(.staticText, identifier: "adopt-model").firstMatch }
+            var details: XCUIElement { app.disclosureTriangles["Workflow details"] }
+            outcome.scroll(byDeltaX: 0, deltaY: -outcome.frame.height)
+            XCTAssertTrue(details.isHittable)
+            details.click()
+            outcome.scroll(byDeltaX: 0, deltaY: -outcome.frame.height)
             XCTAssertTrue(app.staticTexts["adopt-state-path"].waitForExistence(timeout: 5))
             capture("Adopt-\(appearance)-details-scrolled")
-            app.staticTexts["Workflow details"].click()
+            outcome.scroll(byDeltaX: 0, deltaY: outcome.frame.height)
+            XCTAssertTrue(details.isHittable)
+            details.click()
+            outcome.scroll(byDeltaX: 0, deltaY: outcome.frame.height)
             try FileManager.default.removeItem(at: root.appendingPathComponent("fail-adopt-status"))
             resizeWindow(width: 1024, height: 680)
 
