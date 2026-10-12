@@ -28,6 +28,7 @@ and is versioned independently; submodule bumps are recorded here.
 
 ### Fixed
 
+- `make install` installs the agent's lab requirements and `make pip-audit` audits them, so the native app's Training screen loads jobs and evaluations.
 - Native app: with no GGUF folders configured, the Library scans the downloads
   folder set in LM Studio's settings and Settings suggests it. A folder that the
   scan of another detected or scanned folder reaches, under any spelling (letter

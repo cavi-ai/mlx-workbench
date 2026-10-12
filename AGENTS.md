@@ -781,7 +781,8 @@ from `mlx-agent` at runtime.
   the background; `?refresh=1` scans synchronously. The web UI additionally
   keeps the last inventory in `localStorage` so reloads never render empty.
 - Convert/serve Python deps are pinned in `requirements.txt` (exact
-  versions); `make install` installs from it and `make pip-audit` checks the
+  versions), and the agent's lab operations (Training, experiments) in
+  `vendor/mlx-agent/requirements-lab.txt`; `make install` installs both and `make pip-audit` checks the
   runtime against the OSV database — both in local runs and as PR gates
   (`.github/workflows/pr.yml`). The transformers 4.x pin is required by
   mlx-lm's GGUF→HF path and is a tracked, accepted risk (known advisories
