@@ -331,6 +331,7 @@ struct ClientsOutcomeView<Notices: View>: View {
                 Text(result)
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(hasIssues ? WorkbenchColor.failure : WorkbenchColor.success)
+                    .accessibilityIdentifier("client-wiring-result")
             }
             if showsMeasurement {
                 ViewThatFits(in: .horizontal) {

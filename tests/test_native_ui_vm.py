@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/native_ui_vm.py"
@@ -14,6 +14,26 @@ spec.loader.exec_module(vm)
 
 
 class NativeUIVMTests(unittest.TestCase):
+    def test_exited_vm_fails_before_guest_probe_or_wait(self):
+        process = Mock()
+        process.poll.return_value = 1
+        with patch.object(vm.subprocess, "run") as probe, patch.object(vm.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "VM exited before"):
+                vm.wait_for_guest("tart", "test-vm", process, {})
+        probe.assert_not_called()
+        sleep.assert_not_called()
+
+    def test_live_vm_readiness_wait_is_bounded(self):
+        process = Mock()
+        process.poll.return_value = None
+        with patch.object(vm.time, "monotonic", side_effect=[0, 0, 301]), \
+                patch.object(vm.time, "sleep"), \
+                patch.object(vm.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)) as probe:
+            with self.assertRaisesRegex(RuntimeError, "within 300 seconds"):
+                vm.wait_for_guest("tart", "test-vm", process, {})
+        probe.assert_called_once()
+        self.assertEqual(probe.call_args.kwargs["timeout"], 5)
+
     def test_snapshot_keeps_working_source_without_private_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

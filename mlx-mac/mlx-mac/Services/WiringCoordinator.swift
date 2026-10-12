@@ -233,7 +233,9 @@ final class WiringCoordinator: ObservableObject {
             do {
                 receipts.append(try apply(plan))
             } catch {
-                failures.append("\(plan.displayName): \(AppHost.render(error))")
+                // Client-specific WiringError descriptions already name their client.
+                let message = AppHost.render(error)
+                failures.append(error is WiringError ? message : "\(plan.displayName): \(message)")
             }
         }
 
@@ -282,7 +284,7 @@ final class WiringCoordinator: ObservableObject {
     }
 
     var rollbackAvailable: Bool {
-        transactions.first != nil && transactions.first?.rolledBackAt == nil
+        transactions.first.map { !$0.receipts.isEmpty && $0.rolledBackAt == nil } ?? false
     }
 
     // MARK: - Apply internals

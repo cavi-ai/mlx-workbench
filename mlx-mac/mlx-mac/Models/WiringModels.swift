@@ -164,6 +164,18 @@ struct WiringTransaction: Codable, Equatable, Identifiable, Sendable {
     /// Clients skipped or failed during apply, with the reason.
     var failures: [String]
     var rolledBackAt: Date?
+
+    /// Apply outcome only; failure details are presented separately.
+    var resultSummary: String {
+        let failed = "\(failures.count) \(failures.count == 1 ? "client" : "clients") failed."
+        guard !receipts.isEmpty else {
+            return failures.isEmpty ? "No clients were wired." : "No clients were wired. \(failed)"
+        }
+        if failures.isEmpty {
+            return "Wired \(receipts.count) \(receipts.count == 1 ? "client" : "clients") to \(modelName)."
+        }
+        return "Wired \(receipts.count) of \(receipts.count + failures.count) clients to \(modelName). \(failed)"
+    }
 }
 
 // MARK: - Line diff
