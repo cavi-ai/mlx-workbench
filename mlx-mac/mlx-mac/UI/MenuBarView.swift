@@ -17,63 +17,42 @@ struct MenuBarView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-            Text(fleetSummary)
-                .font(WorkbenchTypography.emphasis)
-            if case .running = endpoint.state, let latest = latestBenchmark {
-                Text(latest)
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
-            }
-            if let error = endpoint.lastError {
-                Text(error)
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.failure)
-            }
-            Divider()
-            ForEach(endpoint.fleet.slots) { slot in
-                slotRow(slot)
-            }
-            if endpoint.fleet.slots.isEmpty {
-                Text("No endpoints configured")
-                    .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(WorkbenchColor.muted)
-            }
-            Divider()
-            Button("Open MLX Workbench") { openApp() }
-            Divider()
-            Button("Quit MLX Workbench") { NSApp.terminate(nil) }
+        Button {} label: {
+            Label(fleetSummary, systemImage: EndpointIcon.name(forStates: endpoint.fleet.slots.map { endpoint.slotStates[$0.id] ?? .disabled }))
         }
-        .padding(WorkbenchSpacing.xs)
+        .disabled(true)
+        if case .running = endpoint.state, let latest = latestBenchmark {
+            Button {} label: { Label(latest, systemImage: "speedometer") }
+                .disabled(true)
+        }
+        if let error = endpoint.lastError {
+            Button {} label: { Label(error, systemImage: "exclamationmark.triangle") }
+                .disabled(true)
+        }
+        Divider()
+        ForEach(endpoint.fleet.slots) { slot in
+            Button {
+                Task { await endpoint.setSlotEnabled(id: slot.id, !slot.enabled) }
+            } label: {
+                Label(
+                    MenuBarPresentation.slotTitle(slot),
+                    systemImage: EndpointIcon.name(for: endpoint.slotStates[slot.id] ?? .disabled)
+                )
+            }
+        }
+        if endpoint.fleet.slots.isEmpty {
+            Button("No endpoints configured") {}.disabled(true)
+        }
+        Divider()
+        Button("Open MLX Workbench") { openApp() }
+        Divider()
+        Button("Quit MLX Workbench") { NSApp.terminate(nil) }
+            .keyboardShortcut("q")
     }
 
     /// "N of M endpoints running" across the fleet (spec 09 P2).
     private var fleetSummary: String {
-        let enabled = endpoint.fleet.slots.filter { $0.enabled && !$0.modelPath.isEmpty }
-        guard !enabled.isEmpty else { return "No always-on endpoints" }
-        let running = enabled.filter { isRunning(endpoint.slotStates[$0.id]) }.count
-        let noun = enabled.count == 1 ? "endpoint" : "endpoints"
-        return "\(running) of \(enabled.count) \(noun) running"
-    }
-
-    private func slotRow(_ slot: EndpointSlot) -> some View {
-        HStack(spacing: WorkbenchSpacing.xxs) {
-            Image(systemName: EndpointIcon.name(for: endpoint.slotStates[slot.id] ?? .disabled))
-                .frame(width: 14)
-            Text("\(URL(fileURLWithPath: slot.modelPath).lastPathComponent) :\(slot.port)")
-                .font(WorkbenchTypography.secondary)
-                .lineLimit(1)
-            Spacer()
-            Button(slot.enabled ? "Stop" : "Start") {
-                Task { await endpoint.setSlotEnabled(id: slot.id, !slot.enabled) }
-            }
-            .controlSize(.small)
-        }
-    }
-
-    private func isRunning(_ state: EndpointState?) -> Bool {
-        guard case .running = state else { return false }
-        return true
+        MenuBarPresentation.fleetSummary(slots: endpoint.fleet.slots, states: endpoint.slotStates)
     }
 
     /// Last measured tok/s for the served model, when comparison evidence
@@ -95,6 +74,30 @@ struct MenuBarView: View {
         } else {
             NSApp.windows.first?.makeKeyAndOrderFront(nil)
         }
+    }
+}
+
+/// Strings the menu draws; pure so no file-system lookup happens during rendering.
+enum MenuBarPresentation {
+    /// The last path component, without resolving the path.
+    static func modelName(_ path: String) -> String {
+        NSString(string: path).lastPathComponent
+    }
+
+    /// The menu item for one slot: the action it performs, then the model and port.
+    static func slotTitle(_ slot: EndpointSlot) -> String {
+        "\(slot.enabled ? "Stop" : "Start") \(modelName(slot.modelPath)) · :\(slot.port)"
+    }
+
+    static func fleetSummary(slots: [EndpointSlot], states: [UUID: EndpointState]) -> String {
+        let enabled = slots.filter { $0.enabled && !$0.modelPath.isEmpty }
+        guard !enabled.isEmpty else { return "No always-on endpoints" }
+        let running = enabled.filter { slot in
+            if case .running = states[slot.id] { return true }
+            return false
+        }.count
+        let noun = enabled.count == 1 ? "endpoint" : "endpoints"
+        return "\(running) of \(enabled.count) \(noun) running"
     }
 }
 

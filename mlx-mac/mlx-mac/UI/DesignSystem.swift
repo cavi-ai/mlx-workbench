@@ -432,6 +432,28 @@ extension WorkbenchSize {
         static let placeholderRows = 4
     }
 
+    /// Add from Hugging Face window dimensions.
+    enum Intake {
+        static let minWidth: CGFloat = 560
+        static let idealWidth: CGFloat = 720
+        static let minHeight: CGFloat = 480
+        static let idealHeight: CGFloat = 640
+    }
+
+    /// Controlled-studies panel and sheet dimensions.
+    enum Lab {
+        static let scoreControlWidth: CGFloat = 80
+        static let videoHeight: CGFloat = 260
+        static let authorMinWidth: CGFloat = 540
+        static let authorIdealWidth: CGFloat = 620
+        static let reviewMinWidth: CGFloat = 700
+        static let reviewIdealWidth: CGFloat = 900
+        static let adoptMinWidth: CGFloat = 600
+        static let adoptIdealWidth: CGFloat = 740
+        static let progressFigureMinimum: CGFloat = 72
+        static let storePathMaxWidth: CGFloat = 360
+    }
+
     /// Training route dimensions.
     enum Training {
         static let baseModelMenuWidth: CGFloat = 420
