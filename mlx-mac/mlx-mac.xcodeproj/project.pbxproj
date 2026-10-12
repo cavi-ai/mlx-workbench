@@ -116,6 +116,7 @@
 		LMSRESB1 /* LMStudioShelfResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSRESF1 /* LMStudioShelfResolver.swift */; };
 		LMSPRSB1 /* LMStudioShelfPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSPRSF1 /* LMStudioShelfPresentation.swift */; };
 		LMSVWSB1 /* LMStudioShelfViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSVWSF1 /* LMStudioShelfViews.swift */; };
+		MNUBRTB1 /* MenuBarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MNUBRTF1 /* MenuBarTests.swift */; };
 		TRNPRSB1 /* TrainingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNPRSF1 /* TrainingPresentation.swift */; };
 		LABPRSB1 /* LabPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = LABPRSF1 /* LabPresentation.swift */; };
 		LABRMDB1 /* LabRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LABRMDF1 /* LabRemodelTests.swift */; };
@@ -352,6 +353,7 @@
 		LMSRMDF1 /* LMStudioRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LMStudioRemodelTests.swift; path = LMStudioRemodelTests.swift; sourceTree = "<group>"; };
 		LABPRSF1 /* LabPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabPresentation.swift; path = UI/Views/LabPresentation.swift; sourceTree = "<group>"; };
 		LABRMDF1 /* LabRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabRemodelTests.swift; path = LabRemodelTests.swift; sourceTree = "<group>"; };
+		MNUBRTF1 /* MenuBarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MenuBarTests.swift; path = MenuBarTests.swift; sourceTree = "<group>"; };
 		TRNPRSF1 /* TrainingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingPresentation.swift; path = UI/Views/TrainingPresentation.swift; sourceTree = "<group>"; };
 		TRNVWSF1 /* TrainingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingViews.swift; path = UI/Views/TrainingViews.swift; sourceTree = "<group>"; };
 		ADPRMDF1 /* AdoptRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdoptRemodelTests.swift; path = AdoptRemodelTests.swift; sourceTree = "<group>"; };
@@ -715,6 +717,7 @@
 				LMSRMDF1 /* LMStudioRemodelTests.swift */,
 				TRNRMDF1 /* TrainingRemodelTests.swift */,
 				LABRMDF1 /* LabRemodelTests.swift */,
+				MNUBRTF1 /* MenuBarTests.swift */,
 				ADPRMDF1 /* AdoptRemodelTests.swift */,
 				INTRMDF1 /* IntakeRemodelTests.swift */,
 				24FREF0LR /* LibraryRemodelTests.swift */,
@@ -1102,6 +1105,7 @@
 				LMSRMDB1 /* LMStudioRemodelTests.swift in Sources */,
 				TRNRMDB1 /* TrainingRemodelTests.swift in Sources */,
 				LABRMDB1 /* LabRemodelTests.swift in Sources */,
+				MNUBRTB1 /* MenuBarTests.swift in Sources */,
 				ADPRMDB1 /* AdoptRemodelTests.swift in Sources */,
 				INTRMDB1 /* IntakeRemodelTests.swift in Sources */,
 				24BBLD0LR /* LibraryRemodelTests.swift in Sources */,
