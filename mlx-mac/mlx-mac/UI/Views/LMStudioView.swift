@@ -1,235 +1,232 @@
 import AppKit
 import SwiftUI
 
-// MARK: - LMStudioView
-// Find GGUF files in LM Studio model directories and hand them to Prepare.
+// MARK: - Resolve key and loader
 
-enum LMStudioScanState: Equatable {
-    case notRun
-    case running
-    case completed([LMStudioView.LMSModel])
-    case failed(String)
+/// What the folder resolution depends on; a change, or a finished scan, resolves again.
+struct LMStudioResolveKey: Equatable {
+    let scannedAt: Date?
+    let isRouteActive: Bool
+    let scannedRoots: ScanRoots?
+    let ggufRoots: [String]
+    let mlxRoots: [String]
+    let outputDir: String
+    let scansFinished: Int
 
-    var isRunning: Bool { if case .running = self { return true }; return false }
-    var isFailed: Bool { if case .failed = self { return true }; return false }
-    var models: [LMStudioView.LMSModel] {
-        if case .completed(let models) = self { return models }
-        return []
-    }
-    var symbol: String {
-        switch self {
-        case .notRun, .running: return "square.and.arrow.down"
-        case .completed: return "folder.badge.questionmark"
-        case .failed: return "exclamationmark.triangle"
-        }
-    }
-    var message: String {
-        switch self {
-        case .notRun: return "Scan LM Studio's model folders for GGUF files, or choose an additional source directory."
-        case .running: return "Scanning LM Studio model folders…"
-        case .completed: return "No GGUF files found. Choose another source directory, then scan again."
-        case .failed(let message): return "Scan failed. \(message) Check the source directory, then scan again."
-        }
+    /// The finished-scan count after `isScanning` changes from `wasScanning`.
+    static func scansFinished(_ count: Int, wasScanning: Bool, isScanning: Bool) -> Int {
+        wasScanning && !isScanning ? count + 1 : count
     }
 }
 
+/// Holds the latest folder resolution. A resolve that is cancelled, or that an inactive route asked for, publishes nothing.
+@MainActor
+final class LMStudioResolutionLoader: ObservableObject {
+    @Published private(set) var resolution: LMStudioShelfResolver.Resolution?
+
+    func load(isActive: Bool, resolver: () async -> LMStudioShelfResolver.Resolution) async {
+        guard isActive else { return }
+        let result = await resolver()
+        guard !Task.isCancelled else { return }
+        resolution = result
+    }
+}
+
+// MARK: - LMStudioView
+// What LM Studio holds, by fit on this Mac: MLX models that run here and GGUF files that need converting.
+
 struct LMStudioView: View {
     @ObservedObject var appHost: AppHost
+    private let resources: SystemResourceMonitor
+    private let home: URL
+    private let fixedResolution: LMStudioShelfResolver.Resolution?
     private let onRouteSelection: (AppRoute) -> Void
 
-    @State private var sourceDir = ""
-    @State private var scanState: LMStudioScanState = .notRun
+    @StateObject private var loader = LMStudioResolutionLoader()
+    @State private var scansFinished = 0
+    @State private var index: LMStudioShelfIndex?
+    @State private var layout = LMStudioLayout()
+    @Environment(\.isRouteActive) private var isRouteActive
 
-    private var isScanning: Bool { scanState.isRunning }
-    private var models: [LMSModel] { scanState.models }
-
-    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
+    /// `resources` and `resolution` let a render hold the page at a fixed budget and folder set.
+    init(
+        appHost: AppHost,
+        resources: SystemResourceMonitor? = nil,
+        home: URL = Path.home(),
+        resolution: LMStudioShelfResolver.Resolution? = nil,
+        onRouteSelection: @escaping (AppRoute) -> Void = { _ in }
+    ) {
         self.appHost = appHost
+        self.resources = resources ?? appHost.resources
+        self.home = home
+        self.fixedResolution = resolution
         self.onRouteSelection = onRouteSelection
     }
 
-    struct LMSModel: Identifiable, Equatable {
-        let path: String
-        let name: String
-        let size: Int64
-        var id: String { path }
+    private var resolveKey: LMStudioResolveKey {
+        LMStudioResolveKey(
+            scannedAt: appHost.librarySnapshot?.generatedAt, isRouteActive: isRouteActive, scannedRoots: appHost.scannedRoots,
+            ggufRoots: appHost.config.ggufRoots, mlxRoots: appHost.config.mlxRoots, outputDir: appHost.config.outputDir,
+            scansFinished: scansFinished
+        )
     }
+
+    private var resolution: LMStudioShelfResolver.Resolution? { fixedResolution ?? loader.resolution }
+
+    private struct IndexKey: Equatable {
+        let generatedAt: Date?
+        let resolution: LMStudioShelfResolver.Resolution?
+    }
+
+    private var indexKey: IndexKey { IndexKey(generatedAt: appHost.librarySnapshot?.generatedAt, resolution: resolution) }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                sourceSection
-                if models.isEmpty {
-                    scanNotice
+        GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                    header
+                    ErrorBanner(text: LMStudioShelfPresentation.bannerText(snapshot: appHost.librarySnapshot, lastError: appHost.lastError))
+                    LMStudioShelf(
+                        resources: resources, resolution: resolution, snapshot: appHost.librarySnapshot, index: index,
+                        isScanning: appHost.isScanning, lastError: appHost.lastError,
+                        reserveGB: appHost.config.fitReserveGB, hardware: appHost.hardwareProfile,
+                        layout: layout, home: home, actions: actions
+                    )
                 }
-                if !models.isEmpty {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        SectionTitle(text: "Found \(models.count) GGUF models")
-                        ForEach(models) { model in
-                            HStack(spacing: WorkbenchSpacing.sm) {
-                                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                                    Text(model.name).font(WorkbenchTypography.body)
-                                    Text(model.path)
-                                        .font(WorkbenchTypography.secondary)
-                                        .foregroundStyle(WorkbenchColor.muted)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                }
-                                Spacer()
-                                Text(ByteCountFormatter.string(fromByteCount: model.size, countStyle: .file))
-                                    .font(WorkbenchTypography.secondary)
-                                    .foregroundStyle(WorkbenchColor.muted)
-                                Button("Prepare…") { prepare(model) }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                            }
-                            .padding(.vertical, WorkbenchSpacing.xxxs)
-                        }
-                        Text("Prepare opens a conversion preview for the chosen GGUF.")
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(WorkbenchColor.muted)
-                    }
-                    .formSection {}
-                }
-                Spacer()
+                .frame(maxWidth: WorkbenchSize.LMStudio.contentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(WorkbenchSpacing.pageInset)
             }
-            .padding(WorkbenchSpacing.pageInset)
-        }
-    }
-
-    private var sourceSection: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-            SectionTitle(text: "Find GGUF models")
-            Text("Scans ~/.lmstudio/models and ~/.cache/lm-studio/models. Add a source directory to scan another folder as well.")
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-            Text("Additional source directory (optional)")
-                .font(WorkbenchTypography.label)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: WorkbenchSpacing.xs) { scanControls }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { scanControls }
+            .defaultScrollAnchor(.top)
+            .onChange(of: viewport.size.width, initial: true) { _, width in
+                layout = LMStudioLayout(viewportWidth: width, previous: layout)
             }
         }
-        .formSection {}
-    }
-
-    private var scanNotice: some View {
-        HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
-            if isScanning {
-                ProgressView().controlSize(.small)
-                    .accessibilityLabel("Scanning LM Studio model folders")
+        .onChange(of: appHost.isScanning) { was, now in
+            scansFinished = LMStudioResolveKey.scansFinished(scansFinished, wasScanning: was, isScanning: now)
+        }
+        .onChange(of: indexKey, initial: true) { _, key in
+            if let snapshot = appHost.librarySnapshot, let resolution = key.resolution {
+                index = LMStudioShelfIndex.make(snapshot: snapshot, resolution: resolution)
             } else {
-                Image(systemName: scanState.symbol)
-                    .symbolRenderingMode(.hierarchical)
-                    .accessibilityHidden(true)
+                index = nil
             }
-            Text(scanState.message)
-                .font(WorkbenchTypography.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
         }
-        .foregroundStyle(scanState.isFailed ? WorkbenchColor.failure : WorkbenchColor.muted)
+        .task(id: resolveKey) { await resolve() }
     }
 
-    @ViewBuilder
-    private var scanControls: some View {
-        TextField("Optional source dir", text: $sourceDir)
-            .textFieldStyle(.roundedBorder)
-            .disabled(isScanning)
-        Button("Choose…") { chooseSourceDirectory() }
+    // MARK: Header
+
+    private var header: some View {
+        let lines = (resolution?.folders ?? []).map { LMStudioFolderLine.make($0, home: home) }
+        return VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            if layout.headerWraps {
+                if let first = lines.first { folderLine(first) }
+                scanButton
+            } else {
+                HStack(alignment: .center, spacing: WorkbenchSpacing.sm) {
+                    if let first = lines.first { folderLine(first) }
+                    Spacer(minLength: WorkbenchSpacing.xs)
+                    scanButton
+                }
+            }
+            ForEach(Array(lines.dropFirst())) { line in
+                folderLine(line)
+            }
+        }
+    }
+
+    private var scanButton: some View {
+        Button(appHost.isScanning ? "Scanning…" : "Scan Again") { scan() }
             .buttonStyle(.bordered)
-            .disabled(isScanning)
-        Button("Scan LM Studio") { scan() }
-            .buttonStyle(.borderedProminent)
-            .disabled(isScanning)
+            .disabled(appHost.isScanning)
     }
 
-    private func chooseSourceDirectory() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        let path = sourceDir.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !path.isEmpty { panel.directoryURL = URL(fileURLWithPath: path) }
-        if panel.runModal() == .OK, let url = panel.url { sourceDir = url.path }
+    private func folderLine(_ line: LMStudioFolderLine) -> some View {
+        ReclaimFlowLayout(spacing: WorkbenchSpacing.xs, lineSpacing: WorkbenchSpacing.xxs) {
+            Label {
+                Text(line.displayPath)
+                    .font(WorkbenchTypography.compactValue)
+                    .foregroundStyle(WorkbenchColor.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            } icon: {
+                Image(systemName: "folder").symbolRenderingMode(.hierarchical).accessibilityHidden(true)
+            }
+            Text(line.sourceCaption)
+            Text(line.coverageWord)
+        }
+        .font(WorkbenchTypography.metadata)
+        .foregroundStyle(WorkbenchColor.muted)
+        .contextMenu {
+            Button("Reveal in Finder") { reveal(line.path) }
+            Button("Copy Path") { copy(line.path) }
+        }
     }
 
-    /// Hand a discovered GGUF to the Prepare flow as if the library scan had
-    /// surfaced it: pending conversion status, no outputs yet.
-    private func prepare(_ model: LMSModel) {
-        let item = ModelItem(
-            path: model.path,
-            name: model.name,
-            bytes: model.size,
-            modifiedAt: nil,
-            shard: nil,
-            modelKey: nil,
-            architecture: nil,
-            quantization: nil,
-            parameters: nil,
-            structure: nil,
-            signature: nil,
-            companion: nil,
-            readable: true,
-            status: "pending",
-            outputs: [],
-            tensorCount: nil,
-            error: nil
+    // MARK: Resolve
+
+    private func resolve() async {
+        guard fixedResolution == nil else { return }
+        let config = appHost.config
+        let scannedRoots = appHost.scannedRoots
+        let home = home
+        await loader.load(isActive: isRouteActive) {
+            await Task.detached(priority: .utility) {
+                let gguf = config.ggufRoots.isEmpty ? Config.discoverGgufRoots(home: home) : config.ggufRoots
+                return LMStudioShelfResolver.resolve(
+                    home: home, scannedRoots: scannedRoots, configGGUFRoots: gguf,
+                    configMLXRoots: AppHost.scanMLXRoots(config, ggufRoots: gguf)
+                )
+            }.value
+        }
+    }
+
+    // MARK: Actions
+
+    private var actions: LMStudioShelfActions {
+        LMStudioShelfActions(
+            openSettings: { onRouteSelection(.settings) },
+            prepare: prepare,
+            run: run,
+            showInLibrary: showInLibrary,
+            reveal: reveal,
+            copyPath: copy
         )
-        appHost.selectedModelPath = model.path
-        appHost.modelWorkflow.inspect(source: item, snapshot: appHost.librarySnapshot)
-        onRouteSelection(.prepare)
     }
 
     private func scan() {
-        guard !isScanning else { return }
-        let path = sourceDir.trimmingCharacters(in: .whitespacesAndNewlines)
-        let requestedSource = path.isEmpty ? nil : path
-        scanState = .running
-        Task {
-            do {
-                let models = try await Self.discoverLMStudio(sourceDir: requestedSource)
-                    .map {
-                        LMSModel(path: $0.path, name: $0.name, size: $0.size)
-                    }
-                scanState = .completed(models)
-            } catch {
-                scanState = .failed(error.localizedDescription)
-            }
-        }
+        guard !appHost.isScanning else { return }
+        Task { await appHost.rescan() }
     }
 
-    static func discoverLMStudio(sourceDir: String?) async throws -> [(path: String, name: String, size: Int64)] {
-        var dirs: [URL] = []
-        let home = URL(fileURLWithPath: NSHomeDirectory())
-        dirs.append(home.appendingPathComponent(".lmstudio/models"))
-        dirs.append(home.appendingPathComponent(".cache/lm-studio/models"))
-        if let sourceDir, !sourceDir.isEmpty {
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: sourceDir, isDirectory: &isDirectory),
-                  isDirectory.boolValue,
-                  FileManager.default.isReadableFile(atPath: sourceDir) else {
-                throw NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError, userInfo: [
-                    NSLocalizedDescriptionKey: "The source directory is unavailable or unreadable: \(sourceDir)"
-                ])
-            }
-            dirs.insert(URL(fileURLWithPath: sourceDir), at: 0)
-        }
-        var found: [(path: String, name: String, size: Int64)] = []
-        for dir in dirs {
-            guard let enumerator = FileManager.default.enumerator(
-                at: dir, includingPropertiesForKeys: [.fileSizeKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
-            while let item = enumerator.nextObject() {
-                guard let url = item as? URL else { continue }
-                guard url.pathExtension.lowercased() == "gguf" else { continue }
-                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                found.append((url.path, url.lastPathComponent, Int64(size)))
-            }
-        }
-        return found
+    private func prepare(_ path: String) {
+        guard let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path }) else { return }
+        appHost.selectedModelPath = model.item.path
+        appHost.modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
+        onRouteSelection(.prepare)
+    }
+
+    private func run(_ path: String) {
+        guard let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) }) else { return }
+        appHost.selectedModelPath = path
+        appHost.modelWorkflow.prepareServe(model: model, exactPath: path)
+        onRouteSelection(.run)
+    }
+
+    private func showInLibrary(_ path: String) {
+        appHost.selectedModelPath = path
+        onRouteSelection(.library)
+    }
+
+    private func reveal(_ path: String) {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: path, directoryHint: .inferFromPath)])
+    }
+
+    private func copy(_ path: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(path, forType: .string)
     }
 }
