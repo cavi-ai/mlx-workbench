@@ -429,6 +429,150 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: plan.configPath))
     }
 
+    func testRollbackMovesCreatedConfigToTrash() throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/zed/settings.json")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let storeURL = temporaryURL("transactions.json")
+        let coordinator = makeCoordinator(home: home, store: JSONStore<WiringTransaction>(fileURL: storeURL))
+        coordinator.preview(endpoint: endpoint)
+        let transaction = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+        XCTAssertNotNil(transaction?.receipts.first?.createdFileSHA256)
+        XCTAssertNil(coordinator.persistenceError)
+        let written = try String(contentsOf: config)
+        let reloaded = makeCoordinator(home: home, store: JSONStore<WiringTransaction>(fileURL: storeURL))
+
+        reloaded.rollback()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path))
+        XCTAssertEqual(try String(contentsOf: trash(home).appendingPathComponent("settings.json")), written)
+        XCTAssertNotNil(reloaded.transactions.first?.rolledBackAt)
+        XCTAssertEqual(reloaded.transactions.first?.failures, [])
+        XCTAssertNil(reloaded.lastError)
+        XCTAssertFalse(reloaded.rollbackAvailable)
+    }
+
+    func testRollbackKeepsCreatedConfigWhenTrashFails() throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/zed/settings.json")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let coordinator = makeCoordinator(home: home, moveToTrash: { _ in throw CocoaError(.fileWriteNoPermission) })
+        coordinator.preview(endpoint: endpoint)
+        XCTAssertNotNil(coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash)))
+        let written = try String(contentsOf: config)
+
+        coordinator.rollback()
+
+        XCTAssertEqual(try String(contentsOf: config), written)
+        XCTAssertNotNil(coordinator.transactions.first?.rolledBackAt)
+        XCTAssertEqual(coordinator.transactions.first?.failures.count, 1)
+        XCTAssertNotNil(coordinator.lastError)
+    }
+
+    func testRollbackKeepsUnreadableConfigThatExistedBeforeWiring() throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/zed/settings.json")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([0x7B, 0xC3, 0x28, 0x7D]).write(to: config)
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint)
+        let transaction = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+        XCTAssertEqual(transaction?.receipts.count, 1)
+        XCTAssertNil(transaction?.receipts.first?.createdFileSHA256)
+
+        coordinator.rollback()
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: config.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: trash(home).path))
+    }
+
+    func testRollbackKeepsCreatedConfigEditedAfterWiring() throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/zed/settings.json")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint)
+        XCTAssertNotNil(coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash)))
+        let edited = "{\"theme\": \"light\"}"
+        try edited.write(to: config, atomically: true, encoding: .utf8)
+
+        coordinator.rollback()
+
+        XCTAssertEqual(try String(contentsOf: config), edited)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: trash(home).path))
+        XCTAssertNotNil(coordinator.transactions.first?.rolledBackAt)
+        XCTAssertEqual(coordinator.transactions.first?.failures,
+                       ["zed: \(WiringError.createdFileChanged.errorDescription ?? "")"])
+        XCTAssertEqual(coordinator.lastError, coordinator.transactions.first?.failures.first)
+    }
+
+    func testRollbackRefusesSymlinkAtCreatedConfig() throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/zed/settings.json")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint)
+        XCTAssertNotNil(coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash)))
+        let written = try String(contentsOf: config)
+        let victim = home.appendingPathComponent("victim.json")
+        try written.write(to: victim, atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: config)
+        try FileManager.default.createSymbolicLink(at: config, withDestinationURL: victim)
+
+        coordinator.rollback()
+
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: config.path), victim.path)
+        XCTAssertEqual(try String(contentsOf: victim), written)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: trash(home).path))
+        XCTAssertEqual(coordinator.transactions.first?.failures.count, 1)
+        XCTAssertNotNil(coordinator.lastError)
+    }
+
+    func testRollbackOfCreatedConfigAlreadyRemovedRecordsNoFailure() throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/zed/settings.json")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint)
+        XCTAssertNotNil(coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash)))
+        try FileManager.default.removeItem(at: config)
+
+        coordinator.rollback()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: trash(home).path))
+        XCTAssertNotNil(coordinator.transactions.first?.rolledBackAt)
+        XCTAssertEqual(coordinator.transactions.first?.failures, [])
+        XCTAssertNil(coordinator.lastError)
+    }
+
+    func testLegacyTransactionWithoutCreatedFieldKeepsCreatedConfigOnRollback() throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/zed/settings.json")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let contents = "{\"language_models\": {}}"
+        try contents.write(to: config, atomically: true, encoding: .utf8)
+        let storeURL = temporaryURL("transactions.json")
+        try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let legacy = """
+        [{"appliedAt":0,"endpointBaseURL":"http://127.0.0.1:8766/v1","failures":[],"id":"\(UUID().uuidString)",\
+        "modelName":"qwen3-8b","previewHash":"legacy","receipts":[{"appliedAt":0,"clientID":"zed","configPath":"\(config.path)"}]}]
+        """
+        try legacy.write(to: storeURL, atomically: true, encoding: .utf8)
+        let coordinator = makeCoordinator(home: home, store: JSONStore<WiringTransaction>(fileURL: storeURL))
+        let receipt = try XCTUnwrap(coordinator.transactions.first?.receipts.first)
+        XCTAssertNil(receipt.backupPath)
+        XCTAssertNil(receipt.createdFileSHA256)
+
+        coordinator.rollback()
+
+        XCTAssertEqual(try String(contentsOf: config), contents)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: trash(home).path))
+        XCTAssertNotNil(coordinator.transactions.first?.rolledBackAt)
+        XCTAssertEqual(coordinator.transactions.first?.failures, [])
+        XCTAssertNil(coordinator.lastError)
+    }
+
     func testUndetectedClientsProduceNoPlans() throws {
         let home = try makeHome()
         let coordinator = makeCoordinator(home: home)
@@ -511,11 +655,23 @@ final class WiringCoordinatorTests: XCTestCase {
         return url
     }
 
-    private func makeCoordinator(home: URL) -> WiringCoordinator {
-        WiringCoordinator(
+    private func makeCoordinator(
+        home: URL, store: JSONStore<WiringTransaction>? = nil, moveToTrash: ((URL) throws -> Void)? = nil
+    ) -> WiringCoordinator {
+        let trashDirectory = trash(home)
+        return WiringCoordinator(
             home: home,
-            store: JSONStore<WiringTransaction>(fileURL: temporaryURL("transactions.json"))
+            store: store ?? JSONStore<WiringTransaction>(fileURL: temporaryURL("transactions.json")),
+            moveToTrash: moveToTrash ?? { url in
+                try FileManager.default.createDirectory(at: trashDirectory, withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: url, to: trashDirectory.appendingPathComponent(url.lastPathComponent))
+            }
         )
+    }
+
+    /// Stands in for the macOS Trash so tests never touch the user's real one.
+    private func trash(_ home: URL) -> URL {
+        home.appendingPathComponent("Trash", isDirectory: true)
     }
 
     private nonisolated func temporaryURL(_ name: String) -> URL {

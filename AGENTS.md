@@ -477,7 +477,10 @@ from `mlx-agent` at runtime.
 - The Wire tab also does **Cross-client Wiring**: `WiringCoordinator` detects
   installed clients (opencode/Continue/Zed/Aider writable; LM Studio/Ollama
   advisory-only) and previews/confirms atomic writes to each client's own
-  config with per-file backups, drift re-checks, and rollback. Client write
+  config with per-file backups, drift re-checks, and rollback. Rollback
+  restores backups and moves configs the wiring created to the Trash only
+  while they still hold the written contents (receipt `createdFileSHA256`;
+  receipts without it keep created files). Client write
   targets are a fixed allowlist of well-known config paths.
   Model guidance's **Wire into clients** hands off a one-shot model/port
   request. Clients preselects only a matching running endpoint, supports repo

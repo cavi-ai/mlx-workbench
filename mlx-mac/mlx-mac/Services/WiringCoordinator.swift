@@ -17,6 +17,7 @@ enum WiringError: LocalizedError {
     case noTransactionToRollback
     case symlinkRefused(client: String)
     case serverChanged
+    case createdFileChanged
 
     var errorDescription: String? {
         switch self {
@@ -27,6 +28,7 @@ enum WiringError: LocalizedError {
         case .noTransactionToRollback: return "There is no wiring transaction to roll back."
         case .symlinkRefused(let client): return "\(client): the config path or its backup target is a symbolic link; refusing to write through it."
         case .serverChanged: return "The selected server stopped or changed. Refresh and preview client wiring again."
+        case .createdFileChanged: return "The config file changed after wiring created it; it was left in place."
         }
     }
 }
@@ -49,6 +51,8 @@ final class WiringCoordinator: ObservableObject {
     private let fileManager: FileManager
     private let configSource: ClientConfigSource
     private let store: JSONStore<WiringTransaction>
+    /// Moves a file to the macOS Trash; rollback never deletes permanently.
+    private let moveToTrash: (URL) throws -> Void
     private let now: () -> Date
     private var readGeneration = 0
     private var readQueued = false
@@ -74,6 +78,7 @@ final class WiringCoordinator: ObservableObject {
         fileManager: FileManager = .default,
         configSource: @escaping ClientConfigSource = ClientConfigFile.live,
         store: JSONStore<WiringTransaction>,
+        moveToTrash: ((URL) throws -> Void)? = nil,
         now: @escaping () -> Date = Date.init
     ) {
         self.adapters = adapters
@@ -81,6 +86,7 @@ final class WiringCoordinator: ObservableObject {
         self.fileManager = fileManager
         self.configSource = configSource
         self.store = store
+        self.moveToTrash = moveToTrash ?? { try fileManager.trashItem(at: $0, resultingItemURL: nil) }
         self.now = now
         do {
             transactions = try store.load().sorted { $0.appliedAt > $1.appliedAt }
@@ -260,7 +266,8 @@ final class WiringCoordinator: ObservableObject {
         return transaction
     }
 
-    /// Restore the latest transaction's backups, newest write first.
+    /// Restore the latest transaction's backups and move the files it created
+    /// to the Trash, newest write first.
     func rollback() {
         guard let transaction = transactions.first, transaction.rolledBackAt == nil else {
             lastError = WiringError.noTransactionToRollback.errorDescription
@@ -268,9 +275,12 @@ final class WiringCoordinator: ObservableObject {
         }
         var failures: [String] = []
         for receipt in transaction.receipts.reversed() {
-            guard let backup = receipt.backupPath else { continue }
             do {
-                try restore(backup: backup, to: receipt.configPath)
+                if let backup = receipt.backupPath {
+                    try restore(backup: backup, to: receipt.configPath)
+                } else if let written = receipt.createdFileSHA256 {
+                    try trashCreated(receipt.configPath, writtenSHA256: written)
+                }
             } catch {
                 failures.append("\(receipt.clientID): \(AppHost.render(error))")
             }
@@ -305,6 +315,8 @@ final class WiringCoordinator: ObservableObject {
             try fileManager.copyItem(at: fileURL, to: backup)
             backupPath = backup.path
         }
+        // Only a write to a path with nothing at it creates the file; an unreadable existing file does not count.
+        let createsFile = plan.before == nil && (try? fileManager.attributesOfItem(atPath: plan.configPath)) == nil
 
         do {
             try writeAtomically(plan.after, to: fileURL)
@@ -330,6 +342,7 @@ final class WiringCoordinator: ObservableObject {
             clientID: plan.clientID,
             configPath: plan.configPath,
             backupPath: backupPath,
+            createdFileSHA256: createsFile ? Self.sha256Hex(Data(plan.after.utf8)) : nil,
             appliedAt: now()
         )
     }
@@ -384,6 +397,18 @@ final class WiringCoordinator: ObservableObject {
         }
     }
 
+    /// A created config goes to the Trash only while it still holds exactly
+    /// what the wiring wrote; an edited file stays in place.
+    private func trashCreated(_ path: String, writtenSHA256: String) throws {
+        let targetURL = URL(fileURLWithPath: path)
+        try Self.refuseSymlink(targetURL, client: nil, fileManager: fileManager)
+        guard fileManager.fileExists(atPath: targetURL.path) else { return }
+        guard Self.sha256Hex(try Data(contentsOf: targetURL)) == writtenSHA256 else {
+            throw WiringError.createdFileChanged
+        }
+        try moveToTrash(targetURL)
+    }
+
     private func persist(_ transaction: WiringTransaction) {
         do {
             try store.upsert(transaction, id: \.id)
@@ -399,8 +424,11 @@ final class WiringCoordinator: ObservableObject {
         for plan in plans.sorted(by: { $0.clientID < $1.clientID }) {
             canonical += "plan:\(plan.clientID)|\(plan.configPath)|\(plan.after)\n"
         }
-        let digest = SHA256.hash(data: Data(canonical.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        return sha256Hex(Data(canonical.utf8))
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private func summary(for clientID: String, endpoint: WireEndpoint, creating: Bool) -> String {

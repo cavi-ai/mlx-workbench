@@ -151,6 +151,9 @@ struct ClientEditReceipt: Codable, Equatable, Sendable {
     let clientID: String
     let configPath: String
     let backupPath: String?
+    /// SHA-256 of the contents written when this wiring created the file;
+    /// nil when the file existed before or the receipt predates this field.
+    var createdFileSHA256: String? = nil
     let appliedAt: Date
 }
 

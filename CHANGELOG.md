@@ -28,6 +28,8 @@ and is versioned independently; submodule bumps are recorded here.
 
 ### Fixed
 
+- Clients: Roll back last wiring moves a config file the wiring created to the
+  Trash, unless it changed after the write.
 - Compare results grid: headers, prompts and outputs share one left edge;
   images fill their column and keep their size while loading; a model name
   stays on one line (full path on hover); text outputs take their own height
