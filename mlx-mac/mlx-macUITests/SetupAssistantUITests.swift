@@ -412,9 +412,10 @@ final class WorkbenchReviewUITests: XCTestCase {
             let scroll = app.scrollViews.containing(.textField, identifier: "Workbench API host").firstMatch
             func reveal(_ field: XCUIElement) {
                 XCTAssertTrue(field.waitForExistence(timeout: 10))
-                for _ in 0..<8 where !field.isHittable {
+                for _ in 0..<8 where !scroll.frame.contains(field.frame) || !field.isHittable {
                     scroll.scroll(byDeltaX: 0, deltaY: field.frame.minY < scroll.frame.minY ? 300 : -300)
                 }
+                XCTAssertTrue(scroll.frame.contains(field.frame), "Input must be inside the editor before clicking")
                 XCTAssertTrue(field.isHittable)
             }
             func focusedReplace(_ value: String) {
