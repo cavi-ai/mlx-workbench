@@ -147,7 +147,7 @@ print(String(data: data, encoding: .utf8)!)
             validate_test_summary(summary, expected_ui_tests)
 
     unit_selection = [f"-only-testing:{manifest['unit_test']}"] if manifest.get("unit_test") else []
-    if manifest.get("ui_test"):
+    if manifest.get("ui_test") and not manifest.get("with_unit_tests"):
         print("Focused UI diagnosis: the complete unit gate is not selected", flush=True)
     elif manifest.get("unit_evidence"):
         (output_dir / "unit-evidence.json").write_text(json.dumps(manifest["unit_evidence"], indent=2) + "\n")
@@ -164,9 +164,22 @@ print(String(data: data, encoding: .utf8)!)
         raise RuntimeError("Expected exactly one native UI test runner.")
     template = plistlib.loads(runfiles[0].read_bytes())
     if manifest.get("ui_test"):
-        run("ui-focused", ["xcodebuild", "-xctestrun", str(runfiles[0]),
-                          "-destination", "platform=macOS,arch=arm64", "-resultBundlePath", str(output_dir / "ui-focused.xcresult"),
-                          f"-only-testing:{manifest['ui_test']}", "test-without-building"], expected_ui_tests=1)
+        for stage in (["before", "after"] if (input_dir / "baseline.app").exists() else ["after"]):
+            data = plistlib.loads(plistlib.dumps(template))
+            for configuration in data["TestConfigurations"]:
+                for target in configuration["TestTargets"]:
+                    target.setdefault("EnvironmentVariables", {})["MLX_WORKBENCH_CAPTURE_STAGE"] = stage
+                    if stage == "before":
+                        baseline = str(input_dir / "baseline.app")
+                        target["UITargetAppPath"] = baseline
+                        target["DependentProductPaths"] = [baseline if p == "__TESTROOT__/Debug/mlx-workbench.app" else p
+                                                          for p in target.get("DependentProductPaths", [])]
+            runfile = products / f"ui-focused-{stage}.xctestrun"
+            runfile.write_bytes(plistlib.dumps(data))
+            name = f"ui-focused-{stage}"
+            run(name, ["xcodebuild", "-xctestrun", str(runfile),
+                       "-destination", "platform=macOS,arch=arm64", "-resultBundlePath", str(output_dir / f"{name}.xcresult"),
+                       f"-only-testing:{manifest['ui_test']}", "test-without-building"], expected_ui_tests=1)
         return
     stages = ["after"]
     if (input_dir / "baseline.app").exists():
@@ -190,7 +203,7 @@ print(String(data: data, encoding: .utf8)!)
                 selection += "/testRouteCaptures"
             run(name, ["xcodebuild", "-xctestrun", str(runfile), "-destination", "platform=macOS,arch=arm64",
                        "-resultBundlePath", str(output_dir / f"{name}.xcresult"), f"-only-testing:{selection}",
-                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 7)
+                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 8)
 
 
 def host(args):
@@ -211,7 +224,8 @@ def host(args):
     input_dir, output_dir = run_dir / "input", run_dir / "output"
     files = snapshot(repo, input_dir / "source")
     manifest = {"run_id": run_id, "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
-                "files": files, "base_vm": args.base_vm, "unit_test": args.unit_test, "ui_test": args.ui_test, "preflight_only": args.preflight_only}
+                "files": files, "base_vm": args.base_vm, "unit_test": args.unit_test, "ui_test": args.ui_test,
+                "with_unit_tests": args.with_unit_tests, "preflight_only": args.preflight_only}
     if args.unit_evidence:
         if args.unit_test or args.preflight_only:
             raise RuntimeError("Unit evidence reuse is only available for the complete UI review.")
@@ -274,10 +288,15 @@ def main():
     parser.add_argument("--baseline-app", help="Optional preserved app for matching before captures")
     parser.add_argument("--unit-test", help="Run only this XCTest identifier for failure diagnosis; no full-suite or UI acceptance")
     parser.add_argument("--ui-test", help="Run one UI test for scoped failure diagnosis; no complete UI-suite acceptance")
+    parser.add_argument("--with-unit-tests", action="store_true", help="Run the complete native unit gate before the selected UI test")
     parser.add_argument("--preflight-only", action="store_true", help="Check the guest GUI session without building or running tests")
     parser.add_argument("--unit-evidence", help="Reuse a complete passed native unit run only when its source inputs match")
     parser.add_argument("--guest", nargs=2, metavar=("INPUT", "OUTPUT"), help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.with_unit_tests and (not args.ui_test or args.unit_test or args.preflight_only):
+        parser.error("--with-unit-tests requires --ui-test without --unit-test or --preflight-only")
+    if args.ui_test and args.unit_test:
+        parser.error("Select either --ui-test or --unit-test")
     if args.guest:
         guest(*args.guest)
     elif not args.base_vm:
