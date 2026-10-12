@@ -104,9 +104,42 @@ final class WorkbenchReviewUITests: XCTestCase {
                 print('Fixture server status failed.', file=sys.stderr)
                 sys.exit(2)
             data = {'servers': json.loads((root / 'servers.json').read_text())}
-        elif args[:2] == ['lora', 'start'] and '--confirm' not in args:
-            time.sleep(0.5)
-            data = {'preview_hash': 'fixture-training-preview'}
+        elif args[:2] == ['lora', 'status']:
+            time.sleep(2 if (root / 'slow-training-status').exists() else 0.3)
+            if (root / 'fail-training-status').exists():
+                print('Fixture training jobs unavailable: receipt directory is unreadable.', file=sys.stderr)
+                sys.exit(2)
+            data = {'jobs': json.loads((root / 'training-jobs.json').read_text()) if (root / 'training-jobs.json').exists() else []}
+        elif args and args[0] == 'lab' and 'workspace' in args:
+            request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
+            operation = request['operation']
+            if operation == 'training-history':
+                time.sleep(2 if (root / 'slow-training-history').exists() else 0.3)
+                if (root / 'fail-training-history').exists():
+                    print('Fixture training evaluations unavailable: history is unreadable.', file=sys.stderr)
+                    sys.exit(2)
+                data = {'evaluations': json.loads((root / 'training-history.json').read_text()) if (root / 'training-history.json').exists() else []}
+            elif operation == 'training-inspect':
+                time.sleep(0.5)
+                if (root / 'fail-training-inspect').exists():
+                    print('Fixture retained evaluation unavailable.', file=sys.stderr)
+                    sys.exit(2)
+                data = {'report': {'recipe': 'fixture frozen recipe', 'outputs': {'baseline': 'fixture base output', 'adapter': 'fixture adapter output'}},
+                        'artifact_sha256': 'fixture-evaluation-sha256'}
+            else:
+                data = {}
+        elif args[:2] == ['lora', 'start']:
+            time.sleep(1)
+            confirming = '--confirm' in args
+            if (root / ('fail-training-submit' if confirming else 'fail-training-preview')).exists():
+                print('Fixture training submission failed.' if confirming else 'Fixture training preview failed.', file=sys.stderr)
+                sys.exit(2)
+            if confirming:
+                assert args[args.index('--preview-hash') + 1] == 'fixture-training-preview'
+                (root / 'confirmed-training.json').write_text(json.dumps(args))
+                data = {}
+            else:
+                data = {'preview_hash': 'fixture-training-preview'}
         elif args[:2] == ['wire', 'apply']:
             time.sleep(1.5)
             model = args[2]
@@ -373,6 +406,180 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Training-edited-preview-invalidated")
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("--confirm"))
+    }
+
+    func testTrainingWorkflowGuidanceAndResults() throws {
+        let before = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
+        func flag(_ name: String, _ enabled: Bool) throws {
+            let url = root.appendingPathComponent(name)
+            if enabled { try Data().write(to: url) }
+            else if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        }
+        func write(_ name: String, _ value: Any) throws {
+            try JSONSerialization.data(withJSONObject: value).write(to: root.appendingPathComponent(name))
+        }
+        for appearance in ["Light", "Dark"] {
+            for name in ["fail-training-status", "fail-training-history", "fail-training-preview", "fail-training-submit",
+                         "slow-training-status", "slow-training-history", "fail-training-inspect"] { try flag(name, false) }
+            try write("training-jobs.json", [])
+            try write("training-history.json", [])
+            launch(appearance: appearance, route: "training-studio", isolatedHome: true)
+            resizeWindow(width: 1024, height: 680)
+            let scroll = app.scrollViews.firstMatch
+            func reveal(_ element: XCUIElement) {
+                XCTAssertTrue(element.waitForExistence(timeout: 10))
+                for _ in 0..<10 where !scroll.frame.contains(element.frame) || !element.isHittable {
+                    scroll.scroll(byDeltaX: 0, deltaY: element.frame.minY < scroll.frame.minY ? 280 : -280)
+                }
+                XCTAssertTrue(scroll.frame.contains(element.frame), "Element must be visible before interaction")
+                XCTAssertTrue(element.isHittable)
+            }
+            func message(_ identifier: String) -> String {
+                let element = app.staticTexts[identifier]
+                XCTAssertTrue(element.waitForExistence(timeout: 10), identifier)
+                return element.value as? String ?? element.label
+            }
+            func waitEnabled(_ button: XCUIElement) {
+                let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: button)
+                XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 15), .completed)
+            }
+            let model = app.textFields["Base model repo id"]
+            let dataset = app.textFields["Dataset path"]
+            let iterations = app.textFields["Iterations"]
+            let preview = before ? app.buttons["Preview Training"] : app.buttons["training-preview"]
+            XCTAssertTrue(preview.waitForExistence(timeout: 10))
+            XCTAssertFalse(preview.isEnabled)
+            if !before {
+                XCTAssertTrue(message("training-guidance").contains("base model"))
+                let fix = app.buttons["training-fix-field"]
+                reveal(fix); fix.click()
+                app.typeText("fixture/base")
+                XCTAssertEqual(model.value as? String, "fixture/base", "Fix field must focus the real input")
+                XCTAssertTrue(message("training-guidance").contains("dataset"))
+                reveal(fix); fix.click(); app.typeText(root.path)
+                XCTAssertEqual(dataset.value as? String, root.path)
+                XCTAssertTrue(preview.isEnabled)
+                reveal(iterations); replace(iterations, with: "0")
+                XCTAssertFalse(preview.isEnabled)
+                XCTAssertTrue(message("training-guidance").contains("positive whole number"))
+                reveal(fix); fix.click()
+                app.typeKey("a", modifierFlags: .command); app.typeText("100")
+                XCTAssertEqual(iterations.value as? String, "100")
+                XCTAssertEqual(model.value as? String, "fixture/base")
+                XCTAssertEqual(dataset.value as? String, root.path)
+                XCTAssertTrue(preview.isEnabled)
+                reveal(app.staticTexts["training-jobs-empty"])
+                XCTAssertTrue(app.staticTexts["training-history-empty"].exists)
+                capture("Training-\(appearance)-empty-results-scrolled")
+                reveal(model)
+            }
+            capture("Training-\(appearance)-setup")
+            if before {
+                reveal(model); replace(model, with: "fixture/base")
+                reveal(dataset); replace(dataset, with: root.path)
+            }
+            reveal(preview); preview.click()
+            let confirm = before ? app.buttons["Confirm & Train"] : app.buttons["training-confirm"]
+            XCTAssertTrue(confirm.waitForExistence(timeout: 15)); waitEnabled(confirm)
+            reveal(confirm)
+            capture("Training-\(appearance)-captured-request")
+            resizeWindow(width: 740, height: 680)
+            reveal(confirm); capture("Training-\(appearance)-narrow-request")
+            resizeWindow(width: 740, height: 560)
+            let minimum = app.windows.firstMatch.frame.size
+            resizeWindow(width: 740, height: 520)
+            XCTAssertEqual(app.windows.firstMatch.frame.size.height, minimum.height, accuracy: 3)
+            reveal(confirm); capture("Training-\(appearance)-minimum-request")
+            if before { app.terminate(); continue }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("confirmed-training.json").path))
+            resizeWindow(width: 1024, height: 680)
+            reveal(iterations); replace(iterations, with: "200")
+            XCTAssertFalse(confirm.exists, "Any setup edit must discard the old preview")
+            try flag("fail-training-preview", true)
+            reveal(preview); preview.click()
+            XCTAssertTrue(text(containing: "Fixture training preview failed.").waitForExistence(timeout: 15))
+            reveal(text(containing: "Fixture training preview failed.")); capture("Training-\(appearance)-preview-failed")
+            try flag("fail-training-preview", false)
+            reveal(preview); preview.click()
+            XCTAssertFalse(preview.isEnabled, "Duplicate preview must be locked while preparing")
+            XCTAssertTrue(confirm.waitForExistence(timeout: 15)); waitEnabled(confirm)
+            try flag("fail-training-submit", true)
+            reveal(confirm); confirm.click()
+            XCTAssertFalse(confirm.isEnabled, "Duplicate submission must be locked")
+            XCTAssertTrue(text(containing: "Fixture training submission failed.").waitForExistence(timeout: 15))
+            waitEnabled(confirm)
+            capture("Training-\(appearance)-submission-failed")
+            try flag("fail-training-submit", false)
+            reveal(confirm); confirm.click()
+            XCTAssertTrue(text(containing: "Training submitted. See Activity.").waitForExistence(timeout: 15))
+            let submitted = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("confirmed-training.json"))) as? [String])
+            XCTAssertEqual(submitted[try XCTUnwrap(submitted.firstIndex(of: "--iters")) + 1], "200")
+            XCTAssertEqual(submitted[try XCTUnwrap(submitted.firstIndex(of: "--preview-hash")) + 1], "fixture-training-preview")
+            capture("Training-\(appearance)-submitted")
+
+            let jobs: [[String: Any]] = [["receipt": "fixture-trained-adapter", "repo": "fixture/base", "out": root.appendingPathComponent("adapter").path,
+                                        "pid": 123, "state": "done", "adapter_identity": ["sha256": "fixture-adapter-identity"],
+                                        "log_path": root.appendingPathComponent("training.log").path]]
+            try write("training-jobs.json", jobs)
+            try write("training-history.json", [["id": "fixture-evaluation", "created_at": "2026-10-12T12:00:00Z"]])
+            let refreshJobs = app.buttons["training-refresh-jobs"]
+            let refreshHistory = app.buttons["training-refresh-history"]
+            try flag("slow-training-status", true)
+            reveal(refreshJobs); refreshJobs.click()
+            XCTAssertTrue(app.staticTexts["training-jobs-loading"].waitForExistence(timeout: 5))
+            XCTAssertFalse(refreshJobs.isEnabled)
+            capture("Training-\(appearance)-jobs-loading")
+            XCTAssertTrue(app.buttons["Compare with base"].waitForExistence(timeout: 15))
+            try flag("slow-training-status", false)
+            try flag("slow-training-history", true)
+            reveal(refreshHistory); refreshHistory.click()
+            XCTAssertTrue(app.staticTexts["training-history-loading"].waitForExistence(timeout: 5))
+            XCTAssertFalse(refreshHistory.isEnabled)
+            capture("Training-\(appearance)-history-loading")
+            let evaluation = app.buttons["fixture-evaluation"]
+            XCTAssertTrue(evaluation.waitForExistence(timeout: 15))
+            try flag("slow-training-history", false)
+            reveal(evaluation); evaluation.click()
+            XCTAssertTrue(text(containing: "fixture-evaluation-sha256").waitForExistence(timeout: 15))
+            reveal(text(containing: "fixture-evaluation-sha256"))
+            let report = app.disclosureTriangles["Evaluation outputs and frozen recipe"]
+            if report.exists { reveal(report); report.click() }
+            else {
+                let disclosure = app.buttons["Evaluation outputs and frozen recipe"]
+                reveal(disclosure); disclosure.click()
+            }
+            XCTAssertTrue(text(containing: "fixture frozen recipe").waitForExistence(timeout: 10))
+            capture("Training-\(appearance)-populated-evaluation")
+            try flag("fail-training-inspect", true)
+            reveal(evaluation); evaluation.click()
+            XCTAssertTrue(message("training-inspection-error").contains("Fixture retained evaluation unavailable"))
+            XCTAssertTrue(text(containing: "fixture-evaluation-sha256").exists, "Inspection failure must retain the prior report")
+            capture("Training-\(appearance)-inspection-failed-retained")
+            try flag("fail-training-inspect", false)
+            reveal(evaluation); evaluation.click()
+            waitEnabled(evaluation)
+            XCTAssertFalse(app.staticTexts["training-inspection-error"].exists)
+            try flag("fail-training-status", true)
+            reveal(refreshJobs); refreshJobs.click()
+            XCTAssertTrue(message("training-jobs-error").contains("Fixture training jobs unavailable"))
+            XCTAssertTrue(app.buttons["Compare with base"].exists, "A failed refresh must retain jobs")
+            XCTAssertTrue(evaluation.exists, "A jobs failure must not clear evaluations")
+            reveal(app.staticTexts["training-jobs-error"]); capture("Training-\(appearance)-jobs-refresh-failed")
+            try flag("fail-training-status", false)
+            reveal(refreshJobs); refreshJobs.click(); waitEnabled(refreshJobs)
+            XCTAssertFalse(app.staticTexts["training-jobs-error"].exists)
+            try flag("fail-training-history", true)
+            reveal(refreshHistory); refreshHistory.click()
+            XCTAssertTrue(message("training-history-error").contains("Fixture training evaluations unavailable"))
+            XCTAssertTrue(evaluation.exists, "A failed refresh must retain history")
+            XCTAssertTrue(app.buttons["Compare with base"].exists)
+            reveal(app.staticTexts["training-history-error"]); capture("Training-\(appearance)-history-refresh-failed")
+            try flag("fail-training-history", false)
+            reveal(refreshHistory); refreshHistory.click(); waitEnabled(refreshHistory)
+            XCTAssertFalse(app.staticTexts["training-history-error"].exists)
+            app.terminate()
+            try flag("confirmed-training.json", false)
+        }
     }
 
     private func text(containing value: String) -> XCUIElement {

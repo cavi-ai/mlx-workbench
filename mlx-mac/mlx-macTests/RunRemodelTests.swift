@@ -221,6 +221,167 @@ final class RunRemodelTests: XCTestCase {
         XCTAssertTrue(session.canConfirm)
     }
 
+    func testTrainingGuidancePrioritizesBusyThenMissingFieldsThenIterations() {
+        var draft = TrainingDraft(repo: " \n", data: " \t", iterations: "0")
+        XCTAssertEqual(TrainingPreviewGuidance.resolve(draft: draft, operation: nil)?.field, .repo)
+        draft.repo = "org/model"
+        XCTAssertEqual(TrainingPreviewGuidance.resolve(draft: draft, operation: nil)?.field, .data)
+        draft.data = "/data"
+        let invalid = TrainingPreviewGuidance.resolve(draft: draft, operation: nil)
+        XCTAssertEqual(invalid?.field, .iterations)
+        XCTAssertEqual(invalid?.message, draft.iterationsError)
+        draft.iterations = " 100 "
+        XCTAssertNil(TrainingPreviewGuidance.resolve(draft: draft, operation: nil))
+        for operation in [TrainingSession.Operation.previewing, .submitting] {
+            let busy = TrainingPreviewGuidance.resolve(draft: TrainingDraft(), operation: operation)
+            XCTAssertNotNil(busy)
+            XCTAssertNil(busy?.field, "Busy guidance must never offer field recovery")
+        }
+    }
+
+    func testTrainingCollectionFailuresAreIndependentAndRetainLastSuccessfulRows() async {
+        struct Unavailable: LocalizedError { var errorDescription: String? { "CLI unavailable" } }
+        let job = TrainingJob(receipt: "adapter", repo: "org/model", out: "/adapter", pid: 17,
+                              state: "done", logPath: nil, adapterIdentity: .string("identity"))
+        let record: LabValue = .object(["id": .string("evaluation")])
+        var jobsFail = true
+        var historyFail = false
+        var jobReads = 0
+        var historyReads = 0
+        let collections = TrainingCollections(jobs: {
+            jobReads += 1
+            if jobsFail { throw Unavailable() }
+            return [job]
+        }, history: {
+            historyReads += 1
+            if historyFail { throw Unavailable() }
+            return [record]
+        }, inspect: { _ in LabResponse() })
+
+        await collections.refresh()
+        XCTAssertEqual(jobReads, 1)
+        XCTAssertEqual(historyReads, 1, "History must still be attempted when jobs fails")
+        XCTAssertEqual(collections.jobs.phase, .failed)
+        XCTAssertFalse(collections.jobs.hasLoaded)
+        XCTAssertEqual(collections.jobs.error, "CLI unavailable")
+        XCTAssertEqual(collections.history.items, [record])
+        XCTAssertEqual(collections.history.phase, .populated)
+
+        jobsFail = false
+        historyFail = true
+        await collections.refresh()
+        XCTAssertEqual(collections.jobs.items.map(\.id), ["adapter"])
+        XCTAssertNil(collections.jobs.error)
+        XCTAssertEqual(collections.history.items, [record])
+        XCTAssertEqual(collections.history.error, "CLI unavailable")
+        XCTAssertEqual(collections.history.phase, .populated)
+
+        jobsFail = true
+        await collections.refresh()
+        XCTAssertEqual(collections.jobs.items.map(\.id), ["adapter"])
+        XCTAssertEqual(collections.jobs.error, "CLI unavailable")
+        XCTAssertEqual(collections.history.items, [record])
+        jobsFail = false
+        historyFail = false
+        await collections.refresh()
+        XCTAssertNil(collections.jobs.error)
+        XCTAssertNil(collections.history.error)
+        XCTAssertEqual(jobReads, 4)
+        XCTAssertEqual(historyReads, 4)
+    }
+
+    func testTrainingRefreshLocksAreIndependentAndEmptyRequiresSuccessfulRead() async {
+        let jobsStarted = expectation(description: "jobs started")
+        let historyStarted = expectation(description: "history started")
+        var jobsContinuation: CheckedContinuation<[TrainingJob], Never>?
+        var historyContinuation: CheckedContinuation<[LabValue], Never>?
+        var jobReads = 0
+        var historyReads = 0
+        let collections = TrainingCollections(jobs: {
+            jobReads += 1
+            return await withCheckedContinuation { jobsContinuation = $0; jobsStarted.fulfill() }
+        }, history: {
+            historyReads += 1
+            return await withCheckedContinuation { historyContinuation = $0; historyStarted.fulfill() }
+        }, inspect: { _ in LabResponse() })
+        XCTAssertEqual(collections.jobs.phase, .loading)
+        XCTAssertEqual(collections.history.phase, .loading)
+        let jobsTask = collections.refreshJobs()
+        XCTAssertTrue(collections.jobs.isLoading)
+        XCTAssertNil(collections.refreshJobs(), "Duplicate jobs read must lock synchronously")
+        let historyTask = collections.refreshHistory()
+        XCTAssertTrue(collections.history.isLoading, "Jobs loading must not block history")
+        XCTAssertNil(collections.refreshHistory())
+        await fulfillment(of: [jobsStarted, historyStarted], timeout: 1)
+        historyContinuation?.resume(returning: [])
+        await historyTask?.value
+        XCTAssertEqual(collections.history.phase, .empty)
+        XCTAssertTrue(collections.history.hasLoaded)
+        XCTAssertTrue(collections.jobs.isLoading)
+        jobsContinuation?.resume(returning: [])
+        await jobsTask?.value
+        XCTAssertEqual(collections.jobs.phase, .empty)
+        XCTAssertTrue(collections.jobs.hasLoaded)
+        XCTAssertEqual(jobReads, 1)
+        XCTAssertEqual(historyReads, 1)
+    }
+
+    func testTrainingRefreshKeepsPopulatedRowsDuringRead() async {
+        let record: LabValue = .object(["id": .string("prior")])
+        var continuation: CheckedContinuation<[LabValue], Never>?
+        let started = expectation(description: "refresh started")
+        var reads = 0
+        let collections = TrainingCollections(jobs: { [] }, history: {
+            reads += 1
+            if reads == 1 { return [record] }
+            return await withCheckedContinuation { continuation = $0; started.fulfill() }
+        }, inspect: { _ in LabResponse() })
+        await collections.refreshHistory()?.value
+        let refresh = collections.refreshHistory()
+        XCTAssertTrue(collections.history.isLoading)
+        XCTAssertEqual(collections.history.phase, .populated)
+        XCTAssertEqual(collections.history.items, [record])
+        await fulfillment(of: [started], timeout: 1)
+        continuation?.resume(returning: [])
+        await refresh?.value
+        XCTAssertEqual(collections.history.phase, .empty)
+        XCTAssertTrue(collections.history.items.isEmpty)
+    }
+
+    func testTrainingInspectionLocksRequestsAndRetainsOwningReportAfterFailure() async {
+        struct Rejected: LocalizedError { var errorDescription: String? { "inspection rejected" } }
+        let started = expectation(description: "inspection started")
+        var continuation: CheckedContinuation<LabResponse, Error>?
+        var calls: [String] = []
+        let collections = TrainingCollections(jobs: { [] }, history: { [] }, inspect: { id in
+            calls.append(id)
+            if calls.count == 2 {
+                return try await withCheckedThrowingContinuation { continuation = $0; started.fulfill() }
+            }
+            return LabResponse(report: .string("report-" + id), artifactSHA256: "hash-" + id)
+        })
+        await collections.inspect("first")?.value
+        XCTAssertEqual(collections.inspection?.recordID, "first")
+        let pending = collections.inspect("second")
+        XCTAssertEqual(collections.inspectingID, "second")
+        XCTAssertNil(collections.inspect("third"), "No concurrent inspection may overwrite the pending request")
+        XCTAssertEqual(collections.inspection?.recordID, "first")
+        await fulfillment(of: [started], timeout: 1)
+        continuation?.resume(throwing: Rejected())
+        await pending?.value
+        XCTAssertNil(collections.inspectingID)
+        XCTAssertEqual(collections.inspection?.recordID, "first")
+        XCTAssertEqual(collections.inspection?.response.report, .string("report-first"))
+        XCTAssertEqual(collections.inspection?.response.artifactSHA256, "hash-first")
+        XCTAssertEqual(collections.inspectionError, "Could not inspect second: inspection rejected")
+        XCTAssertNil(collections.history.error)
+        await collections.inspect("second")?.value
+        XCTAssertEqual(collections.inspection?.recordID, "second")
+        XCTAssertEqual(collections.inspection?.response.artifactSHA256, "hash-second")
+        XCTAssertNil(collections.inspectionError)
+        XCTAssertEqual(calls, ["first", "second", "second"])
+    }
+
     private var gb: Int64 { Fixture.gb }
     private var path: String { "/models/atlas-mlx" }
 
