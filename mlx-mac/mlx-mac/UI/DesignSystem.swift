@@ -430,6 +430,14 @@ extension WorkbenchSize {
         static let placeholderRows = 4
     }
 
+    /// Training route dimensions.
+    enum Training {
+        static let baseModelMenuWidth: CGFloat = 420
+        static let iterationsWidth: CGFloat = 120
+        static let evidenceMaxHeight: CGFloat = 240
+        static let recipeMaxHeight: CGFloat = 180
+    }
+
     /// LM Studio route dimensions, measured against the page content width.
     enum LMStudio {
         static let contentMaxWidth: CGFloat = Run.contentMaxWidth
