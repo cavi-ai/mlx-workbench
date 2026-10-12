@@ -543,6 +543,50 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         XCTAssertTrue(recorder.states.isEmpty)
     }
 
+    @MainActor
+    func testAnOlderServeStatusReplyNeverReplacesANewerOne() async throws {
+        let replies = StatusReplies()
+        let api = ModelWorkflowAPI(
+            convertPreview: { _, _, _ in [:] },
+            convertStart: { _, _, _, _ in [:] },
+            convertStatus: { [] },
+            servePreview: { _, _, _ in [:] },
+            serveStart: { _, _, _, _ in [:] },
+            serveStatus: { try await replies.next() },
+            serveStop: { _ in [:] }
+        )
+        let coordinator = ModelWorkflowCoordinator(api: api, persistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }))
+        let running = ServerInfo(path: "/models/m", runtime: "mlx_lm", port: 8080, pid: 1, state: "running")
+
+        let older = Task { await coordinator.refreshServers() }
+        try await replies.waitForRequests(1)
+        let newer = Task { await coordinator.refreshServingStatus() }
+        try await replies.waitForRequests(2)
+
+        await replies.answer(1, with: .success([running]))
+        let newerRead = await newer.value
+        await replies.answer(0, with: .success([]))
+        await older.value
+        XCTAssertTrue(newerRead)
+        XCTAssertEqual(coordinator.servers.map(\.port), [8080], "the older empty reply arrived last and was not shown")
+
+        let olderFailure = Task { await coordinator.refreshServers() }
+        try await replies.waitForRequests(3)
+        let newerSuccess = Task { await coordinator.refreshServers() }
+        try await replies.waitForRequests(4)
+        await replies.answer(3, with: .success([running]))
+        await newerSuccess.value
+        await replies.answer(2, with: .failure(BridgeError.skillFailed))
+        await olderFailure.value
+        XCTAssertNil(coordinator.serversError, "the older failure arrived last and was not shown")
+
+        let latest = Task { await coordinator.refreshServers() }
+        try await replies.waitForRequests(5)
+        await replies.answer(4, with: .success([]))
+        await latest.value
+        XCTAssertTrue(coordinator.servers.isEmpty, "a newer reply still replaces the shown one")
+    }
+
     func testPreparingToServeAVerifiedRecordKeepsItVerified() async throws {
         let store = makeStore()
         let snapshot = snapshotWithEquivalentMLX()
@@ -830,6 +874,26 @@ private actor FlagBox {
 
 private final class TerminalStateRecorder {
     var states: [ConversionWorkflowState] = []
+}
+
+/// Serve status requests that wait until the test answers each one by arrival index.
+private actor StatusReplies {
+    private var pending: [CheckedContinuation<[ServerInfo], Error>] = []
+
+    func next() async throws -> [ServerInfo] {
+        try await withCheckedThrowingContinuation { pending.append($0) }
+    }
+
+    func answer(_ index: Int, with reply: Result<[ServerInfo], Error>) {
+        pending[index].resume(with: reply)
+    }
+
+    func waitForRequests(_ count: Int) async throws {
+        for _ in 0..<1000 where pending.count < count {
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        XCTAssertGreaterThanOrEqual(pending.count, count, "serve status requests reached the API")
+    }
 }
 
 @MainActor

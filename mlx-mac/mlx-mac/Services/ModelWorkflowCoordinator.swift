@@ -121,6 +121,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
     private var pendingCompletionRecordIDs = Set<UUID>()
     private var servePreviewHash: String?
     private var servePreviewIntent: ServeIntent?
+    private var serversRequested = 0
+    private var serversShown = 0
 
     init(
         api: ModelWorkflowAPI,
@@ -517,8 +519,10 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
         servePreviewHash = nil
         servePreviewIntent = nil
+        let request = nextServersRequest()
         do {
-            servers = try await api.serveStatus()
+            let snapshot = try await api.serveStatus()
+            if showsServers(request) { servers = snapshot }
         } catch {
             update(serveState: .failed, message: "Serve status is unavailable; serving remains blocked.", errorMessage: AppHost.render(error))
             return
@@ -659,23 +663,44 @@ final class ModelWorkflowCoordinator: ObservableObject {
     /// Read-only: replaces `servers` from `serve status`. It never touches
     /// conversion jobs, workflow records, verification or any serve action.
     func refreshServers() async {
+        let request = nextServersRequest()
         do {
-            servers = try await api.serveStatus()
+            let snapshot = try await api.serveStatus()
+            guard showsServers(request) else { return }
+            servers = snapshot
             serversError = nil
         } catch {
+            guard showsServers(request) else { return }
             serversError = "Serving status unavailable: \(AppHost.render(error))"
         }
     }
 
     @discardableResult
     func refreshServingStatus() async -> Bool {
+        let request = nextServersRequest()
         do {
-            servers = try await api.serveStatus()
+            let snapshot = try await api.serveStatus()
+            if showsServers(request) { servers = snapshot }
             return true
         } catch {
-            preserveLastKnownState(message: "Server status unavailable: \(AppHost.render(error))")
+            if showsServers(request) {
+                preserveLastKnownState(message: "Server status unavailable: \(AppHost.render(error))")
+            }
             return false
         }
+    }
+
+    private func nextServersRequest() -> Int {
+        serversRequested += 1
+        return serversRequested
+    }
+
+    /// Status reads run concurrently and can finish out of order; a reply is
+    /// shown only when no later-issued reply has been shown already.
+    private func showsServers(_ request: Int) -> Bool {
+        guard request > serversShown else { return false }
+        serversShown = request
+        return true
     }
 
     func clearTransientError() {

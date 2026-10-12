@@ -39,6 +39,8 @@ and is versioned independently; submodule bumps are recorded here.
 - Re-running a conversion to the same destination updates only the new
   attempt: earlier attempts keep their outcome and do not show the new run's
   log, and verification starts once.
+- Serving status in Clients, Run, Activity and the toolbar no longer waits
+  behind a long agent call such as the daily watch check.
 
 ## [0.4.0] - 2026-10-08
 ### Added

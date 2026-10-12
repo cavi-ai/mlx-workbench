@@ -176,12 +176,8 @@ struct FleetRouterSheet: View {
             do {
                 // Render proves the plan produces a valid config before the
                 // apply preview is even requested.
-                _ = try await runFleet { api in
-                    try api.fleetRender(path: plan.targetPath, assignments: apiAssignments)
-                }
-                let data = try await runFleet { api in
-                    try api.fleetApplyPreview(path: plan.targetPath, assignments: apiAssignments)
-                }
+                _ = try await appHost.api.fleetRender(path: plan.targetPath, assignments: apiAssignments)
+                let data = try await appHost.api.fleetApplyPreview(path: plan.targetPath, assignments: apiAssignments)
                 let preview = (data["preview"] as? [String: Any]) ?? data
                 guard let hash = preview["preview_hash"] as? String, !hash.isEmpty else {
                     step = .failed(message: "mlx-agent did not return a preview hash.")
@@ -203,13 +199,11 @@ struct FleetRouterSheet: View {
             do {
                 let directory = URL(fileURLWithPath: plan.targetPath).deletingLastPathComponent()
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                let data = try await runFleet { api in
-                    try api.fleetApplyConfirm(
-                        path: plan.targetPath,
-                        assignments: apiAssignments,
-                        previewHash: hash
-                    )
-                }
+                let data = try await appHost.api.fleetApplyConfirm(
+                    path: plan.targetPath,
+                    assignments: apiAssignments,
+                    previewHash: hash
+                )
                 warnings = (data["warnings"] as? [[String: Any]])?.compactMap { $0["message"] as? String } ?? []
                 let receipt = data["receipt"] as? [String: Any]
                 let status = receipt?["status"] as? String ?? "applied"
@@ -222,11 +216,5 @@ struct FleetRouterSheet: View {
                 step = .failed(message: AppHost.render(error))
             }
         }
-    }
-
-    /// The agent call on a background thread; API stays MainActor-free.
-    private func runFleet<T>(_ work: @escaping (WorkbenchAPI) throws -> T) async throws -> T {
-        let api = appHost.api
-        return try await Task.detached { try work(api) }.value
     }
 }

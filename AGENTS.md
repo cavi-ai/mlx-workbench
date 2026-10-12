@@ -449,6 +449,11 @@ from `mlx-agent` at runtime.
   checkout.
   `CLIProcess` drains stdout/stderr on dedicated threads: blocking pipe reads
   must not depend on shared dispatch workers while a CLI caller waits for EOF.
+  `WorkbenchAPI` runs every agent call on a dispatch worker and suspends the
+  actor meanwhile, so a long call (e.g. `watch diff`) never queues `serve
+  status`; its `command` initializer argument injects the runner in tests.
+  Concurrent replies can finish out of order: `ModelWorkflowCoordinator`
+  shows a serve-status reply only when no later-issued one is already shown.
   Each agent child leads its own process group (media backends stay in it);
   on timeout and on `NSApplication.willTerminateNotification`
   (`CLIProcessRegistry` tracks live children) the whole group gets SIGTERM,
