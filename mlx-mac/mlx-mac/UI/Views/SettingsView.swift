@@ -79,7 +79,6 @@ struct SettingsView: View {
 
             saveBar
         }
-        .background(WorkbenchColor.canvas)
         .onAppear { loadFromConfig() }
         .task(id: probeKey) { await runProbe() }
     }

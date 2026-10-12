@@ -570,7 +570,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
         .padding(WorkbenchSize.Compare.cellInset)
         .frame(width: layout.laneWidth, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(WorkbenchColor.canvas)
+        .background(WorkbenchColor.canvas, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
     }
 
@@ -989,7 +989,7 @@ struct ComparisonListeningPanel: View {
             }
         }
         .padding(WorkbenchSpacing.sm)
-        .background(WorkbenchColor.canvas)
+        .background(WorkbenchColor.canvas, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
         .onChange(of: promptID) { _, _ in
             if !clips.contains(where: { $0.url == player.activeURL }) { player.stop() }

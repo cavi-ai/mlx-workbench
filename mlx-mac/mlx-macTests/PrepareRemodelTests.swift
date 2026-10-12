@@ -365,11 +365,11 @@ final class PrepareRemodelTests: XCTestCase {
         XCTAssertEqual(ContentView.subtitle(route: .overview, workflow: record, selectedModelPath: "/models/other-model"), "")
     }
 
-    func testToolbarBadgeIsSuppressedOnPrepareOnly() {
-        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .prepare, state: .verified))
-        XCTAssertTrue(ContentView.showsWorkflowBadge(route: .overview, state: .verified))
-        XCTAssertTrue(ContentView.showsWorkflowBadge(route: .library, state: .running))
-        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .overview, state: .idle))
+    func testToolbarBadgeNeverRepeatsPrepareAndHidesSuccesses() {
+        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .prepare, state: .verified, acknowledged: false))
+        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .overview, state: .verified, acknowledged: false))
+        XCTAssertTrue(ContentView.showsWorkflowBadge(route: .library, state: .running, acknowledged: true))
+        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .overview, state: .idle, acknowledged: false))
     }
 
     // MARK: - Idle

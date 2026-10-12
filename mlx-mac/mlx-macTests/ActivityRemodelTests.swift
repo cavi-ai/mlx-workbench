@@ -510,12 +510,41 @@ final class ActivityRemodelTests: XCTestCase {
     }
 
     func testToolbarWorkflowBadgeIsSuppressedOnActivity() {
-        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .activity, state: .failed))
-        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .activity, state: .verified))
-        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .prepare, state: .running))
-        XCTAssertTrue(ContentView.showsWorkflowBadge(route: .library, state: .failed))
-        XCTAssertTrue(ContentView.showsWorkflowBadge(route: .run, state: .running))
-        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .library, state: .idle))
+        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .activity, state: .failed, acknowledged: false))
+        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .activity, state: .verified, acknowledged: false))
+        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .prepare, state: .running, acknowledged: false))
+        XCTAssertTrue(ContentView.showsWorkflowBadge(route: .library, state: .failed, acknowledged: false))
+        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .library, state: .failed, acknowledged: true))
+        XCTAssertTrue(ContentView.showsWorkflowBadge(route: .run, state: .running, acknowledged: false))
+        XCTAssertFalse(ContentView.showsWorkflowBadge(route: .library, state: .idle, acknowledged: false))
+    }
+
+    func testToolbarWorkflowBadgeCarriesInFlightWorkAndUnseenFailuresOffTheirOwnPages() {
+        let states: [ConversionWorkflowState] = [
+            .idle, .inspectingSource, .existingModelFound, .previewingConversion, .readyToConfirm,
+            .queued, .running, .completed, .verifying, .verified, .verificationFailed, .failed,
+        ]
+        for route in AppRoute.allCases {
+            for state in states {
+                for acknowledged in [false, true] {
+                    let offPage = route != .prepare && route != .activity
+                    let inFlight = [.queued, .running, .verifying].contains(state)
+                    let unseenFailure = !acknowledged && (state == .failed || state == .verificationFailed)
+                    XCTAssertEqual(
+                        ContentView.showsWorkflowBadge(route: route, state: state, acknowledged: acknowledged),
+                        offPage && (inFlight || unseenFailure), "\(route) \(state) acknowledged \(acknowledged)")
+                }
+            }
+        }
+    }
+
+    func testOutcomeKeyChangesWithTheWorkflowAndItsState() {
+        let failed = Fixture.workflow(state: .failed)
+        let verificationFailed = Fixture.workflow(id: failed.id, state: .verificationFailed)
+        let other = Fixture.workflow(state: .failed)
+        XCTAssertNotEqual(ContentView.outcomeKey(failed), ContentView.outcomeKey(verificationFailed))
+        XCTAssertNotEqual(ContentView.outcomeKey(failed), ContentView.outcomeKey(other))
+        XCTAssertEqual(ContentView.outcomeKey(failed), ContentView.outcomeKey(Fixture.workflow(id: failed.id, state: .failed)))
     }
 
     // MARK: - Layout
