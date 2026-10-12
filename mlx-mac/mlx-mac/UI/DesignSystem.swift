@@ -429,6 +429,31 @@ extension WorkbenchSize {
 
         static let placeholderRows = 4
     }
+
+    /// LM Studio route dimensions, measured against the page content width.
+    enum LMStudio {
+        static let contentMaxWidth: CGFloat = Run.contentMaxWidth
+        static let hysteresis: CGFloat = Library.tierHysteresis
+
+        static let headerThreshold: CGFloat = 560
+        static let legendThreshold: CGFloat = Discover.legendThreshold
+
+        static let symbolColumn: CGFloat = Health.symbolColumn
+        static let fitColumn: CGFloat = Discover.barWidth
+        static let figuresWidth: CGFloat = Discover.figuresWidth
+        static let actionWidth: CGFloat = 96
+        static let nameMinimum: CGFloat = 300
+        static let columnGap: CGFloat = WorkbenchSpacing.sm
+        /// The symbol, name, fit, figures and action columns with the gaps between them, inside the lane surface.
+        static let rowThreshold: CGFloat = symbolColumn + nameMinimum + fitColumn + figuresWidth + actionWidth
+            + columnGap * 4 + WorkbenchSpacing.surfaceInset * 2
+        static let nameMediumMinimum: CGFloat = 200
+        /// The medium row: symbol, name, fit, and a trailing column holding the figures over the action.
+        static let mediumThreshold: CGFloat = symbolColumn + nameMediumMinimum + fitColumn + max(figuresWidth, actionWidth)
+            + columnGap * 3 + WorkbenchSpacing.surfaceInset * 2
+
+        static let placeholderRows = 3
+    }
 }
 
 enum WorkbenchRadius {

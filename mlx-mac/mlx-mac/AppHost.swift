@@ -358,7 +358,7 @@ class AppHost: ObservableObject {
     /// unless a root already contains it (scanning both lists every converted
     /// model twice). With no MLX roots configured the agent falls back to
     /// scanning the GGUF roots, so that fallback is spelled out first.
-    static func scanMLXRoots(_ config: Config, ggufRoots: [String], fileIdentity: (String) -> NSObject? = AppHost.fileIdentity) -> [String] {
+    nonisolated static func scanMLXRoots(_ config: Config, ggufRoots: [String], fileIdentity: (String) -> NSObject? = AppHost.fileIdentity) -> [String] {
         let output = config.outputDir.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !output.isEmpty else { return config.mlxRoots }
         var roots = config.mlxRoots.isEmpty ? ggufRoots : config.mlxRoots
@@ -371,7 +371,7 @@ class AppHost: ObservableObject {
     /// True when `path` is `root` or lies under it: by file identity where the
     /// directories exist (a case-variant or symlinked spelling of a root is that
     /// root), by standardized path otherwise.
-    static func isPath(_ path: String, within root: String, fileIdentity: (String) -> NSObject?) -> Bool {
+    nonisolated static func isPath(_ path: String, within root: String, fileIdentity: (String) -> NSObject?) -> Bool {
         let standardized = { (value: String) in URL(fileURLWithPath: NSString(string: value).expandingTildeInPath).standardizedFileURL }
         let rootURL = standardized(root)
         let rootIdentity = fileIdentity(rootURL.path)
@@ -385,7 +385,7 @@ class AppHost: ObservableObject {
         }
     }
 
-    static func fileIdentity(_ path: String) -> NSObject? {
+    nonisolated static func fileIdentity(_ path: String) -> NSObject? {
         (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.fileResourceIdentifierKey]))?.fileResourceIdentifier as? NSObject
     }
 

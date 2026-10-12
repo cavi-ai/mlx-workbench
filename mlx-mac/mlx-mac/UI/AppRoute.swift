@@ -120,7 +120,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .clientSetup: return "Preview and apply configuration wiring for local clients."
         case .health: return "Inspect runtime and environment health findings."
         case .discover: return "Explore catalog metadata and model candidates."
-        case .lmStudio: return "Inspect LM Studio-compatible local model files."
+        case .lmStudio: return "See LM Studio's models: what runs here and what needs converting."
         case .training: return "Review local training and fine-tuning tools."
         case .adopt: return "Adopt a model role using the available evidence."
         case .settings: return "Configure Workbench paths, runtime, and feature controls."

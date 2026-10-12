@@ -252,7 +252,7 @@ struct DiscoverRowView: View {
     private var nameColumn: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             Text(row.repo)
-                .font(WorkbenchTypography.compactValue)
+                .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.ink)
                 .lineLimit(2)
                 .truncationMode(.middle)
