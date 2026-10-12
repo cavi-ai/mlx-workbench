@@ -42,8 +42,36 @@ private enum AdoptFixtures {
 final class AdoptPresentationTests: XCTestCase {
     private typealias F = AdoptFixtures
 
-    func testRoleListIsTheDiscoveryRolesAndTitlesComeFromDiscover() {
-        XCTAssertEqual(AdoptRole.choices, WorkbenchAPI.discoveryRoleOrder)
+    func testAdoptStartAcceptsTheDiscoveryRoles() throws {
+        let cli = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("vendor/mlx-agent/providers/codex/src/mlx_agent/cli.py")
+        let source = try String(contentsOf: cli, encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: #"start = actions.add_parser\("start""#, options: .regularExpression))
+        let role = try XCTUnwrap(source[start.upperBound...].prefix(400).range(of: #"start.add_argument\("--role"[^\n]*choices=DISCOVERY_ROLES"#, options: .regularExpression))
+        XCTAssertFalse(role.isEmpty)
+    }
+
+    func testIdleSentenceNamesTheDraftRole() {
+        XCTAssertEqual(AdoptRecommendationState.idleSentence(role: "general"), "Start to find a General model for this Mac.")
+        XCTAssertEqual(AdoptRecommendationState.idleSentence(role: "tool-use"), "Start to find a Tool use model for this Mac.")
+    }
+
+    func testLibraryMatchIsSharedWithDiscover() {
+        let owned = F.model(F.cachePath), local = F.model("/models/local")
+        let snapshot = F.snapshot([local, owned])
+        let index = DiscoverPresentation.libraryModels(in: snapshot)
+        XCTAssertEqual(Set(index.keys), [F.repo])
+        XCTAssertEqual(DiscoverPresentation.libraryRepos(in: snapshot), [F.repo])
+        XCTAssertEqual(DiscoverPresentation.libraryModel(for: F.repo, in: index)?.item.path, F.cachePath)
+        XCTAssertNil(DiscoverPresentation.libraryModel(for: "other/repo", in: index))
+        XCTAssertEqual(
+            AdoptRecommendationState.make(response: F.response(), libraryModels: index, intakeIsBusy: false),
+            AdoptRecommendationState.make(response: F.response(), library: snapshot, intakeIsBusy: false)
+        )
+    }
+
+    func testRoleListExcludesAnyAndTitlesComeFromDiscover() {
         XCTAssertFalse(AdoptRole.choices.contains(""))
         XCTAssertTrue(AdoptRole.choices.contains(AdoptRole.initial))
         for role in AdoptRole.choices {

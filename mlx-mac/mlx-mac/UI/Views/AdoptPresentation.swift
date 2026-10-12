@@ -45,14 +45,21 @@ enum AdoptRecommendationState: Equatable {
     case noRecommendation
     case recommended(repo: String, step: AdoptNextStep)
 
-    static let idleSentence = "The recommendation appears after adoption starts."
+    static func idleSentence(role: String) -> String {
+        "Start to find a \(AdoptRole.title(role)) model for this Mac."
+    }
+    static let pendingSentence = "Waiting for the agent's recommendation."
     static let noRecommendationSentence = "No recommendation reported."
 
     /// The library match is exact on the Hugging Face repo id of a cached model.
     static func make(response: AdoptResult?, library: LibrarySnapshot?, intakeIsBusy: Bool) -> AdoptRecommendationState {
+        make(response: response, libraryModels: DiscoverPresentation.libraryModels(in: library), intakeIsBusy: intakeIsBusy)
+    }
+
+    static func make(response: AdoptResult?, libraryModels: [String: LibraryModel], intakeIsBusy: Bool) -> AdoptRecommendationState {
         guard let response else { return .idle }
         guard let repo = response.model, !repo.isEmpty else { return .noRecommendation }
-        if let model = library?.models.first(where: { HFRepoID.forPath($0.item.path) == repo }) {
+        if let model = DiscoverPresentation.libraryModel(for: repo, in: libraryModels) {
             let canRun = ModelTaskPresentation.isServable(model) && model.readiness == .ready
             return .recommended(repo: repo, step: .inLibrary(model: model, canRun: canRun))
         }

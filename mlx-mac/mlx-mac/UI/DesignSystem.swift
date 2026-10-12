@@ -116,6 +116,8 @@ enum WorkbenchSize {
     static let symbolTile: CGFloat = 44
     /// Capacity bar track in a compact region such as the Library inspector.
     static let barHeightCompact: CGFloat = 12
+    /// Common height for mixed controls (menus, toggles, buttons) sharing one line.
+    static let controlRowHeight: CGFloat = 28
 }
 
 extension WorkbenchSize {
