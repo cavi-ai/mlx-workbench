@@ -344,6 +344,40 @@ extension WorkbenchSize {
     }
 }
 
+extension WorkbenchSize {
+    /// Clients route dimensions. Board and header thresholds are measured against the
+    /// page content width, the preview header threshold against the width inside the preview surface.
+    enum Clients {
+        static let contentMaxWidth: CGFloat = Run.contentMaxWidth
+        static let surfaceChrome: CGFloat = Run.surfaceChrome
+        static let hysteresis: CGFloat = Library.tierHysteresis
+
+        static let endpointMinimum: CGFloat = 220
+        static let endpointIdeal: CGFloat = 300
+        static let endpointMaximum: CGFloat = 360
+        static let gapMinimum: CGFloat = 56
+        static let gapIdeal: CGFloat = 72
+        static let gapMaximum: CGFloat = 96
+        static let clientMinimum: CGFloat = 280
+
+        static let rowSymbol: CGFloat = Health.symbolColumn
+        static let rowSymbolGap: CGFloat = 8
+        static let ghostRowMinimum: CGFloat = 190
+        /// Spacing between the vertical buses of neighbouring endpoints inside the connector gap.
+        static let lineFan: CGFloat = 12
+        static let lineDash: [CGFloat] = [WorkbenchSpacing.xxxs, WorkbenchSpacing.xxxs]
+        static let maximumLines = 3
+        static let treeGutter: CGFloat = 24
+
+        static let refreshWidth: CGFloat = 150
+
+        /// An endpoint column, the connector gap and a client column.
+        static let boardThreshold: CGFloat = endpointMinimum + gapMinimum + clientMinimum
+        static let previewHeaderThreshold: CGFloat = 460
+        static let actionsThreshold: CGFloat = 332
+    }
+}
+
 enum WorkbenchRadius {
     /// Small chips and swatches.
     static let chip: CGFloat = 4

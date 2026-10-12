@@ -34,6 +34,14 @@ enum WorkbenchStatePaths {
         }
     }
 
+    /// The home directory client configs are read from; a hosted unit-test process gets an empty directory beneath its test root.
+    static func userHome(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        if isHostedUnitTest(environment) {
+            return hostedTestRoot.appendingPathComponent("home", isDirectory: true)
+        }
+        return URL(fileURLWithPath: NSHomeDirectory())
+    }
+
     /// `<Application Support>/mlx-workbench`: JSON stores, receipts, and caches.
     static func applicationSupport(
         environment: [String: String] = ProcessInfo.processInfo.environment,

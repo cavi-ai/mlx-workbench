@@ -1,3 +1,4 @@
+import Combine
 import CryptoKit
 import Foundation
 
@@ -40,12 +41,18 @@ final class WiringCoordinator: ObservableObject {
     @Published private(set) var isCheckingServer = false
     @Published private(set) var lastError: String?
     @Published private(set) var persistenceError: String?
+    /// What each writable client's config file says right now, by client id.
+    @Published private(set) var readings: [String: ClientConfigStatus] = [:]
 
     private let adapters: [ClientAdapter]
     private let home: URL
     private let fileManager: FileManager
+    private let configSource: ClientConfigSource
     private let store: JSONStore<WiringTransaction>
     private let now: () -> Date
+    private var readGeneration = 0
+    private var readQueued = false
+    private var transactionObserver: AnyCancellable?
 
     /// Plans frozen at preview time; confirm applies exactly these.
     private var previewedPlans: [ClientEditPlan] = []
@@ -65,12 +72,14 @@ final class WiringCoordinator: ObservableObject {
         adapters: [ClientAdapter] = ClientAdapters.all,
         home: URL = URL(fileURLWithPath: NSHomeDirectory()),
         fileManager: FileManager = .default,
+        configSource: @escaping ClientConfigSource = ClientConfigFile.live,
         store: JSONStore<WiringTransaction>,
         now: @escaping () -> Date = Date.init
     ) {
         self.adapters = adapters
         self.home = home
         self.fileManager = fileManager
+        self.configSource = configSource
         self.store = store
         self.now = now
         do {
@@ -78,6 +87,42 @@ final class WiringCoordinator: ObservableObject {
         } catch {
             persistenceError = "Saved wiring transactions are unavailable: \(AppHost.render(error))"
         }
+        // A confirm outcome or a rollback changes the transaction list; the files are read again afterwards.
+        transactionObserver = $transactions.dropFirst().sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleReadings() }
+        }
+    }
+
+    /// Read every writable client's config off the main actor and publish the result,
+    /// unless a newer read or a confirm/rollback outcome superseded this one.
+    func refreshReadings() async {
+        readGeneration &+= 1
+        await readConfigs(generation: readGeneration)
+    }
+
+    private func scheduleReadings() {
+        readGeneration &+= 1
+        guard !readQueued else { return }
+        readQueued = true
+        Task { [weak self] in
+            guard let self else { return }
+            self.readQueued = false
+            await self.readConfigs(generation: self.readGeneration)
+        }
+    }
+
+    private func readConfigs(generation: Int) async {
+        let targets = installations.compactMap { installation -> (id: String, path: String, adapter: ClientAdapter)? in
+            guard !installation.advisoryOnly, let path = installation.configPath,
+                  let adapter = adapters.first(where: { $0.clientID == installation.clientID }) else { return nil }
+            return (installation.clientID, path, adapter)
+        }
+        var next: [String: ClientConfigStatus] = [:]
+        for target in targets {
+            next[target.id] = await configSource(target.path, target.adapter)
+        }
+        guard generation == readGeneration else { return }
+        readings = next
     }
 
     /// Detect installed clients. Advisory rows appear only when the client

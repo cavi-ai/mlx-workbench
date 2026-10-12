@@ -482,6 +482,9 @@ from `mlx-agent` at runtime.
   fresh authoritative status before any file write and refuses stopped,
   replaced or ambiguous servers. Existing config drift and rollback guards
   remain unchanged. Server refreshes run asynchronously on route activation.
+  The Clients board reads each writable client's allowlisted config off the main actor (route
+  activation, Refresh servers, each confirm or rollback outcome) and draws what that file points at
+  against running servers; the reading is read-only and exposes only URL parts and model names.
 - The Run tab hosts the **Always-on Endpoint**: `EndpointSupervisor` keeps a
   chosen verified model serving on a stable loopback port by reconciling
   desired state against authoritative serve status (crash-loop guarded;

@@ -136,6 +136,7 @@ class AppHost: ObservableObject {
             outputStore: ComparisonOutputStore()
         )
         self.wiring = wiring ?? WiringCoordinator(
+            home: WorkbenchStatePaths.userHome(),
             store: JSONStore<WiringTransaction>(fileURL: JSONStore<WiringTransaction>.defaultFileURL("wiring-transactions.json"))
         )
         self.endpoint = endpoint ?? EndpointSupervisor(
