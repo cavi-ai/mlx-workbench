@@ -72,6 +72,267 @@ private actor ReadGate {
     }
 }
 
+// MARK: - Manual wiring review
+
+@MainActor
+final class ManualWiringSessionTests: XCTestCase {
+    private let original = ManualWiringDraft(model: " org/model ", path: " /configs/client.json ", target: " mlx_lm ")
+    private let reviewed = ManualWiringRequest(model: "org/model", path: "/configs/client.json", target: "mlx_lm")
+
+    private func wire(hash: String? = "reviewed-hash", applied: Bool? = nil) -> WireResult {
+        WireResult(preview_hash: hash, config: ["model": "org/model"], applied: applied)
+    }
+
+    func testMissingInputsNeverLaunchAnOperation() {
+        let session = ManualWiringSession(preview: { _ in XCTFail("Invalid draft previewed"); return self.wire() },
+            apply: { _, _ in XCTFail("Missing review applied"); return self.wire(applied: true) })
+        XCTAssertFalse(session.canPreview)
+        XCTAssertNil(session.previewWiring())
+        XCTAssertNil(session.confirmWiring())
+        for field in [\ManualWiringDraft.model, \.path, \.target] {
+            session.draft = original
+            session.draft[keyPath: field] = " \n "
+            XCTAssertFalse(session.canPreview)
+            XCTAssertNil(session.previewWiring())
+            XCTAssertNil(session.confirmWiring())
+            XCTAssertFalse(session.isBusy)
+        }
+    }
+
+    func testCapturedReviewAndEveryEditedInputInvalidateConfirmation() async {
+        var requests: [ManualWiringRequest] = []
+        let session = ManualWiringSession(preview: { requests.append($0); return self.wire() },
+            apply: { _, _ in XCTFail("Edited review applied"); return self.wire(applied: true) })
+        for field in [\ManualWiringDraft.model, \.path, \.target] {
+            session.draft = original
+            await session.previewWiring()?.value
+            XCTAssertEqual(session.preview?.request, reviewed)
+            XCTAssertEqual(session.preview?.hash, "reviewed-hash")
+            XCTAssertEqual(session.preview?.payload?["model"] as? String, "org/model")
+            XCTAssertTrue(session.canConfirm)
+            session.draft[keyPath: field] += "changed"
+            XCTAssertNil(session.preview)
+            XCTAssertFalse(session.canConfirm)
+            XCTAssertNil(session.confirmWiring())
+            XCTAssertEqual(session.guidance, "Inputs changed. Preview again before confirming.")
+            session.draft = original
+            XCTAssertFalse(session.canConfirm, "Returning to old input must not restore authority")
+        }
+        XCTAssertEqual(requests, [reviewed, reviewed, reviewed])
+    }
+
+    func testDelayedPreviewCannotReviveAfterEachInputIsEditedAndReverted() async {
+        for field in [\ManualWiringDraft.model, \.path, \.target] {
+            var continuation: CheckedContinuation<WireResult, Never>?
+            let started = expectation(description: "preview started")
+            var calls = 0
+            let session = ManualWiringSession(preview: { request in
+                XCTAssertEqual(request, self.reviewed)
+                calls += 1
+                return await withCheckedContinuation { continuation = $0; started.fulfill() }
+            }, apply: { _, _ in XCTFail("Obsolete preview applied"); return self.wire(applied: true) })
+            session.draft = original
+            let task = session.previewWiring()
+            XCTAssertEqual(session.operation, .previewing)
+            XCTAssertNil(session.previewWiring())
+            XCTAssertNil(session.confirmWiring())
+            await fulfillment(of: [started], timeout: 2)
+            session.draft[keyPath: field] += "changed"
+            session.draft = original
+            continuation?.resume(returning: wire())
+            await task?.value
+            XCTAssertEqual(calls, 1)
+            XCTAssertNil(session.preview)
+            XCTAssertFalse(session.canConfirm)
+            XCTAssertTrue(session.canPreview)
+            XCTAssertNil(session.errorMessage)
+            XCTAssertEqual(session.guidance, "Inputs changed. Preview again before confirming.")
+        }
+    }
+
+    func testMissingEmptyAndWhitespaceHashesCannotAuthorizeApply() async {
+        let hashes: [String?] = [nil, "", " \n "]
+        for hash in hashes {
+            let session = ManualWiringSession(preview: { _ in self.wire(hash: hash) },
+                apply: { _, _ in XCTFail("Missing hash applied"); return self.wire(applied: true) })
+            session.draft = original
+            await session.previewWiring()?.value
+            XCTAssertNil(session.preview)
+            XCTAssertFalse(session.canConfirm)
+            XCTAssertNil(session.confirmWiring())
+            XCTAssertTrue(session.canPreview)
+            XCTAssertEqual(session.errorMessage, "Wiring preview did not include a confirmation hash. Preview again before confirming.")
+            XCTAssertNil(session.notice)
+        }
+    }
+
+    func testApplyLocksSynchronouslyUsesCapturedArgumentsAndConsumesReview() async {
+        var continuation: CheckedContinuation<WireResult, Never>?
+        let started = expectation(description: "apply started")
+        var calls: [(ManualWiringRequest, String)] = []
+        let session = ManualWiringSession(preview: { _ in self.wire() }, apply: { request, hash in
+            calls.append((request, hash))
+            return await withCheckedContinuation { continuation = $0; started.fulfill() }
+        })
+        session.draft = original
+        await session.previewWiring()?.value
+        let task = session.confirmWiring()
+        XCTAssertEqual(session.operation, .applying)
+        XCTAssertNil(session.preview)
+        XCTAssertNil(session.confirmWiring())
+        XCTAssertNil(session.previewWiring())
+        session.draft = ManualWiringDraft(model: "other/model", path: "/other.json", target: "ollama")
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls.first?.0, reviewed)
+        XCTAssertEqual(calls.first?.1, "reviewed-hash")
+        continuation?.resume(returning: wire(applied: true))
+        await task?.value
+        XCTAssertFalse(session.isBusy)
+        XCTAssertFalse(session.canConfirm)
+        XCTAssertNil(session.confirmWiring())
+        XCTAssertEqual(session.notice, "Wiring applied.")
+        XCTAssertNil(session.errorMessage)
+    }
+
+    func testFalseAndUnconfirmedApplyResultsRequireFreshPreviewAndCanRecover() async {
+        let outcomes: [(Bool?, String)] = [
+            (false, "Wiring was not applied. Review the config file and preview again before confirming."),
+            (nil, "Wiring application was not confirmed. Check the config file, then preview again before confirming."),
+        ]
+        for (applied, message) in outcomes {
+            var calls = 0
+            let session = ManualWiringSession(preview: { _ in self.wire() }, apply: { _, _ in
+                calls += 1
+                return self.wire(applied: calls == 1 ? applied : true)
+            })
+            session.draft = original
+            await session.previewWiring()?.value
+            await session.confirmWiring()?.value
+            XCTAssertEqual(session.errorMessage, message)
+            XCTAssertNil(session.notice)
+            XCTAssertNil(session.preview)
+            XCTAssertNil(session.confirmWiring())
+            XCTAssertTrue(session.canPreview)
+            await session.previewWiring()?.value
+            XCTAssertNil(session.errorMessage)
+            XCTAssertTrue(session.canConfirm)
+            await session.confirmWiring()?.value
+            XCTAssertEqual(calls, 2)
+            XCTAssertEqual(session.notice, "Wiring applied.")
+            XCTAssertNil(session.errorMessage)
+        }
+    }
+
+    func testPreviewAndApplyErrorsOfferRecoveryWithoutReusingAuthority() async {
+        struct Rejected: LocalizedError { var errorDescription: String? { "config changed" } }
+        var previews = 0
+        var applies = 0
+        let session = ManualWiringSession(preview: { _ in
+            previews += 1
+            if previews == 1 { throw Rejected() }
+            return self.wire()
+        }, apply: { _, _ in
+            applies += 1
+            if applies == 1 { throw Rejected() }
+            return self.wire(applied: true)
+        })
+        session.draft = original
+        await session.previewWiring()?.value
+        XCTAssertEqual(session.errorMessage, "Wiring preview failed: config changed Preview again before confirming.")
+        XCTAssertNil(session.confirmWiring())
+        XCTAssertTrue(session.canPreview)
+        await session.previewWiring()?.value
+        await session.confirmWiring()?.value
+        XCTAssertEqual(session.errorMessage, "Wiring failed: config changed Check the config file, then preview again before confirming.")
+        XCTAssertNil(session.notice)
+        XCTAssertNil(session.confirmWiring())
+        XCTAssertTrue(session.canPreview)
+        await session.previewWiring()?.value
+        await session.confirmWiring()?.value
+        XCTAssertEqual(session.notice, "Wiring applied.")
+        XCTAssertNil(session.errorMessage)
+        XCTAssertEqual(previews, 3)
+        XCTAssertEqual(applies, 2)
+    }
+
+    func testDelayedPreviewErrorDoesNotReplaceEditedDraftGuidance() async {
+        struct Rejected: LocalizedError { var errorDescription: String? { "obsolete failure" } }
+        var continuation: CheckedContinuation<WireResult, Error>?
+        let started = expectation(description: "preview started")
+        let session = ManualWiringSession(preview: { _ in
+            try await withCheckedThrowingContinuation { continuation = $0; started.fulfill() }
+        }, apply: { _, _ in XCTFail("No review applied"); return self.wire(applied: true) })
+        session.draft = original
+        let task = session.previewWiring()
+        await fulfillment(of: [started], timeout: 2)
+        session.draft.model += "changed"
+        session.draft = original
+        continuation?.resume(throwing: Rejected())
+        await task?.value
+        XCTAssertNil(session.preview)
+        XCTAssertNil(session.errorMessage)
+        XCTAssertEqual(session.guidance, "Inputs changed. Preview again before confirming.")
+        XCTAssertTrue(session.canPreview)
+    }
+
+    func testManualWiringSubprocessUsesOnlyTheCapturedRequestOnce() async throws {
+        let root = try ClientsFixtures.makeHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let config = root.appendingPathComponent("client config.json")
+        let record = root.appendingPathComponent("argv.jsonl")
+        try "original config".write(to: config, atomically: true, encoding: .utf8)
+        let script = """
+        import json
+        import sys
+
+        args = sys.argv[1:]
+        expected = ["wire", "apply", "org/reviewed-model", "--path", \(String(reflecting: config.path)), "--target", "ollama"]
+        confirmed = "--confirm" in args
+        assert args == expected + (["--confirm", "--preview-hash", "fixture-hash"] if confirmed else []) + ["--json"]
+        with open(\(String(reflecting: record.path)), "a") as record:
+            record.write(json.dumps(args) + "\\n")
+        data = {"preview": {"preview_hash": "fixture-hash", "config": {"model": "org/reviewed-model"}}}
+        if confirmed:
+            with open(\(String(reflecting: config.path))) as config:
+                assert config.read() == "original config"
+            with open(\(String(reflecting: config.path)), "w") as config:
+                config.write("applied fixture config")
+            data["applied"] = True
+        print(json.dumps({"status": "ok", "data": data}))
+        """
+        try ClientsFixtures.write(script, "scripts/mlx-agent", in: root)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: root.path)
+        let session = ManualWiringSession(preview: { request in
+            try await api.wirePreview(model: request.model, path: request.path, target: request.target)
+        }, apply: { request, hash in
+            try await api.wireApply(model: request.model, path: request.path, previewHash: hash, target: request.target)
+        })
+        session.draft = ManualWiringDraft(model: "org/reviewed-model", path: config.path, target: "ollama")
+        let preview = session.previewWiring()
+        XCTAssertNil(session.previewWiring())
+        XCTAssertNil(session.confirmWiring())
+        await preview?.value
+        XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), "original config")
+        XCTAssertTrue(session.canConfirm, session.errorMessage ?? "preview absent")
+        let apply = session.confirmWiring()
+        XCTAssertNil(session.confirmWiring())
+        XCTAssertNil(session.previewWiring())
+        session.draft = ManualWiringDraft(model: "org/edited-model", path: "/unused.json", target: "mlx_lm")
+        await apply?.value
+        XCTAssertEqual(session.notice, "Wiring applied.")
+        XCTAssertNil(session.confirmWiring())
+        XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), "applied fixture config")
+        let lines = try String(contentsOf: record, encoding: .utf8).split(separator: "\n")
+        let arguments = try lines.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String]) }
+        let expected = ["wire", "apply", "org/reviewed-model", "--path", config.path, "--target", "ollama"]
+        XCTAssertEqual(arguments, [
+            expected + ["--json"],
+            expected + ["--confirm", "--preview-hash", "fixture-hash", "--json"],
+        ])
+    }
+}
+
 // MARK: - Reader (AC1)
 
 final class ClientsReaderTests: XCTestCase {

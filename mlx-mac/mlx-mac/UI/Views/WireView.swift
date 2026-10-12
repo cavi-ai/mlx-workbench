@@ -1,5 +1,120 @@
 import SwiftUI
 
+struct ManualWiringDraft: Equatable {
+    var model = ""
+    var path = ""
+    var target = "mlx_lm"
+
+    var request: ManualWiringRequest? {
+        let model = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty, !path.isEmpty, !target.isEmpty else { return nil }
+        return ManualWiringRequest(model: model, path: path, target: target)
+    }
+}
+
+struct ManualWiringRequest: Equatable {
+    let model: String
+    let path: String
+    let target: String
+}
+
+struct ManualWiringPreview {
+    let request: ManualWiringRequest
+    let hash: String
+    let payload: [String: Any]?
+}
+
+@MainActor
+final class ManualWiringSession: ObservableObject {
+    enum Operation: Equatable { case previewing, applying }
+
+    @Published var draft = ManualWiringDraft() {
+        didSet {
+            guard draft != oldValue else { return }
+            revision += 1
+            if preview != nil || operation == .previewing {
+                guidance = "Inputs changed. Preview again before confirming."
+            }
+            preview = nil
+            errorMessage = nil
+            notice = nil
+        }
+    }
+    @Published private(set) var preview: ManualWiringPreview?
+    @Published private(set) var operation: Operation?
+    @Published private(set) var errorMessage: String?
+    @Published private(set) var notice: String?
+    @Published private(set) var guidance: String?
+    private var revision = 0
+    private let previewOperation: (ManualWiringRequest) async throws -> WireResult
+    private let applyOperation: (ManualWiringRequest, String) async throws -> WireResult
+
+    init(preview: @escaping (ManualWiringRequest) async throws -> WireResult,
+         apply: @escaping (ManualWiringRequest, String) async throws -> WireResult) {
+        previewOperation = preview
+        applyOperation = apply
+    }
+
+    var isBusy: Bool { operation != nil }
+    var canPreview: Bool { !isBusy && draft.request != nil }
+    var canConfirm: Bool {
+        !isBusy && preview != nil && preview?.request == draft.request
+            && preview?.hash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    @discardableResult
+    func previewWiring() -> Task<Void, Never>? {
+        guard canPreview, let request = draft.request else { return nil }
+        let revision = revision
+        operation = .previewing
+        preview = nil
+        errorMessage = nil
+        notice = nil
+        guidance = nil
+        return Task {
+            defer { operation = nil }
+            do {
+                let wire = try await previewOperation(request)
+                guard self.revision == revision, draft.request == request else { return }
+                guard let hash = wire.preview_hash,
+                      !hash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    errorMessage = "Wiring preview did not include a confirmation hash. Preview again before confirming."
+                    return
+                }
+                preview = ManualWiringPreview(request: request, hash: hash, payload: wire.config)
+            } catch {
+                guard self.revision == revision else { return }
+                errorMessage = "Wiring preview failed: \(AppHost.render(error)) Preview again before confirming."
+            }
+        }
+    }
+
+    @discardableResult
+    func confirmWiring() -> Task<Void, Never>? {
+        guard canConfirm, let preview else { return nil }
+        operation = .applying
+        self.preview = nil
+        errorMessage = nil
+        notice = nil
+        guidance = nil
+        return Task {
+            defer { operation = nil }
+            do {
+                let wire = try await applyOperation(preview.request, preview.hash)
+                switch wire.applied {
+                case true?: notice = "Wiring applied."
+                case false?: errorMessage = "Wiring was not applied. Review the config file and preview again before confirming."
+                case nil: errorMessage = "Wiring application was not confirmed. Check the config file, then preview again before confirming."
+                }
+            } catch {
+                errorMessage = "Wiring failed: \(AppHost.render(error)) Check the config file, then preview again before confirming."
+            }
+        }
+    }
+}
+
 // MARK: - WireView
 // Preview / apply runtime wiring for a model into a target config.
 
@@ -9,14 +124,7 @@ struct WireView: View {
     @Environment(\.isRouteActive) private var isRouteActive
     private let onRouteSelection: (AppRoute) -> Void
 
-    @State private var model = ""
-    @State private var path = ""
-    @State private var target = "mlx_lm"
-    @State private var isPreviewing = false
-    @State private var preview: [String: Any]?
-    @State private var previewHash: String?
-    @State private var result: String?
-    @State private var errorMessage: String?
+    @StateObject private var manual: ManualWiringSession
 
     @State private var selectedServerID: String?
     @State private var isRefreshingServer = false
@@ -34,6 +142,14 @@ struct WireView: View {
         self.appHost = appHost
         self.onRouteSelection = onRouteSelection
         _wiring = ObservedObject(wrappedValue: appHost.wiring)
+        _manual = StateObject(wrappedValue: ManualWiringSession(
+            preview: { request in
+                try await appHost.api.wirePreview(model: request.model, path: request.path, target: request.target)
+            },
+            apply: { request, hash in
+                try await appHost.api.wireApply(model: request.model, path: request.path, previewHash: hash, target: request.target)
+            }
+        ))
     }
 
     private var runningServers: [ServerInfo] {
@@ -85,24 +201,6 @@ struct WireView: View {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                     clientWiringSection
                     formSection
-                    ErrorBanner(text: errorMessage)
-                    if let result {
-                        Text(result).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success)
-                    }
-                    if let preview {
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                            HStack {
-                                SectionTitle(text: "Preview")
-                                Spacer()
-                                Button("Apply Wiring") {
-                                    apply()
-                                }
-                                .disabled(previewHash == nil)
-                            }
-                            RawJSONDisclosure("Raw wiring payload", value: preview)
-                        }
-                        .formSection {}
-                    }
                 }
                 .frame(maxWidth: WorkbenchSize.Clients.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
@@ -420,7 +518,7 @@ struct WireView: View {
 
     @ViewBuilder
     private var manualWireControls: some View {
-        Picker("Target", selection: $target) {
+        Picker("Target runtime", selection: $manual.draft.target) {
             Text("mlx_lm").tag("mlx_lm")
             Text("mlx-vlm").tag("mlx-vlm")
             Text("ollama").tag("ollama")
@@ -428,28 +526,62 @@ struct WireView: View {
             Text("litellm").tag("litellm")
         }
         .frame(maxWidth: 180, alignment: .leading)
-        Button("Preview Wire") { previewWire() }
-            .buttonStyle(.borderedProminent)
-            .disabled(model.isEmpty || path.isEmpty || isPreviewing)
+        .accessibilityLabel("Target runtime")
+        .accessibilityIdentifier("manual-wire-target")
+        .disabled(manual.operation == .applying)
+        manualPreviewButton.clientsProminence(manual.preview == nil)
     }
 
+    private var manualPreviewButton: some View {
+        Button("Preview Wire") { manual.previewWiring() }
+            .disabled(!manual.canPreview)
+            .help("Review the model, config file and target runtime before writing this file.")
+            .accessibilityIdentifier("manual-wire-preview")
+    }
 
     private var formSection: some View {
-        // Legacy single-file wiring. Cross-client wiring above is the
-        // supported path; this stays available but collapsed.
+        // Cross-client wiring above is the supported path; manual wiring stays collapsed.
         DisclosureGroup {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                HStack {
-                    TextField("Model repo id", text: $model)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Text("Model repo id").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+                    TextField("Model repo id", text: $manual.draft.model)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Model repo id")
+                        .accessibilityIdentifier("manual-wire-model")
+                        .disabled(manual.operation == .applying)
                 }
-                HStack {
-                    TextField("Config file path", text: $path)
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                    Text("Config file path").font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+                    TextField("Config file path", text: $manual.draft.path)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Config file path")
+                        .accessibilityIdentifier("manual-wire-path")
+                        .disabled(manual.operation == .applying)
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: WorkbenchSpacing.xs) { manualWireControls }
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { manualWireControls }
+                }
+                if let operation = manual.operation {
+                    ProgressView(operation == .previewing ? "Previewing wiring…" : "Applying wiring…")
+                        .font(WorkbenchTypography.secondary)
+                        .accessibilityIdentifier("manual-wire-progress")
+                }
+                if let guidance = manual.guidance {
+                    Label(guidance, systemImage: "arrow.clockwise")
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
+                }
+                if let preview = manual.preview { manualReview(preview) }
+                if let error = manual.errorMessage {
+                    ErrorBanner(text: error).accessibilityIdentifier("manual-wire-result")
+                }
+                if let notice = manual.notice {
+                    Label(notice, systemImage: "checkmark.circle")
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.success)
+                        .accessibilityIdentifier("manual-wire-result")
                 }
             }
             .padding(.top, WorkbenchSpacing.xs)
@@ -460,45 +592,34 @@ struct WireView: View {
         }
     }
 
-    private func previewWire() {
-        errorMessage = nil
-        result = nil
-        isPreviewing = true
-        let m = model, p = path, t = target
-        Task {
-            defer { isPreviewing = false }
-            do {
-                let wire = try await appHost.api.wirePreview(model: m, path: p, target: t)
-                preview = wire.config ?? ["preview_hash": wire.preview_hash ?? ""]
-                previewHash = wire.preview_hash
-            } catch let error as BridgeError {
-                preview = nil
-                previewHash = nil
-                errorMessage = error.errorDescription
-            } catch {
-                preview = nil
-                previewHash = nil
-                errorMessage = error.localizedDescription
+    private func manualReview(_ preview: ManualWiringPreview) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            SectionTitle(text: "Manual wiring review")
+            reviewedValue("Model repo id", value: preview.request.model, id: "manual-wire-reviewed-model")
+            reviewedValue("Config file", value: preview.request.path, id: "manual-wire-reviewed-path")
+            reviewedValue("Target runtime", value: preview.request.target, id: "manual-wire-reviewed-target")
+            Button("Confirm manual wiring") { manual.confirmWiring() }
+                .buttonStyle(.borderedProminent)
+                .disabled(!manual.canConfirm)
+                .help("Write the reviewed model and target runtime to the reviewed config file.")
+                .accessibilityIdentifier("manual-wire-confirm")
+            if let payload = preview.payload {
+                RawJSONDisclosure("Raw wiring payload", value: payload)
             }
         }
+        .formSection {}
     }
 
-    private func apply() {
-        guard let previewHash else { return }
-        errorMessage = nil
-        result = nil
-        let m = model, p = path, t = target, h = previewHash
-        Task {
-            do {
-                let wire = try await appHost.api.wireApply(model: m, path: p, previewHash: h, target: t)
-                result = "Wiring applied."
-                preview = wire.config
-                self.previewHash = wire.preview_hash
-            } catch let error as BridgeError {
-                errorMessage = error.errorDescription
-            } catch {
-                errorMessage = error.localizedDescription
-            }
+    private func reviewedValue(_ label: String, value: String, id: String) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            Text(label).font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
+            Text(value)
+                .font(WorkbenchTypography.value)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+                .accessibilityLabel(label + ": " + value)
+                .accessibilityIdentifier(id)
         }
     }
 }
