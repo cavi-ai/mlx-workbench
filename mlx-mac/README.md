@@ -64,6 +64,13 @@ one named XCTest for diagnosis; its result is not full-suite acceptance.
 so a specific interaction or layout failure can be diagnosed first. A focused
 result does not replace the default command's complete gates.
 
+Add `--with-unit-tests` to run the complete unit gate before a selected UI
+test. A focused test can also use `--baseline-app`: the runner executes the
+same test against the preserved app and current build, setting
+`MLX_WORKBENCH_CAPTURE_STAGE` to `before` or `after`. Tests may use the before
+stage for captures while keeping current behavior assertions in the after
+stage. Each stage must execute its selected test without failures or skips.
+
 These UI fixtures test navigation, field validation, preview identity and
 recovery behavior. They do not certify conversion quality, model inference or
 GPU performance. Real-model acceptance still requires its explicit runtime
