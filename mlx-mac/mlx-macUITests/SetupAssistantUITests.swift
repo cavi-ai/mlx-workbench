@@ -1,6 +1,7 @@
 import Darwin
 import SystemConfiguration
 import XCTest
+import AppKit
 
 enum NativeUITestEnvironment {
     private struct IsolationError: LocalizedError {
@@ -159,11 +160,26 @@ final class WorkbenchReviewUITests: XCTestCase {
 
     private func resizeWindow(width: CGFloat, height: CGFloat) {
         let window = app.windows.firstMatch
+        let screen = NSScreen.main?.frame
+        func moveHorizontally(_ delta: CGFloat) {
+            let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+                .withOffset(CGVector(dx: 0, dy: 20))
+            titlebar.press(forDuration: 0.1, thenDragTo: titlebar.withOffset(CGVector(dx: delta, dy: 0)))
+        }
+        // A restored window may extend past the guest display. Bring its
+        // resize handle on-screen before dragging, then keep the capture visible.
+        if let screen, window.frame.maxX > screen.maxX - 4 {
+            moveHorizontally(screen.maxX - window.frame.maxX - 8)
+        }
+        let fittedWidth = min(width, screen?.width ?? width)
         let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
             .withOffset(CGVector(dx: -2, dy: -2))
         let target = window.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: width - 2, dy: height - 2))
+            .withOffset(CGVector(dx: fittedWidth - 2, dy: height - 2))
         corner.press(forDuration: 0.1, thenDragTo: target)
+        if let screen, window.frame.minX < screen.minX {
+            moveHorizontally(screen.minX - window.frame.minX)
+        }
     }
 
     private func select(_ route: String) {
@@ -403,7 +419,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Clients-\(appearance)-matching-preview-narrow")
 
             confirm.click()
-            XCTAssertTrue(text(containing: "Wired 1 client(s) to org/Qwen-second.").waitForExistence(timeout: 10))
+            XCTAssertTrue(text(containing: "Wired 1 client to org/Qwen-second.").waitForExistence(timeout: 10))
             let landed = try JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any]
             let provider = landed?["provider"] as? [String: Any]
             let local = provider?["mlx-local"] as? [String: Any]
@@ -433,6 +449,94 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: config), externalEdit)
             capture("Clients-\(appearance)-status-unavailable")
             try FileManager.default.removeItem(at: root.appendingPathComponent("fail-server-status"))
+            app.terminate()
+        }
+    }
+
+    func testClientWiringOutcomesAndRecovery() throws {
+        let opencode = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+        let zed = root.appendingPathComponent(".config/zed/settings.json")
+        let original = Data("{\"theme\":\"dark\"}".utf8)
+        let externalEdit = Data("{\"theme\":\"light\"}".utf8)
+        try FileManager.default.createDirectory(at: opencode.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: [["repo": "org/Qwen-first", "runtime": "mlx_lm",
+            "port": 8766, "pid": 123, "state": "running"]]).write(to: root.appendingPathComponent("servers.json"))
+        let isBefore = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
+        for appearance in ["Light", "Dark"] {
+            try? FileManager.default.removeItem(at: zed.deletingLastPathComponent())
+            try original.write(to: opencode)
+            launch(appearance: appearance, isolatedHome: true)
+            select("Clients")
+            let endpoint = isBefore ? app.popUpButtons.firstMatch : app.popUpButtons["client-wiring-endpoint"]
+            XCTAssertTrue(endpoint.waitForExistence(timeout: 10))
+            endpoint.click()
+            app.menuItems["Qwen-first :8766"].click()
+            app.buttons["Preview client wiring"].click()
+            let confirm = app.buttons["Confirm client wiring"]
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+            try externalEdit.write(to: opencode)
+            confirm.click()
+            XCTAssertTrue(text(containing: "config file changed after the preview").waitForExistence(timeout: 10))
+            XCTAssertEqual(try Data(contentsOf: opencode), externalEdit)
+            let result = app.staticTexts["client-wiring-result"]
+            if !isBefore {
+                XCTAssertEqual(result.value as? String ?? result.label, "No clients were wired. 1 client failed.")
+                XCTAssertFalse(app.buttons["Roll back last wiring"].exists)
+                XCTAssertFalse(app.buttons["Measure this workflow…"].exists)
+                let failures = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "config file changed after the preview", "config file changed after the preview"))
+                XCTAssertEqual(failures.count, 1)
+                XCTAssertEqual(failures.firstMatch.value as? String ?? failures.firstMatch.label, "opencode: the config file changed after the preview; preview again.")
+            }
+            capture("Clients-\(appearance)-zero-wired")
+            resizeWindow(width: 740, height: 680)
+            XCTAssertEqual(app.windows.firstMatch.frame.width, 740, accuracy: 2)
+            XCTAssertEqual(app.windows.firstMatch.frame.height, 680, accuracy: 2)
+            capture("Clients-\(appearance)-zero-wired-narrow")
+            resizeWindow(width: 1024, height: 680)
+
+            try FileManager.default.createDirectory(at: zed.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let zedOriginal = Data("{\"vim_mode\":true}".utf8)
+            try zedOriginal.write(to: zed)
+            app.buttons["Preview client wiring"].click()
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+            if !isBefore { XCTAssertFalse(result.exists) }
+            try original.write(to: opencode)
+            confirm.click()
+            XCTAssertTrue(text(containing: "config file changed after the preview").waitForExistence(timeout: 10))
+            XCTAssertEqual(try Data(contentsOf: opencode), original)
+            let zedConfig = try JSONSerialization.jsonObject(with: Data(contentsOf: zed)) as? [String: Any]
+            XCTAssertNotNil(zedConfig?["language_models"])
+            if !isBefore {
+                XCTAssertEqual(result.value as? String ?? result.label, "Wired 1 of 2 clients to org/Qwen-first. 1 client failed.")
+                XCTAssertTrue(app.buttons["Measure this workflow…"].exists)
+                XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "config file changed after the preview", "config file changed after the preview")).count, 1)
+            }
+            capture("Clients-\(appearance)-partial-wiring")
+            app.buttons["Roll back last wiring"].click()
+            XCTAssertEqual(try Data(contentsOf: zed), zedOriginal)
+            XCTAssertEqual(try Data(contentsOf: opencode), original)
+            if !isBefore {
+                XCTAssertFalse(result.exists)
+                XCTAssertFalse(app.buttons["Measure this workflow…"].exists)
+            }
+            capture("Clients-\(appearance)-after-rollback")
+
+            app.buttons["Preview client wiring"].click()
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+            confirm.click()
+            let success = isBefore ? "Wired 2 client(s) to org/Qwen-first." : "Wired 2 clients to org/Qwen-first."
+            XCTAssertTrue(text(containing: success).waitForExistence(timeout: 10))
+            for config in [opencode, zed] {
+                XCTAssertTrue(try String(contentsOf: config).contains("127.0.0.1:8766/v1"))
+            }
+            capture("Clients-\(appearance)-full-wiring")
+            app.buttons["Preview client wiring"].click()
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+            if !isBefore {
+                XCTAssertFalse(result.exists)
+                XCTAssertFalse(app.buttons["Measure this workflow…"].exists)
+            }
+            capture("Clients-\(appearance)-new-preview")
             app.terminate()
         }
     }

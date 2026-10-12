@@ -301,6 +301,7 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertNotNil(transaction)
         XCTAssertEqual(transaction?.receipts.count, 1)
         XCTAssertTrue(transaction?.failures.isEmpty == true)
+        XCTAssertEqual(transaction?.resultSummary, "Wired 1 client to qwen3-8b.")
         let written = try String(contentsOf: opencodeConfig)
         XCTAssertEqual(try JSONCTolerant.parse(written)["model"] as? String, "mlx-local/qwen3-8b")
         let backup = try XCTUnwrap(transaction?.receipts.first?.backupPath)
@@ -343,8 +344,72 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertEqual(transaction?.receipts.count, 0)
         XCTAssertEqual(transaction?.failures.count, 1)
         XCTAssertTrue(transaction?.failures.first?.contains("changed after the preview") == true)
+        XCTAssertEqual(transaction?.failures, ["opencode: the config file changed after the preview; preview again."])
+        XCTAssertEqual(transaction?.resultSummary, "No clients were wired. 1 client failed.")
+        XCTAssertFalse(coordinator.rollbackAvailable)
         // The user's edit is untouched.
         XCTAssertEqual(try String(contentsOf: opencodeConfig), "{\"theme\": \"light\"}")
+    }
+
+    func testPartialWiringReportsSuccessWithoutRepeatingFailureDetails() throws {
+        let home = try makeHome()
+        let opencode = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        let zed = home.appendingPathComponent(".config/zed/settings.json")
+        for config in [opencode, zed] {
+            try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "{}".write(to: config, atomically: true, encoding: .utf8)
+        }
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint)
+        try "{\"theme\":\"light\"}".write(to: opencode, atomically: true, encoding: .utf8)
+        let transaction = try XCTUnwrap(coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash)))
+        XCTAssertEqual(transaction.receipts.map(\.clientID), ["zed"])
+        XCTAssertEqual(transaction.failures, ["opencode: the config file changed after the preview; preview again."])
+        XCTAssertEqual(transaction.resultSummary, "Wired 1 of 2 clients to qwen3-8b. 1 client failed.")
+        XCTAssertEqual(coordinator.lastError, transaction.failures.first)
+        XCTAssertTrue(coordinator.rollbackAvailable)
+        XCTAssertEqual(try String(contentsOf: opencode), "{\"theme\":\"light\"}")
+        XCTAssertNotNil(try JSONCTolerant.parse(String(contentsOf: zed))["language_models"])
+        coordinator.rollback()
+        XCTAssertEqual(try String(contentsOf: zed), "{}")
+        XCTAssertEqual(try String(contentsOf: opencode), "{\"theme\":\"light\"}")
+    }
+
+    func testGenericApplyFailureKeepsClientAttributionAndConfigContents() throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = "{}"
+        try original.write(to: config, atomically: true, encoding: .utf8)
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let backup = config.appendingPathExtension("mlxmac-backup-\(formatter.string(from: date))")
+        try "existing backup".write(to: backup, atomically: true, encoding: .utf8)
+        let coordinator = WiringCoordinator(home: home,
+            store: JSONStore<WiringTransaction>(fileURL: temporaryURL("transactions.json")), now: { date })
+        coordinator.preview(endpoint: endpoint)
+        let transaction = try XCTUnwrap(coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash)))
+        XCTAssertTrue(transaction.receipts.isEmpty)
+        let failure = try XCTUnwrap(transaction.failures.first)
+        XCTAssertTrue(failure.hasPrefix("opencode: "))
+        XCTAssertEqual(failure.components(separatedBy: "opencode: ").count, 2)
+        XCTAssertEqual(try String(contentsOf: config), original)
+        XCTAssertEqual(try String(contentsOf: backup), "existing backup")
+    }
+
+    func testWiringOutcomePluralCountsAndEmptyOutcome() {
+        let receipt = ClientEditReceipt(clientID: "zed", configPath: "/unused", backupPath: nil, appliedAt: Date())
+        var transaction = WiringTransaction(id: UUID(), previewHash: "", endpointBaseURL: endpoint.baseURL,
+            modelName: endpoint.modelName, appliedAt: Date(), receipts: [], failures: [], rolledBackAt: nil)
+        XCTAssertEqual(transaction.resultSummary, "No clients were wired.")
+        transaction.failures = ["one", "two"]
+        XCTAssertEqual(transaction.resultSummary, "No clients were wired. 2 clients failed.")
+        transaction.receipts = [receipt]
+        XCTAssertEqual(transaction.resultSummary, "Wired 1 of 3 clients to qwen3-8b. 2 clients failed.")
+        transaction.receipts = [receipt, receipt]
+        transaction.failures = []
+        XCTAssertEqual(transaction.resultSummary, "Wired 2 clients to qwen3-8b.")
     }
 
     func testNewConfigIsCreatedAndItsFailureWouldRemoveTheFile() throws {

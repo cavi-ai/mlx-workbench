@@ -95,16 +95,14 @@ def guest(input_dir, output_dir):
     manifest = json.loads((input_dir / "source-manifest.json").read_text())
     output_dir.mkdir(parents=True, exist_ok=True)
     checked(["/usr/bin/open", "-a", "Calculator"], timeout=10)
-    probe = subprocess.check_output(["/usr/bin/swift", "-e", """
-import AppKit
-import Foundation
-guard let app = NSWorkspace.shared.frontmostApplication,
-      app.bundleIdentifier == "com.apple.calculator" else {
-    fputs("Guest Launch Services did not activate Calculator. No tests were started.\\n", stderr)
-    exit(1)
+    probe = subprocess.check_output(["/usr/bin/osascript", "-l", "JavaScript", "-e", """
+ObjC.import('AppKit');
+const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+const bundle = ObjC.unwrap(app.bundleIdentifier);
+if (bundle !== 'com.apple.calculator') {
+    throw new Error('Guest Launch Services did not activate Calculator. No tests were started.');
 }
-let data = try JSONSerialization.data(withJSONObject: ["bundle_id": app.bundleIdentifier!, "pid": app.processIdentifier])
-print(String(data: data, encoding: .utf8)!)
+JSON.stringify({bundle_id: bundle, pid: app.processIdentifier});
 """], text=True, timeout=30)
     (output_dir / "gui-preflight.json").write_text(probe)
     checked(["/usr/sbin/screencapture", "-x", str(output_dir / "guest-preflight.png")], timeout=10)
@@ -203,7 +201,23 @@ print(String(data: data, encoding: .utf8)!)
                 selection += "/testRouteCaptures"
             run(name, ["xcodebuild", "-xctestrun", str(runfile), "-destination", "platform=macOS,arch=arm64",
                        "-resultBundlePath", str(output_dir / f"{name}.xcresult"), f"-only-testing:{selection}",
-                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 8)
+                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 9)
+
+
+def wait_for_guest(tart, vm, running, env, timeout=300):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if running.poll() is not None:
+            raise RuntimeError("VM exited before its guest agent became ready; see vm.log.")
+        try:
+            ready = subprocess.run([tart, "exec", vm, "/usr/bin/true"], env=env, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=5)
+            if ready.returncode == 0:
+                return
+        except subprocess.TimeoutExpired:
+            pass
+        time.sleep(2)
+    raise RuntimeError(f"VM guest agent did not become ready within {timeout} seconds; see vm.log.")
 
 
 def host(args):
@@ -253,18 +267,7 @@ def host(args):
         running = subprocess.Popen([tart, "run", "--no-graphics", "--no-audio", "--no-clipboard", "--no-usb-accessories",
                                     "--net-host", "--dir", f"review-input:{input_dir}:ro",
                                     "--dir", f"review-output:{output_dir}", vm], env=env, stdout=log, stderr=subprocess.STDOUT)
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline and running.poll() is None:
-            try:
-                ready = subprocess.run([tart, "exec", vm, "/usr/bin/true"], env=env, stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, timeout=5)
-                if ready.returncode == 0:
-                    break
-            except subprocess.TimeoutExpired:
-                pass
-            time.sleep(2)
-        else:
-            raise RuntimeError("VM guest agent did not become ready within 120 seconds; see vm.log.")
+        wait_for_guest(tart, vm, running, env)
         print(f"Artifacts: {output_dir}", flush=True)
         tart_run("exec", vm, "/usr/bin/python3", "/Volumes/My Shared Files/review-input/source/scripts/native_ui_vm.py",
                  "--guest", "/Volumes/My Shared Files/review-input", "/Volumes/My Shared Files/review-output")

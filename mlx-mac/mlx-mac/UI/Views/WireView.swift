@@ -19,8 +19,6 @@ struct WireView: View {
     @State private var errorMessage: String?
 
     @State private var selectedServerID: String?
-    @State private var wiringResult: String?
-    @State private var wiringResultHasIssues = false
     @State private var isRefreshingServer = false
     @State private var serverMessage: String?
     @State private var wiredServer: ServerInfo?
@@ -45,8 +43,11 @@ struct WireView: View {
     }
     private var selectedEndpoint: WireEndpoint? { selectedServer.flatMap { WireEndpoint(server: $0) } }
     private var hasCurrentClientPreview: Bool { wiring.previewMatches(server: selectedServer) }
+    private var resultTransaction: WiringTransaction? {
+        wiring.transactions.first { $0.id == wiredTransactionID && $0.rolledBackAt == nil }
+    }
     private var wiredTransaction: WiringTransaction? {
-        wiring.transactions.first { $0.id == wiredTransactionID && $0.rolledBackAt == nil && !$0.receipts.isEmpty }
+        resultTransaction.flatMap { $0.receipts.isEmpty ? nil : $0 }
     }
 
     var body: some View {
@@ -211,13 +212,8 @@ struct WireView: View {
                                     wiredServer = server
                                     wiredTransactionID = transaction.id
                                     captureError = nil
-                                    wiringResultHasIssues = !transaction.failures.isEmpty
-                                    wiringResult = transaction.failures.isEmpty
-                                        ? "Wired \(transaction.receipts.count) client(s) to \(transaction.modelName)."
-                                        : "Wired with issues: \(transaction.failures.joined(separator: "; "))"
                                 } else {
-                                    wiringResult = nil
-                                    wiringResultHasIssues = false
+                                    clearWiringResult()
                                 }
                             }
                         }
@@ -229,10 +225,11 @@ struct WireView: View {
                 .formSection {}
             }
 
-            if let wiringResult {
-                Text(wiringResult)
+            if let transaction = resultTransaction {
+                Text(transaction.resultSummary)
                     .font(WorkbenchTypography.secondary)
-                    .foregroundStyle(wiringResultHasIssues ? WorkbenchColor.failure : WorkbenchColor.success)
+                    .foregroundStyle(transaction.failures.isEmpty ? WorkbenchColor.success : WorkbenchColor.failure)
+                    .accessibilityIdentifier("client-wiring-result")
             }
             if wiredTransaction != nil {
                 ViewThatFits(in: .horizontal) {
@@ -283,7 +280,10 @@ struct WireView: View {
             clientPreviewButton.buttonStyle(.borderedProminent)
         }
         if wiring.rollbackAvailable {
-            Button("Roll back last wiring") { wiring.rollback() }
+            Button("Roll back last wiring") {
+                wiring.rollback()
+                clearWiringResult()
+            }
                 .buttonStyle(.bordered).disabled(wiring.isApplying || wiring.isCheckingServer || isRefreshingServer)
         }
     }
@@ -291,6 +291,7 @@ struct WireView: View {
     private var clientPreviewButton: some View {
         Button(hasCurrentClientPreview ? "Refresh preview" : "Preview client wiring") {
             Task { @MainActor in
+                clearWiringResult()
                 let chosen = selectedServer
                 await refreshServers()
                 guard let chosen, let current = selectedServer, ClientWiringSelection.sameServer(chosen, current) else {
@@ -302,6 +303,12 @@ struct WireView: View {
         }
         .disabled(selectedEndpoint == nil || isRefreshingServer || wiring.isCheckingServer || wiring.isApplying || wiring.installations.allSatisfy(\.advisoryOnly))
         .help("Review proposed client config changes before applying them.")
+    }
+
+    private func clearWiringResult() {
+        wiredTransactionID = nil
+        wiredServer = nil
+        captureError = nil
     }
 
     private func refreshServers() async {
