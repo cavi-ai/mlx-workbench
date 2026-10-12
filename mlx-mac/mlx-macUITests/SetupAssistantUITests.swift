@@ -534,8 +534,13 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Settings-\(appearance)-save-failed-narrow")
             if !before {
                 resizeWindow(width: 740, height: 560)
-                XCTAssertEqual(app.windows.firstMatch.frame.width, 740, accuracy: 2)
-                XCTAssertEqual(app.windows.firstMatch.frame.height, 560, accuracy: 2)
+                let minimumFrame = app.windows.firstMatch.frame
+                XCTAssertEqual(minimumFrame.width, 740, accuracy: 2)
+                XCTAssertLessThan(minimumFrame.height, 680)
+                // The native title bar adds to the content minimum. Confirm
+                // AppKit's actual resize limit instead of assuming its height.
+                resizeWindow(width: 740, height: minimumFrame.height - 80)
+                XCTAssertEqual(app.windows.firstMatch.frame.height, minimumFrame.height, accuracy: 2)
                 XCTAssertEqual(feedbackText("settings-save-error"), expectedFailure)
                 XCTAssertTrue(app.windows.firstMatch.frame.contains(app.staticTexts["settings-save-error"].frame))
                 XCTAssertTrue(app.windows.firstMatch.frame.contains(save.frame))
