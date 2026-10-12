@@ -491,6 +491,24 @@ final class ActivityRemodelTests: XCTestCase {
         XCTAssertFalse(logless.showsInlineLog)
     }
 
+    func testAReceiptsLogBelongsOnlyToTheNewestRecordHoldingIt() {
+        let older = Fixture.workflow(state: .failed, receipt: "r1", message: "Conversion failed.", errorMessage: "Conversion failed.")
+        let newer = Fixture.workflow(state: .running, receipt: "r1", created: Fixture.stamp.addingTimeInterval(60), updated: Fixture.stamp.addingTimeInterval(60))
+        let finished = Fixture.workflow(state: .failed, receipt: "r2", message: "Conversion failed.", errorMessage: "Conversion failed.")
+        let jobs = ["r1", "r2"].map { (receipt: String) in
+            Job(receipt: receipt, repo: nil, source: nil, qBits: 4, out: nil, pid: nil, logPath: "/logs/\(receipt).log", startedAt: nil, completedAt: nil, state: "running")
+        }
+
+        let cards = ActivityPresentation.cards(
+            workflow: newer, history: [newer, finished, older], jobs: jobs, snapshot: nil,
+            scanModels: [], agentReady: true, convertRuntimeReady: true
+        )
+
+        XCTAssertEqual(cards.first { $0.id == newer.id }?.logPath, "/logs/r1.log")
+        XCTAssertNil(cards.first { $0.id == older.id }?.logPath)
+        XCTAssertEqual(cards.first { $0.id == finished.id }?.logPath, "/logs/r2.log")
+    }
+
     func testToolbarWorkflowBadgeIsSuppressedOnActivity() {
         XCTAssertFalse(ContentView.showsWorkflowBadge(route: .activity, state: .failed))
         XCTAssertFalse(ContentView.showsWorkflowBadge(route: .activity, state: .verified))
