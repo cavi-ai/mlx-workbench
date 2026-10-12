@@ -488,16 +488,23 @@ final class ModelWorkflowCoordinator: ObservableObject {
             model,
             preferred: exactPath ?? workflow.completedModelPath ?? workflow.outputPath
         )
-        update(
+        servePreviewHash = nil
+        servePreviewIntent = nil
+        // A completed or verified record of the selected model is served exactly as recorded.
+        if RunPresentation.runnableStates.contains(workflow.state),
+           let current = workflow.completedModelPath,
+           canonicalPath(current) == canonicalPath(selectedPath) {
+            return
+        }
+        // Any other record keeps its lifecycle; Run serves a separate, unsaved target.
+        workflow = updatedRecord(
+            from: Self.emptyWorkflow(at: now()),
             state: .completed,
             outputPath: selectedPath,
             completedModelPath: selectedPath,
             message: "Ready to preview serving \(model.displayName).",
-            errorMessage: .some(nil),
-            persist: true
+            errorMessage: .some(nil)
         )
-        servePreviewHash = nil
-        servePreviewIntent = nil
     }
 
     func previewServe(runtime: String, port: Int?) async {

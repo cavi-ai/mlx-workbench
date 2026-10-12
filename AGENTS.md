@@ -607,7 +607,10 @@ from `mlx-agent` at runtime.
   fires once when a workflow enters a terminal state (completed / verified /
   verificationFailed / failed) and AppHost wires it to `AlertNotifier`
   (Notification Center; silent when permission is denied). Restores and
-  launch-loads never notify — only live transitions.
+  launch-loads never notify — only live transitions. `prepareServe` never
+  changes a record's lifecycle: a completed or verified record of the chosen
+  model is served unchanged; any other model gets a separate unsaved serve
+  target, leaving the current record untouched.
 - `SetupCoordinator` provides the **first-launch Setup Assistant**: a guided
   sheet over the app's existing probes (agent health, runtime report,
   discovered roots) with the RuntimeInstaller for one-click runtime setup.
