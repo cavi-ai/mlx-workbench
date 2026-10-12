@@ -116,6 +116,8 @@ enum WorkbenchSize {
     static let symbolTile: CGFloat = 44
     /// Capacity bar track in a compact region such as the Library inspector.
     static let barHeightCompact: CGFloat = 12
+    /// Common height for mixed controls (menus, toggles, buttons) sharing one line.
+    static let controlRowHeight: CGFloat = 28
 }
 
 extension WorkbenchSize {
@@ -428,6 +430,14 @@ extension WorkbenchSize {
         static let rowThreshold: CGFloat = symbolColumn + nameMinimum + barWidth + figuresWidth + actionWidth + columnGap * 4
 
         static let placeholderRows = 4
+    }
+
+    /// Training route dimensions.
+    enum Training {
+        static let baseModelMenuWidth: CGFloat = 420
+        static let iterationsWidth: CGFloat = 120
+        static let evidenceMaxHeight: CGFloat = 240
+        static let recipeMaxHeight: CGFloat = 180
     }
 
     /// LM Studio route dimensions, measured against the page content width.

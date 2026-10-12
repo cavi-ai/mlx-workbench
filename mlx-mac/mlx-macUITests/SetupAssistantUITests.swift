@@ -305,7 +305,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let element: XCUIElement
         if let title = titles[route] { element = app.staticTexts[title].firstMatch }
         else if route == "Settings" { element = app.staticTexts["Engine status"].firstMatch }
-        else if route == "LM Studio" { element = app.buttons["Scan LM Studio"] }
+        else if route == "LM Studio" { element = app.buttons["Scan Again"] }
         else if route == "Overview" { element = app.buttons["Open Health"] }
         else { element = app.buttons["New set…"] }
         XCTAssertTrue(element.waitForExistence(timeout: 20), "Missing \(route) content")
@@ -397,10 +397,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Discover-failed-recovery")
 
         select("LM Studio")
-        replace(app.textFields.firstMatch, with: root.appendingPathComponent("missing").path)
-        app.buttons["Scan LM Studio"].click()
-        XCTAssertTrue(text(containing: "Scan failed").waitForExistence(timeout: 15))
-        capture("LMStudio-invalid-source-recovery")
+        XCTAssertTrue(app.buttons["Scan Again"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.textFields.firstMatch.exists, "The shelf reads LM Studio's folders; it takes no typed path")
+        capture("LMStudio-shelf")
     }
 
     func testTrainingEditsRequireNewPreview() throws {
@@ -550,33 +549,36 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertFalse(refreshHistory.isEnabled)
             capture("Training-\(appearance)-history-loading")
             try flag("slow-training-history", false)
-            let evaluation = app.buttons["fixture-evaluation"]
+            let evaluation = app.buttons["training-inspect-fixture-evaluation"]
             XCTAssertTrue(evaluation.waitForExistence(timeout: 15))
             reveal(evaluation); evaluation.click()
             XCTAssertTrue(text(containing: "fixture-evaluation-sha256").waitForExistence(timeout: 15))
             reveal(text(containing: "fixture-evaluation-sha256"))
-            let report = app.disclosureTriangles["Evaluation outputs and frozen recipe"]
+            let reportTitle = "Evaluation fixture-: outputs and frozen recipe"
+            let report = app.disclosureTriangles[reportTitle]
             if report.exists {
                 reveal(report)
                 // Native disclosure frames include the label; click the leading arrow.
                 let window = app.windows.firstMatch
                 let frame = report.frame.intersection(scroll.frame)
                 XCTAssertFalse(frame.isNull)
-                window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
-                    dx: frame.minX + frame.height / 4 - window.frame.minX,
-                    dy: frame.midY - window.frame.minY
-                )).click()
+                if report.value as? Int != 1 {
+                    window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                        dx: frame.minX + frame.height / 4 - window.frame.minX,
+                        dy: frame.midY - window.frame.minY
+                    )).click()
+                }
                 XCTAssertEqual(report.value as? Int, 1)
             }
             else {
-                let disclosure = app.buttons["Evaluation outputs and frozen recipe"]
+                let disclosure = app.buttons[reportTitle]
                 reveal(disclosure); disclosure.click()
             }
             XCTAssertTrue(text(containing: "fixture frozen recipe").waitForExistence(timeout: 10))
             capture("Training-\(appearance)-populated-evaluation")
             try flag("fail-training-inspect", true)
             reveal(evaluation); evaluation.click()
-            XCTAssertTrue(message("training-inspection-error").contains("Fixture retained evaluation unavailable"))
+            XCTAssertTrue(message("training-inspection-error").contains("Evaluation couldn't be inspected"))
             XCTAssertTrue(text(containing: "fixture-evaluation-sha256").exists, "Inspection failure must retain the prior report")
             capture("Training-\(appearance)-inspection-failed-retained")
             try flag("fail-training-inspect", false)
@@ -585,7 +587,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertFalse(app.staticTexts["training-inspection-error"].exists)
             try flag("fail-training-status", true)
             reveal(refreshJobs); refreshJobs.click()
-            XCTAssertTrue(message("training-jobs-error").contains("Fixture training jobs unavailable"))
+            XCTAssertTrue(message("training-jobs-error").contains("Training jobs couldn't load"))
             XCTAssertTrue(app.buttons["Compare with base"].exists, "A failed refresh must retain jobs")
             XCTAssertTrue(evaluation.exists, "A jobs failure must not clear evaluations")
             reveal(app.staticTexts["training-jobs-error"]); capture("Training-\(appearance)-jobs-refresh-failed")
@@ -594,7 +596,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertFalse(app.staticTexts["training-jobs-error"].exists)
             try flag("fail-training-history", true)
             reveal(refreshHistory); refreshHistory.click()
-            XCTAssertTrue(message("training-history-error").contains("Fixture training evaluations unavailable"))
+            XCTAssertTrue(message("training-history-error").contains("Evaluations couldn't load"))
             XCTAssertTrue(evaluation.exists, "A failed refresh must retain history")
             XCTAssertTrue(app.buttons["Compare with base"].exists)
             reveal(app.staticTexts["training-history-error"]); capture("Training-\(appearance)-history-refresh-failed")

@@ -134,136 +134,43 @@ struct TrainingPreviewGuidance: Equatable {
     }
 }
 
-/// Each read owns its loading/error state. Failed refreshes keep the last
-/// successful rows, and synchronous locks prevent duplicate CLI requests.
-struct TrainingCollectionState<Element> {
-    enum Phase: Equatable { case loading, empty, populated, failed }
-    var items: [Element] = []
-    var hasLoaded = false
-    var isLoading = false
-    var error: String?
-
-    var phase: Phase {
-        if !items.isEmpty { return .populated }
-        if isLoading || (!hasLoaded && error == nil) { return .loading }
-        if error != nil { return .failed }
-        return .empty
-    }
-}
-
-struct TrainingEvaluationRecord: Identifiable {
-    let id: String
-    let value: LabValue
-
-    init?(_ value: LabValue) {
-        guard let id = value.object?["id"]?.text, !id.isEmpty else { return nil }
-        self.id = id
-        self.value = value
-    }
-}
-
-@MainActor
-final class TrainingCollections: ObservableObject {
-    struct Inspection {
-        let recordID: String
-        let response: LabResponse
-    }
-
-    @Published private(set) var jobs = TrainingCollectionState<TrainingJob>()
-    @Published private(set) var history = TrainingCollectionState<LabValue>()
-    @Published private(set) var inspection: Inspection?
-    @Published private(set) var inspectingID: String?
-    @Published private(set) var inspectionError: String?
-    private let readJobs: () async throws -> [TrainingJob]
-    private let readHistory: () async throws -> [LabValue]
-    private let readInspection: (String) async throws -> LabResponse
-
-    init(jobs: @escaping () async throws -> [TrainingJob],
-         history: @escaping () async throws -> [LabValue],
-         inspect: @escaping (String) async throws -> LabResponse) {
-        readJobs = jobs
-        readHistory = history
-        readInspection = inspect
-    }
-
-    @discardableResult
-    func refreshJobs() -> Task<Void, Never>? {
-        guard !jobs.isLoading else { return nil }
-        jobs.isLoading = true
-        jobs.error = nil
-        return Task {
-            defer { jobs.isLoading = false }
-            do {
-                jobs.items = try await readJobs()
-                jobs.hasLoaded = true
-            } catch { jobs.error = AppHost.render(error) }
-        }
-    }
-
-    @discardableResult
-    func refreshHistory() -> Task<Void, Never>? {
-        guard !history.isLoading else { return nil }
-        history.isLoading = true
-        history.error = nil
-        return Task {
-            defer { history.isLoading = false }
-            do {
-                history.items = try await readHistory()
-                history.hasLoaded = true
-            } catch { history.error = AppHost.render(error) }
-        }
-    }
-
-    func refresh() async {
-        let jobsTask = refreshJobs()
-        let historyTask = refreshHistory()
-        await jobsTask?.value
-        await historyTask?.value
-    }
-
-    @discardableResult
-    func inspect(_ recordID: String) -> Task<Void, Never>? {
-        guard inspectingID == nil else { return nil }
-        inspectingID = recordID
-        inspectionError = nil
-        return Task {
-            defer { inspectingID = nil }
-            do {
-                let response = try await readInspection(recordID)
-                inspection = Inspection(recordID: recordID, response: response)
-            } catch {
-                inspectionError = "Could not inspect \(recordID): \(AppHost.render(error))"
-            }
-        }
-    }
-}
-
 // MARK: - TrainingView
 // LoRA preview/confirm training on a cached base model.
 
 struct TrainingView: View {
     @ObservedObject var appHost: AppHost
     @StateObject private var session: TrainingSession
-    @StateObject private var collections: TrainingCollections
+    @StateObject private var loader: TrainingLoader
     @State private var evaluationJob: TrainingJob?
+    @State private var retainedExpanded = false
+    private let seededRetained: TrainingRetainedEvidence?
     @State private var cancelError: String?
     @State private var cancelingPIDs: Set<Int> = []
+    @State private var baseChoice = TrainingBaseModelChoice()
+    @State private var baseModels: [String] = []
     @FocusState private var focusedField: TrainingField?
+    @Environment(\.isRouteActive) private var isRouteActive
 
-    init(appHost: AppHost) {
+    /// `seedRetained` lets a render hold the page with an inspected evaluation open.
+    init(
+        appHost: AppHost, loader: TrainingLoader? = nil, session: TrainingSession? = nil,
+        seedRetained: TrainingRetainedEvidence? = nil
+    ) {
         self.appHost = appHost
-        _session = StateObject(wrappedValue: TrainingSession(
+        seededRetained = seedRetained
+        _retainedExpanded = State(initialValue: seedRetained != nil)
+        _loader = StateObject(wrappedValue: loader ?? TrainingLoader(
+            jobs: { try await appHost.api.trainingStatus().jobs },
+            history: { try await appHost.lab.request(LabRequest(operation: "training-history")).evaluations ?? [] },
+            inspect: { try await appHost.lab.request(LabRequest(operation: "training-inspect", evaluationID: $0)) }
+        ))
+        _session = StateObject(wrappedValue: session ?? TrainingSession(
             preview: { request in
                 try await appHost.api.loraPreview(repo: request.repo, data: request.data, iters: request.iterations, out: request.output)
             },
             start: { request, hash in
                 _ = try await appHost.api.loraStart(repo: request.repo, data: request.data, previewHash: hash, iters: request.iterations, out: request.output)
             }
-        ))
-        _collections = StateObject(wrappedValue: TrainingCollections(
-            jobs: { try await appHost.api.trainingStatus().jobs },
-            history: { try await appHost.lab.request(LabRequest(operation: "training-history")).evaluations ?? [] },
-            inspect: { try await appHost.lab.request(LabRequest(operation: "training-inspect", evaluationID: $0)) }
         ))
     }
 
@@ -282,12 +189,20 @@ struct TrainingView: View {
             }
         }
         .sheet(item: $evaluationJob) { job in TrainingEvaluationSheet(lab: appHost.lab, job: job) }
-        .task { await collections.refresh() }
+        .onChange(of: appHost.librarySnapshot?.generatedAt, initial: true) {
+            baseModels = TrainingPresentation.baseModels(appHost.librarySnapshot)
+        }
+        .task(id: isRouteActive) {
+            guard isRouteActive else { return }
+            await loader.refreshIfIdle()
+        }
     }
 
     private var guidance: TrainingPreviewGuidance? {
         TrainingPreviewGuidance.resolve(draft: session.draft, operation: session.operation)
     }
+
+    private var showsCustomRepoField: Bool { baseChoice.showsField(cached: baseModels) }
 
     private func formSection(_ proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -295,19 +210,21 @@ struct TrainingView: View {
             requestSignature(repo: session.draft.repo, data: session.draft.data, output: session.draft.output)
             Divider()
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                if !cachedRepoIdentities.isEmpty {
-                    Picker("Cached base model", selection: cachedRepoSelection) {
+                if !baseModels.isEmpty {
+                    Picker("Base model", selection: cachedRepoSelection) {
                         Text("Custom repo id…").tag("")
-                        ForEach(cachedRepoIdentities, id: \.self) { identity in Text(identity).tag(identity) }
-                    }
+                        ForEach(baseModels, id: \.self) { identity in Text(identity).tag(identity) }
+                    }.frame(maxWidth: WorkbenchSize.Training.baseModelMenuWidth, alignment: .leading)
                 }
-                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                    fieldLabel("Base model repo id")
-                    TextField("Base model repo id", text: $session.draft.repo)
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Base model repo id")
-                        .focused($focusedField, equals: .repo)
-                }.id(TrainingField.repo)
+                if showsCustomRepoField {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        fieldLabel("Base model repo id")
+                        TextField("Base model repo id", text: $session.draft.repo)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Base model repo id")
+                            .focused($focusedField, equals: .repo)
+                    }.id(TrainingField.repo)
+                }
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                     fieldLabel("Dataset path")
                     HStack(spacing: WorkbenchSpacing.xs) {
@@ -315,7 +232,7 @@ struct TrainingView: View {
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Dataset path")
                             .focused($focusedField, equals: .data)
-                        Button("Choose…") { chooseDataset() }.buttonStyle(.bordered)
+                        Button("Choose…") { chooseDataset() }.buttonStyle(.bordered).controlSize(.small)
                     }
                 }.id(TrainingField.data)
                 ViewThatFits(in: .horizontal) {
@@ -325,8 +242,7 @@ struct TrainingView: View {
             }.disabled(session.isBusy)
             previewActions(proxy)
             if session.preview == nil { operationFeedback }
-        }
-        .formSection {}
+        }.formSection {}
     }
 
     /// This signature only renders entered or captured values; the training
@@ -381,21 +297,10 @@ struct TrainingView: View {
         Text(text).font(WorkbenchTypography.label).foregroundStyle(WorkbenchColor.muted)
     }
 
-    private var cachedRepoIdentities: [String] {
-        let models = appHost.librarySnapshot?.models ?? []
-        var identities: Set<String> = []
-        for model in models {
-            for path in [model.item.path] + model.outputPaths {
-                if let repoID = HFRepoID.forPath(path) { identities.insert(repoID) }
-            }
-        }
-        return identities.sorted()
-    }
-
     private var cachedRepoSelection: Binding<String> {
         Binding(
-            get: { cachedRepoIdentities.contains(session.draft.repo) ? session.draft.repo : "" },
-            set: { session.draft.repo = $0 }
+            get: { baseChoice.selection(repo: session.draft.repo, cached: baseModels) },
+            set: { session.draft.repo = baseChoice.select($0) }
         )
     }
 
@@ -405,7 +310,7 @@ struct TrainingView: View {
             fieldLabel("Iterations")
             TextField("Iterations", text: $session.draft.iterations)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: WorkbenchSize.Settings.fieldNarrow)
+                .frame(width: WorkbenchSize.Training.iterationsWidth)
                 .accessibilityLabel("Iterations")
                 .focused($focusedField, equals: .iterations)
             if let error = session.draft.iterationsError {
@@ -456,11 +361,14 @@ struct TrainingView: View {
     }
 
     private func reveal(_ field: TrainingField, proxy: ScrollViewProxy) {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { proxy.scrollTo(field, anchor: .center) }
-        // Focus follows layout, only after an explicit recovery action.
-        DispatchQueue.main.async { focusedField = field }
+        if field == .repo { baseChoice = TrainingBaseModelChoice() }
+        // Custom selection may first need to reveal the field in the layout.
+        DispatchQueue.main.async {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { proxy.scrollTo(field, anchor: .center) }
+            DispatchQueue.main.async { focusedField = field }
+        }
     }
 
     @ViewBuilder
@@ -520,162 +428,68 @@ struct TrainingView: View {
         } label: { fieldLabel(label) }
     }
 
+    private var presentation: TrainingPresentation {
+        TrainingPresentation.make(
+            jobs: loader.jobs, evaluations: loader.evaluations,
+            jobsError: loader.jobsError, historyError: loader.historyError,
+            jobsLoading: loader.isLoadingJobs, historyLoading: loader.isLoadingHistory,
+            jobsLoaded: loader.hasLoadedJobs, historyLoaded: loader.hasLoadedHistory
+        )
+    }
+
     private var trainingJobs: some View {
-        WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                HStack {
-                    Label("Training jobs", systemImage: "list.bullet.rectangle").font(WorkbenchTypography.cardTitle)
-                    Spacer()
-                    Button("Refresh") { collections.refreshJobs() }
-                        .disabled(collections.jobs.isLoading).accessibilityIdentifier("training-refresh-jobs")
-                }
-                collectionFeedback(collections.jobs, name: "training-jobs", loading: "Loading training jobs…",
-                    refreshing: "Refreshing training jobs…", empty: "No training jobs", symbol: "list.bullet.rectangle",
-                    explanation: "Preview and confirm a training request to create a job.")
-                ForEach(collections.jobs.items) { job in
-                    Divider()
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        Text(job.repo + " · " + job.state).font(WorkbenchTypography.cardTitle)
-                        Text(job.out).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if let identity = job.adapterIdentity {
-                            DisclosureGroup("Adapter content identity") {
-                                Text(identity.jsonText).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                            }
-                        }
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: WorkbenchSpacing.sm) { jobActions(job) }
-                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { jobActions(job) }
-                        }
-                    }
-                }
-                if let cancelError {
-                    Label(cancelError, systemImage: "exclamationmark.triangle")
-                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
-                        .textSelection(.enabled).accessibilityIdentifier("training-cancel-error")
-                }
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            TrainingJobsCard(
+                presentation: presentation, pulses: isRouteActive,
+                refresh: { loader.refreshJobs() },
+                actions: TrainingJobActions(
+                    compare: { row in evaluationJob = loader.jobs.first { $0.id == row.id } },
+                    openLog: { NSWorkspace.shared.open(URL(fileURLWithPath: $0)) },
+                    cancel: { cancelTraining($0) }, cancelingPIDs: cancelingPIDs
+                )
+            )
+            if let cancelError {
+                ErrorBanner(text: cancelError).accessibilityIdentifier("training-cancel-error")
             }
         }
     }
 
-    @ViewBuilder
-    private func jobActions(_ job: TrainingJob) -> some View {
-        if job.state == "done", job.adapterIdentity != nil {
-            Button("Compare with base") { evaluationJob = job }
-        }
-        if let log = job.logPath {
-            Button("Open log") { NSWorkspace.shared.open(URL(fileURLWithPath: log)) }
-        }
-        if job.state == "running" {
-            Button(cancelingPIDs.contains(job.pid) ? "Canceling…" : "Cancel training") { cancelTraining(job) }
-                .disabled(cancelingPIDs.contains(job.pid))
-        }
+    private var retained: TrainingRetainedEvidence? {
+        guard let inspection = loader.inspection, let report = inspection.response.report else { return seededRetained }
+        return TrainingRetainedEvidence(evaluationID: inspection.recordID, reportText: report.jsonText,
+            sha256: inspection.response.artifactSHA256 ?? "")
     }
 
     private var evaluationHistory: some View {
-        WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                HStack {
-                    Label("Retained training evaluations", systemImage: "doc.text.magnifyingglass")
-                        .font(WorkbenchTypography.cardTitle)
-                    Spacer()
-                    Button("Refresh") { collections.refreshHistory() }
-                        .disabled(collections.history.isLoading).accessibilityIdentifier("training-refresh-history")
+        TrainingEvaluationsCard(
+            presentation: presentation, retained: retained, inspectingID: loader.inspectingID,
+            retainedExpanded: $retainedExpanded, inspect: { identity in
+                guard let task = loader.inspect(identity) else { return }
+                Task {
+                    await task.value
+                    if loader.inspectionError == nil, loader.inspection?.recordID == identity { retainedExpanded = true }
                 }
-                collectionFeedback(collections.history, name: "training-history", loading: "Loading training evaluations…",
-                    refreshing: "Refreshing training evaluations…", empty: "No retained training evaluations",
-                    symbol: "doc.text.magnifyingglass", explanation: "Compare a completed adapter with its base model to retain an evaluation.")
-                ForEach(collections.history.items.compactMap(TrainingEvaluationRecord.init)) { record in
-                    Divider()
-                    Button(record.id) { collections.inspect(record.id) }
-                        .disabled(collections.inspectingID != nil)
-                    if let created = record.value.object?["created_at"]?.text {
-                        Text(created).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                    }
-                }
-                if let inspectingID = collections.inspectingID {
-                    HStack(spacing: WorkbenchSpacing.xs) {
-                        ProgressView().controlSize(.small)
-                        Text("Inspecting \(inspectingID)…").font(WorkbenchTypography.secondary)
-                            .accessibilityIdentifier("training-inspection-loading")
-                    }
-                }
-                if let error = collections.inspectionError {
-                    HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
-                        Image(systemName: "exclamationmark.triangle").accessibilityHidden(true)
-                        Text(error).font(WorkbenchTypography.secondary).textSelection(.enabled)
-                            .accessibilityIdentifier("training-inspection-error")
-                    }.foregroundStyle(WorkbenchColor.failure)
-                }
-                if let inspection = collections.inspection {
-                    Divider()
-                    Text("Retained evaluation: \(inspection.recordID)")
-                        .font(WorkbenchTypography.emphasis).textSelection(.enabled)
-                        .accessibilityIdentifier("training-retained-evaluation")
-                    if let report = inspection.response.report {
-                        DisclosureGroup("Evaluation outputs and frozen recipe") {
-                            ScrollView {
-                                Text(report.jsonText).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                            }.frame(maxHeight: WorkbenchSize.Prepare.logMaximumHeight)
-                        }
-                    }
-                    if let hash = inspection.response.artifactSHA256 {
-                        Text("SHA-256: " + hash).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func collectionFeedback<Element>(_ state: TrainingCollectionState<Element>, name: String,
-        loading: String, refreshing: String, empty: String, symbol: String, explanation: String) -> some View {
-        if state.isLoading || state.phase == .loading {
-            HStack(spacing: WorkbenchSpacing.xs) {
-                ProgressView().controlSize(.small)
-                Text(state.hasLoaded ? refreshing : loading).font(WorkbenchTypography.secondary)
-                    .accessibilityIdentifier(name + "-loading")
-            }
-        } else if state.phase == .empty {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                HStack(spacing: WorkbenchSpacing.xs) {
-                    Image(systemName: symbol).accessibilityHidden(true)
-                    Text(empty).font(WorkbenchTypography.emphasis)
-                        .accessibilityIdentifier(name + "-empty")
-                }
-                Text(explanation).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            }
-        }
-        if let error = state.error {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
-                    Image(systemName: "exclamationmark.triangle").accessibilityHidden(true)
-                    Text(error).font(WorkbenchTypography.secondary)
-                        .textSelection(.enabled).accessibilityIdentifier(name + "-error")
-                }.foregroundStyle(WorkbenchColor.failure)
-                Text(state.hasLoaded ? "Showing the last loaded results. Refresh to retry." : "Refresh to retry.")
-                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            }
-        }
+            }, refresh: { loader.refreshHistory() }, inspectionError: loader.inspectionError
+        )
     }
 
     private func confirmTraining() {
         guard let task = session.confirmTraining() else { return }
         Task {
             await task.value
-            if session.notice != nil { await collections.refresh() }
+            if session.notice != nil { await loader.refreshIfIdle() }
         }
     }
 
-    private func cancelTraining(_ job: TrainingJob) {
-        guard cancelingPIDs.insert(job.pid).inserted else { return }
+    private func cancelTraining(_ row: TrainingJobRow) {
+        guard cancelingPIDs.insert(row.pid).inserted else { return }
         cancelError = nil
         Task {
-            defer { cancelingPIDs.remove(job.pid) }
+            defer { cancelingPIDs.remove(row.pid) }
             do {
-                _ = try await appHost.api.trainingStop(pid: job.pid)
-                await collections.refreshJobs()?.value
-            } catch { cancelError = "Could not cancel \(job.repo): \(AppHost.render(error))" }
+                _ = try await appHost.api.trainingStop(pid: row.pid)
+                await loader.refreshJobs()?.value
+            } catch { cancelError = "Could not cancel \(row.repo): \(AppHost.render(error))" }
         }
     }
 
@@ -709,9 +523,9 @@ private struct TrainingEvaluationSheet: View {
                 .onChange(of: prompt) { preview = nil; result = nil }
             if let error { Text(error).foregroundStyle(WorkbenchColor.failure) }
             if let preview {
-                DisclosureGroup("Reviewed evaluation recipe") {
-                    ScrollView { Text(preview.jsonText).font(WorkbenchTypography.compactValue).textSelection(.enabled) }.frame(maxHeight: 180)
-                }
+                TrainingRawDisclosure(
+                    title: "Reviewed evaluation recipe", text: preview.jsonText, maxHeight: WorkbenchSize.Training.recipeMaxHeight
+                )
             }
             if let result, let report = result.report?.object {
                 HStack(alignment: .top) {

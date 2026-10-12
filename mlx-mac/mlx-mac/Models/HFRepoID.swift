@@ -9,7 +9,7 @@ import Foundation
 enum HFRepoID {
     /// The repo id for a path inside the Hugging Face cache layout, else nil.
     static func forPath(_ path: String) -> String? {
-        let components = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+        let components = URL(filePath: NSString(string: path).expandingTildeInPath, directoryHint: .notDirectory)
             .standardizedFileURL
             .pathComponents
         guard let marker = components.first(where: { $0.hasPrefix("models--") }) else { return nil }

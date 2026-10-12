@@ -112,10 +112,6 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(AdoptResult.self, from: JSONEncoder().encode(legacy)), legacy)
     }
 
-    func testSupportedAdoptionRolesMatchTheAgentRoles() {
-        XCTAssertEqual(WorkbenchAPI.supportedAdoptionRoles, ["vision", "embedding", "coding", "reasoning", "general", "tool-use"])
-    }
-
     func testScanRunsFixtureAgentAndPreservesReportedBytes() async throws {
         let payload = try fixture(named: "convert-scan-valid")
         let agent = try FixtureAgent(scanPayload: payload)

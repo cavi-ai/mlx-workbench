@@ -24,6 +24,21 @@ final class HFRepoIDTests: XCTestCase {
         XCTAssertFalse(HFRepoID.matches("other/model", a))
     }
 
+    func testPathOnAnAbsentVolumeStillMapsToRepoID() {
+        let path = "/Volumes/NoSuchVolume-\(UUID().uuidString)/hub/models--org--model/snapshots/rev"
+        XCTAssertEqual(HFRepoID.forPath(path), "org/model")
+    }
+
+    func testForPathNeverStatsTheDisk() throws {
+        let source = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("mlx-mac/Models/HFRepoID.swift")
+        let text = try String(contentsOf: source, encoding: .utf8)
+        let forPath = try XCTUnwrap(text.range(of: "static func forPath"))
+        let body = text[forPath.lowerBound...].prefix(400)
+        XCTAssertFalse(body.contains("URL(fileURLWithPath:"))
+    }
+
     func testPathOutsideCachePassesThrough() {
         let path = "/models/mlx/qwen3-8b-mlx"
         XCTAssertNil(HFRepoID.forPath(path))

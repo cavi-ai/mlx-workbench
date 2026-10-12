@@ -377,8 +377,6 @@ actor WorkbenchAPI {
 
     // MARK: - Adopt
 
-    static let supportedAdoptionRoles = ["vision", "embedding", "coding", "reasoning", "general", "tool-use"]
-
     func adoptStart(role: String?, state: String, fast: Bool, offline: Bool) async throws -> AdoptResult {
         let parent = URL(fileURLWithPath: state).deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)

@@ -89,19 +89,8 @@ enum LMStudioShelfResolver {
 
     private static func reach(of folder: URL, in roots: [String], fileIdentity: (String) -> NSObject?) -> (root: String, folder: String)? {
         for root in roots {
-            guard AppHost.isPath(folder.path, within: root, fileIdentity: fileIdentity) else { continue }
+            guard let names = AppHost.components(of: folder.path, within: root, fileIdentity: fileIdentity), !isSkipped(names) else { continue }
             let rootURL = URL(fileURLWithPath: NSString(string: root).expandingTildeInPath).standardizedFileURL
-            let rootIdentity = fileIdentity(rootURL.path)
-            var names: [String] = []
-            var candidate = folder.standardizedFileURL
-            while candidate.path != rootURL.path {
-                if let rootIdentity, let identity = fileIdentity(candidate.path), identity.isEqual(rootIdentity) { break }
-                names.insert(candidate.lastPathComponent, at: 0)
-                let parent = candidate.deletingLastPathComponent()
-                if parent.path == candidate.path { break }
-                candidate = parent
-            }
-            if isSkipped(names) { continue }
             let spelled = names.reduce(rootURL) { $0.appendingPathComponent($1) }
             return (rootURL.path, spelled.path)
         }

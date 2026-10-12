@@ -26,16 +26,17 @@ struct SetupAssistantView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                Text("SETUP").font(WorkbenchTypography.value)
-                    .foregroundStyle(WorkbenchColor.accent)
-                Text(coordinator.step.title).font(WorkbenchTypography.section)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SetupStepTrack(step: coordinator.step)
+            HStack(alignment: .firstTextBaseline) {
+                Text(coordinator.step.title)
+                    .font(WorkbenchTypography.section)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                Text(coordinator.step.progressLabel)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             }
-            Spacer()
-            Text("Step \(coordinator.step.rawValue + 1) of \(SetupCoordinator.Step.allCases.count)")
-                .font(WorkbenchTypography.value)
-                .foregroundStyle(WorkbenchColor.muted)
         }
     }
 
@@ -66,7 +67,7 @@ struct SetupAssistantView: View {
             case .notConfigured:
                 guidance("No agent path is configured.", detail: "The vendored checkout is picked up automatically when the app runs from the repository. Otherwise clone mlx-workbench, run make install, and set the path in Settings to the checkout's vendor/mlx-agent.")
             case .notFound(let path, _):
-                guidance("The configured agent path does not exist.", detail: path)
+                guidance("The configured agent path does not exist.", detail: path, isLiteral: true)
             case .notUsable(_, _, let reason):
                 guidance("The agent at the configured path is not usable.", detail: reason)
             }
@@ -83,7 +84,7 @@ struct SetupAssistantView: View {
                 StatusBadge(status: .ready)
                 Text("Convert and serve runtimes are ready.").font(WorkbenchTypography.body)
             } else {
-                guidance("The runtime is not installed yet.", detail: appHost.runtimeReport.install)
+                guidance("The runtime is not installed yet.", detail: appHost.runtimeReport.install, isLiteral: true)
                 RuntimeInstallView(installer: appHost.runtimeInstaller) {
                     appHost.refreshRuntimeReport()
                 }
@@ -157,14 +158,32 @@ struct SetupAssistantView: View {
         .buttonStyle(.bordered)
     }
 
-    private func guidance(_ title: String, detail: String) -> some View {
+    /// `isLiteral` details are paths or commands and stay monospaced; prose reads in the secondary face.
+    private func guidance(_ title: String, detail: String, isLiteral: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             Text(title).font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.warning)
-            Text(detail).font(WorkbenchTypography.value)
+            Text(detail).font(isLiteral ? WorkbenchTypography.value : WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// One segment per step: finished and current steps fill with the accent, later ones stay in the well.
+private struct SetupStepTrack: View {
+    let step: SetupCoordinator.Step
+
+    var body: some View {
+        HStack(spacing: WorkbenchSpacing.xxs) {
+            ForEach(SetupCoordinator.Step.allCases) { segment in
+                Capsule()
+                    .fill(segment.rawValue <= step.rawValue ? WorkbenchColor.accent : WorkbenchColor.well)
+                    .frame(height: WorkbenchSize.stageTrack * 2)
+            }
+        }
+        .workbenchAnimation(value: step)
+        .accessibilityHidden(true)
     }
 }

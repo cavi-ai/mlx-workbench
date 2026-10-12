@@ -222,6 +222,95 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: [root.path]), [root.path])
     }
 
+    func testContainmentFollowsASymlinkedSpellingOfEitherPath() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("scan-roots-\(UUID().uuidString)")
+        let root = base.appendingPathComponent("models")
+        let inside = root.appendingPathComponent("lms")
+        let sibling = base.appendingPathComponent("other")
+        try fm.createDirectory(at: inside, withIntermediateDirectories: true)
+        try fm.createDirectory(at: sibling, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+        let alias = base.appendingPathComponent("alias")
+        let shelf = base.appendingPathComponent("shelf")
+        try fm.createSymbolicLink(at: alias, withDestinationURL: root)
+        try fm.createSymbolicLink(at: shelf, withDestinationURL: inside)
+        let within = { (path: String, root: String) in AppHost.isPath(path, within: root, fileIdentity: AppHost.fileIdentity) }
+
+        XCTAssertTrue(within(alias.path, root.path), "a symlink to the root")
+        XCTAssertTrue(within(alias.path + "/lms", root.path), "a folder spelled through a symlink to the root")
+        XCTAssertTrue(within(shelf.path, root.path), "a symlink to a folder inside the root")
+        XCTAssertTrue(within(inside.path, alias.path), "a root spelled through a symlink")
+        XCTAssertFalse(within(sibling.path, root.path))
+        XCTAssertFalse(within(root.path, shelf.path))
+
+        var config = Config.defaults()
+        config.mlxRoots = []
+        config.outputDir = alias.path + "/mlx"
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: [root.path]), [root.path])
+    }
+
+    /// The agent's walk prunes hidden and skipped folders and never descends a symlinked folder.
+    func testContainmentStopsWhereTheAgentsWalkStops() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("scan-roots-\(UUID().uuidString)")
+        let root = base.appendingPathComponent("models")
+        let hidden = root.appendingPathComponent(".cache/out")
+        let outside = base.appendingPathComponent("drive/mlx")
+        try fm.createDirectory(at: hidden, withIntermediateDirectories: true)
+        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        try fm.createDirectory(at: root.appendingPathComponent("lms"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+        let linkedOut = root.appendingPathComponent("linked")
+        let hiddenAlias = base.appendingPathComponent("out")
+        let linkedIn = root.appendingPathComponent("shortcut")
+        try fm.createSymbolicLink(at: linkedOut, withDestinationURL: outside)
+        try fm.createSymbolicLink(at: hiddenAlias, withDestinationURL: hidden)
+        try fm.createSymbolicLink(at: linkedIn, withDestinationURL: root.appendingPathComponent("lms"))
+        let within = { (path: String, root: String) in AppHost.isPath(path, within: root, fileIdentity: AppHost.fileIdentity) }
+
+        XCTAssertFalse(within(linkedOut.path, root.path), "a symlinked folder below the root that leaves it")
+        XCTAssertFalse(within(linkedOut.path + "/new", root.path))
+        XCTAssertFalse(within(hidden.path, root.path), "a hidden folder below the root")
+        XCTAssertFalse(within(hiddenAlias.path, root.path), "a symlink into a hidden folder below the root")
+        XCTAssertTrue(within(linkedIn.path, root.path), "a symlinked folder below the root that stays in it")
+        XCTAssertTrue(within(hidden.path, root.appendingPathComponent(".cache").path))
+
+        var config = Config.defaults()
+        config.mlxRoots = [root.path]
+        config.outputDir = linkedOut.path
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: []), [root.path, linkedOut.path])
+        config.outputDir = hiddenAlias.path
+        XCTAssertEqual(AppHost.scanMLXRoots(config, ggufRoots: []), [root.path, hiddenAlias.path])
+    }
+
+    func testContainmentFollowsACaseVariantSymlinkAndFallsBackToSpellingForMissingPaths() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("scan-roots-\(UUID().uuidString)")
+        let root = base.appendingPathComponent("models")
+        try fm.createDirectory(at: root.appendingPathComponent("lms"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+        try fm.createSymbolicLink(at: base.appendingPathComponent("alias"), withDestinationURL: root)
+        let within = { (path: String, root: String) in AppHost.isPath(path, within: root, fileIdentity: AppHost.fileIdentity) }
+
+        let missing = base.appendingPathComponent("gone").path
+        XCTAssertTrue(within(missing + "/a/b", missing))
+        XCTAssertTrue(within(missing + "/a/../b", missing + "/"))
+        XCTAssertFalse(within(missing + "s/a", missing))
+        XCTAssertFalse(within(missing, root.path))
+        XCTAssertTrue(within(base.appendingPathComponent("alias/new/mlx").path, root.path), "a missing folder below a symlink to the root")
+
+        let loop = base.appendingPathComponent("loop")
+        try fm.createSymbolicLink(at: loop, withDestinationURL: loop)
+        XCTAssertFalse(within(loop.path + "/x", root.path))
+        XCTAssertTrue(within(loop.path + "/x", base.path))
+
+        let variant = base.appendingPathComponent("ALIAS").path
+        try XCTSkipUnless(fm.fileExists(atPath: variant), "case-sensitive volume")
+        XCTAssertTrue(within(variant + "/lms", root.path))
+        XCTAssertTrue(within(root.path + "/lms", variant))
+    }
+
     func testPrepareRefreshesStatusOnlyWhileAConversionIsInFlight() {
         let inFlight = [ConversionWorkflowState.queued, .running, .verifying]
         for state in [ConversionWorkflowState.idle, .inspectingSource, .existingModelFound, .previewingConversion, .readyToConfirm,
