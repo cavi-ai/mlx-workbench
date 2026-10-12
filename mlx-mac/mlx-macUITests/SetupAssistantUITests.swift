@@ -107,6 +107,36 @@ final class WorkbenchReviewUITests: XCTestCase {
         elif args[:2] == ['lora', 'start'] and '--confirm' not in args:
             time.sleep(0.5)
             data = {'preview_hash': 'fixture-training-preview'}
+        elif args[:2] in (['adopt', 'start'], ['adopt', 'status']):
+            time.sleep(1.5)
+            if '--state' not in args:
+                print('No adoption state path was supplied.', file=sys.stderr)
+                sys.exit(2)
+            state_path = pathlib.Path(args[args.index('--state') + 1])
+            assert state_path.is_absolute() and state_path.parent.is_dir()
+            if args[1] == 'start':
+                if (root / 'fail-adopt-start').exists():
+                    print('Fixture adoption failed: inspect the saved handoff and retry.', file=sys.stderr)
+                    sys.exit(2)
+                assert not state_path.exists(), 'A previous adoption must not be overwritten'
+                role = args[args.index('--role') + 1]
+                assert role in ['vision', 'embedding', 'coding', 'reasoning', 'general', 'tool-use']
+                recommendation = [] if (root / 'adopt-no-recommendation').exists() else [
+                    {'role': role, 'repo': 'mlx-community/Qwen-Coding-Long-Repository-Name-For-Local-Adoption-4bit',
+                     'evidence_strength': 'verified'}]
+                state = {'workflow_id': 'workflow-' + state_path.stem, 'status': 'complete', 'phase': 'complete',
+                         'request': {'roles': [role]}, 'recommendations': recommendation,
+                         'shortlist': [{'repo': 'shortlisted-only/model'}]}
+                if (root / 'adopt-unknown').exists():
+                    state = {'workflow_id': 'workflow-' + state_path.stem, 'request': {'roles': [role]}}
+                state_path.write_text(json.dumps(state))
+            else:
+                assert state_path.is_file(), 'Status must read the actual adoption handoff'
+                if (root / 'fail-adopt-status').exists():
+                    print('Fixture adoption status failed: the handoff is temporarily unreadable. Refresh to try again.', file=sys.stderr)
+                    sys.exit(2)
+                state = json.loads(state_path.read_text())
+            data = {'state': state}
         else:
             data = {'servers': [], 'jobs': [], 'changes': []}
         print(json.dumps({'status': 'ok', 'data': data}))
@@ -537,6 +567,119 @@ final class WorkbenchReviewUITests: XCTestCase {
                 XCTAssertFalse(app.buttons["Measure this workflow…"].exists)
             }
             capture("Clients-\(appearance)-new-preview")
+            app.terminate()
+        }
+    }
+
+    func testAdoptionHandoffAndRecovery() throws {
+        let before = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
+        let repository = "mlx-community/Qwen-Coding-Long-Repository-Name-For-Local-Adoption-4bit"
+        for appearance in ["Light", "Dark"] {
+            for flag in ["fail-adopt-start", "fail-adopt-status", "adopt-no-recommendation", "adopt-unknown"] {
+                try? FileManager.default.removeItem(at: root.appendingPathComponent(flag))
+            }
+            launch(appearance: appearance, isolatedHome: true)
+            select("Adopt")
+            resizeWindow(width: 1024, height: 680)
+            XCTAssertEqual(app.windows.firstMatch.frame.width, 1024, accuracy: 2)
+            XCTAssertEqual(app.windows.firstMatch.frame.height, 680, accuracy: 2)
+            capture("Adopt-\(appearance)-idle-standard")
+            if before { app.terminate(); continue }
+
+            let picker = app.popUpButtons["adopt-role"]
+            XCTAssertTrue(picker.waitForExistence(timeout: 10))
+            picker.click()
+            app.menuItems["Coding"].click()
+            let fast = app.checkBoxes["Fast"]
+            fast.click()
+            fast.typeKey(" ", modifierFlags: [])
+            fast.typeKey(" ", modifierFlags: [])
+            XCTAssertEqual(fast.value as? String, "1")
+            app.checkBoxes["Offline"].click()
+            let start = app.buttons["adopt-start"]
+            let refresh = app.buttons["adopt-refresh"]
+            start.click()
+            XCTAssertTrue(app.descendants(matching: .any)["adopt-progress"].waitForExistence(timeout: 5))
+            XCTAssertFalse(start.isEnabled)
+            XCTAssertFalse(picker.isEnabled)
+            capture("Adopt-\(appearance)-starting")
+            select("Library")
+            select("Adopt")
+            XCTAssertTrue(text(containing: repository).waitForExistence(timeout: 15))
+            capture("Adopt-\(appearance)-recommendation-standard")
+            XCTAssertTrue(refresh.isEnabled)
+
+            let callsURL = root.appendingPathComponent("calls.jsonl")
+            func calls() throws -> [[String]] {
+                try String(contentsOf: callsURL).split(separator: "\n").map {
+                    try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String]
+                }.filter { $0.first == "adopt" }
+            }
+            let firstStart = try XCTUnwrap(calls().last { $0.prefix(2) == ["adopt", "start"] })
+            XCTAssertTrue(firstStart.contains("--fast"))
+            XCTAssertTrue(firstStart.contains("--offline"))
+            let stateIndex = try XCTUnwrap(firstStart.firstIndex(of: "--state")) + 1
+            let firstPath = firstStart[stateIndex]
+            XCTAssertTrue(firstPath.hasPrefix(root.path))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: firstPath))
+
+            picker.click()
+            app.menuItems["Reasoning"].click()
+            XCTAssertTrue(text(containing: repository).exists, "Draft edits retain the recorded recommendation")
+            let recordedRole = app.staticTexts["adopt-requested-role"]
+            XCTAssertEqual(recordedRole.value as? String ?? recordedRole.label, "Coding")
+            refresh.click()
+            XCTAssertTrue(app.descendants(matching: .any)["adopt-progress"].waitForExistence(timeout: 5))
+            XCTAssertFalse(refresh.isEnabled)
+            capture("Adopt-\(appearance)-refreshing")
+            XCTAssertTrue(refresh.waitForExistence(timeout: 10))
+            XCTAssertTrue(text(containing: repository).waitForExistence(timeout: 10))
+            let predicate = NSPredicate(format: "enabled == true")
+            expectation(for: predicate, evaluatedWith: refresh)
+            waitForExpectations(timeout: 10)
+            let statusCall = try XCTUnwrap(calls().last { $0.prefix(2) == ["adopt", "status"] })
+            XCTAssertEqual(statusCall[try XCTUnwrap(statusCall.firstIndex(of: "--state")) + 1], firstPath)
+
+            try Data().write(to: root.appendingPathComponent("fail-adopt-status"))
+            refresh.click()
+            XCTAssertTrue(app.staticTexts["adopt-last-known"].waitForExistence(timeout: 15))
+            XCTAssertTrue(text(containing: repository).exists)
+            capture("Adopt-\(appearance)-refresh-error")
+            resizeWindow(width: 740, height: 680)
+            XCTAssertEqual(app.windows.firstMatch.frame.width, 740, accuracy: 2)
+            XCTAssertEqual(app.windows.firstMatch.frame.height, 680, accuracy: 2)
+            XCTAssertTrue(start.isHittable)
+            XCTAssertTrue(picker.isHittable)
+            capture("Adopt-\(appearance)-recommendation-narrow")
+            app.staticTexts["Workflow details"].click()
+            app.scrollViews.firstMatch.swipeUp()
+            XCTAssertTrue(app.staticTexts["adopt-state-path"].waitForExistence(timeout: 5))
+            capture("Adopt-\(appearance)-details-scrolled")
+            app.staticTexts["Workflow details"].click()
+            try FileManager.default.removeItem(at: root.appendingPathComponent("fail-adopt-status"))
+            resizeWindow(width: 1024, height: 680)
+
+            try Data().write(to: root.appendingPathComponent("adopt-no-recommendation"))
+            start.click()
+            XCTAssertTrue(text(containing: "No recommendation reported").waitForExistence(timeout: 15))
+            XCTAssertFalse(text(containing: "shortlisted-only/model").exists)
+            let secondStart = try XCTUnwrap(calls().last { $0.prefix(2) == ["adopt", "start"] })
+            let secondPath = secondStart[try XCTUnwrap(secondStart.firstIndex(of: "--state")) + 1]
+            XCTAssertNotEqual(firstPath, secondPath)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: firstPath))
+            capture("Adopt-\(appearance)-no-recommendation")
+
+            try Data().write(to: root.appendingPathComponent("fail-adopt-start"))
+            start.click()
+            XCTAssertTrue(text(containing: "Fixture adoption failed").waitForExistence(timeout: 15))
+            XCTAssertTrue(start.isEnabled)
+            capture("Adopt-\(appearance)-start-error")
+            try FileManager.default.removeItem(at: root.appendingPathComponent("fail-adopt-start"))
+            try Data().write(to: root.appendingPathComponent("adopt-unknown"))
+            start.click()
+            XCTAssertTrue(text(containing: "No recommendation reported").waitForExistence(timeout: 15))
+            XCTAssertFalse(text(containing: repository).exists)
+            capture("Adopt-\(appearance)-missing-fields")
             app.terminate()
         }
     }

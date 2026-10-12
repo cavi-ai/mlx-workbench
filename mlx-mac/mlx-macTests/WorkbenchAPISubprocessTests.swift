@@ -5,6 +5,117 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testAdoptStartCreatesParentAndStatusReusesTheStateFile() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-workbench-adopt-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let state = folder.appendingPathComponent("adoption/\(UUID().uuidString).json")
+        let record = folder.appendingPathComponent("argv.jsonl")
+        let agent = try FixtureAgent(adoptionState: state, recordingTo: record)
+        defer { agent.remove() }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.root.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: state.deletingLastPathComponent().path))
+
+        let started = try await api.adoptStart(role: "coding", state: state.path, fast: true, offline: true)
+        XCTAssertEqual(started.state, state.path)
+        XCTAssertEqual(started.workflowID, "fixture-adoption-workflow")
+        XCTAssertNotEqual(started.state, started.workflowID)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: state.path))
+
+        let refreshed = try await api.adoptStatus(state: try XCTUnwrap(started.state))
+        XCTAssertEqual(refreshed, started)
+        let lines = try String(contentsOf: record, encoding: .utf8).split(separator: "\n")
+        let argv = try lines.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String]) }
+        XCTAssertEqual(argv, [
+            ["adopt", "start", "--role", "coding", "--state", state.path, "--fast", "--offline", "--json"],
+            ["adopt", "status", "--state", state.path, "--json"],
+        ])
+    }
+
+    func testAdoptDecoderSeparatesStatePathFromWorkflowAndPreservesRecommendationEvidence() {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).json").path
+        let result = WorkbenchAPI.adopt(from: ["state": [
+            "workflow_id": "workflow-123", "status": "complete", "phase": "complete",
+            "request": ["roles": ["coding"]],
+            "recommendations": [
+                ["repo": "org/recommended", "evidence_strength": "runtime_measured"],
+                ["repo": "org/other", "evidence_strength": "heuristic_only"],
+            ],
+            "shortlist": [["repo": "org/candidate"]],
+        ]], statePath: path)
+
+        XCTAssertEqual(result.state, path)
+        XCTAssertEqual(result.workflowID, "workflow-123")
+        XCTAssertEqual(result.role, "coding")
+        XCTAssertEqual(result.model, "org/recommended")
+        XCTAssertEqual(result.status, "complete")
+        XCTAssertEqual(result.phase, "complete")
+        XCTAssertEqual(result.evidenceStrength, "runtime_measured")
+        XCTAssertNil(result.manager)
+        XCTAssertNil(result.message)
+    }
+
+    func testCompletedAdoptionWithoutRecommendationDoesNotPromoteTheShortlistOrFlatModel() {
+        let result = WorkbenchAPI.adopt(from: [
+            "model": "org/outer-model",
+            "state": [
+                "workflow_id": "workflow-empty", "status": "complete", "phase": "complete",
+                "model": "org/nested-model", "recommendations": [],
+                "shortlist": [["repo": "org/candidate", "evidence_strength": "runtime_measured"]],
+            ],
+        ])
+
+        XCTAssertNil(result.state)
+        XCTAssertNil(result.model)
+        XCTAssertNil(result.evidenceStrength)
+        XCTAssertEqual(result.workflowID, "workflow-empty")
+        XCTAssertEqual(result.status, "complete")
+        XCTAssertEqual(result.phase, "complete")
+    }
+
+    func testAdoptDecoderPreservesUnknownValuesAndLeavesMissingFieldsAbsent() {
+        let unknown = WorkbenchAPI.adopt(from: ["state": [
+            "workflow_id": "future-workflow", "status": "future-status", "phase": "future-phase",
+            "recommendations": [["repo": "org/model", "evidence_strength": "future-evidence"]],
+            "future_field": "ignored",
+        ]])
+        XCTAssertEqual(unknown.status, "future-status")
+        XCTAssertEqual(unknown.phase, "future-phase")
+        XCTAssertEqual(unknown.evidenceStrength, "future-evidence")
+        XCTAssertNil(unknown.state)
+        XCTAssertNil(unknown.role)
+
+        let missing = WorkbenchAPI.adopt(from: ["state": [:], "model": "org/outer-model"])
+        XCTAssertEqual(missing, AdoptResult(state: nil, role: nil, model: nil, status: nil, message: nil, manager: nil))
+        let incompleteRecommendation = WorkbenchAPI.adopt(from: ["state": [
+            "recommendations": [[:], ["repo": "org/second", "evidence_strength": "runtime_measured"]],
+            "evidence_strength": "heuristic_only",
+        ]])
+        XCTAssertNil(incompleteRecommendation.model)
+        XCTAssertNil(incompleteRecommendation.evidenceStrength)
+    }
+
+    func testAdoptDecoderSupportsLegacyFlatResultsAndExplicitPathTakesPrecedence() throws {
+        let payload: [String: Any] = [
+            "state": "legacy-state.json", "role": "general", "model": "org/legacy",
+            "status": "complete", "message": "Reported message", "manager": "reported-manager",
+        ]
+        let legacy = WorkbenchAPI.adopt(from: payload)
+        XCTAssertEqual(legacy, AdoptResult(
+            state: "legacy-state.json", role: "general", model: "org/legacy", status: "complete",
+            message: "Reported message", manager: "reported-manager"
+        ))
+        XCTAssertEqual(WorkbenchAPI.adopt(from: payload, statePath: "explicit-state.json").state, "explicit-state.json")
+        let encodedLegacy = try JSONSerialization.data(withJSONObject: payload)
+        XCTAssertEqual(try JSONDecoder().decode(AdoptResult.self, from: encodedLegacy), legacy)
+        XCTAssertEqual(try JSONDecoder().decode(AdoptResult.self, from: JSONEncoder().encode(legacy)), legacy)
+    }
+
+    func testSupportedAdoptionRolesMatchTheAgentRoles() {
+        XCTAssertEqual(WorkbenchAPI.supportedAdoptionRoles, ["vision", "embedding", "coding", "reasoning", "general", "tool-use"])
+    }
+
     func testScanRunsFixtureAgentAndPreservesReportedBytes() async throws {
         let payload = try fixture(named: "convert-scan-valid")
         let agent = try FixtureAgent(scanPayload: payload)
@@ -450,6 +561,43 @@ private final class FixtureAgent {
     convenience init(scanPayload: [String: Any]) throws {
         self.init()
         try write(scriptAssertion: "\"convert\" in sys.argv and \"scan\" in sys.argv", payload: scanPayload)
+    }
+
+    convenience init(adoptionState statePath: URL, recordingTo recordPath: URL) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let script = """
+        import json
+        import os
+        import sys
+
+        args = sys.argv[1:]
+        assert args[0] == "adopt" and args[1] in ("start", "status")
+        state_path = args[args.index("--state") + 1]
+        assert state_path == \(String(reflecting: statePath.path))
+        assert os.path.isabs(state_path)
+        assert os.path.isdir(os.path.dirname(state_path))
+        if args[1] == "start":
+            assert not os.path.exists(state_path)
+            assert args[args.index("--role") + 1] == "coding"
+            assert "--fast" in args and "--offline" in args
+            state = {
+                "workflow_id": "fixture-adoption-workflow", "status": "complete", "phase": "complete",
+                "request": {"roles": ["coding"]},
+                "recommendations": [{"repo": "org/coder", "evidence_strength": "heuristic_only"}],
+            }
+            with open(state_path, "w") as handle:
+                json.dump(state, handle)
+        else:
+            assert "--role" not in args and "--fast" not in args and "--offline" not in args
+            with open(state_path) as handle:
+                state = json.load(handle)
+        with open(\(String(reflecting: recordPath.path)), "a") as handle:
+            handle.write(json.dumps(args) + "\\n")
+        print(json.dumps({"status": "ok", "data": {"state": state}}))
+        """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
     }
 
     /// Appends each invocation's argv (JSON) to `recordPath` and returns `payload`.

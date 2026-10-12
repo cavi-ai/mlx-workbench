@@ -372,42 +372,43 @@ actor WorkbenchAPI {
 
     // MARK: - Adopt
 
-    func adoptStart(role: String?, state: String?, fast: Bool, offline: Bool) throws -> AdoptResult {
+    static let supportedAdoptionRoles = ["vision", "embedding", "coding", "reasoning", "general", "tool-use"]
+
+    func adoptStart(role: String?, state: String, fast: Bool, offline: Bool) throws -> AdoptResult {
+        let parent = URL(fileURLWithPath: state).deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         var argv = ["adopt", "start"]
         if let role { argv.append(contentsOf: ["--role", role]) }
-        if let state { argv.append(contentsOf: ["--state", state]) }
+        argv.append(contentsOf: ["--state", state])
         if fast { argv.append("--fast") }
         if offline { argv.append("--offline") }
         let data = try raw(argv, isScout: true)
-        return Self.adopt(from: data)
+        return Self.adopt(from: data, statePath: state)
     }
 
     func adoptStatus(state: String) throws -> AdoptResult {
         let data = try raw(["adopt", "status", "--state", state])
-        return Self.adopt(from: data)
+        return Self.adopt(from: data, statePath: state)
     }
 
-    static func adopt(from data: [String: Any]) -> AdoptResult {
-        let s = (data["state"] as? [String: Any]) ?? data
+    static func adopt(from data: [String: Any], statePath: String? = nil) -> AdoptResult {
+        let nestedState = data["state"] as? [String: Any]
+        let s = nestedState ?? data
         let request = (s["request"] as? [String: Any]) ?? [:]
         let role = (request["roles"] as? [String])?.first ?? s.string("role")
         let recommendations = (s["recommendations"] as? [[String: Any]]) ?? []
         let model = recommendations.first?.string("repo")
-            ?? s.string("model")
-            ?? (s["shortlist"] as? [[String: Any]])?.first?.string("repo")
-        let message: String?
-        if let status = s.string("status"), let phase = s.string("phase") {
-            message = "status: \(status), phase: \(phase)"
-        } else {
-            message = data.string("message")
-        }
+            ?? (nestedState == nil ? s.string("model") : nil)
         return AdoptResult(
-            state: s.string("workflow_id") ?? s.string("state"),
+            state: statePath ?? (nestedState == nil ? s.string("state") : nil),
             role: role,
             model: model,
             status: s.string("status"),
-            message: message,
-            manager: s.string("manager")
+            message: s.string("message") ?? data.string("message"),
+            manager: s.string("manager"),
+            workflowID: s.string("workflow_id"),
+            phase: s.string("phase"),
+            evidenceStrength: recommendations.first?.string("evidence_strength")
         )
     }
 
