@@ -1353,12 +1353,37 @@ struct ComparisonPromptRemoveButton: View {
     }
 }
 
-private struct ComparisonPromptActions: View {
+/// Restores raw values without validation, saving or touching input files.
+struct ComparisonPromptRevertAction<Prompt: Identifiable & Equatable>: View {
+    @Binding var prompt: Prompt
+    let opened: Prompt
+    let number: Int
+
+    var body: some View {
+        Button {
+            guard prompt.id == opened.id else { return }
+            prompt = opened
+        } label: { Label("Revert prompt", systemImage: "arrow.uturn.backward") }
+        .disabled(prompt.id != opened.id || prompt == opened)
+        .comparisonPromptActionHint("Restore prompt \(number) as it was when this card opened; keep other prompts and their order.")
+    }
+}
+
+private struct ComparisonPromptActions<Prompt: Identifiable & Equatable>: View {
+    @Binding var prompt: Prompt
+    @State private var opened: Prompt
     let number: Int
     let canMoveUp: Bool
     let canMoveDown: Bool
     let onDuplicate: () -> Void
     let onMove: (ComparisonPromptMoveDirection) -> Void
+
+    init(prompt: Binding<Prompt>, number: Int, canMoveUp: Bool, canMoveDown: Bool,
+         onDuplicate: @escaping () -> Void, onMove: @escaping (ComparisonPromptMoveDirection) -> Void) {
+        _prompt = prompt; _opened = State(initialValue: prompt.wrappedValue)
+        self.number = number; self.canMoveUp = canMoveUp; self.canMoveDown = canMoveDown
+        self.onDuplicate = onDuplicate; self.onMove = onMove
+    }
 
     var body: some View {
         Menu {
@@ -1368,10 +1393,12 @@ private struct ComparisonPromptActions: View {
                 .disabled(!canMoveUp)
             Button { onMove(.down) } label: { Label("Move down", systemImage: "arrow.down") }
                 .disabled(!canMoveDown)
+            Divider()
+            ComparisonPromptRevertAction(prompt: $prompt, opened: opened, number: number)
         } label: { Image(systemName: "ellipsis") }
             .menuStyle(.borderlessButton).fixedSize()
             .accessibilityLabel("Actions for prompt \(number)")
-            .help("Duplicate this prompt or change its order")
+            .help("Duplicate, reorder or revert this prompt")
     }
 }
 
@@ -1402,7 +1429,7 @@ private struct ComparisonPromptCard: View {
                 Text("PROMPT \(number)").font(WorkbenchTypography.metadata.weight(.semibold))
                     .foregroundStyle(WorkbenchColor.accent)
                 Spacer()
-                ComparisonPromptActions(number: number, canMoveUp: canMoveUp, canMoveDown: canMoveDown,
+                ComparisonPromptActions(prompt: $prompt, number: number, canMoveUp: canMoveUp, canMoveDown: canMoveDown,
                     onDuplicate: onDuplicate, onMove: onMove)
                 ComparisonPromptRemoveButton(number: number, canRemove: canRemove, onRemove: onRemove)
             }
@@ -1690,7 +1717,7 @@ struct MusicPromptFields: View {
                             Text("PROMPT \(number)").font(WorkbenchTypography.metadata.weight(.semibold))
                                 .foregroundStyle(WorkbenchColor.accent)
                             Spacer()
-                            ComparisonPromptActions(number: number,
+                            ComparisonPromptActions(prompt: $prompt, number: number,
                                 canMoveUp: prompts.first?.id != promptID, canMoveDown: prompts.last?.id != promptID,
                                 onDuplicate: { prompts.duplicatePrompt(id: promptID) },
                                 onMove: { prompts.movePrompt(id: promptID, direction: $0) })

@@ -8,6 +8,30 @@ import XCTest
 
 @testable import mlx_workbench
 
+@MainActor
+private final class PromptRevertFixture<Prompt: Identifiable & Equatable>: ObservableObject {
+    @Published var prompts: [Prompt]
+    var prompt: Prompt {
+        get { prompts[prompts.count - 1] }
+        set { prompts[prompts.count - 1] = newValue }
+    }
+    init(_ prompt: Prompt) { prompts = [prompt] }
+    init(prompts: [Prompt]) { self.prompts = prompts }
+}
+
+private struct PromptRevertFixtureView<Prompt: Identifiable & Equatable>: View {
+    @ObservedObject var fixture: PromptRevertFixture<Prompt>
+    let opened: Prompt
+    var body: some View {
+        ComparisonPromptRevertAction(prompt: Binding(get: { fixture.prompt }, set: { fixture.prompt = $0 }),
+            opened: opened, number: 1)
+            .buttonStyle(.borderless)
+            .padding(WorkbenchSpacing.pageInset)
+            .frame(width: 260, height: 70)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+    }
+}
+
 private struct IdleProber: EndpointProbing {
     func listModels(baseURL: URL) async -> [String] { [] }
     func isReady(baseURL: URL) async -> Bool { true }
@@ -2854,6 +2878,83 @@ final class ComparisonMediaTests: XCTestCase {
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    @MainActor
+    func testPromptRevertActionRestoresRawValuesInEveryModeAndKeepsOtherPrompts() async throws {
+        func check<Prompt: Identifiable & Equatable>(_ opened: Prompt, edited: Prompt, other: Prompt, title: String) async throws {
+            let fixture = PromptRevertFixture(prompts: [other, edited])
+            let host = NSHostingView(rootView: PromptRevertFixtureView(fixture: fixture, opened: opened))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 70),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(100))
+            let button = try XCTUnwrap(Self.firstDescendant(of: host) { $0 is NSButton } as? NSButton)
+            XCTAssertTrue(button.isEnabled)
+            button.performClick(nil)
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(fixture.prompt, opened, "Revert must restore the entire raw prompt in \(title)")
+            XCTAssertEqual(fixture.prompts, [other, opened], "Other prompt edits and order must remain intact")
+            XCTAssertFalse(button.isEnabled, "Revert must be disabled after restoring the prompt")
+            fixture.prompt = edited
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertTrue(button.isEnabled, "Further edits must enable Revert again")
+        }
+        for mode in ComparisonMode.allCases where mode != .musicGeneration {
+            var draft = try ComparisonPromptSetDraft(copying: mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode))
+            let opened = draft.prompts[0]
+            draft.duplicatePrompt(id: opened.id)
+            var edited = opened
+            edited.text = "Edited question"; edited.inputPath = "/missing-replacement"
+            edited.keywords = "changed"; edited.maxTokens = "invalid"
+            edited.size = "0"; edited.width = "bad"; edited.height = "-1"; edited.frames = "bad"
+            edited.fps = "bad"; edited.steps = "bad"; edited.seed = "bad"
+            var other = draft.prompts[1]; other.text = "Keep this edit"
+            try await check(opened, edited: edited, other: other, title: mode.rawValue)
+        }
+        var music = MusicPromptSetDraft()
+        let opened = music.prompts[0]
+        music.prompts.duplicatePrompt(id: opened.id)
+        var edited = opened
+        edited.caption = "Edited music"; edited.lyrics = "Edited lyrics"
+        edited.duration = "bad"; edited.steps = "bad"; edited.seed = "bad"
+        var other = music.prompts[1]; other.caption = "Keep this edit"
+        try await check(opened, edited: edited, other: other, title: "music")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
+    }
+
+    @MainActor
+    func testPromptRevertRefusesAnotherIdentityAndRestoresMissingInputWithoutFallback() async throws {
+        let file = root.appendingPathComponent("saved-input.png")
+        try Data("original input".utf8).write(to: file)
+        let entry = PromptEntry(id: "saved", text: "Question", inputKind: .image, inputPath: file.path)
+        let opened = ComparisonPromptSetDraft.Prompt(entry, mode: .vision, savedInput: true)
+        let fixture = PromptRevertFixture(opened)
+        let host = NSHostingView(rootView: PromptRevertFixtureView(fixture: fixture, opened: opened))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 70),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        let button = try XCTUnwrap(Self.firstDescendant(of: host) { $0 is NSButton } as? NSButton)
+        XCTAssertFalse(button.isEnabled)
+        let otherEntry = PromptEntry(id: "other", text: entry.text, inputKind: entry.inputKind, inputPath: entry.inputPath)
+        fixture.prompt = ComparisonPromptSetDraft.Prompt(otherEntry, mode: .vision)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(button.isEnabled, "A retained control cannot restore another prompt identity")
+        fixture.prompt = opened; fixture.prompt.inputPath = "/replacement"
+        try FileManager.default.removeItem(at: file)
+        try await Task.sleep(for: .milliseconds(100))
+        button.performClick(nil)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(fixture.prompt, opened)
+        XCTAssertTrue(fixture.prompt.usesSavedInput)
+        XCTAssertTrue(fixture.prompt.inputFileUnavailable)
+        XCTAssertNil(fixture.prompt.inputPreviewURL)
+        XCTAssertThrowsError(try fixture.prompt.entry(for: .vision))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
     }
 
     func testSavedPromptDraftDetectsRawEditsAndRevertsTheOpenedSnapshot() throws {
