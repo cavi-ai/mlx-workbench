@@ -13,43 +13,57 @@ and is versioned independently; submodule bumps are recorded here.
 ## [Unreleased]
 ### Added
 
-- Native app installed from the DMG updates itself from **Settings →
-  Updates**: Releases installs the latest published release, Nightly (main)
-  installs the nightly build. A download must match its GitHub sha256 digest
-  and be a notarized Developer ID build of MLX Workbench (team `Y76GMV87GM`)
-  before it replaces the app; the previous app goes to the Trash.
-- Distribution builds record their commit and channel in Info.plist
-  (`MLXWorkbenchCommit`, `MLXWorkbenchChannel`); `make dmg DMG_CHANNEL=nightly`
-  names the image `mlx-workbench-nightly-<commit>.dmg`.
-- CI workflow `signed-dmg.yml` attaches a signed, notarized DMG to each
-  published release and, when started by hand, publishes a rolling `nightly`
-  prerelease from `main` if the app's sources changed since the last one;
-  signing uses an App Store Connect API key.
+- App updates: an installed app updates itself from Settings → Updates (Releases or Nightly), installing only a notarized Developer ID build whose sha256 matches GitHub's digest and moving the previous app to the Trash.
+- Builds: distribution builds record their commit and channel in Info.plist, and `make dmg DMG_CHANNEL=nightly` names the image `mlx-workbench-nightly-<commit>.dmg`.
+- CI: `signed-dmg.yml` attaches a signed, notarized DMG to each published release and, when started by hand, publishes a `nightly` prerelease from `main` when the app changed.
+- Compare: music comparisons with caption, lyrics, duration, steps and seed per prompt.
+- Compare: completed runs open A/B inspection in every mode: synced audio and video playback, linked image zoom and pan, and highlighted text differences.
+- Compare: human quality ratings sit beside each mode's results (1–5 listening ratings for music), separate from speed.
+- Compare: prompt sets in every mode can be created, edited, renamed, removed, copied, searched, reordered and reused from a recorded run, with per-prompt settings, saved input copies, input previews, per-card validation and protection for unsaved edits.
+- Lab: controlled experiments with blind video review, adaptive studies, workspace import and a conversion queue, each listed with its status.
+- Library: Delete… moves a model to the Trash after a review that rechecks its identity, folders and serving status.
+- Runtimes: preconverted MLX models install their declared backend, and serving, verification, comparisons and endpoints select the model's loader automatically.
+- Training: text LoRA training is receipt-backed, with retained base-versus-adapter evaluations.
+
+### Changed
+
+- Activity: conversions sit on a timeline grouped by day, each with a stage track, its state once and one action.
+- Add from Hugging Face: the window shows the verdict once, key figures, fit on this Mac for the estimated output or selected GGUF file, and an In Library mark before anything downloads.
+- Adopt: the recommendation shows its fit on this Mac and a next step, Run… or Add from Hugging Face….
+- Clients: a wiring board shows each client's config and the endpoint it points at, and wiring reports zero, partial or full outcomes.
+- Compare: results lead with lettered lanes A–D carrying the mode's metric and a bar relative to the fastest, above a prompt grid that shares their columns.
+- Compare: run history is a searchable popover grouped by mode.
+- Conversion: GGUF projector files are refused before conversion.
+- Discover: candidates show a fit bar for this Mac and an In Library mark, and Add from Hugging Face… opens the intake window.
+- Health: leads with runtime readiness for Prepare and Run and counts verified models that match this environment.
+- Library: each model shows whether it fits now (Fits, Tight, Won't fit), and families have headings with counts.
+- LM Studio: the screen lists the MLX models and GGUF files in LM Studio's downloads folder with fit, Run… or Prepare…, and vision projectors as tags.
+- Menu bar: endpoint slots are native menu items that start or stop each slot.
+- Overview: leads with a model-budget instrument, one next-step action and the conversion flight path.
+- Prepare: quantization tiles show each width's output size and fit above a Source-to-Ready pipeline track.
+- Reclaim: leads with a ledger of space to review, in quarantine and in the Trash, with unknown sizes labelled.
+- Run: lists every running server with Stop or Unload, a memory runway of what is loaded and whether the selected model fits, and one row per endpoint.
+- Settings: grouped sections with a ledger of model folders and their sizes, and blocked saves explain why with Fix field.
+- Setup Assistant: a step track and "Step N of 4" caption lead each step.
+- Toolbar: the conversion badge shows only in-flight conversions and failures not yet seen.
+- Training: setup shows the captured request before confirmation, and jobs and evaluations show status, retry and retained results.
+
+### Removed
+
+- Web UI: the HTTP server and browser assets are gone; `make start` builds and opens the native app.
 
 ### Fixed
 
-- `make install` installs the agent's lab requirements and `make pip-audit` audits them, so the native app's Training screen loads jobs and evaluations.
-- Native app: with no GGUF folders configured, the Library scans the downloads
-  folder set in LM Studio's settings and Settings suggests it. A folder that the
-  scan of another detected or scanned folder reaches, under any spelling (letter
-  case or a symlink), is listed and scanned once; a folder behind a hidden or
-  symlinked folder is scanned on its own. The LM Studio screen reports the same.
-- Clients: Roll back last wiring moves a config file the wiring created to the
-  Trash, unless it changed after the write. Wiring writes `$schema` into
-  opencode configs that lack one.
-- Compare results grid: headers, prompts and outputs share one left edge;
-  images fill their column and keep their size while loading; a model name
-  stays on one line (full path on hover); text outputs take their own height
-  up to a scrolling 140 points; the mode's metric leads each cell and the
-  other metrics wrap only between metrics; cards of one prompt share a height.
-- Run keeps a verified conversion verified, keeps its status message and posts
-  no completion notification; running another model leaves the current
-  conversion record unchanged.
-- Re-running a conversion to the same destination updates only the new
-  attempt: earlier attempts keep their outcome and do not show the new run's
-  log, and verification starts once.
-- Serving status in Clients, Run, Activity and the toolbar no longer waits
-  behind a long agent call such as the daily watch check.
+- Adopt: each adoption keeps its own state file, and a failed refresh keeps the last known result.
+- Clients: rollback moves a config the wiring created to the Trash only while it is unchanged, opencode configs get `$schema`, and confirmation uses the reviewed model, config, runtime and hash.
+- Compare: a failed OpenCode prompt import is reported and leaves existing sets unchanged.
+- Conversion: re-running a conversion to the same destination updates only the new attempt.
+- Discover: the role picker offers only the roles the agent accepts.
+- Library: with no folders configured, the scan includes LM Studio's downloads folder and lists a folder reachable under several spellings once.
+- `make install`: installs the agent's lab requirements, and `make pip-audit` audits them.
+- Recovery: Library, Health, Discover and LM Studio recover from failed loads, serving ports are validated, and editing Training inputs invalidates the preview.
+- Run: preparing Run leaves a verified conversion and its record unchanged and posts no notification.
+- Serving status: Clients, Run, Activity and the toolbar no longer wait behind a long agent call.
 
 ## [0.4.0] - 2026-10-08
 ### Added
