@@ -1,27 +1,25 @@
 # Quickstart
 
-Start the background server and open its loopback URL:
+Open **MLX Workbench** from Applications, or build and open the source
+checkout with `make start`.
 
-```bash
-make start
-make status
-make open
-```
+1. In **Settings**, confirm the engine checkout, model roots, output path,
+   and quarantine path. Installed DMG builds need an explicit engine checkout;
+   source builds can discover `vendor/mlx-agent`.
+2. Inspect local GGUF and MLX weights in **Library**. **Discover** searches
+   Hugging Face Hub. **Add from Hugging Face** previews downloads separately
+   from conversion.
+3. In **Prepare**, review the conversion plan, destination, and source-cleanup
+   choice before confirming. **Activity** shows the job and log.
+4. In **Run**, preview and start a compatible model's loopback endpoint.
+   **Clients** previews configuration changes for local tools.
+5. In **Compare**, choose compatible models and a prompt set, run a measured
+   comparison, and review recorded outputs. Speed alone is not a quality
+   verdict or permission to remove another model.
 
-The default URL is `http://127.0.0.1:8765/`. The process ID and log are stored
-under `.run/`. To use another loopback port, run `make start PORT=9876`.
+Conversions with a supported canary must pass verification before being
+marked verified. Other tasks retain their own behavior; speculative
+drafters are never served.
 
-Open **Settings** first. Confirm the model scan roots, output directory,
-quarantine directory, and MLX Agent checkout. Leave the agent path empty to
-use the pinned `vendor/mlx-agent` submodule. Then use **Models** for local GGUF
-inventory or **Scout** for Hub-backed discovery.
-
-Check and stop the background service with:
-
-```bash
-make status
-make stop
-```
-
-For foreground diagnostics, use `make run`. Never expose the process through
-a non-loopback bind or a reverse proxy.
+Quit through the application menu. Running model endpoints have their own
+Stop controls; inspect Run and Activity before leaving work active.

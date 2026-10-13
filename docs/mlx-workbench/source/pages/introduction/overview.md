@@ -1,23 +1,23 @@
 # MLX Workbench overview
 
-MLX Workbench {{PRODUCT_VERSION}} is a local browser interface for managing the
-MLX model lifecycle on an Apple Silicon Mac. It inventories local weights,
-previews conversions and serving plans, queues reviewed work, and shows the
-receipts and logs returned by MLX Agent.
+MLX Workbench {{PRODUCT_VERSION}} is a native SwiftUI application for the
+MLX model lifecycle on Apple Silicon. It inventories local weights, previews
+conversions and serving plans, follows jobs, and compares recorded outputs.
 
-The workbench does not reimplement MLX Agent. Every agent operation crosses a
-single subprocess boundary: the server invokes the pinned
-`vendor/mlx-agent/scripts/mlx-agent` command with argv tokens and `--json`, then
-renders its result envelope. There are no Python imports from MLX Agent, and
-the two projects remain independently versioned.
+The native application invokes the selected MLX Agent `scripts/mlx-agent`
+with argv tokens and `--json`. The engine owns execution, the shared
+conversion queue, experiments, and training receipts. The Python package
+retains configuration and compatibility utilities; the application has no
+web server.
 
-The UI server accepts loopback connections only. Commands such as Scout
-discovery, Doctor, and other Hub-backed operations may contact the Hugging
-Face Hub; loopback binding is not a promise of network isolation.
+Library, Prepare, Run, Compare, Activity, Reclaim, Clients, Discover, Health,
+Training, and Settings provide the native workflows. Controlled studies
+retain frozen recipes, blind reviews, and durable artifacts separately from
+measured comparisons. Speed does not establish output quality.
 
-These pages cover the browser interface. The native macOS app in `mlx-mac/`
-crosses the same agent boundary and is documented in the repository
-`README.md` and `mlx-mac/README.md`.
+Serving endpoints bind to loopback, such as `127.0.0.1`. Hugging Face Hub
+discovery and downloads can contact the network; loopback binding is
+not a promise of network isolation.
 
-This documentation was generated for release {{RELEASE_TAG}} from commit
+These pages describe release {{RELEASE_TAG}} from commit
 `{{RELEASE_COMMIT}}`.

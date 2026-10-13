@@ -4,29 +4,43 @@
 
 - macOS on Apple Silicon
 - Git with submodule support
-- Python 3.12; `uv` is recommended, and Homebrew Python 3.12 is supported
-- Enough local storage for source weights, converted models, and quarantine
+- Python 3.12; `uv` is recommended
+- Xcode for source builds
+- Storage for source weights, outputs, experiments, and quarantine
 
-Clone the pinned MLX Agent submodule and install the project environment:
+## Install the release application
+
+Download the release DMG and drag **MLX Workbench** into **Applications**.
+The application still needs a local engine checkout and Python runtime:
 
 ```bash
 git clone --recurse-submodules https://github.com/cavi-ai/mlx-workbench.git
 cd mlx-workbench
-make install
-```
-
-`make install` verifies the platform, initializes `vendor/mlx-agent`, creates
-`.venv`, and installs the conversion and serving packages from the pinned
-`requirements.txt` plus the agent's lab packages from
-`vendor/mlx-agent/requirements-lab.txt`, which the native app's Training
-screen needs. The UI server itself uses only the Python standard
-library. Re-run the target after changing the pinned submodule or local
-environment. `make pip-audit` checks the installed packages against the OSV
-vulnerability database.
-
-If the submodule was omitted during clone, recover it with:
-
-```bash
+git checkout {{RELEASE_TAG}}
 git submodule update --init --recursive
 make install
 ```
+
+Set **Settings → mlx-agent checkout** to this checkout's
+`vendor/mlx-agent`. The distribution app uses the enclosing Workbench
+checkout's `.venv`; it contains no build-machine source path.
+**Install Runtime…** uses that checkout.
+
+`make install` installs `requirements.txt` and the engine's
+`requirements-lab.txt` into a Python 3.12 environment. Optional controlled
+study inference uses `requirements-lab-inference.txt` through
+**Controlled studies → Install runtime…**. Optional model backends have
+separate isolated installation flows. `make pip-audit` audits pinned runtime
+dependencies.
+
+## Build from source
+
+After installing the runtime in the tagged checkout:
+
+```bash
+make build-swift
+make start
+```
+
+`make start`, `make run`, and `make open` build and open the native
+application. There is no browser URL or background UI service.

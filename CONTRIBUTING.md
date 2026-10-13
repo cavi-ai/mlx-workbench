@@ -14,13 +14,13 @@ mlx-agent is vendored at `vendor/mlx-agent`. Prefer bumping the submodule to a t
 
 ## Layout
 
-- `mlx_workbench/` — stdlib server, bridge, UI
+- `mlx_workbench/` — configuration, subprocess bridge, compatibility utilities
 - `vendor/mlx-agent/` — git submodule (CLI source of truth)
 - `.venv/` — local Python 3.12 + convert/serve packages (gitignored)
 - `mlx-mac/` — native SwiftUI app; `mlx-mac/assets/app-icon.svg` is the icon
   master (regenerate `AppIcon.appiconset` PNGs from it with ImageMagick)
 - `tests/` — unittest, fake subprocess runner (no live Hub)
-- `Makefile` — `install` / `start` / `stop` / `test` / `dmg` / …
+- `Makefile` — `install` / `start` / `test` / `dmg` / …
 
 ## App icon and DMG
 
@@ -52,9 +52,16 @@ since the published nightly. It signs and notarizes with an App Store Connect AP
 stored as the repository secrets `ASC_KEY_ID`, `ASC_ISSUER_ID` and
 `ASC_KEY_P8` (the `.p8` contents).
 
+A signed DMG built from the release commit can also be attached to a draft
+release before publication. The workflow checks its GitHub sha256 digest,
+Developer ID signature, notarization ticket, version, channel, and commit
+before reusing it. A mismatched candidate fails rather than being replaced.
+
 ## Boundaries
 
-Do not import `mlx_agent` into this package. All agent work goes through `scripts/mlx-agent … --json`.
+Native runtime operations go through `scripts/mlx-agent … --json`.
+Python compatibility utilities delegate to the vendored engine's modules;
+they do not provide an HTTP application.
 
 ## Versioning and releases
 
@@ -69,9 +76,15 @@ Cutting a release:
    PRs land (Added / Changed / Fixed / Security).
 2. `make version-bump V=x.y.z` — bumps the version everywhere and promotes
    the Unreleased section to the dated release section.
-3. `make test && make docs-test && make test-swift` — all gates green.
-4. Commit the bump, `git tag vx.y.z`, push the commit and tag.
-5. Publish the GitHub release for the tag. `publish-docs.yml` verifies the
+3. Run `make test`, `make docs-test`, `make pip-audit`, and `make test-swift`.
+   Validate changed native workflows with their applicable acceptance
+   harnesses; unit tests do not establish real-model execution.
+4. Commit the bump.
+5. Build and validate the tagged Developer ID signed, notarized candidate
+   before publishing. The CI signing account needs Developer ID cloud-signing
+   permission; an App Store Connect API key alone does not grant it.
+6. Tag the validated commit, push the commit and tag, and publish the GitHub
+   release. `publish-docs.yml` verifies the
    tag matches `__version__`, re-runs the test gates, and attaches the
    immutable docs archive to the release.
 

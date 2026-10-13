@@ -11,6 +11,8 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-10-12
 ### Added
 
 - App updates: an installed app updates itself from Settings → Updates (Releases or Nightly), installing only a notarized Developer ID build whose sha256 matches GitHub's digest and moving the previous app to the Trash.
@@ -26,6 +28,14 @@ and is versioned independently; submodule bumps are recorded here.
 - Training: text LoRA training is receipt-backed, with retained base-versus-adapter evaluations.
 
 ### Changed
+
+- Vendored mlx-agent advances from `b95e972` to `fe315aa`, adding local music
+  generation, architecture-selected serving backends, Prism support, and
+  shared experiment workflows.
+- v0.4.0 DMG installations require a manual DMG upgrade; this release adds
+  the installed application's release updater for subsequent upgrades.
+- Earlier browser conversion queues can be explicitly imported after the
+  old server is stopped; their source and an exact backup are preserved.
 
 - Activity: conversions sit on a timeline grouped by day, each with a stage track, its state once and one action.
 - Add from Hugging Face: the window shows the verdict once, key figures, fit on this Mac for the estimated output or selected GGUF file, and an In Library mark before anything downloads.
@@ -53,6 +63,11 @@ and is versioned independently; submodule bumps are recorded here.
 - Web UI: the HTTP server and browser assets are gone; `make start` builds and opens the native app.
 
 ### Fixed
+
+- Release DMGs attached before publication are verified and reused instead
+  of rebuilt. Downloads must match the published checksum; the application
+  must match the release version, commit, channel, Developer ID team, and
+  notarization ticket. Conflicting release assets are not overwritten.
 
 - Adopt: each adoption keeps its own state file, and a failed refresh keeps the last known result.
 - Clients: rollback moves a config the wiring created to the Trash only while it is unchanged, opencode configs get `$schema`, and confirmation uses the reviewed model, config, runtime and hash.
@@ -392,7 +407,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.5.0
 [0.4.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.4.0
 [0.3.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.2.0

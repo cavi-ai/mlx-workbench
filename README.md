@@ -29,7 +29,10 @@ The default agent path is `vendor/mlx-agent` (pinned release). Override with Set
 
 `mlx-mac/` is a native SwiftUI app over the same agent boundary — same preview/confirm discipline, same receipts — with these lifecycle workflows:
 
-- **Conversion Quality Gate**: every conversion output is served on an ephemeral loopback port and probed with a canary suite before it is marked verified.
+- **Conversion Quality Gate**: supported chat, speech-to-text, classification,
+  and image-generation conversions run task-specific canaries before they
+  are marked verified. Chat uses an ephemeral loopback server; other tasks
+  use their engine commands. Tasks without a canary retain their own behavior.
 - **Measured Comparisons**: replay prompt sets (built-in or imported from your opencode history) across variants; measured tok/s and TTFT feed the recommendation engine.
 - **Import OpenCode prompts**: imported prompts become selectable only after the set is saved. A failed save preserves existing sets and reports the import error; retry after resolving the storage problem.
 - **Compare modes**: besides chat, compare vision, video understanding, speech-to-text, text-to-speech, music generation, image generation and video generation models side by side. Each prompt's output is saved (image, audio, video, or text) so you can see and hear the differences next to the speed metric for that mode; the 10 newest runs keep their files. Music prompts carry a caption, lyrics or an instrumental marker, duration, steps and seed; speed does not establish listening quality. Run history is searchable and grouped by mode.
@@ -109,6 +112,16 @@ make test-swift
 ```
 
 Quit through the application's menu. The former HTTP launcher and browser assets have been removed.
+
+### Upgrade from v0.4.0
+
+Quit the old DMG application and install the new release DMG manually;
+v0.4.0 does not contain the release installer. Update the runtime checkout
+to the matching release tag, update its submodules, and run `make install`.
+Confirm the engine checkout in Settings. Existing native settings and
+comparison history retain their state locations; model files do not move.
+Stop an earlier browser server before explicitly importing its conversion
+queue in Activity. Browser serve presets are not native endpoint profiles.
 
 ## Controlled experiments and training
 
