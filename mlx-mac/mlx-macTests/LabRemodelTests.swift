@@ -43,10 +43,34 @@ final class LabPresentationTests: XCTestCase {
         XCTAssertEqual(LabPresentation.aggregateStatus([]), .unknown)
     }
 
-    func testUnknownStatesKeepTheirOwnWording() {
-        XCTAssertEqual(LabPresentation.aggregateStatus(["awaiting_gpu"]).label, "Awaiting Gpu")
+    func testUnknownStatesAreShownVerbatim() throws {
+        XCTAssertEqual(LabPresentation.aggregateStatus(["awaiting_gpu"]).label, "awaiting_gpu")
+        XCTAssertEqual(LabPresentation.aggregateStatus(["awaiting_gpu", "completed"]).label, "awaiting_gpu · Completed")
         XCTAssertEqual(LabPresentation.aggregateStatus(["queued", "completed"]).label, "Queued · Completed")
         XCTAssertEqual(LabPresentation.aggregateStatus(["queued", "queued"]), .queued)
+        XCTAssertEqual(LabJobRow(job: try LF.job("job_a", state: "warming_up")).status.label, "warming_up")
+    }
+
+    func testCompletedReadsTheSameOnEveryRow() throws {
+        let aggregate = LabPresentation.aggregateStatus(["completed"])
+        XCTAssertEqual(aggregate, LabJobRow(job: try LF.job("job_a", state: "completed")).status)
+        let study = try XCTUnwrap(LabStudyRow(value: try LF.value(#"{"study_id":"s_a","state":"completed"}"#)))
+        XCTAssertEqual(aggregate, study.status)
+        XCTAssertEqual(aggregate, LabPresentation.status(for: "completed"))
+    }
+
+    func testAnExperimentWithoutJobsHasNoBadge() throws {
+        let row = LabExperimentRow(item: try LF.item("exp_a", states: []))
+        XCTAssertNil(row.status)
+        XCTAssertEqual(row.evidenceTag, "No jobs yet")
+        XCTAssertFalse(row.canReview)
+    }
+
+    func testRevealValuesAreScalarsOrPointAtTheManifests() throws {
+        XCTAssertEqual(LabPresentation.revealValue(.string("euler")), "euler")
+        XCTAssertEqual(LabPresentation.revealValue(.integer(8)), "8")
+        XCTAssertEqual(LabPresentation.revealValue(try LF.value(#"{"a":1}"#)), "see Frozen manifests")
+        XCTAssertEqual(LabPresentation.revealValue(nil), "")
     }
 
     func testJobBadgeMapsStatesAndKeepsUnknownOnes() throws {
@@ -54,7 +78,6 @@ final class LabPresentationTests: XCTestCase {
         XCTAssertEqual(LabJobRow(job: try LF.job("job_a", state: "running")).status, .running)
         XCTAssertEqual(LabJobRow(job: try LF.job("job_a", state: "failed")).status, .failure)
         XCTAssertEqual(LabJobRow(job: try LF.job("job_a", state: "cancelled")).status.label, "Cancelled")
-        XCTAssertEqual(LabJobRow(job: try LF.job("job_a", state: "warming_up")).status.label, "Warming Up")
     }
 
     func testJobActionsFollowTheState() throws {
@@ -133,7 +156,7 @@ final class LabPresentationTests: XCTestCase {
         let done = try XCTUnwrap(LabStudyRow(value: try LF.value(#"{"study_id":"s_a","state":"mystery_state"}"#)))
         XCTAssertEqual(done.action, .none)
         XCTAssertTrue(done.retainsEvidence)
-        XCTAssertEqual(done.status?.label, "Mystery State")
+        XCTAssertEqual(done.status?.label, "mystery_state")
         XCTAssertTrue(done.rawText.contains("study_id"))
         XCTAssertNil(LabStudyRow(value: try LF.value(#"{"state":"running"}"#)))
     }
@@ -149,9 +172,36 @@ final class LabPresentationTests: XCTestCase {
 final class LabSourceGuardTests: XCTestCase {
     func testRawJSONNeverFeedsATextFont() throws {
         let source = try LF.source("LabView.swift")
-        for line in source.components(separatedBy: "\n") where line.contains("jsonText") {
-            XCTAssertFalse(line.contains(".font("), "raw JSON drawn outside a disclosure: \(line)")
+        let uses = source.components(separatedBy: "jsonText").count - 1
+        XCTAssertEqual(uses, 1, "raw JSON belongs only in manifestText, behind a disclosure")
+        XCTAssertTrue(source.contains("reveal.manifests?[$0]?.jsonText"))
+    }
+
+    func testEveryLabBadgeStopsPulsingWhenItsRouteIsHidden() throws {
+        let source = try LF.source("LabView.swift")
+        let badges = source.components(separatedBy: "StatusBadge(").dropFirst()
+        XCTAssertEqual(badges.count, 3)
+        for badge in badges {
+            XCTAssertTrue(badge.prefix(while: { $0 != "\n" }).contains("pulses: isRouteActive"), String(badge.prefix(60)))
         }
+    }
+
+    func testStudyBlindReviewIsDistinctFromTheExperimentAnchor() throws {
+        let source = try LF.source("LabView.swift")
+        XCTAssertFalse(source.contains("Button(\"Blind review\")"))
+        XCTAssertEqual(source.components(separatedBy: ".accessibilityIdentifier(\"Blind review…\")").count - 1, 1)
+        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"Study blind review…\")"))
+    }
+
+    func testStudyRowsAreBuiltOnRefreshNotInTheBody() throws {
+        let source = try LF.source("LabView.swift")
+        let panel = try XCTUnwrap(source.range(of: "private struct AdaptiveStudiesPanel"))
+        let tail = String(source[panel.upperBound...])
+        let body = try XCTUnwrap(tail.range(of: "private func refresh"))
+        let render = String(tail[..<body.lowerBound])
+        XCTAssertFalse(render.contains("LabStudyRow("))
+        XCTAssertFalse(render.contains("LabStudyRow.init"))
+        XCTAssertTrue(tail[body.lowerBound...].contains("LabStudyRow.init"))
     }
 
     func testSheetsUseTheSectionTitleAndNoFixedWidth() throws {
@@ -175,10 +225,22 @@ final class LabSourceGuardTests: XCTestCase {
     func testTheUITestAnchorsSurvive() throws {
         let source = try LF.source("LabView.swift")
         for anchor in ["New experiment…", "Create experiment", "Play together", "Pause", "Previous frame",
-                       "Next frame", "Submit immutable review", "Blind review…", "Controlled studies"] {
+                       "Next frame", "Submit immutable review", "Blind review…"] {
             XCTAssertTrue(source.contains("\"\(anchor)\""), anchor)
         }
         XCTAssertTrue(source.contains(".accessibilityIdentifier(\"Blind review…\")"))
+        XCTAssertTrue(try LF.source("QuantView.swift").contains("Text(\"Controlled studies\").tag(true)"))
+        var rest = Substring(source)
+        while let open = rest.range(of: "Menu {") {
+            let tail = rest[open.upperBound...]
+            if rest[..<open.lowerBound].hasSuffix("context") { rest = tail; continue }
+            let close = try XCTUnwrap(tail.range(of: "} label:"))
+            let menu = tail[..<close.lowerBound]
+            for anchor in ["New experiment…", "Blind review…", "Create experiment"] {
+                XCTAssertFalse(menu.contains(anchor), "\(anchor) moved into a menu")
+            }
+            rest = tail[close.upperBound...]
+        }
     }
 }
 
@@ -210,6 +272,70 @@ final class LabRenderTests: XCTestCase {
         let suite = "lab-render-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite) ?? .standard
         return LabCoordinator(api: WorkbenchAPI(cli: CLIProcess(), agentPath: "/nonexistent-agent"), defaults: defaults)
+    }
+
+    /// Answers each lab operation from fixtures; the runner never starts a process.
+    nonisolated static let fakeAgent: WorkbenchAPI.AgentCommand = { _, argv, _, _ in
+        guard let index = argv.firstIndex(of: "--request"), index + 1 < argv.count,
+              let data = FileManager.default.contents(atPath: argv[index + 1]),
+              let request = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let operation = request["operation"] as? String
+        else { return [:] }
+        func item(_ id: String, _ sealed: Bool, _ states: [String]) -> [String: Any] {
+            ["id": id, "sealed": sealed, "states": states, "evidence_completeness": "complete"]
+        }
+        switch operation {
+        case "snapshot":
+            return [
+                "history": ["items": [
+                    item("exp_0123456789abcdef", true, ["completed", "completed"]),
+                    item("exp_2123456789abcdef", true, ["completed", "running"]),
+                    item("exp_3123456789abcdef", true, ["completed", "failed"]),
+                ]],
+                "queue": [
+                    ["id": "job_0123456789abcdef", "experiment_id": "exp_0123456789abcdef", "state": "queued"],
+                    ["id": "job_2123456789abcdef", "experiment_id": "exp_2123456789abcdef", "state": "failed",
+                     "error": "The runtime ran out of memory while rendering the second candidate."],
+                ],
+            ]
+        case "study-list":
+            return ["studies": [
+                ["study_id": "study_0123456789", "state": "running", "next_action": "record_preference", "review_id": "r1",
+                 "progress": ["rounds_done": 3, "budget_remaining": 5, "stage": "search"]],
+                ["study_id": "study_1123456789", "state": "completed", "next_action": "none", "progress": ["rounds_done": 9]],
+            ]]
+        case "reveal":
+            return [
+                "review_id": "review_0123456789", "revision": 1,
+                "canonical_by_display": ["left": "candidate_b", "right": "candidate_a"],
+                "variable_path": "inference_steps", "baseline_value": 8, "alternate_value": 16,
+                "manifests": [
+                    "candidate_a": ["model": "ltx-video", "inference_steps": 8, "seed": 42],
+                    "candidate_b": ["model": "ltx-video", "inference_steps": 16, "seed": 42],
+                ],
+            ]
+        default:
+            return [:]
+        }
+    }
+
+    private func fakeCoordinator() -> LabCoordinator {
+        let defaults = UserDefaults(suiteName: "lab-render-" + UUID().uuidString) ?? .standard
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/nonexistent-agent", receiptDirectory: NSTemporaryDirectory(), command: Self.fakeAgent)
+        return LabCoordinator(api: api, defaults: defaults)
+    }
+
+    func testFakeAgentAnswersSnapshotStudiesAndReveal() async throws {
+        let lab = fakeCoordinator()
+        await lab.refresh()
+        XCTAssertNil(lab.error)
+        XCTAssertEqual(lab.snapshot.history?.items.count, 3)
+        XCTAssertEqual(lab.snapshot.queue?.count, 2)
+        let studies = try await lab.request(LabRequest(operation: "study-list")).studies
+        XCTAssertEqual(studies?.count, 2)
+        let reveal = try await lab.request(LabRequest(operation: "reveal", sessionID: "session"))
+        XCTAssertEqual(reveal.manifests?.count, 2)
+        XCTAssertEqual(reveal.variablePath, "inference_steps")
     }
 
     private struct Scenario {
@@ -282,6 +408,20 @@ final class LabRenderTests: XCTestCase {
                 try await attach(LabAuthorSheet(lab: lab), name: "lab-author-sheet", viewport: width, dark: dark, height: 520)
                 try await attach(LabReviewSheet(lab: lab, context: context), name: "lab-review-sheet", viewport: width, dark: dark, height: 760)
                 try await attach(LabAdoptSheet(lab: lab), name: "lab-adopt-sheet", viewport: width, dark: dark, height: 420)
+                let preview = try JSONDecoder().decode(LabResponse.self, from: Data(
+                    #"{"preview_hash":"abc","source_database_digest":"sha256:3f2a9c0d11","artifact_count":42,"artifact_bytes":734003200}"#.utf8))
+                try await attach(LabAdoptSheet(lab: lab, initialPreview: preview, initialDestination: "/Volumes/Studio/Imported Video Lab"),
+                                 name: "lab-adopt-evidence", viewport: width, dark: dark, height: 520)
+                try await attach(
+                    ScrollView {
+                        LabPanel(lab: fakeCoordinator(), installer: RuntimeInstaller(), agentPath: "/nonexistent-agent")
+                            .padding(WorkbenchSpacing.pageInset)
+                    },
+                    name: "lab-panel", viewport: width, dark: dark, height: 1100)
+                let reviewed = LabReviewContext(
+                    id: "session", prompt: "A paper kite over a quiet harbor",
+                    left: URL(fileURLWithPath: "/nonexistent/left.mp4"), right: URL(fileURLWithPath: "/nonexistent/right.mp4"), reviewed: true)
+                try await attach(LabReviewSheet(lab: fakeCoordinator(), context: reviewed), name: "lab-review-frozen", viewport: width, dark: dark, height: 900)
             }
         }
     }

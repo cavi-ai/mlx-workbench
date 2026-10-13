@@ -6,7 +6,7 @@ import Foundation
 struct LabExperimentRow: Equatable, Identifiable {
     let id: String
     let title: String
-    let status: WorkbenchStatus
+    let status: WorkbenchStatus?
     let evidenceTag: String
     let reviewed: Bool
     let canReview: Bool
@@ -14,9 +14,9 @@ struct LabExperimentRow: Equatable, Identifiable {
     init(item: LabHistoryItem) {
         id = item.id
         title = "Experiment " + LabPresentation.shortID(item.id)
-        status = LabPresentation.aggregateStatus(item.states)
+        status = item.states.isEmpty ? nil : LabPresentation.aggregateStatus(item.states)
         reviewed = !item.sealed
-        evidenceTag = item.sealed ? "Identity sealed" : "Reviewed"
+        evidenceTag = item.states.isEmpty ? "No jobs yet" : (item.sealed ? "Identity sealed" : "Reviewed")
         canReview = !item.states.isEmpty && item.states.allSatisfy { $0 == "completed" }
     }
 }
@@ -33,7 +33,7 @@ struct LabJobRow: Equatable, Identifiable {
     init(job: LabJob) {
         id = job.id
         shortID = LabPresentation.shortID(job.id)
-        status = WorkbenchStatus(rawValue: job.state)
+        status = LabPresentation.status(for: job.state)
         canRun = job.state == "queued"
         canCancel = !LabPresentation.finishedJobStates.contains(job.state)
         failure = job.error.flatMap { $0.isEmpty ? nil : $0 }
@@ -65,7 +65,7 @@ struct LabStudyRow: Equatable, Identifiable {
         guard let item = value.object, let identity = item["study_id"]?.text else { return nil }
         id = identity
         shortID = LabPresentation.shortID(identity)
-        status = item["state"]?.text.flatMap { $0.isEmpty ? nil : WorkbenchStatus(rawValue: $0) }
+        status = item["state"]?.text.flatMap { $0.isEmpty ? nil : LabPresentation.status(for: $0) }
         progress = LabPresentation.progressItems(item["progress"])
         prompt = item["prompt"]?.text ?? ""
         let next = item["next_action"]?.text ?? "none"
@@ -95,6 +95,18 @@ enum LabPresentation {
         return String(body.prefix(shortIDLength))
     }
 
+    /// The badge for one engine state; states the app does not know keep the engine's own wording.
+    static func status(for state: String) -> WorkbenchStatus {
+        switch state {
+        case "completed": return .succeeded
+        case "failed": return .failure
+        case "running": return .running
+        case "queued": return .queued
+        case "cancelled": return WorkbenchStatus(rawValue: state)
+        default: return .verbatim(state)
+        }
+    }
+
     /// Any failure fails the experiment; a running job keeps it live; a mixed set reads as its states.
     static func aggregateStatus(_ states: [String]) -> WorkbenchStatus {
         guard !states.isEmpty else { return .unknown }
@@ -103,7 +115,14 @@ enum LabPresentation {
         if states.contains("running") { return .running }
         var unique: [String] = []
         for state in states where !unique.contains(state) { unique.append(state) }
-        return WorkbenchStatus(rawValue: unique.joined(separator: " · "))
+        if unique.count == 1 { return status(for: unique[0]) }
+        return .verbatim(unique.map { status(for: $0).label }.joined(separator: " · "))
+    }
+
+    /// A baseline or alternate value as one line; structured values point at the manifests.
+    static func revealValue(_ value: LabValue?) -> String {
+        guard let value else { return "" }
+        return scalarText(value) ?? "see Frozen manifests"
     }
 
     /// Scalar progress entries as label and value; nested values stay in the raw record.

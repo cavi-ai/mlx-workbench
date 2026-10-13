@@ -138,6 +138,7 @@ struct LabExperimentList: View {
     let rows: [LabExperimentRow]
     let isOpeningReview: Bool
     let review: (LabExperimentRow) -> Void
+    @Environment(\.isRouteActive) private var isRouteActive
 
     var body: some View {
         if rows.isEmpty {
@@ -156,8 +157,8 @@ struct LabExperimentList: View {
                 }
                 .help(row.id)
                 .contextMenu { Button("Copy Experiment ID") { copy(row.id) } }
+                if let status = row.status { StatusBadge(status: status, pulses: isRouteActive) }
                 Spacer(minLength: WorkbenchSpacing.xs)
-                StatusBadge(status: row.status)
                 Button("Blind review…") { review(row) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -180,6 +181,7 @@ struct LabJobRowView: View {
     let runDisabled: Bool
     let run: () -> Void
     let cancel: () -> Void
+    @Environment(\.isRouteActive) private var isRouteActive
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
@@ -187,7 +189,7 @@ struct LabJobRowView: View {
                 Text("Job " + row.shortID)
                     .font(WorkbenchTypography.emphasis)
                     .help(row.id)
-                StatusBadge(status: row.status)
+                StatusBadge(status: row.status, pulses: isRouteActive)
                 Spacer(minLength: WorkbenchSpacing.xs)
                 if row.canRun {
                     Button("Run", action: run).buttonStyle(.bordered).controlSize(.small).disabled(runDisabled)
@@ -406,8 +408,8 @@ struct LabReviewSheet: View {
                 if let reveal {
                     Text("Left: " + (reveal.canonicalByDisplay?["left"] ?? "") + " · Right: " + (reveal.canonicalByDisplay?["right"] ?? ""))
                     let variable = reveal.variablePath ?? ""
-                    let baseline = reveal.baselineValue?.jsonText ?? ""
-                    let alternate = reveal.alternateValue?.jsonText ?? ""
+                    let baseline = LabPresentation.revealValue(reveal.baselineValue)
+                    let alternate = LabPresentation.revealValue(reveal.alternateValue)
                     Text("\(variable): \(baseline) → \(alternate)")
                     TrainingRawDisclosure(title: "Frozen manifests", text: manifestText(reveal))
                 } else {
@@ -502,6 +504,12 @@ struct LabAdoptSheet: View {
     @State private var previewed: Data?
     @State private var busy = false
     @State private var error: String?
+    /// `initialPreview` and `initialDestination` let a render hold the sheet at a validated import.
+    init(lab: LabCoordinator, initialPreview: LabResponse? = nil, initialDestination: String = "") {
+        _lab = ObservedObject(wrappedValue: lab)
+        _preview = State(initialValue: initialPreview)
+        _destination = State(initialValue: initialDestination)
+    }
     private var request: LabRequest {
         LabRequest(operation: "adopt-preview", sourceDatabase: database, sourceArtifacts: artifacts, destination: destination)
     }
@@ -596,6 +604,7 @@ struct LabStudyRowView: View {
     let generationBlocked: Bool
     let perform: (String) -> Void
     let review: (LabStudyRow, String) -> Void
+    @Environment(\.isRouteActive) private var isRouteActive
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -603,7 +612,7 @@ struct LabStudyRowView: View {
                 Text("Study " + row.shortID)
                     .font(WorkbenchTypography.emphasis)
                     .help(row.id)
-                if let status = row.status { StatusBadge(status: status) }
+                if let status = row.status { StatusBadge(status: status, pulses: isRouteActive) }
                 Spacer(minLength: WorkbenchSpacing.xs)
                 switch row.action {
                 case .resume:
@@ -612,7 +621,8 @@ struct LabStudyRowView: View {
                     Button("Generate pair") { perform("study-run") }.buttonStyle(.bordered).controlSize(.small)
                         .disabled(busy || generationBlocked)
                 case .review(let session):
-                    Button("Blind review") { review(row, session) }.buttonStyle(.bordered).controlSize(.small).disabled(busy)
+                    Button("Blind review…") { review(row, session) }.buttonStyle(.bordered).controlSize(.small).disabled(busy)
+                        .accessibilityIdentifier("Study blind review…")
                 case .none:
                     EmptyView()
                 }
@@ -635,7 +645,7 @@ struct LabStudyRowView: View {
 
 private struct AdaptiveStudiesPanel: View {
     @ObservedObject var lab: LabCoordinator
-    @State private var studies: [LabValue] = []
+    @State private var studies: [LabStudyRow] = []
     @State private var busy = false
     @State private var review: LabReviewContext?
     var body: some View {
@@ -648,7 +658,7 @@ private struct AdaptiveStudiesPanel: View {
             }
             Text("Each study keeps its prompt and seed fixed. Human preferences guide the next pair; the engine retains the search budget and stopping evidence.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            ForEach(studies.compactMap(LabStudyRow.init(value:))) { row in
+            ForEach(studies) { row in
                 Divider()
                 LabStudyRowView(
                     row: row, busy: busy, generationBlocked: lab.runningJobID != nil,
@@ -661,7 +671,7 @@ private struct AdaptiveStudiesPanel: View {
         .sheet(item: $review, onDismiss: { Task { await refresh() } }) { context in LabReviewSheet(lab: lab, context: context) }
     }
     private func refresh() async {
-        do { studies = try await lab.request(LabRequest(operation: "study-list")).studies ?? [] }
+        do { studies = try await lab.request(LabRequest(operation: "study-list")).studies?.compactMap(LabStudyRow.init(value:)) ?? [] }
         catch { lab.error = AppHost.render(error) }
     }
     private func perform(_ operation: String, id: String) {

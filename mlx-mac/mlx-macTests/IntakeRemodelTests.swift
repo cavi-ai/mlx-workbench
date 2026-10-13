@@ -18,6 +18,7 @@ private enum IntakeFixtures {
         var verdict = "convertible"
         var repo = IntakeFixtures.repo
         var subfolder: String?
+        var revision = "main"
         var backend: String? = "mlx-lm"
         var backendInstalled = true
         var modelType: String? = "qwen3"
@@ -39,7 +40,7 @@ private enum IntakeFixtures {
             ? #"{"base":"Qwen/Qwen-Image-2.1","base_revision":"abc","lora":"style.safetensors","lora_scale":1.0}"#
             : "null"
         let json = """
-        {"schema":"intake/1","source":{"input":"\(spec.repo)","repo":"\(spec.repo)","revision":"main","file":null,
+        {"schema":"intake/1","source":{"input":"\(spec.repo)","repo":"\(spec.repo)","revision":"\(spec.revision)","file":null,
          "subfolder":\(spec.subfolder.map { "\"\($0)\"" } ?? "null"),"url":"https://huggingface.co/\(spec.repo)"},
          "verdict":"\(spec.verdict)","reasons":\(spec.reasons),"backend":\(spec.backend.map { "\"\($0)\"" } ?? "null"),
          "backend_installed":\(spec.backendInstalled),"model_type":\(spec.modelType.map { "\"\($0)\"" } ?? "null"),
@@ -52,7 +53,7 @@ private enum IntakeFixtures {
         return try JSONDecoder().decode(IntakeResolution.self, from: Data(json.utf8))
     }
 
-    static func model(_ path: String) -> LibraryModel {
+    static func model(_ path: String, readiness: ModelReadiness = .ready) -> LibraryModel {
         let item = ModelItem(
             path: path, name: URL(fileURLWithPath: path).lastPathComponent, bytes: 4_800_000_000,
             modifiedAt: nil, shard: nil,
@@ -60,16 +61,16 @@ private enum IntakeFixtures {
             structure: nil, signature: nil, companion: nil, readable: true,
             status: "ready", outputs: [], tensorCount: nil, error: nil, task: nil
         )
-        return LibraryModel(item: item, readiness: .ready)
+        return LibraryModel(item: item, readiness: readiness)
     }
 
     static func snapshot(_ models: [LibraryModel]) -> LibrarySnapshot {
         LibrarySnapshot(models: models, groups: [], hardware: hardware, generatedAt: Date(timeIntervalSinceReferenceDate: 1_000_000_000))
     }
 
-    static func fit(_ resolution: IntakeResolution, qBits: Int = 4, memory: MemorySnapshot? = live, hasProbed: Bool = true) -> IntakeFit? {
+    static func fit(_ resolution: IntakeResolution, qBits: Int = 4, selectedGGUF: String? = nil, memory: MemorySnapshot? = live, hasProbed: Bool = true) -> IntakeFit? {
         IntakeFit.make(
-            resolution, qBits: qBits, memory: memory, hasProbed: hasProbed,
+            resolution, qBits: qBits, selectedGGUF: selectedGGUF, memory: memory, hasProbed: hasProbed,
             contextTokens: FitAdvisor.defaultContextTokens, reserveGB: 4, hardware: hardware
         )
     }
@@ -221,6 +222,34 @@ final class IntakeRemodelTests: XCTestCase {
         XCTAssertFalse(fit.showsTrack)
     }
 
+    func testGGUFFitUsesTheSelectedFile() throws {
+        let gguf = #"[{"name":"model-Q4_K_M.gguf","bytes":4900000000},{"name":"model-Q8_0.gguf","bytes":8700000000}]"#
+        let value = try F.resolution(F.Spec(verdict: "gguf", backend: nil, estimates: "null", gguf: gguf))
+        let fit = try XCTUnwrap(F.fit(value, selectedGGUF: "model-Q4_K_M.gguf"))
+        XCTAssertEqual(fit.state, .estimated)
+        XCTAssertTrue(fit.detail.contains("selected file, \(LibraryTablePresentation.byteCount(4_900_000_000))"), fit.detail)
+        XCTAssertTrue(try XCTUnwrap(F.fit(value, selectedGGUF: "model-Q8_0.gguf")).detail.contains("selected file, \(LibraryTablePresentation.byteCount(8_700_000_000))"))
+        XCTAssertEqual(try XCTUnwrap(F.fit(value)).state, .sizeUnknown)
+    }
+
+    func testAConvertibleWithoutAnEstimateMakesNoClaimAboutTheRepository() throws {
+        for spec in [F.Spec(estimates: "null"), F.Spec(estimates: "null", recipe: true)] {
+            let fit = try XCTUnwrap(F.fit(try F.resolution(spec)))
+            XCTAssertEqual(fit.state, .sizeUnknown)
+            XCTAssertFalse(fit.detail.contains("does not report"))
+            XCTAssertFalse(fit.detail.lowercased().contains("repository"))
+        }
+    }
+
+    func testTheLoadingPlaceholderIsNeverSpoken() throws {
+        let loading = try XCTUnwrap(F.fit(try F.resolution(), memory: nil, hasProbed: false))
+        XCTAssertEqual(loading.state, .redacted)
+        XCTAssertFalse(loading.accessibilityLabel.contains("Won't fit"))
+        XCTAssertEqual(loading.accessibilityLabel, "Fit on this Mac: reading memory")
+        let live = try XCTUnwrap(F.fit(try F.resolution()))
+        XCTAssertTrue(live.accessibilityLabel.contains(live.word))
+    }
+
     func testFitFollowsTheMemoryReading() throws {
         let value = try F.resolution()
         XCTAssertEqual(F.fit(value, memory: nil, hasProbed: false)?.state, .redacted)
@@ -240,12 +269,41 @@ final class IntakeRemodelTests: XCTestCase {
     // MARK: Library
 
     func testLibraryMatchIsExactOnTheRepositoryRoot() throws {
-        let index = DiscoverPresentation.libraryModels(in: F.snapshot([F.model(F.cachePath), F.model("/models/local")]))
+        let ready = IntakeLibraryMatch.readyPaths(in: F.snapshot([F.model(F.cachePath), F.model("/models/local")]))
         let value = try F.resolution()
-        XCTAssertEqual(IntakeLibraryMatch.model(for: value, in: index)?.item.path, F.cachePath)
-        XCTAssertNil(IntakeLibraryMatch.model(for: try F.resolution(F.Spec(repo: "other/repo")), in: index))
-        XCTAssertNil(IntakeLibraryMatch.model(for: try F.resolution(F.Spec(subfolder: "multilingual")), in: index))
-        XCTAssertNil(IntakeLibraryMatch.model(for: value, in: [:]))
+        XCTAssertEqual(IntakeLibraryMatch.path(for: value, readyPaths: ready), F.cachePath)
+        XCTAssertNil(IntakeLibraryMatch.path(for: try F.resolution(F.Spec(repo: "other/repo")), readyPaths: ready))
+        XCTAssertNil(IntakeLibraryMatch.path(for: try F.resolution(F.Spec(subfolder: "multilingual")), readyPaths: ready))
+        XCTAssertNil(IntakeLibraryMatch.path(for: value, readyPaths: []))
+    }
+
+    func testLibraryMatchNeedsTheReadyModelAtTheRequestedRevision() throws {
+        let ready = IntakeLibraryMatch.readyPaths(in: F.snapshot([F.model(F.cachePath)]))
+        XCTAssertNil(IntakeLibraryMatch.path(for: try F.resolution(F.Spec(revision: "def")), readyPaths: ready))
+        XCTAssertEqual(IntakeLibraryMatch.path(for: try F.resolution(F.Spec(revision: "abc123")), readyPaths: ready), F.cachePath)
+        let incomplete = IntakeLibraryMatch.readyPaths(in: F.snapshot([F.model(F.cachePath, readiness: .incompleteCache)]))
+        XCTAssertTrue(incomplete.isEmpty)
+        XCTAssertNil(IntakeLibraryMatch.path(for: try F.resolution(), readyPaths: incomplete))
+    }
+
+    func testAnAlreadyDownloadedModelSaysSo() throws {
+        let value = try F.resolution(F.Spec(verdict: "already_mlx"))
+        XCTAssertTrue(IntakeVerdictLine.make(value).sentence.contains("downloads and runs"))
+        XCTAssertTrue(IntakeVerdictLine.make(value, inLibrary: true).sentence.contains("already downloaded"))
+    }
+
+    // MARK: Log override
+
+    func testLogChoiceHoldsUntilANewCheckStarts() {
+        XCTAssertEqual(IntakeLogPresentation.override(true, after: .downloading(repo: "a/b")), true)
+        XCTAssertEqual(IntakeLogPresentation.override(true, after: .failed("x")), true)
+        XCTAssertEqual(IntakeLogPresentation.override(false, after: .installing(backend: "mlx-lm")), false)
+        XCTAssertNil(IntakeLogPresentation.override(true, after: .resolving))
+        XCTAssertTrue(IntakeLogPresentation.isExpanded(override: true, activity: .failed("x"), lines: []))
+        XCTAssertTrue(IntakeLogPresentation.isExpanded(override: nil, activity: .failed("x"), lines: ["line"]))
+        XCTAssertFalse(IntakeLogPresentation.isExpanded(override: nil, activity: .failed("x"), lines: []))
+        XCTAssertFalse(IntakeLogPresentation.isExpanded(override: nil, activity: .idle, lines: ["line"]))
+        XCTAssertTrue(IntakeLogPresentation.isExpanded(override: nil, activity: .downloading(repo: "a/b"), lines: []))
     }
 
     // MARK: Log
@@ -296,9 +354,18 @@ final class IntakeSourceTests: XCTestCase {
     func testOnlyTheFitViewObservesTheMemoryMonitorAndOneButtonIsProminent() throws {
         let sheet = try source("IntakeSheet.swift")
         XCTAssertEqual(sheet.components(separatedBy: "@ObservedObject var resources").count - 1, 1)
-        let prominent = sheet.components(separatedBy: ".borderedProminent").count - 1
-        XCTAssertGreaterThan(prominent, 0)
-        XCTAssertEqual(prominent, 5, "one per verdict branch; a verdict shows exactly one")
+        let actions = try XCTUnwrap(sheet.range(of: "switch resolution.verdict {"))
+        let branches = sheet[actions.upperBound...].components(separatedBy: "\n            case ").dropFirst()
+        var prominent: [String: Int] = [:]
+        for branch in branches.prefix(5) {
+            let name = String(branch.prefix(while: { $0 != ":" }))
+            prominent[name] = branch.components(separatedBy: ".borderedProminent").count - 1
+        }
+        XCTAssertEqual(prominent[".convertibleAfterInstall"], 1)
+        XCTAssertEqual(prominent[".convertible"], 1)
+        XCTAssertEqual(prominent[".gguf"], 1)
+        XCTAssertEqual(prominent[".alreadyMLX"], 2, "install or download, never both")
+        XCTAssertEqual(prominent[".unknown"], 0)
     }
 
     func testTheLogIsNotDumpedBeneathTheResult() throws {
@@ -373,6 +440,11 @@ final class IntakeRenderTests: XCTestCase {
         let spec: F.Spec?
         var library: [LibraryModel] = []
         var phase: Phase = .resolved
+        var memory: Memory = .live
+    }
+
+    private enum Memory {
+        case live, loading, unavailable
     }
 
     private enum Phase {
@@ -437,9 +509,20 @@ final class IntakeRenderTests: XCTestCase {
             ),
             Scenario(name: "failed", spec: nil, phase: .failed),
             Scenario(name: "downloading", spec: F.Spec(), phase: .downloading),
+            Scenario(name: "fit-loading", spec: F.Spec(), memory: .loading),
+            Scenario(name: "fit-unavailable", spec: F.Spec(), memory: .unavailable),
         ]
-        let resources = await monitor()
+        let live = await monitor()
+        let loading = SystemResourceMonitor(probe: { nil })
+        let unavailable = SystemResourceMonitor(probe: { nil })
+        await unavailable.refreshMemory()
         for scenario in scenarios {
+            let resources: SystemResourceMonitor
+            switch scenario.memory {
+            case .live: resources = live
+            case .loading: resources = loading
+            case .unavailable: resources = unavailable
+            }
             for dark in [true, false] {
                 for width in [CGFloat(720), 560] {
                     let intake = try makeCoordinator(scenario, log: log.path)
