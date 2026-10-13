@@ -318,7 +318,7 @@ class AppHost: ObservableObject {
     /// Hands a finished download to the existing flows; returns the route to show.
     func reuseIntake(_ resolution: IntakeResolution) async -> AppRoute? {
         await rescan()
-        let ready = Set((librarySnapshot?.models ?? []).filter { $0.readiness == .ready }.map { $0.item.path })
+        let ready = IntakeLibraryMatch.readyPaths(in: librarySnapshot)
         guard let path = IntakeCoordinator.existingModelPath(resolution, qBits: config.qBits, history: modelWorkflow.history, readyPaths: ready) else { return nil }
         selectedModelPath = path
         if resolution.verdict == .convertible {

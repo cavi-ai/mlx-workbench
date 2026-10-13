@@ -11,14 +11,12 @@ struct PortAnalysisPanel: View {
                 SectionTitle(text: "Porting analysis")
                 DetailGrid(rows: PortAnalysisPresentation.rows(analysis))
                 ForEach(analysis.components) { component in
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(component.role).font(WorkbenchTypography.label).frame(width: 80, alignment: .leading)
-                        Text(component.modelType).font(WorkbenchTypography.value)
-                        Spacer()
-                        Text(component.status == "exists" ? (component.matches.first?.module ?? "exists") : "missing")
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(component.status == "exists" ? WorkbenchColor.success : WorkbenchColor.warning)
-                    }
+                    IntakeComponentLine(
+                        role: component.role,
+                        type: component.modelType,
+                        detail: component.status == "exists" ? (component.matches.first?.module ?? "exists") : "missing",
+                        detailColor: component.status == "exists" ? WorkbenchColor.success : WorkbenchColor.warning
+                    )
                 }
                 if !analysis.missing.isEmpty {
                     Text("To write: " + analysis.missing.map(\.name).joined(separator: ", "))

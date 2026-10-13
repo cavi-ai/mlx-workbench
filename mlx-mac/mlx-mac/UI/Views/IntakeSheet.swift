@@ -59,13 +59,27 @@ struct IntakeField: View {
 struct IntakeSheet: View {
     @ObservedObject var intake: IntakeCoordinator
     @ObservedObject var appHost: AppHost
+    let resources: SystemResourceMonitor
     let onRouteSelection: (AppRoute) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var readyPaths: Set<String> = []
+    @State private var logOverride: Bool?
+
+    /// `resources` lets a render hold the window at a fixed memory budget.
+    init(
+        intake: IntakeCoordinator,
+        appHost: AppHost,
+        resources: SystemResourceMonitor? = nil,
+        onRouteSelection: @escaping (AppRoute) -> Void
+    ) {
+        self.intake = intake
+        self.appHost = appHost
+        self.resources = resources ?? appHost.resources
+        self.onRouteSelection = onRouteSelection
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text("Add from Hugging Face")
-                .font(WorkbenchTypography.title)
             HStack(spacing: WorkbenchSpacing.sm) {
                 TextField("https://huggingface.co/org/name", text: $intake.sourceText)
                     .textFieldStyle(.roundedBorder)
@@ -78,18 +92,22 @@ struct IntakeSheet: View {
                     activityLine
                     if let resolution = intake.resolution {
                         summary(resolution)
-                        componentsTable(resolution)
                         actions(resolution)
                         if let analysis = intake.analysis {
                             PortAnalysisPanel(intake: intake, analysis: analysis)
                         }
-                    }
-                    if !intake.logTail.isEmpty {
-                        Text(intake.logTail.joined(separator: "\n"))
-                            .font(WorkbenchTypography.value)
+                    } else if intake.activity == .idle {
+                        Text(IntakeActivityPresentation.idleSentence)
+                            .font(WorkbenchTypography.secondary)
                             .foregroundStyle(WorkbenchColor.muted)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if IntakeLogPresentation.isVisible(activity: intake.activity, lines: intake.logTail) {
+                        IntakeLogDisclosure(
+                            title: IntakeLogPresentation.title(intake.activity),
+                            lines: intake.logTail,
+                            isExpanded: logBinding
+                        )
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -101,57 +119,106 @@ struct IntakeSheet: View {
             }
         }
         .padding(WorkbenchSpacing.lg)
-        .frame(minWidth: 640, idealWidth: 720, minHeight: 480, idealHeight: 640)
+        .frame(
+            minWidth: WorkbenchSize.Intake.minWidth, idealWidth: WorkbenchSize.Intake.idealWidth,
+            minHeight: WorkbenchSize.Intake.minHeight, idealHeight: WorkbenchSize.Intake.idealHeight
+        )
+        .onChange(of: appHost.librarySnapshot?.generatedAt, initial: true) {
+            readyPaths = IntakeLibraryMatch.readyPaths(in: appHost.librarySnapshot)
+        }
+        .onChange(of: intake.activity) {
+            logOverride = IntakeLogPresentation.override(logOverride, after: intake.activity)
+        }
+    }
+
+    private func isInLibrary(_ resolution: IntakeResolution) -> Bool {
+        IntakeLibraryMatch.path(for: resolution, readyPaths: readyPaths) != nil
+    }
+
+    private var logBinding: Binding<Bool> {
+        Binding(
+            get: {
+                IntakeLogPresentation.isExpanded(override: logOverride, activity: intake.activity, lines: intake.logTail)
+            },
+            set: { logOverride = $0 }
+        )
     }
 
     @ViewBuilder
     private var activityLine: some View {
-        switch intake.activity {
-        case .idle:
-            EmptyView()
-        case .resolving:
-            ProgressView("Reading the model card and config…").controlSize(.small)
-        case .installing(let backend):
-            ProgressView("Installing \(backend) into its own environment…").controlSize(.small)
-        case .downloading(let repo):
-            ProgressView("Downloading \(repo)…").controlSize(.small)
-        case .analyzing:
-            ProgressView("Analyzing the architecture…").controlSize(.small)
-        case .drafting:
-            ProgressView("Drafting a port plan with a local model…").controlSize(.small)
-        case .failed(let message):
+        if let sentence = IntakeActivityPresentation.sentence(intake.activity) {
+            HStack(spacing: WorkbenchSpacing.xs) {
+                ProgressView().controlSize(.small)
+                Text(sentence)
+            }
+        } else if case .failed(let message) = intake.activity {
             InlineMessage(kind: .error, text: message)
         }
     }
 
     private func summary(_ resolution: IntakeResolution) -> some View {
-        WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                HStack {
-                    Text(resolution.source.reference).font(WorkbenchTypography.section)
-                    Spacer()
-                    StatusBadge(state: resolution.verdict.rawValue)
+        let inLibrary = isInLibrary(resolution)
+        let verdict = IntakeVerdictLine.make(resolution, inLibrary: inLibrary)
+        let components = IntakePresentation.componentRows(resolution)
+        return WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
+                    Text(resolution.source.reference)
+                        .font(WorkbenchTypography.section)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: WorkbenchSpacing.sm)
+                    if inLibrary {
+                        Label("In Library", systemImage: "checkmark.circle.fill")
+                            .font(WorkbenchTypography.emphasis)
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(WorkbenchColor.success)
+                            .fixedSize()
+                    }
                 }
-                DetailGrid(rows: IntakePresentation.summaryRows(resolution, qBits: appHost.config.qBits))
+                HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
+                    Image(systemName: verdict.symbol)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(verdict.tone.color)
+                        .accessibilityHidden(true)
+                    Text(verdict.sentence)
+                        .font(WorkbenchTypography.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                ReclaimFlowLayout(spacing: WorkbenchSpacing.lg, lineSpacing: WorkbenchSpacing.sm) {
+                    ForEach(IntakePresentation.items(resolution, qBits: appHost.config.qBits)) { item in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                            Text(item.figure)
+                                .font(item.isNumeric ? WorkbenchTypography.tabular : WorkbenchTypography.body)
+                                .foregroundStyle(WorkbenchColor.ink)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(item.label)
+                                .font(WorkbenchTypography.metadata)
+                                .foregroundStyle(WorkbenchColor.muted)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+                IntakeFitView(
+                    resources: resources, resolution: resolution, qBits: appHost.config.qBits,
+                    selectedGGUF: intake.selectedGGUF,
+                    reserveGB: appHost.config.fitReserveGB, hardware: appHost.hardwareProfile
+                )
                 ForEach(IntakePresentation.reasonTexts(resolution), id: \.self) { text in
                     InlineMessage(kind: .warning, text: text)
                 }
-            }
-        }
-    }
-
-    private func componentsTable(_ resolution: IntakeResolution) -> some View {
-        WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                SectionTitle(text: "Components")
-                ForEach(resolution.components) { component in
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(component.role).font(WorkbenchTypography.label).frame(width: 80, alignment: .leading)
-                        Text(component.modelType).font(WorkbenchTypography.value)
-                        Spacer()
-                        Text(component.matches.first.map { "\($0.module) (\($0.match))" } ?? "no MLX implementation")
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(component.matches.isEmpty ? WorkbenchColor.warning : WorkbenchColor.muted)
+                if !components.isEmpty {
+                    Divider()
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        SectionTitle(text: "Components")
+                        ForEach(components) { row in
+                            IntakeComponentLine(
+                                role: row.role, type: row.type, detail: row.detail,
+                                detailColor: row.isMatched ? WorkbenchColor.muted : WorkbenchColor.warning
+                            )
+                        }
                     }
                 }
             }
@@ -160,7 +227,7 @@ struct IntakeSheet: View {
 
     @ViewBuilder
     private func actions(_ resolution: IntakeResolution) -> some View {
-        HStack(spacing: WorkbenchSpacing.sm) {
+        ReclaimFlowLayout(spacing: WorkbenchSpacing.sm, lineSpacing: WorkbenchSpacing.xs) {
             switch resolution.verdict {
             case .convertibleAfterInstall:
                 Button("Install \(resolution.backend ?? "backend")") { Task { await intake.installBackend() } }
@@ -176,7 +243,7 @@ struct IntakeSheet: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(intake.isBusy)
                 } else {
-                    Button("Download") { Task { await finish(resolution) } }
+                    Button(isInLibrary(resolution) ? "Show in Library" : "Download") { Task { await finish(resolution) } }
                         .buttonStyle(.borderedProminent)
                         .disabled(intake.isBusy)
                 }
@@ -196,7 +263,6 @@ struct IntakeSheet: View {
             case .blocked, .unsupported:
                 EmptyView()
             }
-            Spacer()
             Link("Open on Hugging Face", destination: URL(string: resolution.source.url) ?? URL(string: "https://huggingface.co")!)
         }
     }
@@ -216,44 +282,129 @@ struct IntakeSheet: View {
     }
 }
 
-// MARK: - IntakePresentation
+// MARK: - Fit
 
-enum IntakePresentation {
-    /// `qBits` is the configured width; a source that converts only at other widths shows the one Prepare will use.
-    static func summaryRows(_ resolution: IntakeResolution, qBits configured: Int) -> [DetailRow] {
-        let qBits = ModelWorkflowCoordinator.allowedBits(configured, allowed: resolution.qBits)
-        var rows = [DetailRow("Verdict", resolution.verdict.title)]
-        if let task = resolution.task {
-            rows.append(DetailRow("Type", task.type.title))
-            if !task.useCases.isEmpty {
-                rows.append(DetailRow("Use cases", task.useCases.map(ModelTaskPresentation.useCaseTitle).joined(separator: ", ")))
+/// The estimated output's fit now. The only intake view that observes the memory monitor.
+struct IntakeFitView: View {
+    @ObservedObject var resources: SystemResourceMonitor
+    let resolution: IntakeResolution
+    let qBits: Int
+    let selectedGGUF: String?
+    let reserveGB: Double
+    let hardware: HardwareProfile
+
+    var body: some View {
+        if let fit = IntakeFit.make(
+            resolution, qBits: qBits, selectedGGUF: selectedGGUF, memory: resources.memory, hasProbed: resources.hasProbed,
+            contextTokens: resources.contextTokens, reserveGB: reserveGB, hardware: hardware
+        ) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                Text("Fit on this Mac")
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.muted)
+                HStack(spacing: WorkbenchSpacing.xs) {
+                    Image(systemName: fit.symbol)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(fit.tone.color)
+                        .accessibilityHidden(true)
+                    Text(fit.word)
+                        .font(WorkbenchTypography.emphasis)
+                        .foregroundStyle(fit.tone == .fits ? WorkbenchColor.ink : (fit.tone == .neutral ? WorkbenchColor.muted : fit.tone.color))
+                        .redacted(reason: fit.state == .redacted ? .placeholder : [])
+                }
+                if fit.showsTrack {
+                    DiscoverFitBar(fill: fit.fill, tone: fit.tone)
+                        .frame(maxWidth: WorkbenchSize.Discover.barWidth)
+                }
+                Text(fit.detail)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(fit.accessibilityLabel)
+        }
+    }
+}
+
+// MARK: - Components
+
+/// A component's role and type with what implements it; the detail wraps beneath when the row is narrow.
+struct IntakeComponentLine: View {
+    let role: String
+    let type: String
+    let detail: String
+    let detailColor: Color
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
+                identity
+                Spacer(minLength: WorkbenchSpacing.sm)
+                detailText
+            }
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                identity
+                detailText
             }
         }
-        if let backend = resolution.backend {
-            rows.append(DetailRow("Backend", "\(backend)\(resolution.backendInstalled ? "" : " (not installed)")"))
-        }
-        rows.append(DetailRow("Architecture", resolution.modelType ?? "Unknown"))
-        if let recipe = resolution.recipe {
-            rows.append(DetailRow("Built from", "\(recipe.base) + \(recipe.lora)"))
-        }
-        rows.append(DetailRow("Download", LibraryTablePresentation.byteCount(resolution.downloadBytes ?? resolution.bytes)))
-        if let estimate = resolution.estimatedOutputBytes?[String(qBits)] {
-            rows.append(DetailRow("Estimated \(qBits)-bit output", LibraryTablePresentation.byteCount(estimate)))
-        }
-        return rows
+        .accessibilityElement(children: .combine)
     }
 
-    static func reasonTexts(_ resolution: IntakeResolution) -> [String] {
-        resolution.reasons.map { reason in
-            switch reason {
-            case "arch_not_in_registry": return "No installed or declared MLX backend implements \(resolution.modelType ?? "this architecture")."
-            case "custom_code": return "The repository ships custom modeling code; it is read, never executed."
-            case "no_config": return "The repository has no readable config.json."
-            case "gated": return "The repository is gated; downloads need a token, which intake does not handle."
-            case "not_found_or_private": return "The repository does not exist or is private."
-            case "hub_unreachable": return "Hugging Face could not be reached."
-            default: return reason
+    private var identity: some View {
+        HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
+            Text(role)
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.ink)
+            Text(type)
+                .font(WorkbenchTypography.body)
+                .foregroundStyle(WorkbenchColor.ink)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var detailText: some View {
+        Text(detail)
+            .font(WorkbenchTypography.secondary)
+            .foregroundStyle(detailColor)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+// MARK: - Log
+
+struct IntakeLogDisclosure: View {
+    let title: String
+    let lines: [String]
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            ScrollView {
+                Text(lines.isEmpty ? "No log output yet." : lines.joined(separator: "\n"))
+                    .font(WorkbenchTypography.value)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-        } + resolution.warnings
+            .frame(maxHeight: WorkbenchSize.Prepare.logMaximumHeight)
+        } label: {
+            Text(title)
+                .font(WorkbenchTypography.label)
+                .foregroundStyle(WorkbenchColor.ink)
+        }
+    }
+}
+
+// MARK: - Tone
+
+extension IntakeVerdictLine.Tone {
+    var color: Color {
+        switch self {
+        case .positive: return WorkbenchColor.success
+        case .neutral: return WorkbenchColor.accent
+        case .warning: return WorkbenchColor.warning
+        case .failure: return WorkbenchColor.failure
+        }
     }
 }
