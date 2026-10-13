@@ -97,12 +97,17 @@ final class IntakeCoordinator: ObservableObject {
         }
     }
 
+    /// The ready cache path holding `repo` at `revision`; `main` accepts any snapshot.
+    nonisolated static func readyCachePath(repo: String, revision: String, readyPaths: Set<String>) -> String? {
+        readyPaths.sorted().first { path in
+            HFRepoID.forPath(path) == repo &&
+            (revision == "main" || path.contains("/snapshots/\(revision)/") || path.hasSuffix("/snapshots/\(revision)"))
+        }
+    }
+
     static func existingModelPath(_ resolution: IntakeResolution, qBits: Int, history: [ConversionWorkflow], readyPaths: Set<String>) -> String? {
         if resolution.verdict == .alreadyMLX {
-            return readyPaths.sorted().first { path in
-                HFRepoID.forPath(path) == resolution.source.repo &&
-                (resolution.source.revision == "main" || path.contains("/snapshots/\(resolution.source.revision)/") || path.hasSuffix("/snapshots/\(resolution.source.revision)"))
-            }
+            return readyCachePath(repo: resolution.source.repo, revision: resolution.source.revision, readyPaths: readyPaths)
         }
         guard resolution.verdict == .convertible else { return nil }
         let bits = ModelWorkflowCoordinator.allowedBits(qBits, allowed: resolution.qBits)

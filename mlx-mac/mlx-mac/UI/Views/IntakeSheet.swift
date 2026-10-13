@@ -62,7 +62,7 @@ struct IntakeSheet: View {
     let resources: SystemResourceMonitor
     let onRouteSelection: (AppRoute) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var libraryModels: [String: LibraryModel] = [:]
+    @State private var readyPaths: Set<String> = []
     @State private var logOverride: Bool?
 
     /// `resources` lets a render hold the window at a fixed memory budget.
@@ -124,14 +124,22 @@ struct IntakeSheet: View {
             minHeight: WorkbenchSize.Intake.minHeight, idealHeight: WorkbenchSize.Intake.idealHeight
         )
         .onChange(of: appHost.librarySnapshot?.generatedAt, initial: true) {
-            libraryModels = DiscoverPresentation.libraryModels(in: appHost.librarySnapshot)
+            readyPaths = IntakeLibraryMatch.readyPaths(in: appHost.librarySnapshot)
         }
-        .onChange(of: intake.activity) { logOverride = nil }
+        .onChange(of: intake.activity) {
+            logOverride = IntakeLogPresentation.override(logOverride, after: intake.activity)
+        }
+    }
+
+    private func isInLibrary(_ resolution: IntakeResolution) -> Bool {
+        IntakeLibraryMatch.path(for: resolution, readyPaths: readyPaths) != nil
     }
 
     private var logBinding: Binding<Bool> {
         Binding(
-            get: { logOverride ?? IntakeLogPresentation.autoExpands(intake.activity) },
+            get: {
+                IntakeLogPresentation.isExpanded(override: logOverride, activity: intake.activity, lines: intake.logTail)
+            },
             set: { logOverride = $0 }
         )
     }
@@ -139,14 +147,18 @@ struct IntakeSheet: View {
     @ViewBuilder
     private var activityLine: some View {
         if let sentence = IntakeActivityPresentation.sentence(intake.activity) {
-            ProgressView(sentence).controlSize(.small)
+            HStack(spacing: WorkbenchSpacing.xs) {
+                ProgressView().controlSize(.small)
+                Text(sentence)
+            }
         } else if case .failed(let message) = intake.activity {
             InlineMessage(kind: .error, text: message)
         }
     }
 
     private func summary(_ resolution: IntakeResolution) -> some View {
-        let verdict = IntakeVerdictLine.make(resolution)
+        let inLibrary = isInLibrary(resolution)
+        let verdict = IntakeVerdictLine.make(resolution, inLibrary: inLibrary)
         let components = IntakePresentation.componentRows(resolution)
         return WorkbenchSurface {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -156,7 +168,7 @@ struct IntakeSheet: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: WorkbenchSpacing.sm)
-                    if IntakeLibraryMatch.model(for: resolution, in: libraryModels) != nil {
+                    if inLibrary {
                         Label("In Library", systemImage: "checkmark.circle.fill")
                             .font(WorkbenchTypography.emphasis)
                             .symbolRenderingMode(.hierarchical)
@@ -191,6 +203,7 @@ struct IntakeSheet: View {
                 }
                 IntakeFitView(
                     resources: resources, resolution: resolution, qBits: appHost.config.qBits,
+                    selectedGGUF: intake.selectedGGUF,
                     reserveGB: appHost.config.fitReserveGB, hardware: appHost.hardwareProfile
                 )
                 ForEach(IntakePresentation.reasonTexts(resolution), id: \.self) { text in
@@ -230,7 +243,7 @@ struct IntakeSheet: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(intake.isBusy)
                 } else {
-                    Button("Download") { Task { await finish(resolution) } }
+                    Button(isInLibrary(resolution) ? "Show in Library" : "Download") { Task { await finish(resolution) } }
                         .buttonStyle(.borderedProminent)
                         .disabled(intake.isBusy)
                 }
@@ -276,12 +289,13 @@ struct IntakeFitView: View {
     @ObservedObject var resources: SystemResourceMonitor
     let resolution: IntakeResolution
     let qBits: Int
+    let selectedGGUF: String?
     let reserveGB: Double
     let hardware: HardwareProfile
 
     var body: some View {
         if let fit = IntakeFit.make(
-            resolution, qBits: qBits, memory: resources.memory, hasProbed: resources.hasProbed,
+            resolution, qBits: qBits, selectedGGUF: selectedGGUF, memory: resources.memory, hasProbed: resources.hasProbed,
             contextTokens: resources.contextTokens, reserveGB: reserveGB, hardware: hardware
         ) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
@@ -308,6 +322,7 @@ struct IntakeFitView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .combine)
+            .accessibilityLabel(fit.accessibilityLabel)
         }
     }
 }

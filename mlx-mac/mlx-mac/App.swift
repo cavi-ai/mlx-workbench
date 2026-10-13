@@ -48,7 +48,7 @@ struct MlxWorkbenchApp: App {
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 720, height: 640)
-        MenuBarExtra("MLX Workbench", systemImage: EndpointIcon.name(forStates: appHost.endpoint.fleet.slots.filter(\.enabled).compactMap { appHost.endpoint.slotStates[$0.id] })) {
+        MenuBarExtra("MLX Workbench", systemImage: MenuBarPresentation.fleetIcon(slots: appHost.endpoint.fleet.slots, states: appHost.endpoint.slotStates)) {
             MenuBarView(appHost: appHost)
         }
         .menuBarExtraStyle(.menu)

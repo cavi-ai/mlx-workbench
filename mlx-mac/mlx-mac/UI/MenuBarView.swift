@@ -18,7 +18,7 @@ struct MenuBarView: View {
 
     var body: some View {
         Button {} label: {
-            Label(fleetSummary, systemImage: EndpointIcon.name(forStates: endpoint.fleet.slots.map { endpoint.slotStates[$0.id] ?? .disabled }))
+            Label(fleetSummary, systemImage: MenuBarPresentation.fleetIcon(slots: endpoint.fleet.slots, states: endpoint.slotStates))
         }
         .disabled(true)
         if case .running = endpoint.state, let latest = latestBenchmark {
@@ -50,7 +50,7 @@ struct MenuBarView: View {
             .keyboardShortcut("q")
     }
 
-    /// "N of M endpoints running" across the fleet (spec 09 P2).
+    /// "N of M endpoints running" across the fleet.
     private var fleetSummary: String {
         MenuBarPresentation.fleetSummary(slots: endpoint.fleet.slots, states: endpoint.slotStates)
     }
@@ -79,9 +79,14 @@ struct MenuBarView: View {
 
 /// Strings the menu draws; pure so no file-system lookup happens during rendering.
 enum MenuBarPresentation {
-    /// The last path component, without resolving the path.
+    /// The last path component, without resolving the path; an empty path reads "No model".
     static func modelName(_ path: String) -> String {
-        NSString(string: path).lastPathComponent
+        path.isEmpty ? "No model" : NSString(string: path).lastPathComponent
+    }
+
+    /// The icon for the enabled slots; the header and the status item share it.
+    static func fleetIcon(slots: [EndpointSlot], states: [UUID: EndpointState]) -> String {
+        EndpointIcon.name(forStates: slots.filter(\.enabled).compactMap { states[$0.id] })
     }
 
     /// The menu item for one slot: the action it performs, then the model and port.

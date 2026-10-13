@@ -163,6 +163,11 @@ struct WorkbenchStatus: Equatable {
         }
     }
 
+    /// A state from outside the app, shown exactly as reported.
+    static func verbatim(_ raw: String) -> WorkbenchStatus {
+        WorkbenchStatus(label: raw, tone: .neutral)
+    }
+
     private init(label: String, tone: Tone, isLive: Bool = false) {
         self.label = label
         self.tone = tone

@@ -12,7 +12,17 @@ final class MenuBarTests: XCTestCase {
         XCTAssertEqual(MenuBarPresentation.modelName("/nonexistent/models/Qwen3-8B-4bit"), "Qwen3-8B-4bit")
         XCTAssertEqual(MenuBarPresentation.modelName("/nonexistent/models/Qwen3-8B-4bit/"), "Qwen3-8B-4bit")
         XCTAssertEqual(MenuBarPresentation.modelName("org-model"), "org-model")
-        XCTAssertEqual(MenuBarPresentation.modelName(""), "")
+        XCTAssertEqual(MenuBarPresentation.modelName(""), "No model")
+        XCTAssertEqual(MenuBarPresentation.slotTitle(slot("", port: 8080, enabled: false)), "Start No model · :8080")
+    }
+
+    func testFleetIconIgnoresDisabledSlotsLeftInAStaleState() {
+        let off = slot("/m/a", port: 1, enabled: false)
+        let on = slot("/m/b", port: 2)
+        let states: [UUID: EndpointState] = [off.id: .degraded(reason: "x"), on.id: .running(modelPath: "/m/b", port: 2)]
+        XCTAssertEqual(MenuBarPresentation.fleetIcon(slots: [off, on], states: states), "bolt.fill")
+        XCTAssertEqual(MenuBarPresentation.fleetIcon(slots: [off], states: states), "bolt.slash")
+        XCTAssertEqual(MenuBarPresentation.fleetIcon(slots: [on], states: [:]), "bolt.slash")
     }
 
     func testSlotTitleNamesTheActionTheItemPerforms() {
@@ -51,6 +61,7 @@ final class MenuBarTests: XCTestCase {
         let source = try String(contentsOf: url, encoding: .utf8)
         XCTAssertFalse(source.contains("URL(fileURLWithPath:"))
         XCTAssertFalse(source.contains("HStack"))
+        XCTAssertFalse(source.contains("(spec 09"))
         XCTAssertTrue(source.contains("Button(\"Open MLX Workbench\")"))
         XCTAssertTrue(source.contains(".keyboardShortcut(\"q\")"))
     }

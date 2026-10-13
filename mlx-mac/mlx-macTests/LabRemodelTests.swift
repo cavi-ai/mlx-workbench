@@ -43,10 +43,34 @@ final class LabPresentationTests: XCTestCase {
         XCTAssertEqual(LabPresentation.aggregateStatus([]), .unknown)
     }
 
-    func testUnknownStatesKeepTheirOwnWording() {
-        XCTAssertEqual(LabPresentation.aggregateStatus(["awaiting_gpu"]).label, "Awaiting Gpu")
+    func testUnknownStatesAreShownVerbatim() throws {
+        XCTAssertEqual(LabPresentation.aggregateStatus(["awaiting_gpu"]).label, "awaiting_gpu")
+        XCTAssertEqual(LabPresentation.aggregateStatus(["awaiting_gpu", "completed"]).label, "awaiting_gpu · Completed")
         XCTAssertEqual(LabPresentation.aggregateStatus(["queued", "completed"]).label, "Queued · Completed")
         XCTAssertEqual(LabPresentation.aggregateStatus(["queued", "queued"]), .queued)
+        XCTAssertEqual(LabJobRow(job: try LF.job("job_a", state: "warming_up")).status.label, "warming_up")
+    }
+
+    func testCompletedReadsTheSameOnEveryRow() throws {
+        let aggregate = LabPresentation.aggregateStatus(["completed"])
+        XCTAssertEqual(aggregate, LabJobRow(job: try LF.job("job_a", state: "completed")).status)
+        let study = try XCTUnwrap(LabStudyRow(value: try LF.value(#"{"study_id":"s_a","state":"completed"}"#)))
+        XCTAssertEqual(aggregate, study.status)
+        XCTAssertEqual(aggregate, LabPresentation.status(for: "completed"))
+    }
+
+    func testAnExperimentWithoutJobsHasNoBadge() throws {
+        let row = LabExperimentRow(item: try LF.item("exp_a", states: []))
+        XCTAssertNil(row.status)
+        XCTAssertEqual(row.evidenceTag, "No jobs yet")
+        XCTAssertFalse(row.canReview)
+    }
+
+    func testRevealValuesAreScalarsOrPointAtTheManifests() throws {
+        XCTAssertEqual(LabPresentation.revealValue(.string("euler")), "euler")
+        XCTAssertEqual(LabPresentation.revealValue(.integer(8)), "8")
+        XCTAssertEqual(LabPresentation.revealValue(try LF.value(#"{"a":1}"#)), "see Frozen manifests")
+        XCTAssertEqual(LabPresentation.revealValue(nil), "")
     }
 
     func testJobBadgeMapsStatesAndKeepsUnknownOnes() throws {
@@ -54,7 +78,6 @@ final class LabPresentationTests: XCTestCase {
         XCTAssertEqual(LabJobRow(job: try LF.job("job_a", state: "running")).status, .running)
         XCTAssertEqual(LabJobRow(job: try LF.job("job_a", state: "failed")).status, .failure)
         XCTAssertEqual(LabJobRow(job: try LF.job("job_a", state: "cancelled")).status.label, "Cancelled")
-        XCTAssertEqual(LabJobRow(job: try LF.job("job_a", state: "warming_up")).status.label, "Warming Up")
     }
 
     func testJobActionsFollowTheState() throws {
@@ -133,7 +156,7 @@ final class LabPresentationTests: XCTestCase {
         let done = try XCTUnwrap(LabStudyRow(value: try LF.value(#"{"study_id":"s_a","state":"mystery_state"}"#)))
         XCTAssertEqual(done.action, .none)
         XCTAssertTrue(done.retainsEvidence)
-        XCTAssertEqual(done.status?.label, "Mystery State")
+        XCTAssertEqual(done.status?.label, "mystery_state")
         XCTAssertTrue(done.rawText.contains("study_id"))
         XCTAssertNil(LabStudyRow(value: try LF.value(#"{"state":"running"}"#)))
     }
@@ -149,9 +172,36 @@ final class LabPresentationTests: XCTestCase {
 final class LabSourceGuardTests: XCTestCase {
     func testRawJSONNeverFeedsATextFont() throws {
         let source = try LF.source("LabView.swift")
-        for line in source.components(separatedBy: "\n") where line.contains("jsonText") {
-            XCTAssertFalse(line.contains(".font("), "raw JSON drawn outside a disclosure: \(line)")
+        let uses = source.components(separatedBy: "jsonText").count - 1
+        XCTAssertEqual(uses, 1, "raw JSON belongs only in manifestText, behind a disclosure")
+        XCTAssertTrue(source.contains("reveal.manifests?[$0]?.jsonText"))
+    }
+
+    func testEveryLabBadgeStopsPulsingWhenItsRouteIsHidden() throws {
+        let source = try LF.source("LabView.swift")
+        let badges = source.components(separatedBy: "StatusBadge(").dropFirst()
+        XCTAssertEqual(badges.count, 3)
+        for badge in badges {
+            XCTAssertTrue(badge.prefix(while: { $0 != "\n" }).contains("pulses: isRouteActive"), String(badge.prefix(60)))
         }
+    }
+
+    func testStudyBlindReviewIsDistinctFromTheExperimentAnchor() throws {
+        let source = try LF.source("LabView.swift")
+        XCTAssertFalse(source.contains("Button(\"Blind review\")"))
+        XCTAssertEqual(source.components(separatedBy: ".accessibilityIdentifier(\"Blind review…\")").count - 1, 1)
+        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"Study blind review…\")"))
+    }
+
+    func testStudyRowsAreBuiltOnRefreshNotInTheBody() throws {
+        let source = try LF.source("LabView.swift")
+        let panel = try XCTUnwrap(source.range(of: "private struct AdaptiveStudiesPanel"))
+        let tail = String(source[panel.upperBound...])
+        let body = try XCTUnwrap(tail.range(of: "private func refresh"))
+        let render = String(tail[..<body.lowerBound])
+        XCTAssertFalse(render.contains("LabStudyRow("))
+        XCTAssertFalse(render.contains("LabStudyRow.init"))
+        XCTAssertTrue(tail[body.lowerBound...].contains("LabStudyRow.init"))
     }
 
     func testSheetsUseTheSectionTitleAndNoFixedWidth() throws {
@@ -175,10 +225,22 @@ final class LabSourceGuardTests: XCTestCase {
     func testTheUITestAnchorsSurvive() throws {
         let source = try LF.source("LabView.swift")
         for anchor in ["New experiment…", "Create experiment", "Play together", "Pause", "Previous frame",
-                       "Next frame", "Submit immutable review", "Blind review…", "Controlled studies"] {
+                       "Next frame", "Submit immutable review", "Blind review…"] {
             XCTAssertTrue(source.contains("\"\(anchor)\""), anchor)
         }
         XCTAssertTrue(source.contains(".accessibilityIdentifier(\"Blind review…\")"))
+        XCTAssertTrue(try LF.source("QuantView.swift").contains("Text(\"Controlled studies\").tag(true)"))
+        var rest = Substring(source)
+        while let open = rest.range(of: "Menu {") {
+            let tail = rest[open.upperBound...]
+            if rest[..<open.lowerBound].hasSuffix("context") { rest = tail; continue }
+            let close = try XCTUnwrap(tail.range(of: "} label:"))
+            let menu = tail[..<close.lowerBound]
+            for anchor in ["New experiment…", "Blind review…", "Create experiment"] {
+                XCTAssertFalse(menu.contains(anchor), "\(anchor) moved into a menu")
+            }
+            rest = tail[close.upperBound...]
+        }
     }
 }
 
