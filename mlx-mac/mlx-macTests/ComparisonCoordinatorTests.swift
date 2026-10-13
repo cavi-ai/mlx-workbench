@@ -67,6 +67,31 @@ final class ComparisonCoordinatorTests: XCTestCase {
 
     // MARK: - Coordinator runs
 
+    func testWarmupAndMeasurementsShareOneServerAndWarmupIsNotPersisted() async throws {
+        let events = ComparisonProbeEvents()
+        let probe = ServeProbe(
+            lifecycle: ServeLifecycle(
+                preview: { _, _ in await events.record("preview"); return "hash" },
+                start: { _, _, _ in await events.record("start") },
+                stop: { _ in await events.record("stop") }
+            ),
+            prober: RecordingComparisonProber(events: events),
+            pickPort: { 9997 }
+        )
+        let coordinator = ComparisonCoordinator(probe: probe,
+            runStore: JSONStore(fileURL: coordinatorRunStoreURL),
+            promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL))
+        let set = PromptSet(id: "single", name: "Single", useCase: nil,
+            prompts: [PromptEntry(id: "measured", text: "Answer the question.")], origin: .userCreated)
+        coordinator.start(variants: [("/Models/strata", nil)], promptSet: set)
+        let finished = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(finished)
+        let recorded = await events.values
+        XCTAssertEqual(recorded, ["preview", "start", "Say OK.", "Answer the question.", "stop"])
+        let persisted = try JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL).load()
+        XCTAssertEqual(persisted.first?.results.first?.samples.map(\.promptID), ["measured"])
+    }
+
     func testRunMeasuresEveryVariantAndFeedsBenchmarks() async throws {
         let benchmarks = BenchmarkRecorder()
         let coordinator = makeCoordinator()
@@ -303,3 +328,19 @@ private struct StubComparisonProber: EndpointProbing {
 }
 
 private enum StubServeError: Error { case failed }
+
+private actor ComparisonProbeEvents {
+    private(set) var values: [String] = []
+    func record(_ value: String) { values.append(value) }
+}
+
+private struct RecordingComparisonProber: EndpointProbing {
+    let events: ComparisonProbeEvents
+    func isReady(baseURL: URL) async -> Bool { true }
+    func listModels(baseURL: URL) async -> [String] { [] }
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+        await events.record(prompt)
+        return ProbeSample(text: "OK", completionTokens: 2, timeToFirstTokenSeconds: 0.01,
+            durationSeconds: 0.02, metricsEstimated: false)
+    }
+}

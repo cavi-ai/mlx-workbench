@@ -211,7 +211,7 @@ struct ServeProbe: Sendable {
 
     /// Serves `modelPath` on an ephemeral loopback port, runs `prompts`
     /// sequentially, and stops the server even when a probe throws.
-    func run(modelPath: String, prompts: [ProbePrompt]) async throws -> ProbeRunResult {
+    func run(modelPath: String, prompts: [ProbePrompt], warmup: [ProbePrompt] = []) async throws -> ProbeRunResult {
         guard let port = pickPort() else { throw ServeProbeError.noEphemeralPort }
         let hash = try await lifecycle.preview(modelPath, port)
         guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
@@ -223,6 +223,13 @@ struct ServeProbe: Sendable {
                 throw ServeProbeError.serverNeverReady(timeout: readyTimeout)
             }
             let modelID = await resolveModelID(baseURL: baseURL, modelPath: modelPath)
+            // Warm the same loaded model that will produce the measurements.
+            // Warm-up responses never enter the returned samples.
+            for prompt in warmup {
+                try Task.checkCancellation()
+                _ = try await prober.chat(baseURL: baseURL, model: modelID,
+                    prompt: prompt.prompt, maxTokens: prompt.maxTokens, tool: prompt.tool)
+            }
             var samples: [String: ProbeSample] = [:]
             for prompt in prompts {
                 try Task.checkCancellation()

@@ -67,6 +67,25 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertEqual(recorded.last, "stop:9999")
     }
 
+    func testFailedWarmupStopsServerWithoutMeasuringPrompts() async throws {
+        let events = ProbeEventRecorder()
+        let probe = makeProbe(events: events) { id in
+            if id == "unknown" { throw StubError.boom }
+            XCTFail("Measured a canary after warm-up failed")
+            return self.sample()
+        }
+        do {
+            _ = try await probe.run(modelPath: "/Models/strata",
+                prompts: [ProbePrompt(id: "arithmetic", prompt: CanarySuite.cases[0].prompt, maxTokens: 8)],
+                warmup: [ProbePrompt(id: "warmup", prompt: "Say OK.", maxTokens: 4)])
+            XCTFail("Expected warm-up failure")
+        } catch {
+            XCTAssertEqual(error as? StubError, .boom)
+        }
+        let recorded = await events.values
+        XCTAssertEqual(recorded, ["preview:/Models/strata:9999", "start:/Models/strata:9999:hash-1", "stop:9999"])
+    }
+
     func testNeverReadyThrowsAndStops() async {
         let events = ProbeEventRecorder()
         let probe = makeProbe(events: events, ready: false) { _ in self.sample() }
