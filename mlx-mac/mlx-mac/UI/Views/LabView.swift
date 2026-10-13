@@ -504,6 +504,12 @@ struct LabAdoptSheet: View {
     @State private var previewed: Data?
     @State private var busy = false
     @State private var error: String?
+    /// `initialPreview` and `initialDestination` let a render hold the sheet at a validated import.
+    init(lab: LabCoordinator, initialPreview: LabResponse? = nil, initialDestination: String = "") {
+        _lab = ObservedObject(wrappedValue: lab)
+        _preview = State(initialValue: initialPreview)
+        _destination = State(initialValue: initialDestination)
+    }
     private var request: LabRequest {
         LabRequest(operation: "adopt-preview", sourceDatabase: database, sourceArtifacts: artifacts, destination: destination)
     }
