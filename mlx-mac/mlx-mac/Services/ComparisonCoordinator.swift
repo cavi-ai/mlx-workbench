@@ -637,7 +637,9 @@ final class ComparisonCoordinator: ObservableObject {
                     aggregateTokensPerSecond: ComparisonAggregation.medianTokensPerSecond(samples),
                     aggregateTTFTSeconds: ComparisonAggregation.bestTTFT(samples),
                     error: nil,
-                    environmentFingerprint: environmentFingerprint()
+                    environmentFingerprint: environmentFingerprint(),
+                    servingEvidence: outcome.servingEvidence,
+                    startupSeconds: outcome.startupSeconds
                 )
             } catch {
                 result = VariantResult(

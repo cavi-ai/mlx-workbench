@@ -913,6 +913,9 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
     let environmentFingerprint: String?
     /// Median of the run mode's primary metric across samples (media modes).
     let aggregateMetric: Double?
+    /// Nil for historical runs that did not record the confirmed serving preview.
+    let servingEvidence: ProbeServingEvidence?
+    let startupSeconds: Double?
 
     var id: String { modelPath }
 
@@ -943,7 +946,9 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
         aggregateTTFTSeconds: Double?,
         error: String?,
         environmentFingerprint: String? = nil,
-        aggregateMetric: Double? = nil
+        aggregateMetric: Double? = nil,
+        servingEvidence: ProbeServingEvidence? = nil,
+        startupSeconds: Double? = nil
     ) {
         self.modelPath = modelPath
         self.modelSignature = modelSignature
@@ -953,6 +958,8 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
         self.error = error
         self.environmentFingerprint = environmentFingerprint
         self.aggregateMetric = aggregateMetric
+        self.servingEvidence = servingEvidence
+        self.startupSeconds = startupSeconds
     }
 }
 

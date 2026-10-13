@@ -36,4 +36,10 @@ Inspect the preview, then repeat it with `--confirm --preview-hash HASH`. Prepar
 
 Startup can take several minutes; Strata gets a bounded 900-second readiness window. Existing JIT memory admission and unload controls remain in effect. Performance depends on prompt length, draft acceptance, available memory and expert paging. Measure completion throughput and first-token latency separately. Quantization and floating-point execution can change responses; a faster run does not establish equivalent model quality. Workbench makes no universal speedup guarantee.
 
+## Compare with an existing MLX model
+
+Select the prepared Strata profile and an existing ready MLX model in chat Compare, then select one prompt set and run the comparison. Workbench warms each variant on the same endpoint used for its measured prompts and stops it before serving the next variant. Warm-up output is excluded from results. Server startup time is recorded separately from measured first-token latency.
+
+New result cards retain the runtime, weight format and declared quantization from the confirmed serving preview. Strata results also retain its model and runtime fingerprints and draft-and-verify setting. Historical runs without this evidence show **Runtime not recorded**. Strata keeps the original GGUF quantized blocks and Metal execution path; comparison does not convert or download weights. Comparing a GSQ-RCO GGUF with an MLX VQ pack measures two model variants, so evaluate their recorded responses alongside speed before selecting a winner.
+
 Strata's JIT estimate excludes the disk-backed n-gram companion from resident weights. It counts the first shard with a 20% expansion allowance, the full local MTP files, 5 GB of working memory and 30 KB per token at the configured 131,072-token context capacity, then adds the selected headroom reserve. This is a conservative estimate for the supported packs; unavailable memory measurements or insufficient headroom still block loading.

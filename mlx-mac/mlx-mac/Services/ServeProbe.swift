@@ -104,10 +104,52 @@ struct PromptToolSpec: Codable, Equatable, Sendable {
     }
 }
 
+/// Facts from the exact serving preview confirmed for a measured endpoint.
+struct ProbeServingEvidence: Codable, Equatable, Sendable {
+    let runtime: String
+    let previewHash: String
+    let weightFormat: String?
+    let weightQuantization: String?
+    let weightsPreserved: Bool?
+    let modelFingerprint: String?
+    let runtimeFingerprint: String?
+    let speculation: Bool?
+
+    init?(plan: [String: Any]) {
+        guard let runtime = plan["runtime"] as? String, !runtime.isEmpty,
+              let hash = plan["preview_hash"] as? String, !hash.isEmpty else { return nil }
+        self.runtime = runtime; previewHash = hash
+        weightFormat = plan["weight_format"] as? String
+        weightQuantization = plan["weight_quantization"] as? String
+        weightsPreserved = plan["weights_preserved"] as? Bool
+        modelFingerprint = (plan["strata_model_fingerprint"] ?? plan["model_config_fingerprint"]) as? String
+        runtimeFingerprint = plan["strata_runtime_fingerprint"] as? String
+        speculation = plan["strata_speculation"] as? Bool
+    }
+
+    var summary: String {
+        let title: String = switch runtime {
+        case "strata": "Strata · Metal"
+        case "mlx_lm": "MLX-LM"
+        case "mlx-vlm": "MLX-VLM"
+        default: runtime
+        }
+        return [title, weightFormat?.uppercased(), weightQuantization].compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+struct ProbeServePreview: Sendable {
+    let hash: String
+    var evidence: ProbeServingEvidence? = nil
+}
+
 struct ProbeRunResult: Equatable, Sendable {
     let port: Int
     /// Prompt id → sample. Guaranteed to contain every requested prompt id.
     let samples: [String: ProbeSample]
+    var servingEvidence: ProbeServingEvidence? = nil
+    /// Endpoint start through readiness, before warm-up and prompt timing.
+    var startupSeconds: Double? = nil
 }
 
 /// One prompt to send through a probed endpoint. The canary suite and
@@ -161,6 +203,7 @@ struct ServeLifecycle: Sendable {
     var jitStart: (@Sendable (_ modelPath: String, _ port: Int, _ previewHash: String, _ policy: EndpointMemoryPolicy?) async throws -> Void)? = nil
     var unload: (@Sendable (_ port: Int, _ expectedPID: Int) async throws -> Void)? = nil
     var configureMemory: (@Sendable (_ port: Int, _ expectedPID: Int, _ policy: EndpointMemoryPolicy) async throws -> Void)? = nil
+    var reviewedPreview: (@Sendable (_ modelPath: String, _ port: Int) async throws -> ProbeServePreview)? = nil
 }
 
 extension ServeLifecycle {
@@ -172,7 +215,8 @@ extension ServeLifecycle {
                 return response.string("preview_hash") ?? ""
             },
             start: { modelPath, port, previewHash in
-                _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: previewHash)
+                _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: previewHash,
+                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil)
             },
             stop: { port in
                 _ = try await api.serveStop(port: port)
@@ -189,6 +233,10 @@ extension ServeLifecycle {
             },
             configureMemory: { port, pid, policy in
                 _ = try await api.serveMemoryPolicy(port: port, expectedPID: pid, policy: policy)
+            },
+            reviewedPreview: { modelPath, port in
+                let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port)
+                return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
             }
         )
     }
@@ -213,15 +261,22 @@ struct ServeProbe: Sendable {
     /// sequentially, and stops the server even when a probe throws.
     func run(modelPath: String, prompts: [ProbePrompt], warmup: [ProbePrompt] = []) async throws -> ProbeRunResult {
         guard let port = pickPort() else { throw ServeProbeError.noEphemeralPort }
-        let hash = try await lifecycle.preview(modelPath, port)
-        guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
-        try await lifecycle.start(modelPath, port, hash)
+        let preview: ProbeServePreview
+        if let reviewedPreview = lifecycle.reviewedPreview {
+            preview = try await reviewedPreview(modelPath, port)
+        } else {
+            preview = ProbeServePreview(hash: try await lifecycle.preview(modelPath, port))
+        }
+        guard !preview.hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+        let startup = Date()
+        try await lifecycle.start(modelPath, port, preview.hash)
 
         let baseURL = URL(string: "http://127.0.0.1:\(port)")!
         do {
             guard await waitUntilReady(baseURL: baseURL) else {
                 throw ServeProbeError.serverNeverReady(timeout: readyTimeout)
             }
+            let startupSeconds = Date().timeIntervalSince(startup)
             let modelID = await resolveModelID(baseURL: baseURL, modelPath: modelPath)
             // Warm the same loaded model that will produce the measurements.
             // Warm-up responses never enter the returned samples.
@@ -242,7 +297,7 @@ struct ServeProbe: Sendable {
                 )
             }
             try? await lifecycle.stop(port)
-            return ProbeRunResult(port: port, samples: samples)
+            return ProbeRunResult(port: port, samples: samples, servingEvidence: preview.evidence, startupSeconds: startupSeconds)
         } catch {
             // A crashed probe must never leave an orphan server behind.
             try? await lifecycle.stop(port)

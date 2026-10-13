@@ -36,6 +36,42 @@ private struct ComparisonRunFixtureView: View {
 }
 
 final class CompareRemodelTests: XCTestCase {
+    @MainActor
+    func testStrataResultCardsRenderRecordedEvidenceWithoutInventingMeasurements() async throws {
+        guard let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_COMPARISON_RENDER_DIR to capture the native comparison cards.")
+        }
+        let evidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "fixture",
+            "weight_format": "gguf", "weight_quantization": "GSQ-RCO Q2_0", "weights_preserved": true,
+            "strata_speculation": false]))
+        let strata = VariantResult(modelPath: "/models/strata", modelSignature: nil, samples: [],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence)
+        let legacy = result("/models/mlx")
+        let measured = run(.chat, variants: [strata.modelPath, legacy.modelPath], results: [strata, legacy])
+        XCTAssertEqual(ComparePresentation.lanes(for: measured).map(\.state), [.noMeasurement, .noMeasurement])
+        XCTAssertTrue(ComparisonViewLogic.servingDetails(strata).contains("Strata · Metal · GGUF · GSQ-RCO Q2_0"))
+        XCTAssertEqual(ComparisonViewLogic.servingDetails(legacy), ["Runtime not recorded"])
+        let view = MediaRunResultsView(run: measured, store: ComparisonOutputStore(), contentWidth: 900,
+            isRouteActive: false, name: { URL(fileURLWithPath: $0).lastPathComponent }, onReview: { _, _ in }) { _ in EmptyView() }
+            .padding(20).frame(width: 940, height: 420, alignment: .topLeading)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 420),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let directory = URL(fileURLWithPath: folder, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try png.write(to: directory.appendingPathComponent("strata-comparison.png"))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "Strata comparison evidence"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
     private let base = Date(timeIntervalSince1970: 1_791_388_800)
 
     private func result(_ path: String, tps: Double? = nil, metric: Double? = nil, ttft: Double? = nil,
