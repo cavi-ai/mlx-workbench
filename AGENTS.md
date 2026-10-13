@@ -1,7 +1,7 @@
-This repository is `mlx-workbench`, a loopback-only web UI wrapper for
+This repository is `mlx-workbench`, a native SwiftUI application for
 `mlx-agent` model lifecycle tasks on Apple Silicon. It shells out to the
-vendored `mlx-agent` binary and renders results; there are no Python imports
-from `mlx-agent` at runtime.
+vendored `mlx-agent` binary and renders results. The application has no web
+server.
 
 ## Current truth docs
 
@@ -16,30 +16,29 @@ from `mlx-agent` at runtime.
 ## Repository shape to keep in sync
 
 - `vendor/mlx-agent` is a git submodule used as the execution engine.
-- `scripts/mlx-workbench` is the launcher.
-- `mlx_workbench/` is the application package. The web UI is scoped to the
-  core loop (Models / Convert / Duplicates / Scout / Doctor / Serve /
-  Training Studio / Compare Conversions / Model Arch / Jobs / Settings);
-  Adopt, Wire, and the other lifecycle surfaces live in the native app.
-  Serve presets are the web's named endpoint profiles
-  (`mlx_workbench/serve_presets.py`, persisted in `serve-presets.json`
-  beside the queue state file — deliberately separate from `config.json`
-  so the native app's endpoint fleet and web presets never clobber each
-  other).
+- `scripts/mlx-workbench` is the launcher: `mlx_workbench/__main__.py` opens
+  the built application (`--app`, `$MLX_WORKBENCH_APP`, or the Release build
+  under `.run/swift-build`).
+- `mlx_workbench/` is the Python package: configuration and compatibility
+  utilities used by `make install`/`make check` and the Python suite.
+  `mlx_workbench/serve_presets.py` validates named serve profiles in
+  `serve-presets.json` (beside an explicit config profile, else the state
+  directory), separate from `config.json` and the native app's endpoint
+  fleet.
 - The shared `config.json` contract: `mlx_workbench/config.py` preserves keys
-  it does not manage (e.g. the native app's premium toggles), and the web
-  Settings save overlays posted fields onto the loaded config so a web save
-  never strips native-app keys. Keep that invariant.
+  it does not manage (e.g. the native app's premium toggles). Keep that
+  invariant.
 - `tests/fixtures/` is the shared contract-fixture set consumed by BOTH the
   Python suite (`tests/test_contract_fixtures.py`) and the XCTest suite
   (`ScanContractTests`, `WorkbenchAPISubprocessTests`, `ContractFixtureTests`).
   A fixture change must keep both suites green; see `tests/fixtures/README.md`.
-- The web UI's durable convert queue (`convert-queue.json`, schema 1.1) has
-  exactly one writer: the web server. The native app reads it read-only via
-  `Services/WebConvertQueue.swift` and shows it in Activity as "Web Queue" with
-  provenance, only when it holds items or a problem; schema and path resolution mirror
-  `mlx_workbench/convert_queue.py` and are pinned by shared fixtures. Never
-  write to that file from the native app.
+- The durable convert queue (`convert-queue.json`, schema 1.1) is owned by
+  mlx-agent's `mlx_agent.convert_queue`; `mlx_workbench/convert_queue.py`
+  imports it from the configured agent path. Jobs reads and edits the queue
+  only through `mlx-agent lab queue` (`WorkbenchAPI.conversionQueue`), and
+  `Services/WebConvertQueue.swift` parses the replies; schema and path
+  resolution mirror the engine queue and are pinned by shared fixtures. Never
+  write to that file directly from the native app.
 - `tests/` contains unit and release-doc coverage.
 - `mlx-mac/` is the native SwiftUI app (Xcode project, explicit file list in
   `project.pbxproj` — register new sources there). `make test-swift` runs its
@@ -490,7 +489,7 @@ from `mlx-agent` at runtime.
   app process without that variable and keep live behavior. Keep new
   launch-time live work behind this method. Default state locations resolve
   through `Services/WorkbenchStatePaths.swift`: in a hosted unit-test process
-  Application Support, `config.json` and the web queue live under
+  Application Support, `config.json` and the convert queue live under
   `WorkbenchStatePaths.hostedTestRoot`, which the test bundle's principal
   class (`HostedTestStateRoot`) replaces with a fresh temporary directory per
   test. New default state paths go through it.
@@ -554,15 +553,14 @@ from `mlx-agent` at runtime.
   keepers. Folders require recognized MLX config/weights, no symlinks,
   hard-linked/shared files or HF cache layout, and same-volume quarantine.
   Configured roots themselves cannot move. Folder ledger records carry optional
-  `kind: "mlxDirectory"`; legacy GGUF records omit it. The web keeps folder
-  records visible but delegates restore/Trash to the native app. Task-scoped replacement chains
+  `kind: "mlxDirectory"`; legacy GGUF records omit it. Task-scoped replacement chains
   select a terminal keeper within one reviewed comparison or matched workflow
   cohort; they remain advisory and protect their keepers from stale-file advice.
   Quarantine offers native macOS Trash after preview; confirm rechecks file
   identity, size, timestamps, ledger membership and the configured quarantine
   fence. It refuses links and never falls back to permanent deletion. Successful
-  Trash moves preserve ledger history with the web-compatible `deleted_at`
-  field. Quarantine and Trash retain disk usage until Trash is emptied.
+  Trash moves preserve ledger history with the `deleted_at` field shared with
+  `mlx_workbench/quarantine.py`. Quarantine and Trash retain disk usage until Trash is emptied.
 - Compare defaults distinguish intentional serving (`UsageStamp.lastServedAt`)
   from verification/benchmark activity. New comparison runs snapshot prompts
   and can persist explicit human task-outcome reviews. Current recommendations
@@ -717,9 +715,8 @@ from `mlx-agent` at runtime.
 ## Fast onboarding (for a new agent)
 
 - `make install` installs the required Python 3.12 environment and converter libs.
-- `make start` runs the UI on `127.0.0.1:8765` and writes PID/logs to `.run/`.
-- `make run` runs foreground.
-- `make status`, `make stop`, `make open` are standard operations.
+- `make start` (also `make run`, `make open`) builds the Release SwiftUI
+  application under `.run/swift-build` and opens it.
 - `make test` and `python3 -m unittest discover -s tests -t .` run unit tests.
 - `make accept-native-gguf` is excluded from normal tests and requires an
   explicit runtime manifest because it may perform a real conversion.
@@ -738,21 +735,20 @@ from `mlx-agent` at runtime.
 
 ## Security and boundaries
 
-- UI binds loopback only; non-loopback hosts are rejected.
+- `config.json` accepts only loopback hosts (`127.0.0.1`, `localhost`,
+  `::1`); other hosts are rejected.
 - Job arguments are argv tokens (no shell string execution).
 - Quarantine operations are constrained to configured model roots: `.gguf`
-  files in both interfaces, explicitly previewed independent MLX folders in
-  the native app. The web UI can also purge quarantined GGUF files to the macOS Trash
-  (`quarantine.purge`: fenced to existing files inside the quarantine dir,
-  ledger entries marked `deleted_at`, never the ledger itself, symlink
-  refused, audited as `quarantine.delete`).
-- Hardened response surface: CSP with `frame-ancestors 'none'`, `form-action`,
-  `base-uri`, `X-Frame-Options: DENY`, and a `Server:` header without the
-  Python version (`mlx_workbench/server.py`). Concurrent requests are capped
-  by a bounded semaphore (503 when exhausted); see `test_hardening.py`.
-- Durable state files (`config.json`, `convert-queue.json`) are written via
-  `mlx_workbench/atomicio.py`: fsync-before-replace plus directory fsync, and
-  every write refuses symbolic links at the target or temp path. The
+  files in `mlx_workbench/quarantine.py` and the native app, explicitly
+  previewed independent MLX folders in the native app. `quarantine.purge`
+  moves quarantined GGUF files to the macOS Trash (fenced to existing files
+  inside the quarantine dir, ledger entries marked `deleted_at`, never the
+  ledger itself, symlink refused).
+- Durable state files (`config.json`, quarantine ledger, `serve-presets.json`)
+  are written via `mlx_workbench/atomicio.py`: fsync-before-replace plus
+  directory fsync, and every write refuses symbolic links at the target or
+  temp path. The engine queue store writes `convert-queue.json` atomically and
+  refuses symlinked queue and temp paths. The
   quarantine guard additionally refuses symlinked sources and symlinked
   quarantine directories; the Swift `WiringCoordinator` refuses symlinked
   client configs, backup paths, and restore targets, `JSONStore` refuses a
@@ -761,25 +757,14 @@ from `mlx-agent` at runtime.
 - Agent subprocesses run with `start_new_session=True`; on timeout the whole
   process group is terminated then killed (`bridge._kill_process_group`), and
   the child environment is an allowlist (`bridge.agent_environment`), never
-  the web server's full environment. Malformed request bodies (type-confused
-  JSON, control characters in path fields, oversized/undecodable payloads)
-  are refused with classified 4xx envelopes (`tests/test_hardening.py`
-  adversarial route tests); oversized bodies are drained so clients can read
-  the reply.
-- The config key universe is closed (`config._ALLOWED_KEYS` = known web
-  fields + `config._FOREIGN_KEYS` native premium keys): unknown keys are
-  rejected on load and refused on save, so neither frontend can smuggle
-  arbitrary fields into the shared `config.json`.
-- Every state-changing web operation (config save, convert submit, queue
-  cancel/clear/retry/move, serve start/stop, quarantine move) appends a line
-  to a local audit trail via `mlx_workbench/audit.py`
+  the caller's full environment.
+- The config key universe is closed (`config._ALLOWED_KEYS` = known fields +
+  `config._FOREIGN_KEYS` native premium keys): unknown keys are rejected on
+  load and refused on save, so arbitrary fields never enter the shared
+  `config.json`.
+- `mlx_workbench/audit.py` appends events to a local audit trail
   (`$XDG_STATE_HOME/mlx-workbench/audit.jsonl`, bounded, best-effort —
   durable stores stay authoritative).
-- `/api/scan` is served through a stale-while-revalidate cache
-  (`Application.cached_scan`): the first scan populates it, later calls
-  return the snapshot instantly with `cached`/`stale` flags and refresh in
-  the background; `?refresh=1` scans synchronously. The web UI additionally
-  keeps the last inventory in `localStorage` so reloads never render empty.
 - Convert/serve Python deps are pinned in `requirements.txt` (exact
   versions), and the agent's lab operations (Training, experiments) in
   `vendor/mlx-agent/requirements-lab.txt`; `make install` installs both and `make pip-audit` checks the
