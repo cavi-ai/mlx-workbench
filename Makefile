@@ -181,6 +181,10 @@ start run open: run-swift
 test:
 	$(PYTHON) -m unittest discover -s tests -t .
 
+.PHONY: install-strata
+install-strata: mac-only
+	$(PYTHON) scripts/install-strata.py
+
 test-live-scan:
 	MLX_WORKBENCH_LIVE_SCAN=1 $(PYTHON) -m unittest tests.test_live_scan_e2e -v
 
