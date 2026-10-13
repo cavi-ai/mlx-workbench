@@ -70,7 +70,8 @@ enum ModelLibraryBuilder {
                 tensorCount: nil,
                 error: nil,
                 task: output.task,
-                draft: configDraft(config)
+                draft: configDraft(config),
+                servingRuntime: output.runtime
             )
             return LibraryModel(
                 item: item,
@@ -105,8 +106,9 @@ enum ModelLibraryBuilder {
         var evidence = [
             "path=\(output.path)",
             "status=ready",
-            "origin=mlx_output",
+            output.runtime == "strata" ? "origin=strata_profile" : "origin=mlx_output",
         ]
+        if let runtime = output.runtime { evidence.append("runtime=\(runtime)") }
         if let modelKey = output.modelKey?.trimmingCharacters(in: .whitespacesAndNewlines), !modelKey.isEmpty {
             evidence.append("model_key=\(modelKey)")
         }

@@ -10,7 +10,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "vendor/mlx-agent/src"))
-from mlx_agent.strata_runtime import ENGINE_REVISION, HTTP_REVISION, INSTALL_MARKER, installed_runtime, runtime_root, source_digest
+from mlx_agent.strata_runtime import ENGINE_REVISION, HTTP_REVISION, INSTALL_MARKER, engine_launcher, installed_runtime, runtime_root, source_digest
 
 
 def checkout(url, revision, destination, reference=None):
@@ -38,7 +38,7 @@ def main():
     root = args.root.expanduser().absolute()
     if root.is_symlink():
         parser.error("The installation directory must not be a symbolic link")
-    if (root / INSTALL_MARKER).exists():
+    if (root / INSTALL_MARKER).exists() and (root / "strata-mlx").exists():
         print(json.dumps(installed_runtime(root), indent=2))
         return
     root.mkdir(parents=True, exist_ok=True)
@@ -51,6 +51,14 @@ def main():
     subprocess.run(["uv", "sync", "--directory", str(root / "engine"), "--frozen", "--no-dev", "--python", "3.12"], check=True)
     python = root / "engine/.venv/bin/python"
     subprocess.run([str(python), "-c", "import mlx.core, mlx_lm.models.qwen4_exp, gguf, regex, jinja2"], check=True)
+    launcher = root / "strata-mlx"
+    if launcher.exists() or launcher.is_symlink():
+        if launcher.is_symlink() or launcher.read_text() != engine_launcher(root):
+            raise ValueError("An incompatible engine launcher already exists")
+    else:
+        with launcher.open("x", encoding="utf-8") as handle:
+            handle.write(engine_launcher(root))
+    launcher.chmod(0o700)
     marker = {"engine_revision": ENGINE_REVISION, "http_revision": HTTP_REVISION, "source_sha256": source_digest(root)}
     temporary = root / (INSTALL_MARKER + ".tmp")
     temporary.write_text(json.dumps(marker, indent=2) + "\n", encoding="utf-8")

@@ -34,6 +34,7 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
     let error: String?
     let task: ModelTask?
     let draft: ModelDraft?
+    var servingRuntime: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case path, name, bytes, shard, architecture, quantization, parameters
@@ -41,6 +42,7 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
         case modifiedAt = "modified_at"
         case modelKey = "model_key"
         case tensorCount = "tensor_count"
+        case servingRuntime = "runtime"
     }
 
     var id: String { path }
@@ -49,7 +51,7 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
          modelKey: String?, architecture: String?, quantization: String?, parameters: String?,
          structure: String?, signature: String?, companion: Bool?, readable: Bool?,
          status: String, outputs: [String], tensorCount: Int?, error: String?,
-         task: ModelTask? = nil, draft: ModelDraft? = nil) {
+         task: ModelTask? = nil, draft: ModelDraft? = nil, servingRuntime: String? = nil) {
         self.path = path
         self.name = name
         self.bytes = bytes
@@ -69,6 +71,7 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
         self.error = error
         self.task = task
         self.draft = draft
+        self.servingRuntime = servingRuntime
     }
 }
 
@@ -111,9 +114,10 @@ struct MLXOutput: Codable, Equatable, Identifiable, Hashable {
     let quantization: QuantInfo?
     let provenance: String?
     var task: ModelTask? = nil
+    var runtime: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case path, name, quantization, provenance, task
+        case path, name, quantization, provenance, task, runtime
         case modelKey = "model_key"
     }
 

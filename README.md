@@ -25,6 +25,8 @@ That is the whole setup. `make install` creates a project `.venv` (not Homebrew 
 
 The default agent path is `vendor/mlx-agent` (pinned release). Override with Settings, or `$MLX_AGENT_HOME`, for a local mlx-agent checkout. `make install` and `make check` use that resolved configured path first, and initialize the vendored submodule only when no usable agent is configured.
 
+Qwen3.8-Flash-Next can also use the optional [Strata inference runtime](docs/strata.md) with a prepared local GGUF pair. Its dependencies are isolated from the standard MLX environment.
+
 ## Native workflows
 
 `mlx-mac/` is a native SwiftUI app over the same agent boundary — same preview/confirm discipline, same receipts — with these lifecycle workflows:

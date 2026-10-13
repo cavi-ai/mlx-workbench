@@ -778,7 +778,8 @@ actor WorkbenchAPI {
                 modelKey: raw.string("model_key"),
                 quantization: info,
                 provenance: raw.string("provenance"),
-                task: ModelTask(dictionary: raw["task"] as? [String: Any])
+                task: ModelTask(dictionary: raw["task"] as? [String: Any]),
+                runtime: raw.string("runtime")
             )
         }
         guard let totalsDict = data["totals"] as? [String: Any] else {
