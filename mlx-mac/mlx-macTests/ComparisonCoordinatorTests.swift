@@ -21,7 +21,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertFalse(setup.goal.matches(changed))
     }
 
-    func testSettingsSearchSuggestionRequiresQualityHeadroomAndMatchingEvidence() throws {
+    func testSettingsSearchSuggestionRequiresQualityHeadroomAndMatchingEvidence() async throws {
         let setup = StrataSettingsSearchSetup()
         let lanes = try setup.lanes(modelPath: "/Models/strata", signature: "model")
         let memory = SystemMemoryEvidence(totalBytes: 128_000_000_000, baselineAvailableBytes: 40_000_000_000,
@@ -46,6 +46,31 @@ final class ComparisonCoordinatorTests: XCTestCase {
         })
         XCTAssertEqual(run.settingsSearchCandidateID, lanes[0].id)
         let reviewed = run
+        let source = JSONStore<ComparisonRun>(fileURL: temporaryURL("suggestions.json"))
+        try source.upsert(reviewed, id: \.id)
+        let comparison = ComparisonCoordinator(probe: ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "unused" },
+            start: { _, _, _ in XCTFail("Reading suggestions must not serve") }, stop: { _ in }), prober: OpenAIEndpointProber()),
+            runStore: source, promptSetStore: JSONStore(fileURL: temporaryURL("prompts.json")))
+        XCTAssertEqual(try comparison.requireCurrentSuggestion(reviewed).id, lanes[0].id)
+        let profileStore = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let profiles = ServingProfileCoordinator(store: profileStore, probe: { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in throw WorkflowEvidenceError.invalid("Runtime unavailable") },
+                start: { _, _, _ in XCTFail("Failed verification must not start") }, stop: { _ in }), prober: OpenAIEndpointProber())
+        })
+        profiles.suggestionSource = { try comparison.requireCurrentSuggestion($0) }
+        let draft = try XCTUnwrap(profiles.createSuggestedProfile(run: reviewed, name: "Suggested"))
+        XCTAssertEqual(draft.sourceRunID, reviewed.id)
+        XCTAssertEqual(draft.sourceLaneID, lanes[0].id)
+        await profiles.verifySuggestion(run: reviewed, profileID: draft.id)
+        await profiles.verifySuggestion(run: reviewed, profileID: draft.id)
+        XCTAssertEqual(try profileStore.load().count, 1)
+        XCTAssertFalse(try XCTUnwrap(profileStore.load().first).hasPassedVerification)
+        var changedReview = reviewed; changedReview.qualityReviews?[lanes[0].id] = nil
+        try source.upsert(changedReview, id: \.id)
+        XCTAssertThrowsError(try comparison.requireCurrentSuggestion(reviewed))
+        XCTAssertNil(profiles.createSuggestedProfile(run: reviewed, name: "Outdated"))
+        XCTAssertEqual(try profileStore.load().count, 1)
+        try source.upsert(reviewed, id: \.id)
         var partial = reviewed; partial.results.removeLast()
         XCTAssertNil(partial.settingsSearchCandidateID)
         for key in ["modelFingerprint", "runtimeFingerprint", "contextTokens"] {

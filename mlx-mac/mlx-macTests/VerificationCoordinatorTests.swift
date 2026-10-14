@@ -7,6 +7,64 @@ import XCTest
 
 @MainActor
 final class VerificationCoordinatorTests: XCTestCase {
+    func testChangedComparisonCannotPublishPassingSuggestedVerification() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        var profile = managementProfile(); profile.verification = nil
+        try store.upsert(profile, id: \.id)
+        let evidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "preview",
+            "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "runtime", "strata_speculation": false,
+            "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
+        let coordinator = ServingProfileCoordinator(store: store, probe: { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "preview" }, start: { _, _, _ in }, stop: { _ in },
+                reviewedPreview: { _, _ in ProbeServePreview(hash: "preview", evidence: evidence) }),
+                prober: StubVerificationProber(responder: { id in
+                    let original = Self.passingSample(id)
+                    return ProbeSample(text: original.text, completionTokens: 10, timeToFirstTokenSeconds: 0.1,
+                        durationSeconds: 1, metricsEstimated: false, finishReason: "stop")
+                }), readyPollIntervalNanoseconds: 1_000_000, pickPort: { 9999 })
+        })
+        await coordinator.verify(id: profile.id, expectedEvidence: evidence,
+            beforePublishing: { throw WorkflowEvidenceError.invalid("Comparison changed") })
+        XCTAssertNotNil(coordinator.lastError)
+        XCTAssertTrue(coordinator.lastError?.contains("Comparison changed") == true)
+        XCTAssertNil(try store.load().first?.verification)
+        XCTAssertFalse(coordinator.profiles.first?.hasPassedVerification ?? true)
+    }
+
+    func testLocalSuggestedProfileVerificationWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_SUGGESTED_PROFILE_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_SUGGESTED_PROFILE_MANIFEST for explicit suggested-profile acceptance.")
+        }
+        struct Manifest: Decodable { let agentPath: String; let comparisonFile: String; let evidenceRoot: String }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let root = URL(fileURLWithPath: manifest.evidenceRoot)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: root.path)
+        let runs = JSONStore<ComparisonRun>(fileURL: URL(fileURLWithPath: manifest.comparisonFile))
+        let comparison = ComparisonCoordinator(probe: ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber()),
+            runStore: runs, promptSetStore: JSONStore(fileURL: root.appendingPathComponent("prompts.json")))
+        let run = try XCTUnwrap(try runs.load().first)
+        let selected = try comparison.requireCurrentSuggestion(run)
+        let store = JSONStore<ServingProfile>(fileURL: root.appendingPathComponent("profiles.json"))
+        let profiles = ServingProfileCoordinator(store: store, probe: { options in
+            ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
+                prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
+        })
+        profiles.suggestionSource = { try comparison.requireCurrentSuggestion($0) }
+        let draft = try XCTUnwrap(profiles.createSuggestedProfile(run: run, name: "Suggested configuration"))
+        XCTAssertFalse(draft.hasPassedVerification)
+        XCTAssertEqual(draft.sourceRunID, run.id)
+        XCTAssertEqual(draft.sourceLaneID, selected.id)
+        await profiles.verifySuggestion(run: run, profileID: draft.id)
+        XCTAssertNil(profiles.lastError)
+        let verified = try XCTUnwrap(try store.load().first { $0.id == draft.id })
+        XCTAssertTrue(verified.hasPassedVerification)
+        XCTAssertEqual(verified.verification?.modelFingerprint, selected.servingEvidence?.modelFingerprint)
+        XCTAssertEqual(verified.verification?.runtimeFingerprint, selected.servingEvidence?.runtimeFingerprint)
+        XCTAssertEqual(verified.verification?.canaries.count, CanarySuite.cases.count)
+        let servers = try await api.serveStatus()
+        XCTAssertTrue(servers.isEmpty)
+    }
     func testProfileRenamePreservesProofAndRejectsStaleOrInvalidEdits() throws {
         let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         let original = managementProfile()
@@ -176,6 +234,11 @@ final class VerificationCoordinatorTests: XCTestCase {
         }
         scenes.append(("rename", AnyView(ServingProfileRenameSheet(profiles: coordinator, profile: profile, onRenamed: { _ in })), 510))
         scenes.append(("remove", AnyView(ServingProfileRemovalSheet(profiles: coordinator, profile: profile, onRemoved: { })), 510))
+        let emptyRun = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil, variants: [profile.modelPath],
+            results: [], startedAt: Date(), finishedAt: Date(), state: .completed)
+        scenes.append(("verify-suggestion", AnyView(SuggestedProfileVerificationSheet(profiles: coordinator,
+            request: ServingProfileSaveRequest(run: emptyRun, laneID: "lane", letter: "A", verifySuggestion: true),
+            onOpenRun: { _ in XCTFail("Rendering must not open Run"); return nil })), 560))
         for (name, content, width) in scenes {
             let view = content.frame(width: width, height: 330, alignment: .topLeading)
                 .background(WorkbenchColor.canvas).preferredColorScheme(.dark)

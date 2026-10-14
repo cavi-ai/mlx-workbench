@@ -22,6 +22,8 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
     let modelPath: String
     var options: StrataComparisonOptions
     var verification: ServingProfileVerification? = nil
+    var sourceRunID: UUID? = nil
+    var sourceLaneID: String? = nil
 
     var isValid: Bool {
         Self.nameValidationError(name) == nil
@@ -113,6 +115,7 @@ final class ServingProfileCoordinator: ObservableObject {
     @Published private(set) var lastError: String?
     /// Without an authoritative endpoint reference check, removal is refused.
     var removalGuard: ((UUID) throws -> Void)?
+    var suggestionSource: ((ComparisonRun) throws -> VariantResult)?
     private let store: JSONStore<ServingProfile>
     private let probe: @Sendable (StrataComparisonOptions) -> ServeProbe
 
@@ -132,7 +135,8 @@ final class ServingProfileCoordinator: ObservableObject {
                 throw WorkflowEvidenceError.invalid("Select a successful Strata lane with recorded serving settings.")
             }
             let profile = ServingProfile(id: UUID(), name: name.trimmingCharacters(in: .whitespacesAndNewlines), modelPath: result.modelPath,
-                options: StrataComparisonOptions(speculation: speculation, expertMemoryGB: evidence.expertMemoryGB, contextTokens: context))
+                options: StrataComparisonOptions(speculation: speculation, expertMemoryGB: evidence.expertMemoryGB, contextTokens: context),
+                sourceRunID: run.id, sourceLaneID: result.id)
             guard profile.isValid else { throw WorkflowEvidenceError.invalid("Enter a profile name of 1–80 characters and valid settings.") }
             try store.upsert(profile, id: \.id)
             profiles = try store.load()
@@ -148,6 +152,28 @@ final class ServingProfileCoordinator: ObservableObject {
             throw WorkflowEvidenceError.invalid("The current serving profile requires verification.")
         }
         return current
+    }
+
+    func createSuggestedProfile(run: ComparisonRun, name: String) -> ServingProfile? {
+        do {
+            guard activeID == nil, let suggestionSource else { throw WorkflowEvidenceError.invalid("Suggestion verification is unavailable or already running.") }
+            let result = try suggestionSource(run)
+            return saveLane(run: run, laneID: result.id, name: name)
+        } catch { lastError = AppHost.render(error); return nil }
+    }
+
+    func verifySuggestion(run: ComparisonRun, profileID: UUID) async {
+        do {
+            guard activeID == nil, let suggestionSource else { throw WorkflowEvidenceError.invalid("Suggestion verification is unavailable or already running.") }
+            let result = try suggestionSource(run)
+            guard let evidence = result.servingEvidence, let context = evidence.contextTokens, let speculation = evidence.speculation,
+                  let profile = try store.load().first(where: { $0.id == profileID }), profile.sourceRunID == run.id,
+                  profile.sourceLaneID == result.id, profile.modelPath == result.modelPath,
+                  profile.options == StrataComparisonOptions(speculation: speculation, expertMemoryGB: evidence.expertMemoryGB, contextTokens: context) else {
+                throw WorkflowEvidenceError.invalid("The saved profile no longer matches this suggestion.")
+            }
+            await verify(id: profileID, expectedEvidence: evidence, beforePublishing: { _ = try suggestionSource(run) })
+        } catch { lastError = AppHost.render(error) }
     }
 
     @discardableResult
@@ -199,7 +225,7 @@ final class ServingProfileCoordinator: ObservableObject {
     }
 
     /// Uses the existing canaries with an explicit 1,024-token answer budget for thinking models.
-    func verify(id: UUID) async {
+    func verify(id: UUID, expectedEvidence: ProbeServingEvidence? = nil, beforePublishing: (() throws -> Void)? = nil) async {
         guard activeID == nil, let saved = profiles.first(where: { $0.id == id }), saved.isValid else { return }
         var original = saved
         activeID = id; lastError = nil
@@ -214,7 +240,9 @@ final class ServingProfileCoordinator: ObservableObject {
                 original = cleared; profiles = try store.load()
             }
             let prompts = CanarySuite.cases.map { ProbePrompt(id: $0.id, prompt: $0.prompt, maxTokens: max(1024, $0.maxTokens)) }
-            let outcome = try await probe(original.options).run(modelPath: original.modelPath, prompts: prompts)
+            var selectedProbe = probe(original.options)
+            selectedProbe.expectedServingEvidence = expectedEvidence
+            let outcome = try await selectedProbe.run(modelPath: original.modelPath, prompts: prompts)
             guard let evidence = outcome.servingEvidence, evidence.runtime == "strata",
                   let model = evidence.modelFingerprint, let runtime = evidence.runtimeFingerprint,
                   evidence.speculation == original.options.speculation, evidence.expertMemoryGB == original.options.expertMemoryGB,
@@ -236,6 +264,7 @@ final class ServingProfileCoordinator: ObservableObject {
             }
             let proof = ServingProfileVerification(options: original.options, modelFingerprint: model, runtimeFingerprint: runtime,
                 suiteVersion: CanarySuite.version, canaries: canaries, verifiedAt: Date())
+            try beforePublishing?()
             var updated = original; updated.verification = proof
             let changed = try store.update(id: id, keyPath: \.id) { current in
                 guard current == original else { throw WorkflowEvidenceError.invalid("The profile changed during verification. Verify its current settings.") }
