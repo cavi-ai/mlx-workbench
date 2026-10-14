@@ -89,6 +89,23 @@ final class EndpointSupervisor: ObservableObject {
 
     // MARK: - User actions (single-slot shim)
 
+    /// Read durable and in-memory references; disabled slots still own their configuration.
+    /// This synchronous check cannot interleave with another main-actor fleet mutation.
+    func requireUnreferencedProfile(_ id: UUID) throws {
+        guard activeUserOperations == 0, !isReconciling, !isUnloading else {
+            throw WorkflowEvidenceError.invalid("Wait for the endpoint operation to finish before removing a profile.")
+        }
+        let persisted = fleetStore.load()
+        guard persisted.problem == nil, persistenceError == nil else {
+            throw WorkflowEvidenceError.invalid("Endpoint configuration is unavailable. The profile was kept.")
+        }
+        let references = (fleet.slots + persisted.config.slots).filter { $0.servingProfile?.id == id }
+        guard references.isEmpty else {
+            let ports = Set(references.map(\.port)).sorted().map(String.init).joined(separator: ", ")
+            throw WorkflowEvidenceError.invalid("Endpoints on ports \(ports) use this profile. Replace their profile or remove those slots first; disabling them keeps the reference.")
+        }
+    }
+
     /// Enable the endpoint for a model. Verified models only, unless the
     /// user explicitly overrides (the same discipline as the quality gate).
     /// Enable from raw UI text: an empty field means the default port; a

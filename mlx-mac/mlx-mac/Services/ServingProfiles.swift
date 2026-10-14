@@ -18,16 +18,21 @@ struct ServingProfileVerification: Codable, Equatable, Sendable {
 
 struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
-    let name: String
+    var name: String
     let modelPath: String
     var options: StrataComparisonOptions
     var verification: ServingProfileVerification? = nil
 
     var isValid: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && name.count <= 80
-            && !name.unicodeScalars.contains { $0.value < 32 }
+        Self.nameValidationError(name) == nil
             && modelPath.hasPrefix("/") && !modelPath.unicodeScalars.contains { $0.value < 32 }
             && options.validationError == nil
+    }
+    static func nameValidationError(_ name: String) -> String? {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Enter a profile name." }
+        guard name.count <= 80 else { return "Use no more than 80 characters." }
+        guard !name.unicodeScalars.contains(where: { $0.value < 32 }) else { return "Use a name without control characters." }
+        return nil
     }
     var hasPassedVerification: Bool { isValid && verification?.passed == true && verification?.options == options }
 
@@ -106,6 +111,8 @@ final class ServingProfileCoordinator: ObservableObject {
     @Published private(set) var profiles: [ServingProfile] = []
     @Published private(set) var activeID: UUID?
     @Published private(set) var lastError: String?
+    /// Without an authoritative endpoint reference check, removal is refused.
+    var removalGuard: ((UUID) throws -> Void)?
     private let store: JSONStore<ServingProfile>
     private let probe: @Sendable (StrataComparisonOptions) -> ServeProbe
 
@@ -141,6 +148,54 @@ final class ServingProfileCoordinator: ObservableObject {
             throw WorkflowEvidenceError.invalid("The current serving profile requires verification.")
         }
         return current
+    }
+
+    @discardableResult
+    func profileForManagement(_ id: UUID) -> ServingProfile? {
+        do {
+            guard activeID == nil else { throw WorkflowEvidenceError.invalid("Wait for profile verification to finish.") }
+            let loaded = try store.load()
+            profiles = loaded
+            guard let current = loaded.first(where: { $0.id == id }) else {
+                throw WorkflowEvidenceError.invalid("The serving profile is no longer available.")
+            }
+            lastError = nil
+            return current
+        } catch { lastError = AppHost.render(error); return nil }
+    }
+
+    @discardableResult
+    func rename(_ original: ServingProfile, name: String) -> ServingProfile? {
+        do {
+            guard activeID == nil else { throw WorkflowEvidenceError.invalid("Wait for profile verification to finish.") }
+            if let error = ServingProfile.nameValidationError(name) { throw WorkflowEvidenceError.invalid(error) }
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed != original.name else { throw WorkflowEvidenceError.invalid("Choose a different profile name.") }
+            var renamed = original; renamed.name = trimmed
+            let changed = try store.update(id: original.id, keyPath: \.id) { current in
+                guard current == original else { throw WorkflowEvidenceError.invalid("The profile changed. Reopen Rename to use its current name.") }
+                return renamed
+            }
+            guard changed else { throw WorkflowEvidenceError.invalid("The serving profile is no longer available.") }
+            profiles = try store.load(); lastError = nil
+            return renamed
+        } catch { lastError = AppHost.render(error); return nil }
+    }
+
+    @discardableResult
+    func remove(_ original: ServingProfile) -> Bool {
+        do {
+            guard activeID == nil else { throw WorkflowEvidenceError.invalid("Wait for profile verification to finish.") }
+            guard let removalGuard else { throw WorkflowEvidenceError.invalid("Endpoint references could not be checked. The profile was kept.") }
+            let changed = try store.update(id: original.id, keyPath: \.id) { current in
+                guard current == original else { throw WorkflowEvidenceError.invalid("The profile changed. Review it again before removal.") }
+                try removalGuard(original.id)
+                return nil
+            }
+            guard changed else { throw WorkflowEvidenceError.invalid("The serving profile is no longer available.") }
+            profiles = try store.load(); lastError = nil
+            return true
+        } catch { lastError = AppHost.render(error); return false }
     }
 
     /// Uses the existing canaries with an explicit 1,024-token answer budget for thinking models.

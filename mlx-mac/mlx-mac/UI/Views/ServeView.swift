@@ -571,7 +571,8 @@ struct ServeView: View {
                     .frame(minWidth: WorkbenchSize.Run.slotModelMinimum, alignment: .leading)
                     .help(slot.modelPath)
                 if let profile = slot.servingProfile {
-                    Text(profile.name).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    Text(profiles.profiles.first(where: { $0.id == profile.id })?.name ?? profile.name)
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 }
                 if !isTwoLine { slotFacts(slot, attempts: attempts) }
                 Spacer(minLength: WorkbenchSpacing.xs)
