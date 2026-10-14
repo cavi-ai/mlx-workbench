@@ -444,6 +444,8 @@ struct QuantView: View {
     @State private var reuseError: String?
     @State private var slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
     @State private var strataSettings: [String: StrataComparisonOptions] = [:]
+    @State private var settingsSearchGoal: StrataSettingsSearchGoal?
+    @State private var showingSettingsSearch = false
     @State private var variantSlots: [String?] = [nil, nil]
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
     @State private var selectedRunID: ComparisonRun.ID?
@@ -545,6 +547,27 @@ struct QuantView: View {
             .frame(maxWidth: 1100, alignment: .leading)
             .frame(maxWidth: .infinity)
             .padding(WorkbenchSpacing.pageInset)
+        }
+        .sheet(isPresented: $showingSettingsSearch) {
+            StrataSettingsSearchSheet(models: readyModels.filter { $0.item.servingRuntime == "strata" }) { model, setup in
+                guard comparison.activeRunID == nil, !comparison.savingPromptSet,
+                      let current = readyModels.first(where: { $0.item.path == model.item.path && $0.item.servingRuntime == "strata" }) else {
+                    return "The selected model or comparison is no longer available."
+                }
+                do {
+                    guard let memory = MemorySnapshot.probe(), setup.headroomGB <= Double(memory.totalBytes) / 1e9 else {
+                        return "Choose a headroom target within this Mac's total RAM; memory reporting must be available."
+                    }
+                    let lanes = try setup.lanes(modelPath: current.item.path, signature: current.item.signature)
+                    variantSlots = lanes.map { Optional($0.modelPath) }
+                    slotIDs = lanes.map(\.id)
+                    strataSettings = Dictionary(uniqueKeysWithValues: lanes.map { ($0.id, $0.strataOptions!) })
+                    settingsSearchGoal = setup.goal
+                    initializedSuggestions = true; manuallySelectedModels = true
+                    selectionReason = "Four Strata configurations at one fixed context."
+                    return nil
+                } catch { return AppHost.render(error) }
+            }
         }
         .sheet(isPresented: Binding(get: { importPreview != nil }, set: { if !$0 { importPreview = nil } })) {
             if let importPreview {
@@ -748,7 +771,18 @@ struct QuantView: View {
         if let reason = ComparePresentation.runUnavailableReason(slots: variantSlots, activeRunID: comparison.activeRunID,
             availablePaths: Set(readyModels.map { $0.item.path }), hasPromptSet: selectedPromptSet != nil,
             savingPromptSet: comparison.savingPromptSet, hasPrompts: selectedPromptSet?.prompts.isEmpty == false) { return reason }
+        if let goal = settingsSearchGoal, mode == .chat, !goal.matches(selectedChatLanes) {
+            return "Settings search needs its four matching lanes. Prepare it again or switch to manual comparison."
+        }
         return selectedStrataSlots.compactMap { strataSettings[slotIDs[$0]]?.validationError }.first
+    }
+
+    private var selectedChatLanes: [ComparisonLaneConfiguration] {
+        variantSlots.indices.compactMap { index in
+            guard let path = variantSlots[index], let model = readyModels.first(where: { $0.item.path == path }) else { return nil }
+            return ComparisonLaneConfiguration(id: slotIDs[index], modelPath: path, modelSignature: model.item.signature,
+                strataOptions: repeatedStrataPaths.contains(path) ? strataSettings[slotIDs[index]] ?? StrataComparisonOptions() : nil)
+        }
     }
 
     private var repeatedStrataPaths: Set<String> {
@@ -772,6 +806,16 @@ struct QuantView: View {
                 comparisonModePicker.pickerStyle(.menu)
             }
             .disabled(comparison.activeRunID != nil)
+            if mode == .chat, !repeatedStrataPaths.isEmpty {
+                Button("Find best settings…") { showingSettingsSearch = true }
+                    .disabled(comparison.activeRunID != nil || comparison.savingPromptSet)
+                if let goal = settingsSearchGoal {
+                    Text("Settings search · \(goal.contextTokens) context tokens · \(goal.headroomGB.formatted()) GB observed headroom target")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    Button("Switch to manual comparison") { settingsSearchGoal = nil }
+                        .disabled(comparison.activeRunID != nil)
+                }
+            }
 
             if readyModels.isEmpty {
                 HStack(spacing: WorkbenchSpacing.sm) {
@@ -1310,12 +1354,7 @@ struct QuantView: View {
         guard let promptSet = selectedPromptSet,
               runUnavailableReason == nil else { return }
         if mode == .chat {
-            let lanes = variantSlots.indices.compactMap { index -> ComparisonLaneConfiguration? in
-                guard let path = variantSlots[index], let model = readyModels.first(where: { $0.item.path == path }) else { return nil }
-                return ComparisonLaneConfiguration(id: slotIDs[index], modelPath: path, modelSignature: model.item.signature,
-                    strataOptions: repeatedStrataPaths.contains(path) ? strataSettings[slotIDs[index]] ?? StrataComparisonOptions() : nil)
-            }
-            comparison.start(lanes: lanes, promptSet: promptSet)
+            comparison.start(lanes: selectedChatLanes, promptSet: promptSet, settingsSearchGoal: settingsSearchGoal)
         } else {
             let variants = ComparePresentation.variantPaths(variantSlots).compactMap { path in
                 readyModels.first { $0.item.path == path }.map { (path: $0.item.path, signature: $0.item.signature) }
@@ -1372,6 +1411,7 @@ struct QuantView: View {
     }
 
     private func useRecordedSetup(mode: ComparisonMode, paths: [String], name: String, promptSet: PromptSet) {
+        settingsSearchGoal = nil
         initializedSuggestions = true
         manuallySelectedModels = true
         self.mode = mode
@@ -1392,6 +1432,64 @@ struct QuantView: View {
 
     private func shortName(_ path: String) -> String {
         ComparePresentation.displayName(for: path, models: appHost.librarySnapshot?.models ?? [])
+    }
+}
+
+struct StrataSettingsSearchSheet: View {
+    let models: [LibraryModel]
+    let onUse: (LibraryModel, StrataSettingsSearchSetup) -> String?
+    @Environment(\.dismiss) private var dismiss
+    @State private var modelPath: String
+    @State private var lowerBudget = "2"
+    @State private var upperBudget = "4"
+    @State private var headroom = "8"
+    @State private var context = 8192
+    @State private var error: String?
+
+    init(models: [LibraryModel], onUse: @escaping (LibraryModel, StrataSettingsSearchSetup) -> String?) {
+        self.models = models; self.onUse = onUse
+        _modelPath = State(initialValue: models.first?.item.path ?? "")
+    }
+    private var setup: StrataSettingsSearchSetup? {
+        guard let lower = Double(lowerBudget.trimmingCharacters(in: .whitespaces)),
+              let upper = Double(upperBudget.trimmingCharacters(in: .whitespaces)),
+              let target = Double(headroom.trimmingCharacters(in: .whitespaces)) else { return nil }
+        return StrataSettingsSearchSetup(lowerExpertMemoryGB: lower, upperExpertMemoryGB: upper, contextTokens: context, headroomGB: target)
+    }
+    private var validation: String? { setup?.validationError ?? (setup == nil ? "Enter numeric expert budgets and a headroom target." : nil) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Find best Strata settings").font(WorkbenchTypography.cardTitle)
+            Picker("Model", selection: $modelPath) {
+                ForEach(models, id: \.item.path) { model in Text(model.item.name).tag(model.item.path) }
+            }
+            Picker("Fixed context", selection: $context) {
+                ForEach([2048, 4096, 8192, 16384, 32768, 65536, 131072], id: \.self) { value in Text("\(value) tokens").tag(value) }
+            }
+            HStack {
+                Text("Expert budgets (GB)")
+                TextField("Lower", text: $lowerBudget).frame(width: 80)
+                TextField("Upper", text: $upperBudget).frame(width: 80)
+            }.textFieldStyle(.roundedBorder)
+            HStack {
+                Text("Observed headroom target (GB)")
+                TextField("Headroom", text: $headroom).frame(width: 80).textFieldStyle(.roundedBorder)
+            }
+            Text("Four lanes test each budget with speculation off and on, using the same prompt set and context. Use setup prepares the lanes; Run comparison starts them sequentially. Existing memory admission guards still apply.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            Text("Rate every lane's task quality after the run. A suggested configuration needs a score of 4 or 5, complete answers, matching fingerprints and sufficient observed headroom. Verify its serving profile before use.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            ErrorBanner(text: validation ?? error)
+            HStack {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Use setup") {
+                    guard let setup, let model = models.first(where: { $0.item.path == modelPath }) else { return }
+                    error = onUse(model, setup)
+                    if error == nil { dismiss() }
+                }.keyboardShortcut(.defaultAction).disabled(validation != nil || !models.contains(where: { $0.item.path == modelPath }))
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 540)
     }
 }
 

@@ -717,6 +717,17 @@ struct ComparisonMemoryTradeoffView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("Memory and answer latency").font(WorkbenchTypography.cardTitle)
+            if let goal = run.settingsSearchGoal {
+                Text("Recorded search target: \(goal.contextTokens) context tokens · \(goal.headroomGB.formatted()) GB headroom")
+                    .font(WorkbenchTypography.secondary)
+                if let id = run.settingsSearchCandidateID, let lane = lanes.first(where: { $0.resultKey == id }) {
+                    Text("Fastest observed qualifying answer start: lane \(lane.letter). Save this lane as a serving profile and verify it before serving.")
+                        .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("No qualifying suggestion. Complete all four lanes, review each lane's task quality, and check headroom and runtime evidence.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Text("System headroom is an estimate sampled during startup, warm-up and prompts. Other apps and file caching affect it; it is not model-only RAM use or a guaranteed peak.")
                 .fixedSize(horizontal: false, vertical: true)
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)

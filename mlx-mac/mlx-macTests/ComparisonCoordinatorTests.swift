@@ -5,6 +5,114 @@ import XCTest
 
 @MainActor
 final class ComparisonCoordinatorTests: XCTestCase {
+    func testSettingsSearchPreparesOnlyFourDistinctLanesAtOneContext() throws {
+        let setup = StrataSettingsSearchSetup()
+        let lanes = try setup.lanes(modelPath: "/Models/strata", signature: "model")
+        XCTAssertEqual(lanes.count, 4)
+        XCTAssertEqual(Set(lanes.map(\.id)).count, 4)
+        XCTAssertEqual(lanes.map { $0.strataOptions?.expertMemoryGB }, [2, 2, 4, 4])
+        XCTAssertEqual(lanes.map { $0.strataOptions?.speculation }, [false, true, false, true])
+        XCTAssertTrue(setup.goal.matches(lanes))
+        var invalid = setup; invalid.upperExpertMemoryGB = 2
+        XCTAssertThrowsError(try invalid.lanes(modelPath: "/Models/strata", signature: nil))
+        invalid = setup; invalid.headroomGB = .nan
+        XCTAssertThrowsError(try invalid.lanes(modelPath: "/Models/strata", signature: nil))
+        var changed = lanes; changed[0].strataOptions?.contextTokens = 32768
+        XCTAssertFalse(setup.goal.matches(changed))
+    }
+
+    func testSettingsSearchSuggestionRequiresQualityHeadroomAndMatchingEvidence() throws {
+        let setup = StrataSettingsSearchSetup()
+        let lanes = try setup.lanes(modelPath: "/Models/strata", signature: "model")
+        let memory = SystemMemoryEvidence(totalBytes: 128_000_000_000, baselineAvailableBytes: 40_000_000_000,
+            minimumAvailableBytes: 30_000_000_000, endingAvailableBytes: 32_000_000_000, sampleCount: 10,
+            missedSamples: 0, startedAt: Date(), endedAt: Date(), samplingIntervalSeconds: 0.5)
+        let results = try lanes.enumerated().map { index, lane in
+            let options = lane.strataOptions!
+            let evidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "preview",
+                "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "runtime", "strata_context_tokens": options.contextTokens,
+                "strata_speculation": options.speculation, "strata_expert_memory_gb": options.expertMemoryGB!]))
+            let sample = ComparisonSample(promptID: "p", outputExcerpt: "323", tokensPerSecond: 10, timeToFirstTokenSeconds: 1,
+                error: nil, finishReason: "stop", timeToFirstAnswerSeconds: Double(index + 1))
+            return VariantResult(modelPath: lane.modelPath, modelSignature: "model", samples: [sample], aggregateTokensPerSecond: 10,
+                aggregateTTFTSeconds: 1, error: nil, servingEvidence: evidence, laneID: lane.id, systemMemory: memory)
+        }
+        var run = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil, variants: lanes.map(\.modelPath),
+            results: results, startedAt: Date(), finishedAt: Date(), state: .completed, promptEntries: [PromptEntry(id: "p", text: "17 * 19")],
+            laneConfigurations: lanes, settingsSearchGoal: setup.goal)
+        XCTAssertNil(run.settingsSearchCandidateID)
+        run.qualityReviews = Dictionary(uniqueKeysWithValues: lanes.map {
+            ($0.id, ComparisonQualityReview(score: 5, rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: Date()))
+        })
+        XCTAssertEqual(run.settingsSearchCandidateID, lanes[0].id)
+        let reviewed = run
+        var partial = reviewed; partial.results.removeLast()
+        XCTAssertNil(partial.settingsSearchCandidateID)
+        for key in ["modelFingerprint", "runtimeFingerprint", "contextTokens"] {
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(reviewed)) as? [String: Any])
+            var values = try XCTUnwrap(object["results"] as? [[String: Any]])
+            var evidence = try XCTUnwrap(values[0]["servingEvidence"] as? [String: Any])
+            if key == "contextTokens" { evidence[key] = 32768 } else { evidence[key] = "changed" }
+            values[0]["servingEvidence"] = evidence; object["results"] = values
+            let changed = try JSONDecoder().decode(ComparisonRun.self, from: JSONSerialization.data(withJSONObject: object))
+            XCTAssertNil(changed.settingsSearchCandidateID)
+        }
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(reviewed)) as? [String: Any])
+        legacy.removeValue(forKey: "settingsSearchGoal")
+        XCTAssertNil(try JSONDecoder().decode(ComparisonRun.self, from: JSONSerialization.data(withJSONObject: legacy)).settingsSearchGoal)
+        run.qualityReviews?[lanes[0].id] = ComparisonQualityReview(score: 2, rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: Date())
+        XCTAssertEqual(run.settingsSearchCandidateID, lanes[1].id)
+        run.settingsSearchGoal = StrataSettingsSearchGoal(contextTokens: setup.contextTokens, headroomGB: 31)
+        XCTAssertNil(run.settingsSearchCandidateID)
+        run.settingsSearchGoal = setup.goal
+        run.qualityReviews?[lanes[3].id] = nil
+        XCTAssertNil(run.settingsSearchCandidateID)
+        let decoded = try JSONDecoder().decode(ComparisonRun.self, from: JSONEncoder().encode(run))
+        XCTAssertEqual(decoded.settingsSearchGoal, setup.goal)
+    }
+
+    func testLocalSettingsSearchWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_STRATA_SEARCH_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_STRATA_SEARCH_MANIFEST for explicit four-lane settings-search acceptance.")
+        }
+        struct Manifest: Decodable { let agentPath: String; let modelPath: String; let evidenceRoot: String }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let root = URL(fileURLWithPath: manifest.evidenceRoot)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: root.path)
+        let factory: @Sendable (StrataComparisonOptions) -> ServeProbe = { options in
+            ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
+                prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
+        }
+        let store = JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json"))
+        let coordinator = ComparisonCoordinator(probe: factory(StrataComparisonOptions()), runStore: store,
+            promptSetStore: JSONStore(fileURL: root.appendingPathComponent("prompts.json")), strataProbe: factory)
+        let setup = StrataSettingsSearchSetup()
+        let lanes = try setup.lanes(modelPath: manifest.modelPath, signature: nil)
+        let prompts = PromptSet(id: "search", name: "Settings search", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Calculate 17 times 19. In your final answer, return only JSON with one key named answer and its numeric value.", maxTokens: 1024)], origin: .userCreated)
+        let completed = expectation(description: "four real settings-search lanes completed")
+        coordinator.onBenchmarks = { values in XCTAssertTrue(values.isEmpty); completed.fulfill() }
+        coordinator.start(lanes: lanes, promptSet: prompts, settingsSearchGoal: setup.goal)
+        await fulfillment(of: [completed], timeout: 2400)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        XCTAssertEqual(run.results.count, 4)
+        XCTAssertEqual(run.settingsSearchGoal, setup.goal)
+        XCTAssertNil(run.settingsSearchCandidateID)
+        for result in run.results {
+            XCTAssertNil(result.error)
+            XCTAssertTrue(try XCTUnwrap(result.systemMemory).isValid)
+            XCTAssertNotNil(result.memoryTradeoffAnswerSeconds)
+            let output = try XCTUnwrap(result.samples.first?.fullOutput)
+            let answer = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Int])
+            XCTAssertEqual(answer, ["answer": 323])
+            coordinator.reviewQuality(runID: run.id, modelPath: result.id, score: 5)
+        }
+        XCTAssertNotNil(coordinator.runs.first?.settingsSearchCandidateID)
+        XCTAssertEqual(try store.load().first?.settingsSearchCandidateID, coordinator.runs.first?.settingsSearchCandidateID)
+        let servers = try await api.serveStatus()
+        XCTAssertTrue(servers.isEmpty)
+    }
     // MARK: - Builtin prompt sets
 
     func testBuiltinPromptSetsAreSane() {

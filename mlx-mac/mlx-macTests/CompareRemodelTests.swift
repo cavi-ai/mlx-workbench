@@ -36,6 +36,29 @@ private struct ComparisonRunFixtureView: View {
 }
 
 final class CompareRemodelTests: XCTestCase {
+    @MainActor
+    func testSettingsSearchSheetRendersWithoutApplyingOrStarting() async throws {
+        guard let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_COMPARISON_RENDER_DIR for native settings-search presentation evidence.")
+        }
+        var applied = false
+        let view = StrataSettingsSearchSheet(models: [library("/Models/strata")]) { _, _ in applied = true; return nil }
+            .frame(width: 580, height: 480, alignment: .topLeading)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 480), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let directory = URL(fileURLWithPath: folder)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try png.write(to: directory.appendingPathComponent("settings-search.png"))
+        XCTAssertFalse(applied)
+    }
     func testModelPickerAllowsOnlyExplicitlyRepeatablePaths() {
         let models = [library("/models/strata"), library("/models/other")]
         let slots: [String?] = ["/models/strata", nil]
