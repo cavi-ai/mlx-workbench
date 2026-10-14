@@ -183,6 +183,7 @@ final class ServingProfileCoordinator: ObservableObject {
     var removalGuard: ((UUID) throws -> Void)?
     var suggestionSource: ((ComparisonRun) throws -> VariantResult)?
     var comparisonSource: ((UUID) throws -> ComparisonRun?)?
+    var measuredSource: ((ComparisonRun, String) throws -> VariantResult)?
     private let store: JSONStore<ServingProfile>
     private let probe: @Sendable (StrataComparisonOptions) -> ServeProbe
 
@@ -261,6 +262,39 @@ final class ServingProfileCoordinator: ObservableObject {
             throw WorkflowEvidenceError.invalid("A profile changed or is no longer available. Reopen Compare profiles.")
         }
         return try ServingProfileComparisonSetup(baseline: baseline, candidate: candidate)
+    }
+
+    private func measuredBinding(run: ComparisonRun, laneID: String) throws -> (ServingProfile, VariantResult) {
+        guard activeID == nil, let measuredSource else { throw WorkflowEvidenceError.invalid("Measured-profile verification is unavailable or already running.") }
+        let result = try measuredSource(run, laneID)
+        let currentProfiles = try store.load()
+        guard let lane = run.laneConfigurations?.first(where: { $0.id == laneID }), let id = lane.servingProfileID,
+              currentProfiles.filter({ $0.id == id }).count == 1, let current = currentProfiles.first(where: { $0.id == id }), current.isValid,
+              current.modelPath == lane.modelPath, current.options == lane.strataOptions else {
+            throw WorkflowEvidenceError.invalid("The current profile no longer matches the measured model and settings.")
+        }
+        return (current, result)
+    }
+
+    func prepareMeasuredVerification(run: ComparisonRun, laneID: String) throws -> ServingProfile {
+        try measuredBinding(run: run, laneID: laneID).0
+    }
+
+    func verifyMeasuredLane(run: ComparisonRun, laneID: String, original: ServingProfile) async {
+        do {
+            let (current, result) = try measuredBinding(run: run, laneID: laneID)
+            guard current == original, let measuredSource, let evidence = result.servingEvidence else {
+                throw WorkflowEvidenceError.invalid("The profile changed. Reopen its measured verification.")
+            }
+            let changed = try store.update(id: original.id, keyPath: \.id) { saved in
+                guard saved == original else { throw WorkflowEvidenceError.invalid("The profile changed before verification.") }
+                var linked = saved; linked.sourceRunID = run.id; linked.sourceLaneID = laneID; linked.verification = nil
+                return linked
+            }
+            guard changed else { throw WorkflowEvidenceError.invalid("The profile is no longer available.") }
+            profiles = try store.load()
+            await verify(id: original.id, expectedEvidence: evidence, beforePublishing: { _ = try measuredSource(run, laneID) })
+        } catch { lastError = AppHost.render(error) }
     }
 
     func createSuggestedProfile(run: ComparisonRun, name: String) -> ServingProfile? {

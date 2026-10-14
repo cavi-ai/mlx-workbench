@@ -393,6 +393,26 @@ final class ComparisonCoordinator: ObservableObject {
         try runStore.load().first { $0.id == id }
     }
 
+    func requireCurrentProfileLane(_ expected: ComparisonRun, laneID: String) throws -> VariantResult {
+        guard activeRunID == nil else { throw WorkflowEvidenceError.invalid("Wait for the current comparison to finish.") }
+        guard let current = try recordedRun(id: expected.id), current == expected, current.state == .completed,
+              current.effectiveMode == .chat, current.hasValidLaneIdentities,
+              let lane = current.laneConfigurations?.first(where: { $0.id == laneID }), lane.servingProfileID != nil,
+              current.results.filter({ $0.id == laneID }).count == 1,
+              let result = current.results.first(where: { $0.id == laneID }), result.error == nil,
+              result.modelPath == lane.modelPath, result.modelSignature == lane.modelSignature,
+              let prompts = current.promptEntries, !prompts.isEmpty, Set(prompts.map(\.id)).count == prompts.count,
+              result.samples.count == prompts.count, Set(result.samples.map(\.promptID)) == Set(prompts.map(\.id)),
+              result.samples.allSatisfy(\.hasCompletedAnswer),
+              let evidence = result.servingEvidence, evidence.runtime == "strata",
+              evidence.modelFingerprint?.isEmpty == false, evidence.runtimeFingerprint?.isEmpty == false,
+              evidence.speculation == lane.strataOptions?.speculation, evidence.expertMemoryGB == lane.strataOptions?.expertMemoryGB,
+              evidence.contextTokens == lane.strataOptions?.contextTokens else {
+            throw WorkflowEvidenceError.invalid("The measured profile lane changed or lacks complete matching evidence. Review its current comparison again.")
+        }
+        return result
+    }
+
     /// Opt-in: import the user's real opencode prompts as a comparison
     /// prompt set. Returns the durably saved set, or nil when import or saving fails.
     /// The button press is the consent; import only happens here.
