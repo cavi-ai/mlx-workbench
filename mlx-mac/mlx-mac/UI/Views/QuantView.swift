@@ -1261,6 +1261,7 @@ struct QuantView: View {
             selectedPath: appHost.selectedModelPath, runs: comparison.runs, mode: mode,
             environment: appHost.watch.currentFingerprintDescription, promptSetID: selectedPromptSet?.id,
             promptEntries: selectedPromptSet?.prompts)
+        strataSettings = [:]
         variantSlots = suggestion.paths
         selectionReason = suggestion.reason
         initializedSuggestions = true
@@ -1278,6 +1279,7 @@ struct QuantView: View {
         }
         let selection = WorkflowCharts.comparisonSelection(task, models: models, mode: mode, activeRunID: comparison.activeRunID)
         if let slots = selection.slots {
+            strataSettings = [:]
             variantSlots = slots
             initializedSuggestions = true
             manuallySelectedModels = true
