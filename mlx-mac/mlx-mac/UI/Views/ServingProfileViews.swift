@@ -39,6 +39,8 @@ struct ServingProfileControls: View {
     let modelPath: String?
     @State private var port = String(EndpointConfig.defaultPort)
     @State private var jit = true
+    @State private var renameRequest: ServingProfile?
+    @State private var removalRequest: ServingProfile?
 
     private var choices: [ServingProfile] { profiles.profiles.filter { $0.modelPath == modelPath } }
     private var selected: ServingProfile? { profiles.profiles.first { $0.id == workflow.servingProfile?.id } }
@@ -57,13 +59,19 @@ struct ServingProfileControls: View {
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                     Text(profile.hasPassedVerification ? "Canaries passed. Settings and fingerprints are checked again before serving." : "Profile verification is required before serving.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                    Button(profiles.activeID == profile.id ? "Verifying…" : "Verify profile") {
-                        Task {
-                            await profiles.verify(id: profile.id)
-                            if workflow.servingProfile?.id == profile.id {
-                                workflow.selectServingProfile(profiles.profiles.first { $0.id == profile.id })
+                    HStack {
+                        Button(profiles.activeID == profile.id ? "Verifying…" : "Verify profile") {
+                            Task {
+                                await profiles.verify(id: profile.id)
+                                if workflow.servingProfile?.id == profile.id {
+                                    workflow.selectServingProfile(profiles.profiles.first { $0.id == profile.id })
+                                }
                             }
                         }
+                        Menu("Manage profile") {
+                            Button("Rename…") { renameRequest = profiles.profileForManagement(profile.id) }
+                            Button("Remove…", role: .destructive) { removalRequest = profiles.profileForManagement(profile.id) }
+                        }.fixedSize()
                     }.disabled(profiles.activeID != nil || workflow.isServeSubmissionInFlight)
                     if let proof = profile.verification {
                         DisclosureGroup("Canary results") {
@@ -87,6 +95,85 @@ struct ServingProfileControls: View {
                 ErrorBanner(text: profiles.lastError)
                 ErrorBanner(text: endpoint.lastError)
             }.padding(.vertical, WorkbenchSpacing.sm)
+                .sheet(item: $renameRequest) { profile in
+                    ServingProfileRenameSheet(profiles: profiles, profile: profile) { renamed in
+                        if workflow.servingProfile?.id == renamed.id { workflow.selectServingProfile(renamed) }
+                    }
+                }
+                .sheet(item: $removalRequest) { profile in
+                    ServingProfileRemovalSheet(profiles: profiles, profile: profile) {
+                        if workflow.servingProfile?.id == profile.id { workflow.selectServingProfile(nil) }
+                    }
+                }
         }
+    }
+}
+
+struct ServingProfileRenameSheet: View {
+    @ObservedObject var profiles: ServingProfileCoordinator
+    let profile: ServingProfile
+    let onRenamed: (ServingProfile) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var error: String?
+    @State private var confirmingDiscard = false
+
+    init(profiles: ServingProfileCoordinator, profile: ServingProfile, onRenamed: @escaping (ServingProfile) -> Void) {
+        self.profiles = profiles; self.profile = profile; self.onRenamed = onRenamed
+        _name = State(initialValue: profile.name)
+    }
+
+    private var validation: String? { ServingProfile.nameValidationError(name) }
+    private var dirty: Bool { name != profile.name }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Rename serving profile").font(WorkbenchTypography.cardTitle)
+            Text("Renaming preserves its settings and verification.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            TextField("Profile name", text: $name).textFieldStyle(.roundedBorder)
+                .onChange(of: name) { _, _ in error = nil }
+            ErrorBanner(text: validation ?? error)
+            HStack {
+                Button("Cancel") { if dirty { confirmingDiscard = true } else { dismiss() } }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Rename") {
+                    if let renamed = profiles.rename(profile, name: name) { onRenamed(renamed); dismiss() }
+                    else { error = profiles.lastError }
+                }.keyboardShortcut(.defaultAction)
+                    .disabled(validation != nil || name.trimmingCharacters(in: .whitespacesAndNewlines) == profile.name || profiles.activeID != nil)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 460)
+            .interactiveDismissDisabled(dirty)
+            .alert("Discard profile name changes?", isPresented: $confirmingDiscard) {
+                Button("Keep editing", role: .cancel) { }
+                Button("Discard changes", role: .destructive) { dismiss() }
+            }
+    }
+}
+
+struct ServingProfileRemovalSheet: View {
+    @ObservedObject var profiles: ServingProfileCoordinator
+    let profile: ServingProfile
+    let onRemoved: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Remove “\(profile.name)”?").font(WorkbenchTypography.cardTitle)
+            Text("This removes the saved profile and its verification. Model files, past comparisons and running servers are unchanged.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            Text("Configured endpoints must release this profile first, including disabled endpoints.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            ErrorBanner(text: error)
+            HStack {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Remove profile", role: .destructive) {
+                    if profiles.remove(profile) { onRemoved(); dismiss() }
+                    else { error = profiles.lastError }
+                }.disabled(profiles.activeID != nil)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 460)
     }
 }

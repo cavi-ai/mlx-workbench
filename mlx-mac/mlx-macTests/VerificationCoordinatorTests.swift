@@ -7,6 +7,128 @@ import XCTest
 
 @MainActor
 final class VerificationCoordinatorTests: XCTestCase {
+    func testProfileRenamePreservesProofAndRejectsStaleOrInvalidEdits() throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let original = managementProfile()
+        try store.upsert(original, id: \.id)
+        let coordinator = managementCoordinator(store)
+        let renamed = try XCTUnwrap(coordinator.rename(original, name: "  Daily chat  "))
+        XCTAssertEqual(renamed.name, "Daily chat")
+        XCTAssertEqual(renamed.verification, original.verification)
+        XCTAssertEqual(renamed.options, original.options)
+        XCTAssertEqual(renamed.id, original.id)
+        XCTAssertEqual(try coordinator.resolve(original), renamed)
+        let bytes = try Data(contentsOf: store.url)
+        XCTAssertNil(coordinator.rename(original, name: "Stale"))
+        for invalid in ["", "\n", "bad\nname", String(repeating: "a", count: 81), "Daily chat"] {
+            XCTAssertNil(coordinator.rename(renamed, name: invalid))
+        }
+        XCTAssertEqual(try Data(contentsOf: store.url), bytes)
+        XCTAssertEqual(coordinator.profiles, [renamed])
+        var external = renamed; external.name = "External name"
+        try store.upsert(external, id: \.id)
+        XCTAssertNil(coordinator.rename(renamed, name: "Outdated edit"))
+        XCTAssertEqual(coordinator.profileForManagement(original.id), external)
+        XCTAssertNotNil(coordinator.rename(external, name: "Reopened edit"))
+    }
+
+    func testProfileRemovalRequiresReferenceGuardAndCurrentDurableSnapshot() throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let original = managementProfile()
+        try store.upsert(original, id: \.id)
+        let coordinator = managementCoordinator(store)
+        XCTAssertFalse(coordinator.remove(original))
+        coordinator.removalGuard = { _ in throw WorkflowEvidenceError.invalid("Endpoint still uses this profile") }
+        XCTAssertFalse(coordinator.remove(original))
+        coordinator.removalGuard = { _ in }
+        let renamed = try XCTUnwrap(coordinator.rename(original, name: "Renamed"))
+        XCTAssertFalse(coordinator.remove(original))
+        XCTAssertTrue(coordinator.remove(renamed))
+        XCTAssertTrue(try store.load().isEmpty)
+        XCTAssertTrue(coordinator.profiles.isEmpty)
+        XCTAssertThrowsError(try coordinator.resolve(original))
+    }
+
+    func testProfileRemovalProtectsDisabledEndpointsAndUnavailableFleet() throws {
+        let original = managementProfile()
+        let location = temporaryURL("endpoint-fleet.json")
+        let fleetStore = JSONStore<EndpointFleetConfig>(fileURL: location)
+        let endpoint = EndpointSupervisor(lifecycle: ServeLifecycle(preview: { _, _ in "unused" },
+            start: { _, _, _ in XCTFail("Management must not start a server") }, stop: { _ in XCTFail("Management must not stop a server") }),
+            statusProvider: { XCTFail("Management must not probe a server"); return [] },
+            store: JSONStore(fileURL: temporaryURL("endpoint.json")), fleetStore: fleetStore)
+        var slot = EndpointSlot(enabled: false, port: 9999, modelPath: original.modelPath)
+        slot.servingProfile = original
+        try fleetStore.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
+        XCTAssertThrowsError(try endpoint.requireUnreferencedProfile(original.id))
+        try fleetStore.replaceAll([.empty])
+        XCTAssertNoThrow(try endpoint.requireUnreferencedProfile(original.id))
+        try Data("broken".utf8).write(to: location)
+        XCTAssertThrowsError(try endpoint.requireUnreferencedProfile(original.id))
+        XCTAssertEqual(String(decoding: try Data(contentsOf: location), as: UTF8.self), "broken")
+    }
+
+    func testFailedProfileManagementWritesPreserveDiskAndPublishedState() throws {
+        let location = temporaryURL("profiles.json")
+        let original = managementProfile()
+        try JSONStore<ServingProfile>(fileURL: location).upsert(original, id: \.id)
+        let bytes = try Data(contentsOf: location)
+        let store = JSONStore<ServingProfile>(fileURL: location, replaceItem: { _, _ in
+            throw WorkflowEvidenceError.invalid("Write unavailable")
+        })
+        let coordinator = managementCoordinator(store)
+        coordinator.removalGuard = { _ in }
+        XCTAssertNil(coordinator.rename(original, name: "Other"))
+        XCTAssertEqual(coordinator.profiles, [original])
+        XCTAssertFalse(coordinator.remove(original))
+        XCTAssertEqual(coordinator.profiles, [original])
+        XCTAssertEqual(try Data(contentsOf: location), bytes)
+        try Data("broken".utf8).write(to: location)
+        XCTAssertNil(coordinator.rename(original, name: "Other"))
+        XCTAssertFalse(coordinator.remove(original))
+        XCTAssertEqual(coordinator.profiles, [original])
+        XCTAssertEqual(String(decoding: try Data(contentsOf: location), as: UTF8.self), "broken")
+    }
+
+    func testProfileManagementRefusesActiveVerification() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        var original = managementProfile(); original.verification = nil
+        try store.upsert(original, id: \.id)
+        let coordinator = ServingProfileCoordinator(store: store, probe: { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in
+                try await Task.sleep(for: .milliseconds(100))
+                throw WorkflowEvidenceError.invalid("Unavailable runtime")
+            }, start: { _, _, _ in XCTFail("No start expected") }, stop: { _ in }), prober: OpenAIEndpointProber())
+        })
+        coordinator.removalGuard = { _ in XCTFail("Verification must block before checking references") }
+        let verification = Task { await coordinator.verify(id: original.id) }
+        for _ in 0..<20 { if coordinator.activeID != nil { break }; await Task.yield() }
+        XCTAssertEqual(coordinator.activeID, original.id)
+        XCTAssertNil(coordinator.rename(original, name: "Other"))
+        XCTAssertFalse(coordinator.remove(original))
+        XCTAssertEqual(try store.load(), [original])
+        await verification.value
+    }
+
+    private func managementProfile() -> ServingProfile {
+        let options = StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)
+        var profile = ServingProfile(id: UUID(), name: "Paged", modelPath: "/Models/strata", options: options)
+        profile.verification = ServingProfileVerification(options: options, modelFingerprint: "model", runtimeFingerprint: "runtime",
+            suiteVersion: CanarySuite.version, canaries: CanarySuite.cases.map {
+                CanaryResult(id: $0.id, title: $0.title, passed: true, failureReason: nil, responseExcerpt: "fixture",
+                             tokensPerSecond: nil, timeToFirstTokenSeconds: nil)
+            }, verifiedAt: Date())
+        return profile
+    }
+
+    private func managementCoordinator(_ store: JSONStore<ServingProfile>) -> ServingProfileCoordinator {
+        ServingProfileCoordinator(store: store, probe: { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in XCTFail("Management must not verify"); return "unused" },
+                start: { _, _, _ in XCTFail("Management must not start") }, stop: { _ in XCTFail("Management must not stop") }),
+                prober: OpenAIEndpointProber())
+        })
+    }
+
     func testFailedProfileReverificationRevokesPreviouslySavedProof() async throws {
         let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         let options = StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)
@@ -48,9 +170,14 @@ final class VerificationCoordinatorTests: XCTestCase {
             store: JSONStore(fileURL: temporaryURL("endpoint.json")))
         let directory = URL(fileURLWithPath: folder, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        for width in [600.0, 900.0] {
-            let view = ServingProfileControls(profiles: coordinator, workflow: workflow, endpoint: endpoint, modelPath: profile.modelPath)
-                .padding(20).frame(width: width, height: 330, alignment: .topLeading)
+        var scenes: [(String, AnyView, Double)] = [600.0, 900.0].map { width in
+            ("profile-\(Int(width))", AnyView(ServingProfileControls(profiles: coordinator, workflow: workflow, endpoint: endpoint,
+                modelPath: profile.modelPath).padding(20)), width)
+        }
+        scenes.append(("rename", AnyView(ServingProfileRenameSheet(profiles: coordinator, profile: profile, onRenamed: { _ in })), 510))
+        scenes.append(("remove", AnyView(ServingProfileRemovalSheet(profiles: coordinator, profile: profile, onRemoved: { })), 510))
+        for (name, content, width) in scenes {
+            let view = content.frame(width: width, height: 330, alignment: .topLeading)
                 .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
             let host = NSHostingView(rootView: view)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 330),
@@ -62,7 +189,7 @@ final class VerificationCoordinatorTests: XCTestCase {
             let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: bitmap)
             let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            try png.write(to: directory.appendingPathComponent("profile-\(Int(width)).png"))
+            try png.write(to: directory.appendingPathComponent("\(name).png"))
         }
     }
     func testSavedLaneIsUnverifiedAndCorruptProfileStoreIsPreserved() throws {

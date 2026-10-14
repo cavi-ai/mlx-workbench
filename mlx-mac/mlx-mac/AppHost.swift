@@ -227,6 +227,10 @@ class AppHost: ObservableObject {
         // The always-on endpoint only serves verified models by default;
         // the quality gate's per-signature status is the verdict source.
         self.endpoint.profileLifecycle = { profile in .verifiedProfile(try profiles.resolve(profile), api: api) }
+        profiles.removalGuard = { [weak self] id in
+            guard let endpoint = self?.endpoint else { throw WorkflowEvidenceError.invalid("Endpoint configuration is unavailable.") }
+            try endpoint.requireUnreferencedProfile(id)
+        }
         self.endpoint.isVerified = { [weak self] path in
             self?.isModelVerified(path) ?? false
         }
