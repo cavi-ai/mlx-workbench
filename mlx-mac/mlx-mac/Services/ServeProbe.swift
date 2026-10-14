@@ -9,6 +9,20 @@ import Darwin
 // HTTP API, and always stop the server afterwards. No new mlx-agent
 // subcommands; serving stays inside the argv boundary.
 
+struct DraftTokenEvidence: Codable, Equatable, Sendable {
+    let offered: Int
+    let accepted: Int
+    var isValid: Bool { offered >= 0 && accepted >= 0 && accepted <= offered }
+    var acceptanceFraction: Double? { isValid && offered > 0 ? Double(accepted) / Double(offered) : nil }
+
+    init?(timings: [String: Any]) {
+        guard timings["draft_n"] is NSNumber, timings["draft_n_accepted"] is NSNumber,
+              let offered = timings.int("draft_n"), let accepted = timings.int("draft_n_accepted"),
+              offered >= 0, accepted >= 0, accepted <= offered else { return nil }
+        self.offered = offered; self.accepted = accepted
+    }
+}
+
 struct ProbeSample: Equatable, Sendable {
     let text: String
     let completionTokens: Int?
@@ -30,6 +44,7 @@ struct ProbeSample: Equatable, Sendable {
     let reasoningText: String?
     let finishReason: String?
     let timeToFirstAnswerSeconds: Double?
+    let draftTokens: DraftTokenEvidence?
 
     init(
         text: String,
@@ -43,7 +58,8 @@ struct ProbeSample: Equatable, Sendable {
         toolCallsValid: Int? = nil,
         reasoningText: String? = nil,
         finishReason: String? = nil,
-        timeToFirstAnswerSeconds: Double? = nil
+        timeToFirstAnswerSeconds: Double? = nil,
+        draftTokens: DraftTokenEvidence? = nil
     ) {
         self.text = text
         self.completionTokens = completionTokens
@@ -57,6 +73,7 @@ struct ProbeSample: Equatable, Sendable {
         self.reasoningText = reasoningText
         self.finishReason = finishReason
         self.timeToFirstAnswerSeconds = timeToFirstAnswerSeconds
+        self.draftTokens = draftTokens
     }
 
     /// Prompt-processing speed estimated as prompt tokens over TTFT. TTFT
@@ -548,6 +565,8 @@ struct OpenAIEndpointProber: EndpointProbing {
         var firstAnswerAt: Date?
         var completionTokens: Int?
         var promptTokens: Int?
+        var draftTokens: DraftTokenEvidence?
+        var draftCountsConflict = false
         var firstTokenAt: Date?
         // Streamed tool calls arrive as deltas keyed by index; collect the
         // names and accumulate argument fragments per call.
@@ -566,6 +585,12 @@ struct OpenAIEndpointProber: EndpointProbing {
                 }
                 if let count = usage["prompt_tokens"] as? Int {
                     promptTokens = count
+                }
+                if let timings = chunk["timings"] as? [String: Any],
+                   timings["draft_n"] != nil || timings["draft_n_accepted"] != nil {
+                    if let reported = DraftTokenEvidence(timings: timings), !draftCountsConflict,
+                       draftTokens == nil || draftTokens == reported { draftTokens = reported }
+                    else { draftCountsConflict = true; draftTokens = nil }
                 }
             }
             if let choices = chunk["choices"] as? [[String: Any]], let choice = choices.first {
@@ -631,7 +656,8 @@ struct OpenAIEndpointProber: EndpointProbing {
             toolCallsValid: toolCallsValid,
             reasoningText: reasoning,
             finishReason: finishReason,
-            timeToFirstAnswerSeconds: firstAnswerAt.map { $0.timeIntervalSince(startedAt) }
+            timeToFirstAnswerSeconds: firstAnswerAt.map { $0.timeIntervalSince(startedAt) },
+            draftTokens: draftTokens
         )
     }
 }

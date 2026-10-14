@@ -66,6 +66,37 @@ struct ServingProfileComparisonEvidence: Identifiable {
     }
 }
 
+struct ServingProfileChoice: Identifiable {
+    let profile: ServingProfile
+    let evidence: ServingProfileComparisonEvidence?
+    let evidenceUnavailableReason: String?
+    var id: UUID { profile.id }
+}
+
+struct ServingProfileMemoryReview: Identifiable {
+    let profile: ServingProfile
+    let estimatedBytes: Int64
+    let memory: MemorySnapshot?
+    let capturedAt: Date
+    let verificationMatches: Bool
+    var id: UUID { profile.id }
+
+    init(profile: ServingProfile, plan: [String: Any], memory: MemorySnapshot?, capturedAt: Date) throws {
+        guard profile.isValid, plan.string("path") == profile.modelPath,
+              let evidence = ProbeServingEvidence(plan: plan), evidence.runtime == "strata",
+              evidence.modelFingerprint?.isEmpty == false, evidence.runtimeFingerprint?.isEmpty == false,
+              evidence.speculation == profile.options.speculation, evidence.expertMemoryGB == profile.options.expertMemoryGB,
+              evidence.contextTokens == profile.options.contextTokens,
+              let bytes = plan.int("strata_memory_estimate_bytes"), bytes > 0 else {
+            throw WorkflowEvidenceError.invalid("The runtime preview did not return a memory estimate for this profile's model and settings.")
+        }
+        self.profile = profile; estimatedBytes = Int64(bytes); self.capturedAt = capturedAt
+        if let memory, memory.totalBytes > 0, (0...memory.totalBytes).contains(memory.availableBytes) { self.memory = memory }
+        else { self.memory = nil }
+        verificationMatches = (try? profile.validate(plan: plan)) != nil
+    }
+}
+
 struct ServingProfileVerification: Codable, Equatable, Sendable {
     let options: StrataComparisonOptions
     let modelFingerprint: String
@@ -184,6 +215,7 @@ final class ServingProfileCoordinator: ObservableObject {
     var suggestionSource: ((ComparisonRun) throws -> VariantResult)?
     var comparisonSource: ((UUID) throws -> ComparisonRun?)?
     var measuredSource: ((ComparisonRun, String) throws -> VariantResult)?
+    var memoryPreview: ((ServingProfile) async throws -> [String: Any])?
     private let store: JSONStore<ServingProfile>
     private let probe: @Sendable (StrataComparisonOptions) -> ServeProbe
 
@@ -234,6 +266,64 @@ final class ServingProfileCoordinator: ObservableObject {
             throw WorkflowEvidenceError.invalid("The source comparison is unavailable. The profile and its canary verdict are unchanged.")
         }
         return try ServingProfileComparisonEvidence(profile: current, run: run)
+    }
+
+    /// Read saved snapshots only on an explicit chooser action; never measure or persist here.
+    func profileChoices(modelPath: String) throws -> [ServingProfileChoice] {
+        let saved = try store.load()
+        guard Set(saved.map(\.id)).count == saved.count else {
+            throw WorkflowEvidenceError.invalid("Saved profiles contain repeated identities. Profile selection is unavailable.")
+        }
+        let choices = saved.filter { $0.modelPath == modelPath }.map { profile in
+            do {
+                guard let id = profile.sourceRunID, profile.sourceLaneID != nil else {
+                    throw WorkflowEvidenceError.invalid("No source comparison recorded.")
+                }
+                guard let comparisonSource, let run = try comparisonSource(id) else {
+                    throw WorkflowEvidenceError.invalid("The recorded source comparison is unavailable.")
+                }
+                return ServingProfileChoice(profile: profile,
+                    evidence: try ServingProfileComparisonEvidence(profile: profile, run: run), evidenceUnavailableReason: nil)
+            } catch {
+                let reason: String
+                if case WorkflowEvidenceError.invalid(let message) = error { reason = message }
+                else { reason = "The saved comparison could not be read. Open Compare to inspect it." }
+                return ServingProfileChoice(profile: profile, evidence: nil, evidenceUnavailableReason: reason)
+            }
+        }
+        profiles = saved
+        return choices
+    }
+
+    func selectChoice(_ choice: ServingProfileChoice, modelPath: String) throws -> ServingProfile {
+        guard activeID == nil else { throw WorkflowEvidenceError.invalid("Wait for profile verification to finish.") }
+        let saved = try store.load()
+        let matches = saved.filter { $0.id == choice.id }
+        guard Set(saved.map(\.id)).count == saved.count, matches.count == 1, let current = matches.first, current == choice.profile,
+              current.isValid, current.modelPath == modelPath else {
+            throw WorkflowEvidenceError.invalid("The profile changed or is no longer available. Refresh profiles before selecting.")
+        }
+        if let displayed = choice.evidence {
+            let currentEvidence = try comparisonEvidence(for: current)
+            guard currentEvidence.run == displayed.run else {
+                throw WorkflowEvidenceError.invalid("The comparison evidence changed. Refresh profiles before selecting.")
+            }
+        }
+        profiles = saved
+        return current
+    }
+
+    func memoryReview(for choice: ServingProfileChoice,
+                      memoryProbe: @escaping @Sendable () -> MemorySnapshot? = MemorySnapshot.probe) async throws -> ServingProfileMemoryReview {
+        let profile = try selectChoice(choice, modelPath: choice.profile.modelPath)
+        guard let memoryPreview else { throw WorkflowEvidenceError.invalid("The runtime memory preview is unavailable.") }
+        let plan = try await memoryPreview(profile)
+        try Task.checkCancellation()
+        let memory = await Task.detached(priority: .utility) { memoryProbe() }.value
+        let capturedAt = Date()
+        try Task.checkCancellation()
+        _ = try selectChoice(choice, modelPath: profile.modelPath)
+        return try ServingProfileMemoryReview(profile: profile, plan: plan, memory: memory, capturedAt: capturedAt)
     }
 
     @discardableResult

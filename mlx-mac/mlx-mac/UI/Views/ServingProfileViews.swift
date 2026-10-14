@@ -135,6 +135,7 @@ struct ServingProfileControls: View {
     @State private var comparisonRequest: ServingProfile?
     @State private var evidenceRequest: ServingProfileComparisonEvidence?
     @State private var evidenceError: String?
+    @State private var chooserRequest: ServingProfileChooserRequest?
 
     private var choices: [ServingProfile] { profiles.profiles.filter { $0.modelPath == modelPath } }
     private var selected: ServingProfile? { profiles.profiles.first { $0.id == workflow.servingProfile?.id } }
@@ -151,6 +152,14 @@ struct ServingProfileControls: View {
                     Text("Runtime defaults").tag(Optional<UUID>.none)
                     ForEach(choices) { profile in Text(profile.name).tag(Optional(profile.id)) }
                 }.disabled(workflow.isServeSubmissionInFlight || profiles.activeID != nil)
+                Button("Review profiles…") {
+                    guard let modelPath else { return }
+                    do {
+                        chooserRequest = ServingProfileChooserRequest(modelPath: modelPath,
+                            choices: try profiles.profileChoices(modelPath: modelPath))
+                        evidenceError = nil
+                    } catch { evidenceError = AppHost.render(error) }
+                }.disabled(workflow.isServeSubmissionInFlight || profiles.activeID != nil || modelPath == nil)
                 if let profile = selected {
                     Text("Draft-and-verify \(profile.options.speculation ? "on" : "off") · expert memory \(profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(profile.options.contextTokens) context tokens")
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
@@ -201,6 +210,15 @@ struct ServingProfileControls: View {
                 ErrorBanner(text: endpoint.lastError)
             }.padding(.vertical, WorkbenchSpacing.sm)
                 .sheet(item: $evidenceRequest) { evidence in ServingProfileComparisonSheet(evidence: evidence) }
+                .sheet(item: $chooserRequest) { request in
+                    ServingProfileChooserSheet(profiles: profiles, request: request, selectedID: workflow.servingProfile?.id) { profile in
+                        guard !workflow.isServeSubmissionInFlight, profile.modelPath == workflow.workflow.completedModelPath else {
+                            return "The Run model changed or serving is in progress. Reopen profile selection."
+                        }
+                        workflow.selectServingProfile(profile)
+                        return nil
+                    }
+                }
                 .sheet(item: $copyRequest) { profile in
                     ServingProfileCopySheet(profiles: profiles, profile: profile) { copy in workflow.selectServingProfile(copy) }
                 }
@@ -220,6 +238,144 @@ struct ServingProfileControls: View {
                         if workflow.servingProfile?.id == profile.id { workflow.selectServingProfile(nil) }
                     }
                 }
+        }
+    }
+}
+
+struct ServingProfileChooserRequest: Identifiable {
+    let id = UUID()
+    let modelPath: String
+    let choices: [ServingProfileChoice]
+}
+
+struct ServingProfileChooserSheet: View {
+    @ObservedObject var profiles: ServingProfileCoordinator
+    let request: ServingProfileChooserRequest
+    let selectedID: UUID?
+    let onSelect: (ServingProfile) -> String?
+    @Environment(\.dismiss) private var dismiss
+    @State private var choices: [ServingProfileChoice]
+    @State private var error: String?
+    @State private var memoryReviews: [UUID: ServingProfileMemoryReview] = [:]
+    @State private var memoryCheckingID: UUID?
+    @State private var memoryCheckTask: Task<Void, Never>?
+
+    init(profiles: ServingProfileCoordinator, request: ServingProfileChooserRequest, selectedID: UUID?,
+         onSelect: @escaping (ServingProfile) -> String?) {
+        self.profiles = profiles; self.request = request; self.selectedID = selectedID; self.onSelect = onSelect
+        _choices = State(initialValue: request.choices)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Choose a serving profile").font(WorkbenchTypography.cardTitle)
+            Text("Review saved settings and measurements for this model. Selecting a profile returns to Run; preview and confirmation are still required.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    if choices.isEmpty { Text("No saved profiles for this model.").font(WorkbenchTypography.secondary) }
+                    ForEach(choices) { choice in
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(choice.profile.name).font(WorkbenchTypography.label).fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                                if choice.id == selectedID { Text("Selected").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted) }
+                            }
+                            Text("Draft-and-verify \(choice.profile.options.speculation ? "on" : "off") · expert memory \(choice.profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(choice.profile.options.contextTokens) context tokens")
+                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+                            Text(choice.profile.hasPassedVerification ? "Canaries passed · serving rechecks fingerprints" : "Canary verification required")
+                                .font(WorkbenchTypography.secondary)
+                            if let evidence = choice.evidence {
+                                Text("\(evidence.run.promptSetName) · recorded \((evidence.run.finishedAt ?? evidence.run.startedAt).formatted(date: .abbreviated, time: .shortened))")
+                                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+                                LabeledContent("Median first answer", value: evidence.result.memoryTradeoffAnswerSeconds.map {
+                                    "\($0.formatted(.number.precision(.fractionLength(2)))) s"
+                                } ?? "Not recorded for every answer")
+                                LabeledContent("Lowest system headroom", value: evidence.memory.map {
+                                    "\((Double($0.minimumAvailableBytes) / 1e9).formatted(.number.precision(.fractionLength(1)))) GB"
+                                } ?? "Not recorded")
+                                LabeledContent("Task review", value: evidence.taskReview.map { ComparisonQualityReview.taskScoreTitle($0.score) } ?? "Not recorded")
+                            } else {
+                                Text("Comparison evidence unavailable: \(choice.evidenceUnavailableReason ?? "Not recorded")")
+                                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+                            }
+                            if !choice.profile.isValid {
+                                Text("This saved profile has invalid settings.").font(WorkbenchTypography.secondary)
+                            }
+                            if let review = memoryReviews[choice.id] { ServingProfileMemoryReviewView(review: review) }
+                            HStack {
+                                Button("Select profile") { select(choice) }
+                                    .disabled(!choice.profile.isValid || profiles.activeID != nil || memoryCheckingID != nil)
+                                    .accessibilityLabel("Select profile \(choice.profile.name)")
+                                Button(memoryCheckingID == choice.id ? "Checking memory…" : "Check memory", action: { checkMemory(choice) })
+                                    .disabled(!choice.profile.isValid || profiles.activeID != nil || memoryCheckingID != nil)
+                                    .accessibilityLabel("Check memory for \(choice.profile.name)")
+                                if memoryCheckingID == choice.id { ProgressView().controlSize(.small) }
+                            }
+                            Divider()
+                        }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Text("Measurements retain their recorded prompt sets and dates. System headroom includes other apps and file caching; it does not measure model-only RAM or predict available RAM now.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            ErrorBanner(text: error)
+            HStack {
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(memoryCheckingID != nil)
+                Spacer()
+                Button("Refresh profiles", action: refresh).disabled(profiles.activeID != nil || memoryCheckingID != nil)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 600, height: 640)
+            .interactiveDismissDisabled(memoryCheckingID != nil)
+            .onDisappear { memoryCheckTask?.cancel() }
+    }
+
+    private func select(_ choice: ServingProfileChoice) {
+        do {
+            let profile = try profiles.selectChoice(choice, modelPath: request.modelPath)
+            error = onSelect(profile)
+            if error == nil { dismiss() }
+        } catch { self.error = AppHost.render(error) }
+    }
+
+    private func refresh() {
+        memoryReviews = [:]
+        do { choices = try profiles.profileChoices(modelPath: request.modelPath); error = nil }
+        catch { choices = []; self.error = AppHost.render(error) }
+    }
+
+    private func checkMemory(_ choice: ServingProfileChoice) {
+        guard memoryCheckingID == nil else { return }
+        memoryCheckingID = choice.id; memoryReviews[choice.id] = nil; error = nil
+        memoryCheckTask = Task {
+            defer { memoryCheckingID = nil; memoryCheckTask = nil }
+            do {
+                let review = try await profiles.memoryReview(for: choice)
+                guard !Task.isCancelled else { return }
+                memoryReviews[choice.id] = review
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.error = AppHost.render(error)
+            }
+        }
+    }
+}
+
+struct ServingProfileMemoryReviewView: View {
+    let review: ServingProfileMemoryReview
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Text("Memory check · \(review.capturedAt.formatted(date: .abbreviated, time: .standard))")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            LabeledContent("Runtime memory estimate", value: "\((Double(review.estimatedBytes) / 1e9).formatted(.number.precision(.fractionLength(1)))) GB")
+            LabeledContent("Available RAM estimate", value: review.memory.map {
+                "\((Double($0.availableBytes) / 1e9).formatted(.number.precision(.fractionLength(1)))) GB"
+            } ?? "Unavailable")
+            Text(review.verificationMatches ? "Saved canaries match this runtime preview." : "Canary verification is required for this runtime preview.")
+                .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Eager startup additionally requires the runtime's headroom reserve. Available RAM includes reclaimable inactive pages and can change after this reading. Confirmed startup checks its memory guard again; this check loads no model.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
         }
     }
 }

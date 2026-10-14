@@ -22,6 +22,226 @@ final class VerificationCoordinatorTests: XCTestCase {
             promptEntries: [PromptEntry(id: "p", text: "17 * 19")], laneConfigurations: [lane])
     }
 
+    func testProfileChoicesReadSavedEvidenceWithoutWritingOrServing() throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let runs = JSONStore<ComparisonRun>(fileURL: temporaryURL("runs.json"))
+        var measured = managementProfile()
+        var run = try measuredProfileRun(measured)
+        run.qualityReviews = ["measured": ComparisonQualityReview(score: 4,
+            rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: Date())]
+        measured.sourceRunID = run.id; measured.sourceLaneID = "measured"
+        let unmeasured = ServingProfile(id: UUID(), name: "Unverified copy", modelPath: measured.modelPath,
+            options: StrataComparisonOptions(expertMemoryGB: 4))
+        let other = ServingProfile(id: UUID(), name: "Other model", modelPath: "/Models/other", options: measured.options)
+        try store.replaceAll([measured, unmeasured, other]); try runs.replaceAll([run])
+        let profileBytes = try Data(contentsOf: store.url), runBytes = try Data(contentsOf: runs.url)
+        let coordinator = managementCoordinator(store)
+        coordinator.comparisonSource = { id in try runs.load().first { $0.id == id } }
+        let choices = try coordinator.profileChoices(modelPath: measured.modelPath)
+        XCTAssertEqual(choices.map(\.profile.id), [measured.id, unmeasured.id])
+        XCTAssertEqual(choices[0].evidence?.result.memoryTradeoffAnswerSeconds, 2)
+        XCTAssertEqual(choices[0].evidence?.taskReview?.score, 4)
+        XCTAssertNil(choices[0].evidence?.memory)
+        XCTAssertNil(choices[0].evidenceUnavailableReason)
+        XCTAssertNil(choices[1].evidence)
+        XCTAssertNotNil(choices[1].evidenceUnavailableReason)
+        XCTAssertEqual(try coordinator.selectChoice(choices[0], modelPath: measured.modelPath), measured)
+        XCTAssertEqual(try coordinator.selectChoice(choices[1], modelPath: measured.modelPath), unmeasured)
+        XCTAssertThrowsError(try coordinator.resolve(unmeasured))
+        XCTAssertEqual(try Data(contentsOf: store.url), profileBytes)
+        XCTAssertEqual(try Data(contentsOf: runs.url), runBytes)
+        try Data("corrupt".utf8).write(to: runs.url)
+        let unavailable = try coordinator.profileChoices(modelPath: measured.modelPath)
+        XCTAssertNil(unavailable[0].evidence)
+        XCTAssertNotNil(unavailable[0].evidenceUnavailableReason)
+        XCTAssertTrue(unavailable[0].profile.hasPassedVerification)
+        XCTAssertEqual(try Data(contentsOf: runs.url), Data("corrupt".utf8))
+        XCTAssertEqual(try Data(contentsOf: store.url), profileBytes)
+    }
+
+    private func profileMemoryPlan(_ profile: ServingProfile) -> [String: Any] {
+        ["path": profile.modelPath, "runtime": "strata", "preview_hash": "preview",
+         "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "runtime",
+         "strata_speculation": profile.options.speculation, "strata_expert_memory_gb": profile.options.expertMemoryGB!,
+         "strata_context_tokens": profile.options.contextTokens, "strata_memory_estimate_bytes": 20_000_000_000]
+    }
+
+    func testMemoryReviewUsesFreshPlanAndPreservesVerificationAndFiles() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let profile = managementProfile()
+        try store.replaceAll([profile])
+        let coordinator = managementCoordinator(store)
+        coordinator.memoryPreview = { requested in
+            XCTAssertEqual(requested, profile)
+            return self.profileMemoryPlan(requested)
+        }
+        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        let before = try Data(contentsOf: store.url)
+        let review = try await coordinator.memoryReview(for: choice, memoryProbe: {
+            MemorySnapshot(totalBytes: 64_000_000_000, availableBytes: 10_000_000_000)
+        })
+        XCTAssertEqual(review.estimatedBytes, 20_000_000_000)
+        XCTAssertEqual(review.memory?.availableBytes, 10_000_000_000)
+        XCTAssertTrue(review.verificationMatches)
+        XCTAssertEqual(try Data(contentsOf: store.url), before)
+        XCTAssertEqual(coordinator.profiles, [profile])
+        var stalePlan = profileMemoryPlan(profile); stalePlan["strata_runtime_fingerprint"] = "changed"
+        let stale = try ServingProfileMemoryReview(profile: profile, plan: stalePlan, memory: nil, capturedAt: Date())
+        XCTAssertFalse(stale.verificationMatches)
+        XCTAssertNil(stale.memory)
+        for invalid: Any in [true, -1, 1.5, "unknown"] {
+            var plan = profileMemoryPlan(profile); plan["strata_memory_estimate_bytes"] = invalid
+            XCTAssertThrowsError(try ServingProfileMemoryReview(profile: profile, plan: plan, memory: nil, capturedAt: Date()))
+        }
+        var changed = profileMemoryPlan(profile); changed["strata_context_tokens"] = 16384
+        XCTAssertThrowsError(try ServingProfileMemoryReview(profile: profile, plan: changed, memory: nil, capturedAt: Date()))
+        changed = profileMemoryPlan(profile); changed["path"] = "/Models/other"
+        XCTAssertThrowsError(try ServingProfileMemoryReview(profile: profile, plan: changed, memory: nil, capturedAt: Date()))
+        let invalidMemory = try ServingProfileMemoryReview(profile: profile, plan: profileMemoryPlan(profile),
+            memory: MemorySnapshot(totalBytes: 64, availableBytes: 65), capturedAt: Date())
+        XCTAssertNil(invalidMemory.memory)
+    }
+
+    func testMemoryReviewRejectsProfileChangesDuringPreview() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let profile = managementProfile()
+        try store.replaceAll([profile])
+        let coordinator = managementCoordinator(store)
+        coordinator.memoryPreview = { requested in
+            var changed = requested; changed.name = "Changed during check"
+            try store.replaceAll([changed])
+            return self.profileMemoryPlan(requested)
+        }
+        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        do {
+            _ = try await coordinator.memoryReview(for: choice, memoryProbe: { nil })
+            XCTFail("A changed profile cannot receive the old memory review")
+        } catch { }
+        XCTAssertEqual(try store.load().first?.name, "Changed during check")
+        XCTAssertTrue(try XCTUnwrap(try store.load().first).hasPassedVerification)
+    }
+
+    func testMemoryPreviewDoesNotConfirmAndUsesBoundedTimeout() async throws {
+        let profile = managementProfile()
+        let plan = profileMemoryPlan(profile)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/unused", command: { _, argv, _, timeout in
+            XCTAssertEqual(Array(argv.prefix(2)), ["serve", "start"])
+            XCTAssertFalse(argv.contains("--confirm")); XCTAssertFalse(argv.contains("--jit"))
+            XCTAssertEqual(timeout, 30)
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--path")) + 1], profile.modelPath)
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-expert-memory-gb")) + 1], "2.0")
+            return ["status": "preview", "plan": plan]
+        })
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        try store.replaceAll([profile])
+        let coordinator = managementCoordinator(store)
+        coordinator.memoryPreview = { requested in
+            try await api.servePreview(repo: requested.modelPath, runtime: "strata", port: nil,
+                strataOptions: requested.options, timeout: 30)
+        }
+        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        let review = try await coordinator.memoryReview(for: choice, memoryProbe: { nil })
+        XCTAssertNil(review.memory); XCTAssertTrue(review.verificationMatches)
+    }
+
+    func testCancelledMemoryReviewCannotPublishAReading() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let profile = managementProfile()
+        try store.replaceAll([profile])
+        let before = try Data(contentsOf: store.url)
+        let coordinator = managementCoordinator(store)
+        coordinator.memoryPreview = { requested in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return self.profileMemoryPlan(requested)
+        }
+        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        let operation = Task {
+            try await coordinator.memoryReview(for: choice, memoryProbe: {
+                XCTFail("A cancelled preview must not capture RAM"); return nil
+            })
+        }
+        do { _ = try await operation.value; XCTFail("Cancelled checks must not return a review") }
+        catch is CancellationError { }
+        XCTAssertEqual(try Data(contentsOf: store.url), before)
+    }
+
+    func testLocalProfileMemoryReviewWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_MEMORY_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_PROFILE_MEMORY_MANIFEST for the local runtime memory preview.")
+        }
+        struct Manifest: Decodable { let agentPath: String; let profilesFile: String; let comparisonFile: String; let evidenceRoot: String }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let root = URL(fileURLWithPath: manifest.evidenceRoot)
+        let store = JSONStore<ServingProfile>(fileURL: URL(fileURLWithPath: manifest.profilesFile))
+        let runs = JSONStore<ComparisonRun>(fileURL: URL(fileURLWithPath: manifest.comparisonFile))
+        let profileBytes = try Data(contentsOf: store.url), runBytes = try Data(contentsOf: runs.url)
+        let coordinator = managementCoordinator(store)
+        coordinator.comparisonSource = { id in try runs.load().first { $0.id == id } }
+        let modelPath = try XCTUnwrap(coordinator.profiles.first?.modelPath)
+        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: modelPath).first { $0.evidence != nil && $0.profile.hasPassedVerification })
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath,
+            receiptDirectory: root.appendingPathComponent("receipts").path)
+        coordinator.memoryPreview = { requested in
+            try await api.servePreview(repo: requested.modelPath, runtime: "strata", port: nil,
+                strataOptions: requested.options, timeout: 30)
+        }
+        let before = try await api.serveStatus()
+        let review = try await coordinator.memoryReview(for: choice)
+        XCTAssertGreaterThan(review.estimatedBytes, 0)
+        XCTAssertNotNil(review.memory); XCTAssertTrue(review.verificationMatches)
+        XCTAssertEqual(review.profile, choice.profile)
+        let after = try await api.serveStatus()
+        XCTAssertEqual(after.count, before.count)
+        XCTAssertTrue(after.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: store.url), profileBytes)
+        XCTAssertEqual(try Data(contentsOf: runs.url), runBytes)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let host = NSHostingView(rootView: ServingProfileMemoryReviewView(review: review).padding(24)
+            .frame(width: 560, height: 290, alignment: .topLeading).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 290), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: root.appendingPathComponent("memory-review.png"))
+    }
+
+    func testProfileChoiceRejectsChangedProfileAndComparisonSnapshots() throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let runs = JSONStore<ComparisonRun>(fileURL: temporaryURL("runs.json"))
+        var profile = managementProfile()
+        let run = try measuredProfileRun(profile)
+        profile.sourceRunID = run.id; profile.sourceLaneID = "measured"
+        try store.replaceAll([profile]); try runs.replaceAll([run])
+        let coordinator = managementCoordinator(store)
+        coordinator.comparisonSource = { id in try runs.load().first { $0.id == id } }
+        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        var changedRun = run; changedRun.qualityReviews = ["measured": ComparisonQualityReview(score: 1,
+            rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: Date())]
+        try runs.replaceAll([changedRun])
+        XCTAssertThrowsError(try coordinator.selectChoice(choice, modelPath: profile.modelPath))
+        let refreshed = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        XCTAssertEqual(refreshed.evidence?.taskReview?.score, 1)
+        XCTAssertEqual(try coordinator.selectChoice(refreshed, modelPath: profile.modelPath), profile)
+        var changedProfile = profile; changedProfile.name = "Renamed elsewhere"
+        try store.replaceAll([changedProfile])
+        XCTAssertThrowsError(try coordinator.selectChoice(refreshed, modelPath: profile.modelPath))
+        let renamed = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        XCTAssertEqual(coordinator.profiles, [changedProfile])
+        XCTAssertEqual(try coordinator.selectChoice(renamed, modelPath: profile.modelPath), changedProfile)
+        XCTAssertThrowsError(try coordinator.selectChoice(refreshed, modelPath: "/Models/other"))
+        try store.replaceAll([])
+        XCTAssertThrowsError(try coordinator.selectChoice(refreshed, modelPath: profile.modelPath))
+        try store.replaceAll([profile, profile])
+        XCTAssertThrowsError(try coordinator.profileChoices(modelPath: profile.modelPath))
+        XCTAssertThrowsError(try coordinator.selectChoice(choice, modelPath: profile.modelPath))
+        try Data("corrupt".utf8).write(to: store.url)
+        XCTAssertThrowsError(try coordinator.profileChoices(modelPath: profile.modelPath))
+        XCTAssertEqual(try Data(contentsOf: store.url), Data("corrupt".utf8))
+    }
+
     func testMeasuredProfileVerificationRetainsIdentityAndRevokesOldProofOnFailure() async throws {
         let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         let original = managementProfile(), run = try measuredProfileRun(original)
@@ -427,6 +647,8 @@ final class VerificationCoordinatorTests: XCTestCase {
         let verification = Task { await coordinator.verify(id: original.id) }
         for _ in 0..<20 { if coordinator.activeID != nil { break }; await Task.yield() }
         XCTAssertEqual(coordinator.activeID, original.id)
+        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: original.modelPath).first)
+        XCTAssertThrowsError(try coordinator.selectChoice(choice, modelPath: original.modelPath))
         XCTAssertNil(coordinator.rename(original, name: "Other"))
         XCTAssertFalse(coordinator.remove(original))
         XCTAssertEqual(try store.load(), [original])
@@ -503,6 +725,11 @@ final class VerificationCoordinatorTests: XCTestCase {
             onSaved: { _ in XCTFail("Rendering must not save a profile copy") })), 560))
         scenes.append(("compare-profiles", AnyView(ServingProfileComparisonSetupSheet(profiles: coordinator, baseline: profile,
             onUse: { _ in XCTFail("Rendering must not prepare or run a comparison"); return nil })), 560))
+        let chooser = ServingProfileChooserRequest(modelPath: profile.modelPath,
+            choices: try coordinator.profileChoices(modelPath: profile.modelPath))
+        scenes.append(("profile-chooser-unmeasured", AnyView(ServingProfileChooserSheet(profiles: coordinator,
+            request: chooser, selectedID: profile.id,
+            onSelect: { _ in XCTFail("Rendering must not select a profile"); return nil })), 640))
         let emptyRun = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil, variants: [profile.modelPath],
             results: [], startedAt: Date(), finishedAt: Date(), state: .completed)
         scenes.append(("verify-suggestion", AnyView(ComparisonProfileVerificationSheet(profiles: coordinator,
@@ -540,9 +767,36 @@ final class VerificationCoordinatorTests: XCTestCase {
                     contentWidth: 860, isRouteActive: false, name: { URL(fileURLWithPath: $0).lastPathComponent },
                     onReview: { _, _ in XCTFail("Rendering must not save a review") }, laneActions: { _ in EmptyView() }).padding(20)
             }), 900))
+            scenes.append(("profile-comparison-text", AnyView(TextComparisonEditor(run: run,
+                store: ComparisonOutputStore(root: root.appendingPathComponent("outputs")),
+                name: { URL(fileURLWithPath: $0).lastPathComponent },
+                onReview: { _, _ in XCTFail("Rendering must not save a review") }).padding(20)), 900))
+        }
+        if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_CHOOSER_MANIFEST"] {
+            struct Manifest: Decodable { let profilesFile: String; let comparisonFile: String }
+            let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+            let profilesStore = JSONStore<ServingProfile>(fileURL: URL(fileURLWithPath: manifest.profilesFile))
+            let runsStore = JSONStore<ComparisonRun>(fileURL: URL(fileURLWithPath: manifest.comparisonFile))
+            let profileBytes = try Data(contentsOf: profilesStore.url), runBytes = try Data(contentsOf: runsStore.url)
+            let reader = managementCoordinator(profilesStore)
+            reader.comparisonSource = { id in try runsStore.load().first { $0.id == id } }
+            let modelPath = try XCTUnwrap(reader.profiles.first?.modelPath)
+            let choices = try reader.profileChoices(modelPath: modelPath)
+            let measured = try XCTUnwrap(choices.first { $0.evidence != nil })
+            XCTAssertNotNil(measured.evidence?.memory)
+            XCTAssertNotNil(measured.evidence?.result.memoryTradeoffAnswerSeconds)
+            let selected = try reader.selectChoice(measured, modelPath: modelPath)
+            workflow.selectServingProfile(selected)
+            XCTAssertEqual(workflow.servingProfile, selected)
+            XCTAssertEqual(workflow.workflow.serveState, .idle)
+            XCTAssertEqual(try Data(contentsOf: profilesStore.url), profileBytes)
+            XCTAssertEqual(try Data(contentsOf: runsStore.url), runBytes)
+            scenes.append(("profile-chooser-recorded", AnyView(ServingProfileChooserSheet(profiles: reader,
+                request: ServingProfileChooserRequest(modelPath: modelPath, choices: choices), selectedID: selected.id,
+                onSelect: { _ in XCTFail("Rendering must not select a profile"); return nil })), 640))
         }
         for (name, content, width) in scenes {
-            let height = name == "profile-comparison-results" ? 900.0 : (["comparison-evidence", "customize-copy", "compare-profiles", "verify-measured"].contains(name) ? 510.0 : 330.0)
+            let height = name.hasPrefix("profile-chooser") ? 680.0 : (name == "profile-comparison-text" ? 620.0 : (name == "profile-comparison-results" ? 900.0 : (["comparison-evidence", "customize-copy", "compare-profiles", "verify-measured"].contains(name) ? 510.0 : 330.0)))
             let view = content.frame(width: width, height: height, alignment: .topLeading)
                 .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
             let host = NSHostingView(rootView: view)

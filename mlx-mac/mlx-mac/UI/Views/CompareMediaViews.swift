@@ -601,6 +601,9 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 } else {
                     outputView(sample, modelPath: lane.path, side: layout.mediaSide)
                     metrics(sample)
+                    if mode == .chat, result?.servingEvidence?.runtime == "strata" || sample.draftTokens != nil {
+                        ComparisonDraftTokenEvidenceView(evidence: sample.draftTokens)
+                    }
                 }
             } else if ComparePresentation.showsNotRun(sample: sample, result: result) {
                 Text("Not run").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -700,6 +703,22 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(rate <= SpeechCanary.maxWordErrorRate ? WorkbenchColor.success : WorkbenchColor.warning)
         }
+    }
+}
+
+struct ComparisonDraftTokenEvidenceView: View {
+    let evidence: DraftTokenEvidence?
+
+    static func description(_ evidence: DraftTokenEvidence?) -> String {
+        guard let evidence, evidence.isValid else { return "Draft counts not reported" }
+        guard let fraction = evidence.acceptanceFraction else { return "Server reported 0 draft tokens" }
+        return "\(evidence.accepted) of \(evidence.offered) draft tokens accepted · \(String(format: "%.1f%%", fraction * 100))"
+    }
+
+    var body: some View {
+        Text(Self.description(evidence)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            .fixedSize(horizontal: false, vertical: true)
+            .help("Server-reported draft counts for this request. Compare answer quality and measured latency separately.")
     }
 }
 

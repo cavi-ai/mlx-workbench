@@ -920,6 +920,7 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     let metricsEstimated: Bool?
     let timeToFirstAnswerSeconds: Double?
     let durationSeconds: Double?
+    let draftTokens: DraftTokenEvidence?
 
     var hasCompletedAnswer: Bool {
         error == nil && finishReason == "stop" && !(fullOutput ?? outputExcerpt).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -966,7 +967,8 @@ struct ComparisonSample: Codable, Equatable, Sendable {
         completionTokens: Int? = nil,
         metricsEstimated: Bool? = nil,
         timeToFirstAnswerSeconds: Double? = nil,
-        durationSeconds: Double? = nil
+        durationSeconds: Double? = nil,
+        draftTokens: DraftTokenEvidence? = nil
     ) {
         self.promptID = promptID
         self.outputExcerpt = outputExcerpt
@@ -998,6 +1000,7 @@ struct ComparisonSample: Codable, Equatable, Sendable {
         self.metricsEstimated = metricsEstimated
         self.timeToFirstAnswerSeconds = timeToFirstAnswerSeconds
         self.durationSeconds = durationSeconds
+        self.draftTokens = draftTokens
     }
 }
 
@@ -1368,7 +1371,8 @@ enum ComparisonAggregation {    static func medianTokensPerSecond(_ samples: [Co
             completionTokens: probe.completionTokens,
             metricsEstimated: probe.metricsEstimated,
             timeToFirstAnswerSeconds: probe.timeToFirstAnswerSeconds,
-            durationSeconds: probe.durationSeconds
+            durationSeconds: probe.durationSeconds,
+            draftTokens: probe.draftTokens
         )
     }
 
