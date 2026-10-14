@@ -7,6 +7,131 @@ import XCTest
 
 @MainActor
 final class VerificationCoordinatorTests: XCTestCase {
+    private func measuredProfileRun(_ profile: ServingProfile) throws -> ComparisonRun {
+        let evidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "preview",
+            "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "runtime", "strata_speculation": false,
+            "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
+        let lane = ComparisonLaneConfiguration(id: "measured", modelPath: profile.modelPath, modelSignature: "model",
+            strataOptions: profile.options, servingProfileID: profile.id, servingProfileName: profile.name)
+        let result = VariantResult(modelPath: profile.modelPath, modelSignature: "model",
+            samples: [ComparisonSample(promptID: "p", outputExcerpt: "323", tokensPerSecond: 10, timeToFirstTokenSeconds: 1,
+                error: nil, finishReason: "stop", timeToFirstAnswerSeconds: 2)], aggregateTokensPerSecond: 10,
+            aggregateTTFTSeconds: 1, error: nil, servingEvidence: evidence, laneID: lane.id)
+        return ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "Arithmetic", useCase: nil,
+            variants: [profile.modelPath], results: [result], startedAt: Date(), finishedAt: Date(), state: .completed,
+            promptEntries: [PromptEntry(id: "p", text: "17 * 19")], laneConfigurations: [lane])
+    }
+
+    func testMeasuredProfileVerificationRetainsIdentityAndRevokesOldProofOnFailure() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let original = managementProfile(), run = try measuredProfileRun(original)
+        try store.upsert(original, id: \.id)
+        let runs = JSONStore<ComparisonRun>(fileURL: temporaryURL("runs.json"))
+        try runs.upsert(run, id: \.id)
+        let comparison = ComparisonCoordinator(probe: ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "unused" },
+            start: { _, _, _ in XCTFail("Reading a measured lane must not serve") }, stop: { _ in }), prober: OpenAIEndpointProber()),
+            runStore: runs, promptSetStore: JSONStore(fileURL: temporaryURL("prompts.json")))
+        let coordinator = ServingProfileCoordinator(store: store, probe: { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in throw WorkflowEvidenceError.invalid("Runtime unavailable") },
+                start: { _, _, _ in XCTFail("Failed preflight must not start") }, stop: { _ in }), prober: OpenAIEndpointProber())
+        })
+        coordinator.measuredSource = { try comparison.requireCurrentProfileLane($0, laneID: $1) }
+        let before = try Data(contentsOf: store.url)
+        XCTAssertEqual(try coordinator.prepareMeasuredVerification(run: run, laneID: "measured"), original)
+        XCTAssertEqual(try Data(contentsOf: store.url), before)
+        await coordinator.verifyMeasuredLane(run: run, laneID: "measured", original: original)
+        let linked = try XCTUnwrap(try store.load().first)
+        XCTAssertEqual(linked.id, original.id); XCTAssertEqual(linked.name, original.name)
+        XCTAssertEqual(linked.options, original.options); XCTAssertEqual(linked.modelPath, original.modelPath)
+        XCTAssertEqual(linked.sourceRunID, run.id); XCTAssertEqual(linked.sourceLaneID, "measured")
+        XCTAssertNil(linked.verification); XCTAssertNotNil(coordinator.lastError)
+        await coordinator.verifyMeasuredLane(run: run, laneID: "measured", original: linked)
+        XCTAssertEqual(try store.load().count, 1)
+        var changed = run; changed.finishedAt = run.finishedAt?.addingTimeInterval(1)
+        try runs.upsert(changed, id: \.id)
+        XCTAssertThrowsError(try comparison.requireCurrentProfileLane(run, laneID: "measured"))
+        let linkedBytes = try Data(contentsOf: store.url)
+        await coordinator.verifyMeasuredLane(run: run, laneID: "measured", original: linked)
+        XCTAssertEqual(try Data(contentsOf: store.url), linkedBytes)
+        try runs.upsert(run, id: \.id)
+        var edited = linked; edited.options.contextTokens = 32768
+        try store.upsert(edited, id: \.id)
+        XCTAssertThrowsError(try coordinator.prepareMeasuredVerification(run: run, laneID: "measured"))
+        var incomplete = run; incomplete.results = []
+        try runs.upsert(incomplete, id: \.id)
+        XCTAssertThrowsError(try comparison.requireCurrentProfileLane(incomplete, laneID: "measured"))
+    }
+
+    func testMeasuredProfileRejectsChangedSourceAfterPassingCanaries() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let original = managementProfile(), run = try measuredProfileRun(original)
+        try store.upsert(original, id: \.id)
+        let evidence = try XCTUnwrap(run.results.first?.servingEvidence)
+        let coordinator = ServingProfileCoordinator(store: store, probe: { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "preview" }, start: { _, _, _ in }, stop: { _ in },
+                reviewedPreview: { _, _ in ProbeServePreview(hash: "preview", evidence: evidence) }),
+                prober: StubVerificationProber(responder: { id in
+                    let sample = Self.passingSample(id)
+                    return ProbeSample(text: sample.text, completionTokens: 10, timeToFirstTokenSeconds: 0.1,
+                        durationSeconds: 1, metricsEstimated: false, finishReason: "stop")
+                }), readyPollIntervalNanoseconds: 1_000_000, pickPort: { 9999 })
+        })
+        var reads = 0
+        coordinator.measuredSource = { _, _ in
+            reads += 1
+            if reads > 1 { throw WorkflowEvidenceError.invalid("Comparison changed") }
+            return run.results[0]
+        }
+        await coordinator.verifyMeasuredLane(run: run, laneID: "measured", original: original)
+        XCTAssertEqual(reads, 2)
+        XCTAssertTrue(coordinator.lastError?.contains("Comparison changed") == true)
+        XCTAssertNil(try store.load().first?.verification)
+        XCTAssertEqual(try store.load().count, 1)
+    }
+
+    func testLocalMeasuredProfileVerificationWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_MEASURED_PROFILE_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_MEASURED_PROFILE_MANIFEST for explicit existing-profile verification acceptance.")
+        }
+        struct Manifest: Decodable { let agentPath: String; let profilesFile: String; let comparisonFile: String; let evidenceRoot: String }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let sourceProfiles = URL(fileURLWithPath: manifest.profilesFile), sourceRuns = URL(fileURLWithPath: manifest.comparisonFile)
+        let profileBytes = try Data(contentsOf: sourceProfiles), runBytes = try Data(contentsOf: sourceRuns)
+        let originals = try JSONStore<ServingProfile>(fileURL: sourceProfiles).load()
+        let original = try XCTUnwrap(originals.first { !$0.hasPassedVerification })
+        let recorded = try JSONStore<ComparisonRun>(fileURL: sourceRuns).load()
+        let run = try XCTUnwrap(recorded.first { $0.laneConfigurations?.contains { $0.servingProfileID == original.id } == true })
+        let lane = try XCTUnwrap(run.laneConfigurations?.first { $0.servingProfileID == original.id })
+        let root = URL(fileURLWithPath: manifest.evidenceRoot)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = JSONStore<ServingProfile>(fileURL: root.appendingPathComponent("profiles.json"))
+        let runs = JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json"))
+        try store.replaceAll(originals); try runs.replaceAll(recorded)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: root.path)
+        let comparison = ComparisonCoordinator(probe: ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber()),
+            runStore: runs, promptSetStore: JSONStore(fileURL: root.appendingPathComponent("prompts.json")))
+        let coordinator = ServingProfileCoordinator(store: store, probe: { options in
+            ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
+                prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
+        })
+        coordinator.measuredSource = { try comparison.requireCurrentProfileLane($0, laneID: $1) }
+        XCTAssertEqual(try coordinator.prepareMeasuredVerification(run: run, laneID: lane.id), original)
+        await coordinator.verifyMeasuredLane(run: run, laneID: lane.id, original: original)
+        XCTAssertNil(coordinator.lastError)
+        let saved = try XCTUnwrap(try store.load().first { $0.id == original.id })
+        XCTAssertEqual(try store.load().count, originals.count)
+        XCTAssertEqual(saved.name, original.name); XCTAssertEqual(saved.options, original.options)
+        XCTAssertEqual(saved.sourceRunID, run.id); XCTAssertEqual(saved.sourceLaneID, lane.id)
+        XCTAssertTrue(saved.hasPassedVerification)
+        XCTAssertEqual(saved.verification?.canaries.count, CanarySuite.cases.count)
+        XCTAssertEqual(saved.verification?.modelFingerprint, run.results.first { $0.id == lane.id }?.servingEvidence?.modelFingerprint)
+        XCTAssertEqual(saved.verification?.runtimeFingerprint, run.results.first { $0.id == lane.id }?.servingEvidence?.runtimeFingerprint)
+        XCTAssertEqual(try Data(contentsOf: sourceProfiles), profileBytes)
+        XCTAssertEqual(try Data(contentsOf: sourceRuns), runBytes)
+        let servers = try await api.serveStatus()
+        XCTAssertTrue(servers.isEmpty)
+    }
+
     func testProfileComparisonStagesDistinctSettingsWithoutSavingOrServing() throws {
         let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         let baseline = managementProfile()
@@ -380,8 +505,11 @@ final class VerificationCoordinatorTests: XCTestCase {
             onUse: { _ in XCTFail("Rendering must not prepare or run a comparison"); return nil })), 560))
         let emptyRun = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil, variants: [profile.modelPath],
             results: [], startedAt: Date(), finishedAt: Date(), state: .completed)
-        scenes.append(("verify-suggestion", AnyView(SuggestedProfileVerificationSheet(profiles: coordinator,
-            request: ServingProfileSaveRequest(run: emptyRun, laneID: "lane", letter: "A", verifySuggestion: true),
+        scenes.append(("verify-suggestion", AnyView(ComparisonProfileVerificationSheet(profiles: coordinator,
+            request: ServingProfileSaveRequest(run: emptyRun, laneID: "lane", letter: "A", action: .verifySuggestion),
+            onOpenRun: { _ in XCTFail("Rendering must not open Run"); return nil })), 560))
+        scenes.append(("verify-measured", AnyView(ComparisonProfileVerificationSheet(profiles: coordinator,
+            request: ServingProfileSaveRequest(run: emptyRun, laneID: "lane", letter: "B", action: .verifyMeasured(profile)),
             onOpenRun: { _ in XCTFail("Rendering must not open Run"); return nil })), 560))
         if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_EVIDENCE_MANIFEST"] {
             struct Manifest: Decodable { let comparisonFile: String; let evidenceRoot: String }
@@ -414,7 +542,7 @@ final class VerificationCoordinatorTests: XCTestCase {
             }), 900))
         }
         for (name, content, width) in scenes {
-            let height = name == "profile-comparison-results" ? 900.0 : (["comparison-evidence", "customize-copy", "compare-profiles"].contains(name) ? 510.0 : 330.0)
+            let height = name == "profile-comparison-results" ? 900.0 : (["comparison-evidence", "customize-copy", "compare-profiles", "verify-measured"].contains(name) ? 510.0 : 330.0)
             let view = content.frame(width: width, height: height, alignment: .topLeading)
                 .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
             let host = NSHostingView(rootView: view)

@@ -1,14 +1,20 @@
 import SwiftUI
 
+enum ServingProfileSaveAction {
+    case save
+    case verifySuggestion
+    case verifyMeasured(ServingProfile)
+}
+
 struct ServingProfileSaveRequest: Identifiable {
     let id = UUID()
     let run: ComparisonRun
     let laneID: String
     let letter: String
-    var verifySuggestion = false
+    var action: ServingProfileSaveAction = .save
 }
 
-struct SuggestedProfileVerificationSheet: View {
+struct ComparisonProfileVerificationSheet: View {
     @ObservedObject var profiles: ServingProfileCoordinator
     let request: ServingProfileSaveRequest
     let onOpenRun: (ServingProfile) -> String?
@@ -17,20 +23,35 @@ struct SuggestedProfileVerificationSheet: View {
     @State private var profileID: UUID?
     @State private var working = false
     @State private var error: String?
+    @State private var verifiedInSheet = false
 
     private var profile: ServingProfile? { profiles.profiles.first { $0.id == profileID } }
+    private var existingProfile: ServingProfile? {
+        if case .verifyMeasured(let profile) = request.action { return profile }
+        return nil
+    }
+    private var hasPassed: Bool {
+        verifiedInSheet && profile?.hasPassedVerification == true
+            && profile?.sourceRunID == request.run.id && profile?.sourceLaneID == request.laneID
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text("Verify suggested lane \(request.letter)").font(WorkbenchTypography.cardTitle)
-            Text("Save a named profile and run the canary checks with this lane's recorded settings. The comparison and model/runtime fingerprints are checked again. Verification temporarily loads the model and stops its test server afterward.")
+            Text(existingProfile == nil ? "Verify suggested lane \(request.letter)" : "Verify measured lane \(request.letter)").font(WorkbenchTypography.cardTitle)
+            Text(existingProfile == nil
+                 ? "Save a named profile and run the canary checks with this lane's recorded settings. The comparison and model/runtime fingerprints are checked again. Verification temporarily loads the model and stops its test server afterward."
+                 : "Attach this comparison to the existing profile and run fresh canary checks. Starting clears its previous canary verdict. The comparison and model/runtime fingerprints are rechecked. Verification temporarily loads the model and stops its test server afterward.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
-            TextField("Profile name", text: $name).textFieldStyle(.roundedBorder).disabled(profileID != nil || working)
+            if let existingProfile {
+                Text(profile?.name ?? existingProfile.name).font(WorkbenchTypography.label)
+                Text("Draft-and-verify \(existingProfile.options.speculation ? "on" : "off") · expert memory \(existingProfile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(existingProfile.options.contextTokens) context tokens")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            } else { TextField("Profile name", text: $name).textFieldStyle(.roundedBorder).disabled(profileID != nil || working) }
             if working { ProgressView("Verifying profile…") }
             if let profile {
-                Text(profile.hasPassedVerification ? "Canaries passed. Open Run to review and confirm serving." : "Profile saved; verification has not passed. Retry uses this same profile.")
+                Text(hasPassed ? "Canaries passed. Open Run to review and confirm serving." : "Verification has not passed for this action. Retry uses this same profile.")
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                if let proof = profile.verification {
+                if let proof = profile.verification, existingProfile == nil || hasPassed || !proof.passed {
                     ForEach(proof.canaries, id: \.id) { canary in
                         Text("\(canary.title): \(canary.passed ? "passed" : canary.failureReason ?? "failed")")
                             .font(WorkbenchTypography.metadata).fixedSize(horizontal: false, vertical: true)
@@ -41,25 +62,37 @@ struct SuggestedProfileVerificationSheet: View {
             HStack {
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(working)
                 Spacer()
-                if let profile, profile.hasPassedVerification {
+                if let profile, hasPassed {
                     Button("Open Run") {
                         error = onOpenRun(profile)
                         if error == nil { dismiss() }
                     }.keyboardShortcut(.defaultAction)
                 } else {
-                    Button(profileID == nil ? "Save and verify" : "Retry verification") {
-                        working = true; error = nil
-                        Task {
-                            if profileID == nil { profileID = profiles.createSuggestedProfile(run: request.run, name: name)?.id }
-                            if let profileID { await profiles.verifySuggestion(run: request.run, profileID: profileID) }
-                            error = profiles.lastError; working = false
-                        }
-                    }.keyboardShortcut(.defaultAction)
-                        .disabled(working || profiles.activeID != nil || ServingProfile.nameValidationError(name) != nil)
+                    Button(profileID == nil ? (existingProfile == nil ? "Save and verify" : "Attach and verify") : "Retry verification", action: startVerification)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(working || profiles.activeID != nil || (existingProfile == nil && ServingProfile.nameValidationError(name) != nil))
                 }
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 520)
             .interactiveDismissDisabled(working)
+    }
+
+    private func startVerification() {
+        working = true; error = nil; verifiedInSheet = false
+        Task {
+            if let existingProfile {
+                let expected = profileID == nil ? existingProfile : profile
+                profileID = existingProfile.id
+                if let expected { await profiles.verifyMeasuredLane(run: request.run, laneID: request.laneID, original: expected) }
+                else { error = "The profile is no longer available." }
+            } else {
+                if profileID == nil { profileID = profiles.createSuggestedProfile(run: request.run, name: name)?.id }
+                if let profileID { await profiles.verifySuggestion(run: request.run, profileID: profileID) }
+            }
+            error = error ?? profiles.lastError
+            verifiedInSheet = error == nil && profile?.hasPassedVerification == true
+            working = false
+        }
     }
 }
 

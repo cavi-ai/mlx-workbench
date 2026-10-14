@@ -454,6 +454,7 @@ struct QuantView: View {
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
     @State private var selectedRunID: ComparisonRun.ID?
     @State private var profileSaveRequest: ServingProfileSaveRequest?
+    @State private var profileActionError: String?
     @State private var promoteContext: PromoteContext?
     @State private var promotedWinner: PromotedWinner?
     @State private var showingFilters = false
@@ -1303,8 +1304,9 @@ struct QuantView: View {
             }
         }
         .sheet(item: $profileSaveRequest) { request in
-            if request.verifySuggestion {
-                SuggestedProfileVerificationSheet(profiles: servingProfiles, request: request) { profile in
+            if case .save = request.action { SaveServingProfileSheet(profiles: servingProfiles, request: request) }
+            else {
+                ComparisonProfileVerificationSheet(profiles: servingProfiles, request: request) { profile in
                     do { _ = try servingProfiles.resolve(profile) } catch { return AppHost.render(error) }
                     guard let model = readyModels.first(where: { $0.item.path == profile.modelPath }) else {
                         return "The verified model is not available in the current Library."
@@ -1314,8 +1316,11 @@ struct QuantView: View {
                     onRouteSelection(.run)
                     return nil
                 }
-            } else { SaveServingProfileSheet(profiles: servingProfiles, request: request) }
+            }
         }
+        .alert("Profile verification unavailable", isPresented: Binding(get: { profileActionError != nil }, set: { if !$0 { profileActionError = nil } })) {
+            Button("OK") { profileActionError = nil }
+        } message: { Text(profileActionError ?? "") }
         .sheet(item: $promoteContext) { context in
             PromoteWinnerSheet(
                 appHost: appHost,
@@ -1328,9 +1333,20 @@ struct QuantView: View {
     /// Chat lanes carry the promote button on the winner and the preferred-model menu.
     @ViewBuilder
     private func laneActions(_ lane: CompareLane, run: ComparisonRun, winnerPath: String?) -> some View {
+        if run.state == .completed, run.laneConfigurations?.first(where: { $0.id == lane.resultKey })?.servingProfileID != nil,
+           let result = run.results.first(where: { $0.id == lane.resultKey }), result.error == nil,
+           !result.samples.isEmpty, result.samples.allSatisfy(\.hasCompletedAnswer) {
+            Button("Verify measured profile…") {
+                do {
+                    let profile = try servingProfiles.prepareMeasuredVerification(run: run, laneID: lane.resultKey)
+                    profileSaveRequest = ServingProfileSaveRequest(run: run, laneID: lane.resultKey, letter: lane.letter, action: .verifyMeasured(profile))
+                } catch { profileActionError = AppHost.render(error) }
+            }.buttonStyle(.borderedProminent).controlSize(.small)
+                .disabled(comparison.activeRunID != nil || servingProfiles.activeID != nil)
+        }
         if run.settingsSearchCandidateID == lane.resultKey {
             Button("Save and verify suggestion…") {
-                profileSaveRequest = ServingProfileSaveRequest(run: run, laneID: lane.resultKey, letter: lane.letter, verifySuggestion: true)
+                profileSaveRequest = ServingProfileSaveRequest(run: run, laneID: lane.resultKey, letter: lane.letter, action: .verifySuggestion)
             }.buttonStyle(.borderedProminent).controlSize(.small)
                 .disabled(comparison.activeRunID != nil || servingProfiles.activeID != nil)
         }

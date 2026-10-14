@@ -236,6 +236,10 @@ class AppHost: ObservableObject {
             guard let comparison = self?.comparison else { throw WorkflowEvidenceError.invalid("Comparison results are unavailable.") }
             return try comparison.recordedRun(id: id)
         }
+        profiles.measuredSource = { [weak self] run, laneID in
+            guard let comparison = self?.comparison else { throw WorkflowEvidenceError.invalid("Comparison results are unavailable.") }
+            return try comparison.requireCurrentProfileLane(run, laneID: laneID)
+        }
         profiles.removalGuard = { [weak self] id in
             guard let endpoint = self?.endpoint else { throw WorkflowEvidenceError.invalid("Endpoint configuration is unavailable.") }
             try endpoint.requireUnreferencedProfile(id)
