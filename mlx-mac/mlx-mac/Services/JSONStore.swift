@@ -63,6 +63,19 @@ final class JSONStore<Value: Codable> {
         }
     }
 
+    /// Append a fresh identity only while the source snapshot still matches, under the mutation lock.
+    @discardableResult
+    func insert<ID: Equatable>(_ value: Value, requiring original: Value, id keyPath: KeyPath<Value, ID>) throws -> Bool where Value: Equatable {
+        try withLock {
+            var values = try loadUnlocked()
+            guard values.first(where: { $0[keyPath: keyPath] == original[keyPath: keyPath] }) == original,
+                  !values.contains(where: { $0[keyPath: keyPath] == value[keyPath: keyPath] }) else { return false }
+            values.append(value)
+            try write(values)
+            return true
+        }
+    }
+
     /// Read and change one existing identity under the same mutation lock.
     /// Returning nil removes it; a missing identity never creates a store.
     @discardableResult

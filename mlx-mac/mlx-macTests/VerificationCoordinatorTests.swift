@@ -7,6 +7,54 @@ import XCTest
 
 @MainActor
 final class VerificationCoordinatorTests: XCTestCase {
+    func testProfileCopyPreservesOriginalAndRequiresFreshVerification() throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        var original = managementProfile(); original.sourceRunID = UUID(); original.sourceLaneID = "lane"
+        try store.upsert(original, id: \.id)
+        let coordinator = managementCoordinator(store)
+        var draft = ServingProfileCopyDraft(original: original)
+        XCTAssertFalse(draft.hasChanges)
+        XCTAssertNil(draft.validationError)
+        let unchanged = try XCTUnwrap(coordinator.createCopy(draft))
+        XCTAssertNotEqual(unchanged.id, original.id)
+        XCTAssertEqual(unchanged.modelPath, original.modelPath)
+        XCTAssertEqual(unchanged.options, original.options)
+        XCTAssertEqual(unchanged.sourceRunID, original.sourceRunID)
+        XCTAssertEqual(unchanged.sourceLaneID, original.sourceLaneID)
+        XCTAssertNil(unchanged.verification)
+        XCTAssertFalse(unchanged.hasPassedVerification)
+        draft.name = "Tuned"; draft.options.speculation = true; draft.options.expertMemoryGB = 4; draft.options.contextTokens = 32768
+        XCTAssertTrue(draft.hasChanges)
+        let tuned = try XCTUnwrap(coordinator.createCopy(draft))
+        XCTAssertEqual(tuned.options, draft.options)
+        XCTAssertNil(tuned.sourceRunID); XCTAssertNil(tuned.sourceLaneID)
+        XCTAssertNil(tuned.verification)
+        XCTAssertEqual(try store.load().first { $0.id == original.id }, original)
+        XCTAssertThrowsError(try coordinator.resolve(tuned))
+        let bytes = try Data(contentsOf: store.url)
+        draft.name = "\n"
+        XCTAssertNotNil(draft.validationError); XCTAssertNil(coordinator.createCopy(draft))
+        draft.name = "Invalid"; draft.options.expertMemoryGB = .nan
+        XCTAssertNotNil(draft.validationError); XCTAssertNil(coordinator.createCopy(draft))
+        XCTAssertEqual(try Data(contentsOf: store.url), bytes)
+        draft = ServingProfileCopyDraft(original: original)
+        var renamed = original; renamed.name = "Changed"
+        try store.upsert(renamed, id: \.id)
+        XCTAssertNil(coordinator.createCopy(draft))
+        XCTAssertEqual(try store.load().count, 3)
+    }
+
+    func testProfileCopySaveFailurePreservesStoreAndPublishedProfiles() throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json")) { _, _ in throw CocoaError(.fileWriteNoPermission) }
+        let original = managementProfile()
+        try store.upsert(original, id: \.id)
+        let coordinator = managementCoordinator(store), bytes = try Data(contentsOf: store.url)
+        XCTAssertNil(coordinator.createCopy(ServingProfileCopyDraft(original: original)))
+        XCTAssertNotNil(coordinator.lastError)
+        XCTAssertEqual(coordinator.profiles, [original])
+        XCTAssertEqual(try Data(contentsOf: store.url), bytes)
+    }
+
     func testProfileEvidenceReadsDurableSourceAndRefusesMismatchesWithoutWriting() throws {
         let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         let source = JSONStore<ComparisonRun>(fileURL: temporaryURL("comparisons.json"))
@@ -202,6 +250,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         try Data("broken".utf8).write(to: location)
         XCTAssertNil(coordinator.rename(original, name: "Other"))
         XCTAssertFalse(coordinator.remove(original))
+        XCTAssertNil(coordinator.createCopy(ServingProfileCopyDraft(original: original)))
         XCTAssertEqual(coordinator.profiles, [original])
         XCTAssertEqual(String(decoding: try Data(contentsOf: location), as: UTF8.self), "broken")
     }
@@ -292,6 +341,8 @@ final class VerificationCoordinatorTests: XCTestCase {
         }
         scenes.append(("rename", AnyView(ServingProfileRenameSheet(profiles: coordinator, profile: profile, onRenamed: { _ in })), 510))
         scenes.append(("remove", AnyView(ServingProfileRemovalSheet(profiles: coordinator, profile: profile, onRemoved: { })), 510))
+        scenes.append(("customize-copy", AnyView(ServingProfileCopySheet(profiles: coordinator, profile: profile,
+            onSaved: { _ in XCTFail("Rendering must not save a profile copy") })), 560))
         let emptyRun = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil, variants: [profile.modelPath],
             results: [], startedAt: Date(), finishedAt: Date(), state: .completed)
         scenes.append(("verify-suggestion", AnyView(SuggestedProfileVerificationSheet(profiles: coordinator,
@@ -316,7 +367,7 @@ final class VerificationCoordinatorTests: XCTestCase {
             scenes.append(("comparison-evidence", AnyView(ServingProfileComparisonSheet(evidence: evidence)), 600))
         }
         for (name, content, width) in scenes {
-            let height = name == "comparison-evidence" ? 510.0 : 330.0
+            let height = ["comparison-evidence", "customize-copy"].contains(name) ? 510.0 : 330.0
             let view = content.frame(width: width, height: height, alignment: .topLeading)
                 .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
             let host = NSHostingView(rootView: view)

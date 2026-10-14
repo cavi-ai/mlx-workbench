@@ -97,6 +97,7 @@ struct ServingProfileControls: View {
     @State private var jit = true
     @State private var renameRequest: ServingProfile?
     @State private var removalRequest: ServingProfile?
+    @State private var copyRequest: ServingProfile?
     @State private var evidenceRequest: ServingProfileComparisonEvidence?
     @State private var evidenceError: String?
 
@@ -134,6 +135,7 @@ struct ServingProfileControls: View {
                             }
                         }
                         Menu("Manage profile") {
+                            Button("Customize copy…") { copyRequest = profiles.profileForManagement(profile.id) }
                             Button("Rename…") { renameRequest = profiles.profileForManagement(profile.id) }
                             Button("Remove…", role: .destructive) { removalRequest = profiles.profileForManagement(profile.id) }
                         }.fixedSize()
@@ -162,6 +164,9 @@ struct ServingProfileControls: View {
                 ErrorBanner(text: endpoint.lastError)
             }.padding(.vertical, WorkbenchSpacing.sm)
                 .sheet(item: $evidenceRequest) { evidence in ServingProfileComparisonSheet(evidence: evidence) }
+                .sheet(item: $copyRequest) { profile in
+                    ServingProfileCopySheet(profiles: profiles, profile: profile) { copy in workflow.selectServingProfile(copy) }
+                }
                 .sheet(item: $renameRequest) { profile in
                     ServingProfileRenameSheet(profiles: profiles, profile: profile) { renamed in
                         if workflow.servingProfile?.id == renamed.id { workflow.selectServingProfile(renamed) }
@@ -173,6 +178,47 @@ struct ServingProfileControls: View {
                     }
                 }
         }
+    }
+}
+
+struct ServingProfileCopySheet: View {
+    @ObservedObject var profiles: ServingProfileCoordinator
+    let onSaved: (ServingProfile) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: ServingProfileCopyDraft
+    @State private var error: String?
+    @State private var confirmingDiscard = false
+
+    init(profiles: ServingProfileCoordinator, profile: ServingProfile, onSaved: @escaping (ServingProfile) -> Void) {
+        self.profiles = profiles; self.onSaved = onSaved
+        _draft = State(initialValue: ServingProfileCopyDraft(original: profile))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Customize profile copy").font(WorkbenchTypography.cardTitle)
+            Text("Copy settings from “\(draft.original.name)”. The new profile uses the same local model and requires its own canary verification. Your original profile and endpoint settings stay intact.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            TextField("Profile name", text: $draft.name).textFieldStyle(.roundedBorder)
+            StrataComparisonControls(options: $draft.options,
+                helpText: "A smaller expert budget pages more weights from disk. Changed settings need new measurements; the copy does not inherit comparison evidence for different settings.")
+            ErrorBanner(text: ServingProfile.nameValidationError(draft.name) ?? error)
+            HStack {
+                Button("Cancel") { if draft.hasChanges { confirmingDiscard = true } else { dismiss() } }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Save copy") {
+                    if let copy = profiles.createCopy(draft) { onSaved(copy); dismiss() }
+                    else { error = profiles.lastError }
+                }.keyboardShortcut(.defaultAction).disabled(draft.validationError != nil || profiles.activeID != nil)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 520)
+            .onChange(of: draft.name) { _, _ in error = nil }
+            .onChange(of: draft.options) { _, _ in error = nil }
+            .interactiveDismissDisabled(draft.hasChanges)
+            .alert("Discard profile copy changes?", isPresented: $confirmingDiscard) {
+                Button("Keep editing", role: .cancel) { }
+                Button("Discard changes", role: .destructive) { dismiss() }
+            }
     }
 }
 
