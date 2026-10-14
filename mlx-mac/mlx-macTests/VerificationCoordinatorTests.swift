@@ -7,6 +7,64 @@ import XCTest
 
 @MainActor
 final class VerificationCoordinatorTests: XCTestCase {
+    func testProfileEvidenceReadsDurableSourceAndRefusesMismatchesWithoutWriting() throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let source = JSONStore<ComparisonRun>(fileURL: temporaryURL("comparisons.json"))
+        var profile = managementProfile()
+        profile.sourceRunID = UUID(); profile.sourceLaneID = "lane"
+        let evidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "preview",
+            "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "runtime", "strata_speculation": false,
+            "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
+        let memory = SystemMemoryEvidence(totalBytes: 64_000_000_000, baselineAvailableBytes: 30_000_000_000,
+            minimumAvailableBytes: 25_000_000_000, endingAvailableBytes: 28_000_000_000, sampleCount: 10,
+            missedSamples: 1, startedAt: Date(), endedAt: Date(), samplingIntervalSeconds: 0.5)
+        let result = VariantResult(modelPath: profile.modelPath, modelSignature: "model",
+            samples: [ComparisonSample(promptID: "p", outputExcerpt: "323", tokensPerSecond: 10, timeToFirstTokenSeconds: 1,
+                error: nil, finishReason: "stop", timeToFirstAnswerSeconds: 2)], aggregateTokensPerSecond: 10,
+            aggregateTTFTSeconds: 1, error: nil, servingEvidence: evidence, laneID: "lane", systemMemory: memory)
+        let run = ComparisonRun(id: profile.sourceRunID!, promptSetID: "p", promptSetName: "Arithmetic", useCase: nil,
+            variants: [profile.modelPath], results: [result], startedAt: Date(), finishedAt: Date(), state: .completed,
+            qualityReviews: ["lane": ComparisonQualityReview(score: 5, rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: Date())])
+        try store.upsert(profile, id: \.id); try source.upsert(run, id: \.id)
+        let originalProfiles = try Data(contentsOf: store.url), originalRuns = try Data(contentsOf: source.url)
+        let comparison = ComparisonCoordinator(probe: ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "unused" },
+            start: { _, _, _ in XCTFail("Evidence inspection must not load a model") }, stop: { _ in }), prober: OpenAIEndpointProber()),
+            runStore: source, promptSetStore: JSONStore(fileURL: temporaryURL("prompts.json")))
+        let coordinator = managementCoordinator(store)
+        coordinator.comparisonSource = { try comparison.recordedRun(id: $0) }
+        let read = try coordinator.comparisonEvidence(for: profile)
+        XCTAssertEqual(read.result.memoryTradeoffAnswerSeconds, 2)
+        XCTAssertEqual(read.memory?.minimumAvailableBytes, 25_000_000_000)
+        XCTAssertEqual(read.taskReview?.score, 5)
+        var incomplete = run
+        incomplete.results[0] = VariantResult(modelPath: result.modelPath, modelSignature: result.modelSignature,
+            samples: result.samples, aggregateTokensPerSecond: result.aggregateTokensPerSecond,
+            aggregateTTFTSeconds: result.aggregateTTFTSeconds, error: nil, servingEvidence: evidence, laneID: "lane")
+        incomplete.qualityReviews = nil
+        let withoutOptionalMetrics = try ServingProfileComparisonEvidence(profile: profile, run: incomplete)
+        XCTAssertNil(withoutOptionalMetrics.memory)
+        XCTAssertNil(withoutOptionalMetrics.taskReview)
+        XCTAssertEqual(try Data(contentsOf: store.url), originalProfiles)
+        XCTAssertEqual(try Data(contentsOf: source.url), originalRuns)
+        var changed = profile; changed.options.contextTokens = 16384
+        XCTAssertThrowsError(try ServingProfileComparisonEvidence(profile: changed, run: run))
+        changed = ServingProfile(id: profile.id, name: profile.name, modelPath: "/Models/other", options: profile.options,
+            sourceRunID: profile.sourceRunID, sourceLaneID: profile.sourceLaneID)
+        XCTAssertThrowsError(try ServingProfileComparisonEvidence(profile: changed, run: run))
+        changed = profile; changed.verification = ServingProfileVerification(options: profile.options, modelFingerprint: "new-model",
+            runtimeFingerprint: "runtime", suiteVersion: CanarySuite.version, canaries: profile.verification!.canaries, verifiedAt: Date())
+        XCTAssertThrowsError(try ServingProfileComparisonEvidence(profile: changed, run: run))
+        var legacy = profile; legacy.sourceRunID = nil; legacy.sourceLaneID = nil
+        try store.upsert(legacy, id: \.id)
+        XCTAssertThrowsError(try coordinator.comparisonEvidence(for: legacy))
+        try store.upsert(profile, id: \.id)
+        try Data("[]".utf8).write(to: source.url)
+        XCTAssertThrowsError(try coordinator.comparisonEvidence(for: profile))
+        try Data("corrupt".utf8).write(to: source.url)
+        XCTAssertThrowsError(try coordinator.comparisonEvidence(for: profile))
+        XCTAssertEqual(try Data(contentsOf: source.url), Data("corrupt".utf8))
+        XCTAssertEqual(try Data(contentsOf: store.url), originalProfiles)
+    }
     func testChangedComparisonCannotPublishPassingSuggestedVerification() async throws {
         let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         var profile = managementProfile(); profile.verification = nil
@@ -239,11 +297,30 @@ final class VerificationCoordinatorTests: XCTestCase {
         scenes.append(("verify-suggestion", AnyView(SuggestedProfileVerificationSheet(profiles: coordinator,
             request: ServingProfileSaveRequest(run: emptyRun, laneID: "lane", letter: "A", verifySuggestion: true),
             onOpenRun: { _ in XCTFail("Rendering must not open Run"); return nil })), 560))
+        if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_EVIDENCE_MANIFEST"] {
+            struct Manifest: Decodable { let comparisonFile: String; let evidenceRoot: String }
+            let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+            let profilesURL = URL(fileURLWithPath: manifest.evidenceRoot).appendingPathComponent("profiles.json")
+            let recordedProfiles = JSONStore<ServingProfile>(fileURL: profilesURL)
+            let recordedRuns = JSONStore<ComparisonRun>(fileURL: URL(fileURLWithPath: manifest.comparisonFile))
+            let selected = try XCTUnwrap(try recordedProfiles.load().first { $0.hasPassedVerification })
+            let reader = managementCoordinator(recordedProfiles)
+            reader.comparisonSource = { id in try recordedRuns.load().first { $0.id == id } }
+            let profileBytes = try Data(contentsOf: profilesURL)
+            let runBytes = try Data(contentsOf: recordedRuns.url)
+            let evidence = try reader.comparisonEvidence(for: selected)
+            XCTAssertNotNil(evidence.memory); XCTAssertNotNil(evidence.result.memoryTradeoffAnswerSeconds)
+            XCTAssertNotNil(evidence.taskReview)
+            XCTAssertEqual(try Data(contentsOf: profilesURL), profileBytes)
+            XCTAssertEqual(try Data(contentsOf: recordedRuns.url), runBytes)
+            scenes.append(("comparison-evidence", AnyView(ServingProfileComparisonSheet(evidence: evidence)), 600))
+        }
         for (name, content, width) in scenes {
-            let view = content.frame(width: width, height: 330, alignment: .topLeading)
+            let height = name == "comparison-evidence" ? 510.0 : 330.0
+            let view = content.frame(width: width, height: height, alignment: .topLeading)
                 .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
             let host = NSHostingView(rootView: view)
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 330),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                 styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
             defer { window.close() }

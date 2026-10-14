@@ -231,6 +231,10 @@ class AppHost: ObservableObject {
             guard let comparison = self?.comparison else { throw WorkflowEvidenceError.invalid("Comparison results are unavailable.") }
             return try comparison.requireCurrentSuggestion(run)
         }
+        profiles.comparisonSource = { [weak self] id in
+            guard let comparison = self?.comparison else { throw WorkflowEvidenceError.invalid("Comparison results are unavailable.") }
+            return try comparison.recordedRun(id: id)
+        }
         profiles.removalGuard = { [weak self] id in
             guard let endpoint = self?.endpoint else { throw WorkflowEvidenceError.invalid("Endpoint configuration is unavailable.") }
             try endpoint.requireUnreferencedProfile(id)

@@ -389,6 +389,10 @@ final class ComparisonCoordinator: ObservableObject {
         return result
     }
 
+    func recordedRun(id: UUID) throws -> ComparisonRun? {
+        try runStore.load().first { $0.id == id }
+    }
+
     /// Opt-in: import the user's real opencode prompts as a comparison
     /// prompt set. Returns the durably saved set, or nil when import or saving fails.
     /// The button press is the consent; import only happens here.
