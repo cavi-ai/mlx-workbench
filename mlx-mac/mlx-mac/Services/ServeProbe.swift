@@ -289,6 +289,7 @@ struct ServeProbe: Sendable {
     var pickPort: @Sendable () -> Int? = EphemeralPort.pick
     /// Opt-in for comparisons; verification and ordinary serving do not sample.
     var memoryProbe: (@Sendable () -> MemorySnapshot?)? = nil
+    var expectedServingEvidence: ProbeServingEvidence? = nil
 
     /// Serves `modelPath` on an ephemeral loopback port, runs the canary
     /// suite sequentially, and stops the server even when a probe throws.
@@ -309,6 +310,15 @@ struct ServeProbe: Sendable {
             preview = ProbeServePreview(hash: try await lifecycle.preview(modelPath, port))
         }
         guard !preview.hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+        if let expected = expectedServingEvidence {
+            guard expected.modelFingerprint?.isEmpty == false, expected.runtimeFingerprint?.isEmpty == false,
+                  let actual = preview.evidence, actual.runtime == expected.runtime,
+                  actual.modelFingerprint == expected.modelFingerprint, actual.runtimeFingerprint == expected.runtimeFingerprint,
+                  actual.speculation == expected.speculation, actual.expertMemoryGB == expected.expertMemoryGB,
+                  actual.contextTokens == expected.contextTokens else {
+                throw WorkflowEvidenceError.invalid("The suggested model, runtime or settings changed. Run the comparison again before verifying its suggestion.")
+            }
+        }
         let memory = memoryProbe.map { SystemMemoryRecorder(probe: $0) }
         await memory?.sample()
         let sampling = memory.map { recorder in

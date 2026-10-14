@@ -380,6 +380,15 @@ final class ComparisonCoordinator: ObservableObject {
         } catch { persistenceError = "Task review could not be saved: \(AppHost.render(error))" }
     }
 
+    func requireCurrentSuggestion(_ expected: ComparisonRun) throws -> VariantResult {
+        guard activeRunID == nil else { throw WorkflowEvidenceError.invalid("Wait for the current comparison to finish.") }
+        guard let current = try runStore.load().first(where: { $0.id == expected.id }), current == expected,
+              let id = current.settingsSearchCandidateID, let result = current.results.first(where: { $0.id == id }) else {
+            throw WorkflowEvidenceError.invalid("The suggested comparison changed or is no longer eligible. Review its current results again.")
+        }
+        return result
+    }
+
     /// Opt-in: import the user's real opencode prompts as a comparison
     /// prompt set. Returns the durably saved set, or nil when import or saving fails.
     /// The button press is the consent; import only happens here.

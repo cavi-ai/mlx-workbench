@@ -425,6 +425,7 @@ struct QuantView: View {
     @State private var showsControlledStudies = false
     @ObservedObject var appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
+    @ObservedObject private var servingProfiles: ServingProfileCoordinator
     private let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive
 
@@ -495,6 +496,7 @@ struct QuantView: View {
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
+        _servingProfiles = ObservedObject(wrappedValue: appHost.servingProfiles)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -768,6 +770,7 @@ struct QuantView: View {
     }
 
     private var runUnavailableReason: String? {
+        if servingProfiles.activeID != nil { return "Wait for serving-profile verification to finish." }
         if let reason = ComparePresentation.runUnavailableReason(slots: variantSlots, activeRunID: comparison.activeRunID,
             availablePaths: Set(readyModels.map { $0.item.path }), hasPromptSet: selectedPromptSet != nil,
             savingPromptSet: comparison.savingPromptSet, hasPrompts: selectedPromptSet?.prompts.isEmpty == false) { return reason }
@@ -1257,7 +1260,18 @@ struct QuantView: View {
             }
         }
         .sheet(item: $profileSaveRequest) { request in
-            SaveServingProfileSheet(profiles: appHost.servingProfiles, request: request)
+            if request.verifySuggestion {
+                SuggestedProfileVerificationSheet(profiles: servingProfiles, request: request) { profile in
+                    do { _ = try servingProfiles.resolve(profile) } catch { return AppHost.render(error) }
+                    guard let model = readyModels.first(where: { $0.item.path == profile.modelPath }) else {
+                        return "The verified model is not available in the current Library."
+                    }
+                    appHost.modelWorkflow.prepareServe(model: model, exactPath: profile.modelPath)
+                    appHost.modelWorkflow.selectServingProfile(profile)
+                    onRouteSelection(.run)
+                    return nil
+                }
+            } else { SaveServingProfileSheet(profiles: servingProfiles, request: request) }
         }
         .sheet(item: $promoteContext) { context in
             PromoteWinnerSheet(
@@ -1271,6 +1285,12 @@ struct QuantView: View {
     /// Chat lanes carry the promote button on the winner and the preferred-model menu.
     @ViewBuilder
     private func laneActions(_ lane: CompareLane, run: ComparisonRun, winnerPath: String?) -> some View {
+        if run.settingsSearchCandidateID == lane.resultKey {
+            Button("Save and verify suggestion…") {
+                profileSaveRequest = ServingProfileSaveRequest(run: run, laneID: lane.resultKey, letter: lane.letter, verifySuggestion: true)
+            }.buttonStyle(.borderedProminent).controlSize(.small)
+                .disabled(comparison.activeRunID != nil || servingProfiles.activeID != nil)
+        }
         if run.effectiveMode == .chat, run.state == .completed,
            let result = run.results.first(where: { $0.id == lane.resultKey }), result.error == nil, result.servingEvidence?.runtime == "strata" {
             Button("Save serving profile…") {

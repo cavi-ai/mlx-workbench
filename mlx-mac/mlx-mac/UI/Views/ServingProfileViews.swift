@@ -5,6 +5,62 @@ struct ServingProfileSaveRequest: Identifiable {
     let run: ComparisonRun
     let laneID: String
     let letter: String
+    var verifySuggestion = false
+}
+
+struct SuggestedProfileVerificationSheet: View {
+    @ObservedObject var profiles: ServingProfileCoordinator
+    let request: ServingProfileSaveRequest
+    let onOpenRun: (ServingProfile) -> String?
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var profileID: UUID?
+    @State private var working = false
+    @State private var error: String?
+
+    private var profile: ServingProfile? { profiles.profiles.first { $0.id == profileID } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Verify suggested lane \(request.letter)").font(WorkbenchTypography.cardTitle)
+            Text("Save a named profile and run the canary checks with this lane's recorded settings. The comparison and model/runtime fingerprints are checked again. Verification temporarily loads the model and stops its test server afterward.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            TextField("Profile name", text: $name).textFieldStyle(.roundedBorder).disabled(profileID != nil || working)
+            if working { ProgressView("Verifying profile…") }
+            if let profile {
+                Text(profile.hasPassedVerification ? "Canaries passed. Open Run to review and confirm serving." : "Profile saved; verification has not passed. Retry uses this same profile.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                if let proof = profile.verification {
+                    ForEach(proof.canaries, id: \.id) { canary in
+                        Text("\(canary.title): \(canary.passed ? "passed" : canary.failureReason ?? "failed")")
+                            .font(WorkbenchTypography.metadata).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            ErrorBanner(text: error)
+            HStack {
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(working)
+                Spacer()
+                if let profile, profile.hasPassedVerification {
+                    Button("Open Run") {
+                        error = onOpenRun(profile)
+                        if error == nil { dismiss() }
+                    }.keyboardShortcut(.defaultAction)
+                } else {
+                    Button(profileID == nil ? "Save and verify" : "Retry verification") {
+                        working = true; error = nil
+                        Task {
+                            if profileID == nil { profileID = profiles.createSuggestedProfile(run: request.run, name: name)?.id }
+                            if let profileID { await profiles.verifySuggestion(run: request.run, profileID: profileID) }
+                            error = profiles.lastError; working = false
+                        }
+                    }.keyboardShortcut(.defaultAction)
+                        .disabled(working || profiles.activeID != nil || ServingProfile.nameValidationError(name) != nil)
+                }
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 520)
+            .interactiveDismissDisabled(working)
+    }
 }
 
 struct SaveServingProfileSheet: View {

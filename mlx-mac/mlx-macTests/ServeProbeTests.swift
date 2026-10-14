@@ -4,6 +4,19 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServeProbeTests: XCTestCase {
+    func testChangedSuggestedFingerprintIsRefusedBeforeStarting() async throws {
+        let expected = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "old",
+            "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "old-runtime",
+            "strata_speculation": false, "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
+        let actual = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "new",
+            "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "new-runtime",
+            "strata_speculation": false, "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
+        var probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "unused" },
+            start: { _, _, _ in XCTFail("A stale suggestion must not load") }, stop: { _ in XCTFail("No server started") },
+            reviewedPreview: { _, _ in ProbeServePreview(hash: "new", evidence: actual) }), prober: OpenAIEndpointProber())
+        probe.expectedServingEvidence = expected
+        do { _ = try await probe.run(modelPath: "/Models/strata"); XCTFail("Expected stale runtime rejection") } catch { }
+    }
     func testTradeoffLatencyRequiresCompleteAnswersAndFiniteTimings() {
         func result(_ samples: [ComparisonSample]) -> VariantResult {
             VariantResult(modelPath: "/m", modelSignature: nil, samples: samples, aggregateTokensPerSecond: nil,
