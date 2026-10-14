@@ -26,11 +26,11 @@ enum ComparisonInsights {
                     fullCohort(result, run: run) && candidates.contains { valid(result, model: $0, environment: environment) }
                 }) else { return nil }
                 let performance = run.results.allSatisfy({ run.metricValue(of: $0) != nil }) ? run.leaders : []
-                let reviews = run.results.compactMap { run.qualityReviews?[$0.modelPath] }
+                let reviews = run.results.compactMap { run.qualityReviews?[$0.id] }
                 let rubric = run.effectiveMode == .musicGeneration
                     ? ComparisonQualityReview.musicListeningRubric : ComparisonQualityReview.taskOutcomeRubric
                 let reviewed = reviews.count == run.results.count && reviews.allSatisfy { $0.rubricID == rubric && (1...5).contains($0.score) }
-                let quality = reviewed ? run.results.filter { run.qualityReviews?[$0.modelPath]?.score == reviews.map(\.score).max() } : []
+                let quality = reviewed ? run.results.filter { run.qualityReviews?[$0.id]?.score == reviews.map(\.score).max() } : []
                 let latencies = run.results.compactMap { nonnegative($0.aggregateTTFTSeconds) }
                 let latency = run.effectiveMode == .chat && latencies.count == run.results.count ? run.results.filter { $0.aggregateTTFTSeconds == latencies.min() } : []
                 guard !performance.isEmpty || !quality.isEmpty || !latency.isEmpty else { return nil }
@@ -41,13 +41,13 @@ enum ComparisonInsights {
     static func agentEvidence(models: [LibraryModel], runs: [ComparisonRun], workflow: [WorkflowEvidence], environment: String?, hardware: HardwareProfile, memory: MemorySnapshot?, capturedAt: Date?, contextTokens: Int, reserveGB: Double, protected: Set<String>, exportedAt: Date = Date()) -> AgentEvidenceExport {
         let facts = runs.filter { $0.state == .completed }.flatMap { run in
             run.results.map { result in
-                let current = fullCohort(result, run: run) && models.contains { valid(result, model: $0, environment: environment) }
+                let current = !run.hasCustomServingConfiguration && fullCohort(result, run: run) && models.contains { valid(result, model: $0, environment: environment) }
                 return AgentComparisonFact(runID: run.id, workloadID: run.promptSetID, promptSetName: run.promptSetName,
                     useCase: run.useCase, mode: run.effectiveMode.rawValue, measuredAt: run.finishedAt ?? run.startedAt,
                     modelPath: result.modelPath, modelSignature: result.modelSignature, environmentFingerprint: result.environmentFingerprint,
                     sampleCount: result.samples.count, successfulSamples: result.samples.filter { $0.error == nil }.count,
                     tokensPerSecond: positive(result.aggregateTokensPerSecond), timeToFirstTokenSeconds: nonnegative(result.aggregateTTFTSeconds),
-                    quality: run.qualityReviews?[result.modelPath], limitedValidation: limitedValidation(result), current: current,
+                    quality: run.qualityReviews?[result.id], limitedValidation: limitedValidation(result), current: current,
                     aggregateMetric: positive(result.aggregateMetric), primaryMetric: run.effectiveMode.primaryMetric.rawValue,
                     evidenceStatus: current ? "Current identity/environment and full prompt cohort" : "Historical, incomplete cohort, missing identity or changed environment; exclude from current comparisons",
                     samplePeakMemoryGB: result.samples.compactMap(\.peakMemoryGB).compactMap { nonnegative($0) }.max())
@@ -101,11 +101,11 @@ enum ComparisonInsights {
     }
 
     static func taskTradeoffs(models: [LibraryModel], runs: [ComparisonRun], environment: String?) -> [String] {
-        runs.filter { $0.state == .completed }.compactMap { run in
+        runs.filter { $0.state == .completed && !$0.hasCustomServingConfiguration }.compactMap { run in
             let results = run.results.filter { result in fullCohort(result, run: run) && models.contains { valid(result, model: $0, environment: environment) } }
             guard results.count >= 2 else { return nil }
             let reviewed = results.compactMap { result -> (String, Int)? in
-                guard let review = run.qualityReviews?[result.modelPath], review.rubricID == ComparisonQualityReview.taskOutcomeRubric else { return nil }
+                guard let review = run.qualityReviews?[result.id], review.rubricID == ComparisonQualityReview.taskOutcomeRubric else { return nil }
                 return (result.modelPath, review.score)
             }
             guard reviewed.count == results.count, let quality = reviewed.max(by: { $0.1 < $1.1 }) else {
@@ -166,7 +166,7 @@ enum ComparisonInsights {
         let anchor = served ?? match(selectedPath) ?? prior ?? ordered[0]
         let source = served != nil ? "Last intentionally served model" : match(selectedPath) != nil ? "Library selection" : prior != nil ? "Last comparison model" : "First eligible model"
         // Distance is evaluated only within one completed run, never across prompt cohorts.
-        let cohort = runs.filter { $0.state == .completed && $0.effectiveMode == mode
+        let cohort = runs.filter { $0.state == .completed && !$0.hasCustomServingConfiguration && $0.effectiveMode == mode
             && (promptSetID == nil || $0.promptSetID == promptSetID)
             && (promptEntries == nil || $0.promptEntries == promptEntries) }.sorted { $0.startedAt > $1.startedAt }.first { run in
             run.results.contains { fullCohort($0, run: run) && valid($0, model: anchor, environment: environment) && mode.metricValue(of: $0) != nil && (mode != .chat || nonnegative($0.aggregateTTFTSeconds) != nil) }
@@ -204,7 +204,7 @@ enum ComparisonInsights {
     }
 
     static func currentResult(model: LibraryModel, runs: [ComparisonRun], environment: String?, promptSetID: String, promptEntries: [PromptEntry]? = nil) -> (ComparisonRun, VariantResult)? {
-        for run in runs.sorted(by: { $0.startedAt > $1.startedAt }) where run.state == .completed && run.promptSetID == promptSetID
+        for run in runs.sorted(by: { $0.startedAt > $1.startedAt }) where run.state == .completed && !run.hasCustomServingConfiguration && run.promptSetID == promptSetID
             && (promptEntries == nil || run.promptEntries == promptEntries) {
             if let result = run.results.first(where: { fullCohort($0, run: run) && valid($0, model: model, environment: environment) }) { return (run, result) }
         }
@@ -272,12 +272,12 @@ enum ComparisonInsights {
             }
         }
         var seenRuns = Set<String>()
-        for run in runs.sorted(by: { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }) where run.state == .completed && run.effectiveMode == .chat {
+        for run in runs.sorted(by: { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }) where run.state == .completed && run.effectiveMode == .chat && !run.hasCustomServingConfiguration {
             // Newer results for a prompt set supersede its older advice, including incomplete reviews.
             guard seenRuns.insert(run.promptSetID).inserted else { continue }
             let measurements = models.compactMap { model -> Measurement? in
                 guard let result = run.results.first(where: { valid($0, model: model, environment: environment) }), fullCohort(result, run: run),
-                      let quality = run.qualityReviews?[model.item.path], (1...5).contains(quality.score), !quality.rubricID.isEmpty,
+                      let quality = run.qualityReviews?[result.id], (1...5).contains(quality.score), !quality.rubricID.isEmpty,
                       let speed = positive(result.aggregateTokensPerSecond), let ttft = nonnegative(result.aggregateTTFTSeconds) else { return nil }
                 return Measurement(model: model, quality: quality.score, rubric: quality.rubricID, speed: speed, ttft: ttft, duration: nil)
             }

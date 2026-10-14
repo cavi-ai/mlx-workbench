@@ -98,7 +98,7 @@ enum AgentTaskAdvisor {
         }
         var output: [AgentTaskGuidance] = []
         var seen = Set<String>()
-        let orderedRuns = runs.filter { $0.state == .completed }.sorted {
+        let orderedRuns = runs.filter { $0.state == .completed && !$0.hasCustomServingConfiguration }.sorted {
             let left = $0.finishedAt ?? $0.startedAt, right = $1.finishedAt ?? $1.startedAt
             return left == right ? $0.id.uuidString < $1.id.uuidString : left > right
         }
@@ -113,7 +113,7 @@ enum AgentTaskAdvisor {
                 if !topologyValid || !ComparisonInsights.fullCohort(result, run: run) { reasons.append("Incomplete or invalid prompt cohort") }
                 if result.error != nil || result.samples.contains(where: { $0.error != nil }) { reasons.append("Run contains failed samples") }
                 if let model = models.first(where: { $0.item.path == result.modelPath }), !run.effectiveMode.accepts(model.item.task?.type) { reasons.append("Model task does not match this mode") }
-                let review = run.qualityReviews?[result.modelPath]
+                let review = run.qualityReviews?[result.id]
                 let quality = review.flatMap { $0.rubricID == ComparisonQualityReview.taskOutcomeRubric && (1...5).contains($0.score) ? $0.score : nil }
                 return candidate(path: result.modelPath, id: run.id.uuidString, date: date, quality: quality,
                     performance: run.effectiveMode.metricValue(of: result),

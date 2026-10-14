@@ -36,9 +36,9 @@ struct TextComparisonEditor: View {
          onReview: @escaping (String, Int?) -> Void, reviewError: String? = nil) {
         self.run = run; self.store = store; self.name = name; self.onReview = onReview; self.reviewError = reviewError
         _promptID = State(initialValue: ComparisonViewLogic.rows(for: run).first?.id ?? "")
-        let first = run.results.first?.modelPath
+        let first = run.results.first?.id
         _leftPath = State(initialValue: first)
-        _rightPath = State(initialValue: run.results.first(where: { $0.modelPath != first })?.modelPath)
+        _rightPath = State(initialValue: run.results.first(where: { $0.id != first })?.id)
     }
 
     var body: some View {
@@ -105,8 +105,8 @@ struct TextComparisonEditor: View {
 
     private func modelPicker(_ letter: String, path: Binding<String?>, excluding: String?) -> some View {
         Picker("Model \(letter)", selection: path) {
-            ForEach(run.results.filter { $0.modelPath != excluding }) { result in
-                Text(name(result.modelPath)).tag(String?.some(result.modelPath))
+            ForEach(run.results.filter { $0.id != excluding }) { result in
+                Text(ComparisonViewLogic.laneLabel(result, run: run, name: name)).tag(String?.some(result.id))
             }
         }
         .frame(maxWidth: .infinity)
@@ -124,8 +124,8 @@ struct TextComparisonContent: View {
     let name: (String) -> String
     let onReview: (String, Int?) -> Void
 
-    private var left: VariantResult? { run.results.first { $0.modelPath == leftPath } }
-    private var right: VariantResult? { run.results.first { $0.modelPath == rightPath } }
+    private var left: VariantResult? { run.results.first { $0.id == leftPath } }
+    private var right: VariantResult? { run.results.first { $0.id == rightPath } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -173,13 +173,27 @@ struct TextComparisonContent: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
                 LetterChip(letter: letter)
-                Text(result.map { name($0.modelPath) } ?? "No model selected")
+                Text(result.map { ComparisonViewLogic.laneLabel($0, run: run, name: name) } ?? "No model selected")
                     .font(WorkbenchTypography.label).lineLimit(1).help(result?.modelPath ?? "")
                 Spacer(minLength: 0)
             }
             if let result {
-                TaskQualityRating(run: run, modelPath: result.modelPath, modelName: name(result.modelPath),
+                TaskQualityRating(run: run, modelPath: result.id, modelName: name(result.modelPath),
                     store: store, onReview: onReview)
+                if let sample = result.samples.first(where: { $0.promptID == promptID }) {
+                    if let status = sample.completionDescription {
+                        Text(status).font(WorkbenchTypography.metadata)
+                            .foregroundStyle(sample.hasCompletedAnswer ? WorkbenchColor.muted : WorkbenchColor.warning)
+                    }
+                    if let reasoning = sample.reasoningText, !reasoning.isEmpty {
+                        DisclosureGroup("Reasoning") {
+                            ScrollView {
+                                Text(reasoning).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }.frame(height: 160)
+                        }
+                    }
+                }
                 if let output = ComparisonDiff.output(result, promptID: promptID) {
                     Text(output.isExcerpt ? "Saved excerpt · full text not recorded" : "Full recorded output")
                         .font(WorkbenchTypography.metadata)

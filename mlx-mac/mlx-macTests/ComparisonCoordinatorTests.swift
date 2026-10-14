@@ -67,6 +67,152 @@ final class ComparisonCoordinatorTests: XCTestCase {
 
     // MARK: - Coordinator runs
 
+    func testLocalStrataLaneComparisonWhenRequested() async throws {
+        guard let manifestPath = ProcessInfo.processInfo.environment["MLX_WORKBENCH_STRATA_LANE_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_STRATA_LANE_MANIFEST for an explicit local Strata lane comparison.")
+        }
+        struct Manifest: Decodable {
+            let agentPath: String
+            let modelPath: String
+            let evidenceRoot: String
+            let expertMemoryGB: Double
+            let contextTokens: Int
+        }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: manifestPath)))
+        guard [manifest.agentPath, manifest.modelPath, manifest.evidenceRoot].allSatisfy({ $0.hasPrefix("/") }) else {
+            throw NSError(domain: "StrataLaneAcceptance", code: 1, userInfo: [NSLocalizedDescriptionKey: "Manifest paths must be absolute."])
+        }
+        let directory = URL(fileURLWithPath: manifest.evidenceRoot, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: directory.path)
+        let events = ComparisonProbeEvents()
+        let factory: @Sendable (StrataComparisonOptions) -> ServeProbe = { options in
+            var lifecycle = ServeLifecycle.live(api: api, runtime: "strata", strataOptions: options)
+            let preview = lifecycle.reviewedPreview!
+            let start = lifecycle.start
+            let stop = lifecycle.stop
+            lifecycle.reviewedPreview = { path, port in
+                await events.record("preview:\(options.speculation)")
+                return try await preview(path, port)
+            }
+            lifecycle.start = { path, port, hash in
+                await events.record("start:\(options.speculation)")
+                try await start(path, port, hash)
+            }
+            lifecycle.stop = { port in
+                try await stop(port)
+                let stillReady = await OpenAIEndpointProber().isReady(baseURL: URL(string: "http://127.0.0.1:\(port)")!)
+                XCTAssertFalse(stillReady, "The stopped lane endpoint must be released before another lane loads")
+                await events.record("stop:\(options.speculation)")
+            }
+            return ServeProbe(lifecycle: lifecycle, prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
+        }
+        let lanes = [false, true].map { speculation in
+            ComparisonLaneConfiguration(id: UUID().uuidString, modelPath: manifest.modelPath, modelSignature: nil,
+                strataOptions: StrataComparisonOptions(speculation: speculation, expertMemoryGB: manifest.expertMemoryGB,
+                                                       contextTokens: manifest.contextTokens))
+        }
+        let coordinator = ComparisonCoordinator(probe: factory(StrataComparisonOptions()),
+            runStore: JSONStore(fileURL: directory.appendingPathComponent("runs.json")),
+            promptSetStore: JSONStore(fileURL: directory.appendingPathComponent("prompts.json")), strataProbe: factory)
+        let promptSet = PromptSet(id: "strata-lane-acceptance", name: "Strata lanes", useCase: nil,
+            prompts: [PromptEntry(id: "p1", text: "Calculate 17 times 19. In your final answer, return only JSON with one key named answer and its numeric value.", maxTokens: 1024)], origin: .userCreated)
+        let finished = expectation(description: "both real Strata lanes finished")
+        coordinator.onBenchmarks = { values in XCTAssertTrue(values.isEmpty); finished.fulfill() }
+        coordinator.start(lanes: lanes, promptSet: promptSet)
+        await fulfillment(of: [finished], timeout: 1800)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        XCTAssertEqual(run.laneConfigurations, lanes)
+        XCTAssertEqual(run.results.map(\.id), lanes.map(\.id))
+        XCTAssertEqual(run.results.count, 2)
+        for (lane, result) in zip(lanes, run.results) {
+            XCTAssertNil(result.error)
+            XCTAssertEqual(result.modelPath, manifest.modelPath)
+            XCTAssertEqual(result.servingEvidence?.speculation, lane.strataOptions?.speculation)
+            XCTAssertEqual(result.servingEvidence?.expertMemoryGB, manifest.expertMemoryGB)
+            XCTAssertEqual(result.servingEvidence?.contextTokens, manifest.contextTokens)
+            let sample = try XCTUnwrap(result.samples.first)
+            XCTAssertTrue(sample.hasCompletedAnswer)
+            XCTAssertNotNil(sample.timeToFirstAnswerSeconds)
+            XCTAssertEqual(sample.finishReason, "stop")
+            XCTAssertEqual(sample.metricsEstimated, false)
+            XCTAssertGreaterThan(sample.completionTokens ?? 0, 0)
+            XCTAssertFalse((sample.reasoningText ?? "").isEmpty)
+        }
+        XCTAssertEqual(Set(run.results.compactMap { $0.servingEvidence?.modelFingerprint }).count, 1)
+        XCTAssertEqual(Set(run.results.compactMap { $0.servingEvidence?.runtimeFingerprint }).count, 1)
+        let ordered = await events.values
+        XCTAssertEqual(ordered, ["preview:false", "start:false", "stop:false", "preview:true", "start:true", "stop:true"])
+        XCTAssertEqual(try ComparisonRunSetup(run: run).laneConfigurations, lanes)
+    }
+
+    func testSameModelLanesKeepSettingsResultsReviewsAndReuseIndependent() async throws {
+        let events = ComparisonProbeEvents()
+        let factory: @Sendable (StrataComparisonOptions) -> ServeProbe = { options in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { path, _ in
+                await events.record("preview:\(path):\(options.speculation)"); return "hash"
+            }, start: { path, _, _ in await events.record("start:\(path)") },
+                stop: { _ in await events.record("stop") }), prober: LaneComparisonProber(speculation: options.speculation), pickPort: { 9997 })
+        }
+        let lanes = [
+            ComparisonLaneConfiguration(id: "lane-a", modelPath: "/Models/strata", modelSignature: "sig",
+                strataOptions: StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)),
+            ComparisonLaneConfiguration(id: "lane-b", modelPath: "/Models/strata", modelSignature: "sig",
+                strataOptions: StrataComparisonOptions(speculation: true, expertMemoryGB: 2, contextTokens: 8192))]
+        let coordinator = ComparisonCoordinator(probe: factory(StrataComparisonOptions()),
+            runStore: JSONStore(fileURL: coordinatorRunStoreURL), promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL),
+            strataProbe: factory)
+        let finished = expectation(description: "both lanes finished")
+        coordinator.onBenchmarks = { values in XCTAssertTrue(values.isEmpty); finished.fulfill() }
+        coordinator.start(lanes: lanes, promptSet: BuiltinPromptSets.coding)
+        await fulfillment(of: [finished], timeout: 5)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        XCTAssertEqual(run.results.map(\.id), ["lane-a", "lane-b"])
+        XCTAssertEqual(run.results.map(\.modelPath), ["/Models/strata", "/Models/strata"])
+        XCTAssertEqual(ComparePresentation.lanes(for: run).map(\.resultKey), ["lane-a", "lane-b"])
+        XCTAssertEqual(ComparePresentation.lanes(for: run).compactMap(\.value), [10, 20])
+        XCTAssertEqual(run.results.map { $0.samples.first?.fullOutput }, ["answer-a", "answer-b"])
+        XCTAssertEqual(ComparisonDiff.pairs(run.results[0], run.results[1]).count, BuiltinPromptSets.coding.prompts.count)
+        let ordered = await events.values
+        XCTAssertEqual(ordered, ["preview:/Models/strata:false", "start:/Models/strata", "stop",
+                                "preview:/Models/strata:true", "start:/Models/strata", "stop"])
+        coordinator.reviewQuality(runID: run.id, modelPath: "lane-a", score: 2)
+        coordinator.reviewQuality(runID: run.id, modelPath: "lane-b", score: 5)
+        let persisted = try XCTUnwrap(JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL).load().first)
+        XCTAssertEqual(persisted.qualityReviews?["lane-a"]?.score, 2)
+        XCTAssertEqual(persisted.qualityReviews?["lane-b"]?.score, 5)
+        XCTAssertEqual(try ComparisonRunSetup(run: persisted).laneConfigurations, lanes)
+        XCTAssertTrue(coordinator.aggregateBenchmarks().isEmpty)
+    }
+
+    func testInvalidLaneIdentitiesAndUnconfiguredRepeatedModelsNeverStart() {
+        let coordinator = makeCoordinator()
+        let repeated = [ComparisonLaneConfiguration(id: "same", modelPath: "/Models/a", modelSignature: nil),
+                        ComparisonLaneConfiguration(id: "same", modelPath: "/Models/b", modelSignature: nil)]
+        coordinator.start(lanes: repeated, promptSet: BuiltinPromptSets.coding)
+        XCTAssertNil(coordinator.activeRunID)
+        XCTAssertTrue(coordinator.runs.isEmpty)
+        let unconfigured = [ComparisonLaneConfiguration(id: "a", modelPath: "/Models/a", modelSignature: nil),
+                            ComparisonLaneConfiguration(id: "b", modelPath: "/Models/a", modelSignature: nil)]
+        coordinator.start(lanes: unconfigured, promptSet: BuiltinPromptSets.coding)
+        XCTAssertNil(coordinator.activeRunID)
+        XCTAssertTrue(coordinator.runs.isEmpty)
+    }
+
+    func testLegacyRunDecodingPreservesPathsAndDoesNotInventCompletionOrLanes() throws {
+        let original = makeRun(results: [VariantResult(modelPath: "/Models/a", modelSignature: "sig", samples: [
+            ComparisonSample(promptID: "p", outputExcerpt: "historical", tokensPerSecond: 10,
+                             timeToFirstTokenSeconds: 0.1, error: nil)],
+            aggregateTokensPerSecond: 10, aggregateTTFTSeconds: 0.1, error: nil)], state: .completed)
+        let decoded = try JSONDecoder().decode(ComparisonRun.self, from: JSONEncoder().encode(original))
+        XCTAssertNil(decoded.laneConfigurations)
+        XCTAssertEqual(decoded.variantIdentities, ["/Models/a"])
+        XCTAssertEqual(decoded.results.first?.id, "/Models/a")
+        XCTAssertNil(decoded.results.first?.samples.first?.reasoningText)
+        XCTAssertNil(decoded.results.first?.samples.first?.finishReason)
+        XCTAssertNil(decoded.results.first?.samples.first?.completionDescription)
+    }
+
     func testLocalStrataSettingsComparisonWhenRequested() async throws {
         guard let manifestPath = ProcessInfo.processInfo.environment["MLX_WORKBENCH_STRATA_COMPARISON_MANIFEST"] else {
             throw XCTSkip("Set MLX_WORKBENCH_STRATA_COMPARISON_MANIFEST for an explicit local Strata comparison.")
@@ -472,6 +618,17 @@ private struct StubComparisonProber: EndpointProbing {
 }
 
 private enum StubServeError: Error { case failed }
+
+private struct LaneComparisonProber: EndpointProbing {
+    let speculation: Bool
+    func listModels(baseURL: URL) async -> [String] { [] }
+    func isReady(baseURL: URL) async -> Bool { true }
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+        ProbeSample(text: speculation ? "answer-b" : "answer-a", completionTokens: speculation ? 20 : 10,
+            timeToFirstTokenSeconds: 0.1, durationSeconds: 1.1, metricsEstimated: false,
+            reasoningText: "fixture reasoning", finishReason: "stop", timeToFirstAnswerSeconds: 0.2)
+    }
+}
 
 private actor ComparisonProbeEvents {
     private(set) var values: [String] = []

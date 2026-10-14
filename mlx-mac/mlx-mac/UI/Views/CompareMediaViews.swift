@@ -10,6 +10,12 @@ import UniformTypeIdentifiers
 // can be tested.
 
 enum ComparisonViewLogic {
+    static func laneLabel(_ result: VariantResult, run: ComparisonRun, name: (String) -> String) -> String {
+        guard result.laneID != nil, let index = run.variantIdentities.firstIndex(of: result.id) else {
+            return name(result.modelPath)
+        }
+        return "\(ComparePresentation.letter(index)) · \(name(result.modelPath))"
+    }
     struct OutputClip: Identifiable {
         let modelPath: String
         let url: URL
@@ -90,7 +96,7 @@ enum ComparisonViewLogic {
     /// This does not erase reviews recorded while an output was still available.
     static func qualityReviewUnavailableReason(_ run: ComparisonRun, modelPath: String, store: ComparisonOutputStore) -> String? {
         guard run.state == .completed else { return "Wait for the comparison to finish before rating quality." }
-        guard run.variants.contains(modelPath), let result = run.results.first(where: { $0.modelPath == modelPath }),
+        guard run.variantIdentities.contains(modelPath), let result = run.results.first(where: { $0.id == modelPath }),
               result.error == nil, ComparisonInsights.fullCohort(result, run: run),
               result.samples.allSatisfy({ $0.error == nil }) else {
             return "A complete, successful set of outputs is needed to rate this model."
@@ -144,6 +150,10 @@ enum ComparisonViewLogic {
         switch mode {
         case .chat:
             if let ttft = sample.timeToFirstTokenSeconds { parts.append(firstToken(ttft)) }
+            if let answer = sample.timeToFirstAnswerSeconds { parts.append(String(format: "answer begins %.2f s", answer)) }
+            if let duration = sample.durationSeconds { parts.append(String(format: "total %.2f s", duration)) }
+            if let tokens = sample.completionTokens { parts.append("\(tokens) generated tokens") }
+            if sample.metricsEstimated == true { parts.append("token count estimated") }
             if let prefill = sample.prefillTokensPerSecond { parts.append(prefillText(prefill)) }
             parts.append(contentsOf: toolCallParts(calls: sample.toolCalls, names: sample.toolNames, usable: sample.toolCallsValid))
         case .vision, .videoUnderstanding:
@@ -412,7 +422,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 GridRow {
                     promptCell(entry, width: layout.promptWidth)
                     ForEach(lanes) { lane in
-                        let result = run.results.first { $0.modelPath == lane.path }
+                        let result = run.results.first { $0.id == lane.resultKey }
                         resultCell(result?.samples.first { $0.promptID == entry.id }, result: result, lane: lane, layout: layout)
                     }
                 }
@@ -435,7 +445,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
     // MARK: Lane header
 
     private func laneHeader(_ lane: CompareLane, measuredCount: Int) -> some View {
-        let result = run.results.first { $0.modelPath == lane.path }
+        let result = run.results.first { $0.id == lane.resultKey }
         let metric = mode.primaryMetric
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -484,7 +494,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
             if mode == .musicGeneration && run.state == .completed {
                 listeningReview(lane.path)
             } else if mode != .musicGeneration {
-                TaskQualityRating(run: run, modelPath: lane.path, modelName: name(lane.path), store: store, onReview: onReview)
+                TaskQualityRating(run: run, modelPath: lane.resultKey, modelName: name(lane.path), store: store, onReview: onReview)
             }
         }
     }
@@ -627,7 +637,15 @@ struct MediaRunResultsView<LaneActions: View>: View {
         switch mode.outputKind {
         case .text:
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                OutputExcerpt(text: sample.fullOutput ?? sample.outputExcerpt)
+                if let status = sample.completionDescription {
+                    Text(status).font(WorkbenchTypography.metadata)
+                        .foregroundStyle(sample.hasCompletedAnswer ? WorkbenchColor.muted : WorkbenchColor.warning)
+                }
+                let answer = sample.fullOutput ?? sample.outputExcerpt
+                OutputExcerpt(text: answer.isEmpty && sample.reasoningText != nil ? "No answer text" : answer)
+                if let reasoning = sample.reasoningText, !reasoning.isEmpty {
+                    DisclosureGroup("Reasoning") { OutputExcerpt(text: reasoning) }
+                }
                 badge(sample)
             }
         case .image, .audio, .video:

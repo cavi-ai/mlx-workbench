@@ -36,6 +36,13 @@ private struct ComparisonRunFixtureView: View {
 }
 
 final class CompareRemodelTests: XCTestCase {
+    func testModelPickerAllowsOnlyExplicitlyRepeatablePaths() {
+        let models = [library("/models/strata"), library("/models/other")]
+        let slots: [String?] = ["/models/strata", nil]
+        XCTAssertEqual(ComparePresentation.options(forSlot: 1, slots: slots, candidates: models).map { $0.item.path }, ["/models/other"])
+        XCTAssertEqual(ComparePresentation.options(forSlot: 1, slots: slots, candidates: models,
+            repeatedPaths: ["/models/strata"]).map { $0.item.path }, ["/models/strata", "/models/other"])
+    }
     @MainActor
     func testStrataResultCardsRenderRecordedEvidenceWithoutInventingMeasurements() async throws {
         guard let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] else {
@@ -47,19 +54,40 @@ final class CompareRemodelTests: XCTestCase {
         let strata = VariantResult(modelPath: "/models/strata", modelSignature: nil, samples: [],
             aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence)
         let legacy = result("/models/mlx")
-        let measured = run(.chat, variants: [strata.modelPath, legacy.modelPath], results: [strata, legacy])
+        let answer = ComparisonSample(promptID: "p", outputExcerpt: "4", tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil, error: nil, fullOutput: "4", reasoningText: "Add two and two.", finishReason: "stop")
+        let truncated = ComparisonSample(promptID: "p", outputExcerpt: "", tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil, error: nil, fullOutput: "", reasoningText: "Still thinking.", finishReason: "length")
+        let lanes = [ComparisonLaneConfiguration(id: "a", modelPath: strata.modelPath, modelSignature: nil,
+                        strataOptions: StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)),
+                     ComparisonLaneConfiguration(id: "b", modelPath: strata.modelPath, modelSignature: nil,
+                        strataOptions: StrataComparisonOptions(speculation: true, expertMemoryGB: 2, contextTokens: 8192))]
+        let otherEvidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "fixture-b",
+            "weight_format": "gguf", "weight_quantization": "GSQ-RCO Q2_0", "weights_preserved": true,
+            "strata_speculation": true, "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
+        var measured = run(.chat, variants: [strata.modelPath, strata.modelPath], results: [
+            VariantResult(modelPath: strata.modelPath, modelSignature: nil, samples: [answer],
+                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence, laneID: "a"),
+            VariantResult(modelPath: strata.modelPath, modelSignature: nil, samples: [truncated],
+                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: otherEvidence, laneID: "b")])
+        measured.laneConfigurations = lanes
+        measured.promptEntries = [PromptEntry(id: "p", text: "What is 2 + 2?")]
         XCTAssertEqual(ComparePresentation.lanes(for: measured).map(\.state), [.noMeasurement, .noMeasurement])
+        XCTAssertEqual(ComparePresentation.lanes(for: measured).map(\.resultKey), ["a", "b"])
         XCTAssertTrue(ComparisonViewLogic.servingDetails(strata).contains("Strata · Metal · GGUF · GSQ-RCO Q2_0"))
         XCTAssertEqual(ComparisonViewLogic.servingDetails(legacy), ["Runtime not recorded"])
         let view = VStack(alignment: .leading) {
-            StrataComparisonControls(options: .constant(StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)))
+            HStack(alignment: .top) {
+                StrataComparisonControls(options: .constant(lanes[0].strataOptions!))
+                StrataComparisonControls(options: .constant(lanes[1].strataOptions!))
+            }
             MediaRunResultsView(run: measured, store: ComparisonOutputStore(), contentWidth: 900,
             isRouteActive: false, name: { URL(fileURLWithPath: $0).lastPathComponent }, onReview: { _, _ in }) { _ in EmptyView() }
         }
-            .padding(20).frame(width: 940, height: 640, alignment: .topLeading)
+            .padding(20).frame(width: 940, height: 850, alignment: .topLeading)
             .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
         let host = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 640),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 850),
             styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
         defer { window.close() }
