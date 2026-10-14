@@ -767,6 +767,10 @@ final class VerificationCoordinatorTests: XCTestCase {
                     contentWidth: 860, isRouteActive: false, name: { URL(fileURLWithPath: $0).lastPathComponent },
                     onReview: { _, _ in XCTFail("Rendering must not save a review") }, laneActions: { _ in EmptyView() }).padding(20)
             }), 900))
+            scenes.append(("profile-comparison-text", AnyView(TextComparisonEditor(run: run,
+                store: ComparisonOutputStore(root: root.appendingPathComponent("outputs")),
+                name: { URL(fileURLWithPath: $0).lastPathComponent },
+                onReview: { _, _ in XCTFail("Rendering must not save a review") }).padding(20)), 900))
         }
         if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_CHOOSER_MANIFEST"] {
             struct Manifest: Decodable { let profilesFile: String; let comparisonFile: String }
@@ -792,7 +796,7 @@ final class VerificationCoordinatorTests: XCTestCase {
                 onSelect: { _ in XCTFail("Rendering must not select a profile"); return nil })), 640))
         }
         for (name, content, width) in scenes {
-            let height = name.hasPrefix("profile-chooser") ? 680.0 : (name == "profile-comparison-results" ? 900.0 : (["comparison-evidence", "customize-copy", "compare-profiles", "verify-measured"].contains(name) ? 510.0 : 330.0))
+            let height = name.hasPrefix("profile-chooser") ? 680.0 : (name == "profile-comparison-text" ? 620.0 : (name == "profile-comparison-results" ? 900.0 : (["comparison-evidence", "customize-copy", "compare-profiles", "verify-measured"].contains(name) ? 510.0 : 330.0)))
             let view = content.frame(width: width, height: height, alignment: .topLeading)
                 .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
             let host = NSHostingView(rootView: view)

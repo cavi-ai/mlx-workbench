@@ -206,6 +206,51 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertFalse(sample.metricsEstimated)
     }
 
+    func testStreamDraftCountsPersistWithoutChangingAnswerMetrics() async throws {
+        let body = #"data: {"choices":[{"delta":{"content":"323"}}]}"# + "\n"
+            + #"data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":12},"timings":{"draft_n":18,"draft_n_accepted":8}}"#
+            + "\ndata: [DONE]\n"
+        let sample = try await OpenAIEndpointProber(session: stubSession(body: body)).chat(
+            baseURL: URL(string: "http://127.0.0.1:9999")!, model: "strata", prompt: "17 * 19", maxTokens: 128)
+        XCTAssertEqual(sample.draftTokens?.offered, 18)
+        XCTAssertEqual(sample.draftTokens?.accepted, 8)
+        XCTAssertEqual(try XCTUnwrap(sample.draftTokens?.acceptanceFraction), 8.0 / 18.0, accuracy: 0.000001)
+        XCTAssertEqual(sample.text, "323"); XCTAssertEqual(sample.completionTokens, 12)
+        let recorded = ComparisonAggregation.sample(from: sample, promptID: "p")
+        let data = try JSONEncoder().encode(recorded)
+        let restored = try JSONDecoder().decode(ComparisonSample.self, from: data)
+        XCTAssertEqual(restored.draftTokens, sample.draftTokens)
+        XCTAssertTrue(restored.hasCompletedAnswer)
+        let label = ComparisonDraftTokenEvidenceView.description(restored.draftTokens)
+        XCTAssertTrue(label.contains("8 of 18")); XCTAssertTrue(label.contains("44.4%"))
+        var legacy = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy.removeValue(forKey: "draftTokens")
+        let old = try JSONDecoder().decode(ComparisonSample.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(old.draftTokens)
+        XCTAssertEqual(ComparisonDraftTokenEvidenceView.description(old.draftTokens), "Draft counts not reported")
+    }
+
+    func testDraftCountsRequireValidReportedPairsAndDoNotInventAcceptance() throws {
+        XCTAssertNil(DraftTokenEvidence(timings: [:]))
+        for timings: [String: Any] in [["draft_n": 10], ["draft_n": 10, "draft_n_accepted": 11],
+            ["draft_n": -1, "draft_n_accepted": 0], ["draft_n": true, "draft_n_accepted": 0],
+            ["draft_n": 1.5, "draft_n_accepted": 0], ["draft_n": "10", "draft_n_accepted": 1]] {
+            XCTAssertNil(DraftTokenEvidence(timings: timings))
+        }
+        let zero = try XCTUnwrap(DraftTokenEvidence(timings: ["draft_n": 0, "draft_n_accepted": 0]))
+        XCTAssertNil(zero.acceptanceFraction)
+        XCTAssertEqual(ComparisonDraftTokenEvidenceView.description(zero), "Server reported 0 draft tokens")
+    }
+
+    func testConflictingStreamDraftCountsRemainUnreported() async throws {
+        let body = #"data: {"usage":{"completion_tokens":12},"timings":{"draft_n":18,"draft_n_accepted":8},"choices":[]}"#
+            + "\n" + #"data: {"usage":{"completion_tokens":13},"timings":{"draft_n":20,"draft_n_accepted":9},"choices":[]}"#
+            + "\ndata: [DONE]\n"
+        let sample = try await OpenAIEndpointProber(session: stubSession(body: body)).chat(
+            baseURL: URL(string: "http://127.0.0.1:9999")!, model: "strata", prompt: "hello", maxTokens: 32)
+        XCTAssertNil(sample.draftTokens)
+    }
+
     func testReasoningAndAnswerInOneDeltaRemainSeparateWithFinishAndUsage() async throws {
         let body = #"data: {"choices":[{"delta":{"reasoning_content":"Compute.","content":"323"}}]}"#
             + "\n" + #"data: {"choices":[{"delta":{},"finish_reason":"stop"}]}"#
