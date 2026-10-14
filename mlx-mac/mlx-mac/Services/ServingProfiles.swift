@@ -1,5 +1,36 @@
 import Foundation
 
+/// A read-only view of the currently saved source comparison, not a fresh measurement.
+struct ServingProfileComparisonEvidence: Identifiable {
+    let profile: ServingProfile
+    let run: ComparisonRun
+    let result: VariantResult
+    var id: UUID { profile.id }
+    var memory: SystemMemoryEvidence? { result.systemMemory.flatMap { $0.isValid ? $0 : nil } }
+    var taskReview: ComparisonQualityReview? {
+        guard let review = run.qualityReviews?[result.id], review.rubricID == ComparisonQualityReview.taskOutcomeRubric,
+              (1...5).contains(review.score) else { return nil }
+        return review
+    }
+
+    init(profile: ServingProfile, run: ComparisonRun) throws {
+        guard profile.isValid, profile.sourceRunID == run.id, let laneID = profile.sourceLaneID,
+              run.state == .completed, run.effectiveMode == .chat, run.results.filter({ $0.id == laneID }).count == 1,
+              let result = run.results.first(where: { $0.id == laneID }), result.error == nil, result.modelPath == profile.modelPath,
+              let serving = result.servingEvidence, serving.runtime == "strata",
+              serving.speculation == profile.options.speculation, serving.expertMemoryGB == profile.options.expertMemoryGB,
+              serving.contextTokens == profile.options.contextTokens else {
+            throw WorkflowEvidenceError.invalid("The source comparison no longer matches this profile's model, lane or settings.")
+        }
+        if let proof = profile.verification {
+            guard serving.modelFingerprint == proof.modelFingerprint, serving.runtimeFingerprint == proof.runtimeFingerprint else {
+                throw WorkflowEvidenceError.invalid("The source comparison fingerprints differ from this profile's verification. Review the comparison in Compare.")
+            }
+        }
+        self.profile = profile; self.run = run; self.result = result
+    }
+}
+
 struct ServingProfileVerification: Codable, Equatable, Sendable {
     let options: StrataComparisonOptions
     let modelFingerprint: String
@@ -116,6 +147,7 @@ final class ServingProfileCoordinator: ObservableObject {
     /// Without an authoritative endpoint reference check, removal is refused.
     var removalGuard: ((UUID) throws -> Void)?
     var suggestionSource: ((ComparisonRun) throws -> VariantResult)?
+    var comparisonSource: ((UUID) throws -> ComparisonRun?)?
     private let store: JSONStore<ServingProfile>
     private let probe: @Sendable (StrataComparisonOptions) -> ServeProbe
 
@@ -152,6 +184,20 @@ final class ServingProfileCoordinator: ObservableObject {
             throw WorkflowEvidenceError.invalid("The current serving profile requires verification.")
         }
         return current
+    }
+
+    func comparisonEvidence(for requested: ServingProfile) throws -> ServingProfileComparisonEvidence {
+        guard let current = try store.load().first(where: { $0.id == requested.id }),
+              current.modelPath == requested.modelPath, current.options == requested.options else {
+            throw WorkflowEvidenceError.invalid("The serving profile changed or is no longer available. Select it again.")
+        }
+        guard let id = current.sourceRunID, current.sourceLaneID != nil else {
+            throw WorkflowEvidenceError.invalid("This profile has no recorded source comparison.")
+        }
+        guard let comparisonSource, let run = try comparisonSource(id) else {
+            throw WorkflowEvidenceError.invalid("The source comparison is unavailable. The profile and its canary verdict are unchanged.")
+        }
+        return try ServingProfileComparisonEvidence(profile: current, run: run)
     }
 
     func createSuggestedProfile(run: ComparisonRun, name: String) -> ServingProfile? {

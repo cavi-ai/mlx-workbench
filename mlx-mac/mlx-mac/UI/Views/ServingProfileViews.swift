@@ -97,6 +97,8 @@ struct ServingProfileControls: View {
     @State private var jit = true
     @State private var renameRequest: ServingProfile?
     @State private var removalRequest: ServingProfile?
+    @State private var evidenceRequest: ServingProfileComparisonEvidence?
+    @State private var evidenceError: String?
 
     private var choices: [ServingProfile] { profiles.profiles.filter { $0.modelPath == modelPath } }
     private var selected: ServingProfile? { profiles.profiles.first { $0.id == workflow.servingProfile?.id } }
@@ -106,7 +108,10 @@ struct ServingProfileControls: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 Picker("Serving profile", selection: Binding<UUID?>(
                     get: { workflow.servingProfile?.id },
-                    set: { id in workflow.selectServingProfile(id.flatMap { id in choices.first { $0.id == id } }) })) {
+                    set: { id in
+                        evidenceError = nil
+                        workflow.selectServingProfile(id.flatMap { id in choices.first { $0.id == id } })
+                    })) {
                     Text("Runtime defaults").tag(Optional<UUID>.none)
                     ForEach(choices) { profile in Text(profile.name).tag(Optional(profile.id)) }
                 }.disabled(workflow.isServeSubmissionInFlight || profiles.activeID != nil)
@@ -116,6 +121,10 @@ struct ServingProfileControls: View {
                     Text(profile.hasPassedVerification ? "Canaries passed. Settings and fingerprints are checked again before serving." : "Profile verification is required before serving.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                     HStack {
+                        Button("Comparison evidence…") {
+                            do { evidenceRequest = try profiles.comparisonEvidence(for: profile); evidenceError = nil }
+                            catch { evidenceError = AppHost.render(error) }
+                        }
                         Button(profiles.activeID == profile.id ? "Verifying…" : "Verify profile") {
                             Task {
                                 await profiles.verify(id: profile.id)
@@ -148,9 +157,11 @@ struct ServingProfileControls: View {
                     Text("The endpoint keeps this profile across relaunches. Its loopback port stays stable.")
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 }
+                ErrorBanner(text: evidenceError)
                 ErrorBanner(text: profiles.lastError)
                 ErrorBanner(text: endpoint.lastError)
             }.padding(.vertical, WorkbenchSpacing.sm)
+                .sheet(item: $evidenceRequest) { evidence in ServingProfileComparisonSheet(evidence: evidence) }
                 .sheet(item: $renameRequest) { profile in
                     ServingProfileRenameSheet(profiles: profiles, profile: profile) { renamed in
                         if workflow.servingProfile?.id == renamed.id { workflow.selectServingProfile(renamed) }
@@ -162,6 +173,42 @@ struct ServingProfileControls: View {
                     }
                 }
         }
+    }
+}
+
+struct ServingProfileComparisonSheet: View {
+    let evidence: ServingProfileComparisonEvidence
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Comparison evidence").font(WorkbenchTypography.cardTitle)
+            Text(evidence.profile.name).font(WorkbenchTypography.label)
+            Text("\(evidence.run.promptSetName) · recorded \((evidence.run.finishedAt ?? evidence.run.startedAt).formatted(date: .abbreviated, time: .shortened))")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            Text("\(evidence.result.samples.count) recorded \(evidence.result.samples.count == 1 ? "prompt" : "prompts") · draft-and-verify \(evidence.profile.options.speculation ? "on" : "off") · expert memory \(evidence.profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(evidence.profile.options.contextTokens) context tokens")
+                .font(WorkbenchTypography.metadata).fixedSize(horizontal: false, vertical: true)
+            if let seconds = evidence.result.memoryTradeoffAnswerSeconds {
+                LabeledContent("Median time to first answer", value: "\(seconds.formatted(.number.precision(.fractionLength(2)))) s")
+            } else { LabeledContent("Median time to first answer", value: "Not recorded for every finished answer") }
+            if let memory = evidence.memory {
+                LabeledContent("Lowest sampled system headroom", value: "\((Double(memory.minimumAvailableBytes) / 1e9).formatted(.number.precision(.fractionLength(1)))) GB")
+                Text("\(memory.sampleCount) readings · \(memory.missedSamples) unavailable · \(memory.samplingIntervalSeconds.formatted()) s interval")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            } else { LabeledContent("System headroom", value: "Not recorded") }
+            if let review = evidence.taskReview {
+                LabeledContent("Task review", value: ComparisonQualityReview.taskScoreTitle(review.score))
+                Text("Reviewed \(review.reviewedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            } else { LabeledContent("Task review", value: "Not recorded") }
+            Text("These are saved measurements and the current saved task review. System headroom includes other apps and file caching; it does not measure model-only RAM or guarantee future headroom.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            Text(evidence.profile.hasPassedVerification
+                ? "Canaries passed separately. Serving still rechecks the model, runtime and settings."
+                : "Canary verification is required before serving this profile.")
+                .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack { Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
+        }.padding(WorkbenchSpacing.lg).frame(width: 560)
     }
 }
 
