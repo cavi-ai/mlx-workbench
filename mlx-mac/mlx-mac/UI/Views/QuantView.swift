@@ -439,6 +439,7 @@ struct QuantView: View {
     @State private var pendingGeneralReuseSetup: ComparisonRunSetup?
     @State private var reusedPromptSet: PromptSet?
     @State private var reuseError: String?
+    @State private var strataSettings: [String: StrataComparisonOptions] = [:]
     @State private var variantSlots: [String?] = [nil, nil]
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
     @State private var selectedRunID: ComparisonRun.ID?
@@ -739,9 +740,17 @@ struct QuantView: View {
     }
 
     private var runUnavailableReason: String? {
-        ComparePresentation.runUnavailableReason(slots: variantSlots, activeRunID: comparison.activeRunID,
+        if let reason = ComparePresentation.runUnavailableReason(slots: variantSlots, activeRunID: comparison.activeRunID,
             availablePaths: Set(readyModels.map { $0.item.path }), hasPromptSet: selectedPromptSet != nil,
-            savingPromptSet: comparison.savingPromptSet, hasPrompts: selectedPromptSet?.prompts.isEmpty == false)
+            savingPromptSet: comparison.savingPromptSet, hasPrompts: selectedPromptSet?.prompts.isEmpty == false) { return reason }
+        return selectedStrataPaths.compactMap { strataSettings[$0]?.validationError }.first
+    }
+
+    private var selectedStrataPaths: [String] {
+        guard mode == .chat else { return [] }
+        return ComparePresentation.variantPaths(variantSlots).filter { path in
+            readyModels.contains { $0.item.path == path && $0.item.servingRuntime == "strata" }
+        }
     }
 
     private var selectedPromptSet: PromptSet? {
@@ -781,6 +790,14 @@ struct QuantView: View {
                 ) {
                     slotControls
                 }
+            }
+            ForEach(selectedStrataPaths, id: \.self) { path in
+                DisclosureGroup("Strata settings · \(shortName(path))") {
+                    StrataComparisonControls(options: Binding(
+                        get: { strataSettings[path] ?? StrataComparisonOptions() },
+                        set: { strataSettings[path] = $0 }))
+                }
+                .disabled(comparison.activeRunID != nil)
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: WorkbenchSpacing.xs) { inlineControls }
@@ -1130,7 +1147,7 @@ struct QuantView: View {
     // MARK: - Selected run detail
 
     private func runDetail(_ run: ComparisonRun) -> some View {
-        let winnerPath = run.effectiveMode == .chat && run.state == .completed ? run.winner?.modelPath : nil
+        let winnerPath = run.effectiveMode == .chat && run.state == .completed && !run.hasCustomServingConfiguration ? run.winner?.modelPath : nil
         return WorkbenchSurface {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 runHeader
@@ -1194,7 +1211,7 @@ struct QuantView: View {
     /// Chat lanes carry the promote button on the winner and the preferred-model menu.
     @ViewBuilder
     private func laneActions(_ lane: CompareLane, run: ComparisonRun, winnerPath: String?) -> some View {
-        if run.effectiveMode == .chat, lane.path == winnerPath || (run.useCase != nil && lane.state == .measured) {
+        if run.effectiveMode == .chat, !run.hasCustomServingConfiguration, lane.path == winnerPath || (run.useCase != nil && lane.state == .measured) {
             HStack(spacing: WorkbenchSpacing.xs) {
                 if lane.path == winnerPath, let winner = run.winner {
                     Button("Use fastest…") { promoteContext = PromoteContext(run: run, winner: winner) }
@@ -1269,7 +1286,8 @@ struct QuantView: View {
             readyModels.first { $0.item.path == path }
                 .map { (path: $0.item.path, signature: $0.item.signature) }
         }
-        comparison.start(variants: variants, promptSet: promptSet, mode: mode)
+        let options = Dictionary(uniqueKeysWithValues: selectedStrataPaths.map { ($0, strataSettings[$0] ?? StrataComparisonOptions()) })
+        comparison.start(variants: variants, promptSet: promptSet, mode: mode, strataOptions: options)
     }
 
     private func removePromptSet(_ set: PromptSet) {
@@ -1301,12 +1319,14 @@ struct QuantView: View {
 
     private func applyReusedSetup(_ setup: MusicComparisonSetup, _ promptSet: PromptSet) {
         guard comparison.activeRunID == nil else { return }
+        strataSettings = [:]
         useRecordedSetup(mode: .musicGeneration, paths: setup.modelPaths, name: setup.sourceName, promptSet: promptSet)
         pendingReuseSetup = nil
     }
 
     private func applyReusedSetup(_ setup: ComparisonRunSetup, _ promptSet: PromptSet) -> String? {
         guard comparison.activeRunID == nil else { return "Wait for the current comparison to finish." }
+        strataSettings = setup.strataOptions ?? [:]
         useRecordedSetup(mode: setup.draft.mode, paths: setup.modelPaths, name: setup.sourceName, promptSet: promptSet)
         pendingGeneralReuseSetup = nil
         return nil
@@ -1469,5 +1489,29 @@ struct PromoteWinnerSheet: View {
 
         onPromoted(winnerPath)
         dismiss()
+    }
+}
+
+struct StrataComparisonControls: View {
+    @Binding var options: StrataComparisonOptions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Toggle("Draft-and-verify speculation", isOn: $options.speculation)
+            Picker("Expert memory", selection: $options.expertMemoryGB) {
+                Text("Automatic").tag(Optional<Double>.none)
+                ForEach(Array(Set([0.5, 2, 4, 8, 12, 16, 24, 32, 48, 64] + (options.expertMemoryGB.map { [$0] } ?? []))).sorted(), id: \.self) { budget in
+                    Text("\(budget.formatted()) GB").tag(Optional(budget))
+                }
+            }.fixedSize()
+            Picker("Context capacity", selection: $options.contextTokens) {
+                ForEach(Array(Set([2048, 8192, 32768, 131072, options.contextTokens])).sorted(), id: \.self) { count in
+                    Text("\(count) tokens").tag(count)
+                }
+            }.fixedSize()
+            if let error = options.validationError { Text(error).foregroundStyle(.red) }
+            Text("A smaller expert budget pages more weights from disk. Custom settings are recorded with this run and excluded from default recommendations.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+        }.padding(.top, WorkbenchSpacing.sm)
     }
 }

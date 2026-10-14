@@ -21,6 +21,7 @@ final class ComparisonCoordinator: ObservableObject {
     @Published private(set) var savingPromptSet = false
 
     private let probe: ServeProbe
+    private let strataProbe: (@Sendable (StrataComparisonOptions) -> ServeProbe)?
     private let runStore: JSONStore<ComparisonRun>
     private let promptSetStore: JSONStore<PromptSet>
     private let promptInputStore: ComparisonPromptInputStore
@@ -52,11 +53,13 @@ final class ComparisonCoordinator: ObservableObject {
         now: @escaping () -> Date = Date.init,
         mediaRunner: ComparisonMediaRunner? = nil,
         outputStore: ComparisonOutputStore? = nil,
+        strataProbe: (@Sendable (StrataComparisonOptions) -> ServeProbe)? = nil,
         generateInput: @escaping @Sendable (PromptEntry, URL) async throws -> URL = { entry, directory in
             try await ComparisonMediaFixtures.generateInput(for: entry, into: directory)
         }
     ) {
         self.probe = probe
+        self.strataProbe = strataProbe
         self.runStore = runStore
         self.promptSetStore = promptSetStore
         self.promptInputStore = ComparisonPromptInputStore(root: promptSetStore.url.deletingLastPathComponent()
@@ -411,7 +414,8 @@ final class ComparisonCoordinator: ObservableObject {
     /// another variant's numbers. Chat replays prompts on the serve probe;
     /// every other mode runs each prompt through the media runner and keeps
     /// what the model produced.
-    func start(variants: [(path: String, signature: String?)], promptSet: PromptSet, mode: ComparisonMode? = nil) {
+    func start(variants: [(path: String, signature: String?)], promptSet: PromptSet, mode: ComparisonMode? = nil,
+               strataOptions: [String: StrataComparisonOptions] = [:]) {
         guard !savingPromptSet else {
             lastError = "Wait for the prompt set save to finish."
             return
@@ -425,6 +429,13 @@ final class ComparisonCoordinator: ObservableObject {
             return
         }
         let mode = mode ?? promptSet.effectiveMode
+        if !strataOptions.isEmpty {
+            guard mode == .chat, strataProbe != nil, Set(strataOptions.keys).isSubset(of: Set(variants.map(\.path))),
+                  strataOptions.values.allSatisfy({ $0.validationError == nil }) else {
+                lastError = "Strata settings require valid chat variants and a configured serving runtime."
+                return
+            }
+        }
         guard promptSet.effectiveMode == mode else {
             lastError = "\(promptSet.name) is a \(promptSet.effectiveMode.title) prompt set, not \(mode.title)."
             return
@@ -447,14 +458,16 @@ final class ComparisonCoordinator: ObservableObject {
             finishedAt: nil,
             state: .running,
             mode: mode == .chat ? nil : mode,
-            promptEntries: promptSet.prompts
+            promptEntries: promptSet.prompts,
+            strataOptions: strataOptions.isEmpty ? nil : strataOptions
         )
         runs.insert(run, at: 0)
         activeRunID = run.id
 
         if mode == .chat {
             Task { [probe, now] in
-                await execute(runID: run.id, variants: variants, promptSet: promptSet, probe: probe, now: now)
+                await execute(runID: run.id, variants: variants, promptSet: promptSet, probe: probe, now: now,
+                              strataOptions: strataOptions)
             }
         } else if let mediaRunner, let outputStore {
             Task {
@@ -612,7 +625,8 @@ final class ComparisonCoordinator: ObservableObject {
         variants: [(path: String, signature: String?)],
         promptSet: PromptSet,
         probe: ServeProbe,
-        now: () -> Date
+        now: () -> Date,
+        strataOptions: [String: StrataComparisonOptions]
     ) async {
         let prompts = promptSet.prompts.map {
             ProbePrompt(id: $0.id, prompt: $0.text, maxTokens: min($0.maxTokens, maxTokensCap()), tool: $0.tool)
@@ -621,9 +635,11 @@ final class ComparisonCoordinator: ObservableObject {
         for variant in variants {
             guard let runIndex = runs.firstIndex(where: { $0.id == runID }) else { return }
             progressMessage = "Measuring \(URL(fileURLWithPath: variant.path).lastPathComponent)…"
+            var cleanupFailed = false
             let result: VariantResult
             do {
-                let outcome = try await probe.run(modelPath: variant.path, prompts: prompts,
+                let selectedProbe = strataOptions[variant.path].flatMap { self.strataProbe?($0) } ?? probe
+                let outcome = try await selectedProbe.run(modelPath: variant.path, prompts: prompts,
                     warmup: [ProbePrompt(id: "__warmup", prompt: "Say OK.", maxTokens: 4)])
                 let samples = promptSet.prompts.compactMap { entry in
                     outcome.samples[entry.id].map {
@@ -642,6 +658,7 @@ final class ComparisonCoordinator: ObservableObject {
                     startupSeconds: outcome.startupSeconds
                 )
             } catch {
+                if case ServeProbeError.stopFailed = error { cleanupFailed = true }
                 result = VariantResult(
                     modelPath: variant.path,
                     modelSignature: variant.signature,
@@ -653,6 +670,15 @@ final class ComparisonCoordinator: ObservableObject {
             }
             runs[runIndex].results.append(result)
             persist(runs[runIndex])
+            if cleanupFailed {
+                runs[runIndex].state = .failed
+                runs[runIndex].finishedAt = now()
+                persist(runs[runIndex])
+                activeRunID = nil
+                progressMessage = nil
+                onBenchmarks?([])
+                return
+            }
             if result.error == nil {
                 onVariantMeasured?(variant.path)
             }
@@ -668,7 +694,8 @@ final class ComparisonCoordinator: ObservableObject {
     }
 
     private func benchmarks(for run: ComparisonRun) -> [RecommendationBenchmarkResult] {
-        guard run.state == .completed, run.effectiveMode == .chat, let measuredAt = run.finishedAt else { return [] }
+        guard run.state == .completed, run.effectiveMode == .chat, !run.hasCustomServingConfiguration,
+              let measuredAt = run.finishedAt else { return [] }
         let useCase = run.useCase ?? .generalChat
         return run.results.compactMap { result in
             guard result.error == nil, !result.samples.isEmpty else { return nil }

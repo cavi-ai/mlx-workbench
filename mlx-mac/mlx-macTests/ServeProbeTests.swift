@@ -35,6 +35,35 @@ final class ServeProbeTests: XCTestCase {
         )
     }
 
+    func testStopFailureIsReportedInsteadOfSuccessfulMeasurements() async throws {
+        let probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" },
+            start: { _, _, _ in }, stop: { _ in throw StubError.boom }),
+            prober: StubProber(ready: true, responder: { _ in self.sample() }), pickPort: { 9999 })
+        do {
+            _ = try await probe.run(modelPath: "/Models/strata")
+            XCTFail("Stop failure must not return a successful result")
+        } catch { guard case ServeProbeError.stopFailed = error else { return XCTFail("Unexpected error: \(error)") } }
+    }
+
+    func testStreamedServerErrorDoesNotBecomeAnEstimatedMeasurement() async throws {
+        let prober = OpenAIEndpointProber(session: stubSession(body: "data: {\"error\":{\"message\":\"context exceeded\"}}\n\n"))
+        do {
+            _ = try await prober.chat(baseURL: URL(string: "http://127.0.0.1:9999")!, model: "model", prompt: "hello", maxTokens: 8)
+            XCTFail("Server error must fail the sample")
+        } catch { guard case ProbeHTTPError.invalidResponse = error else { return XCTFail("Unexpected error: \(error)") } }
+    }
+
+    func testStrataReasoningStreamRecordsOutputAndFirstTokenTime() async throws {
+        let body = #"data: {"choices":[{"delta":{"reasoning_content":"Checking the example."}}]}"#
+            + "\n" + #"data: {"usage":{"completion_tokens":4,"prompt_tokens":10},"choices":[]}"# + "\ndata: [DONE]\n"
+        let sample = try await OpenAIEndpointProber(session: stubSession(body: body)).chat(
+            baseURL: URL(string: "http://127.0.0.1:9999")!, model: "strata", prompt: "hello", maxTokens: 8)
+        XCTAssertEqual(sample.text, "Checking the example.")
+        XCTAssertNotNil(sample.timeToFirstTokenSeconds)
+        XCTAssertEqual(sample.completionTokens, 4)
+        XCTAssertFalse(sample.metricsEstimated)
+    }
+
     func testRunServesEveryCanaryThenStops() async throws {
         let events = ProbeEventRecorder()
         let probe = makeProbe(events: events) { _ in self.sample() }

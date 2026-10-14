@@ -104,6 +104,24 @@ struct PromptToolSpec: Codable, Equatable, Sendable {
     }
 }
 
+struct StrataComparisonOptions: Codable, Equatable, Sendable {
+    var speculation = false
+    var expertMemoryGB: Double? = nil
+    var contextTokens = 131072
+
+    var validationError: String? {
+        if let budget = expertMemoryGB, !budget.isFinite || !(0.5...64).contains(budget) {
+            return "Expert memory must be from 0.5 to 64 GB."
+        }
+        return (512...131072).contains(contextTokens) ? nil : "Context must be from 512 to 131072 tokens."
+    }
+    var isDefault: Bool { !speculation && expertMemoryGB == nil && contextTokens == 131072 }
+    var arguments: [String] {
+        ["--strata-speculation", speculation ? "on" : "off", "--strata-context-tokens", String(contextTokens)]
+            + (expertMemoryGB.map { ["--strata-expert-memory-gb", String($0)] } ?? [])
+    }
+}
+
 /// Facts from the exact serving preview confirmed for a measured endpoint.
 struct ProbeServingEvidence: Codable, Equatable, Sendable {
     let runtime: String
@@ -114,6 +132,12 @@ struct ProbeServingEvidence: Codable, Equatable, Sendable {
     let modelFingerprint: String?
     let runtimeFingerprint: String?
     let speculation: Bool?
+    let expertMemoryGB: Double?
+    let contextTokens: Int?
+
+    var hasCustomOptions: Bool {
+        speculation == true || expertMemoryGB != nil || contextTokens.map { $0 != 131072 } == true
+    }
 
     init?(plan: [String: Any]) {
         guard let runtime = plan["runtime"] as? String, !runtime.isEmpty,
@@ -125,6 +149,8 @@ struct ProbeServingEvidence: Codable, Equatable, Sendable {
         modelFingerprint = (plan["strata_model_fingerprint"] ?? plan["model_config_fingerprint"]) as? String
         runtimeFingerprint = plan["strata_runtime_fingerprint"] as? String
         speculation = plan["strata_speculation"] as? Bool
+        expertMemoryGB = plan["strata_expert_memory_gb"] as? Double
+        contextTokens = plan["strata_context_tokens"] as? Int
     }
 
     var summary: String {
@@ -180,12 +206,15 @@ extension EndpointProbing {
 enum ServeProbeError: LocalizedError {
     case noEphemeralPort
     case servePreviewMissingHash
+    case stopFailed(String)
     case serverNeverReady(timeout: TimeInterval)
 
     var errorDescription: String? {
         switch self {
         case .noEphemeralPort:
             return "Could not reserve an ephemeral loopback port for the verification server."
+        case .stopFailed(let detail):
+            return "Could not stop the comparison server: \(detail). Further variants were not started."
         case .servePreviewMissingHash:
             return "The serve preview did not include a preview hash."
         case .serverNeverReady(let timeout):
@@ -208,25 +237,25 @@ struct ServeLifecycle: Sendable {
 
 extension ServeLifecycle {
     /// Production lifecycle: the agent selects the declared loader from local model metadata.
-    static func live(api: WorkbenchAPI, runtime: String = "auto") -> ServeLifecycle {
+    static func live(api: WorkbenchAPI, runtime: String = "auto", strataOptions: StrataComparisonOptions? = nil) -> ServeLifecycle {
         ServeLifecycle(
             preview: { modelPath, port in
-                let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port)
+                let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions)
                 return response.string("preview_hash") ?? ""
             },
             start: { modelPath, port, previewHash in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: previewHash,
-                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil)
+                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions)
             },
             stop: { port in
                 _ = try await api.serveStop(port: port)
             },
             jitPreview: { modelPath, port, policy in
-                let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, jit: true, memoryPolicy: policy)
+                let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, jit: true, memoryPolicy: policy, strataOptions: strataOptions)
                 return response.string("preview_hash") ?? ""
             },
             jitStart: { modelPath, port, hash, policy in
-                _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: hash, jit: true, memoryPolicy: policy)
+                _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: hash, jit: true, memoryPolicy: policy, strataOptions: strataOptions)
             },
             unload: { port, pid in
                 _ = try await api.serveUnload(port: port, expectedPID: pid)
@@ -235,7 +264,7 @@ extension ServeLifecycle {
                 _ = try await api.serveMemoryPolicy(port: port, expectedPID: pid, policy: policy)
             },
             reviewedPreview: { modelPath, port in
-                let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port)
+                let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions)
                 return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
             }
         )
@@ -296,11 +325,13 @@ struct ServeProbe: Sendable {
                     tool: prompt.tool
                 )
             }
-            try? await lifecycle.stop(port)
+            do { try await lifecycle.stop(port) }
+            catch { throw ServeProbeError.stopFailed(error.localizedDescription) }
             return ProbeRunResult(port: port, samples: samples, servingEvidence: preview.evidence, startupSeconds: startupSeconds)
         } catch {
-            // A crashed probe must never leave an orphan server behind.
-            try? await lifecycle.stop(port)
+            if case ServeProbeError.stopFailed = error { throw error }
+            do { try await lifecycle.stop(port) }
+            catch { throw ServeProbeError.stopFailed(error.localizedDescription) }
             throw error
         }
     }
@@ -449,6 +480,7 @@ struct OpenAIEndpointProber: EndpointProbing {
             if payload == "[DONE]" { break }
             guard let data = payload.data(using: .utf8),
                   let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            if chunk["error"] != nil { throw ProbeHTTPError.invalidResponse }
             if let usage = chunk["usage"] as? [String: Any] {
                 if let count = usage["completion_tokens"] as? Int {
                     completionTokens = count
@@ -463,6 +495,7 @@ struct OpenAIEndpointProber: EndpointProbing {
                 // with empty `content`; both count as the response.
                 let piece = (delta["content"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                     ?? (delta["reasoning"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                    ?? (delta["reasoning_content"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 if let piece {
                     if firstTokenAt == nil { firstTokenAt = Date() }
                     text += piece

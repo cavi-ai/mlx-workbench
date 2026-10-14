@@ -208,6 +208,11 @@ enum ComparisonViewLogic {
         if let speculation = result.servingEvidence?.speculation {
             lines.append(speculation ? "Draft-and-verify on" : "Draft-and-verify off")
         }
+        if result.servingEvidence?.runtime == "strata" {
+            lines.append(result.servingEvidence?.expertMemoryGB.map { String(format: "Expert memory %.2f GB", $0) } ?? "Expert memory automatic")
+            if let context = result.servingEvidence?.contextTokens { lines.append("Context capacity \(context) tokens") }
+            if result.servingEvidence?.hasCustomOptions == true { lines.append("Custom settings · excluded from default recommendations") }
+        }
         if result.servingEvidence?.weightsPreserved == true { lines.append("Original quantized weights") }
         if let seconds = result.startupSeconds { lines.append(String(format: "Server startup %.2f s", seconds)) }
         return lines
