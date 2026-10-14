@@ -817,6 +817,49 @@ enum BuiltinPromptSets {
 // MARK: Runs and results
 
 /// A lane's serving choice. Its identity is independent of the real model path.
+struct StrataSettingsSearchGoal: Codable, Equatable, Sendable {
+    let contextTokens: Int
+    let headroomGB: Double
+
+    var isValid: Bool { (512...131072).contains(contextTokens) && headroomGB.isFinite && (0...1024).contains(headroomGB) }
+    func matches(_ lanes: [ComparisonLaneConfiguration]) -> Bool {
+        guard isValid, lanes.count == 4, lanes.allSatisfy(\.isValid), Set(lanes.map(\.id)).count == 4,
+              Set(lanes.map(\.modelPath)).count == 1, Set(lanes.map(\.modelSignature)).count == 1,
+              lanes.allSatisfy({ $0.strataOptions?.contextTokens == contextTokens && $0.strataOptions?.expertMemoryGB != nil }) else { return false }
+        let budgets = Set(lanes.compactMap { $0.strataOptions?.expertMemoryGB })
+        return budgets.count == 2 && budgets.allSatisfy { budget in
+            Set(lanes.filter { $0.strataOptions?.expertMemoryGB == budget }.compactMap { $0.strataOptions?.speculation }) == [false, true]
+        }
+    }
+}
+
+struct StrataSettingsSearchSetup: Equatable {
+    var lowerExpertMemoryGB = 2.0
+    var upperExpertMemoryGB = 4.0
+    var contextTokens = 8192
+    var headroomGB = 8.0
+    var goal: StrataSettingsSearchGoal { StrataSettingsSearchGoal(contextTokens: contextTokens, headroomGB: headroomGB) }
+    var validationError: String? {
+        guard goal.isValid else { return "Choose a valid fixed context and headroom target from 0 to 1,024 GB." }
+        for budget in [lowerExpertMemoryGB, upperExpertMemoryGB] {
+            if let error = StrataComparisonOptions(expertMemoryGB: budget, contextTokens: contextTokens).validationError { return error }
+        }
+        return lowerExpertMemoryGB < upperExpertMemoryGB ? nil : "The second expert budget must exceed the first."
+    }
+    func lanes(modelPath: String, signature: String?) throws -> [ComparisonLaneConfiguration] {
+        if let error = validationError { throw WorkflowEvidenceError.invalid(error) }
+        guard modelPath.hasPrefix("/"), !modelPath.unicodeScalars.contains(where: { $0.value < 32 }) else {
+            throw WorkflowEvidenceError.invalid("Choose an available local Strata model.")
+        }
+        return [lowerExpertMemoryGB, upperExpertMemoryGB].flatMap { budget in
+            [false, true].map { speculation in
+                ComparisonLaneConfiguration(id: UUID().uuidString, modelPath: modelPath, modelSignature: signature,
+                    strataOptions: StrataComparisonOptions(speculation: speculation, expertMemoryGB: budget, contextTokens: contextTokens))
+            }
+        }
+    }
+}
+
 struct ComparisonLaneConfiguration: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let modelPath: String
@@ -1059,6 +1102,38 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     var qualityReviews: [String: ComparisonQualityReview]? = nil
     var strataOptions: [String: StrataComparisonOptions]? = nil
     var laneConfigurations: [ComparisonLaneConfiguration]? = nil
+    var settingsSearchGoal: StrataSettingsSearchGoal? = nil
+
+    var settingsSearchCandidateID: String? {
+        guard state == .completed, effectiveMode == .chat, hasValidLaneIdentities, let goal = settingsSearchGoal,
+              let lanes = laneConfigurations, goal.matches(lanes), results.count == 4,
+              Set(results.map(\.id)) == Set(lanes.map(\.id)), let prompts = promptEntries, !prompts.isEmpty,
+              Set(prompts.map(\.id)).count == prompts.count else { return nil }
+        var fingerprints: Set<[String]> = []
+        for lane in lanes {
+            guard let result = results.first(where: { $0.id == lane.id }), result.error == nil, result.modelPath == lane.modelPath,
+                  result.modelSignature == lane.modelSignature,
+                  let evidence = result.servingEvidence, evidence.runtime == "strata",
+                  let model = evidence.modelFingerprint, !model.isEmpty, let runtime = evidence.runtimeFingerprint, !runtime.isEmpty,
+                  evidence.contextTokens == goal.contextTokens, evidence.expertMemoryGB == lane.strataOptions?.expertMemoryGB,
+                  evidence.speculation == lane.strataOptions?.speculation,
+                  let memory = result.systemMemory, memory.isValid,
+                  result.samples.count == prompts.count, Set(result.samples.map(\.promptID)) == Set(prompts.map(\.id)),
+                  let review = qualityReviews?[lane.id], review.rubricID == ComparisonQualityReview.taskOutcomeRubric,
+                  (1...5).contains(review.score) else { return nil }
+            fingerprints.insert([model, runtime])
+        }
+        guard fingerprints.count == 1, Set(results.compactMap { $0.systemMemory?.totalBytes }).count == 1 else { return nil }
+        return results.filter {
+            ($0.systemMemory.map { Double($0.minimumAvailableBytes) / 1e9 >= goal.headroomGB } ?? false)
+                && (qualityReviews?[$0.id]?.score ?? 0) >= 4 && $0.memoryTradeoffAnswerSeconds != nil
+        }.sorted { leftResult, rightResult in
+            let left = leftResult.memoryTradeoffAnswerSeconds!; let right = rightResult.memoryTradeoffAnswerSeconds!
+            return left == right
+                ? (lanes.firstIndex(where: { $0.id == leftResult.id }) ?? 0) < (lanes.firstIndex(where: { $0.id == rightResult.id }) ?? 0)
+                : left < right
+        }.first?.id
+    }
 
     var variantIdentities: [String] { hasValidLaneIdentities ? laneConfigurations?.map(\.id) ?? variants : variants }
 

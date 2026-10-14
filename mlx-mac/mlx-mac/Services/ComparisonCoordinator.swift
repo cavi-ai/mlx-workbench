@@ -415,14 +415,17 @@ final class ComparisonCoordinator: ObservableObject {
     /// another variant's numbers. Chat replays prompts on the serve probe;
     /// every other mode runs each prompt through the media runner and keeps
     /// what the model produced.
-    func start(lanes: [ComparisonLaneConfiguration], promptSet: PromptSet) {
+    func start(lanes: [ComparisonLaneConfiguration], promptSet: PromptSet, settingsSearchGoal: StrataSettingsSearchGoal? = nil) {
         start(variants: lanes.map { ($0.modelPath, $0.modelSignature) }, promptSet: promptSet,
-              mode: .chat, laneConfigurations: lanes)
+              mode: .chat, laneConfigurations: lanes, settingsSearchGoal: settingsSearchGoal)
     }
 
     func start(variants: [(path: String, signature: String?)], promptSet: PromptSet, mode: ComparisonMode? = nil,
                strataOptions: [String: StrataComparisonOptions] = [:],
-               laneConfigurations: [ComparisonLaneConfiguration]? = nil) {
+               laneConfigurations: [ComparisonLaneConfiguration]? = nil, settingsSearchGoal: StrataSettingsSearchGoal? = nil) {
+        if let goal = settingsSearchGoal, !goal.matches(laneConfigurations ?? []) {
+            lastError = "Settings search requires four matching lanes at one fixed context."; return
+        }
         guard !savingPromptSet else {
             lastError = "Wait for the prompt set save to finish."
             return
@@ -484,7 +487,8 @@ final class ComparisonCoordinator: ObservableObject {
             mode: mode == .chat ? nil : mode,
             promptEntries: promptSet.prompts,
             strataOptions: strataOptions.isEmpty ? nil : strataOptions,
-            laneConfigurations: laneConfigurations
+            laneConfigurations: laneConfigurations,
+            settingsSearchGoal: settingsSearchGoal
         )
         runs.insert(run, at: 0)
         activeRunID = run.id
