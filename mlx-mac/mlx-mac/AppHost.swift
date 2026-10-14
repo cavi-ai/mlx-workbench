@@ -122,6 +122,10 @@ class AppHost: ObservableObject {
             probe: { options in ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
                 prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900) })
         self.servingProfiles = profiles
+        profiles.memoryPreview = { profile in
+            try await api.servePreview(repo: profile.modelPath, runtime: "strata", port: nil,
+                strataOptions: profile.options, timeout: 30)
+        }
         self.modelWorkflow = ModelWorkflowCoordinator(
             api: modelWorkflowAPI ?? .live(api: api, resolveProfile: { try profiles.resolve($0) }),
             persistence: modelWorkflowPersistence ?? .live(store: ModelWorkflowStore(fileURL: ModelWorkflowStore.defaultFileURL()))

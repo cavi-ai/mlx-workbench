@@ -256,6 +256,9 @@ struct ServingProfileChooserSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var choices: [ServingProfileChoice]
     @State private var error: String?
+    @State private var memoryReviews: [UUID: ServingProfileMemoryReview] = [:]
+    @State private var memoryCheckingID: UUID?
+    @State private var memoryCheckTask: Task<Void, Never>?
 
     init(profiles: ServingProfileCoordinator, request: ServingProfileChooserRequest, selectedID: UUID?,
          onSelect: @escaping (ServingProfile) -> String?) {
@@ -299,9 +302,16 @@ struct ServingProfileChooserSheet: View {
                             if !choice.profile.isValid {
                                 Text("This saved profile has invalid settings.").font(WorkbenchTypography.secondary)
                             }
-                            Button("Select profile") { select(choice) }
-                                .disabled(!choice.profile.isValid || profiles.activeID != nil)
-                                .accessibilityLabel("Select profile \(choice.profile.name)")
+                            if let review = memoryReviews[choice.id] { ServingProfileMemoryReviewView(review: review) }
+                            HStack {
+                                Button("Select profile") { select(choice) }
+                                    .disabled(!choice.profile.isValid || profiles.activeID != nil || memoryCheckingID != nil)
+                                    .accessibilityLabel("Select profile \(choice.profile.name)")
+                                Button(memoryCheckingID == choice.id ? "Checking memory…" : "Check memory", action: { checkMemory(choice) })
+                                    .disabled(!choice.profile.isValid || profiles.activeID != nil || memoryCheckingID != nil)
+                                    .accessibilityLabel("Check memory for \(choice.profile.name)")
+                                if memoryCheckingID == choice.id { ProgressView().controlSize(.small) }
+                            }
                             Divider()
                         }
                     }
@@ -311,11 +321,13 @@ struct ServingProfileChooserSheet: View {
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
             ErrorBanner(text: error)
             HStack {
-                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(memoryCheckingID != nil)
                 Spacer()
-                Button("Refresh profiles", action: refresh).disabled(profiles.activeID != nil)
+                Button("Refresh profiles", action: refresh).disabled(profiles.activeID != nil || memoryCheckingID != nil)
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 600, height: 640)
+            .interactiveDismissDisabled(memoryCheckingID != nil)
+            .onDisappear { memoryCheckTask?.cancel() }
     }
 
     private func select(_ choice: ServingProfileChoice) {
@@ -327,8 +339,44 @@ struct ServingProfileChooserSheet: View {
     }
 
     private func refresh() {
+        memoryReviews = [:]
         do { choices = try profiles.profileChoices(modelPath: request.modelPath); error = nil }
         catch { choices = []; self.error = AppHost.render(error) }
+    }
+
+    private func checkMemory(_ choice: ServingProfileChoice) {
+        guard memoryCheckingID == nil else { return }
+        memoryCheckingID = choice.id; memoryReviews[choice.id] = nil; error = nil
+        memoryCheckTask = Task {
+            defer { memoryCheckingID = nil; memoryCheckTask = nil }
+            do {
+                let review = try await profiles.memoryReview(for: choice)
+                guard !Task.isCancelled else { return }
+                memoryReviews[choice.id] = review
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.error = AppHost.render(error)
+            }
+        }
+    }
+}
+
+struct ServingProfileMemoryReviewView: View {
+    let review: ServingProfileMemoryReview
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Text("Memory check · \(review.capturedAt.formatted(date: .abbreviated, time: .standard))")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            LabeledContent("Runtime memory estimate", value: "\((Double(review.estimatedBytes) / 1e9).formatted(.number.precision(.fractionLength(1)))) GB")
+            LabeledContent("Available RAM estimate", value: review.memory.map {
+                "\((Double($0.availableBytes) / 1e9).formatted(.number.precision(.fractionLength(1)))) GB"
+            } ?? "Unavailable")
+            Text(review.verificationMatches ? "Saved canaries match this runtime preview." : "Canary verification is required for this runtime preview.")
+                .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Eager startup additionally requires the runtime's headroom reserve. Available RAM includes reclaimable inactive pages and can change after this reading. Confirmed startup checks its memory guard again; this check loads no model.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

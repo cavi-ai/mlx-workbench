@@ -73,6 +73,30 @@ struct ServingProfileChoice: Identifiable {
     var id: UUID { profile.id }
 }
 
+struct ServingProfileMemoryReview: Identifiable {
+    let profile: ServingProfile
+    let estimatedBytes: Int64
+    let memory: MemorySnapshot?
+    let capturedAt: Date
+    let verificationMatches: Bool
+    var id: UUID { profile.id }
+
+    init(profile: ServingProfile, plan: [String: Any], memory: MemorySnapshot?, capturedAt: Date) throws {
+        guard profile.isValid, plan.string("path") == profile.modelPath,
+              let evidence = ProbeServingEvidence(plan: plan), evidence.runtime == "strata",
+              evidence.modelFingerprint?.isEmpty == false, evidence.runtimeFingerprint?.isEmpty == false,
+              evidence.speculation == profile.options.speculation, evidence.expertMemoryGB == profile.options.expertMemoryGB,
+              evidence.contextTokens == profile.options.contextTokens,
+              let bytes = plan.int("strata_memory_estimate_bytes"), bytes > 0 else {
+            throw WorkflowEvidenceError.invalid("The runtime preview did not return a memory estimate for this profile's model and settings.")
+        }
+        self.profile = profile; estimatedBytes = Int64(bytes); self.capturedAt = capturedAt
+        if let memory, memory.totalBytes > 0, (0...memory.totalBytes).contains(memory.availableBytes) { self.memory = memory }
+        else { self.memory = nil }
+        verificationMatches = (try? profile.validate(plan: plan)) != nil
+    }
+}
+
 struct ServingProfileVerification: Codable, Equatable, Sendable {
     let options: StrataComparisonOptions
     let modelFingerprint: String
@@ -191,6 +215,7 @@ final class ServingProfileCoordinator: ObservableObject {
     var suggestionSource: ((ComparisonRun) throws -> VariantResult)?
     var comparisonSource: ((UUID) throws -> ComparisonRun?)?
     var measuredSource: ((ComparisonRun, String) throws -> VariantResult)?
+    var memoryPreview: ((ServingProfile) async throws -> [String: Any])?
     private let store: JSONStore<ServingProfile>
     private let probe: @Sendable (StrataComparisonOptions) -> ServeProbe
 
@@ -286,6 +311,19 @@ final class ServingProfileCoordinator: ObservableObject {
         }
         profiles = saved
         return current
+    }
+
+    func memoryReview(for choice: ServingProfileChoice,
+                      memoryProbe: @escaping @Sendable () -> MemorySnapshot? = MemorySnapshot.probe) async throws -> ServingProfileMemoryReview {
+        let profile = try selectChoice(choice, modelPath: choice.profile.modelPath)
+        guard let memoryPreview else { throw WorkflowEvidenceError.invalid("The runtime memory preview is unavailable.") }
+        let plan = try await memoryPreview(profile)
+        try Task.checkCancellation()
+        let memory = await Task.detached(priority: .utility) { memoryProbe() }.value
+        let capturedAt = Date()
+        try Task.checkCancellation()
+        _ = try selectChoice(choice, modelPath: profile.modelPath)
+        return try ServingProfileMemoryReview(profile: profile, plan: plan, memory: memory, capturedAt: capturedAt)
     }
 
     @discardableResult
