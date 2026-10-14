@@ -492,7 +492,7 @@ actor WorkbenchAPI {
     }
 
     func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
-                      strataOptions: StrataComparisonOptions? = nil) async throws -> [String: Any] {
+                      strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil) async throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + ["--runtime", runtime, "--receipts-dir", receiptDirectory]
@@ -502,7 +502,7 @@ actor WorkbenchAPI {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
             argv += strataOptions.arguments
         }
-        return Self.unwrapPlan(try await raw(argv))
+        return Self.unwrapPlan(try await raw(argv, timeout: timeout))
     }
 
     func serveStart(repo: String, runtime: String, port: Int?,
