@@ -5,6 +5,67 @@ import XCTest
 
 @MainActor
 final class ComparisonCoordinatorTests: XCTestCase {
+    func testLocalSavedProfileComparisonWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_COMPARE_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_PROFILE_COMPARE_MANIFEST for explicit local profile-comparison acceptance.")
+        }
+        struct Manifest: Decodable { let agentPath: String; let profilesFile: String; let evidenceRoot: String }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let sourceURL = URL(fileURLWithPath: manifest.profilesFile), source = JSONStore<ServingProfile>(fileURL: sourceURL)
+        let sourceBytes = try Data(contentsOf: sourceURL)
+        let baseline = try XCTUnwrap(try source.load().first { $0.hasPassedVerification })
+        let directory = URL(fileURLWithPath: manifest.evidenceRoot)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: directory.path)
+        let factory: @Sendable (StrataComparisonOptions) -> ServeProbe = { options in
+            ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
+                prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
+        }
+        let profileStore = JSONStore<ServingProfile>(fileURL: directory.appendingPathComponent("profiles.json"))
+        try profileStore.replaceAll([baseline])
+        let profiles = ServingProfileCoordinator(store: profileStore, probe: factory)
+        var draft = ServingProfileCopyDraft(original: baseline)
+        draft.options.speculation.toggle()
+        let candidate = try XCTUnwrap(profiles.createCopy(draft))
+        let before = try Data(contentsOf: profileStore.url)
+        let setup = try profiles.prepareComparison(baseline: baseline, candidate: candidate)
+        let lanes = setup.lanes(signature: nil)
+        let coordinator = ComparisonCoordinator(probe: factory(StrataComparisonOptions()),
+            runStore: JSONStore(fileURL: directory.appendingPathComponent("runs.json")),
+            promptSetStore: JSONStore(fileURL: directory.appendingPathComponent("prompts.json")), strataProbe: factory)
+        let prompts = PromptSet(id: "profile-comparison-acceptance", name: "Profile comparison", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Calculate 17 times 19. In your final answer, return only JSON with one key named answer and its numeric value.", maxTokens: 1024)], origin: .userCreated)
+        let finished = expectation(description: "saved profile configurations measured")
+        coordinator.onBenchmarks = { values in XCTAssertTrue(values.isEmpty); finished.fulfill() }
+        coordinator.start(lanes: lanes, promptSet: prompts)
+        await fulfillment(of: [finished], timeout: 1800)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        XCTAssertEqual(run.state, .completed)
+        XCTAssertEqual(run.laneConfigurations, lanes)
+        XCTAssertEqual(ComparePresentation.lanes(for: run).map(\.profileName), [baseline.name, candidate.name])
+        XCTAssertEqual(run.results.count, 2)
+        for (lane, result) in zip(lanes, run.results) {
+            XCTAssertNil(result.error)
+            XCTAssertEqual(result.id, lane.id)
+            XCTAssertEqual(result.servingEvidence?.speculation, lane.strataOptions?.speculation)
+            XCTAssertEqual(result.servingEvidence?.expertMemoryGB, lane.strataOptions?.expertMemoryGB)
+            XCTAssertEqual(result.servingEvidence?.contextTokens, lane.strataOptions?.contextTokens)
+            XCTAssertEqual(result.servingEvidence?.modelFingerprint, baseline.verification?.modelFingerprint)
+            XCTAssertEqual(result.servingEvidence?.runtimeFingerprint, baseline.verification?.runtimeFingerprint)
+            XCTAssertTrue(try XCTUnwrap(result.systemMemory).isValid)
+            XCTAssertNotNil(result.memoryTradeoffAnswerSeconds)
+            let sample = try XCTUnwrap(result.samples.first)
+            XCTAssertTrue(sample.hasCompletedAnswer)
+            let answer = try JSONSerialization.jsonObject(with: Data((sample.fullOutput ?? sample.outputExcerpt).utf8)) as? [String: Int]
+            XCTAssertEqual(answer?["answer"], 323)
+        }
+        XCTAssertEqual(try Data(contentsOf: profileStore.url), before)
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+        XCTAssertNil(candidate.verification)
+        let servers = try await api.serveStatus()
+        XCTAssertTrue(servers.isEmpty)
+    }
+
     func testSettingsSearchPreparesOnlyFourDistinctLanesAtOneContext() throws {
         let setup = StrataSettingsSearchSetup()
         let lanes = try setup.lanes(modelPath: "/Models/strata", signature: "model")

@@ -247,6 +247,7 @@ struct CompareLane: Equatable, Identifiable {
     let fraction: Double?
     let isLeader: Bool
     var resultID: String? = nil
+    var profileName: String? = nil
     var resultKey: String { resultID ?? path }
 
     var letter: String { ComparePresentation.letter(index) }
@@ -290,7 +291,8 @@ extension ComparePresentation {
                 fraction = run.effectiveMode.primaryMetric.higherIsBetter ? value / best : best / value
             }
             return CompareLane(index: index, path: path, state: state, value: value, fraction: fraction,
-                isLeader: ranked && leaders.contains(key), resultID: key)
+                isLeader: ranked && leaders.contains(key), resultID: key,
+                profileName: run.hasValidLaneIdentities ? run.laneConfigurations?.first(where: { $0.id == key })?.servingProfileName : nil)
         }
     }
 
@@ -445,6 +447,7 @@ struct QuantView: View {
     @State private var reuseError: String?
     @State private var slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
     @State private var strataSettings: [String: StrataComparisonOptions] = [:]
+    @State private var laneSources: [String: ComparisonLaneConfiguration] = [:]
     @State private var settingsSearchGoal: StrataSettingsSearchGoal?
     @State private var showingSettingsSearch = false
     @State private var variantSlots: [String?] = [nil, nil]
@@ -564,6 +567,7 @@ struct QuantView: View {
                     variantSlots = lanes.map { Optional($0.modelPath) }
                     slotIDs = lanes.map(\.id)
                     strataSettings = Dictionary(uniqueKeysWithValues: lanes.map { ($0.id, $0.strataOptions!) })
+                    laneSources = [:]
                     settingsSearchGoal = setup.goal
                     initializedSuggestions = true; manuallySelectedModels = true
                     selectionReason = "Four Strata configurations at one fixed context."
@@ -580,6 +584,8 @@ struct QuantView: View {
             }
         }
         .task(id: isRouteActive) { consumeImportRequest() }
+        .task(id: isRouteActive) { consumeProfileComparisonRequest() }
+        .onChange(of: appHost.servingProfileComparisonRequest?.id) { _, _ in consumeProfileComparisonRequest() }
         .sheet(item: $pendingReuseSetup) { setup in
             MusicComparisonSetupSheet(setup: setup,
                 availablePaths: Set(readyModels.map { $0.item.path }), name: shortName,
@@ -662,7 +668,7 @@ struct QuantView: View {
         .onChange(of: readyModels.map { $0.item.path }) { _, _ in
             guard comparison.activeRunID == nil else { return }
             if let familyFilter, !readyModels.contains(where: { ComparePresentation.familyLabel($0) == familyFilter }) { self.familyFilter = nil }
-            if reusedPromptSet == nil {
+            if reusedPromptSet == nil && laneSources.isEmpty {
                 let reconciled = ComparisonInsights.reconcile(slots: variantSlots, available: Set(readyModels.map { $0.item.path }))
                 if reconciled != variantSlots { variantSlots = reconciled; selectionReason = "Unavailable models were cleared; your remaining selections were kept." }
             }
@@ -674,6 +680,32 @@ struct QuantView: View {
         guard isRouteActive, appHost.workflowReportImportRequested else { return }
         appHost.workflowReportImportRequested = false
         importReport()
+    }
+
+    private func consumeProfileComparisonRequest() {
+        guard isRouteActive, let request = appHost.servingProfileComparisonRequest else { return }
+        guard comparison.activeRunID == nil, !comparison.savingPromptSet, servingProfiles.activeID == nil else {
+            reuseError = "Wait for the comparison, prompt-set save or profile verification to finish."
+            return
+        }
+        do {
+            _ = try servingProfiles.prepareComparison(baseline: request.baseline, candidate: request.candidate)
+            guard let model = ComparisonViewLogic.candidates(from: appHost.librarySnapshot?.models ?? [], mode: .chat)
+                .first(where: { $0.item.path == request.baseline.modelPath && $0.item.servingRuntime == "strata" }) else {
+                throw WorkflowEvidenceError.invalid("The profiles' local Strata model is unavailable in Library.")
+            }
+            let lanes = request.lanes(signature: model.item.signature)
+            mode = .chat; settingsSearchGoal = nil; reusedPromptSet = nil
+            variantSlots = lanes.map { Optional($0.modelPath) }; slotIDs = lanes.map(\.id)
+            while slotIDs.count < ComparePresentation.maxSlots { slotIDs.append(UUID().uuidString) }
+            strataSettings = Dictionary(uniqueKeysWithValues: lanes.map { ($0.id, $0.strataOptions!) })
+            laneSources = Dictionary(uniqueKeysWithValues: lanes.map { ($0.id, $0) })
+            familyFilter = nil; sizeFilter = .all; modelSearch = ""
+            initializedSuggestions = true; manuallySelectedModels = true
+            selectionReason = "Recorded profile settings: A · \(request.baseline.name); B · \(request.candidate.name). Choose one prompt set, then Run comparison."
+            selectedRunID = nil; reuseError = nil
+            appHost.servingProfileComparisonRequest = nil
+        } catch { reuseError = AppHost.render(error); appHost.servingProfileComparisonRequest = nil }
     }
 
     private func importReport() {
@@ -783,8 +815,12 @@ struct QuantView: View {
     private var selectedChatLanes: [ComparisonLaneConfiguration] {
         variantSlots.indices.compactMap { index in
             guard let path = variantSlots[index], let model = readyModels.first(where: { $0.item.path == path }) else { return nil }
-            return ComparisonLaneConfiguration(id: slotIDs[index], modelPath: path, modelSignature: model.item.signature,
+            var lane = ComparisonLaneConfiguration(id: slotIDs[index], modelPath: path, modelSignature: model.item.signature,
                 strataOptions: repeatedStrataPaths.contains(path) ? strataSettings[slotIDs[index]] ?? StrataComparisonOptions() : nil)
+            if let source = laneSources[lane.id], source.modelPath == lane.modelPath, source.strataOptions == lane.strataOptions {
+                lane.servingProfileID = source.servingProfileID; lane.servingProfileName = source.servingProfileName
+            }
+            return lane
         }
     }
 
@@ -867,6 +903,10 @@ struct QuantView: View {
             }
             if comparison.activeRunID == nil {
                 ComparisonRunGuidance(reason: runUnavailableReason)
+            }
+            if appHost.servingProfileComparisonRequest != nil {
+                Button("Use requested profiles") { consumeProfileComparisonRequest() }
+                    .disabled(comparison.activeRunID != nil || comparison.savingPromptSet || servingProfiles.activeID != nil)
             }
             ErrorBanner(text: reuseError)
             ErrorBanner(text: comparison.lastError)
@@ -1008,6 +1048,9 @@ struct QuantView: View {
                     .font(WorkbenchTypography.metadata)
                     .foregroundStyle(WorkbenchColor.muted)
                 if mode == .chat {
+                    if let lane = selectedChatLanes.first(where: { $0.id == slotIDs[index] }), let name = lane.servingProfileName {
+                        Text("Recorded profile: \(name)").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    }
                     DisclosureGroup("Strata settings") {
                         StrataComparisonControls(options: Binding(
                             get: { strataSettings[slotIDs[index]] ?? StrataComparisonOptions() },
@@ -1336,6 +1379,7 @@ struct QuantView: View {
             environment: appHost.watch.currentFingerprintDescription, promptSetID: selectedPromptSet?.id,
             promptEntries: selectedPromptSet?.prompts)
         strataSettings = [:]
+        laneSources = [:]
         variantSlots = suggestion.paths
         selectionReason = suggestion.reason
         initializedSuggestions = true
@@ -1354,6 +1398,7 @@ struct QuantView: View {
         let selection = WorkflowCharts.comparisonSelection(task, models: models, mode: mode, activeRunID: comparison.activeRunID)
         if let slots = selection.slots {
             strataSettings = [:]
+            laneSources = [:]
             variantSlots = slots
             initializedSuggestions = true
             manuallySelectedModels = true
@@ -1413,6 +1458,7 @@ struct QuantView: View {
     private func applyReusedSetup(_ setup: MusicComparisonSetup, _ promptSet: PromptSet) {
         guard comparison.activeRunID == nil else { return }
         strataSettings = [:]
+        laneSources = [:]
         useRecordedSetup(mode: .musicGeneration, paths: setup.modelPaths, name: setup.sourceName, promptSet: promptSet)
         pendingReuseSetup = nil
     }
@@ -1420,10 +1466,12 @@ struct QuantView: View {
     private func applyReusedSetup(_ setup: ComparisonRunSetup, _ promptSet: PromptSet) -> String? {
         guard comparison.activeRunID == nil else { return "Wait for the current comparison to finish." }
         strataSettings = [:]
+        laneSources = [:]
         for (index, path) in setup.modelPaths.enumerated() {
             if let options = setup.laneConfigurations?[index].strataOptions ?? setup.strataOptions?[path] {
                 strataSettings[slotIDs[index]] = options
             }
+            if let lane = setup.laneConfigurations?[index] { laneSources[slotIDs[index]] = lane }
         }
         useRecordedSetup(mode: setup.draft.mode, paths: setup.modelPaths, name: setup.sourceName, promptSet: promptSet)
         pendingGeneralReuseSetup = nil

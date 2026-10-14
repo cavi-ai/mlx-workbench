@@ -467,12 +467,15 @@ struct MediaRunResultsView<LaneActions: View>: View {
                     }
                 }
                 .workbenchAnimation(value: lane.isLeader)
-                Text(name(lane.path))
+                Text(lane.profileName ?? name(lane.path))
                     .font(WorkbenchTypography.emphasis)
                     .lineLimit(2, reservesSpace: true)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
                     .help(lane.path)
+                if lane.profileName != nil {
+                    Text(name(lane.path)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
                 if mode == .chat, let result {
                     ForEach(ComparisonViewLogic.servingDetails(result), id: \.self) { line in
                         Text(line)
@@ -492,13 +495,13 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(([ComparePresentation.laneAccessibilityLabel(lane, name: name(lane.path), metric: metric)]
+            .accessibilityLabel(([ComparePresentation.laneAccessibilityLabel(lane, name: lane.profileName.map { "\($0), \(name(lane.path))" } ?? name(lane.path), metric: metric)]
                 + (mode == .chat ? result.map(ComparisonViewLogic.servingDetails) ?? [] : [])).joined(separator: ", "))
             laneActions(lane)
             if mode == .musicGeneration && run.state == .completed {
                 listeningReview(lane.path)
             } else if mode != .musicGeneration {
-                TaskQualityRating(run: run, modelPath: lane.resultKey, modelName: name(lane.path), store: store, onReview: onReview)
+                TaskQualityRating(run: run, modelPath: lane.resultKey, modelName: lane.profileName ?? name(lane.path), store: store, onReview: onReview)
             }
         }
     }

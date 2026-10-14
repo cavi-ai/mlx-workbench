@@ -93,11 +93,13 @@ struct ServingProfileControls: View {
     @ObservedObject var workflow: ModelWorkflowCoordinator
     @ObservedObject var endpoint: EndpointSupervisor
     let modelPath: String?
+    var onCompare: ((ServingProfileComparisonSetup) -> String?)? = nil
     @State private var port = String(EndpointConfig.defaultPort)
     @State private var jit = true
     @State private var renameRequest: ServingProfile?
     @State private var removalRequest: ServingProfile?
     @State private var copyRequest: ServingProfile?
+    @State private var comparisonRequest: ServingProfile?
     @State private var evidenceRequest: ServingProfileComparisonEvidence?
     @State private var evidenceError: String?
 
@@ -135,6 +137,8 @@ struct ServingProfileControls: View {
                             }
                         }
                         Menu("Manage profile") {
+                            Button("Compare profiles…") { comparisonRequest = profiles.profileForManagement(profile.id) }
+                                .disabled(onCompare == nil || choices.filter(\.isValid).count < 2)
                             Button("Customize copy…") { copyRequest = profiles.profileForManagement(profile.id) }
                             Button("Rename…") { renameRequest = profiles.profileForManagement(profile.id) }
                             Button("Remove…", role: .destructive) { removalRequest = profiles.profileForManagement(profile.id) }
@@ -167,6 +171,12 @@ struct ServingProfileControls: View {
                 .sheet(item: $copyRequest) { profile in
                     ServingProfileCopySheet(profiles: profiles, profile: profile) { copy in workflow.selectServingProfile(copy) }
                 }
+                .sheet(item: $comparisonRequest) { profile in
+                    ServingProfileComparisonSetupSheet(profiles: profiles, baseline: profile) { setup in
+                        guard let onCompare else { return "Comparison setup is unavailable." }
+                        return onCompare(setup)
+                    }
+                }
                 .sheet(item: $renameRequest) { profile in
                     ServingProfileRenameSheet(profiles: profiles, profile: profile) { renamed in
                         if workflow.servingProfile?.id == renamed.id { workflow.selectServingProfile(renamed) }
@@ -178,6 +188,58 @@ struct ServingProfileControls: View {
                     }
                 }
         }
+    }
+}
+
+struct ServingProfileComparisonSetupSheet: View {
+    @ObservedObject var profiles: ServingProfileCoordinator
+    let baseline: ServingProfile
+    let onUse: (ServingProfileComparisonSetup) -> String?
+    @Environment(\.dismiss) private var dismiss
+    @State private var candidateID: UUID?
+    @State private var error: String?
+
+    private var choices: [ServingProfile] { profiles.profiles.filter { $0.id != baseline.id && $0.modelPath == baseline.modelPath && $0.isValid } }
+    private var candidate: ServingProfile? { choices.first { $0.id == candidateID } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Compare serving profiles").font(WorkbenchTypography.cardTitle)
+            Text("Prepare two configurations of this local model in Compare. Choose one shared prompt set there, then explicitly run the comparison. Measurements do not change either profile's verification or your endpoint.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            Text("A · \(baseline.name)").font(WorkbenchTypography.label)
+            settings(baseline)
+            Picker("B · Comparison profile", selection: $candidateID) {
+                Text("Choose a profile").tag(Optional<UUID>.none)
+                ForEach(choices) { profile in Text(profile.name).tag(Optional(profile.id)) }
+            }
+            if let candidate { settings(candidate) }
+            if candidate?.options == baseline.options {
+                Text("Choose a profile with different settings.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            ErrorBanner(text: error)
+            HStack {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Use setup", action: useSetup).keyboardShortcut(.defaultAction)
+                    .disabled(candidate == nil || candidate?.options == baseline.options || profiles.activeID != nil)
+            }
+        }.padding(WorkbenchSpacing.lg).frame(width: 520)
+            .onChange(of: candidateID) { _, _ in error = nil }
+    }
+
+    private func settings(_ profile: ServingProfile) -> some View {
+        Text("Draft-and-verify \(profile.options.speculation ? "on" : "off") · expert memory \(profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(profile.options.contextTokens) context tokens")
+            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func useSetup() {
+        guard let candidate else { return }
+        do {
+            let setup = try profiles.prepareComparison(baseline: baseline, candidate: candidate)
+            error = onUse(setup)
+            if error == nil { dismiss() }
+        } catch { self.error = AppHost.render(error) }
     }
 }
 

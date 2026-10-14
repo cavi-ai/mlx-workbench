@@ -1,5 +1,26 @@
 import Foundation
 
+struct ServingProfileComparisonSetup: Identifiable, Equatable {
+    let id = UUID()
+    let baseline: ServingProfile
+    let candidate: ServingProfile
+
+    init(baseline: ServingProfile, candidate: ServingProfile) throws {
+        guard baseline.isValid, candidate.isValid, baseline.id != candidate.id,
+              baseline.modelPath == candidate.modelPath, baseline.options != candidate.options else {
+            throw WorkflowEvidenceError.invalid("Choose two different profile configurations for the same local model.")
+        }
+        self.baseline = baseline; self.candidate = candidate
+    }
+
+    func lanes(signature: String?) -> [ComparisonLaneConfiguration] {
+        [baseline, candidate].map { profile in
+            ComparisonLaneConfiguration(id: UUID().uuidString, modelPath: profile.modelPath, modelSignature: signature,
+                strataOptions: profile.options, servingProfileID: profile.id, servingProfileName: profile.name)
+        }
+    }
+}
+
 struct ServingProfileCopyDraft {
     let original: ServingProfile
     var name: String
@@ -231,6 +252,15 @@ final class ServingProfileCoordinator: ObservableObject {
             profiles = try store.load(); lastError = nil
             return copy
         } catch { lastError = AppHost.render(error); return nil }
+    }
+
+    func prepareComparison(baseline: ServingProfile, candidate: ServingProfile) throws -> ServingProfileComparisonSetup {
+        guard activeID == nil else { throw WorkflowEvidenceError.invalid("Wait for profile verification to finish.") }
+        let current = try store.load()
+        guard current.filter({ $0.id == baseline.id }) == [baseline], current.filter({ $0.id == candidate.id }) == [candidate] else {
+            throw WorkflowEvidenceError.invalid("A profile changed or is no longer available. Reopen Compare profiles.")
+        }
+        return try ServingProfileComparisonSetup(baseline: baseline, candidate: candidate)
     }
 
     func createSuggestedProfile(run: ComparisonRun, name: String) -> ServingProfile? {

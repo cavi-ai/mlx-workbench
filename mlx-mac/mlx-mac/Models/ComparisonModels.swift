@@ -865,6 +865,8 @@ struct ComparisonLaneConfiguration: Codable, Equatable, Identifiable, Sendable {
     let modelPath: String
     let modelSignature: String?
     var strataOptions: StrataComparisonOptions? = nil
+    var servingProfileID: UUID? = nil
+    var servingProfileName: String? = nil
 
     var isValid: Bool {
         !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -872,6 +874,8 @@ struct ComparisonLaneConfiguration: Codable, Equatable, Identifiable, Sendable {
             && !id.unicodeScalars.contains { $0.value < 32 }
             && !modelPath.unicodeScalars.contains { $0.value < 32 }
             && strataOptions?.validationError == nil
+            && ((servingProfileID == nil && servingProfileName == nil)
+                || (servingProfileID != nil && strataOptions != nil && servingProfileName.map { ServingProfile.nameValidationError($0) == nil } == true))
     }
 }
 
