@@ -66,6 +66,13 @@ struct ServingProfileComparisonEvidence: Identifiable {
     }
 }
 
+struct ServingProfileChoice: Identifiable {
+    let profile: ServingProfile
+    let evidence: ServingProfileComparisonEvidence?
+    let evidenceUnavailableReason: String?
+    var id: UUID { profile.id }
+}
+
 struct ServingProfileVerification: Codable, Equatable, Sendable {
     let options: StrataComparisonOptions
     let modelFingerprint: String
@@ -234,6 +241,51 @@ final class ServingProfileCoordinator: ObservableObject {
             throw WorkflowEvidenceError.invalid("The source comparison is unavailable. The profile and its canary verdict are unchanged.")
         }
         return try ServingProfileComparisonEvidence(profile: current, run: run)
+    }
+
+    /// Read saved snapshots only on an explicit chooser action; never measure or persist here.
+    func profileChoices(modelPath: String) throws -> [ServingProfileChoice] {
+        let saved = try store.load()
+        guard Set(saved.map(\.id)).count == saved.count else {
+            throw WorkflowEvidenceError.invalid("Saved profiles contain repeated identities. Profile selection is unavailable.")
+        }
+        let choices = saved.filter { $0.modelPath == modelPath }.map { profile in
+            do {
+                guard let id = profile.sourceRunID, profile.sourceLaneID != nil else {
+                    throw WorkflowEvidenceError.invalid("No source comparison recorded.")
+                }
+                guard let comparisonSource, let run = try comparisonSource(id) else {
+                    throw WorkflowEvidenceError.invalid("The recorded source comparison is unavailable.")
+                }
+                return ServingProfileChoice(profile: profile,
+                    evidence: try ServingProfileComparisonEvidence(profile: profile, run: run), evidenceUnavailableReason: nil)
+            } catch {
+                let reason: String
+                if case WorkflowEvidenceError.invalid(let message) = error { reason = message }
+                else { reason = "The saved comparison could not be read. Open Compare to inspect it." }
+                return ServingProfileChoice(profile: profile, evidence: nil, evidenceUnavailableReason: reason)
+            }
+        }
+        profiles = saved
+        return choices
+    }
+
+    func selectChoice(_ choice: ServingProfileChoice, modelPath: String) throws -> ServingProfile {
+        guard activeID == nil else { throw WorkflowEvidenceError.invalid("Wait for profile verification to finish.") }
+        let saved = try store.load()
+        let matches = saved.filter { $0.id == choice.id }
+        guard Set(saved.map(\.id)).count == saved.count, matches.count == 1, let current = matches.first, current == choice.profile,
+              current.isValid, current.modelPath == modelPath else {
+            throw WorkflowEvidenceError.invalid("The profile changed or is no longer available. Refresh profiles before selecting.")
+        }
+        if let displayed = choice.evidence {
+            let currentEvidence = try comparisonEvidence(for: current)
+            guard currentEvidence.run == displayed.run else {
+                throw WorkflowEvidenceError.invalid("The comparison evidence changed. Refresh profiles before selecting.")
+            }
+        }
+        profiles = saved
+        return current
     }
 
     @discardableResult
