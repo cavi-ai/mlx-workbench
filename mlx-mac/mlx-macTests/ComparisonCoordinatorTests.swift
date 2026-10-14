@@ -127,6 +127,8 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertEqual(run.results.count, 2)
         for (lane, result) in zip(lanes, run.results) {
             XCTAssertNil(result.error)
+            XCTAssertTrue(try XCTUnwrap(result.systemMemory).isValid)
+            XCTAssertGreaterThan(try XCTUnwrap(result.systemMemory).sampleCount, 2)
             XCTAssertEqual(result.modelPath, manifest.modelPath)
             XCTAssertEqual(result.servingEvidence?.speculation, lane.strataOptions?.speculation)
             XCTAssertEqual(result.servingEvidence?.expertMemoryGB, manifest.expertMemoryGB)

@@ -45,6 +45,7 @@ final class ComparisonCoordinator: ObservableObject {
     var environmentFingerprint: () -> String? = { nil }
     /// Per-prompt max_tokens cap from Settings (wired by AppHost).
     var maxTokensCap: () -> Int = { Int.max }
+    var memoryProbe: @Sendable () -> MemorySnapshot? = MemorySnapshot.probe
 
     init(
         probe: ServeProbe,
@@ -664,7 +665,8 @@ final class ComparisonCoordinator: ObservableObject {
             let result: VariantResult
             do {
                 let options = laneConfigurations?[variantIndex].strataOptions ?? strataOptions[variant.path]
-                let selectedProbe = options.flatMap { self.strataProbe?($0) } ?? probe
+                var selectedProbe = options.flatMap { self.strataProbe?($0) } ?? probe
+                selectedProbe.memoryProbe = memoryProbe
                 let outcome = try await selectedProbe.run(modelPath: variant.path, prompts: prompts,
                     warmup: [ProbePrompt(id: "__warmup", prompt: "Say OK.", maxTokens: 4)])
                 let samples = promptSet.prompts.compactMap { entry in
@@ -682,7 +684,8 @@ final class ComparisonCoordinator: ObservableObject {
                     environmentFingerprint: environmentFingerprint(),
                     servingEvidence: outcome.servingEvidence,
                     startupSeconds: outcome.startupSeconds,
-                    laneID: laneConfigurations?[variantIndex].id
+                    laneID: laneConfigurations?[variantIndex].id,
+                    systemMemory: outcome.systemMemory
                 )
             } catch {
                 if case ServeProbeError.stopFailed = error { cleanupFailed = true }

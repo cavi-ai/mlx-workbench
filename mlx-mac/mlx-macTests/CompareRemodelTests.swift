@@ -55,7 +55,7 @@ final class CompareRemodelTests: XCTestCase {
             aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence)
         let legacy = result("/models/mlx")
         let answer = ComparisonSample(promptID: "p", outputExcerpt: "4", tokensPerSecond: nil,
-            timeToFirstTokenSeconds: nil, error: nil, fullOutput: "4", reasoningText: "Add two and two.", finishReason: "stop")
+            timeToFirstTokenSeconds: nil, error: nil, fullOutput: "4", reasoningText: "Add two and two.", finishReason: "stop", timeToFirstAnswerSeconds: 0.5)
         let truncated = ComparisonSample(promptID: "p", outputExcerpt: "", tokensPerSecond: nil,
             timeToFirstTokenSeconds: nil, error: nil, fullOutput: "", reasoningText: "Still thinking.", finishReason: "length")
         let lanes = [ComparisonLaneConfiguration(id: "a", modelPath: strata.modelPath, modelSignature: nil,
@@ -67,7 +67,10 @@ final class CompareRemodelTests: XCTestCase {
             "strata_speculation": true, "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
         var measured = run(.chat, variants: [strata.modelPath, strata.modelPath], results: [
             VariantResult(modelPath: strata.modelPath, modelSignature: nil, samples: [answer],
-                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence, laneID: "a"),
+                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence, laneID: "a",
+                systemMemory: SystemMemoryEvidence(totalBytes: 128_000_000_000, baselineAvailableBytes: 50_000_000_000,
+                    minimumAvailableBytes: 28_000_000_000, endingAvailableBytes: 30_000_000_000, sampleCount: 50,
+                    missedSamples: 0, startedAt: Date(), endedAt: Date(), samplingIntervalSeconds: 0.5)),
             VariantResult(modelPath: strata.modelPath, modelSignature: nil, samples: [truncated],
                 aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: otherEvidence, laneID: "b")])
         measured.laneConfigurations = lanes
@@ -84,10 +87,10 @@ final class CompareRemodelTests: XCTestCase {
             MediaRunResultsView(run: measured, store: ComparisonOutputStore(), contentWidth: 900,
             isRouteActive: false, name: { URL(fileURLWithPath: $0).lastPathComponent }, onReview: { _, _ in }) { _ in EmptyView() }
         }
-            .padding(20).frame(width: 940, height: 850, alignment: .topLeading)
+            .padding(20).frame(width: 940, height: 1500, alignment: .topLeading)
             .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
         let host = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 850),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 1500),
             styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
         defer { window.close() }

@@ -32,6 +32,26 @@ enum FitVerdict: Equatable, Sendable {
     }
 }
 
+/// System-wide sampled headroom, not engine allocation or model-only memory use.
+struct SystemMemoryEvidence: Codable, Equatable, Sendable {
+    let totalBytes: Int64
+    let baselineAvailableBytes: Int64
+    let minimumAvailableBytes: Int64
+    let endingAvailableBytes: Int64
+    let sampleCount: Int
+    let missedSamples: Int
+    let startedAt: Date
+    let endedAt: Date
+    let samplingIntervalSeconds: Double
+
+    var isValid: Bool {
+        totalBytes > 0 && sampleCount >= 2 && missedSamples >= 0 && endedAt >= startedAt
+            && samplingIntervalSeconds.isFinite && samplingIntervalSeconds > 0
+            && [baselineAvailableBytes, minimumAvailableBytes, endingAvailableBytes].allSatisfy { (0...totalBytes).contains($0) }
+            && minimumAvailableBytes <= min(baselineAvailableBytes, endingAvailableBytes)
+    }
+}
+
 /// Live unified-memory snapshot via Mach probes.
 struct MemorySnapshot: Equatable, Sendable {
     let totalBytes: Int64

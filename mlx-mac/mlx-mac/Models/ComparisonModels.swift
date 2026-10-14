@@ -970,6 +970,7 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
     /// Nil for historical runs that did not record the confirmed serving preview.
     let servingEvidence: ProbeServingEvidence?
     let startupSeconds: Double?
+    let systemMemory: SystemMemoryEvidence?
 
     var id: String { laneID ?? modelPath }
 
@@ -1003,7 +1004,8 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
         aggregateMetric: Double? = nil,
         servingEvidence: ProbeServingEvidence? = nil,
         startupSeconds: Double? = nil,
-        laneID: String? = nil
+        laneID: String? = nil,
+        systemMemory: SystemMemoryEvidence? = nil
     ) {
         self.modelPath = modelPath
         self.modelSignature = modelSignature
@@ -1016,6 +1018,16 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
         self.servingEvidence = servingEvidence
         self.startupSeconds = startupSeconds
         self.laneID = laneID
+        self.systemMemory = systemMemory
+    }
+
+    /// Require a finished answer and actual answer timing for every prompt.
+    var memoryTradeoffAnswerSeconds: Double? {
+        guard error == nil, !samples.isEmpty, samples.allSatisfy(\.hasCompletedAnswer) else { return nil }
+        let values = samples.compactMap(\.timeToFirstAnswerSeconds).filter { $0.isFinite && $0 > 0 }.sorted()
+        guard values.count == samples.count else { return nil }
+        let middle = values.count / 2
+        return values.count.isMultiple(of: 2) ? (values[middle - 1] + values[middle]) / 2 : values[middle]
     }
 }
 
