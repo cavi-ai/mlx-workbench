@@ -185,6 +185,9 @@ struct TextComparisonContent: View {
                         Text(status).font(WorkbenchTypography.metadata)
                             .foregroundStyle(sample.hasCompletedAnswer ? WorkbenchColor.muted : WorkbenchColor.warning)
                     }
+                    if run.effectiveMode == .chat, result.servingEvidence?.runtime == "strata" || sample.draftTokens != nil {
+                        ComparisonDraftTokenEvidenceView(evidence: sample.draftTokens)
+                    }
                     if let reasoning = sample.reasoningText, !reasoning.isEmpty {
                         DisclosureGroup("Reasoning") {
                             ScrollView {

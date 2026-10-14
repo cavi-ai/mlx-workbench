@@ -55,6 +55,14 @@ final class ComparisonCoordinatorTests: XCTestCase {
             XCTAssertTrue(try XCTUnwrap(result.systemMemory).isValid)
             XCTAssertNotNil(result.memoryTradeoffAnswerSeconds)
             let sample = try XCTUnwrap(result.samples.first)
+            if ProcessInfo.processInfo.environment["MLX_WORKBENCH_STRATA_DRAFT_EVIDENCE"] == "1" {
+                let drafts = try XCTUnwrap(sample.draftTokens)
+                XCTAssertTrue(drafts.isValid)
+                if lane.strataOptions?.speculation == true { XCTAssertGreaterThan(drafts.offered, 0) }
+                else { XCTAssertEqual(drafts.offered, 0); XCTAssertNil(drafts.acceptanceFraction) }
+                let saved = try XCTUnwrap(try JSONStore<ComparisonRun>(fileURL: directory.appendingPathComponent("runs.json")).load().first)
+                XCTAssertEqual(saved.results.first { $0.id == result.id }?.samples.first?.draftTokens, drafts)
+            }
             XCTAssertTrue(sample.hasCompletedAnswer)
             let answer = try JSONSerialization.jsonObject(with: Data((sample.fullOutput ?? sample.outputExcerpt).utf8)) as? [String: Int]
             XCTAssertEqual(answer?["answer"], 323)
