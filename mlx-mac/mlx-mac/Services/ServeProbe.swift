@@ -27,6 +27,9 @@ struct ProbeSample: Equatable, Sendable {
     /// Of the emitted calls, how many carried arguments that parse as JSON
     /// and contain the offered tool's required keys.
     let toolCallsValid: Int?
+    let reasoningText: String?
+    let finishReason: String?
+    let timeToFirstAnswerSeconds: Double?
 
     init(
         text: String,
@@ -37,7 +40,10 @@ struct ProbeSample: Equatable, Sendable {
         metricsEstimated: Bool,
         toolCalls: Int? = nil,
         toolNames: [String]? = nil,
-        toolCallsValid: Int? = nil
+        toolCallsValid: Int? = nil,
+        reasoningText: String? = nil,
+        finishReason: String? = nil,
+        timeToFirstAnswerSeconds: Double? = nil
     ) {
         self.text = text
         self.completionTokens = completionTokens
@@ -48,6 +54,9 @@ struct ProbeSample: Equatable, Sendable {
         self.toolCalls = toolCalls
         self.toolNames = toolNames
         self.toolCallsValid = toolCallsValid
+        self.reasoningText = reasoningText
+        self.finishReason = finishReason
+        self.timeToFirstAnswerSeconds = timeToFirstAnswerSeconds
     }
 
     /// Prompt-processing speed estimated as prompt tokens over TTFT. TTFT
@@ -467,6 +476,9 @@ struct OpenAIEndpointProber: EndpointProbing {
         guard (200..<300).contains(http.statusCode) else { throw ProbeHTTPError.httpStatus(http.statusCode) }
 
         var text = ""
+        var reasoning = ""
+        var finishReason: String?
+        var firstAnswerAt: Date?
         var completionTokens: Int?
         var promptTokens: Int?
         var firstTokenAt: Date?
@@ -489,16 +501,17 @@ struct OpenAIEndpointProber: EndpointProbing {
                     promptTokens = count
                 }
             }
-            if let choices = chunk["choices"] as? [[String: Any]],
-               let delta = choices.first?["delta"] as? [String: Any] {
-                // Thinking models (Qwen3 et al.) put output in `reasoning`
-                // with empty `content`; both count as the response.
-                let piece = (delta["content"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-                    ?? (delta["reasoning"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-                    ?? (delta["reasoning_content"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-                if let piece {
-                    if firstTokenAt == nil { firstTokenAt = Date() }
-                    text += piece
+            if let choices = chunk["choices"] as? [[String: Any]], let choice = choices.first {
+                if let reason = choice["finish_reason"] as? String { finishReason = reason }
+                guard let delta = choice["delta"] as? [String: Any] else { continue }
+                let thought = (delta["reasoning_content"] ?? delta["reasoning"]) as? String ?? ""
+                let answer = delta["content"] as? String ?? ""
+                if !thought.isEmpty || !answer.isEmpty {
+                    let now = Date()
+                    if firstTokenAt == nil { firstTokenAt = now }
+                    if !answer.isEmpty, firstAnswerAt == nil { firstAnswerAt = now }
+                    reasoning += thought
+                    text += answer
                 }
                 if let calls = delta["tool_calls"] as? [[String: Any]] {
                     for call in calls {
@@ -525,7 +538,8 @@ struct OpenAIEndpointProber: EndpointProbing {
         } else {
             // Rough chars-per-token estimate; flagged on the sample so reports
             // never present estimates as measurements.
-            tokens = text.isEmpty ? nil : max(1, text.count / 4)
+            let characters = text.count + reasoning.count
+            tokens = characters == 0 ? nil : max(1, characters / 4)
             estimated = true
         }
         let toolCallIndices = Set(toolCallNamesByIndex.keys).union(toolCallArgumentsByIndex.keys)
@@ -547,7 +561,10 @@ struct OpenAIEndpointProber: EndpointProbing {
             metricsEstimated: estimated,
             toolCalls: toolCalls,
             toolNames: toolNames,
-            toolCallsValid: toolCallsValid
+            toolCallsValid: toolCallsValid,
+            reasoningText: reasoning,
+            finishReason: finishReason,
+            timeToFirstAnswerSeconds: firstAnswerAt.map { $0.timeIntervalSince(startedAt) }
         )
     }
 }

@@ -58,10 +58,42 @@ final class ServeProbeTests: XCTestCase {
             + "\n" + #"data: {"usage":{"completion_tokens":4,"prompt_tokens":10},"choices":[]}"# + "\ndata: [DONE]\n"
         let sample = try await OpenAIEndpointProber(session: stubSession(body: body)).chat(
             baseURL: URL(string: "http://127.0.0.1:9999")!, model: "strata", prompt: "hello", maxTokens: 8)
-        XCTAssertEqual(sample.text, "Checking the example.")
+        XCTAssertEqual(sample.text, "")
+        XCTAssertEqual(sample.reasoningText, "Checking the example.")
         XCTAssertNotNil(sample.timeToFirstTokenSeconds)
         XCTAssertEqual(sample.completionTokens, 4)
         XCTAssertFalse(sample.metricsEstimated)
+    }
+
+    func testReasoningAndAnswerInOneDeltaRemainSeparateWithFinishAndUsage() async throws {
+        let body = #"data: {"choices":[{"delta":{"reasoning_content":"Compute.","content":"323"}}]}"#
+            + "\n" + #"data: {"choices":[{"delta":{},"finish_reason":"stop"}]}"#
+            + "\n" + #"data: {"usage":{"completion_tokens":7,"prompt_tokens":12},"choices":[]}"# + "\ndata: [DONE]\n"
+        let sample = try await OpenAIEndpointProber(session: stubSession(body: body)).chat(
+            baseURL: URL(string: "http://127.0.0.1:9999")!, model: "strata", prompt: "17 * 19", maxTokens: 128)
+        XCTAssertEqual(sample.text, "323")
+        XCTAssertEqual(sample.reasoningText, "Compute.")
+        XCTAssertEqual(sample.finishReason, "stop")
+        XCTAssertNotNil(sample.timeToFirstAnswerSeconds)
+        let recorded = ComparisonAggregation.sample(from: sample, promptID: "p")
+        XCTAssertEqual(recorded.fullOutput, "323")
+        XCTAssertEqual(recorded.reasoningText, "Compute.")
+        XCTAssertEqual(recorded.completionTokens, 7)
+        XCTAssertEqual(recorded.finishReason, "stop")
+        XCTAssertEqual(recorded.metricsEstimated, false)
+    }
+
+    func testReasoningOnlyLengthFinishIsNotACompletedAnswer() async throws {
+        let body = #"data: {"choices":[{"delta":{"reasoning":"Still calculating."}}]}"#
+            + "\n" + #"data: {"choices":[{"finish_reason":"length","delta":{}}]}"# + "\ndata: [DONE]\n"
+        let sample = try await OpenAIEndpointProber(session: stubSession(body: body)).chat(
+            baseURL: URL(string: "http://127.0.0.1:9999")!, model: "strata", prompt: "compute", maxTokens: 8)
+        let recorded = ComparisonAggregation.sample(from: sample, promptID: "p")
+        XCTAssertEqual(recorded.fullOutput, "")
+        XCTAssertEqual(recorded.finishReason, "length")
+        XCTAssertNil(recorded.timeToFirstAnswerSeconds)
+        XCTAssertFalse(recorded.hasCompletedAnswer)
+        XCTAssertTrue(recorded.metricsEstimated == true)
     }
 
     func testRunServesEveryCanaryThenStops() async throws {

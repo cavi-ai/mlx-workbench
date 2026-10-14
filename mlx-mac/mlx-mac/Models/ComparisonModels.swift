@@ -432,6 +432,7 @@ struct ComparisonRunSetup: Identifiable {
     let sourceName: String
     let modelPaths: [String]
     let strataOptions: [String: StrataComparisonOptions]?
+    let laneConfigurations: [ComparisonLaneConfiguration]?
     private let useCase: UseCase?
     var draft: ComparisonPromptSetDraft
 
@@ -443,12 +444,13 @@ struct ComparisonRunSetup: Identifiable {
         guard !run.variants.isEmpty, run.variants.count <= 4,
               !run.variants.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                   || $0.unicodeScalars.contains(where: { $0.value < 32 }) }),
-              Set(run.variants).count == run.variants.count,
+              run.hasValidLaneIdentities,
               !entries.contains(where: { $0.id.isEmpty }), Set(entries.map(\.id)).count == entries.count else {
             throw ComparisonPromptSetDraft.InvalidDraft(message: "This recorded setup contains invalid model or prompt selections.")
         }
         id = run.id; sourceName = run.promptSetName; modelPaths = run.variants; useCase = run.useCase
         strataOptions = run.strataOptions
+        laneConfigurations = run.laneConfigurations
         draft = ComparisonPromptSetDraft(mode: run.effectiveMode, useCase: run.useCase)
         draft.name = "\(sourceName) · reused"
         draft.prompts = entries.map { entry in
@@ -814,6 +816,22 @@ enum BuiltinPromptSets {
 
 // MARK: Runs and results
 
+/// A lane's serving choice. Its identity is independent of the real model path.
+struct ComparisonLaneConfiguration: Codable, Equatable, Identifiable, Sendable {
+    let id: String
+    let modelPath: String
+    let modelSignature: String?
+    var strataOptions: StrataComparisonOptions? = nil
+
+    var isValid: Bool {
+        !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !id.unicodeScalars.contains { $0.value < 32 }
+            && !modelPath.unicodeScalars.contains { $0.value < 32 }
+            && strataOptions?.validationError == nil
+    }
+}
+
 struct ComparisonSample: Codable, Equatable, Sendable {
     let promptID: String
     let outputExcerpt: String
@@ -849,6 +867,27 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     let secondsPerStep: Double?
     let secondsPerFrame: Double?
     let pixelStd: Double?
+    let reasoningText: String?
+    let finishReason: String?
+    let completionTokens: Int?
+    let metricsEstimated: Bool?
+    let timeToFirstAnswerSeconds: Double?
+    let durationSeconds: Double?
+
+    var hasCompletedAnswer: Bool {
+        error == nil && finishReason == "stop" && !(fullOutput ?? outputExcerpt).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var completionDescription: String? {
+        guard reasoningText != nil || finishReason != nil else { return nil }
+        switch finishReason {
+        case "stop": return hasCompletedAnswer ? "Answer finished" : "Generation stopped · no answer text"
+        case "length": return "Token limit reached · output incomplete"
+        case "tool_calls": return "Tool call emitted"
+        case nil: return "Finish reason not reported"
+        default: return "Generation ended: \(finishReason!)"
+        }
+    }
 
     init(
         promptID: String,
@@ -874,7 +913,13 @@ struct ComparisonSample: Codable, Equatable, Sendable {
         peakMemoryGB: Double? = nil,
         secondsPerStep: Double? = nil,
         secondsPerFrame: Double? = nil,
-        pixelStd: Double? = nil
+        pixelStd: Double? = nil,
+        reasoningText: String? = nil,
+        finishReason: String? = nil,
+        completionTokens: Int? = nil,
+        metricsEstimated: Bool? = nil,
+        timeToFirstAnswerSeconds: Double? = nil,
+        durationSeconds: Double? = nil
     ) {
         self.promptID = promptID
         self.outputExcerpt = outputExcerpt
@@ -900,10 +945,17 @@ struct ComparisonSample: Codable, Equatable, Sendable {
         self.secondsPerStep = secondsPerStep
         self.secondsPerFrame = secondsPerFrame
         self.pixelStd = pixelStd
+        self.reasoningText = reasoningText
+        self.finishReason = finishReason
+        self.completionTokens = completionTokens
+        self.metricsEstimated = metricsEstimated
+        self.timeToFirstAnswerSeconds = timeToFirstAnswerSeconds
+        self.durationSeconds = durationSeconds
     }
 }
 
 struct VariantResult: Codable, Equatable, Identifiable, Sendable {
+    let laneID: String?
     let modelPath: String
     let modelSignature: String?
     let samples: [ComparisonSample]
@@ -919,7 +971,7 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
     let servingEvidence: ProbeServingEvidence?
     let startupSeconds: Double?
 
-    var id: String { modelPath }
+    var id: String { laneID ?? modelPath }
 
     /// Median prompt-processing speed across samples, when any sample
     /// reported prompt tokens.
@@ -950,7 +1002,8 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
         environmentFingerprint: String? = nil,
         aggregateMetric: Double? = nil,
         servingEvidence: ProbeServingEvidence? = nil,
-        startupSeconds: Double? = nil
+        startupSeconds: Double? = nil,
+        laneID: String? = nil
     ) {
         self.modelPath = modelPath
         self.modelSignature = modelSignature
@@ -962,6 +1015,7 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
         self.aggregateMetric = aggregateMetric
         self.servingEvidence = servingEvidence
         self.startupSeconds = startupSeconds
+        self.laneID = laneID
     }
 }
 
@@ -992,9 +1046,22 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     /// Explicit human task-outcome review, independent of speed and canary checks.
     var qualityReviews: [String: ComparisonQualityReview]? = nil
     var strataOptions: [String: StrataComparisonOptions]? = nil
+    var laneConfigurations: [ComparisonLaneConfiguration]? = nil
+
+    var variantIdentities: [String] { hasValidLaneIdentities ? laneConfigurations?.map(\.id) ?? variants : variants }
+
+    var hasValidLaneIdentities: Bool {
+        if let lanes = laneConfigurations {
+            return effectiveMode == .chat && lanes.map(\.modelPath) == variants
+                && lanes.allSatisfy(\.isValid) && Set(lanes.map(\.id)).count == lanes.count
+        }
+        return Set(variants).count == variants.count
+    }
 
     var hasCustomServingConfiguration: Bool {
-        strataOptions?.values.contains(where: { !$0.isDefault }) == true
+        Set(variants).count != variants.count
+            || laneConfigurations?.contains { $0.strataOptions.map { !$0.isDefault } == true } == true
+            || strataOptions?.values.contains(where: { !$0.isDefault }) == true
             || results.contains { $0.servingEvidence?.hasCustomOptions == true }
     }
 
@@ -1100,7 +1167,7 @@ enum ComparisonDiff {
     }
 
     static func pairs(_ left: VariantResult, _ right: VariantResult) -> [Pair] {
-        guard left.modelPath != right.modelPath else { return [] }
+        guard left.id != right.id else { return [] }
         var seen = Set<String>()
         return left.samples.compactMap { sample in
             guard seen.insert(sample.promptID).inserted,
@@ -1204,7 +1271,13 @@ enum ComparisonAggregation {    static func medianTokensPerSecond(_ samples: [Co
             toolCalls: probe.toolCalls,
             toolNames: probe.toolNames,
             toolCallsValid: probe.toolCallsValid,
-            fullOutput: probe.text
+            fullOutput: probe.text,
+            reasoningText: probe.reasoningText,
+            finishReason: probe.finishReason,
+            completionTokens: probe.completionTokens,
+            metricsEstimated: probe.metricsEstimated,
+            timeToFirstAnswerSeconds: probe.timeToFirstAnswerSeconds,
+            durationSeconds: probe.durationSeconds
         )
     }
 

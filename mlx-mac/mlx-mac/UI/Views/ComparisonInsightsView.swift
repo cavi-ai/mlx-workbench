@@ -180,7 +180,7 @@ struct ComparisonInsightsView: View {
                     Text(String(format: "Recorded sample peak %.2f GB at %@; not a current fit guarantee.", peak, (run.finishedAt ?? run.startedAt).formatted()))
                         .font(WorkbenchTypography.secondary)
                 }
-                Picker("Human task outcome", selection: Binding<Int?>(get: { comparison.runs.first { $0.id == run.id }?.qualityReviews?[model.item.path]?.score }, set: { comparison.reviewQuality(runID: run.id, modelPath: model.item.path, score: $0) })) {
+                Picker("Human task outcome", selection: Binding<Int?>(get: { comparison.runs.first { $0.id == run.id }?.qualityReviews?[result.id]?.score }, set: { comparison.reviewQuality(runID: run.id, modelPath: result.id, score: $0) })) {
                     Text("Unreviewed").tag(Int?.none)
                     ForEach(1...5, id: \.self) { Text("\($0) / 5").tag(Optional($0)) }
                 }.frame(width: 300).disabled(comparison.activeRunID != nil)

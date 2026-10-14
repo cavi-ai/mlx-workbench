@@ -364,7 +364,7 @@ final class ComparisonCoordinator: ObservableObject {
 
     func reviewQuality(runID: UUID, modelPath: String, score: Int?) {
         guard activeRunID != runID, let index = runs.firstIndex(where: { $0.id == runID && $0.state == .completed }),
-              runs[index].results.contains(where: { $0.modelPath == modelPath }),
+              runs[index].results.contains(where: { $0.id == modelPath }),
               score == nil || (1...5).contains(score!) else { return }
         var updated = runs[index]
         var reviews = updated.qualityReviews ?? [:]
@@ -414,8 +414,14 @@ final class ComparisonCoordinator: ObservableObject {
     /// another variant's numbers. Chat replays prompts on the serve probe;
     /// every other mode runs each prompt through the media runner and keeps
     /// what the model produced.
+    func start(lanes: [ComparisonLaneConfiguration], promptSet: PromptSet) {
+        start(variants: lanes.map { ($0.modelPath, $0.modelSignature) }, promptSet: promptSet,
+              mode: .chat, laneConfigurations: lanes)
+    }
+
     func start(variants: [(path: String, signature: String?)], promptSet: PromptSet, mode: ComparisonMode? = nil,
-               strataOptions: [String: StrataComparisonOptions] = [:]) {
+               strataOptions: [String: StrataComparisonOptions] = [:],
+               laneConfigurations: [ComparisonLaneConfiguration]? = nil) {
         guard !savingPromptSet else {
             lastError = "Wait for the prompt set save to finish."
             return
@@ -429,6 +435,23 @@ final class ComparisonCoordinator: ObservableObject {
             return
         }
         let mode = mode ?? promptSet.effectiveMode
+        if let lanes = laneConfigurations {
+            guard mode == .chat, lanes.count <= 4, lanes.count == variants.count,
+                  lanes.map(\.modelPath) == variants.map(\.path), lanes.allSatisfy(\.isValid),
+                  Set(lanes.map(\.id)).count == lanes.count, strataOptions.isEmpty,
+                  lanes.allSatisfy({ $0.strataOptions == nil || strataProbe != nil }) else {
+                lastError = "Each chat lane needs a unique identity and valid serving settings."
+                return
+            }
+            let repeatedPaths = Set(lanes.filter { lane in lanes.filter { $0.modelPath == lane.modelPath }.count > 1 }.map(\.modelPath))
+            guard lanes.filter({ repeatedPaths.contains($0.modelPath) }).allSatisfy({ $0.strataOptions != nil }) else {
+                lastError = "Repeated model selections require independent Strata settings."
+                return
+            }
+        } else if Set(variants.map(\.path)).count != variants.count {
+            lastError = "Repeated model selections require independent comparison lanes."
+            return
+        }
         if !strataOptions.isEmpty {
             guard mode == .chat, strataProbe != nil, Set(strataOptions.keys).isSubset(of: Set(variants.map(\.path))),
                   strataOptions.values.allSatisfy({ $0.validationError == nil }) else {
@@ -459,7 +482,8 @@ final class ComparisonCoordinator: ObservableObject {
             state: .running,
             mode: mode == .chat ? nil : mode,
             promptEntries: promptSet.prompts,
-            strataOptions: strataOptions.isEmpty ? nil : strataOptions
+            strataOptions: strataOptions.isEmpty ? nil : strataOptions,
+            laneConfigurations: laneConfigurations
         )
         runs.insert(run, at: 0)
         activeRunID = run.id
@@ -467,7 +491,7 @@ final class ComparisonCoordinator: ObservableObject {
         if mode == .chat {
             Task { [probe, now] in
                 await execute(runID: run.id, variants: variants, promptSet: promptSet, probe: probe, now: now,
-                              strataOptions: strataOptions)
+                              strataOptions: strataOptions, laneConfigurations: laneConfigurations)
             }
         } else if let mediaRunner, let outputStore {
             Task {
@@ -626,19 +650,21 @@ final class ComparisonCoordinator: ObservableObject {
         promptSet: PromptSet,
         probe: ServeProbe,
         now: () -> Date,
-        strataOptions: [String: StrataComparisonOptions]
+        strataOptions: [String: StrataComparisonOptions],
+        laneConfigurations: [ComparisonLaneConfiguration]?
     ) async {
         let prompts = promptSet.prompts.map {
             ProbePrompt(id: $0.id, prompt: $0.text, maxTokens: min($0.maxTokens, maxTokensCap()), tool: $0.tool)
         }
 
-        for variant in variants {
+        for (variantIndex, variant) in variants.enumerated() {
             guard let runIndex = runs.firstIndex(where: { $0.id == runID }) else { return }
             progressMessage = "Measuring \(URL(fileURLWithPath: variant.path).lastPathComponent)…"
             var cleanupFailed = false
             let result: VariantResult
             do {
-                let selectedProbe = strataOptions[variant.path].flatMap { self.strataProbe?($0) } ?? probe
+                let options = laneConfigurations?[variantIndex].strataOptions ?? strataOptions[variant.path]
+                let selectedProbe = options.flatMap { self.strataProbe?($0) } ?? probe
                 let outcome = try await selectedProbe.run(modelPath: variant.path, prompts: prompts,
                     warmup: [ProbePrompt(id: "__warmup", prompt: "Say OK.", maxTokens: 4)])
                 let samples = promptSet.prompts.compactMap { entry in
@@ -655,7 +681,8 @@ final class ComparisonCoordinator: ObservableObject {
                     error: nil,
                     environmentFingerprint: environmentFingerprint(),
                     servingEvidence: outcome.servingEvidence,
-                    startupSeconds: outcome.startupSeconds
+                    startupSeconds: outcome.startupSeconds,
+                    laneID: laneConfigurations?[variantIndex].id
                 )
             } catch {
                 if case ServeProbeError.stopFailed = error { cleanupFailed = true }
@@ -665,7 +692,8 @@ final class ComparisonCoordinator: ObservableObject {
                     samples: [],
                     aggregateTokensPerSecond: nil,
                     aggregateTTFTSeconds: nil,
-                    error: AppHost.render(error)
+                    error: AppHost.render(error),
+                    laneID: laneConfigurations?[variantIndex].id
                 )
             }
             runs[runIndex].results.append(result)

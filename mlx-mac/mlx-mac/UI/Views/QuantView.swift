@@ -143,9 +143,9 @@ enum ComparePresentation {
 
     /// Models a slot's menu offers: everything except what the other slots
     /// already hold. The slot's own choice stays selectable.
-    static func options(forSlot index: Int, slots: [String?], candidates: [LibraryModel]) -> [LibraryModel] {
+    static func options(forSlot index: Int, slots: [String?], candidates: [LibraryModel], repeatedPaths: Set<String> = []) -> [LibraryModel] {
         let taken = Set(slots.enumerated().compactMap { $0.offset == index ? nil : $0.element })
-        return candidates.filter { !taken.contains($0.item.path) }
+        return candidates.filter { !taken.contains($0.item.path) || repeatedPaths.contains($0.item.path) }
     }
 
     /// The model the operator is looking at plus one sibling of the same
@@ -246,6 +246,8 @@ struct CompareLane: Equatable, Identifiable {
     /// Share of the best lane (1 for leaders); set only when at least two lanes are ranked.
     let fraction: Double?
     let isLeader: Bool
+    var resultID: String? = nil
+    var resultKey: String { resultID ?? path }
 
     var letter: String { ComparePresentation.letter(index) }
     var id: String { "\(index)|\(path)" }
@@ -270,9 +272,10 @@ extension ComparePresentation {
         let values = run.results.compactMap { run.metricValue(of: $0) }
         let ranked = values.count >= 2
         let best = run.effectiveMode.primaryMetric.higherIsBetter ? values.max() : values.min()
-        let leaders = Set(run.leaders.map(\.modelPath))
+        let leaders = Set(run.leaders.map(\.id))
         return run.variants.enumerated().map { index, path in
-            let result = run.results.first { $0.modelPath == path }
+            let key = run.variantIdentities[index]
+            let result = run.results.first { $0.id == key }
             let value = result.flatMap { run.metricValue(of: $0) }
             let state: CompareLane.State
             if let result {
@@ -287,7 +290,7 @@ extension ComparePresentation {
                 fraction = run.effectiveMode.primaryMetric.higherIsBetter ? value / best : best / value
             }
             return CompareLane(index: index, path: path, state: state, value: value, fraction: fraction,
-                isLeader: ranked && leaders.contains(path))
+                isLeader: ranked && leaders.contains(key), resultID: key)
         }
     }
 
@@ -439,6 +442,7 @@ struct QuantView: View {
     @State private var pendingGeneralReuseSetup: ComparisonRunSetup?
     @State private var reusedPromptSet: PromptSet?
     @State private var reuseError: String?
+    @State private var slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
     @State private var strataSettings: [String: StrataComparisonOptions] = [:]
     @State private var variantSlots: [String?] = [nil, nil]
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
@@ -743,13 +747,16 @@ struct QuantView: View {
         if let reason = ComparePresentation.runUnavailableReason(slots: variantSlots, activeRunID: comparison.activeRunID,
             availablePaths: Set(readyModels.map { $0.item.path }), hasPromptSet: selectedPromptSet != nil,
             savingPromptSet: comparison.savingPromptSet, hasPrompts: selectedPromptSet?.prompts.isEmpty == false) { return reason }
-        return selectedStrataPaths.compactMap { strataSettings[$0]?.validationError }.first
+        return selectedStrataSlots.compactMap { strataSettings[slotIDs[$0]]?.validationError }.first
     }
 
-    private var selectedStrataPaths: [String] {
-        guard mode == .chat else { return [] }
-        return ComparePresentation.variantPaths(variantSlots).filter { path in
-            readyModels.contains { $0.item.path == path && $0.item.servingRuntime == "strata" }
+    private var repeatedStrataPaths: Set<String> {
+        mode == .chat ? Set(readyModels.filter { $0.item.servingRuntime == "strata" }.map { $0.item.path }) : []
+    }
+
+    private var selectedStrataSlots: [Int] {
+        variantSlots.indices.filter { index in
+            variantSlots[index].map { repeatedStrataPaths.contains($0) } == true
         }
     }
 
@@ -791,14 +798,6 @@ struct QuantView: View {
                     slotControls
                 }
             }
-            ForEach(selectedStrataPaths, id: \.self) { path in
-                DisclosureGroup("Strata settings · \(shortName(path))") {
-                    StrataComparisonControls(options: Binding(
-                        get: { strataSettings[path] ?? StrataComparisonOptions() },
-                        set: { strataSettings[path] = $0 }))
-                }
-                .disabled(comparison.activeRunID != nil)
-            }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: WorkbenchSpacing.xs) { inlineControls }
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { wrappedControls }
@@ -806,6 +805,10 @@ struct QuantView: View {
             .padding(.top, WorkbenchSpacing.sm)
             .overlay(alignment: .top) {
                 Rectangle().fill(WorkbenchColor.accent.opacity(.stroke)).frame(height: WorkbenchSpacing.hairline)
+            }
+            if !selectedStrataSlots.isEmpty {
+                Text("Select the same Strata model in another lane to compare settings. Each lane runs separately.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
             if comparison.activeRunID != nil {
                 ProgressView(comparison.progressMessage ?? "Measuring…")
@@ -915,7 +918,7 @@ struct QuantView: View {
                             Button(modelOptionLabel(selected)) { slotBinding(index).wrappedValue = selected.item.path }
                         }
                     }
-                    ForEach(ComparePresentation.groups(ComparePresentation.options(forSlot: index, slots: variantSlots, candidates: filteredModels), by: modelGrouping)) { group in
+                    ForEach(ComparePresentation.groups(ComparePresentation.options(forSlot: index, slots: variantSlots, candidates: filteredModels, repeatedPaths: repeatedStrataPaths), by: modelGrouping)) { group in
                         Section(group.title) {
                             ForEach(group.models, id: \.item.path) { model in
                                 Button {
@@ -956,6 +959,13 @@ struct QuantView: View {
                 Text("Strata · Metal · GGUF")
                     .font(WorkbenchTypography.metadata)
                     .foregroundStyle(WorkbenchColor.muted)
+                if mode == .chat {
+                    DisclosureGroup("Strata settings") {
+                        StrataComparisonControls(options: Binding(
+                            get: { strataSettings[slotIDs[index]] ?? StrataComparisonOptions() },
+                            set: { strataSettings[slotIDs[index]] = $0 }))
+                    }.disabled(comparison.activeRunID != nil)
+                }
             }
         }
         .padding(WorkbenchSpacing.xs)
@@ -1108,7 +1118,7 @@ struct QuantView: View {
                         }
                     }
                     ForEach(champion.quality) { result in
-                        if let score = champion.run.qualityReviews?[result.modelPath]?.score {
+                        if let score = champion.run.qualityReviews?[result.id]?.score {
                             Button {
                                 pick(champion.run)
                             } label: {
@@ -1154,7 +1164,9 @@ struct QuantView: View {
 
                 if run.effectiveMode == .chat, run.variants.count > 1,
                    run.results.contains(where: { $0.servingEvidence?.runtime == "strata" }) {
-                    Text("These results compare the selected model variants. A speed difference does not isolate the runtime or establish equivalent response quality.")
+                    Text(Set(run.variants).count < run.variants.count
+                        ? "These lanes compare serving settings for the same weights. Speed does not establish answer quality."
+                        : "These results compare the selected model variants. A speed difference does not isolate the runtime or establish equivalent response quality.")
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(WorkbenchColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1239,7 +1251,7 @@ struct QuantView: View {
     private func slotBinding(_ index: Int) -> Binding<String?> {
         Binding(
             get: { index < variantSlots.count ? variantSlots[index] : nil },
-            set: { if index < variantSlots.count { initializedSuggestions = true; manuallySelectedModels = true; selectionReason = "Your model selection."; variantSlots[index] = $0 } }
+            set: { if index < variantSlots.count { initializedSuggestions = true; manuallySelectedModels = true; selectionReason = "Your model selection."; if variantSlots[index] != $0 { strataSettings[slotIDs[index]] = nil }; variantSlots[index] = $0 } }
         )
     }
 
@@ -1276,18 +1288,28 @@ struct QuantView: View {
 
     private func removeSlot(_ index: Int) {
         guard index >= 2, index < variantSlots.count else { return }
+        strataSettings[slotIDs[index]] = nil
+        slotIDs.remove(at: index)
+        slotIDs.append(UUID().uuidString)
         variantSlots.remove(at: index)
     }
 
     private func startRun() {
         guard let promptSet = selectedPromptSet,
               runUnavailableReason == nil else { return }
-        let variants = ComparePresentation.variantPaths(variantSlots).compactMap { path in
-            readyModels.first { $0.item.path == path }
-                .map { (path: $0.item.path, signature: $0.item.signature) }
+        if mode == .chat {
+            let lanes = variantSlots.indices.compactMap { index -> ComparisonLaneConfiguration? in
+                guard let path = variantSlots[index], let model = readyModels.first(where: { $0.item.path == path }) else { return nil }
+                return ComparisonLaneConfiguration(id: slotIDs[index], modelPath: path, modelSignature: model.item.signature,
+                    strataOptions: repeatedStrataPaths.contains(path) ? strataSettings[slotIDs[index]] ?? StrataComparisonOptions() : nil)
+            }
+            comparison.start(lanes: lanes, promptSet: promptSet)
+        } else {
+            let variants = ComparePresentation.variantPaths(variantSlots).compactMap { path in
+                readyModels.first { $0.item.path == path }.map { (path: $0.item.path, signature: $0.item.signature) }
+            }
+            comparison.start(variants: variants, promptSet: promptSet, mode: mode)
         }
-        let options = Dictionary(uniqueKeysWithValues: selectedStrataPaths.map { ($0, strataSettings[$0] ?? StrataComparisonOptions()) })
-        comparison.start(variants: variants, promptSet: promptSet, mode: mode, strataOptions: options)
     }
 
     private func removePromptSet(_ set: PromptSet) {
@@ -1326,7 +1348,12 @@ struct QuantView: View {
 
     private func applyReusedSetup(_ setup: ComparisonRunSetup, _ promptSet: PromptSet) -> String? {
         guard comparison.activeRunID == nil else { return "Wait for the current comparison to finish." }
-        strataSettings = setup.strataOptions ?? [:]
+        strataSettings = [:]
+        for (index, path) in setup.modelPaths.enumerated() {
+            if let options = setup.laneConfigurations?[index].strataOptions ?? setup.strataOptions?[path] {
+                strataSettings[slotIDs[index]] = options
+            }
+        }
         useRecordedSetup(mode: setup.draft.mode, paths: setup.modelPaths, name: setup.sourceName, promptSet: promptSet)
         pendingGeneralReuseSetup = nil
         return nil
