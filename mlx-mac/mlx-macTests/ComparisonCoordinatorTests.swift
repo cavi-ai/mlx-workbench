@@ -5,6 +5,49 @@ import XCTest
 
 @MainActor
 final class ComparisonCoordinatorTests: XCTestCase {
+    func testLocalPromptProcessingEvidenceWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROMPT_PROCESSING_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_PROMPT_PROCESSING_MANIFEST for local prompt-processing acceptance.")
+        }
+        struct Manifest: Decodable { let agentPath: String; let profilesFile: String; let evidenceRoot: String }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let source = JSONStore<ServingProfile>(fileURL: URL(fileURLWithPath: manifest.profilesFile))
+        let before = try Data(contentsOf: source.url)
+        let profile = try XCTUnwrap(try source.load().first { $0.hasPassedVerification })
+        let root = URL(fileURLWithPath: manifest.evidenceRoot)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: root.path)
+        let probe = ServeProbe(lifecycle: .verifiedProfile(profile, api: api),
+            prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
+        let store = JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json"))
+        let coordinator = ComparisonCoordinator(probe: probe, runStore: store,
+            promptSetStore: JSONStore(fileURL: root.appendingPathComponent("prompts.json")), strataProbe: { _ in probe })
+        let lane = ComparisonLaneConfiguration(id: "profile", modelPath: profile.modelPath, modelSignature: nil,
+            strataOptions: profile.options, servingProfileID: profile.id, servingProfileName: profile.name)
+        let text = "Calculate 17 times 19. In your final answer, return only JSON with one key named answer and its numeric value."
+        let prompts = PromptSet(id: "prompt-processing-acceptance", name: "Prompt processing", useCase: nil,
+            prompts: [PromptEntry(id: "first", text: text, maxTokens: 1024), PromptEntry(id: "repeat", text: text, maxTokens: 1024)], origin: .userCreated)
+        let finished = expectation(description: "prompt processing recorded")
+        coordinator.onBenchmarks = { values in XCTAssertTrue(values.isEmpty); finished.fulfill() }
+        coordinator.start(lanes: [lane], promptSet: prompts)
+        await fulfillment(of: [finished], timeout: 1200)
+        let run = try XCTUnwrap(try store.load().first)
+        XCTAssertEqual(run.state, .completed)
+        let result = try XCTUnwrap(run.results.first)
+        XCTAssertNil(result.error); XCTAssertEqual(result.samples.count, 2)
+        for sample in result.samples {
+            let evidence = try XCTUnwrap(sample.promptProcessing)
+            XCTAssertTrue(evidence.isValid)
+            XCTAssertEqual(evidence.promptTokens, sample.promptTokens)
+            XCTAssertTrue(sample.hasCompletedAnswer)
+            let answer = try JSONSerialization.jsonObject(with: Data((sample.fullOutput ?? sample.outputExcerpt).utf8)) as? [String: Int]
+            XCTAssertEqual(answer?["answer"], 323)
+        }
+        XCTAssertGreaterThan(try XCTUnwrap(result.samples.last?.promptProcessing).cachedTokens, 0)
+        XCTAssertEqual(try Data(contentsOf: source.url), before)
+        let servers = try await api.serveStatus()
+        XCTAssertTrue(servers.isEmpty)
+    }
+
     func testLocalSavedProfileComparisonWhenRequested() async throws {
         guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_COMPARE_MANIFEST"] else {
             throw XCTSkip("Set MLX_WORKBENCH_PROFILE_COMPARE_MANIFEST for explicit local profile-comparison acceptance.")

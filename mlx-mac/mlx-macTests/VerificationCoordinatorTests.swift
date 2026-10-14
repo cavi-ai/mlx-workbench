@@ -795,8 +795,28 @@ final class VerificationCoordinatorTests: XCTestCase {
                 request: ServingProfileChooserRequest(modelPath: modelPath, choices: choices), selectedID: selected.id,
                 onSelect: { _ in XCTFail("Rendering must not select a profile"); return nil })), 640))
         }
+        if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROMPT_PROCESSING_MANIFEST"] {
+            struct Manifest: Decodable { let evidenceRoot: String }
+            let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+            let root = URL(fileURLWithPath: manifest.evidenceRoot)
+            let run = try XCTUnwrap(try JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json")).load().first)
+            XCTAssertTrue(run.results.flatMap(\.samples).allSatisfy { $0.promptProcessing?.isValid == true })
+            scenes.append(("prompt-processing-results", AnyView(ScrollView {
+                MediaRunResultsView(run: run, store: ComparisonOutputStore(root: root.appendingPathComponent("outputs")),
+                    contentWidth: 760, isRouteActive: false, name: { URL(fileURLWithPath: $0).lastPathComponent },
+                    onReview: { _, _ in XCTFail("Rendering must not save a review") }, laneActions: { _ in EmptyView() }).padding(20)
+            }), 800))
+        }
         for (name, content, width) in scenes {
-            let height = name.hasPrefix("profile-chooser") ? 680.0 : (name == "profile-comparison-text" ? 620.0 : (name == "profile-comparison-results" ? 900.0 : (["comparison-evidence", "customize-copy", "compare-profiles", "verify-measured"].contains(name) ? 510.0 : 330.0)))
+            let height: Double
+            switch name {
+            case "prompt-processing-results": height = 1100
+            case "profile-chooser-recorded", "profile-chooser-unmeasured": height = 680
+            case "profile-comparison-text": height = 620
+            case "profile-comparison-results": height = 900
+            case "comparison-evidence", "customize-copy", "compare-profiles", "verify-measured": height = 510
+            default: height = 330
+            }
             let view = content.frame(width: width, height: height, alignment: .topLeading)
                 .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
             let host = NSHostingView(rootView: view)

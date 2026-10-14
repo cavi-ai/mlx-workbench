@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CoreFoundation
 
 // MARK: - ServeProbe
 //
@@ -20,6 +21,33 @@ struct DraftTokenEvidence: Codable, Equatable, Sendable {
               let offered = timings.int("draft_n"), let accepted = timings.int("draft_n_accepted"),
               offered >= 0, accepted >= 0, accepted <= offered else { return nil }
         self.offered = offered; self.accepted = accepted
+    }
+}
+
+struct PromptProcessingEvidence: Codable, Equatable, Sendable {
+    let promptTokens: Int
+    let cachedTokens: Int
+    let processedTokens: Int
+    let processingSeconds: Double
+
+    var isValid: Bool {
+        promptTokens > 0 && cachedTokens >= 0 && cachedTokens <= promptTokens
+            && processedTokens == promptTokens - cachedTokens && processingSeconds.isFinite && processingSeconds >= 0
+    }
+    var tokensPerSecond: Double? {
+        guard isValid, processedTokens > 0, processingSeconds > 0 else { return nil }
+        let rate = Double(processedTokens) / processingSeconds
+        return rate.isFinite ? rate : nil
+    }
+
+    init?(usage: [String: Any], timings: [String: Any]) {
+        guard usage["prompt_tokens"] is NSNumber, timings["cache_n"] is NSNumber, timings["prompt_n"] is NSNumber,
+              let total = usage.int("prompt_tokens"), let cached = timings.int("cache_n"), let processed = timings.int("prompt_n"),
+              let milliseconds = timings["prompt_ms"] as? NSNumber, CFGetTypeID(milliseconds) != CFBooleanGetTypeID(),
+              milliseconds.doubleValue.isFinite, milliseconds.doubleValue >= 0,
+              total > 0, cached >= 0, cached <= total, processed == total - cached else { return nil }
+        promptTokens = total; cachedTokens = cached; processedTokens = processed
+        processingSeconds = milliseconds.doubleValue / 1000
     }
 }
 
@@ -45,6 +73,7 @@ struct ProbeSample: Equatable, Sendable {
     let finishReason: String?
     let timeToFirstAnswerSeconds: Double?
     let draftTokens: DraftTokenEvidence?
+    let promptProcessing: PromptProcessingEvidence?
 
     init(
         text: String,
@@ -59,7 +88,8 @@ struct ProbeSample: Equatable, Sendable {
         reasoningText: String? = nil,
         finishReason: String? = nil,
         timeToFirstAnswerSeconds: Double? = nil,
-        draftTokens: DraftTokenEvidence? = nil
+        draftTokens: DraftTokenEvidence? = nil,
+        promptProcessing: PromptProcessingEvidence? = nil
     ) {
         self.text = text
         self.completionTokens = completionTokens
@@ -74,15 +104,16 @@ struct ProbeSample: Equatable, Sendable {
         self.finishReason = finishReason
         self.timeToFirstAnswerSeconds = timeToFirstAnswerSeconds
         self.draftTokens = draftTokens
+        self.promptProcessing = promptProcessing
     }
 
-    /// Prompt-processing speed estimated as prompt tokens over TTFT. TTFT
-    /// includes queueing and first decode, so this is a lower bound — the UI
-    /// labels it as an estimate.
+    /// Client-side estimate over TTFT, using reported new-token counts when
+    /// available. Without cache evidence it uses the whole prompt length.
     var prefillTokensPerSecond: Double? {
-        guard let promptTokens, promptTokens > 0,
+        let count = promptProcessing.flatMap { $0.isValid && $0.promptTokens == promptTokens ? $0.processedTokens : nil } ?? promptTokens
+        guard let count, count > 0,
               let ttft = timeToFirstTokenSeconds, ttft > 0 else { return nil }
-        return Double(promptTokens) / ttft
+        return Double(count) / ttft
     }
 }
 
@@ -567,6 +598,8 @@ struct OpenAIEndpointProber: EndpointProbing {
         var promptTokens: Int?
         var draftTokens: DraftTokenEvidence?
         var draftCountsConflict = false
+        var promptProcessing: PromptProcessingEvidence?
+        var promptProcessingConflict = false
         var firstTokenAt: Date?
         // Streamed tool calls arrive as deltas keyed by index; collect the
         // names and accumulate argument fragments per call.
@@ -591,6 +624,12 @@ struct OpenAIEndpointProber: EndpointProbing {
                     if let reported = DraftTokenEvidence(timings: timings), !draftCountsConflict,
                        draftTokens == nil || draftTokens == reported { draftTokens = reported }
                     else { draftCountsConflict = true; draftTokens = nil }
+                }
+                if let timings = chunk["timings"] as? [String: Any],
+                   timings["cache_n"] != nil || timings["prompt_n"] != nil || timings["prompt_ms"] != nil {
+                    if let reported = PromptProcessingEvidence(usage: usage, timings: timings), !promptProcessingConflict,
+                       promptProcessing == nil || promptProcessing == reported { promptProcessing = reported }
+                    else { promptProcessingConflict = true; promptProcessing = nil }
                 }
             }
             if let choices = chunk["choices"] as? [[String: Any]], let choice = choices.first {
@@ -622,6 +661,7 @@ struct OpenAIEndpointProber: EndpointProbing {
         }
 
         let finishedAt = Date()
+        if promptProcessing?.promptTokens != promptTokens { promptProcessing = nil }
         let estimated: Bool
         let tokens: Int?
         if let completionTokens {
@@ -657,7 +697,8 @@ struct OpenAIEndpointProber: EndpointProbing {
             reasoningText: reasoning,
             finishReason: finishReason,
             timeToFirstAnswerSeconds: firstAnswerAt.map { $0.timeIntervalSince(startedAt) },
-            draftTokens: draftTokens
+            draftTokens: draftTokens,
+            promptProcessing: promptProcessing
         )
     }
 }
