@@ -16,6 +16,20 @@ final class JSONStoreTests: XCTestCase {
         XCTAssertEqual(try store.load(), [])
     }
 
+    func testInsertRequiresUnchangedSourceAndUniqueIdentity() throws {
+        let store = JSONStore<Item>(fileURL: storeURL())
+        let original = Item(id: "a", note: "one"), copy = Item(id: "b", note: "copy")
+        XCTAssertFalse(try store.insert(copy, requiring: original, id: \.id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.url.path))
+        try store.upsert(original, id: \.id)
+        XCTAssertFalse(try store.insert(copy, requiring: Item(id: "a", note: "stale"), id: \.id))
+        XCTAssertTrue(try store.insert(copy, requiring: original, id: \.id))
+        let bytes = try Data(contentsOf: store.url)
+        XCTAssertFalse(try store.insert(copy, requiring: original, id: \.id))
+        XCTAssertEqual(try Data(contentsOf: store.url), bytes)
+        XCTAssertEqual(try store.load(), [original, copy])
+    }
+
     func testReplaceAllRoundTrips() throws {
         let store = JSONStore<Item>(fileURL: storeURL())
         let items = [Item(id: "a", note: "one"), Item(id: "b", note: "two")]
@@ -43,6 +57,7 @@ final class JSONStoreTests: XCTestCase {
         let store = JSONStore<Item>(fileURL: url)
         XCTAssertThrowsError(try store.load())
         XCTAssertThrowsError(try store.upsert(Item(id: "a", note: "one"), id: \.id))
+        XCTAssertThrowsError(try store.insert(Item(id: "b", note: "copy"), requiring: Item(id: "a", note: "one"), id: \.id))
 
         // The damaged file must survive untouched until a human looks.
         XCTAssertEqual(try Data(contentsOf: url), before)
@@ -65,6 +80,7 @@ final class JSONStoreTests: XCTestCase {
         try store.replaceAll([Item(id: "a", note: "one")])
         let before = try Data(contentsOf: url)
         XCTAssertThrowsError(try store.update(id: "a", keyPath: \.id) { _ in nil })
+        XCTAssertThrowsError(try store.insert(Item(id: "b", note: "copy"), requiring: Item(id: "a", note: "one"), id: \.id))
         XCTAssertEqual(try Data(contentsOf: url), before)
     }
 

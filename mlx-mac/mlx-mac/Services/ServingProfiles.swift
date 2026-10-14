@@ -1,5 +1,19 @@
 import Foundation
 
+struct ServingProfileCopyDraft {
+    let original: ServingProfile
+    var name: String
+    var options: StrataComparisonOptions
+
+    init(original: ServingProfile) {
+        self.original = original
+        name = String(original.name.prefix(75)) + " copy"
+        options = original.options
+    }
+    var hasChanges: Bool { name != String(original.name.prefix(75)) + " copy" || options != original.options }
+    var validationError: String? { ServingProfile.nameValidationError(name) ?? options.validationError }
+}
+
 /// A read-only view of the currently saved source comparison, not a fresh measurement.
 struct ServingProfileComparisonEvidence: Identifiable {
     let profile: ServingProfile
@@ -198,6 +212,25 @@ final class ServingProfileCoordinator: ObservableObject {
             throw WorkflowEvidenceError.invalid("The source comparison is unavailable. The profile and its canary verdict are unchanged.")
         }
         return try ServingProfileComparisonEvidence(profile: current, run: run)
+    }
+
+    @discardableResult
+    func createCopy(_ draft: ServingProfileCopyDraft) -> ServingProfile? {
+        do {
+            guard activeID == nil else { throw WorkflowEvidenceError.invalid("Wait for profile verification to finish.") }
+            if let error = draft.validationError { throw WorkflowEvidenceError.invalid(error) }
+            guard draft.original.isValid else { throw WorkflowEvidenceError.invalid("The source profile is invalid.") }
+            let sameSettings = draft.options == draft.original.options
+            let copy = ServingProfile(id: UUID(), name: draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                modelPath: draft.original.modelPath, options: draft.options,
+                sourceRunID: sameSettings ? draft.original.sourceRunID : nil,
+                sourceLaneID: sameSettings ? draft.original.sourceLaneID : nil)
+            guard try store.insert(copy, requiring: draft.original, id: \.id) else {
+                throw WorkflowEvidenceError.invalid("The source profile changed or is no longer available. Reopen Customize copy.")
+            }
+            profiles = try store.load(); lastError = nil
+            return copy
+        } catch { lastError = AppHost.render(error); return nil }
     }
 
     func createSuggestedProfile(run: ComparisonRun, name: String) -> ServingProfile? {

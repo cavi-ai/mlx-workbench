@@ -1651,6 +1651,7 @@ struct PromoteWinnerSheet: View {
 
 struct StrataComparisonControls: View {
     @Binding var options: StrataComparisonOptions
+    var helpText = "A smaller expert budget pages more weights from disk. Custom settings are recorded with this run and excluded from default recommendations."
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -1667,7 +1668,7 @@ struct StrataComparisonControls: View {
                 }
             }.fixedSize()
             if let error = options.validationError { Text(error).foregroundStyle(.red) }
-            Text("A smaller expert budget pages more weights from disk. Custom settings are recorded with this run and excluded from default recommendations.")
+            Text(helpText)
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
         }.padding(.top, WorkbenchSpacing.sm)
     }
