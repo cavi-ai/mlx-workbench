@@ -1,6 +1,7 @@
 import AVFoundation
 import AVKit
 import AppKit
+import Charts
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -353,6 +354,9 @@ struct MediaRunResultsView<LaneActions: View>: View {
             } else {
                 grid(lanes: lanes, layout: layout)
             }
+            if mode == .chat, run.state == .completed {
+                ComparisonMemoryTradeoffView(run: run)
+            }
             if ComparisonViewLogic.showsListening(run) {
                 ComparisonListeningPanel(run: run, store: store, name: name, player: audio)
                     .id(run.id)
@@ -693,6 +697,66 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(rate <= SpeechCanary.maxWordErrorRate ? WorkbenchColor.success : WorkbenchColor.warning)
         }
+    }
+}
+
+struct ComparisonMemoryTradeoffView: View {
+    let run: ComparisonRun
+    @State private var headroomGoalGB = 8.0
+
+    private var lanes: [CompareLane] { ComparePresentation.lanes(for: run) }
+    private func result(_ lane: CompareLane) -> VariantResult? { run.results.first { $0.id == lane.resultKey } }
+    private func memory(_ lane: CompareLane) -> SystemMemoryEvidence? {
+        guard let evidence = result(lane)?.systemMemory, evidence.isValid else { return nil }
+        return evidence
+    }
+    private var measured: [CompareLane] { lanes.filter { memory($0) != nil && result($0)?.memoryTradeoffAnswerSeconds != nil } }
+    private var maximumGB: Double { max(1, lanes.compactMap { memory($0).map { Double($0.totalBytes) / 1e9 } }.max() ?? 128) }
+    private func gb(_ bytes: Int64) -> String { String(format: "%.1f GB", Double(bytes) / 1e9) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Memory and answer latency").font(WorkbenchTypography.cardTitle)
+            Text("System headroom is an estimate sampled during startup, warm-up and prompts. Other apps and file caching affect it; it is not model-only RAM use or a guaranteed peak.")
+                .fixedSize(horizontal: false, vertical: true)
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            Text("Engine allocation: not reported.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            if !measured.isEmpty {
+                Text("Explore minimum headroom: \(headroomGoalGB.formatted(.number.precision(.fractionLength(1)))) GB")
+                    .font(WorkbenchTypography.secondary)
+                Slider(value: $headroomGoalGB, in: 0...maximumGB, step: 0.5)
+                    .accessibilityLabel("Observed headroom target in gigabytes")
+                Chart(measured) { lane in
+                    if let memory = memory(lane), let seconds = result(lane)?.memoryTradeoffAnswerSeconds {
+                        PointMark(x: .value("Headroom", Double(memory.minimumAvailableBytes) / 1e9), y: .value("Answer latency", seconds))
+                            .foregroundStyle(Double(memory.minimumAvailableBytes) / 1e9 >= headroomGoalGB ? WorkbenchColor.accent : WorkbenchColor.muted)
+                            .annotation(position: .top) { Text(lane.letter).font(WorkbenchTypography.label) }
+                    }
+                }
+                .chartXAxisLabel("Lowest sampled system headroom (GB)")
+                .chartYAxisLabel("Median time to first answer (s)")
+                .frame(height: 220)
+                Text("Points require a finished answer and answer timing for every prompt. Completion does not establish answer quality; use the recorded answers and task ratings.")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+            ForEach(lanes) { lane in
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("Lane \(lane.letter)").font(WorkbenchTypography.label)
+                    if let evidence = memory(lane) {
+                        Text("Headroom: \(gb(evidence.baselineAvailableBytes)) before start · \(gb(evidence.minimumAvailableBytes)) sampled minimum · \(gb(evidence.endingAvailableBytes)) before cleanup")
+                        Text("\(evidence.sampleCount) readings · \(evidence.missedSamples) unavailable · 0.5 s sampling interval")
+                        if result(lane)?.memoryTradeoffAnswerSeconds != nil {
+                            Text(Double(evidence.minimumAvailableBytes) / 1e9 >= headroomGoalGB ? "Observed minimum meets the selected target." : "Observed minimum is below the selected target.")
+                        }
+                    } else { Text("System headroom not recorded.") }
+                    if let seconds = result(lane)?.memoryTradeoffAnswerSeconds {
+                        Text(String(format: "Median time to first answer %.2f s", seconds))
+                    } else { Text("Answer latency unavailable for a complete prompt cohort.") }
+                }.font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+        }.lineLimit(nil).padding(WorkbenchSpacing.md)
+            .background(WorkbenchColor.canvas, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
     }
 }
 

@@ -185,6 +185,7 @@ struct ProbeRunResult: Equatable, Sendable {
     var servingEvidence: ProbeServingEvidence? = nil
     /// Endpoint start through readiness, before warm-up and prompt timing.
     var startupSeconds: Double? = nil
+    var systemMemory: SystemMemoryEvidence? = nil
 }
 
 /// One prompt to send through a probed endpoint. The canary suite and
@@ -286,6 +287,8 @@ struct ServeProbe: Sendable {
     var readyTimeout: TimeInterval = 120
     var readyPollIntervalNanoseconds: UInt64 = 1_000_000_000
     var pickPort: @Sendable () -> Int? = EphemeralPort.pick
+    /// Opt-in for comparisons; verification and ordinary serving do not sample.
+    var memoryProbe: (@Sendable () -> MemorySnapshot?)? = nil
 
     /// Serves `modelPath` on an ephemeral loopback port, runs the canary
     /// suite sequentially, and stops the server even when a probe throws.
@@ -306,8 +309,23 @@ struct ServeProbe: Sendable {
             preview = ProbeServePreview(hash: try await lifecycle.preview(modelPath, port))
         }
         guard !preview.hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+        let memory = memoryProbe.map { SystemMemoryRecorder(probe: $0) }
+        await memory?.sample()
+        let sampling = memory.map { recorder in
+            Task.detached(priority: .utility) {
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                    guard !Task.isCancelled else { return }
+                    await recorder.sample()
+                }
+            }
+        }
         let startup = Date()
-        try await lifecycle.start(modelPath, port, preview.hash)
+        do { try await lifecycle.start(modelPath, port, preview.hash) }
+        catch {
+            sampling?.cancel(); await sampling?.value
+            throw error
+        }
 
         let baseURL = URL(string: "http://127.0.0.1:\(port)")!
         do {
@@ -334,10 +352,14 @@ struct ServeProbe: Sendable {
                     tool: prompt.tool
                 )
             }
+            sampling?.cancel(); await sampling?.value
+            let systemMemory = await memory?.finish()
             do { try await lifecycle.stop(port) }
             catch { throw ServeProbeError.stopFailed(error.localizedDescription) }
-            return ProbeRunResult(port: port, samples: samples, servingEvidence: preview.evidence, startupSeconds: startupSeconds)
+            return ProbeRunResult(port: port, samples: samples, servingEvidence: preview.evidence,
+                startupSeconds: startupSeconds, systemMemory: systemMemory)
         } catch {
+            sampling?.cancel(); await sampling?.value
             if case ServeProbeError.stopFailed = error { throw error }
             do { try await lifecycle.stop(port) }
             catch { throw ServeProbeError.stopFailed(error.localizedDescription) }
@@ -364,6 +386,41 @@ struct ServeProbe: Sendable {
             try? await Task.sleep(nanoseconds: readyPollIntervalNanoseconds)
         }
         return false
+    }
+}
+
+/// One lane owns one recorder and joins its sampling task before cleanup or return.
+private actor SystemMemoryRecorder {
+    let probe: @Sendable () -> MemorySnapshot?
+    let startedAt = Date()
+    var total: Int64?
+    var baseline: Int64?
+    var minimum: Int64?
+    var ending: Int64?
+    var samples = 0
+    var missed = 0
+    var attempts = 0
+
+    init(probe: @escaping @Sendable () -> MemorySnapshot?) { self.probe = probe }
+
+    func sample() {
+        defer { attempts += 1 }
+        guard let value = probe(), value.totalBytes > 0, (0...value.totalBytes).contains(value.availableBytes),
+              total == nil || total == value.totalBytes else { missed += 1; ending = nil; return }
+        if attempts == 0 { baseline = value.availableBytes }
+        total = value.totalBytes
+        minimum = min(minimum ?? value.availableBytes, value.availableBytes)
+        ending = value.availableBytes
+        samples += 1
+    }
+
+    func finish() -> SystemMemoryEvidence? {
+        sample()
+        guard let total, let baseline, let minimum, let ending else { return nil }
+        let evidence = SystemMemoryEvidence(totalBytes: total, baselineAvailableBytes: baseline,
+            minimumAvailableBytes: minimum, endingAvailableBytes: ending, sampleCount: samples, missedSamples: missed,
+            startedAt: startedAt, endedAt: Date(), samplingIntervalSeconds: 0.5)
+        return evidence.isValid ? evidence : nil
     }
 }
 

@@ -4,6 +4,72 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServeProbeTests: XCTestCase {
+    func testTradeoffLatencyRequiresCompleteAnswersAndFiniteTimings() {
+        func result(_ samples: [ComparisonSample]) -> VariantResult {
+            VariantResult(modelPath: "/m", modelSignature: nil, samples: samples, aggregateTokensPerSecond: nil,
+                aggregateTTFTSeconds: nil, error: nil)
+        }
+        let first = ComparisonSample(promptID: "a", outputExcerpt: "ok", tokensPerSecond: nil, timeToFirstTokenSeconds: nil,
+            error: nil, finishReason: "stop", timeToFirstAnswerSeconds: 2)
+        let second = ComparisonSample(promptID: "b", outputExcerpt: "ok", tokensPerSecond: nil, timeToFirstTokenSeconds: nil,
+            error: nil, finishReason: "stop", timeToFirstAnswerSeconds: 4)
+        XCTAssertEqual(result([first, second]).memoryTradeoffAnswerSeconds, 3)
+        let unfinished = ComparisonSample(promptID: "b", outputExcerpt: "", tokensPerSecond: nil, timeToFirstTokenSeconds: nil,
+            error: nil, reasoningText: "thinking", finishReason: "length", timeToFirstAnswerSeconds: 1)
+        XCTAssertNil(result([first, unfinished]).memoryTradeoffAnswerSeconds)
+        XCTAssertNil(result([ComparisonSample(promptID: "a", outputExcerpt: "ok", tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil, error: nil, finishReason: "stop", timeToFirstAnswerSeconds: .nan)]).memoryTradeoffAnswerSeconds)
+        XCTAssertNil(result([]).memoryTradeoffAnswerSeconds)
+    }
+
+    func testMemoryEvidenceIsRecordedAndLegacyResultsRemainUnknown() async throws {
+        let events = ProbeEventRecorder()
+        var probe = makeProbe(events: events, responder: { _ in self.sample() })
+        probe.memoryProbe = { MemorySnapshot(totalBytes: 128_000_000_000, availableBytes: 40_000_000_000) }
+        let outcome = try await probe.run(modelPath: "/Models/model", prompts: [ProbePrompt(id: "p", prompt: "hello", maxTokens: 8)])
+        let evidence = try XCTUnwrap(outcome.systemMemory)
+        XCTAssertEqual(evidence.baselineAvailableBytes, 40_000_000_000)
+        XCTAssertEqual(evidence.minimumAvailableBytes, 40_000_000_000)
+        XCTAssertGreaterThanOrEqual(evidence.sampleCount, 2)
+        let result = VariantResult(modelPath: "/Models/model", modelSignature: nil, samples: [],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, systemMemory: evidence)
+        let data = try JSONEncoder().encode(result)
+        XCTAssertEqual(try JSONDecoder().decode(VariantResult.self, from: data).systemMemory, evidence)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy.removeValue(forKey: "systemMemory")
+        XCTAssertNil(try JSONDecoder().decode(VariantResult.self, from: JSONSerialization.data(withJSONObject: legacy)).systemMemory)
+        probe.memoryProbe = { MemorySnapshot(totalBytes: 1, availableBytes: 2) }
+        let unavailable = try await probe.run(modelPath: "/Models/model", prompts: [])
+        XCTAssertNil(unavailable.systemMemory)
+    }
+
+    func testMemorySamplingEndsWhenStartFails() async throws {
+        let readings = MemoryReadCounter()
+        var probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" },
+            start: { _, _, _ in throw StubError.boom }, stop: { _ in XCTFail("A failed start owns its cleanup") }),
+            prober: StubProber(ready: true, responder: { _ in self.sample() }), pickPort: { 9999 })
+        probe.memoryProbe = { readings.read() }
+        do { _ = try await probe.run(modelPath: "/Models/model"); XCTFail("Expected a start failure") } catch { }
+        let ended = readings.count
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(readings.count, ended)
+    }
+
+    func testMemorySamplingCoversLoadingAndKeepsUnavailableReadingsSeparate() async throws {
+        for invalidSecond in [false, true] {
+            let readings = MemoryReadCounter(invalidSecond: invalidSecond)
+            var probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" },
+                start: { _, _, _ in try await Task.sleep(for: .milliseconds(650)) }, stop: { _ in }),
+                prober: StubProber(ready: true, responder: { _ in self.sample() }), pickPort: { 9999 })
+            probe.memoryProbe = { readings.read() }
+            let outcome = try await probe.run(modelPath: "/Models/model", prompts: [])
+            let memory = try XCTUnwrap(outcome.systemMemory)
+            XCTAssertEqual(memory.baselineAvailableBytes, 40_000_000_000)
+            XCTAssertEqual(memory.minimumAvailableBytes, invalidSecond ? 35_000_000_000 : 10_000_000_000)
+            XCTAssertEqual(memory.endingAvailableBytes, 35_000_000_000)
+            XCTAssertEqual(memory.missedSamples, invalidSecond ? 1 : 0)
+        }
+    }
     func testProfileReceiptRequiresTheConfirmedPlanAndProcessIdentity() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: file) }
@@ -457,6 +523,20 @@ extension ModelListBox: EndpointProbing {
 private actor ProbeEventRecorder {
     private(set) var values: [String] = []
     func record(_ value: String) { values.append(value) }
+}
+
+private final class MemoryReadCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    private let invalidSecond: Bool
+    init(invalidSecond: Bool = false) { self.invalidSecond = invalidSecond }
+    var count: Int { lock.withLock { value } }
+    func read() -> MemorySnapshot? {
+        let reading = lock.withLock { value += 1; return value }
+        if invalidSecond && reading == 2 { return nil }
+        return MemorySnapshot(totalBytes: 128_000_000_000,
+            availableBytes: reading == 1 ? 40_000_000_000 : reading == 2 ? 10_000_000_000 : 35_000_000_000)
+    }
 }
 
 private struct StubProber: EndpointProbing {
