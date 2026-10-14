@@ -67,6 +67,108 @@ final class ComparisonCoordinatorTests: XCTestCase {
 
     // MARK: - Coordinator runs
 
+    func testLocalStrataSettingsComparisonWhenRequested() async throws {
+        guard let manifestPath = ProcessInfo.processInfo.environment["MLX_WORKBENCH_STRATA_COMPARISON_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_STRATA_COMPARISON_MANIFEST for an explicit local Strata comparison.")
+        }
+        struct Manifest: Decodable {
+            let agentPath: String
+            let modelPath: String
+            let evidenceRoot: String
+            let expertMemoryGB: Double
+            let contextTokens: Int
+        }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: manifestPath)))
+        let directory = URL(fileURLWithPath: manifest.evidenceRoot, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: directory.path)
+        let factory: (StrataComparisonOptions) -> ServeProbe = { options in
+            ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
+                       prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
+        }
+        let coordinator = ComparisonCoordinator(probe: factory(StrataComparisonOptions()),
+            runStore: JSONStore(fileURL: directory.appendingPathComponent("runs.json")),
+            promptSetStore: JSONStore(fileURL: directory.appendingPathComponent("prompts.json")), strataProbe: factory)
+        let prompt = PromptSet(id: "local-strata-controls", name: "Strata settings", useCase: nil,
+            prompts: [PromptEntry(id: "p1", text: "Explain how a hash table handles collisions using separate chaining. Give a short example.", maxTokens: 128)], origin: .userCreated)
+        for speculation in [false, true] {
+            let options = StrataComparisonOptions(speculation: speculation, expertMemoryGB: manifest.expertMemoryGB,
+                                                   contextTokens: manifest.contextTokens)
+            XCTAssertNil(options.validationError)
+            let finished = expectation(description: "comparison finished")
+            coordinator.onBenchmarks = { _ in finished.fulfill() }
+            coordinator.start(variants: [(manifest.modelPath, nil)], promptSet: prompt,
+                              strataOptions: [manifest.modelPath: options])
+            await fulfillment(of: [finished], timeout: 1800)
+            XCTAssertNil(coordinator.activeRunID)
+            let run = try XCTUnwrap(coordinator.runs.first)
+            let result = try XCTUnwrap(run.results.first)
+            XCTAssertNil(result.error)
+            XCTAssertEqual(result.servingEvidence?.speculation, speculation)
+            XCTAssertEqual(result.servingEvidence?.expertMemoryGB, options.expertMemoryGB)
+            XCTAssertEqual(result.servingEvidence?.contextTokens, options.contextTokens)
+            XCTAssertFalse(result.samples.isEmpty)
+            if let sample = result.samples.first {
+                XCTAssertFalse((sample.fullOutput ?? sample.outputExcerpt).isEmpty)
+                XCTAssertNotNil(sample.timeToFirstTokenSeconds)
+            }
+            guard result.error == nil else { return }
+        }
+    }
+
+    func testStopFailurePreventsLoadingAnotherVariant() async throws {
+        let events = ComparisonProbeEvents()
+        let probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" },
+            start: { path, _, _ in await events.record(path) }, stop: { _ in throw StubServeError.failed }),
+            prober: StubComparisonProber(gate: nil), pickPort: { 9997 })
+        let coordinator = ComparisonCoordinator(probe: probe, runStore: JSONStore(fileURL: coordinatorRunStoreURL),
+            promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL))
+        let finished = expectation(description: "comparison aborted after stop failure")
+        coordinator.onBenchmarks = { _ in finished.fulfill() }
+        coordinator.start(variants: [("/Models/a", nil), ("/Models/b", nil)], promptSet: BuiltinPromptSets.coding)
+        await fulfillment(of: [finished], timeout: 5)
+        let started = await events.values
+        XCTAssertEqual(started, ["/Models/a"])
+        XCTAssertEqual(coordinator.runs.first?.state, .failed)
+        XCTAssertEqual(coordinator.runs.first?.results.count, 1)
+        XCTAssertNotNil(coordinator.runs.first?.results.first?.error)
+        XCTAssertTrue(coordinator.aggregateBenchmarks().isEmpty)
+    }
+
+    func testCustomStrataSettingsReachServingPersistAndDoNotFeedDefaultBenchmarks() async throws {
+        let options = StrataComparisonOptions(speculation: true, expertMemoryGB: 2, contextTokens: 8192)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            if argv.contains("stop") { return [:] }
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-speculation")) + 1], "on")
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-expert-memory-gb")) + 1], "2.0")
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-context-tokens")) + 1], "8192")
+            if argv.contains("--confirm") { return [:] }
+            return ["plan": ["preview_hash": "custom", "runtime": "strata", "strata_speculation": true,
+                "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]]
+        })
+        let benchmarks = BenchmarkRecorder()
+        let coordinator = ComparisonCoordinator(probe: ServeProbe(
+            lifecycle: .live(api: api), prober: StubComparisonProber(gate: nil), pickPort: { 9997 }),
+            runStore: JSONStore(fileURL: coordinatorRunStoreURL), promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL),
+            strataProbe: { setting in ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: setting),
+                prober: StubComparisonProber(gate: nil), pickPort: { 9997 }) })
+        coordinator.onBenchmarks = { benchmarks.record($0) }
+        coordinator.start(variants: [("/Models/strata", "sig")], promptSet: BuiltinPromptSets.coding,
+                          strataOptions: ["/Models/strata": options])
+        let finished = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(finished)
+        let persisted = try JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL).load()
+        let run = try XCTUnwrap(persisted.first)
+        XCTAssertNil(run.results.first?.error)
+        XCTAssertEqual(run.strataOptions?["/Models/strata"], options)
+        XCTAssertEqual(run.results.first?.servingEvidence?.expertMemoryGB, 2)
+        XCTAssertEqual(run.results.first?.servingEvidence?.contextTokens, 8192)
+        XCTAssertTrue(run.hasCustomServingConfiguration)
+        XCTAssertEqual(try ComparisonRunSetup(run: run).strataOptions, run.strataOptions)
+        XCTAssertEqual(benchmarks.values.flatMap { $0 }.count, 0)
+        XCTAssertTrue(coordinator.aggregateBenchmarks().isEmpty)
+    }
+
     func testWarmupAndMeasurementsShareOneServerAndWarmupIsNotPersisted() async throws {
         let events = ComparisonProbeEvents()
         let probe = ServeProbe(

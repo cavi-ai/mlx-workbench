@@ -43,7 +43,7 @@ final class CompareRemodelTests: XCTestCase {
         }
         let evidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "fixture",
             "weight_format": "gguf", "weight_quantization": "GSQ-RCO Q2_0", "weights_preserved": true,
-            "strata_speculation": false]))
+            "strata_speculation": false, "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
         let strata = VariantResult(modelPath: "/models/strata", modelSignature: nil, samples: [],
             aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence)
         let legacy = result("/models/mlx")
@@ -51,12 +51,15 @@ final class CompareRemodelTests: XCTestCase {
         XCTAssertEqual(ComparePresentation.lanes(for: measured).map(\.state), [.noMeasurement, .noMeasurement])
         XCTAssertTrue(ComparisonViewLogic.servingDetails(strata).contains("Strata · Metal · GGUF · GSQ-RCO Q2_0"))
         XCTAssertEqual(ComparisonViewLogic.servingDetails(legacy), ["Runtime not recorded"])
-        let view = MediaRunResultsView(run: measured, store: ComparisonOutputStore(), contentWidth: 900,
+        let view = VStack(alignment: .leading) {
+            StrataComparisonControls(options: .constant(StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)))
+            MediaRunResultsView(run: measured, store: ComparisonOutputStore(), contentWidth: 900,
             isRouteActive: false, name: { URL(fileURLWithPath: $0).lastPathComponent }, onReview: { _, _ in }) { _ in EmptyView() }
-            .padding(20).frame(width: 940, height: 420, alignment: .topLeading)
+        }
+            .padding(20).frame(width: 940, height: 640, alignment: .topLeading)
             .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
         let host = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 420),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 640),
             styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
         defer { window.close() }

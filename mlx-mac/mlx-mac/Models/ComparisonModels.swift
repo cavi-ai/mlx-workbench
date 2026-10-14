@@ -431,6 +431,7 @@ struct ComparisonRunSetup: Identifiable {
     let id: UUID
     let sourceName: String
     let modelPaths: [String]
+    let strataOptions: [String: StrataComparisonOptions]?
     private let useCase: UseCase?
     var draft: ComparisonPromptSetDraft
 
@@ -447,6 +448,7 @@ struct ComparisonRunSetup: Identifiable {
             throw ComparisonPromptSetDraft.InvalidDraft(message: "This recorded setup contains invalid model or prompt selections.")
         }
         id = run.id; sourceName = run.promptSetName; modelPaths = run.variants; useCase = run.useCase
+        strataOptions = run.strataOptions
         draft = ComparisonPromptSetDraft(mode: run.effectiveMode, useCase: run.useCase)
         draft.name = "\(sourceName) · reused"
         draft.prompts = entries.map { entry in
@@ -966,6 +968,7 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
 enum ComparisonRunState: String, Codable, Sendable {
     case running
     case completed
+    case failed
 }
 
 struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
@@ -988,6 +991,12 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     var inputArtifacts: [String: String]? = nil
     /// Explicit human task-outcome review, independent of speed and canary checks.
     var qualityReviews: [String: ComparisonQualityReview]? = nil
+    var strataOptions: [String: StrataComparisonOptions]? = nil
+
+    var hasCustomServingConfiguration: Bool {
+        strataOptions?.values.contains(where: { !$0.isDefault }) == true
+            || results.contains { $0.servingEvidence?.hasCustomOptions == true }
+    }
 
     var effectiveMode: ComparisonMode { mode ?? .chat }
 
@@ -1137,7 +1146,7 @@ struct ModelPerformanceProfile: Equatable {
         runs: [ComparisonRun]
     ) -> ModelPerformanceProfile? {
         let matches: [(measuredAt: Date, result: VariantResult)] = runs
-            .filter { $0.state == .completed && $0.effectiveMode == .chat }
+            .filter { $0.state == .completed && $0.effectiveMode == .chat && !$0.hasCustomServingConfiguration }
             .compactMap { run in
                 guard let result = run.results.first(where: {
                     $0.modelPath == modelPath

@@ -135,7 +135,9 @@ class AppHost: ObservableObject {
             runStore: JSONStore<ComparisonRun>(fileURL: JSONStore<ComparisonRun>.defaultFileURL("comparison-runs.json")),
             promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json")),
             mediaRunner: LiveComparisonMediaRunner(api: api),
-            outputStore: ComparisonOutputStore()
+            outputStore: ComparisonOutputStore(),
+            strataProbe: { options in ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
+                prober: OpenAIEndpointProber(requestTimeout: 900)) }
         )
         self.wiring = wiring ?? WiringCoordinator(
             home: WorkbenchStatePaths.userHome(),

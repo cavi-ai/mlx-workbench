@@ -14,7 +14,7 @@ enum ComparisonInsights {
     static func champions(models: [LibraryModel], runs: [ComparisonRun], environment: String?) -> [Champions] {
         guard knownEnvironment(environment) else { return [] }
         var seen: Set<String> = []
-        return runs.filter { $0.state == .completed }
+        return runs.filter { $0.state == .completed && !$0.hasCustomServingConfiguration }
             .sorted { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }
             .compactMap { run in
                 guard seen.insert("\(run.effectiveMode.rawValue)|\(run.promptSetID)").inserted,
@@ -133,6 +133,7 @@ enum ComparisonInsights {
     }
 
     static func valid(_ result: VariantResult, model: LibraryModel, environment: String?) -> Bool {
+        guard result.servingEvidence?.hasCustomOptions != true else { return false }
         guard let signature = model.item.signature, !signature.isEmpty,
               let environment, knownEnvironment(environment) else { return false }
         return result.modelPath == model.item.path && result.modelSignature == signature

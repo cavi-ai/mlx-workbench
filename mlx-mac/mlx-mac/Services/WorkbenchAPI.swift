@@ -491,18 +491,23 @@ actor WorkbenchAPI {
         return ["--repo", model]
     }
 
-    func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil) async throws -> [String: Any] {
+    func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
+                      strataOptions: StrataComparisonOptions? = nil) async throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + ["--runtime", runtime, "--receipts-dir", receiptDirectory]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
+        if let strataOptions {
+            if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
+            argv += strataOptions.arguments
+        }
         return Self.unwrapPlan(try await raw(argv))
     }
 
     func serveStart(repo: String, runtime: String, port: Int?,
                     previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
-                    timeout: TimeInterval? = nil) async throws -> [String: Any] {
+                    timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil) async throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + [
@@ -512,6 +517,10 @@ actor WorkbenchAPI {
             ]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
+        if let strataOptions {
+            if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
+            argv += strataOptions.arguments
+        }
         return try await raw(argv, timeout: timeout)
     }
 
