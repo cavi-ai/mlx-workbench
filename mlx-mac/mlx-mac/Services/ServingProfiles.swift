@@ -1,0 +1,204 @@
+import Foundation
+
+struct ServingProfileVerification: Codable, Equatable, Sendable {
+    let options: StrataComparisonOptions
+    let modelFingerprint: String
+    let runtimeFingerprint: String
+    let suiteVersion: Int
+    let canaries: [CanaryResult]
+    let verifiedAt: Date
+    var answerBudget: Int? = 1024
+
+    var passed: Bool {
+        suiteVersion == CanarySuite.version && answerBudget == 1024 && !modelFingerprint.isEmpty && !runtimeFingerprint.isEmpty
+            && canaries.count == CanarySuite.cases.count && canaries.allSatisfy(\.passed)
+            && Set(canaries.map(\.id)) == Set(CanarySuite.cases.map(\.id))
+    }
+}
+
+struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
+    let id: UUID
+    let name: String
+    let modelPath: String
+    var options: StrataComparisonOptions
+    var verification: ServingProfileVerification? = nil
+
+    var isValid: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && name.count <= 80
+            && !name.unicodeScalars.contains { $0.value < 32 }
+            && modelPath.hasPrefix("/") && !modelPath.unicodeScalars.contains { $0.value < 32 }
+            && options.validationError == nil
+    }
+    var hasPassedVerification: Bool { isValid && verification?.passed == true && verification?.options == options }
+
+    func validate(plan: [String: Any]) throws {
+        guard hasPassedVerification, let proof = verification,
+              let evidence = ProbeServingEvidence(plan: plan), evidence.runtime == "strata",
+              evidence.modelFingerprint == proof.modelFingerprint, evidence.runtimeFingerprint == proof.runtimeFingerprint,
+              evidence.speculation == options.speculation, evidence.expertMemoryGB == options.expertMemoryGB,
+              evidence.contextTokens == options.contextTokens else {
+            throw WorkflowEvidenceError.invalid("This serving profile needs verification for the current model, runtime and settings.")
+        }
+    }
+
+    func preview(api: WorkbenchAPI, port: Int?, jit: Bool = false, policy: EndpointMemoryPolicy? = nil) async throws -> [String: Any] {
+        guard hasPassedVerification else { throw WorkflowEvidenceError.invalid("Verify the serving profile before previewing it.") }
+        let plan = try await api.servePreview(repo: modelPath, runtime: "strata", port: port,
+                                              jit: jit, memoryPolicy: policy, strataOptions: options)
+        try validate(plan: plan)
+        return plan
+    }
+
+    func start(api: WorkbenchAPI, port: Int?, hash: String, jit: Bool = false, policy: EndpointMemoryPolicy? = nil) async throws -> [String: Any] {
+        let plan = try await preview(api: api, port: port, jit: jit, policy: policy)
+        guard plan.string("preview_hash") == hash else {
+            throw WorkflowEvidenceError.invalid("The serving profile preview changed. Preview it again before confirming.")
+        }
+        return try await api.serveStart(repo: modelPath, runtime: "strata", port: port, previewHash: hash,
+                                       jit: jit, memoryPolicy: policy, timeout: 960, strataOptions: options)
+    }
+
+    /// Receipt ownership is established by serve status; bind its exact confirmed plan as well.
+    static func matchesReceipt(_ server: ServerInfo, previewHash: String?) -> Bool {
+        guard let previewHash, !previewHash.isEmpty, let pid = server.pid, let port = server.port,
+              !server.modelIdentity.isEmpty, let location = server.receipt,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: location),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber, size.intValue <= 65536,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: location)),
+              let receipt = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return receipt["preview_hash"] as? String == previewHash && receipt["pid"] as? Int == pid
+            && receipt["port"] as? Int == port
+            && (receipt["path"] ?? receipt["repo"]) as? String == server.modelIdentity
+    }
+}
+
+extension ServeLifecycle {
+    static func verifiedProfile(_ profile: ServingProfile, api: WorkbenchAPI) -> ServeLifecycle {
+        var lifecycle = live(api: api, runtime: "strata", strataOptions: profile.options)
+        lifecycle.reviewedPreview = { path, port in
+            guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
+            let plan = try await profile.preview(api: api, port: port)
+            return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
+        }
+        lifecycle.preview = { path, port in
+            guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
+            return try await profile.preview(api: api, port: port).string("preview_hash") ?? ""
+        }
+        lifecycle.start = { path, port, hash in
+            guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
+            _ = try await profile.start(api: api, port: port, hash: hash)
+        }
+        lifecycle.jitPreview = { path, port, policy in
+            guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
+            return try await profile.preview(api: api, port: port, jit: true, policy: policy).string("preview_hash") ?? ""
+        }
+        lifecycle.jitStart = { path, port, hash, policy in
+            guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
+            _ = try await profile.start(api: api, port: port, hash: hash, jit: true, policy: policy)
+        }
+        return lifecycle
+    }
+}
+
+@MainActor
+final class ServingProfileCoordinator: ObservableObject {
+    @Published private(set) var profiles: [ServingProfile] = []
+    @Published private(set) var activeID: UUID?
+    @Published private(set) var lastError: String?
+    private let store: JSONStore<ServingProfile>
+    private let probe: @Sendable (StrataComparisonOptions) -> ServeProbe
+
+    init(store: JSONStore<ServingProfile>, probe: @escaping @Sendable (StrataComparisonOptions) -> ServeProbe) {
+        self.store = store; self.probe = probe
+        do { profiles = try store.load() }
+        catch { lastError = "Serving profiles could not be loaded: \(AppHost.render(error))" }
+    }
+
+    @discardableResult
+    func saveLane(run: ComparisonRun, laneID: String, name: String) -> ServingProfile? {
+        do {
+            guard run.state == .completed, run.effectiveMode == .chat,
+                  let result = run.results.first(where: { $0.id == laneID }), result.error == nil,
+                  let evidence = result.servingEvidence, evidence.runtime == "strata",
+                  let speculation = evidence.speculation, let context = evidence.contextTokens else {
+                throw WorkflowEvidenceError.invalid("Select a successful Strata lane with recorded serving settings.")
+            }
+            let profile = ServingProfile(id: UUID(), name: name.trimmingCharacters(in: .whitespacesAndNewlines), modelPath: result.modelPath,
+                options: StrataComparisonOptions(speculation: speculation, expertMemoryGB: evidence.expertMemoryGB, contextTokens: context))
+            guard profile.isValid else { throw WorkflowEvidenceError.invalid("Enter a profile name of 1–80 characters and valid settings.") }
+            try store.upsert(profile, id: \.id)
+            profiles = try store.load()
+            lastError = nil
+            return profile
+        } catch { lastError = AppHost.render(error); return nil }
+    }
+
+    func resolve(_ requested: ServingProfile) throws -> ServingProfile {
+        guard activeID != requested.id else { throw WorkflowEvidenceError.invalid("Profile verification is in progress.") }
+        guard let current = try store.load().first(where: { $0.id == requested.id }),
+              current.modelPath == requested.modelPath, current.options == requested.options, current.hasPassedVerification else {
+            throw WorkflowEvidenceError.invalid("The current serving profile requires verification.")
+        }
+        return current
+    }
+
+    /// Uses the existing canaries with an explicit 1,024-token answer budget for thinking models.
+    func verify(id: UUID) async {
+        guard activeID == nil, let saved = profiles.first(where: { $0.id == id }), saved.isValid else { return }
+        var original = saved
+        activeID = id; lastError = nil
+        defer { activeID = nil }
+        do {
+            if original.verification != nil {
+                var cleared = original; cleared.verification = nil
+                let invalidated = try store.update(id: id, keyPath: \.id) { current in
+                    guard current == saved else { throw WorkflowEvidenceError.invalid("The profile changed before verification.") }; return cleared
+                }
+                guard invalidated else { throw WorkflowEvidenceError.invalid("The profile is no longer available.") }
+                original = cleared; profiles = try store.load()
+            }
+            let prompts = CanarySuite.cases.map { ProbePrompt(id: $0.id, prompt: $0.prompt, maxTokens: max(1024, $0.maxTokens)) }
+            let outcome = try await probe(original.options).run(modelPath: original.modelPath, prompts: prompts)
+            guard let evidence = outcome.servingEvidence, evidence.runtime == "strata",
+                  let model = evidence.modelFingerprint, let runtime = evidence.runtimeFingerprint,
+                  evidence.speculation == original.options.speculation, evidence.expertMemoryGB == original.options.expertMemoryGB,
+                  evidence.contextTokens == original.options.contextTokens else {
+                throw WorkflowEvidenceError.invalid("The verification server did not record the selected settings and fingerprints.")
+            }
+            let canaries = CanarySuite.cases.map { kase -> CanaryResult in
+                guard let sample = outcome.samples[kase.id] else {
+                    return CanaryResult(id: kase.id, title: kase.title, passed: false, failureReason: "Canary response missing.",
+                                        responseExcerpt: "", tokensPerSecond: nil, timeToFirstTokenSeconds: nil)
+                }
+                let evaluated = CanarySuite.evaluate(kase, sample: sample)
+                guard sample.finishReason == "stop" else {
+                    return CanaryResult(id: kase.id, title: kase.title, passed: false, failureReason: "The answer did not finish normally.",
+                        responseExcerpt: evaluated.responseExcerpt, tokensPerSecond: evaluated.tokensPerSecond,
+                        timeToFirstTokenSeconds: evaluated.timeToFirstTokenSeconds)
+                }
+                return evaluated
+            }
+            let proof = ServingProfileVerification(options: original.options, modelFingerprint: model, runtimeFingerprint: runtime,
+                suiteVersion: CanarySuite.version, canaries: canaries, verifiedAt: Date())
+            var updated = original; updated.verification = proof
+            let changed = try store.update(id: id, keyPath: \.id) { current in
+                guard current == original else { throw WorkflowEvidenceError.invalid("The profile changed during verification. Verify its current settings.") }
+                return updated
+            }
+            guard changed else { throw WorkflowEvidenceError.invalid("The serving profile is no longer available.") }
+            profiles = try store.load()
+            if !proof.passed { lastError = "Profile verification failed. Inspect the recorded canary failures before serving." }
+        } catch {
+            lastError = AppHost.render(error)
+            // A failed re-verification never leaves a previous passing verdict in use.
+            do {
+                _ = try store.update(id: id, keyPath: \.id) { current in
+                    guard current == original else { return current }
+                    var invalidated = current; invalidated.verification = nil; return invalidated
+                }
+                profiles = try store.load()
+            } catch { profiles = []; lastError = "Serving profile state could not be saved: \(AppHost.render(error))" }
+        }
+    }
+}

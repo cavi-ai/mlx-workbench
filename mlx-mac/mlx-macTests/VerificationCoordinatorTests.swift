@@ -1,10 +1,153 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 
 @testable import mlx_workbench
 
 @MainActor
 final class VerificationCoordinatorTests: XCTestCase {
+    func testFailedProfileReverificationRevokesPreviouslySavedProof() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let options = StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)
+        var profile = ServingProfile(id: UUID(), name: "Paged", modelPath: "/Models/strata", options: options)
+        profile.verification = ServingProfileVerification(options: options, modelFingerprint: "model", runtimeFingerprint: "runtime",
+            suiteVersion: CanarySuite.version, canaries: CanarySuite.cases.map {
+                CanaryResult(id: $0.id, title: $0.title, passed: true, failureReason: nil, responseExcerpt: "fixture",
+                             tokensPerSecond: nil, timeToFirstTokenSeconds: nil)
+            }, verifiedAt: Date())
+        try store.upsert(profile, id: \.id)
+        let coordinator = ServingProfileCoordinator(store: store, probe: { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in throw WorkflowEvidenceError.invalid("Runtime changed") },
+                start: { _, _, _ in XCTFail("An invalid preview must never start") }, stop: { _ in }), prober: OpenAIEndpointProber())
+        })
+        XCTAssertNoThrow(try coordinator.resolve(profile))
+        await coordinator.verify(id: profile.id)
+        XCTAssertNotNil(coordinator.lastError)
+        XCTAssertNil(try store.load().first?.verification)
+        XCTAssertThrowsError(try coordinator.resolve(profile))
+        XCTAssertFalse(coordinator.profiles.first?.hasPassedVerification ?? true)
+    }
+
+    func testServingProfileControlsRenderWhenRequested() async throws {
+        guard let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_RENDER_DIR"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_PROFILE_RENDER_DIR to capture the native serving-profile controls.")
+        }
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let profile = ServingProfile(id: UUID(), name: "Paged Strata", modelPath: "/Models/strata",
+            options: StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192))
+        try store.upsert(profile, id: \.id)
+        let coordinator = ServingProfileCoordinator(store: store, probe: { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "unused" }, start: { _, _, _ in }, stop: { _ in }),
+                prober: OpenAIEndpointProber())
+        })
+        let workflow = makeWorkflowCoordinator()
+        workflow.selectServingProfile(profile)
+        let endpoint = EndpointSupervisor(lifecycle: ServeLifecycle(preview: { _, _ in "unused" },
+            start: { _, _, _ in }, stop: { _ in }), statusProvider: { [] },
+            store: JSONStore(fileURL: temporaryURL("endpoint.json")))
+        let directory = URL(fileURLWithPath: folder, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for width in [600.0, 900.0] {
+            let view = ServingProfileControls(profiles: coordinator, workflow: workflow, endpoint: endpoint, modelPath: profile.modelPath)
+                .padding(20).frame(width: width, height: 330, alignment: .topLeading)
+                .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 330),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(250))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: directory.appendingPathComponent("profile-\(Int(width)).png"))
+        }
+    }
+    func testSavedLaneIsUnverifiedAndCorruptProfileStoreIsPreserved() throws {
+        let location = temporaryURL("serving-profiles.json")
+        let coordinator = ServingProfileCoordinator(store: JSONStore(fileURL: location), probe: { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "unused" }, start: { _, _, _ in }, stop: { _ in }),
+                       prober: OpenAIEndpointProber())
+        })
+        let evidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "recorded",
+            "strata_speculation": true, "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]))
+        let result = VariantResult(modelPath: "/Models/strata", modelSignature: nil, samples: [], aggregateTokensPerSecond: nil,
+            aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence, laneID: "lane")
+        let run = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil, variants: [result.modelPath],
+                                results: [result], startedAt: Date(), finishedAt: Date(), state: .completed)
+        let saved = try XCTUnwrap(coordinator.saveLane(run: run, laneID: "lane", name: "Paged"))
+        XCTAssertTrue(saved.options.speculation)
+        XCTAssertFalse(saved.hasPassedVerification)
+        XCTAssertThrowsError(try coordinator.resolve(saved))
+        XCTAssertEqual(try JSONStore<ServingProfile>(fileURL: location).load(), [saved])
+        try Data("broken".utf8).write(to: location)
+        XCTAssertNil(coordinator.saveLane(run: run, laneID: "lane", name: "Other"))
+        XCTAssertEqual(coordinator.profiles, [saved])
+        XCTAssertEqual(String(decoding: try Data(contentsOf: location), as: UTF8.self), "broken")
+    }
+
+    func testLocalServingProfileCanaryRunAndJITWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_STRATA_PROFILE_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_STRATA_PROFILE_MANIFEST for explicit local serving-profile acceptance.")
+        }
+        struct Manifest: Decodable { let agentPath: String; let modelPath: String; let evidenceRoot: String }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let root = URL(fileURLWithPath: manifest.evidenceRoot)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: root.path)
+        let store = JSONStore<ServingProfile>(fileURL: root.appendingPathComponent("profiles.json"))
+        let profile = ServingProfile(id: UUID(), name: "Paged Strata", modelPath: manifest.modelPath,
+            options: StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192))
+        try store.upsert(profile, id: \.id)
+        let coordinator = ServingProfileCoordinator(store: store, probe: { options in
+            ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
+                prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
+        })
+        await coordinator.verify(id: profile.id)
+        XCTAssertNil(coordinator.lastError)
+        let verified = try XCTUnwrap(coordinator.profiles.first { $0.id == profile.id })
+        XCTAssertTrue(verified.hasPassedVerification)
+        guard verified.hasPassedVerification else { return }
+        XCTAssertEqual(verified.verification?.canaries.count, CanarySuite.cases.count)
+
+        let port = try XCTUnwrap(EphemeralPort.pick())
+        let modelAPI = ModelWorkflowAPI.live(api: api, resolveProfile: { try coordinator.resolve($0) })
+        let workflow = ModelWorkflowCoordinator(api: modelAPI, persistence: .live(store: ModelWorkflowStore(fileURL: root.appendingPathComponent("workflows.json"))))
+        let item = ModelItem(path: manifest.modelPath, name: "Strata", bytes: 1, modifiedAt: nil, shard: nil,
+            modelKey: nil, architecture: "qwen4exp", quantization: nil, parameters: nil, structure: nil, signature: nil,
+            companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil)
+        workflow.prepareServe(model: LibraryModel(item: item), exactPath: manifest.modelPath)
+        workflow.selectServingProfile(verified)
+        await workflow.previewServe(runtime: "auto", port: port)
+        XCTAssertEqual(workflow.workflow.serveState, .readyToConfirm)
+        await workflow.confirmServe(runtime: "auto", port: port)
+        XCTAssertEqual(workflow.workflow.serveState, .running)
+        await workflow.stopServer(modelPath: manifest.modelPath)
+
+        let endpoint = EndpointSupervisor(lifecycle: .live(api: api), statusProvider: { try await api.serveStatus() },
+            store: JSONStore(fileURL: root.appendingPathComponent("endpoint.json")))
+        endpoint.profileLifecycle = { .verifiedProfile(try coordinator.resolve($0), api: api) }
+        let jitPort = try XCTUnwrap(EphemeralPort.pick())
+        await endpoint.enableProfile(verified, port: jitPort, loadOnRequest: true)
+        await endpoint.reconcile()
+        XCTAssertNil(endpoint.lastError)
+        XCTAssertEqual(endpoint.fleet.slots.first?.servingProfile?.id, verified.id)
+        let slot = try XCTUnwrap(endpoint.fleet.slots.first)
+        let running = try await api.serveStatus()
+        let server = try XCTUnwrap(running.first { $0.port == jitPort })
+        XCTAssertTrue(ServingProfile.matchesReceipt(server, previewHash: slot.profilePreviewHash))
+        do {
+            let response = try await OpenAIEndpointProber(requestTimeout: 900).chat(baseURL: URL(string: "http://127.0.0.1:\(jitPort)")!,
+                model: manifest.modelPath, prompt: "Reply with exactly OK.", maxTokens: 1024)
+            XCTAssertTrue(response.text.contains("OK"))
+            XCTAssertEqual(response.finishReason, "stop")
+        } catch { await endpoint.disable(); throw error }
+        await endpoint.disable()
+        let stopped = try await api.serveStatus()
+        XCTAssertFalse(stopped.contains { $0.port == jitPort })
+    }
     // MARK: - Store
 
     func testStoreRoundTripsReport() throws {
