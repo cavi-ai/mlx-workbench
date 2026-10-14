@@ -387,7 +387,14 @@ struct ServeView: View {
             }
         }
         ServingProfileControls(profiles: appHost.servingProfiles, workflow: modelWorkflow, endpoint: endpoint,
-            modelPath: modelWorkflow.workflow.completedModelPath)
+            modelPath: modelWorkflow.workflow.completedModelPath, onCompare: { setup in
+                guard appHost.comparison.activeRunID == nil, !appHost.comparison.savingPromptSet else {
+                    return "Wait for the current comparison or prompt-set save to finish."
+                }
+                appHost.servingProfileComparisonRequest = setup
+                onRouteSelection(.compare)
+                return nil
+            })
         if let error = portInput.error {
             Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
         }

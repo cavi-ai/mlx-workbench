@@ -7,6 +7,39 @@ import XCTest
 
 @MainActor
 final class VerificationCoordinatorTests: XCTestCase {
+    func testProfileComparisonStagesDistinctSettingsWithoutSavingOrServing() throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        let baseline = managementProfile()
+        let candidate = ServingProfile(id: UUID(), name: "Tuned", modelPath: baseline.modelPath,
+            options: StrataComparisonOptions(speculation: true, expertMemoryGB: 4, contextTokens: 8192))
+        try store.replaceAll([baseline, candidate])
+        let coordinator = managementCoordinator(store), bytes = try Data(contentsOf: store.url)
+        let setup = try coordinator.prepareComparison(baseline: baseline, candidate: candidate)
+        let lanes = setup.lanes(signature: "fresh")
+        XCTAssertEqual(lanes.count, 2)
+        XCTAssertEqual(Set(lanes.map(\.id)).count, 2)
+        XCTAssertEqual(lanes.map(\.modelPath), [baseline.modelPath, baseline.modelPath])
+        XCTAssertEqual(lanes.map(\.strataOptions), [baseline.options, candidate.options])
+        XCTAssertEqual(lanes.map(\.servingProfileName), [baseline.name, candidate.name])
+        XCTAssertEqual(lanes.map(\.servingProfileID), [baseline.id, candidate.id])
+        XCTAssertEqual(lanes.map(\.modelSignature), ["fresh", "fresh"])
+        XCTAssertEqual(try JSONDecoder().decode([ComparisonLaneConfiguration].self, from: JSONEncoder().encode(lanes)), lanes)
+        let namedRun = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil,
+            variants: lanes.map(\.modelPath), results: [], startedAt: Date(), finishedAt: Date(), state: .completed, laneConfigurations: lanes)
+        XCTAssertEqual(ComparePresentation.lanes(for: namedRun).map(\.profileName), [baseline.name, candidate.name])
+        XCTAssertEqual(try Data(contentsOf: store.url), bytes)
+        XCTAssertThrowsError(try coordinator.prepareComparison(baseline: baseline, candidate: baseline))
+        var identical = candidate; identical.options = baseline.options
+        XCTAssertThrowsError(try ServingProfileComparisonSetup(baseline: baseline, candidate: identical))
+        let other = ServingProfile(id: UUID(), name: "Other", modelPath: "/Models/other", options: candidate.options)
+        XCTAssertThrowsError(try ServingProfileComparisonSetup(baseline: baseline, candidate: other))
+        var renamed = candidate; renamed.name = "Changed"
+        try store.upsert(renamed, id: \.id)
+        XCTAssertThrowsError(try coordinator.prepareComparison(baseline: baseline, candidate: candidate))
+        XCTAssertFalse(candidate.hasPassedVerification)
+        XCTAssertEqual(try store.load().first { $0.id == baseline.id }, baseline)
+    }
+
     func testProfileCopyPreservesOriginalAndRequiresFreshVerification() throws {
         let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         var original = managementProfile(); original.sourceRunID = UUID(); original.sourceLaneID = "lane"
@@ -343,6 +376,8 @@ final class VerificationCoordinatorTests: XCTestCase {
         scenes.append(("remove", AnyView(ServingProfileRemovalSheet(profiles: coordinator, profile: profile, onRemoved: { })), 510))
         scenes.append(("customize-copy", AnyView(ServingProfileCopySheet(profiles: coordinator, profile: profile,
             onSaved: { _ in XCTFail("Rendering must not save a profile copy") })), 560))
+        scenes.append(("compare-profiles", AnyView(ServingProfileComparisonSetupSheet(profiles: coordinator, baseline: profile,
+            onUse: { _ in XCTFail("Rendering must not prepare or run a comparison"); return nil })), 560))
         let emptyRun = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil, variants: [profile.modelPath],
             results: [], startedAt: Date(), finishedAt: Date(), state: .completed)
         scenes.append(("verify-suggestion", AnyView(SuggestedProfileVerificationSheet(profiles: coordinator,
@@ -366,8 +401,20 @@ final class VerificationCoordinatorTests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: recordedRuns.url), runBytes)
             scenes.append(("comparison-evidence", AnyView(ServingProfileComparisonSheet(evidence: evidence)), 600))
         }
+        if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_COMPARE_MANIFEST"] {
+            struct Manifest: Decodable { let evidenceRoot: String }
+            let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+            let root = URL(fileURLWithPath: manifest.evidenceRoot)
+            let run = try XCTUnwrap(try JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json")).load().first { $0.state == .completed })
+            XCTAssertEqual(ComparePresentation.lanes(for: run).compactMap(\.profileName).count, 2)
+            scenes.append(("profile-comparison-results", AnyView(ScrollView {
+                MediaRunResultsView(run: run, store: ComparisonOutputStore(root: root.appendingPathComponent("outputs")),
+                    contentWidth: 860, isRouteActive: false, name: { URL(fileURLWithPath: $0).lastPathComponent },
+                    onReview: { _, _ in XCTFail("Rendering must not save a review") }, laneActions: { _ in EmptyView() }).padding(20)
+            }), 900))
+        }
         for (name, content, width) in scenes {
-            let height = ["comparison-evidence", "customize-copy"].contains(name) ? 510.0 : 330.0
+            let height = name == "profile-comparison-results" ? 900.0 : (["comparison-evidence", "customize-copy", "compare-profiles"].contains(name) ? 510.0 : 330.0)
             let view = content.frame(width: width, height: height, alignment: .topLeading)
                 .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
             let host = NSHostingView(rootView: view)
