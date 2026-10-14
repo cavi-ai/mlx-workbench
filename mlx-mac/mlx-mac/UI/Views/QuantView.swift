@@ -935,6 +935,11 @@ struct QuantView: View {
                     .foregroundStyle(WorkbenchColor.muted)
                     .lineLimit(1)
             }
+            if model?.item.servingRuntime == "strata" {
+                Text("Strata · Metal · GGUF")
+                    .font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.muted)
+            }
         }
         .padding(WorkbenchSpacing.xs)
         .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
@@ -1129,6 +1134,14 @@ struct QuantView: View {
         return WorkbenchSurface {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 runHeader
+
+                if run.effectiveMode == .chat, run.variants.count > 1,
+                   run.results.contains(where: { $0.servingEvidence?.runtime == "strata" }) {
+                    Text("These results compare the selected model variants. A speed difference does not isolate the runtime or establish equivalent response quality.")
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if let promotedWinner, promotedWinner.runID == run.id {
                     HStack(spacing: WorkbenchSpacing.sm) {

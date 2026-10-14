@@ -1,9 +1,43 @@
 import Foundation
+import SwiftUI
 import XCTest
 
 @testable import mlx_workbench
 
 final class ScanContractTests: XCTestCase {
+    @MainActor
+    func testStrataOutputKeepsItsRuntimeAndTextOnlyTask() throws {
+        var payload = fixture(named: "convert-scan-valid")
+        payload["outputs"] = [[
+            "path": "/Models/Qwen3.8-Flash-Next-Strata-Q2_0", "name": "Qwen3.8-Flash-Next-Strata-Q2_0",
+            "runtime": "strata", "quantization": NSNull(), "provenance": NSNull(),
+            "task": ["type": "text_llm", "use_cases": ["general_chat"], "source": "config", "confidence": "confirmed"],
+        ]]
+        let result = try WorkbenchAPI.decodeScan(payload)
+        XCTAssertEqual(result.outputs.first?.runtime, "strata")
+        XCTAssertEqual(result.outputs.first?.task?.type, .textLLM)
+        XCTAssertNil(result.outputs.first?.quantization)
+        let snapshot = ModelLibraryBuilder.build(scan: result,
+            hardware: HardwareProfile(chip: "Apple Silicon", model: "Mac", memoryBytes: 128 * 1_024 * 1_024 * 1_024, macOSVersion: "26"), now: Date())
+        let model = try XCTUnwrap(snapshot.models.first { $0.item.path == result.outputs.first?.path })
+        XCTAssertEqual(model.item.servingRuntime, "strata")
+        let rows = ModelDetailsPresentation.displayRows(for: model, prepareDestination: nil)
+        XCTAssertTrue(rows.contains { $0.label == "Runtime" && $0.value == "Strata (text only)" })
+        XCTAssertEqual(ModelDetailsPresentation.readinessExplanation(for: model), "A local GGUF profile is prepared for the Strata runtime.")
+        let view = NSHostingView(rootView: DetailGrid(rows: rows).padding().frame(width: 520, height: 260)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 260), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        defer { window.close() }
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let attachment = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        attachment.name = "Strata model details"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
     func testServeMemoryPolicyAndAdmissionFailureDecodeWithoutInventingDefaults() throws {
         let servers = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [
             ["jit": true, "memory_policy": ["idle_timeout_seconds": 600, "keep_loaded": false, "minimum_headroom_gb": 2],

@@ -623,13 +623,8 @@ final class ComparisonCoordinator: ObservableObject {
             progressMessage = "Measuring \(URL(fileURLWithPath: variant.path).lastPathComponent)…"
             let result: VariantResult
             do {
-                // Warm-up: one throwaway prompt so first-token load cost does
-                // not contaminate measured TTFT.
-                _ = try await probe.run(
-                    modelPath: variant.path,
-                    prompts: [ProbePrompt(id: "__warmup", prompt: "Say OK.", maxTokens: 4)]
-                )
-                let outcome = try await probe.run(modelPath: variant.path, prompts: prompts)
+                let outcome = try await probe.run(modelPath: variant.path, prompts: prompts,
+                    warmup: [ProbePrompt(id: "__warmup", prompt: "Say OK.", maxTokens: 4)])
                 let samples = promptSet.prompts.compactMap { entry in
                     outcome.samples[entry.id].map {
                         ComparisonAggregation.sample(from: $0, promptID: entry.id)
@@ -642,7 +637,9 @@ final class ComparisonCoordinator: ObservableObject {
                     aggregateTokensPerSecond: ComparisonAggregation.medianTokensPerSecond(samples),
                     aggregateTTFTSeconds: ComparisonAggregation.bestTTFT(samples),
                     error: nil,
-                    environmentFingerprint: environmentFingerprint()
+                    environmentFingerprint: environmentFingerprint(),
+                    servingEvidence: outcome.servingEvidence,
+                    startupSeconds: outcome.startupSeconds
                 )
             } catch {
                 result = VariantResult(

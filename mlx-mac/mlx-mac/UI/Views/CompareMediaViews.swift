@@ -202,6 +202,16 @@ enum ComparisonViewLogic {
         }
         return lines
     }
+
+    static func servingDetails(_ result: VariantResult) -> [String] {
+        var lines = [result.servingEvidence?.summary ?? "Runtime not recorded"]
+        if let speculation = result.servingEvidence?.speculation {
+            lines.append(speculation ? "Draft-and-verify on" : "Draft-and-verify off")
+        }
+        if result.servingEvidence?.weightsPreserved == true { lines.append("Original quantized weights") }
+        if let seconds = result.startupSeconds { lines.append(String(format: "Server startup %.2f s", seconds)) }
+        return lines
+    }
 }
 
 // MARK: - Results grid
@@ -444,6 +454,14 @@ struct MediaRunResultsView<LaneActions: View>: View {
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
                     .help(lane.path)
+                if mode == .chat, let result {
+                    ForEach(ComparisonViewLogic.servingDetails(result), id: \.self) { line in
+                        Text(line)
+                            .font(WorkbenchTypography.metadata)
+                            .foregroundStyle(WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 laneValue(lane, metric: metric, measuredCount: measuredCount)
                 if let result, lane.state == .measured, mode == .chat {
                     ForEach(ComparisonViewLogic.chatLaneDetails(result), id: \.self) { line in
@@ -455,7 +473,8 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(ComparePresentation.laneAccessibilityLabel(lane, name: name(lane.path), metric: metric))
+            .accessibilityLabel(([ComparePresentation.laneAccessibilityLabel(lane, name: name(lane.path), metric: metric)]
+                + (mode == .chat ? result.map(ComparisonViewLogic.servingDetails) ?? [] : [])).joined(separator: ", "))
             laneActions(lane)
             if mode == .musicGeneration && run.state == .completed {
                 listeningReview(lane.path)

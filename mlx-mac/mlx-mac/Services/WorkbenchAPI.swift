@@ -501,7 +501,8 @@ actor WorkbenchAPI {
     }
 
     func serveStart(repo: String, runtime: String, port: Int?,
-                    previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil) async throws -> [String: Any] {
+                    previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
+                    timeout: TimeInterval? = nil) async throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + [
@@ -511,7 +512,7 @@ actor WorkbenchAPI {
             ]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
-        return try await raw(argv)
+        return try await raw(argv, timeout: timeout)
     }
 
     func serveStop(port: Int) async throws -> [String: Any] {
@@ -778,7 +779,8 @@ actor WorkbenchAPI {
                 modelKey: raw.string("model_key"),
                 quantization: info,
                 provenance: raw.string("provenance"),
-                task: ModelTask(dictionary: raw["task"] as? [String: Any])
+                task: ModelTask(dictionary: raw["task"] as? [String: Any]),
+                runtime: raw.string("runtime")
             )
         }
         guard let totalsDict = data["totals"] as? [String: Any] else {

@@ -91,6 +91,9 @@ enum ModelDetailsPresentation {
             Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened)
         }
         rows.append(DetailRow("Modified", modified ?? "Unknown"))
+        if model.item.servingRuntime == "strata" {
+            rows.append(DetailRow("Runtime", "Strata (text only)"))
+        }
         rows.append(DetailRow("Readiness", "\(model.readiness.title) — \(readinessExplanation(for: model))", prose: true))
         if model.readiness == .duplicate {
             rows.append(DetailRow("Duplicate status", "Duplicate variant reported by the latest library scan. Review the raw model evidence before preparing it.", prose: true))
@@ -104,6 +107,9 @@ enum ModelDetailsPresentation {
     static func readinessExplanation(for model: LibraryModel) -> String {
         switch model.readiness {
         case .ready:
+            if model.item.servingRuntime == "strata" {
+                return "A local GGUF profile is prepared for the Strata runtime."
+            }
             if !model.outputPaths.isEmpty {
                 return "An MLX output path was detected for this local model."
             }

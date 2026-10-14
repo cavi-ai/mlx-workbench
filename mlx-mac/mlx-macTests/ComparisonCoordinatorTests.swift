@@ -67,6 +67,73 @@ final class ComparisonCoordinatorTests: XCTestCase {
 
     // MARK: - Coordinator runs
 
+    func testWarmupAndMeasurementsShareOneServerAndWarmupIsNotPersisted() async throws {
+        let events = ComparisonProbeEvents()
+        let probe = ServeProbe(
+            lifecycle: ServeLifecycle(
+                preview: { _, _ in await events.record("preview"); return "hash" },
+                start: { _, _, _ in await events.record("start") },
+                stop: { _ in await events.record("stop") }
+            ),
+            prober: RecordingComparisonProber(events: events),
+            pickPort: { 9997 }
+        )
+        let coordinator = ComparisonCoordinator(probe: probe,
+            runStore: JSONStore(fileURL: coordinatorRunStoreURL),
+            promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL))
+        let set = PromptSet(id: "single", name: "Single", useCase: nil,
+            prompts: [PromptEntry(id: "measured", text: "Answer the question.")], origin: .userCreated)
+        coordinator.start(variants: [("/Models/strata", nil)], promptSet: set)
+        let finished = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(finished)
+        let recorded = await events.values
+        XCTAssertEqual(recorded, ["preview", "start", "Say OK.", "Answer the question.", "stop"])
+        let persisted = try JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL).load()
+        XCTAssertEqual(persisted.first?.results.first?.samples.map(\.promptID), ["measured"])
+    }
+
+    func testComparisonPersistsResolvedRuntimeAndQuantizationFromReviewedPlan() async throws {
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            if argv.contains("--confirm") || argv.contains("stop") { return [:] }
+            return ["plan": ["preview_hash": "reviewed-hash", "runtime": "strata",
+                "weight_format": "gguf", "weight_quantization": "GSQ-RCO Q2_0", "weights_preserved": true,
+                "strata_speculation": false, "strata_model_fingerprint": "model-fingerprint",
+                "strata_runtime_fingerprint": "runtime-fingerprint", "readiness_deadline": 900]]
+        })
+        let coordinator = ComparisonCoordinator(
+            probe: ServeProbe(lifecycle: .live(api: api), prober: StubComparisonProber(gate: nil), pickPort: { 9997 }),
+            runStore: JSONStore(fileURL: coordinatorRunStoreURL),
+            promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL))
+        coordinator.start(variants: [("/Models/strata", "sig")], promptSet: BuiltinPromptSets.coding)
+        let finished = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(finished)
+        let stored = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: coordinatorRunStoreURL)) as? [[String: Any]])
+        let results = try XCTUnwrap(stored.first?["results"] as? [[String: Any]])
+        let evidence = try XCTUnwrap(results.first?["servingEvidence"] as? [String: Any])
+        XCTAssertEqual(evidence["runtime"] as? String, "strata")
+        XCTAssertEqual(evidence["previewHash"] as? String, "reviewed-hash")
+        XCTAssertEqual(evidence["weightFormat"] as? String, "gguf")
+        XCTAssertEqual(evidence["weightQuantization"] as? String, "GSQ-RCO Q2_0")
+        XCTAssertEqual(evidence["speculation"] as? Bool, false)
+        XCTAssertEqual(evidence["weightsPreserved"] as? Bool, true)
+        XCTAssertEqual(evidence["modelFingerprint"] as? String, "model-fingerprint")
+        XCTAssertEqual(evidence["runtimeFingerprint"] as? String, "runtime-fingerprint")
+        XCTAssertGreaterThan(try XCTUnwrap(results.first?["startupSeconds"] as? Double), 0)
+        let reloaded = try JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL).load()
+        XCTAssertEqual(reloaded.first?.results.first?.servingEvidence?.runtime, "strata")
+        XCTAssertEqual(reloaded.first?.results.first?.servingEvidence?.speculation, false)
+    }
+
+    func testHistoricalResultRemainsUnknownAfterDecoding() throws {
+        let data = Data(#"{"modelPath":"/old/model","samples":[],"aggregateTokensPerSecond":12}"#.utf8)
+        let result = try JSONDecoder().decode(VariantResult.self, from: data)
+        XCTAssertNil(result.servingEvidence)
+        XCTAssertNil(result.startupSeconds)
+        XCTAssertEqual(ComparisonViewLogic.servingDetails(result), ["Runtime not recorded"])
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any])
+        XCTAssertNil(encoded["servingEvidence"])
+    }
+
     func testRunMeasuresEveryVariantAndFeedsBenchmarks() async throws {
         let benchmarks = BenchmarkRecorder()
         let coordinator = makeCoordinator()
@@ -303,3 +370,19 @@ private struct StubComparisonProber: EndpointProbing {
 }
 
 private enum StubServeError: Error { case failed }
+
+private actor ComparisonProbeEvents {
+    private(set) var values: [String] = []
+    func record(_ value: String) { values.append(value) }
+}
+
+private struct RecordingComparisonProber: EndpointProbing {
+    let events: ComparisonProbeEvents
+    func isReady(baseURL: URL) async -> Bool { true }
+    func listModels(baseURL: URL) async -> [String] { [] }
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+        await events.record(prompt)
+        return ProbeSample(text: "OK", completionTokens: 2, timeToFirstTokenSeconds: 0.01,
+            durationSeconds: 0.02, metricsEstimated: false)
+    }
+}
