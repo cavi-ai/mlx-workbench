@@ -62,6 +62,8 @@ struct EndpointSlot: Codable, Equatable, Sendable, Identifiable {
     /// Absent in legacy fleets: preserve their eager-serving behavior.
     var loadOnRequest: Bool?
     var memoryPolicy: EndpointMemoryPolicy?
+    var servingProfile: ServingProfile? = nil
+    var profilePreviewHash: String? = nil
     var usesJIT: Bool { loadOnRequest == true }
 
     init(id: UUID = UUID(), enabled: Bool, port: Int, modelPath: String, role: UseCase? = nil, loadOnRequest: Bool? = nil, memoryPolicy: EndpointMemoryPolicy? = nil) {

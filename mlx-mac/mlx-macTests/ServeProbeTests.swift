@@ -4,6 +4,68 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServeProbeTests: XCTestCase {
+    func testProfileReceiptRequiresTheConfirmedPlanAndProcessIdentity() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let receipt: [String: Any] = ["preview_hash": "confirmed", "pid": 123, "port": 9999, "path": "/Models/strata"]
+        try JSONSerialization.data(withJSONObject: receipt).write(to: file)
+        let server = ServerInfo(path: "/Models/strata", runtime: "strata", port: 9999, pid: 123, receipt: file.path)
+        XCTAssertTrue(ServingProfile.matchesReceipt(server, previewHash: "confirmed"))
+        XCTAssertFalse(ServingProfile.matchesReceipt(server, previewHash: "old"))
+        XCTAssertFalse(ServingProfile.matchesReceipt(server, previewHash: nil))
+        XCTAssertFalse(ServingProfile.matchesReceipt(ServerInfo(path: "/Models/strata", port: 9999, pid: 456, receipt: file.path), previewHash: "confirmed"))
+        XCTAssertFalse(ServingProfile.matchesReceipt(ServerInfo(path: "/Models/other", port: 9999, pid: 123, receipt: file.path), previewHash: "confirmed"))
+        XCTAssertFalse(ServingProfile.matchesReceipt(ServerInfo(path: "/Models/strata", receipt: file.path), previewHash: "confirmed"))
+    }
+    @MainActor
+    func testVerifiedServingProfileUsesReviewedOptionsForEagerAndJIT() async throws {
+        let options = StrataComparisonOptions(speculation: true, expertMemoryGB: 2, contextTokens: 8192)
+        var profile = ServingProfile(id: UUID(), name: "Paged", modelPath: "/Models/strata", options: options)
+        profile.verification = ServingProfileVerification(options: options, modelFingerprint: "model", runtimeFingerprint: "runtime",
+            suiteVersion: CanarySuite.version, canaries: CanarySuite.cases.map {
+                CanaryResult(id: $0.id, title: $0.title, passed: true, failureReason: nil, responseExcerpt: "fixture",
+                             tokensPerSecond: nil, timeToFirstTokenSeconds: nil)
+            }, verifiedAt: Date())
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-speculation")) + 1], "on")
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-expert-memory-gb")) + 1], "2.0")
+            XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-context-tokens")) + 1], "8192")
+            if argv.contains("--confirm") {
+                XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--preview-hash")) + 1], "reviewed")
+                return [:]
+            }
+            return ["plan": ["runtime": "strata", "preview_hash": "reviewed", "strata_model_fingerprint": "model",
+                "strata_runtime_fingerprint": "runtime", "strata_speculation": true, "strata_expert_memory_gb": 2.0,
+                "strata_context_tokens": 8192]]
+        })
+        let lifecycle = ServeLifecycle.verifiedProfile(profile, api: api)
+        let hash = try await lifecycle.preview(profile.modelPath, 9999)
+        try await lifecycle.start(profile.modelPath, 9999, hash)
+        let jitHash = try await XCTUnwrap(lifecycle.jitPreview)(profile.modelPath, 9999, .automatic)
+        try await XCTUnwrap(lifecycle.jitStart)(profile.modelPath, 9999, jitHash, .automatic)
+        var changed = profile; changed.options.contextTokens = 2048
+        do { _ = try await changed.preview(api: api, port: 9999); XCTFail("Changed profile settings must require verification") }
+        catch { XCTAssertFalse(changed.hasPassedVerification) }
+    }
+    func testServingProfileVerificationBindsSettingsAndBothFingerprints() throws {
+        let options = StrataComparisonOptions(expertMemoryGB: 2, contextTokens: 8192)
+        let canaries = CanarySuite.cases.map { CanaryResult(id: $0.id, title: $0.title, passed: true,
+            failureReason: nil, responseExcerpt: "fixture", tokensPerSecond: nil, timeToFirstTokenSeconds: nil) }
+        var profile = ServingProfile(id: UUID(), name: "Paged", modelPath: "/Models/strata", options: options)
+        let plan: [String: Any] = ["runtime": "strata", "preview_hash": "preview", "strata_model_fingerprint": "model",
+            "strata_runtime_fingerprint": "runtime", "strata_speculation": false,
+            "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]
+        XCTAssertThrowsError(try profile.validate(plan: plan))
+        profile.verification = ServingProfileVerification(options: options, modelFingerprint: "model", runtimeFingerprint: "runtime",
+            suiteVersion: CanarySuite.version, canaries: canaries, verifiedAt: Date())
+        XCTAssertNoThrow(try profile.validate(plan: plan))
+        for key in ["strata_model_fingerprint", "strata_runtime_fingerprint"] {
+            var changed = plan; changed[key] = "changed"
+            XCTAssertThrowsError(try profile.validate(plan: changed))
+        }
+        profile.options.speculation = true
+        XCTAssertThrowsError(try profile.validate(plan: plan))
+    }
     private func sample(text: String = "ok") -> ProbeSample {
         ProbeSample(text: text, completionTokens: 10, timeToFirstTokenSeconds: 0.05, durationSeconds: 0.5, metricsEstimated: false)
     }

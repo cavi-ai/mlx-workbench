@@ -3,6 +3,7 @@ import Foundation
 private struct ServeIntent: Equatable {
     let runtime: String
     let port: Int?
+    let profile: ServingProfile?
 }
 
 enum ModelWorkflowAPIUnavailable: LocalizedError {
@@ -18,6 +19,8 @@ struct ModelWorkflowAPI {
     let serveStart: (String, String, Int?, String) async throws -> [String: Any]
     let serveStatus: () async throws -> [ServerInfo]
     let serveStop: (Int) async throws -> [String: Any]
+    var profilePreview: (ServingProfile, Int?) async throws -> [String: Any] = { _, _ in throw WorkflowEvidenceError.invalid("Serving profiles are unavailable.") }
+    var profileStart: (ServingProfile, Int?, String) async throws -> [String: Any] = { _, _, _ in throw WorkflowEvidenceError.invalid("Serving profiles are unavailable.") }
     var convertRepoPreview: (RepoConversionRequest) async throws -> [String: Any] = { _ in
         throw ModelWorkflowAPIUnavailable.repoConversion
     }
@@ -26,7 +29,7 @@ struct ModelWorkflowAPI {
         throw ModelWorkflowAPIUnavailable.repoConversion
     }
 
-    static func live(api: WorkbenchAPI) -> ModelWorkflowAPI {
+    static func live(api: WorkbenchAPI, resolveProfile: @escaping (ServingProfile) throws -> ServingProfile = { $0 }) -> ModelWorkflowAPI {
         var workflowAPI = ModelWorkflowAPI(
             convertPreview: { path, qBits, output in try await api.convertPreview(ggufPath: path, qBits: qBits, out: output) },
             convertStart: { path, qBits, output, hash in try await api.convertStart(ggufPath: path, qBits: qBits, out: output, previewHash: hash) },
@@ -36,6 +39,8 @@ struct ModelWorkflowAPI {
             serveStatus: { try await api.serveStatus() },
             serveStop: { port in try await api.serveStop(port: port) }
         )
+        workflowAPI.profilePreview = { profile, port in try await resolveProfile(profile).preview(api: api, port: port) }
+        workflowAPI.profileStart = { profile, port, hash in try await resolveProfile(profile).start(api: api, port: port, hash: hash) }
         workflowAPI.convertRepoPreview = { request in
             try await api.convertRepoPreview(
                 repo: request.repo, qBits: request.qBits, out: request.output, hfCache: nil,
@@ -95,6 +100,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     @Published private(set) var serversError: String?
     @Published private(set) var isConversionSubmissionInFlight = false
     @Published private(set) var isServeSubmissionInFlight = false
+    @Published private(set) var servingProfile: ServingProfile?
 
     private let api: ModelWorkflowAPI
     private let persistence: ModelWorkflowPersistence
@@ -490,6 +496,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             model,
             preferred: exactPath ?? workflow.completedModelPath ?? workflow.outputPath
         )
+        if servingProfile?.modelPath != selectedPath { servingProfile = nil }
         servePreviewHash = nil
         servePreviewIntent = nil
         // A completed or verified record of the selected model is served exactly as recorded.
@@ -507,6 +514,13 @@ final class ModelWorkflowCoordinator: ObservableObject {
             message: "Ready to preview serving \(model.displayName).",
             errorMessage: .some(nil)
         )
+    }
+
+    func selectServingProfile(_ profile: ServingProfile?) {
+        guard !isServeSubmissionInFlight else { return }
+        servingProfile = profile
+        servePreviewHash = nil; servePreviewIntent = nil
+        update(serveState: .idle, message: "Preview the selected serving configuration.", errorMessage: .some(nil))
     }
 
     func previewServe(runtime: String, port: Int?) async {
@@ -534,13 +548,16 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
         update(serveState: .previewing, message: "Preparing serve preview.", errorMessage: .some(nil))
         do {
-            let response = try await api.servePreview(model, runtime, port)
+            if let profile = servingProfile, profile.modelPath != model { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
+            let response: [String: Any]
+            if let profile = servingProfile { response = try await api.profilePreview(profile, port) }
+            else { response = try await api.servePreview(model, runtime, port) }
             guard let hash = response.string("preview_hash"), !hash.isEmpty else {
                 update(serveState: .failed, message: "Serve preview did not include a preview hash.", errorMessage: "Missing serve preview hash.")
                 return
             }
             servePreviewHash = hash
-            servePreviewIntent = ServeIntent(runtime: runtime, port: port)
+            servePreviewIntent = ServeIntent(runtime: runtime, port: port, profile: servingProfile)
             update(serveState: .readyToConfirm, message: "Serve preview ready for confirmation.", errorMessage: .some(nil))
         } catch {
             update(serveState: .failed, message: "Serve preview failed: \(AppHost.render(error))", errorMessage: AppHost.render(error))
@@ -559,7 +576,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             update(serveState: .failed, message: "Preview serving before confirming it.", errorMessage: "Missing serve preview hash.")
             return
         }
-        guard intent.runtime == runtime, intent.port == port else {
+        guard intent.runtime == runtime, intent.port == port, intent.profile == servingProfile else {
             servePreviewHash = nil
             servePreviewIntent = nil
             update(
@@ -576,7 +593,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
         servePreviewHash = nil
         servePreviewIntent = nil
         do {
-            _ = try await api.serveStart(model, runtime, port, hash)
+            if let profile = servingProfile { _ = try await api.profileStart(profile, port, hash) }
+            else { _ = try await api.serveStart(model, runtime, port, hash) }
             let statusAvailable = await refreshOperationalStatus()
             guard statusAvailable,
                   servers.contains(where: { serverRunsModel($0, model) }) else {

@@ -26,6 +26,7 @@ struct ServeView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var endpoint: EndpointSupervisor
+    @ObservedObject private var profiles: ServingProfileCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
     private let onRouteSelection: (AppRoute) -> Void
     @State private var runtime = "auto"
@@ -52,6 +53,7 @@ struct ServeView: View {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
+        _profiles = ObservedObject(wrappedValue: appHost.servingProfiles)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -384,6 +386,8 @@ struct ServeView: View {
                 serveActions(presentation)
             }
         }
+        ServingProfileControls(profiles: appHost.servingProfiles, workflow: modelWorkflow, endpoint: endpoint,
+            modelPath: modelWorkflow.workflow.completedModelPath)
         if let error = portInput.error {
             Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
         }
@@ -408,6 +412,7 @@ struct ServeView: View {
                 Text("mlx-vlm").tag("mlx-vlm")
             }
             .frame(width: WorkbenchSize.Run.runtimeWidth)
+            .disabled(modelWorkflow.servingProfile != nil)
             TextField("Port", text: $portText, prompt: Text("Optional"))
                 .textFieldStyle(.roundedBorder)
                 .frame(width: WorkbenchSize.Run.portField)
@@ -446,6 +451,7 @@ struct ServeView: View {
     @ViewBuilder
     private func serveActions(_ presentation: RunPresentation) -> some View {
         let busy = modelWorkflow.isServeSubmissionInFlight || portInput.error != nil
+            || (modelWorkflow.servingProfile.map { !$0.hasPassedVerification } ?? false) || appHost.servingProfiles.activeID != nil
         // Exactly one action is armed at a time: preview until the intent is
         // ready to confirm, then confirm.
         if presentation.canConfirm {
@@ -564,6 +570,9 @@ struct ServeView: View {
                     .truncationMode(.middle)
                     .frame(minWidth: WorkbenchSize.Run.slotModelMinimum, alignment: .leading)
                     .help(slot.modelPath)
+                if let profile = slot.servingProfile {
+                    Text(profile.name).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
                 if !isTwoLine { slotFacts(slot, attempts: attempts) }
                 Spacer(minLength: WorkbenchSpacing.xs)
                 slotMenu(slot, slotState: slotState)

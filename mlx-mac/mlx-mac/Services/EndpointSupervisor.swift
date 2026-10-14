@@ -45,6 +45,7 @@ final class EndpointSupervisor: ObservableObject {
         )
     }
 
+    var profileLifecycle: ((ServingProfile) throws -> ServeLifecycle)?
     private let lifecycle: ServeLifecycle
     private let statusProvider: @Sendable () async throws -> [ServerInfo]
     private let fleetStore: EndpointFleetStore
@@ -111,6 +112,11 @@ final class EndpointSupervisor: ObservableObject {
         activeUserOperations += 1
         defer { activeUserOperations -= 1 }
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "enable") else { return }
+        if let slot = fleet.slots.first, slot.servingProfile != nil {
+            do {
+                if try await statusProvider().contains(where: { $0.port == slot.port }) { try await lifecycle.stop(slot.port) }
+            } catch { lastError = AppHost.render(error); return }
+        }
         let initialLoadMode = loadOnRequest ?? (fleet.slots.isEmpty ? lifecycle.jitPreview != nil : nil)
         let isNew = fleet.slots.isEmpty
         if let id = fleet.slots.first?.id { pendingUserServeBySlot.removeValue(forKey: id) }
@@ -118,6 +124,7 @@ final class EndpointSupervisor: ObservableObject {
             slot.enabled = true
             slot.port = port
             slot.modelPath = modelPath
+            slot.servingProfile = nil; slot.profilePreviewHash = nil
             if let initialLoadMode { slot.loadOnRequest = initialLoadMode }
             if isNew, slot.usesJIT { slot.memoryPolicy = .automatic }
         }
@@ -127,6 +134,35 @@ final class EndpointSupervisor: ObservableObject {
         lastError = nil
         persist()
         await reconcile(userRequestedSlotID: fleet.slots.first?.id)
+    }
+
+    func enableProfile(_ profile: ServingProfile, port: Int, loadOnRequest: Bool) async {
+        guard !isUnloading, profile.hasPassedVerification, profileLifecycle != nil, (1...65535).contains(port) else {
+            lastError = "Verify the serving profile and choose a valid port before enabling it."; return
+        }
+        activeUserOperations += 1
+        defer { activeUserOperations -= 1 }
+        do {
+            let selected = try profileLifecycle!(profile)
+            if loadOnRequest {
+                guard let preview = selected.jitPreview else { throw WorkflowEvidenceError.invalid("Profile JIT serving is unavailable.") }
+                _ = try await preview(profile.modelPath, port, .automatic)
+            } else { _ = try await selected.preview(profile.modelPath, port) }
+        } catch { lastError = AppHost.render(error); return }
+        var candidate = fleet.slots.first ?? EndpointSlot(enabled: false, port: port, modelPath: profile.modelPath)
+        candidate.enabled = true; candidate.port = port; candidate.modelPath = profile.modelPath
+        candidate.loadOnRequest = loadOnRequest; candidate.memoryPolicy = loadOnRequest ? .automatic : nil
+        candidate.servingProfile = profile; candidate.profilePreviewHash = nil
+        guard validate(candidate, isNew: fleet.slots.isEmpty) else { return }
+        if let old = fleet.slots.first, old.enabled {
+            do {
+                let running = try await statusProvider()
+                if running.contains(where: { $0.port == old.port }) { try await lifecycle.stop(old.port) }
+            } catch { lastError = "The previous endpoint could not be stopped: \(AppHost.render(error))"; return }
+        }
+        if fleet.slots.isEmpty { fleet.slots.append(candidate) } else { fleet.slots[0] = candidate }
+        slotAttemptTimestamps[candidate.id] = []; persist()
+        await reconcile(userRequestedSlotID: candidate.id)
     }
 
     func disable() async {
@@ -157,7 +193,7 @@ final class EndpointSupervisor: ObservableObject {
         guard passesGate(modelPath: modelPath, allowUnverified: allowUnverified, action: "swap") else { return }
         if let id = fleet.slots.first?.id { pendingUserServeBySlot.removeValue(forKey: id) }
         await stopServing(on: config.port)
-        mutateSlot0 { $0.modelPath = modelPath }
+        mutateSlot0 { $0.modelPath = modelPath; $0.servingProfile = nil; $0.profilePreviewHash = nil }
         persist()
         await reconcile(userRequestedSlotID: fleet.slots.first?.id)
     }
@@ -188,6 +224,7 @@ final class EndpointSupervisor: ObservableObject {
         defer { activeUserOperations -= 1 }
         guard let index = fleet.slots.firstIndex(where: { $0.id == id }) else { return }
         var candidate = fleet.slots[index]
+        if candidate.modelPath != modelPath { candidate.servingProfile = nil; candidate.profilePreviewHash = nil }
         candidate.modelPath = modelPath
         candidate.port = port
         candidate.role = role
@@ -234,6 +271,7 @@ final class EndpointSupervisor: ObservableObject {
             await stopServing(on: fleet.slots[index].port)
         }
         fleet.slots[index].modelPath = modelPath
+        fleet.slots[index].servingProfile = nil; fleet.slots[index].profilePreviewHash = nil
         persist()
         await reconcile(userRequestedSlotID: fleet.slots[index].enabled ? id : nil)
     }
@@ -454,8 +492,14 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     private func reconcileSlot(_ slot: EndpointSlot, running: [ServerInfo]) async {
+        if let profile = slot.servingProfile, !profile.isValid || profile.modelPath != slot.modelPath {
+            slotStates[slot.id] = .degraded(reason: "The endpoint serving profile is invalid."); return
+        }
         if let ours = running.first(where: { $0.port == slot.port }) {
             if HFRepoID.matches(ours.modelIdentity, slot.modelPath) {
+                if slot.servingProfile != nil && !ServingProfile.matchesReceipt(ours, previewHash: slot.profilePreviewHash) {
+                    slotStates[slot.id] = .degraded(reason: "The running endpoint does not match the confirmed serving profile. Re-enable the profile."); return
+                }
                 slotResidencies[slot.id] = ours.residencySummary
                 slotMemoryPolicies[slot.id] = ours.memoryPolicy
                 slotLoadBlockedReasons[slot.id] = ours.loadBlockedReason
@@ -507,6 +551,11 @@ final class EndpointSupervisor: ObservableObject {
         slotAttemptTimestamps[slot.id] = attempts
         slotRestartAttempts[slot.id] = attempts.count
         do {
+            let lifecycle: ServeLifecycle
+            if let profile = slot.servingProfile {
+                guard profile.modelPath == slot.modelPath, let factory = profileLifecycle else { throw WorkflowEvidenceError.invalid("Serving profile is unavailable or changed.") }
+                lifecycle = try factory(profile)
+            } else { lifecycle = self.lifecycle }
             let preview: @Sendable (String, Int) async throws -> String
             let start: @Sendable (String, Int, String) async throws -> Void
             if slot.usesJIT {
@@ -523,6 +572,9 @@ final class EndpointSupervisor: ObservableObject {
             guard !hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
             guard fleet.slots.contains(slot) else { return }
             try await start(slot.modelPath, slot.port, hash)
+            if slot.servingProfile != nil, let index = fleet.slots.firstIndex(where: { $0.id == slot.id }) {
+                fleet.slots[index].profilePreviewHash = hash; persist()
+            }
             slotStates[slot.id] = .waitingForServer
         } catch {
             pendingUserServeBySlot.removeValue(forKey: slot.id)

@@ -447,6 +447,7 @@ struct QuantView: View {
     @State private var variantSlots: [String?] = [nil, nil]
     @State private var selectedPromptSetID: String = BuiltinPromptSets.coding.id
     @State private var selectedRunID: ComparisonRun.ID?
+    @State private var profileSaveRequest: ServingProfileSaveRequest?
     @State private var promoteContext: PromoteContext?
     @State private var promotedWinner: PromotedWinner?
     @State private var showingFilters = false
@@ -1211,6 +1212,9 @@ struct QuantView: View {
                 if width > 0 { compareContentWidth = width }
             }
         }
+        .sheet(item: $profileSaveRequest) { request in
+            SaveServingProfileSheet(profiles: appHost.servingProfiles, request: request)
+        }
         .sheet(item: $promoteContext) { context in
             PromoteWinnerSheet(
                 appHost: appHost,
@@ -1223,6 +1227,12 @@ struct QuantView: View {
     /// Chat lanes carry the promote button on the winner and the preferred-model menu.
     @ViewBuilder
     private func laneActions(_ lane: CompareLane, run: ComparisonRun, winnerPath: String?) -> some View {
+        if run.effectiveMode == .chat, run.state == .completed,
+           let result = run.results.first(where: { $0.id == lane.resultKey }), result.error == nil, result.servingEvidence?.runtime == "strata" {
+            Button("Save serving profile…") {
+                profileSaveRequest = ServingProfileSaveRequest(run: run, laneID: lane.resultKey, letter: lane.letter)
+            }.buttonStyle(.bordered).controlSize(.small)
+        }
         if run.effectiveMode == .chat, !run.hasCustomServingConfiguration, lane.path == winnerPath || (run.useCase != nil && lane.state == .measured) {
             HStack(spacing: WorkbenchSpacing.xs) {
                 if lane.path == winnerPath, let winner = run.winner {

@@ -32,6 +32,7 @@ class AppHost: ObservableObject {
     let verification: VerificationCoordinator
     /// Measured Comparisons (prompt-set replay across variants).
     let comparison: ComparisonCoordinator
+    let servingProfiles: ServingProfileCoordinator
     let lab: LabCoordinator
     /// Cross-client wiring transactions (premium spec 02).
     let wiring: WiringCoordinator
@@ -116,8 +117,12 @@ class AppHost: ObservableObject {
         self.api = api
         self.lab = LabCoordinator(api: api)
         self.resources = SystemResourceMonitor(statusProvider: { try await api.serveStatus() })
+        let profiles = ServingProfileCoordinator(store: JSONStore(fileURL: JSONStore<ServingProfile>.defaultFileURL("serving-profiles.json")),
+            probe: { options in ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
+                prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900) })
+        self.servingProfiles = profiles
         self.modelWorkflow = ModelWorkflowCoordinator(
-            api: modelWorkflowAPI ?? .live(api: api),
+            api: modelWorkflowAPI ?? .live(api: api, resolveProfile: { try profiles.resolve($0) }),
             persistence: modelWorkflowPersistence ?? .live(store: ModelWorkflowStore(fileURL: ModelWorkflowStore.defaultFileURL()))
         )
         self.verification = verification ?? VerificationCoordinator(
@@ -221,6 +226,7 @@ class AppHost: ObservableObject {
         }
         // The always-on endpoint only serves verified models by default;
         // the quality gate's per-signature status is the verdict source.
+        self.endpoint.profileLifecycle = { profile in .verifiedProfile(try profiles.resolve(profile), api: api) }
         self.endpoint.isVerified = { [weak self] path in
             self?.isModelVerified(path) ?? false
         }
