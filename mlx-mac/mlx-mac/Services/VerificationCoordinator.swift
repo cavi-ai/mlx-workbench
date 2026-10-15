@@ -102,8 +102,11 @@ final class VerificationCoordinator: ObservableObject {
         }) else { return }
         var updated = report
         updated.outcome = .keptDespiteFailure
-        persist(updated)
-        onResolution?(recordID, .keptAnyway)
+        do {
+            try persist(updated)
+            lastError = nil
+            onResolution?(recordID, .keptAnyway)
+        } catch { lastError = AppHost.render(error) }
     }
 
     private func latestReport(for path: String) -> VerificationReport? {
@@ -118,17 +121,20 @@ final class VerificationCoordinator: ObservableObject {
             .path
     }
 
-    private func persist(_ report: VerificationReport) {
+    private func persist(_ report: VerificationReport) throws {
+        do {
+            try store.upsert(report)
+        } catch {
+            let message = "Verification report could not be saved: \(AppHost.render(error))"
+            persistenceError = message
+            throw WorkflowEvidenceError.invalid(message)
+        }
         if let index = reports.firstIndex(where: { $0.id == report.id }) {
             reports[index] = report
         } else {
             reports.insert(report, at: 0)
         }
-        do {
-            try store.upsert(report)
-        } catch {
-            persistenceError = "Verification report could not be saved: \(AppHost.render(error))"
-        }
+        persistenceError = nil
     }
 }
 
@@ -207,7 +213,7 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                     outcome: outcome,
                     environmentFingerprint: self.environmentFingerprint()
                 )
-                persist(report)
+                try persist(report)
                 onReport?(report)
                 activeModelPath = nil
                 progressMessage = nil

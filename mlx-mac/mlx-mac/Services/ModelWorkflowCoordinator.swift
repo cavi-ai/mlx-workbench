@@ -847,7 +847,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
                 updatedRecord(
                     from: record,
                     state: .completed,
-                    message: "Verification could not run (\(reason)); the output is complete but unverified.",
+                    message: "Verification result unavailable (\(reason)); the output is complete but unverified.",
                     errorMessage: .some(nil)
                 ),
                 persist: true,
