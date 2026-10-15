@@ -188,6 +188,9 @@ struct TextComparisonContent: View {
                     if run.effectiveMode == .chat, result.servingEvidence?.runtime == "strata" || sample.draftTokens != nil {
                         ComparisonDraftTokenEvidenceView(evidence: sample.draftTokens)
                     }
+                    if run.effectiveMode == .chat, result.servingEvidence?.runtime == "strata" || sample.promptProcessing != nil {
+                        ComparisonPromptProcessingEvidenceView(evidence: sample.promptProcessing)
+                    }
                     if let reasoning = sample.reasoningText, !reasoning.isEmpty {
                         DisclosureGroup("Reasoning") {
                             ScrollView {

@@ -242,6 +242,53 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertEqual(ComparisonDraftTokenEvidenceView.description(zero), "Server reported 0 draft tokens")
     }
 
+    func testReportedPromptProcessingSeparatesCachedTokensAndServerClock() async throws {
+        let body = #"data: {"choices":[{"delta":{"content":"323"}}]}"# + "\n"
+            + #"data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":12},"timings":{"cache_n":80,"prompt_n":20,"prompt_ms":200}}"#
+            + "\ndata: [DONE]\n"
+        let sample = try await OpenAIEndpointProber(session: stubSession(body: body)).chat(
+            baseURL: URL(string: "http://127.0.0.1:9999")!, model: "strata", prompt: "17 * 19", maxTokens: 128)
+        let evidence = try XCTUnwrap(sample.promptProcessing)
+        XCTAssertEqual(evidence.cachedTokens, 80); XCTAssertEqual(evidence.processedTokens, 20)
+        XCTAssertEqual(evidence.processingSeconds, 0.2)
+        XCTAssertEqual(evidence.tokensPerSecond, 100)
+        let ttft = try XCTUnwrap(sample.timeToFirstTokenSeconds)
+        XCTAssertEqual(try XCTUnwrap(sample.prefillTokensPerSecond), 20 / ttft, accuracy: 1)
+        let recorded = ComparisonAggregation.sample(from: sample, promptID: "p")
+        let saved = try JSONDecoder().decode(ComparisonSample.self, from: JSONEncoder().encode(recorded))
+        XCTAssertEqual(saved.promptProcessing, evidence)
+        XCTAssertTrue(ComparisonPromptProcessingEvidenceView.description(saved.promptProcessing).contains("80 cached"))
+        var legacy = try XCTUnwrap(try JSONSerialization.jsonObject(with: JSONEncoder().encode(recorded)) as? [String: Any])
+        legacy.removeValue(forKey: "promptProcessing")
+        let old = try JSONDecoder().decode(ComparisonSample.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(old.promptProcessing)
+        XCTAssertEqual(ComparisonPromptProcessingEvidenceView.description(old.promptProcessing), "Prompt cache and server timing not reported")
+    }
+
+    func testPromptProcessingValidatesCountsAndDoesNotInventZeroWorkSpeed() throws {
+        let usage: [String: Any] = ["prompt_tokens": 100]
+        let cached = try XCTUnwrap(PromptProcessingEvidence(usage: usage, timings: ["cache_n": 100, "prompt_n": 0, "prompt_ms": 0]))
+        XCTAssertNil(cached.tokensPerSecond)
+        let sample = ProbeSample(text: "323", completionTokens: 1, promptTokens: 100, timeToFirstTokenSeconds: 2,
+            durationSeconds: 3, metricsEstimated: false, promptProcessing: cached)
+        XCTAssertNil(sample.prefillTokensPerSecond)
+        XCTAssertTrue(ComparisonPromptProcessingEvidenceView.description(cached).contains("No new prompt tokens"))
+        for timings: [String: Any] in [["cache_n": 80, "prompt_n": 21, "prompt_ms": 200],
+            ["cache_n": -1, "prompt_n": 101, "prompt_ms": 200], ["cache_n": 80, "prompt_n": 20, "prompt_ms": -1],
+            ["cache_n": 80, "prompt_n": 20, "prompt_ms": true], ["cache_n": "80", "prompt_n": 20, "prompt_ms": 200]] {
+            XCTAssertNil(PromptProcessingEvidence(usage: usage, timings: timings))
+        }
+    }
+
+    func testConflictingPromptProcessingRemainsUnreported() async throws {
+        let body = #"data: {"usage":{"prompt_tokens":100},"timings":{"cache_n":80,"prompt_n":20,"prompt_ms":200},"choices":[]}"#
+            + "\n" + #"data: {"usage":{"prompt_tokens":100},"timings":{"cache_n":90,"prompt_n":10,"prompt_ms":100},"choices":[]}"#
+            + "\ndata: [DONE]\n"
+        let sample = try await OpenAIEndpointProber(session: stubSession(body: body)).chat(
+            baseURL: URL(string: "http://127.0.0.1:9999")!, model: "strata", prompt: "hello", maxTokens: 32)
+        XCTAssertNil(sample.promptProcessing)
+    }
+
     func testConflictingStreamDraftCountsRemainUnreported() async throws {
         let body = #"data: {"usage":{"completion_tokens":12},"timings":{"draft_n":18,"draft_n_accepted":8},"choices":[]}"#
             + "\n" + #"data: {"usage":{"completion_tokens":13},"timings":{"draft_n":20,"draft_n_accepted":9},"choices":[]}"#

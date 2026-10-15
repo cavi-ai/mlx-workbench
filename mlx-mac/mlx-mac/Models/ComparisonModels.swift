@@ -887,8 +887,8 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     let error: String?
     /// Prompt tokens reported by the server's usage block, when present.
     let promptTokens: Int?
-    /// Prompt-processing speed (prompt tokens over TTFT — a lower bound,
-    /// since TTFT includes queueing and first decode).
+    /// Client-side prefill estimate over TTFT; uses new-token counts when
+    /// reported, otherwise the full prompt length with unknown cache use.
     let prefillTokensPerSecond: Double?
     /// Tool calls emitted when the prompt offered a tool; nil otherwise.
     let toolCalls: Int?
@@ -921,6 +921,7 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     let timeToFirstAnswerSeconds: Double?
     let durationSeconds: Double?
     let draftTokens: DraftTokenEvidence?
+    let promptProcessing: PromptProcessingEvidence?
 
     var hasCompletedAnswer: Bool {
         error == nil && finishReason == "stop" && !(fullOutput ?? outputExcerpt).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -968,7 +969,8 @@ struct ComparisonSample: Codable, Equatable, Sendable {
         metricsEstimated: Bool? = nil,
         timeToFirstAnswerSeconds: Double? = nil,
         durationSeconds: Double? = nil,
-        draftTokens: DraftTokenEvidence? = nil
+        draftTokens: DraftTokenEvidence? = nil,
+        promptProcessing: PromptProcessingEvidence? = nil
     ) {
         self.promptID = promptID
         self.outputExcerpt = outputExcerpt
@@ -1001,6 +1003,7 @@ struct ComparisonSample: Codable, Equatable, Sendable {
         self.timeToFirstAnswerSeconds = timeToFirstAnswerSeconds
         self.durationSeconds = durationSeconds
         self.draftTokens = draftTokens
+        self.promptProcessing = promptProcessing
     }
 }
 
@@ -1372,7 +1375,8 @@ enum ComparisonAggregation {    static func medianTokensPerSecond(_ samples: [Co
             metricsEstimated: probe.metricsEstimated,
             timeToFirstAnswerSeconds: probe.timeToFirstAnswerSeconds,
             durationSeconds: probe.durationSeconds,
-            draftTokens: probe.draftTokens
+            draftTokens: probe.draftTokens,
+            promptProcessing: probe.promptProcessing
         )
     }
 

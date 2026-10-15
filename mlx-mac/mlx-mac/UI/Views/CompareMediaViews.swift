@@ -179,7 +179,7 @@ enum ComparisonViewLogic {
         String(format: "first token %.2f s", seconds)
     }
 
-    /// Prompt tokens over first-token time is a lower bound, so it always reads as an estimate.
+    /// Client TTFT includes work beyond prompt processing; cache evidence may be unavailable.
     static func prefillText(_ tokensPerSecond: Double) -> String {
         String(format: "in ~%.0f tok/s (est.)", tokensPerSecond)
     }
@@ -604,6 +604,9 @@ struct MediaRunResultsView<LaneActions: View>: View {
                     if mode == .chat, result?.servingEvidence?.runtime == "strata" || sample.draftTokens != nil {
                         ComparisonDraftTokenEvidenceView(evidence: sample.draftTokens)
                     }
+                    if mode == .chat, result?.servingEvidence?.runtime == "strata" || sample.promptProcessing != nil {
+                        ComparisonPromptProcessingEvidenceView(evidence: sample.promptProcessing)
+                    }
                 }
             } else if ComparePresentation.showsNotRun(sample: sample, result: result) {
                 Text("Not run").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -719,6 +722,25 @@ struct ComparisonDraftTokenEvidenceView: View {
         Text(Self.description(evidence)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             .fixedSize(horizontal: false, vertical: true)
             .help("Server-reported draft counts for this request. Compare answer quality and measured latency separately.")
+    }
+}
+
+struct ComparisonPromptProcessingEvidenceView: View {
+    let evidence: PromptProcessingEvidence?
+
+    static func description(_ evidence: PromptProcessingEvidence?) -> String {
+        guard let evidence, evidence.isValid else { return "Prompt cache and server timing not reported" }
+        let clock = String(format: "server prompt time %.3f s", evidence.processingSeconds)
+        if evidence.processedTokens == 0 { return "No new prompt tokens · \(evidence.cachedTokens) cached · " + clock }
+        let work = "\(evidence.processedTokens) new prompt tokens · \(evidence.cachedTokens) cached"
+        if let rate = evidence.tokensPerSecond { return work + " · " + String(format: "server prefill %.1f tok/s · ", rate) + clock }
+        return work + " · " + clock + " · rate unavailable"
+    }
+
+    var body: some View {
+        Text(Self.description(evidence)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            .fixedSize(horizontal: false, vertical: true)
+            .help("Server-reported new and cached input tokens and prompt-processing time. Client first-token latency includes other work.")
     }
 }
 
