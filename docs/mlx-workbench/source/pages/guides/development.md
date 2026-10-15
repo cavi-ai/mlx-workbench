@@ -43,6 +43,22 @@ xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
   -only-testing:mlx-workbenchTests/TrainedAdapterRuntimeTests test
 ```
 
+To exercise training with a blank output field, provide a cached base smaller
+than 1 GB and a dataset containing one example in each of `train.jsonl` and
+`valid.jsonl`. This opt-in test previews and confirms one iteration with batch
+size 1, checks the completed receipt and adapter identity, and retains its
+isolated application-data tree beneath `.run/`.
+
+```bash
+TEST_RUNNER_MLX_WORKBENCH_REAL_TRAINING_REPO=publisher/model \
+TEST_RUNNER_MLX_WORKBENCH_REAL_TRAINING_DATA=/absolute/path/to/dataset \
+TEST_RUNNER_MLX_WORKBENCH_PYTHON=/absolute/path/to/runtime/bin/python \
+TEST_RUNNER_HF_HUB_OFFLINE=1 TEST_RUNNER_TRANSFORMERS_OFFLINE=1 \
+xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+  -destination 'platform=macOS' \
+  -only-testing:mlx-workbenchTests/TrainedAdapterRuntimeTests/testBlankOutputTrainingCreatesARealAdapterInApplicationSupport test
+```
+
 ## Engine boundary
 
 The app reaches the engine only through `scripts/mlx-agent … --json`, with argv tokens and never a shell string. Every engine call runs off the main actor, so a long call never blocks serving status. Each engine child leads its own process group; on timeout or app quit the whole group gets SIGTERM, then SIGKILL after two seconds. Work the engine detaches, such as conversion jobs and servers, runs in its own session and is not stopped.

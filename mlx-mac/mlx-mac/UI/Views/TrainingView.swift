@@ -46,6 +46,7 @@ struct TrainingRequest: Equatable {
 }
 
 struct TrainingPreview {
+    let sourceDraft: TrainingDraft
     let request: TrainingRequest
     let hash: String
     let payload: [String: Any]
@@ -70,23 +71,32 @@ final class TrainingSession: ObservableObject {
     private var revision = 0
     private let previewOperation: (TrainingRequest) async throws -> [String: Any]
     private let startOperation: (TrainingRequest, String) async throws -> Void
+    private let outputDestination: () -> URL
 
     init(preview: @escaping (TrainingRequest) async throws -> [String: Any],
-         start: @escaping (TrainingRequest, String) async throws -> Void) {
+         start: @escaping (TrainingRequest, String) async throws -> Void,
+         outputDestination: @escaping () -> URL = {
+             WorkbenchStatePaths.applicationSupport().appendingPathComponent("trained-adapters", isDirectory: true)
+                 .appendingPathComponent(UUID().uuidString, isDirectory: true)
+         }) {
         previewOperation = preview
         startOperation = start
+        self.outputDestination = outputDestination
     }
 
     var isBusy: Bool { operation != nil }
     var canPreview: Bool { !isBusy && draft.request != nil }
     var canConfirm: Bool {
-        guard !isBusy, let preview, preview.request == draft.request else { return false }
+        guard !isBusy, let preview, preview.sourceDraft == draft else { return false }
         return TrainingPlanSummary(payload: preview.payload).blockingReason == nil
     }
 
     @discardableResult
     func previewTraining() -> Task<Void, Never>? {
-        guard canPreview, let request = draft.request else { return nil }
+        guard canPreview, let input = draft.request else { return nil }
+        let sourceDraft = draft
+        let request = TrainingRequest(repo: input.repo, data: input.data, iterations: input.iterations,
+            output: input.output ?? outputDestination().path, batchSize: input.batchSize)
         let revision = revision
         operation = .previewing
         preview = nil
@@ -96,14 +106,14 @@ final class TrainingSession: ObservableObject {
             defer { operation = nil }
             do {
                 let payload = try await previewOperation(request)
-                guard self.revision == revision, draft.request == request else { return }
+                guard self.revision == revision, draft == sourceDraft else { return }
                 let nested = payload["plan"] as? [String: Any]
                 guard let hash = (payload["preview_hash"] as? String ?? nested?["preview_hash"] as? String),
                       !hash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     errorMessage = "Training preview did not include a confirmation hash. Preview again before training."
                     return
                 }
-                preview = TrainingPreview(request: request, hash: hash, payload: payload)
+                preview = TrainingPreview(sourceDraft: sourceDraft, request: request, hash: hash, payload: payload)
             } catch {
                 guard self.revision == revision else { return }
                 errorMessage = AppHost.render(error)
@@ -375,6 +385,9 @@ struct TrainingView: View {
             fieldLabel("Output (optional)")
             TextField("Output (optional)", text: $session.draft.output)
                 .textFieldStyle(.roundedBorder).accessibilityLabel("Output directory")
+            Text("Leave blank for a new adapter folder in Workbench’s application data.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

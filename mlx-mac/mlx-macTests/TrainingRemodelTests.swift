@@ -31,6 +31,76 @@ private enum TF {
 private struct Boom: Error, LocalizedError { var errorDescription: String? { "boom" } }
 
 @MainActor
+final class TrainingOutputTests: XCTestCase {
+    func testBlankOutputCapturesAFreshDestinationWithoutChangingTheDraft() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        var choices = 0
+        var previews: [TrainingRequest] = [], starts: [TrainingRequest] = []
+        let session = TrainingSession(preview: { request in
+            previews.append(request); return ["preview_hash": "reviewed", "out": request.output!]
+        }, start: { request, hash in
+            starts.append(request); XCTAssertEqual(hash, "reviewed")
+        }, outputDestination: {
+            choices += 1; return root.appendingPathComponent(String(choices))
+        })
+        session.draft = TrainingDraft(repo: "org/base", data: "/dataset", output: "  ")
+        let original = session.draft
+        await session.previewTraining()?.value
+        let first = try XCTUnwrap(session.preview?.request.output)
+        XCTAssertEqual(session.draft, original)
+        XCTAssertTrue(session.canConfirm)
+        XCTAssertEqual(starts.count, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        await session.previewTraining()?.value
+        let second = try XCTUnwrap(session.preview?.request.output)
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(choices, 2)
+        await session.confirmTraining()?.value
+        XCTAssertEqual(starts, [previews[1]])
+        XCTAssertEqual(starts.first?.output, second)
+        XCTAssertEqual(choices, 2)
+        XCTAssertEqual(session.draft, original)
+    }
+
+    func testExplicitOutputIsPreservedAndEditsInvalidateItsPreview() async {
+        let session = TrainingSession(preview: { ["preview_hash": "reviewed", "out": $0.output!] },
+            start: { _, _ in XCTFail("Edited output must be previewed again") },
+            outputDestination: { XCTFail("An explicit output must not use a default"); return URL(fileURLWithPath: "/unused") })
+        session.draft = TrainingDraft(repo: "org/base", data: "/dataset", output: " /chosen/adapter ")
+        await session.previewTraining()?.value
+        XCTAssertEqual(session.preview?.request.output, "/chosen/adapter")
+        XCTAssertTrue(session.canConfirm)
+        session.draft.output = "/different/adapter"
+        XCTAssertNil(session.preview)
+        XCTAssertNil(session.confirmTraining())
+    }
+
+    func testDefaultDestinationUsesApplicationSupportAndCliPreviewCreatesNoOutput() async throws {
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["train.jsonl", "valid.jsonl"] {
+            try Data((String(repeating: "{\"text\":\"A local example.\"}\n", count: 4)).utf8).write(to: root.appendingPathComponent(name))
+        }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: source.appendingPathComponent("vendor/mlx-agent").path,
+            receiptDirectory: root.path)
+        let session = TrainingSession(preview: { request in
+            try await api.loraPreview(repo: request.repo, data: request.data, iters: request.iterations, out: request.output, batchSize: request.batchSize)
+        }, start: { _, _ in XCTFail("A preview must never start training") })
+        session.draft = TrainingDraft(repo: "workbench-fixture/uncached-training-input", data: root.path)
+        await session.previewTraining()?.value
+        let preview = try XCTUnwrap(session.preview, session.errorMessage ?? "Missing preview")
+        let output = try XCTUnwrap(preview.request.output)
+        let expectedParent = WorkbenchStatePaths.applicationSupport().appendingPathComponent("trained-adapters")
+        XCTAssertEqual(URL(fileURLWithPath: output).deletingLastPathComponent().path, expectedParent.path)
+        XCTAssertEqual(preview.payload["out"] as? String, output)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".mlx-agent-receipts").path))
+    }
+}
+
+@MainActor
 final class TrainingBatchTests: XCTestCase {
     func testNativeBridgePreservesBatchSizeInPreviewAndConfirmation() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -97,6 +167,81 @@ final class TrainingBatchTests: XCTestCase {
 
 @MainActor
 final class TrainedAdapterRuntimeTests: XCTestCase {
+    func testBlankOutputTrainingCreatesARealAdapterInApplicationSupport() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let repo = environment["MLX_WORKBENCH_REAL_TRAINING_REPO"],
+              let dataset = environment["MLX_WORKBENCH_REAL_TRAINING_DATA"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_REAL_TRAINING_REPO and MLX_WORKBENCH_REAL_TRAINING_DATA for real training acceptance.")
+        }
+        guard environment["HF_HUB_OFFLINE"] == "1", environment["TRANSFORMERS_OFFLINE"] == "1" else {
+            throw WorkflowEvidenceError.invalid("Real training acceptance requires offline model loading.")
+        }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let evidence = source.appendingPathComponent(".run/real-training-output-" + UUID().uuidString)
+        let previousRoot = WorkbenchStatePaths.hostedTestRoot
+        WorkbenchStatePaths.hostedTestRoot = evidence
+        defer { WorkbenchStatePaths.hostedTestRoot = previousRoot }
+        let support = WorkbenchStatePaths.applicationSupport()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: source.appendingPathComponent("vendor/mlx-agent").path,
+            receiptDirectory: support.path)
+        let session = TrainingSession(preview: { request in
+            try await api.loraPreview(repo: request.repo, data: request.data, iters: request.iterations, out: request.output, batchSize: request.batchSize)
+        }, start: { request, hash in
+            _ = try await api.loraStart(repo: request.repo, data: request.data, previewHash: hash,
+                iters: request.iterations, out: request.output, batchSize: request.batchSize)
+        })
+        session.draft = TrainingDraft(repo: repo, data: dataset, iterations: "1", batchSize: "1")
+        let original = session.draft
+        await session.previewTraining()?.value
+        let preview = try XCTUnwrap(session.preview, session.errorMessage ?? "Missing training preview")
+        let output = try XCTUnwrap(preview.request.output)
+        XCTAssertEqual(URL(fileURLWithPath: output).deletingLastPathComponent().path,
+            support.appendingPathComponent("trained-adapters").path)
+        XCTAssertEqual(preview.payload["out"] as? String, output)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output))
+        let summary = TrainingPlanSummary(payload: preview.payload)
+        guard session.canConfirm, summary.trainingExamples == 1, summary.validationExamples == 1,
+              let base = summary.basePath else {
+            throw WorkflowEvidenceError.invalid("Bounded training acceptance needs a cached base and one example per split.")
+        }
+        let weights = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: base), includingPropertiesForKeys: [.fileSizeKey])
+            .filter { $0.pathExtension == "safetensors" }
+        let bytes = try weights.reduce(0) { try $0 + ($1.resolvingSymlinksInPath().resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) }
+        guard bytes > 0, bytes < 1_000_000_000 else { throw WorkflowEvidenceError.invalid("Use an existing base smaller than 1 GB.") }
+        do {
+            await session.confirmTraining()?.value
+            XCTAssertNil(session.errorMessage)
+            let deadline = Date().addingTimeInterval(120)
+            var completed: TrainingJob?
+            while Date() < deadline {
+                let jobs = try await api.trainingStatus().jobs
+                if let job = jobs.first(where: { $0.out == output }), job.state == "done" || job.state == "failed" {
+                    completed = job; break
+                }
+                try await Task.sleep(for: .milliseconds(500))
+            }
+            let job = try XCTUnwrap(completed, session.errorMessage ?? "Training did not finish within its bound")
+            guard job.state == "done", job.adapterIdentity != nil else {
+                throw WorkflowEvidenceError.invalid("Training failed; inspect \(job.logPath ?? job.receipt).")
+            }
+            let record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: job.receipt))) as? [String: Any])
+            XCTAssertEqual(record["process_exit_code"] as? Int, 0)
+            XCTAssertEqual(record["out"] as? String, output)
+            XCTAssertEqual(session.draft, original)
+            try JSONSerialization.data(withJSONObject: ["training_receipt": job.receipt, "record": record,
+                "preview": preview.payload, "quality_improvement_measured": false], options: [.prettyPrinted, .sortedKeys])
+                .write(to: evidence.appendingPathComponent("result.json"))
+            print("Real default-output training evidence: \(evidence.path)")
+        } catch {
+            do {
+                for job in try await api.trainingStatus().jobs where job.out == output && ["running", "unknown"].contains(job.state) {
+                    _ = try await api.trainingStop(pid: job.pid)
+                }
+            } catch { XCTFail("Training acceptance cleanup failed: \(error)") }
+            throw error
+        }
+    }
+
     func testCompletedLocalAdapterServesThroughRunAndStops() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["MLX_WORKBENCH_REAL_ADAPTER_RECEIPT"] else {

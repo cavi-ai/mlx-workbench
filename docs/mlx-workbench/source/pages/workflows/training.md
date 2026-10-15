@@ -12,6 +12,11 @@ Text LoRA training records local job receipts and adapter outputs. Controlled st
 4. **Preview Training** captures the request as a training plan. Review the reported adapter output directory, dataset example counts and cached base path. If the preview reports a missing base snapshot, confirmation is disabled: cache the model, then preview again. Older previews may not report these fields. Editing any input invalidates the preview.
 5. **Confirm & Train** submits the job; it appears under **Training jobs** and in Activity.
 
+Leave **Output** blank to use a fresh folder under
+`~/Library/Application Support/mlx-workbench/trained-adapters/`. The preview shows
+the chosen destination, and confirmation uses that path. An explicit output
+path is preserved. Preview does not create the adapter folder or start training.
+
 Each run pins the cached base model, copies the reviewed dataset bytes, records the actual process result and verifies the adapter content. **Open log** and **Inspect** show a job's details; failed jobs can be retried.
 
 **Use in Run** stages a completed job's recorded base and adapter in
