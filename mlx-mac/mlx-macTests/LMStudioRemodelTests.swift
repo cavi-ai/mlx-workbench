@@ -505,6 +505,23 @@ final class LMStudioRowsTests: XCTestCase {
         XCTAssertEqual(LMStudioSummary(mlxModels: 1, ggufToConvert: 0, mlxFitNow: 0, totalBytes: 0).items[0].label, "MLX model")
     }
 
+    func testSummaryDistinguishesUnknownPartialAndKnownFitCounts() {
+        let model = F.mlx("/lm/p/a-8bit")
+        for hasProbed in [false, true] {
+            let summary = F.present(snapshot: F.snapshot([model]), memory: nil, hasProbed: hasProbed).summary
+            XCTAssertEqual(summary.items[2], .init(figure: "—", label: "fit unknown"))
+        }
+        let readingAvailable = F.present(snapshot: F.snapshot([model]), memory: F.memory(), hasProbed: false).summary
+        XCTAssertEqual(readingAvailable.items[2], .init(figure: "1", label: "fit now"))
+        let unestimated = F.mlx("/lm/p/unknown-8bit", bytes: 0)
+        let partial = F.present(snapshot: F.snapshot([model, unestimated])).summary
+        XCTAssertEqual(partial.items[2], .init(figure: "1", label: "known to fit"))
+        let huge = F.mlx("/lm/p/huge-8bit", bytes: 200_000_000_000)
+        let knownZero = F.present(snapshot: F.snapshot([huge])).summary
+        XCTAssertEqual(knownZero.items[2], .init(figure: "0", label: "fit now"))
+        XCTAssertEqual(F.present(snapshot: F.snapshot([]), memory: nil).summary.items[2], .init(figure: "0", label: "fit now"))
+    }
+
     func testLaneTitlesNameTheFormat() {
         XCTAssertEqual(LMStudioLane(format: .mlx, rows: [], notice: nil).title, "MLX models")
         XCTAssertEqual(LMStudioLane(format: .gguf, rows: [], notice: nil).title, "GGUF files")

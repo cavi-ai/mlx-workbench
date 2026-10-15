@@ -72,4 +72,6 @@ Two lanes are ranked by fit:
 - **MLX**: models that run as they are; **Run…** opens Run.
 - **GGUF**: files that need converting; **Prepare…** opens Prepare, or **Run…** when a converted output already exists. Split GGUF files are summed; vision projector files appear as tags.
 
+The fit summary shows **fit unknown** until the MLX models have fit estimates. A partial set of estimates is labeled **known to fit**; a complete set uses **fit now**. Zero is shown only as the known count, never as a substitute for unavailable estimates.
+
 The screen never writes configuration. When the scan does not reach the folder, add it to your roots in Settings.
