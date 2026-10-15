@@ -37,6 +37,22 @@ private struct ComparisonRunFixtureView: View {
 
 final class CompareRemodelTests: XCTestCase {
     @MainActor
+    func testOpenStudiesRequiresAnExplicitClickAndUsesTheStudyRoute() async throws {
+        var destinations: [AppRoute] = []
+        let host = NSHostingView(rootView: StudiesNavigationButton { destinations.append($0) }
+            .buttonStyle(.borderless).padding(20).frame(width: 300, height: 100))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        func button(_ view: NSView) -> NSButton? { (view as? NSButton) ?? view.subviews.compactMap { button($0) }.first }
+        try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+        XCTAssertTrue(destinations.isEmpty)
+        try XCTUnwrap(button(host)).performClick(nil)
+        XCTAssertEqual(destinations, [.studies])
+    }
+
+    @MainActor
     func testEmptyComparisonLeadsWithSetupAtBothContentWidths() async throws {
         let app = AppHost(config: Config.defaults())
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }

@@ -21,14 +21,14 @@ These pages describe release {{RELEASE_TAG}} from commit `{{RELEASE_COMMIT}}`.
 
 ## Screens
 
-The sidebar groups fourteen screens.
+The sidebar groups fifteen screens.
 
 | Group | Screen | Purpose |
 |---|---|---|
 | Workbench | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
 | | **Library** | Local GGUF and MLX weights, fit now, details, lineage and deletion |
 | Lifecycle | **Prepare** | Preview and confirm conversions; follow verification |
-| | **Compare** | Measured comparisons and controlled studies |
+| | **Compare** | Measured model comparisons with recorded prompts and outputs |
 | | **Run** | Loopback servers, memory runway, always-on endpoints and serving profiles |
 | Operations | **Activity** | Conversion, server, experiment and training jobs on one timeline |
 | | **Reclaim** | Quarantine, Trash, source cleanup and restore |
@@ -36,6 +36,7 @@ The sidebar groups fourteen screens.
 | | **Health** | Runtime readiness, model health and the Setup Assistant |
 | Lab | **Discover** | Hugging Face Hub candidates with fit for this Mac |
 | | **LM Studio** | Models in LM Studio's downloads folder, ready to run or prepare |
+| | **Studies** | Controlled experiments, generation jobs and blind review |
 | | **Training** | Text LoRA training and base-versus-adapter evaluation |
 | | **Adopt** | A role recommendation from the available evidence |
 | Settings | **Settings** | Engine, model locations, storage, defaults, advisors and updates |

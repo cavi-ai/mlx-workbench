@@ -18,7 +18,7 @@ Each run pins the cached base model, copies the reviewed dataset bytes, records 
 
 ## Controlled studies
 
-**Compare → Controlled studies** runs A/B experiments that change one variable at a time and reviews the outputs blind.
+**Studies**, in the Lab sidebar group, runs A/B experiments that change one variable at a time and reviews the outputs blind. **Compare → Open Studies** opens the same workspace. Returning to Studies refreshes its experiment and adaptive-study lists; navigating does not create or run an experiment.
 
 1. **Install study tools** once. **Install video runtime** adds the optional Torch runtime for video generation.
 2. **New experiment…**: start from a frozen recipe from the engine and choose the variable to change (inference steps, guidance or seed). **Validate pair**, then **Create experiment**. Model and runtime identities stay attached to both candidates.

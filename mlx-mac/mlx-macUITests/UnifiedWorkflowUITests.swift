@@ -36,9 +36,9 @@ final class UnifiedWorkflowUITests: XCTestCase {
             attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
         }
         launch("quant")
-        let mode = app.radioButtons["Controlled studies"]
-        if mode.waitForExistence(timeout: 10) { mode.click() }
-        else { app.buttons["Controlled studies"].click() }
+        let studies = app.buttons["open-studies"]
+        XCTAssertTrue(studies.waitForExistence(timeout: 10))
+        studies.click()
         XCTAssertTrue(app.buttons["New experiment…"].waitForExistence(timeout: 30))
         app.buttons["New experiment…"].click()
         XCTAssertTrue(app.staticTexts["New controlled experiment"].waitForExistence(timeout: 15))

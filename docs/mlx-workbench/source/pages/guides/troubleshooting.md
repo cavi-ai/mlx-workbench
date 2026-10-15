@@ -38,7 +38,7 @@ Confirmation refuses a server that stopped or changed since the preview, a confi
 
 ## Training or controlled studies cannot load
 
-Re-run `make install` for the engine's `requirements-lab.txt`. Video generation needs **Compare → Controlled studies → Install video runtime**. Read the error and the receipt before retrying; **Recover interrupted jobs** reconciles jobs left by a crash.
+Re-run `make install` for the engine's `requirements-lab.txt`. Video generation needs **Studies → Runtime setup → Install video runtime**. Read the error and the receipt before retrying; **Recover interrupted jobs** reconciles jobs left by a crash.
 
 ## An earlier queue cannot be imported
 

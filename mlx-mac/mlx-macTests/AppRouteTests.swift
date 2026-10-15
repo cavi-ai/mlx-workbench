@@ -2,23 +2,23 @@ import XCTest
 @testable import mlx_workbench
 
 final class AppRouteTests: XCTestCase {
-    func testRouteRegistryContainsTheFourteenUniqueLegacyIDsInCanonicalOrder() {
+    func testRouteRegistryPreservesLegacyIDsAndIncludesStudies() {
         let routes = AppRoute.allCases
         let expectedIDs = [
             "quickstart", "models",
             "convert", "quant", "serve",
             "jobs", "duplicates", "wire", "doctor",
-            "scout", "lmstudio", "training-studio", "adopt",
+            "scout", "lmstudio", "studies", "training-studio", "adopt",
             "settings"
         ]
 
-        XCTAssertEqual(routes.count, 14)
+        XCTAssertEqual(routes.count, 15)
         XCTAssertEqual(routes.map(\.rawValue), expectedIDs)
         XCTAssertEqual(Set(routes.map(\.rawValue)).count, routes.count)
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
 
         XCTAssertEqual(AppRoute.grouped.map(\.group), [.workbench, .lifecycle, .operations, .lab, .settings])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 3, 4, 4, 1])
+        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 3, 4, 5, 1])
     }
 
     func testRouteMetadataMatchesTheSiliconInstrumentBenchInformationArchitecture() {
@@ -34,6 +34,7 @@ final class AppRouteTests: XCTestCase {
             (.health, "Operations", "Health", "stethoscope"),
             (.discover, "Lab", "Discover", "magnifyingglass"),
             (.lmStudio, "Lab", "LM Studio", "square.and.arrow.down"),
+            (.studies, "Lab", "Studies", "square.split.2x1"),
             (.training, "Lab", "Training", "sparkles"),
             (.adopt, "Lab", "Adopt", "hand.tap"),
             (.settings, "Settings", "Settings", "gearshape")
@@ -50,6 +51,7 @@ final class AppRouteTests: XCTestCase {
     func testLegacyIDInitializerFallsBackToOverviewForUnknownValues() {
         XCTAssertEqual(AppRoute(legacyID: "quickstart"), .overview)
         XCTAssertEqual(AppRoute(rawID: "models"), .library)
+        XCTAssertEqual(AppRoute(rawID: "studies"), .studies)
         XCTAssertEqual(AppRoute(rawID: "not-a-route"), .overview)
         XCTAssertEqual(AppRoute(rawID: nil), .overview)
     }

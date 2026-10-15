@@ -1,6 +1,6 @@
 # Compare
 
-**Compare** measures ready models against the same prompts on this Mac and keeps every output, so you judge quality from what the models produced and speed from what was measured. Its picker switches between **Quick comparison** and **Controlled studies** ([Training and studies](training.md)).
+**Compare** measures ready models against the same prompts on this Mac and keeps every output, so you judge quality from what the models produced and speed from what was measured. **Open Studies** opens the separate [controlled studies](training.md#controlled-studies) workspace in the Lab sidebar group.
 
 When the selected mode has no results, setup comes first, followed by compact history and empty-state guidance. Existing results remain above setup when a run is available.
 

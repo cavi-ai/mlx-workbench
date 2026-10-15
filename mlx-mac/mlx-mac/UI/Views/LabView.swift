@@ -3,6 +3,31 @@ import AVKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct StudiesView: View {
+    let lab: LabCoordinator
+    let installer: RuntimeInstaller
+    let agentPath: String
+
+    var body: some View {
+        ScrollView {
+            LabPanel(lab: lab, installer: installer, agentPath: agentPath)
+                .frame(maxWidth: 1100, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(WorkbenchSpacing.pageInset)
+        }
+    }
+}
+
+struct StudiesNavigationButton: View {
+    let onRouteSelection: (AppRoute) -> Void
+
+    var body: some View {
+        Button("Open Studies", systemImage: "square.split.2x1") { onRouteSelection(.studies) }
+            .help("Change one variable at a time and review generated clips blind.")
+            .accessibilityIdentifier("open-studies")
+    }
+}
+
 struct LabPanel: View {
     @ObservedObject var lab: LabCoordinator
     @ObservedObject var installer: RuntimeInstaller
@@ -11,6 +36,7 @@ struct LabPanel: View {
     @State private var adopting = false
     @State private var review: LabReviewContext?
     @State private var isOpeningReview = false
+    @Environment(\.isRouteActive) private var isRouteActive
 
     var body: some View {
         WorkbenchCard("Controlled studies", systemImage: "square.split.2x1") {
@@ -60,7 +86,7 @@ struct LabPanel: View {
             AdaptiveStudiesPanel(lab: lab)
             LabJobRows(lab: lab)
         }
-        .task { await lab.refresh() }
+        .task(id: isRouteActive) { if isRouteActive { await lab.refresh() } }
         .sheet(isPresented: $adopting) { LabAdoptSheet(lab: lab) }
         .sheet(isPresented: $authoring) { LabAuthorSheet(lab: lab) }
         .sheet(item: $review) { context in LabReviewSheet(lab: lab, context: context) }
@@ -645,7 +671,6 @@ struct LabStudyRowView: View {
 
 private struct AdaptiveStudiesPanel: View {
     @ObservedObject var lab: LabCoordinator
-    @State private var studies: [LabStudyRow] = []
     @State private var busy = false
     @State private var review: LabReviewContext?
     var body: some View {
@@ -654,11 +679,11 @@ private struct AdaptiveStudiesPanel: View {
                 Text("Adaptive guidance studies").font(WorkbenchTypography.cardTitle)
                 Spacer()
                 Button("Import frozen recipe…") { importRecipe() }.buttonStyle(.bordered).controlSize(.small).disabled(busy)
-                Button("Refresh studies") { Task { await refresh() } }.buttonStyle(.bordered).controlSize(.small).disabled(busy)
+                Button("Refresh studies") { Task { await refresh() } }.buttonStyle(.bordered).controlSize(.small).disabled(busy || lab.isRefreshing)
             }
             Text("Each study keeps its prompt and seed fixed. Human preferences guide the next pair; the engine retains the search budget and stopping evidence.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            ForEach(studies) { row in
+            ForEach(lab.studies) { row in
                 Divider()
                 LabStudyRowView(
                     row: row, busy: busy, generationBlocked: lab.runningJobID != nil,
@@ -667,12 +692,10 @@ private struct AdaptiveStudiesPanel: View {
                 )
             }
         }
-        .task { await refresh() }
         .sheet(item: $review, onDismiss: { Task { await refresh() } }) { context in LabReviewSheet(lab: lab, context: context) }
     }
     private func refresh() async {
-        do { studies = try await lab.request(LabRequest(operation: "study-list")).studies?.compactMap(LabStudyRow.init(value:)) ?? [] }
-        catch { lab.error = AppHost.render(error) }
+        await lab.refresh()
     }
     private func perform(_ operation: String, id: String) {
         busy = true

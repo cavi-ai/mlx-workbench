@@ -51,6 +51,9 @@ server.
   `MLX Workbench.app` on an `MLX Workbench` volume under `.release/` (ad-hoc
   signed; `DEVELOPER_TEAM=<team id>` archives, exports with Developer ID,
   notarizes through the Xcode account, and staples via `build-swift-devid`).
+- Studies is a Lab sidebar destination using the shared `LabCoordinator`.
+  Compare's Open Studies action routes there. Cached study views refresh their
+  read-only lists on activation; navigation never starts jobs or installs a runtime.
 - `make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json` is the
   opt-in real-data native GGUF-to-Run acceptance surface. Its runner validates
   an explicit allowlisted local source and loopback config, selects only the

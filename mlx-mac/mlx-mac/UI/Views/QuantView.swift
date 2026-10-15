@@ -424,7 +424,6 @@ extension ComparePresentation {
 }
 
 struct QuantView: View {
-    @State private var showsControlledStudies = false
     @ObservedObject var appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
     @ObservedObject private var servingProfiles: ServingProfileCoordinator
@@ -507,13 +506,10 @@ struct QuantView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                Picker("Workflow", selection: $showsControlledStudies) {
-                    Text("Quick comparison").tag(false)
-                    Text("Controlled studies").tag(true)
-                }.pickerStyle(.segmented)
-                if showsControlledStudies {
-                    LabPanel(lab: appHost.lab, installer: appHost.runtimeInstaller, agentPath: appHost.config.mlxAgentPath)
-                } else {
+                HStack {
+                    Spacer()
+                    StudiesNavigationButton(onRouteSelection: onRouteSelection)
+                }
                 if shownRun == nil { setupBar }
                 resultsArea
                 WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
@@ -549,7 +545,6 @@ struct QuantView: View {
                 }
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
-                }
             }
             .frame(maxWidth: 1100, alignment: .leading)
             .frame(maxWidth: .infinity)
@@ -695,7 +690,6 @@ struct QuantView: View {
 
     private func consumeModelComparisonRequest() {
         guard isRouteActive, let request = appHost.modelComparisonRequest else { return }
-        showsControlledStudies = false
         guard canApplyLibrarySelection else {
             reuseError = "Finish the current comparison, save, editor or profile verification, then use the selected Library model."
             return
