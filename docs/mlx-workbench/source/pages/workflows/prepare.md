@@ -23,7 +23,7 @@ After a fresh scan confirms the output, the conversion quality gate runs the can
 | Classification | Answers a billing ticket that must route to billing and read as a refund request |
 | Image generation | Renders a fixed prompt at 512×512 and must write a non-blank image |
 
-A pass marks the workflow **verified**; a failure marks it **verification failed**. Task types without a canary complete without one. Turn the gate off in **Settings → Advisors → Verify conversions**.
+A pass marks the workflow **verified** only after its report is saved; a failure marks it **verification failed**. If the report cannot be saved, the output remains complete but unverified, the storage error is shown and no new verdict is published. Resolve the storage problem before retrying verification. **Keep anyway** also requires its override to be saved before changing the workflow. Task types without a canary complete without one. Turn the gate off in **Settings → Advisors → Verify conversions**.
 
 A notification announces each terminal state: completed, verified, verification failed or failed. Restoring state at launch never notifies.
 
