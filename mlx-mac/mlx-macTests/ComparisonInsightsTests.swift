@@ -4,6 +4,83 @@ import SwiftUI
 @testable import mlx_workbench
 
 final class ComparisonInsightsTests: XCTestCase {
+    private func pairedSpeculationFixture(onCache: Int = 40, onTokens: Int = 100,
+                                           onRuntime: String = "runtime", includeCache: Bool = true, budget: Double = 2,
+                                           onBudget: Double? = nil, onFinish: String = "stop", onEstimated: Bool = false) -> ComparisonRun {
+        let path = "/Models/strata"
+        let lanes = [false, true].map { on in
+            ComparisonLaneConfiguration(id: "\(budget)-\(on ? "on" : "off")", modelPath: path, modelSignature: "model",
+                strataOptions: StrataComparisonOptions(speculation: on, expertMemoryGB: on ? onBudget ?? budget : budget, contextTokens: 8192))
+        }
+        let results = lanes.map { lane in
+            let on = lane.strataOptions!.speculation
+            let evidence = ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "plan",
+                "strata_model_fingerprint": "model", "strata_runtime_fingerprint": on ? onRuntime : "runtime",
+                "strata_speculation": on, "strata_expert_memory_gb": lane.strataOptions!.expertMemoryGB!, "strata_context_tokens": 8192])
+            let cached = on ? onCache : 40
+            let processing = PromptProcessingEvidence(usage: ["prompt_tokens": 100],
+                timings: ["cache_n": cached, "prompt_n": 100 - cached, "prompt_ms": 100])
+            let samples = (0..<2).map { i in
+                ComparisonSample(promptID: "p\(i)", outputExcerpt: "answer", tokensPerSecond: on ? [20.0, 30][i] : [10.0, 20][i],
+                    timeToFirstTokenSeconds: 1, error: nil, promptTokens: 100, finishReason: on ? onFinish : "stop",
+                    completionTokens: on ? onTokens : 100, metricsEstimated: on && onEstimated,
+                    timeToFirstAnswerSeconds: on ? [2.0, 6][i] : [4.0, 8][i], promptProcessing: includeCache ? processing : nil)
+            }
+            return VariantResult(modelPath: path, modelSignature: "model", samples: samples,
+                aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil, servingEvidence: evidence, laneID: lane.id)
+        }
+        return ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "Paired prompts", useCase: nil,
+            variants: lanes.map(\.modelPath), results: results, startedAt: Date(), finishedAt: Date(), state: .completed,
+            promptEntries: [PromptEntry(id: "p0", text: "first"), PromptEntry(id: "p1", text: "second")], laneConfigurations: lanes)
+    }
+
+    func testPairedSpeculationSummarizesMatchedRequestsWithoutChoosingAProfile() throws {
+        let run = pairedSpeculationFixture()
+        let before = try JSONEncoder().encode(run)
+        let pair = try XCTUnwrap(SpeculationComparison.summaries(in: run).first)
+        XCTAssertNil(pair.unavailableReason)
+        XCTAssertEqual(pair.off.strataOptions?.speculation, false); XCTAssertEqual(pair.on.strataOptions?.speculation, true)
+        XCTAssertEqual(pair.rows.count, 2)
+        XCTAssertEqual(pair.medianDecodeRatio, 1.75)
+        XCTAssertEqual(pair.offAnswerSeconds, 6); XCTAssertEqual(pair.onAnswerSeconds, 4)
+        XCTAssertNil(run.winner)
+        XCTAssertNil(run.qualityReviews)
+        let after = try JSONDecoder().decode(ComparisonRun.self, from: before)
+        XCTAssertEqual(after, run)
+    }
+
+    func testPairedSpeculationWithholdsMismatchedAndMissingEvidence() throws {
+        for run in [pairedSpeculationFixture(onCache: 41), pairedSpeculationFixture(onTokens: 101),
+                    pairedSpeculationFixture(onRuntime: "other"), pairedSpeculationFixture(includeCache: false),
+                    pairedSpeculationFixture(onFinish: "length"), pairedSpeculationFixture(onEstimated: true)] {
+            let pair = try XCTUnwrap(SpeculationComparison.summaries(in: run).first)
+            XCTAssertNotNil(pair.unavailableReason)
+            XCTAssertTrue(pair.rows.isEmpty)
+            XCTAssertNil(pair.medianDecodeRatio)
+        }
+        var incomplete = pairedSpeculationFixture(); incomplete.state = .running
+        XCTAssertTrue(SpeculationComparison.summaries(in: incomplete).isEmpty)
+        var missing = pairedSpeculationFixture(); missing.results.removeLast()
+        XCTAssertNotNil(SpeculationComparison.summaries(in: missing).first?.unavailableReason)
+        var extra = pairedSpeculationFixture()
+        let recorded = extra.results[0]
+        extra.results.append(VariantResult(modelPath: recorded.modelPath, modelSignature: recorded.modelSignature,
+            samples: recorded.samples, aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil,
+            servingEvidence: recorded.servingEvidence, laneID: "unexpected"))
+        XCTAssertNotNil(SpeculationComparison.summaries(in: extra).first?.unavailableReason)
+        XCTAssertTrue(SpeculationComparison.summaries(in: pairedSpeculationFixture(onBudget: 4)).isEmpty)
+    }
+
+    func testPairedSpeculationKeepsEachExplicitBudgetSeparate() throws {
+        let low = pairedSpeculationFixture(budget: 2), high = pairedSpeculationFixture(budget: 4)
+        let run = ComparisonRun(id: UUID(), promptSetID: low.promptSetID, promptSetName: low.promptSetName, useCase: nil,
+            variants: low.variants + high.variants, results: low.results + high.results, startedAt: Date(), finishedAt: Date(),
+            state: .completed, promptEntries: low.promptEntries, laneConfigurations: low.laneConfigurations! + high.laneConfigurations!)
+        let pairs = SpeculationComparison.summaries(in: run)
+        XCTAssertEqual(pairs.count, 2)
+        XCTAssertEqual(pairs.compactMap { $0.off.strataOptions?.expertMemoryGB }, [2, 4])
+        XCTAssertTrue(pairs.allSatisfy { $0.rows.count == 2 && $0.medianDecodeRatio == 1.75 && $0.unavailableReason == nil })
+    }
     private func actionEvidence(models: [LibraryModel]? = nil, runs: [ComparisonRun], reports: [WorkflowEvidence] = [],
                                 available: Int64 = 24_000_000_000, environment: String? = "macOS|M4|1.0") -> AgentEvidenceExport {
         ComparisonInsights.agentEvidence(models: models ?? [model("/a"), model("/b")], runs: runs, workflow: reports,

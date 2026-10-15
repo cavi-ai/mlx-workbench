@@ -355,6 +355,7 @@ struct MediaRunResultsView<LaneActions: View>: View {
                 grid(lanes: lanes, layout: layout)
             }
             if mode == .chat, run.state == .completed {
+                ComparisonSpeculationSummaryView(run: run)
                 ComparisonMemoryTradeoffView(run: run)
             }
             if ComparisonViewLogic.showsListening(run) {
@@ -741,6 +742,58 @@ struct ComparisonPromptProcessingEvidenceView: View {
         Text(Self.description(evidence)).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             .fixedSize(horizontal: false, vertical: true)
             .help("Server-reported new and cached input tokens and prompt-processing time. Client first-token latency includes other work.")
+    }
+}
+
+struct ComparisonSpeculationSummaryView: View {
+    let run: ComparisonRun
+
+    private func label(_ lane: ComparisonLaneConfiguration) -> String {
+        let recorded = ComparePresentation.lanes(for: run).first { $0.resultKey == lane.id }
+        return "Lane \(recorded?.letter ?? lane.id)" + (lane.servingProfileName.map { " · \($0)" } ?? "")
+    }
+    private func review(_ id: String) -> String {
+        guard let review = run.qualityReviews?[id], review.rubricID == ComparisonQualityReview.taskOutcomeRubric,
+              (1...5).contains(review.score) else { return "Not reviewed" }
+        return ComparisonQualityReview.taskScoreTitle(review.score)
+    }
+
+    var body: some View {
+        let pairs = SpeculationComparison.summaries(in: run)
+        if !pairs.isEmpty {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                Text("Paired speculation observations").font(WorkbenchTypography.cardTitle)
+                ForEach(pairs) { pair in
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                        Text("Expert memory \(pair.off.strataOptions?.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(pair.off.strataOptions?.contextTokens ?? 0) context tokens")
+                            .font(WorkbenchTypography.label)
+                        Text("Off: \(label(pair.off)) · On: \(label(pair.on))")
+                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+                        if let reason = pair.unavailableReason {
+                            Text("Paired summary unavailable: \(reason)").font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+                        } else if let ratio = pair.medianDecodeRatio, let off = pair.offAnswerSeconds, let on = pair.onAnswerSeconds {
+                            LabeledContent("Median client decode-rate ratio, on / off", value: String(format: "%.2f×", ratio))
+                            LabeledContent("Median answer start, off / on", value: String(format: "%.2f s / %.2f s", off, on))
+                            Text("\(pair.rows.count) paired \(pair.rows.count == 1 ? "prompt" : "prompts") · matching cache work and generation counts")
+                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            DisclosureGroup("Per-prompt observations") {
+                                ForEach(pair.rows) { row in
+                                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                                        Text(run.promptEntries?.first { $0.id == row.id }?.text ?? row.id).font(WorkbenchTypography.secondary).lineLimit(2)
+                                        Text(String(format: "Off %.1f tok/s · On %.1f tok/s · %.2f×", row.offRate, row.onRate, row.decodeRatio))
+                                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                                    }
+                                }
+                            }
+                        }
+                        Text("Task ratings · Off: \(review(pair.off.id)) · On: \(review(pair.on.id))")
+                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Text("A ratio above 1 means higher recorded client decode throughput with speculation on. These are sequential observations; system load can vary. Inspect answers and task ratings before choosing settings. This summary does not select or verify a profile.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 

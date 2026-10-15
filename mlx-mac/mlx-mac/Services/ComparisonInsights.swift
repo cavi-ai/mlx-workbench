@@ -1,5 +1,112 @@
 import Foundation
 
+struct SpeculationComparison: Identifiable {
+    struct Row: Identifiable {
+        let id: String
+        let offRate: Double
+        let onRate: Double
+        let offAnswerSeconds: Double
+        let onAnswerSeconds: Double
+        var decodeRatio: Double { onRate / offRate }
+    }
+    let off: ComparisonLaneConfiguration
+    let on: ComparisonLaneConfiguration
+    let rows: [Row]
+    let unavailableReason: String?
+    var id: String { off.id }
+    var medianDecodeRatio: Double? { Self.median(rows.map(\.decodeRatio)) }
+    var offAnswerSeconds: Double? { Self.median(rows.map(\.offAnswerSeconds)) }
+    var onAnswerSeconds: Double? { Self.median(rows.map(\.onAnswerSeconds)) }
+
+    static func summaries(in run: ComparisonRun) -> [Self] {
+        guard run.state == .completed, run.effectiveMode == .chat, run.hasValidLaneIdentities,
+              let lanes = run.laneConfigurations else { return [] }
+        return lanes.filter { $0.strataOptions?.speculation == false }.compactMap { off in
+            let cohort = lanes.filter { lane in
+                lane.modelPath == off.modelPath && lane.modelSignature == off.modelSignature && lane.strataOptions != nil
+                    && lane.strataOptions?.expertMemoryGB == off.strataOptions?.expertMemoryGB
+                    && lane.strataOptions?.contextTokens == off.strataOptions?.contextTokens
+            }
+            let enabled = cohort.filter { $0.strataOptions?.speculation == true }
+            guard cohort.count == 2, enabled.count == 1, let on = enabled.first else { return nil }
+            return Self(run: run, off: off, on: on)
+        }
+    }
+
+    private init(run: ComparisonRun, off: ComparisonLaneConfiguration, on: ComparisonLaneConfiguration) {
+        self.off = off; self.on = on
+        do { rows = try Self.compare(run: run, off: off, on: on); unavailableReason = nil }
+        catch { rows = []; unavailableReason = (error as? Unavailable)?.reason ?? "Paired measurements are unavailable." }
+    }
+
+    private struct Unavailable: Error { let reason: String }
+
+    private static func compare(run: ComparisonRun, off: ComparisonLaneConfiguration, on: ComparisonLaneConfiguration) throws -> [Row] {
+        guard let lanes = run.laneConfigurations, run.results.count == lanes.count,
+              Set(run.results.map(\.id)) == Set(lanes.map(\.id)) else {
+            throw Unavailable(reason: "The saved lane results do not match the recorded comparison cohort.")
+        }
+        guard off.strataOptions?.expertMemoryGB != nil else {
+            throw Unavailable(reason: "An explicit expert-memory budget is required for paired observations.")
+        }
+        guard let prompts = run.promptEntries, !prompts.isEmpty, Set(prompts.map(\.id)).count == prompts.count else {
+            throw Unavailable(reason: "The recorded prompt cohort is unavailable.")
+        }
+        func result(_ lane: ComparisonLaneConfiguration) throws -> VariantResult {
+            let matches = run.results.filter { $0.id == lane.id }
+            guard matches.count == 1, let result = matches.first, result.error == nil,
+                  result.modelPath == lane.modelPath, result.modelSignature == lane.modelSignature,
+                  result.samples.count == prompts.count, Set(result.samples.map(\.promptID)) == Set(prompts.map(\.id)),
+                  let evidence = result.servingEvidence, evidence.runtime == "strata",
+                  evidence.modelFingerprint?.isEmpty == false, evidence.runtimeFingerprint?.isEmpty == false,
+                  evidence.speculation == lane.strataOptions?.speculation,
+                  evidence.expertMemoryGB == lane.strataOptions?.expertMemoryGB,
+                  evidence.contextTokens == lane.strataOptions?.contextTokens else {
+                throw Unavailable(reason: "Each lane needs a complete matching prompt cohort and recorded runtime settings.")
+            }
+            return result
+        }
+        let disabled = try result(off), enabled = try result(on)
+        guard disabled.servingEvidence?.modelFingerprint == enabled.servingEvidence?.modelFingerprint,
+              disabled.servingEvidence?.runtimeFingerprint == enabled.servingEvidence?.runtimeFingerprint,
+              disabled.environmentFingerprint == enabled.environmentFingerprint else {
+            throw Unavailable(reason: "Recorded model, runtime or environment fingerprints differ.")
+        }
+        let offSamples = Dictionary(uniqueKeysWithValues: disabled.samples.map { ($0.promptID, $0) })
+        let onSamples = Dictionary(uniqueKeysWithValues: enabled.samples.map { ($0.promptID, $0) })
+        return try prompts.map { prompt in
+            guard let a = offSamples[prompt.id], let b = onSamples[prompt.id],
+                  a.hasCompletedAnswer, b.hasCompletedAnswer, a.metricsEstimated == false, b.metricsEstimated == false,
+                  let tokens = a.completionTokens, tokens > 0, tokens == b.completionTokens else {
+                throw Unavailable(reason: "Every paired prompt needs finished answers and equal reported generation counts.")
+            }
+            guard let ac = a.promptProcessing, ac.isValid, let bc = b.promptProcessing, bc.isValid,
+                  ac.promptTokens == a.promptTokens, bc.promptTokens == b.promptTokens else {
+                throw Unavailable(reason: "Cache work was not recorded consistently for every paired prompt.")
+            }
+            guard ac.promptTokens == bc.promptTokens, ac.cachedTokens == bc.cachedTokens,
+                  ac.processedTokens == bc.processedTokens else {
+                throw Unavailable(reason: "Recorded cache work differs between the on and off requests.")
+            }
+            guard let ar = positive(a.tokensPerSecond), let br = positive(b.tokensPerSecond),
+                  positive(br / ar) != nil, let at = positive(a.timeToFirstAnswerSeconds), let bt = positive(b.timeToFirstAnswerSeconds) else {
+                throw Unavailable(reason: "A recorded decode rate or answer-start time is unavailable.")
+            }
+            return Row(id: prompt.id, offRate: ar, onRate: br, offAnswerSeconds: at, onAnswerSeconds: bt)
+        }
+    }
+
+    private static func positive(_ value: Double?) -> Double? {
+        guard let value, value.isFinite, value > 0 else { return nil }
+        return value
+    }
+    private static func median(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted(), middle = sorted.count / 2
+        return sorted.count.isMultiple(of: 2) ? sorted[middle - 1] / 2 + sorted[middle] / 2 : sorted[middle]
+    }
+}
+
 enum ComparisonInsights {
     struct Champions: Identifiable {
         let run: ComparisonRun

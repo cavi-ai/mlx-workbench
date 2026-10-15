@@ -771,6 +771,7 @@ final class VerificationCoordinatorTests: XCTestCase {
                 store: ComparisonOutputStore(root: root.appendingPathComponent("outputs")),
                 name: { URL(fileURLWithPath: $0).lastPathComponent },
                 onReview: { _, _ in XCTFail("Rendering must not save a review") }).padding(20)), 900))
+            scenes.append(("paired-speculation", AnyView(ComparisonSpeculationSummaryView(run: run).padding(24)), 900))
         }
         if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_CHOOSER_MANIFEST"] {
             struct Manifest: Decodable { let profilesFile: String; let comparisonFile: String }
@@ -810,6 +811,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         for (name, content, width) in scenes {
             let height: Double
             switch name {
+            case "paired-speculation": height = 460
             case "prompt-processing-results": height = 1100
             case "profile-chooser-recorded", "profile-chooser-unmeasured": height = 680
             case "profile-comparison-text": height = 620
