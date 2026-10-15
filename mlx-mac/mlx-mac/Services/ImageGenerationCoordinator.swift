@@ -42,9 +42,12 @@ final class ImageGenerationCoordinator: ObservableObject {
         case generating(modelPath: String, startedAt: Date)
         case finished(modelPath: String, GenerationResult)
         case failed(modelPath: String, String)
+        case cancelled(modelPath: String)
     }
 
     @Published private(set) var state: State = .idle
+    @Published private(set) var isCancelling = false
+    private var renderTask: Task<GenerationResult, Error>?
 
     private let render: @Sendable (String, URL, ImageRequest) async throws -> GenerationResult
     private let outputDirectory: () -> URL
@@ -71,13 +74,20 @@ final class ImageGenerationCoordinator: ObservableObject {
             .appendingPathComponent("MLX Workbench", isDirectory: true)
     }
 
-    /// `<model>-<yyyyMMdd-HHmmss>-s<seed>.png`, unique per second and seed.
+    /// Each attempt gets an independent destination, including retries in the same second.
     nonisolated static func outputURL(directory: URL, modelPath: String, seed: Int, date: Date) -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let name = URL(fileURLWithPath: modelPath).lastPathComponent
-        return directory.appendingPathComponent("\(name)-\(formatter.string(from: date))-s\(seed).png")
+        return directory.appendingPathComponent("\(name)-\(formatter.string(from: date))-\(UUID().uuidString)-s\(seed).png")
+    }
+
+    func cancel(modelPath: String) {
+        guard case .generating(let path, _) = state, path == modelPath,
+              let renderTask, !isCancelling else { return }
+        isCancelling = true
+        renderTask.cancel()
     }
 
     func generate(modelPath: String, request: ImageRequest) async {
@@ -90,14 +100,33 @@ final class ImageGenerationCoordinator: ObservableObject {
         var trimmed = request
         trimmed.prompt = prompt
         do {
+            try Task.checkCancellation()
             let directory = outputDirectory()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let started = now()
             let out = Self.outputURL(directory: directory, modelPath: modelPath, seed: request.seed, date: started)
             state = .generating(modelPath: modelPath, startedAt: started)
-            state = .finished(modelPath: modelPath, try await render(modelPath, out, trimmed))
+            let render = self.render
+            let request = trimmed
+            let task = Task {
+                try Task.checkCancellation()
+                return try await render(modelPath, out, request)
+            }
+            renderTask = task
+            defer { renderTask = nil; isCancelling = false }
+            do {
+                let result = try await withTaskCancellationHandler {
+                    try await task.value
+                } onCancel: { task.cancel() }
+                try Task.checkCancellation()
+                guard !task.isCancelled else { throw CancellationError() }
+                state = .finished(modelPath: modelPath, result)
+            } catch {
+                state = error is CancellationError || task.isCancelled || Task.isCancelled
+                    ? .cancelled(modelPath: modelPath) : .failed(modelPath: modelPath, AppHost.render(error))
+            }
         } catch {
-            state = .failed(modelPath: modelPath, AppHost.render(error))
+            state = error is CancellationError ? .cancelled(modelPath: modelPath) : .failed(modelPath: modelPath, AppHost.render(error))
         }
     }
 }
