@@ -4561,11 +4561,12 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(coordinator.runs.isEmpty)
 
         coordinator.start(variants: [("/m", nil)], promptSet: promptSet(for: .imageGeneration))
-        let runID = try XCTUnwrap(coordinator.activeRunID)
+        XCTAssertNil(coordinator.activeRunID)
+        XCTAssertNotNil(coordinator.lastError)
         await waitForRun(coordinator)
 
         for id in saved { XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(id).path), "\(id)") }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(runID).path))
+        XCTAssertTrue(coordinator.runs.isEmpty)
     }
 
     @MainActor

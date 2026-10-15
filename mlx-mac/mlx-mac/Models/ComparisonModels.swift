@@ -1145,6 +1145,44 @@ enum ComparisonRunState: String, Codable, Sendable {
     case interrupted
 }
 
+struct ComparisonServerReceipt: Codable, Equatable, Sendable {
+    let port: Int
+    let pid: Int
+    let modelIdentity: String
+    let previewHash: String
+    let startedAt: String
+
+    var isValid: Bool {
+        (1...65535).contains(port) && pid > 0 && pid <= Int(Int32.max)
+            && !modelIdentity.isEmpty && !previewHash.isEmpty && !startedAt.isEmpty
+    }
+
+    init(port: Int, pid: Int, modelIdentity: String, previewHash: String, startedAt: String) {
+        self.port = port; self.pid = pid; self.modelIdentity = modelIdentity
+        self.previewHash = previewHash; self.startedAt = startedAt
+    }
+
+    init(response: [String: Any], modelPath: String, port: Int, previewHash: String) throws {
+        guard let receipt = response["receipt"] as? [String: Any], let pid = receipt.int("pid"),
+              receipt.int("port") == port, receipt.string("preview_hash") == previewHash,
+              let identity = receipt.string("path") ?? receipt.string("repo"), let started = receipt.string("started_at") else {
+            throw WorkflowEvidenceError.invalid("The confirmed server did not return its ownership receipt.")
+        }
+        self.init(port: port, pid: pid, modelIdentity: identity, previewHash: previewHash, startedAt: started)
+        let samePath = identity.hasPrefix("/") && modelPath.hasPrefix("/")
+            && URL(fileURLWithPath: identity).resolvingSymlinksInPath() == URL(fileURLWithPath: modelPath).resolvingSymlinksInPath()
+        guard isValid, samePath || HFRepoID.serveIdentity(for: identity) == HFRepoID.serveIdentity(for: modelPath) else {
+            throw WorkflowEvidenceError.invalid("The confirmed server receipt does not match the requested model.")
+        }
+    }
+}
+
+struct ComparisonCleanup: Codable, Equatable, Sendable {
+    let server: ComparisonServerReceipt
+    var completionState: ComparisonRunState
+    var isValid: Bool { server.isValid && [.failed, .cancelled, .interrupted].contains(completionState) }
+}
+
 struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let promptSetID: String
@@ -1168,6 +1206,7 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     var strataOptions: [String: StrataComparisonOptions]? = nil
     var laneConfigurations: [ComparisonLaneConfiguration]? = nil
     var settingsSearchGoal: StrataSettingsSearchGoal? = nil
+    var pendingServerCleanup: ComparisonCleanup? = nil
 
     var settingsSearchCandidateID: String? { settingsSearchAssessment.candidateID }
 

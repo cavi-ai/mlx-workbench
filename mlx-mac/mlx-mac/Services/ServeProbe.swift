@@ -234,6 +234,7 @@ struct ProbeRunResult: Equatable, Sendable {
     /// Endpoint start through readiness, before warm-up and prompt timing.
     var startupSeconds: Double? = nil
     var systemMemory: SystemMemoryEvidence? = nil
+    var ownedServer: ComparisonServerReceipt? = nil
 }
 
 struct ServeProbeCancelled: LocalizedError {
@@ -296,6 +297,7 @@ struct ServeLifecycle: Sendable {
     var unload: (@Sendable (_ port: Int, _ expectedPID: Int) async throws -> Void)? = nil
     var configureMemory: (@Sendable (_ port: Int, _ expectedPID: Int, _ policy: EndpointMemoryPolicy) async throws -> Void)? = nil
     var reviewedPreview: (@Sendable (_ modelPath: String, _ port: Int) async throws -> ProbeServePreview)? = nil
+    var startWithReceipt: (@Sendable (_ modelPath: String, _ port: Int, _ previewHash: String) async throws -> ComparisonServerReceipt?)? = nil
 }
 
 extension ServeLifecycle {
@@ -329,6 +331,11 @@ extension ServeLifecycle {
             reviewedPreview: { modelPath, port in
                 let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions)
                 return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
+            },
+            startWithReceipt: { path, port, hash in
+                let response = try await api.serveStart(repo: path, runtime: runtime, port: port, previewHash: hash,
+                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions)
+                return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
             }
         )
     }
@@ -354,7 +361,8 @@ struct ServeProbe: Sendable {
 
     /// Serves `modelPath` on an ephemeral loopback port, runs `prompts`
     /// sequentially, and stops the server even when a probe throws.
-    func run(modelPath: String, prompts: [ProbePrompt], warmup: [ProbePrompt] = [], warmEachPrompt: Bool = false) async throws -> ProbeRunResult {
+    func run(modelPath: String, prompts: [ProbePrompt], warmup: [ProbePrompt] = [], warmEachPrompt: Bool = false,
+             onServerStarted: (@Sendable (ComparisonServerReceipt) async throws -> Void)? = nil) async throws -> ProbeRunResult {
         try Task.checkCancellation()
         guard let port = pickPort() else { throw ServeProbeError.noEphemeralPort }
         let preview: ProbeServePreview
@@ -386,7 +394,14 @@ struct ServeProbe: Sendable {
             }
         }
         let startup = Date()
-        do { try Task.checkCancellation(); try await lifecycle.start(modelPath, port, preview.hash) }
+        var ownedServer: ComparisonServerReceipt?
+        let requiresReceipt = onServerStarted != nil && lifecycle.startWithReceipt != nil
+        do {
+            try Task.checkCancellation()
+            if onServerStarted != nil, let start = lifecycle.startWithReceipt {
+                ownedServer = try await start(modelPath, port, preview.hash)
+            } else { try await lifecycle.start(modelPath, port, preview.hash) }
+        }
         catch {
             sampling?.cancel(); await sampling?.value
             throw error
@@ -398,9 +413,13 @@ struct ServeProbe: Sendable {
         var systemMemory: SystemMemoryEvidence?
         func snapshot() -> ProbeRunResult {
             ProbeRunResult(port: port, samples: samples, servingEvidence: preview.evidence,
-                startupSeconds: startupSeconds, systemMemory: systemMemory)
+                startupSeconds: startupSeconds, systemMemory: systemMemory, ownedServer: ownedServer)
         }
         do {
+            if requiresReceipt && ownedServer == nil {
+                throw WorkflowEvidenceError.invalid("The confirmed comparison server did not return valid ownership evidence.")
+            }
+            if let ownedServer { try await onServerStarted?(ownedServer) }
             try Task.checkCancellation()
             guard await waitUntilReady(baseURL: baseURL) else {
                 throw ServeProbeError.serverNeverReady(timeout: readyTimeout)

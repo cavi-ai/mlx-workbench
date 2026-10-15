@@ -146,6 +146,7 @@ class AppHost: ObservableObject {
             promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json")),
             mediaRunner: LiveComparisonMediaRunner(api: api),
             outputStore: ComparisonOutputStore(),
+            recoverCleanup: { try await api.recoverComparisonServer($0) },
             strataProbe: { options in ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
                 prober: OpenAIEndpointProber(requestTimeout: 900)) }
         )

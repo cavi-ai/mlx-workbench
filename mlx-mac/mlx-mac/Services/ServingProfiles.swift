@@ -163,7 +163,7 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
     }
 
     /// Receipt ownership is established by serve status; bind its exact confirmed plan as well.
-    static func matchesReceipt(_ server: ServerInfo, previewHash: String?) -> Bool {
+    static func matchesReceipt(_ server: ServerInfo, previewHash: String?, startedAt: String? = nil) -> Bool {
         guard let previewHash, !previewHash.isEmpty, let pid = server.pid, let port = server.port,
               !server.modelIdentity.isEmpty, let location = server.receipt,
               let attributes = try? FileManager.default.attributesOfItem(atPath: location),
@@ -174,6 +174,7 @@ struct ServingProfile: Codable, Equatable, Identifiable, Sendable {
         return receipt["preview_hash"] as? String == previewHash && receipt["pid"] as? Int == pid
             && receipt["port"] as? Int == port
             && (receipt["path"] ?? receipt["repo"]) as? String == server.modelIdentity
+            && (startedAt == nil || receipt["started_at"] as? String == startedAt)
     }
 }
 
@@ -192,6 +193,11 @@ extension ServeLifecycle {
         lifecycle.start = { path, port, hash in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
             _ = try await profile.start(api: api, port: port, hash: hash)
+        }
+        lifecycle.startWithReceipt = { path, port, hash in
+            guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
+            let response = try await profile.start(api: api, port: port, hash: hash)
+            return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
         }
         lifecycle.jitPreview = { path, port, policy in
             guard path == profile.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }

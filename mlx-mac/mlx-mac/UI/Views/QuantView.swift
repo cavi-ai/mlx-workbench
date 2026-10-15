@@ -804,6 +804,7 @@ struct QuantView: View {
 
     private var runUnavailableReason: String? {
         if servingProfiles.activeID != nil { return "Wait for serving-profile verification to finish." }
+        if let reason = comparison.runStateUnavailableReason { return reason }
         if let reason = ComparePresentation.runUnavailableReason(slots: variantSlots, activeRunID: comparison.activeRunID,
             availablePaths: Set(readyModels.map { $0.item.path }), hasPromptSet: selectedPromptSet != nil,
             savingPromptSet: comparison.savingPromptSet, hasPrompts: selectedPromptSet?.prompts.isEmpty == false) { return reason }

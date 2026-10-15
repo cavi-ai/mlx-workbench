@@ -7,6 +7,142 @@ import XCTest
 
 @MainActor
 final class ComparisonCoordinatorTests: XCTestCase {
+    private func cleanupRun(_ pid: Int = 131071) -> ComparisonRun {
+        var run = makeRun(results: [], state: .failed)
+        run.pendingServerCleanup = ComparisonCleanup(server: ComparisonServerReceipt(port: 9997, pid: pid,
+            modelIdentity: "/Models/a", previewHash: "owned", startedAt: "original"), completionState: .cancelled)
+        return run
+    }
+
+    func testInvalidRecordedCleanupBlocksWithoutCallingRecovery() async throws {
+        let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL)
+        var run = cleanupRun(); run.pendingServerCleanup?.completionState = .completed
+        try store.upsert(run, id: \.id)
+        let before = try Data(contentsOf: store.url), events = ComparisonProbeEvents()
+        let coordinator = makeCoordinator(recoverCleanup: { _ in await events.record("unexpected") })
+        coordinator.retryCleanup()
+        let finished = await waitFor { !coordinator.isCancelling }
+        XCTAssertTrue(finished); XCTAssertTrue(coordinator.cleanupPending)
+        let calls = await events.values
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: store.url), before)
+    }
+
+    func testConfirmedOwnershipSurvivesFailedCleanupAndCoordinatorRecreation() async throws {
+        let record = try XCTUnwrap(cleanupRun().pendingServerCleanup), prober = CancellationComparisonProber(), cleanup = RetriableComparisonCleanup()
+        var lifecycle = ServeLifecycle(preview: { _, _ in "owned" }, start: { _, _, _ in XCTFail("Receipt-aware start is required") },
+            stop: { port in try await cleanup.stop(port) })
+        lifecycle.startWithReceipt = { _, _, _ in record.server }
+        let probe = ServeProbe(lifecycle: lifecycle, prober: prober, pickPort: { 9997 })
+        let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL)
+        let coordinator = ComparisonCoordinator(probe: probe, runStore: store, promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL))
+        let set = PromptSet(id: "owned", name: "Owned", useCase: nil,
+            prompts: [PromptEntry(id: "a", text: "First"), PromptEntry(id: "b", text: "Second")], origin: .userCreated)
+        coordinator.start(variants: [("/Models/a", nil)], promptSet: set)
+        for _ in 0..<500 {
+            if await prober.requests.contains("Second") { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(try store.load().first?.pendingServerCleanup?.server, record.server)
+        coordinator.cancel()
+        let blocked = await waitFor { coordinator.cleanupPending }
+        XCTAssertTrue(blocked)
+        let original = try XCTUnwrap(store.load().first)
+        XCTAssertEqual(original.pendingServerCleanup?.completionState, .cancelled)
+        let restored = makeCoordinator(recoverCleanup: { server in await cleanup.allow(); try await cleanup.stop(server.port) })
+        XCTAssertEqual(restored.activeRunID, original.id)
+        let before = await cleanup.ports
+        XCTAssertEqual(before, [9997])
+        restored.retryCleanup()
+        let finished = await waitFor { restored.activeRunID == nil }
+        XCTAssertTrue(finished)
+        let saved = try XCTUnwrap(store.load().first)
+        XCTAssertNil(saved.pendingServerCleanup)
+        XCTAssertEqual(saved.state, .cancelled)
+        XCTAssertEqual(saved.results, original.results)
+    }
+
+    func testOwnershipWriteFailureStopsBeforeWarmupAndDoesNotStartAnotherModel() async throws {
+        let record = try XCTUnwrap(cleanupRun().pendingServerCleanup), prober = CancellationComparisonProber(), events = ComparisonProbeEvents()
+        var lifecycle = ServeLifecycle(preview: { _, _ in "owned" }, start: { _, _, _ in XCTFail("Receipt-aware start is required") },
+            stop: { port in await events.record("stop:\(port)") })
+        lifecycle.startWithReceipt = { _, _, _ in await events.record("start"); return record.server }
+        let failing = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL, replaceItem: { _, _ in throw StubServeError.failed })
+        let coordinator = ComparisonCoordinator(probe: ServeProbe(lifecycle: lifecycle, prober: prober, pickPort: { 9997 }),
+            runStore: failing, promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL))
+        coordinator.start(variants: [("/Models/a", nil), ("/Models/b", nil)], promptSet: BuiltinPromptSets.coding)
+        let finished = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(finished)
+        let requests = await prober.requests, calls = await events.values
+        XCTAssertTrue(requests.isEmpty); XCTAssertEqual(calls, ["start", "stop:9997"])
+        XCTAssertEqual(coordinator.runs.first?.state, .failed)
+        XCTAssertNotNil(coordinator.persistenceError)
+    }
+
+    func testCleanupRecoveryRequiresADurableClearAndHandlesMoreThanOneRun() async throws {
+        let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL)
+        let first = cleanupRun(), second = cleanupRun(131072)
+        try store.replaceAll([first, second])
+        let events = ComparisonProbeEvents()
+        let recover: @Sendable (ComparisonServerReceipt) async throws -> Void = { server in await events.record("\(server.pid)") }
+        let coordinator = makeCoordinator(recoverCleanup: recover)
+        let current = try XCTUnwrap(coordinator.activeRunID)
+        coordinator.retryCleanup()
+        let next = await waitFor { coordinator.activeRunID != current && !coordinator.isCancelling }
+        XCTAssertTrue(next); XCTAssertTrue(coordinator.cleanupPending)
+        let saved = try store.load()
+        XCTAssertNil(saved.first { $0.id == current }?.pendingServerCleanup)
+        XCTAssertEqual(saved.first { $0.id == current }?.state, .cancelled)
+        coordinator.retryCleanup()
+        let released = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(released)
+        XCTAssertTrue(try store.load().allSatisfy { $0.pendingServerCleanup == nil && $0.state == .cancelled })
+        let calls = await events.values
+        XCTAssertEqual(Set(calls), ["131071", "131072"])
+    }
+
+    func testCleanupRecoveryRefusesChangedAndUnwritableEvidence() async throws {
+        let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL), run = cleanupRun()
+        try store.upsert(run, id: \.id)
+        let events = ComparisonProbeEvents()
+        let coordinator = makeCoordinator(recoverCleanup: { _ in await events.record("recover") })
+        let before = try Data(contentsOf: store.url)
+        try Data("invalid".utf8).write(to: store.url)
+        coordinator.retryCleanup()
+        let refused = await waitFor { !coordinator.isCancelling }
+        XCTAssertTrue(refused); XCTAssertTrue(coordinator.cleanupPending)
+        let earlyCalls = await events.values
+        XCTAssertTrue(earlyCalls.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: store.url), Data("invalid".utf8))
+        try before.write(to: store.url)
+        let failing = JSONStore<ComparisonRun>(fileURL: store.url, replaceItem: { _, _ in throw StubServeError.failed })
+        let blocked = ComparisonCoordinator(probe: ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "unused" },
+            start: { _, _, _ in XCTFail("Recovery must not start a server") }, stop: { _ in }), prober: StubComparisonProber(gate: nil)),
+            runStore: failing, promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL), recoverCleanup: { _ in })
+        blocked.retryCleanup()
+        let attempted = await waitFor { !blocked.isCancelling }
+        XCTAssertTrue(attempted); XCTAssertTrue(blocked.cleanupPending); XCTAssertNotNil(blocked.activeRunID)
+        XCTAssertEqual(try Data(contentsOf: store.url), before)
+        coordinator.retryCleanup()
+        let cleared = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(cleared)
+    }
+    func testUnresolvedServerCleanupIsRestoredAndBlocksNewComparisons() throws {
+        let run = makeRun(results: [], state: .failed)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(run)) as? [String: Any])
+        object["pendingServerCleanup"] = ["server": ["port": 9997, "pid": 131071, "modelIdentity": "/Models/a",
+            "previewHash": "owned-hash", "startedAt": "2026-10-15T12:00:00Z"], "completionState": "cancelled"]
+        let saved = try JSONDecoder().decode(ComparisonRun.self, from: JSONSerialization.data(withJSONObject: object))
+        let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL)
+        try store.upsert(saved, id: \.id)
+        let coordinator = makeCoordinator()
+        XCTAssertTrue(coordinator.cleanupPending)
+        XCTAssertEqual(coordinator.activeRunID, run.id)
+        coordinator.start(variants: [("/Models/other", nil)], promptSet: BuiltinPromptSets.coding)
+        XCTAssertEqual(coordinator.runs.count, 1)
+        XCTAssertEqual(coordinator.runs.first?.id, run.id)
+        XCTAssertTrue(coordinator.aggregateBenchmarks().isEmpty)
+    }
     func testLocalComparisonCancellationWhenRequested() async throws {
         guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_CANCEL_MANIFEST"] else {
             throw XCTSkip("Set MLX_WORKBENCH_COMPARISON_CANCEL_MANIFEST for real comparison cancellation acceptance.")
@@ -19,10 +155,35 @@ final class ComparisonCoordinatorTests: XCTestCase {
         let root = URL(fileURLWithPath: manifest.evidenceRoot)
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: root.path)
         let prober = LiveCancellationComparisonProber()
-        let probe = ServeProbe(lifecycle: .verifiedProfile(profile, api: api), prober: prober, readyTimeout: 900)
+        let stage = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RECOVERY_STAGE"]
+        var lifecycle = ServeLifecycle.verifiedProfile(profile, api: api)
+        if stage == "prepare" { lifecycle.stop = { _ in throw WorkflowEvidenceError.invalid("Cleanup transport unavailable") } }
+        let probe = ServeProbe(lifecycle: lifecycle, prober: prober, readyTimeout: 900)
         let store = JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json"))
         let coordinator = ComparisonCoordinator(probe: probe, runStore: store,
-            promptSetStore: JSONStore(fileURL: root.appendingPathComponent("prompts.json")), strataProbe: { _ in probe })
+            promptSetStore: JSONStore(fileURL: root.appendingPathComponent("prompts.json")),
+            recoverCleanup: { try await api.recoverComparisonServer($0) }, strataProbe: { _ in probe })
+        if stage == "recover" {
+            struct Handoff: Codable { let hostPID: Int32; let runID: UUID }
+            let handoff = try JSONDecoder().decode(Handoff.self, from: Data(contentsOf: root.appendingPathComponent("handoff.json")))
+            XCTAssertNotEqual(handoff.hostPID, ProcessInfo.processInfo.processIdentifier)
+            XCTAssertEqual(coordinator.activeRunID, handoff.runID); XCTAssertTrue(coordinator.cleanupPending)
+            let pending = try XCTUnwrap(try store.load().first { $0.id == handoff.runID }?.pendingServerCleanup)
+            let beforeRetry = try await api.serveStatus()
+            XCTAssertTrue(beforeRetry.contains { $0.pid == pending.server.pid && $0.port == pending.server.port })
+            coordinator.retryCleanup()
+            let finished = await waitFor(timeout: 60) { coordinator.activeRunID == nil }
+            XCTAssertTrue(finished, coordinator.lastError ?? "Cleanup did not finish")
+            let saved = try XCTUnwrap(try store.load().first { $0.id == handoff.runID })
+            XCTAssertEqual(saved.state, .cancelled); XCTAssertNil(saved.pendingServerCleanup)
+            XCTAssertEqual(saved.results.first?.samples.map(\.promptID), ["first"])
+            let afterRetry = try await api.serveStatus()
+            XCTAssertFalse(afterRetry.contains { $0.pid == pending.server.pid && $0.port == pending.server.port })
+            XCTAssertEqual(try Data(contentsOf: profiles.url), try Data(contentsOf: root.appendingPathComponent("profiles-before.json")))
+            try JSONEncoder().encode(Handoff(hostPID: ProcessInfo.processInfo.processIdentifier, runID: handoff.runID))
+                .write(to: root.appendingPathComponent("recovered.json"), options: .atomic)
+            return
+        }
         let lane = ComparisonLaneConfiguration(id: "profile", modelPath: profile.modelPath, modelSignature: nil,
             strataOptions: profile.options, servingProfileID: profile.id, servingProfileName: profile.name)
         let set = PromptSet(id: "cancel-acceptance", name: "Cancellation", useCase: nil,
@@ -38,10 +199,27 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertTrue(secondStarted, coordinator.runs.first?.results.first?.error ?? "Second request was not reached")
         try await Task.sleep(for: .milliseconds(500))
         coordinator.cancel()
+        if stage == "prepare" {
+            let blocked = await waitFor(timeout: 60) { coordinator.cleanupPending }
+            XCTAssertTrue(blocked)
+            let saved = try XCTUnwrap(try store.load().first)
+            XCTAssertEqual(saved.pendingServerCleanup?.completionState, .cancelled)
+            XCTAssertEqual(saved.results.first?.samples.map(\.promptID), ["first"])
+            let owned = try XCTUnwrap(saved.pendingServerCleanup?.server)
+            let servers = try await api.serveStatus()
+            XCTAssertTrue(servers.contains { $0.pid == owned.pid && $0.port == owned.port })
+            XCTAssertEqual(try Data(contentsOf: profiles.url), before)
+            try before.write(to: root.appendingPathComponent("profiles-before.json"), options: .atomic)
+            struct Handoff: Codable { let hostPID: Int32; let runID: UUID }
+            try JSONEncoder().encode(Handoff(hostPID: ProcessInfo.processInfo.processIdentifier, runID: saved.id))
+                .write(to: root.appendingPathComponent("handoff.json"), options: .atomic)
+            return
+        }
         let finished = await waitFor(timeout: 60) { coordinator.activeRunID == nil }
         XCTAssertTrue(finished)
         let run = try XCTUnwrap(try store.load().first)
         XCTAssertEqual(run.state, .cancelled)
+        XCTAssertNil(run.pendingServerCleanup)
         XCTAssertEqual(run.results.first?.samples.map(\.promptID), ["first"])
         XCTAssertTrue(try XCTUnwrap(run.results.first?.samples.first).hasCompletedAnswer)
         XCTAssertTrue(coordinator.aggregateBenchmarks().isEmpty)
@@ -814,7 +992,9 @@ final class ComparisonCoordinatorTests: XCTestCase {
             XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-speculation")) + 1], "on")
             XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-expert-memory-gb")) + 1], "2.0")
             XCTAssertEqual(argv[try XCTUnwrap(argv.firstIndex(of: "--strata-context-tokens")) + 1], "8192")
-            if argv.contains("--confirm") { return [:] }
+            if argv.contains("--confirm") {
+                return ["receipt": ["pid": 131071, "port": 9997, "path": "/Models/strata", "preview_hash": "custom", "started_at": "original"]]
+            }
             return ["plan": ["preview_hash": "custom", "runtime": "strata", "strata_speculation": true,
                 "strata_expert_memory_gb": 2.0, "strata_context_tokens": 8192]]
         })
@@ -895,7 +1075,13 @@ final class ComparisonCoordinatorTests: XCTestCase {
 
     func testComparisonPersistsResolvedRuntimeAndQuantizationFromReviewedPlan() async throws {
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
-            if argv.contains("--confirm") || argv.contains("stop") { return [:] }
+            if argv.contains("stop") { return [:] }
+            if argv.contains("--confirm") {
+                let index = try XCTUnwrap(argv.firstIndex(of: "--port"))
+                let port = try XCTUnwrap(Int(argv[index + 1]))
+                return ["receipt": ["pid": 131071, "port": port, "path": "/Models/strata",
+                    "preview_hash": "reviewed-hash", "started_at": "original"]]
+            }
             return ["plan": ["preview_hash": "reviewed-hash", "runtime": "strata",
                 "weight_format": "gguf", "weight_quantization": "GSQ-RCO Q2_0", "weights_preserved": true,
                 "strata_speculation": false, "strata_model_fingerprint": "model-fingerprint",
@@ -1066,7 +1252,8 @@ final class ComparisonCoordinatorTests: XCTestCase {
         runStoreURL: URL? = nil,
         promptSetStoreURL: URL? = nil,
         failingPaths: Set<String> = [],
-        gate: ProbeGate? = nil
+        gate: ProbeGate? = nil,
+        recoverCleanup: @escaping @Sendable (ComparisonServerReceipt) async throws -> Void = { _ in throw StubServeError.failed }
     ) -> ComparisonCoordinator {
         let probe = ServeProbe(
             lifecycle: ServeLifecycle(
@@ -1084,7 +1271,8 @@ final class ComparisonCoordinatorTests: XCTestCase {
         return ComparisonCoordinator(
             probe: probe,
             runStore: JSONStore<ComparisonRun>(fileURL: runStoreURL ?? coordinatorRunStoreURL),
-            promptSetStore: JSONStore<PromptSet>(fileURL: promptSetStoreURL ?? coordinatorPromptSetStoreURL)
+            promptSetStore: JSONStore<PromptSet>(fileURL: promptSetStoreURL ?? coordinatorPromptSetStoreURL),
+            recoverCleanup: recoverCleanup
         )
     }
 

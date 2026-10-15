@@ -5,6 +5,40 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testComparisonRecoveryChecksReceiptIdentityAndNeverStopsAReplacement() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("comparison-receipt-\(UUID().uuidString)")
+        let receipt = root.appendingPathComponent(".mlx-agent-receipts/serve/9997.json")
+        try FileManager.default.createDirectory(at: receipt.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let expected = ComparisonServerReceipt(port: 9997, pid: 131071, modelIdentity: "/Models/a", previewHash: "owned", startedAt: "original")
+        let original: [String: Any] = ["port": 9997, "pid": 131071, "path": "/Models/a", "preview_hash": "owned", "started_at": "original"]
+        let base: [String: Any] = ["port": 9997, "pid": 131071, "path": "/Models/a", "started_at": "original",
+            "receipt": receipt.path, "alive": true, "argv_match": true]
+        for scenario in 0..<9 {
+            var row = base, file = original
+            if scenario == 1 { file["preview_hash"] = "different" }
+            if scenario == 2 { row["started_at"] = "replacement" }
+            if scenario == 6 { row["pid"] = 131072 }
+            if scenario == 8 { file["started_at"] = "replacement" }
+            try JSONSerialization.data(withJSONObject: file).write(to: receipt)
+            let recorder = AgentCallRecorder()
+            let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: root.path, command: { path, argv, scout, timeout in
+                recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+                if argv.contains("status") {
+                    if scenario == 5 { return [:] }
+                    return ["servers": scenario == 3 || scenario == 7 ? [] : [row]]
+                }
+                if scenario == 4 { throw BridgeError.skillOutputUnreadable }
+                return ["status": "stopped"]
+            })
+            let expectFailure = [1, 2, 5, 7, 8].contains(scenario)
+            do {
+                try await api.recoverComparisonServer(expected, mayBeAlive: { _ in ![3, 4, 5, 6].contains(scenario) })
+                XCTAssertFalse(expectFailure, "scenario \(scenario)")
+            } catch { XCTAssertTrue(expectFailure, "scenario \(scenario): \(error)") }
+            XCTAssertEqual(recorder.values.filter { $0.argv.contains("stop") }.count, [0, 4].contains(scenario) ? 1 : 0)
+        }
+    }
     func testCancelledInvocationDoesNotLaunchAndCleanupIgnoresTaskCancellation() async throws {
         let token = CLIInvocationCancellation(); token.cancel()
         XCTAssertThrowsError(try CLIProcess().run(agentPath: "/missing", argv: ["convert", "video"], cancellation: token)) {
