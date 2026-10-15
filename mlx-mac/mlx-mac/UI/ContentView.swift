@@ -26,12 +26,12 @@ struct ContentView: View {
     }
 
     private var selectedRoute: AppRoute {
-        AppRoute(rawID: selectedRouteID)
+        AppRoute(rawID: selectedRouteID).navigationDestination
     }
 
     private var selectedRouteBinding: Binding<AppRoute> {
         Binding(
-            get: { AppRoute(rawID: selectedRouteID) },
+            get: { selectedRoute },
             set: { selectedRouteID = $0.rawValue }
         )
     }
@@ -103,7 +103,8 @@ struct ContentView: View {
     /// Keeps a destination mounted after its first visit, preserving local
     /// view state without eagerly constructing every feature view.
     static func mountedRoutes(for visitedRoutes: Set<AppRoute>) -> [AppRoute] {
-        AppRoute.allCases.filter { visitedRoutes.contains($0) }
+        let destinations = Set(visitedRoutes.map(\.navigationDestination))
+        return AppRoute.allCases.filter { destinations.contains($0) }
     }
 
     @ViewBuilder
@@ -146,16 +147,15 @@ struct ContentView: View {
             WireView(appHost: appHost, onRouteSelection: navigate)
         case .health:
             DoctorView(appHost: appHost, onRouteSelection: navigate)
-        case .discover:
-            ScoutView(appHost: appHost)
+        case .discover, .adopt:
+            DiscoveryWorkspace(appHost: appHost,
+                recommendationRequested: selectedRouteID == AppRoute.adopt.rawValue, onRouteSelection: navigate)
         case .lmStudio:
             LMStudioView(appHost: appHost, onRouteSelection: navigate)
         case .studies:
             StudiesView(lab: appHost.lab, installer: appHost.runtimeInstaller, agentPath: appHost.config.mlxAgentPath)
         case .training:
             TrainingView(appHost: appHost)
-        case .adopt:
-            AdoptView(appHost: appHost, onRouteSelection: navigate)
         case .settings:
             SettingsView(appHost: appHost, onRouteSelection: navigate)
         }

@@ -38,11 +38,10 @@ The sidebar groups fifteen screens.
 | | **Reclaim** | Quarantine, Trash, source cleanup and restore |
 | | **Clients** | Config wiring for local clients, with rollback |
 | | **Health** | Runtime readiness, model health and the Setup Assistant |
-| Lab | **Discover** | Hugging Face Hub candidates with fit for this Mac |
+| Lab | **Discover** | Browse Hugging Face Hub candidates or request a task recommendation |
 | | **LM Studio** | Models in LM Studio's downloads folder, ready to run or prepare |
 | | **Studies** | Controlled experiments, generation jobs and blind review |
 | | **Training** | Text LoRA training and base-versus-adapter evaluation |
-| | **Adopt** | A role recommendation from the available evidence |
 | Settings | **Settings** | Engine, model locations, storage, defaults, advisors and updates |
 
 The menu bar item shows endpoint status and starts or stops each endpoint. The toolbar's memory header shows estimated RAM use and headroom on every screen.

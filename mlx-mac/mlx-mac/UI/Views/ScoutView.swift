@@ -1,6 +1,68 @@
 import AppKit
 import SwiftUI
 
+enum DiscoveryMode: String, CaseIterable, Identifiable {
+    case browse, recommend
+    var id: Self { self }
+    var title: String { self == .browse ? "Browse candidates" : "Recommend for a task" }
+}
+
+/// Both tasks retain their draft and results when switching modes or routes.
+struct DiscoveryWorkspace: View {
+    let appHost: AppHost
+    let recommendationRequested: Bool
+    let onRouteSelection: (AppRoute) -> Void
+    @Environment(\.isRouteActive) private var isRouteActive
+    @State private var mode: DiscoveryMode
+    @State private var visitedModes: Set<DiscoveryMode>
+
+    init(appHost: AppHost, initialMode: DiscoveryMode = .browse, recommendationRequested: Bool = false,
+         onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
+        self.appHost = appHost
+        self.recommendationRequested = recommendationRequested
+        self.onRouteSelection = onRouteSelection
+        let initial = recommendationRequested ? DiscoveryMode.recommend : initialMode
+        _mode = State(initialValue: initial)
+        _visitedModes = State(initialValue: [initial])
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Picker("Discovery task", selection: $mode) {
+                ForEach(DiscoveryMode.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 440)
+            .padding(.horizontal, WorkbenchSpacing.pageInset)
+            .padding(.top, WorkbenchSpacing.pageInset)
+            .accessibilityIdentifier("discovery-mode")
+            ZStack {
+                ForEach(DiscoveryMode.allCases.filter { visitedModes.contains($0) }) { destination in
+                    let active = destination == mode
+                    modeView(destination)
+                        .environment(\.isRouteActive, isRouteActive && active)
+                        .opacity(active ? 1 : 0)
+                        .allowsHitTesting(active)
+                        .accessibilityHidden(!active)
+                        .zIndex(active ? 1 : 0)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onChange(of: mode) { _, selected in visitedModes.insert(selected) }
+        .onChange(of: recommendationRequested) { _, requested in
+            if requested { mode = .recommend; visitedModes.insert(.recommend) }
+        }
+    }
+
+    @ViewBuilder private func modeView(_ mode: DiscoveryMode) -> some View {
+        switch mode {
+        case .browse: ScoutView(appHost: appHost)
+        case .recommend: AdoptView(appHost: appHost, onRouteSelection: onRouteSelection)
+        }
+    }
+}
+
 // MARK: - ScoutView
 // Discover MLX models for this host, by role.
 

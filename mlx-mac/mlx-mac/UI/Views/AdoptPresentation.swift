@@ -46,7 +46,7 @@ enum AdoptRecommendationState: Equatable {
     case recommended(repo: String, step: AdoptNextStep)
 
     static func idleSentence(role: String) -> String {
-        "Start to find a \(AdoptRole.title(role)) model for this Mac."
+        "Verify and recommend to find a \(AdoptRole.title(role)) model for this Mac."
     }
     static let pendingSentence = "Waiting for the agent's recommendation."
     static let noRecommendationSentence = "No recommendation reported."
