@@ -10,6 +10,8 @@
 
 The **Source** picker switches between **All models** and **LM Studio**. Switching sources preserves the main table's filters and selected model, without changing configuration or starting conversion or serving.
 
+**Show in Library** on a source model opens **All models**, clears search and readiness/quantization filters, and selects the model in the inspector. This explicit reveal leaves column and grouping preferences intact.
+
 | Column | Meaning |
 |---|---|
 | Quantization | Declared bits or quant type |

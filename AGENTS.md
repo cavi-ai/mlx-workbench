@@ -447,6 +447,10 @@ server.
   Legacy `lmstudio` navigation resolves to Library and opens that source; the sidebar omits
   the legacy row. Only the visible source is route-active, so hidden table search, toolbar
   and inspector controls do not appear over the source view.
+  Show in Library emits a fresh `LibraryRevealRequest`, selects All models, clears table
+  search/readiness/quantization filters and opens the requested model's inspector. The
+  receiver accepts only a path present in the current snapshot; grouping and column
+  preferences remain intact. Reveal does not write config or start model work.
   The LM Studio source lists models from the Library snapshot, not a scan of its own.
   `LMStudioShelfResolver` (off the main actor) reads `downloadsFolder` from `~/.lmstudio/settings.json`
   (the default and older folders only when settings name none), and states per format whether the last

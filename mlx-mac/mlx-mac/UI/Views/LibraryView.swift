@@ -213,6 +213,15 @@ enum LibraryPresentation {
 
 // MARK: - LibraryView
 
+struct LibraryRevealRequest: Equatable {
+    let id = UUID()
+    let modelPath: String
+
+    func resolvedPath(in snapshot: LibrarySnapshot?) -> String? {
+        snapshot?.models.first { $0.item.path == modelPath }?.item.path
+    }
+}
+
 enum LibrarySource: String, CaseIterable, Identifiable {
     case allModels, lmStudio
     var id: Self { self }
@@ -228,6 +237,7 @@ struct LibraryWorkspace: View {
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var source: LibrarySource
     @State private var visitedSources: Set<LibrarySource>
+    @State private var revealRequest: LibraryRevealRequest?
 
     init(appHost: AppHost, initialSource: LibrarySource = .allModels, lmStudioRequested: Bool = false,
          sourceHome: URL = WorkbenchStatePaths.userHome(), onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
@@ -271,9 +281,18 @@ struct LibraryWorkspace: View {
 
     @ViewBuilder private func sourceView(_ source: LibrarySource) -> some View {
         switch source {
-        case .allModels: LibraryView(appHost: appHost, onRouteSelection: onRouteSelection)
-        case .lmStudio: LMStudioView(appHost: appHost, home: sourceHome, onRouteSelection: onRouteSelection)
+        case .allModels: LibraryView(appHost: appHost, revealRequest: revealRequest, onRouteSelection: onRouteSelection)
+        case .lmStudio: LMStudioView(appHost: appHost, home: sourceHome, onRouteSelection: navigateFromSource)
         }
+    }
+
+    private func navigateFromSource(_ route: AppRoute) {
+        if route == .library {
+            source = .allModels
+            visitedSources.insert(.allModels)
+            if let path = appHost.selectedModelPath { revealRequest = LibraryRevealRequest(modelPath: path) }
+        }
+        onRouteSelection(route)
     }
 }
 
@@ -281,6 +300,7 @@ struct LibraryView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var reclaim: ReclaimCoordinator
     private let onRouteSelection: (AppRoute) -> Void
+    let revealRequest: LibraryRevealRequest?
 
     @State private var search = ""
     @State private var readinessFilter: ModelReadiness?
@@ -298,8 +318,9 @@ struct LibraryView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.workbenchViewport) private var viewport
 
-    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
+    init(appHost: AppHost, revealRequest: LibraryRevealRequest? = nil, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
+        self.revealRequest = revealRequest
         _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
         self.onRouteSelection = onRouteSelection
     }
@@ -442,6 +463,15 @@ struct LibraryView: View {
                 if let path, visiblePaths.contains(path), selection != path {
                     selection = path
                 }
+            }
+            .onChange(of: revealRequest, initial: true) { _, request in
+                guard let path = request?.resolvedPath(in: snapshot) else { return }
+                search = ""
+                readinessFilter = nil
+                quantizationFilter = nil
+                selection = path
+                appHost.selectedModelPath = path
+                showInspector = true
             }
     }
 

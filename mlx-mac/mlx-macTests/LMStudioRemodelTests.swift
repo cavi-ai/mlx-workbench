@@ -522,6 +522,15 @@ final class LMStudioRowsTests: XCTestCase {
         XCTAssertEqual(F.present(snapshot: F.snapshot([]), memory: nil).summary.items[2], .init(figure: "0", label: "fit now"))
     }
 
+    func testLibraryRevealRequiresTheRequestedModelInTheCurrentSnapshot() {
+        let model = F.mlx("/lm/p/requested-8bit")
+        let request = LibraryRevealRequest(modelPath: model.item.path)
+        XCTAssertEqual(request.resolvedPath(in: F.snapshot([model])), model.item.path)
+        XCTAssertNil(request.resolvedPath(in: nil))
+        XCTAssertNil(request.resolvedPath(in: F.snapshot([F.mlx("/lm/p/other-8bit")])))
+        XCTAssertNotEqual(request, LibraryRevealRequest(modelPath: model.item.path), "Repeated explicit reveals need distinct identities.")
+    }
+
     func testLaneTitlesNameTheFormat() {
         XCTAssertEqual(LMStudioLane(format: .mlx, rows: [], notice: nil).title, "MLX models")
         XCTAssertEqual(LMStudioLane(format: .gguf, rows: [], notice: nil).title, "GGUF files")
@@ -965,10 +974,11 @@ final class LMStudioRenderTests: XCTestCase {
         window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
         defer { window.close() }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-        func capture(_ name: String) throws {
-            hosting.layoutSubtreeIfNeeded()
-            let image = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: image)
+        func capture(_ name: String, from view: NSView? = nil) throws {
+            let target = view ?? hosting
+            target.layoutSubtreeIfNeeded()
+            let image = try XCTUnwrap(target.bitmapImageRepForCachingDisplay(in: target.bounds))
+            target.cacheDisplay(in: target.bounds, to: image)
             try XCTUnwrap(image.representation(using: .png, properties: [:]))
                 .write(to: root.appendingPathComponent(name + ".png"))
         }
@@ -997,6 +1007,20 @@ final class LMStudioRenderTests: XCTestCase {
         XCTAssertEqual(app.modelWorkflow.workflow, workflow)
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: app.configPath)), configBytes)
         XCTAssertNil(app.lastError)
+        let revealHosting = NSHostingView(rootView: LibraryView(appHost: app,
+            revealRequest: LibraryRevealRequest(modelPath: models[1].item.path))
+            .environment(\.isRouteActive, true).frame(width: 814, height: 1000)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        window.contentView = revealHosting
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(app.selectedModelPath, models[1].item.path)
+        XCTAssertEqual(app.modelWorkflow.workflow, workflow)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: app.configPath)), configBytes)
+        let detailsHosting = NSHostingView(rootView: ModelDetailsView(appHost: app, model: models[1], onRouteSelection: { _ in })
+            .frame(width: 430, height: 1000).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        window.contentView = detailsHosting
+        try await Task.sleep(for: .milliseconds(250))
+        try capture("revealed-model-details", from: detailsHosting)
     }
 
     private func config() -> Config {
