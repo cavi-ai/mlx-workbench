@@ -1,24 +1,20 @@
 # Version and support
 
-These docs describe MLX Workbench {{PRODUCT_VERSION}}, release
-{{RELEASE_TAG}}, built from commit `{{RELEASE_COMMIT}}`.
+These docs describe MLX Workbench {{PRODUCT_VERSION}}, release {{RELEASE_TAG}}, built from commit `{{RELEASE_COMMIT}}`.
 
-Workbench and MLX Agent are independently versioned. Use this release's pinned
-`vendor/mlx-agent` and matching runtime. Engine updates change the subprocess
-contract and require compatibility validation.
+## Versioning
 
-macOS on Apple Silicon with Python 3.12 is supported. Xcode is required for
-source builds; a release DMG supplies the native application.
+Workbench and MLX Agent are versioned independently. Each Workbench release pins a tested engine revision in `vendor/mlx-agent`; use that pin and its runtime. An engine update changes the subprocess contract and needs compatibility validation, so engine bumps get their own changelog entry. Release notes are in `CHANGELOG.md` and on the [releases page](https://github.com/cavi-ai/mlx-workbench/releases).
 
-## Upgrade from v0.4.0
+## Supported platform
 
-This release removes the browser UI and HTTP application routes. Use the
-native app; previous UI-server commands and browser integrations no longer
-apply. Existing model weights do not need to be moved.
+- macOS on Apple Silicon
+- Python 3.12 for the engine runtime
+- Xcode for source builds; the release DMG needs none
 
-Quit a v0.4.0 DMG app and install the new release DMG manually. The v0.4.0
-distribution does not contain the new release installer. Update the runtime
-checkout:
+## Updating
+
+Installed apps update from **Settings → Updates** (Releases or Nightly). A DMG update replaces only the app, so bring the engine checkout to the matching tag:
 
 ```bash
 git fetch origin --tags
@@ -27,21 +23,12 @@ git submodule update --init --recursive
 make install
 ```
 
-Preserve local changes before changing the checkout revision. Confirm the
-engine path in Settings. Existing native settings and comparison history
-retain their state locations. Missing or pruned media stays labeled.
+Keep local changes safe before changing the checkout. Confirm the engine path in Settings afterwards. Settings, comparison history and model files stay where they are.
 
-Stop a former browser server before explicitly importing its
-`convert-queue.json` in Activity. Import preserves its source and an exact
-backup. Browser serve presets are not native endpoint profiles.
+Source builds update their own checkout from **Settings → Updates** and rebuild before relaunching.
 
-## Later updates
+## Upgrading from v0.4.0
 
-Installed apps use **Settings → Updates** for Releases or the manually
-published Nightly channel. Downloads require a published sha256 digest and
-a notarized Developer ID build. Source-built apps update their checkout and
-require rebuild and relaunch.
+v0.5.0 removed the browser UI and its HTTP routes; use the native app. A v0.4.0 DMG app does not contain the release updater: quit it, install the new DMG by hand, then update the engine checkout as above.
 
-For diagnostics, include version and commit, macOS and chip, Python version,
-engine tag or commit, failing screen, and redacted error. Exclude credentials
-and proprietary model data.
+Stop a former browser server before importing its `convert-queue.json` in Activity. Import preserves the source and an exact backup. Browser serve presets are not native endpoint profiles.
