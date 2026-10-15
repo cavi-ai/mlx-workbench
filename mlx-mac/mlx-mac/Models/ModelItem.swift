@@ -222,6 +222,9 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let activeRequests: Int?
     let memoryPolicy: EndpointMemoryPolicy?
     let loadBlockedReason: String?
+    let adapterPath: String?
+    let adapterIdentity: LabValue?
+    let adapterStatus: String?
 
     enum CodingKeys: String, CodingKey {
         case repo, path, runtime, port, pid, state, receipt
@@ -231,6 +234,9 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case activeRequests = "active_requests"
         case memoryPolicy = "memory_policy"
         case loadBlockedReason = "load_blocked_reason"
+        case adapterPath = "adapter_path"
+        case adapterIdentity = "adapter_identity"
+        case adapterStatus = "adapter_status"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -250,7 +256,10 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         workerPid: Int? = nil,
         activeRequests: Int? = nil,
         memoryPolicy: EndpointMemoryPolicy? = nil,
-        loadBlockedReason: String? = nil
+        loadBlockedReason: String? = nil,
+        adapterPath: String? = nil,
+        adapterIdentity: LabValue? = nil,
+        adapterStatus: String? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -267,6 +276,9 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.activeRequests = activeRequests
         self.memoryPolicy = memoryPolicy
         self.loadBlockedReason = loadBlockedReason
+        self.adapterPath = adapterPath
+        self.adapterIdentity = adapterIdentity
+        self.adapterStatus = adapterStatus
     }
 
     /// The identity serve reports for this server's model: the repo id for
@@ -276,9 +288,24 @@ struct ServerInfo: Codable, Equatable, Identifiable {
 
     var id: String { "\(modelIdentity)-\(port.map(String.init) ?? "")" }
 
+    /// Model-only workflows cannot substitute an adapter server, including
+    /// historical servers whose adapter metadata could not be established.
+    func matchesUnadaptedModel(_ modelPath: String) -> Bool {
+        adapterPath == nil && adapterIdentity == nil && adapterStatus == nil
+            && HFRepoID.matches(modelIdentity, modelPath)
+    }
+
+    var adapterSummary: String? {
+        if let adapterPath, !adapterPath.isEmpty {
+            return "Adapter: " + URL(fileURLWithPath: adapterPath).lastPathComponent
+        }
+        return adapterIdentity != nil || adapterStatus != nil ? "Adapter identity unavailable" : nil
+    }
+
     func sameProcess(as other: ServerInfo) -> Bool {
         modelIdentity == other.modelIdentity && port == other.port && pid == other.pid &&
-        runtime == other.runtime && receipt == other.receipt && startedAt == other.startedAt
+        runtime == other.runtime && receipt == other.receipt && startedAt == other.startedAt &&
+        adapterPath == other.adapterPath && adapterIdentity == other.adapterIdentity && adapterStatus == other.adapterStatus
     }
 
     var residencySummary: String {

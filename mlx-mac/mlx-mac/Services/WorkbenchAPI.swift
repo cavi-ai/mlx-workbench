@@ -660,7 +660,10 @@ actor WorkbenchAPI {
     static func servers(from data: [String: Any], key: String = "servers") -> [ServerInfo]? {
         guard let raw = data[key] as? [[String: Any]] else { return nil }
         return raw.map { r in
-            ServerInfo(
+            let adapterFields = r.filter { ["adapter_path", "adapter_identity", "adapter_status"].contains($0.key) }
+            let adapter = (try? JSONSerialization.data(withJSONObject: adapterFields))
+                .flatMap { try? JSONDecoder().decode(ServerInfo.self, from: $0) }
+            return ServerInfo(
                 repo: r.string("repo"),
                 path: r.string("path"),
                 runtime: r.string("runtime"),
@@ -675,7 +678,10 @@ actor WorkbenchAPI {
                 workerPid: r.int("worker_pid"),
                 activeRequests: r.int("active_requests"),
                 memoryPolicy: Self.memoryPolicy(from: r["memory_policy"]),
-                loadBlockedReason: r.string("load_blocked_reason")
+                loadBlockedReason: r.string("load_blocked_reason"),
+                adapterPath: adapter?.adapterPath,
+                adapterIdentity: adapter?.adapterIdentity,
+                adapterStatus: adapter == nil ? "unknown" : adapter?.adapterStatus
             )
         }
     }

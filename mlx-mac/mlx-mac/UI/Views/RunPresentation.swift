@@ -51,7 +51,7 @@ struct RunPresentation: Equatable {
         guard let modelPath else { return nil }
         return servers.first(where: {
             $0.state?.lowercased() == "running"
-                && HFRepoID.matches($0.modelIdentity, modelPath)
+                && $0.matchesUnadaptedModel(modelPath)
         })
     }
     var canPreview: Bool {

@@ -10,6 +10,12 @@
 
 Run lists every running server with **Stop** or **Unload**. Refreshing Run only reads serving status.
 
+Model-only Run and endpoint setup do not reuse a server reported with an adapter
+as its base model. Unknown adapter metadata also prevents adoption. A conflicting
+endpoint names the adapter when its path is available. Model handoffs to Clients
+match servers without adapters; selecting a server directly in Clients keeps
+its adapter identity attached to the confirmation checks.
+
 ## Always-on endpoints
 
 The **Endpoints** section keeps chosen models serving on stable ports. The app reconciles each endpoint's desired state against the engine's serving status and restarts a crashed endpoint, with a crash-loop guard per endpoint.

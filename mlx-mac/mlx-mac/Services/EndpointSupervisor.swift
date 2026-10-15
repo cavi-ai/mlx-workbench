@@ -329,7 +329,7 @@ final class EndpointSupervisor: ObservableObject {
             let slot = fleet.slots[index]
             let current = try await statusProvider().first { $0.port == slot.port && $0.state?.lowercased() == "running" }
             if let current {
-                guard HFRepoID.matches(current.modelIdentity, slot.modelPath) else {
+                guard current.matchesUnadaptedModel(slot.modelPath) else {
                     lastError = "A different model is serving on this port. Refresh before changing load mode."
                     return
                 }
@@ -374,7 +374,7 @@ final class EndpointSupervisor: ObservableObject {
             let slot = fleet.slots[index]
             let current = try await statusProvider().first { $0.port == slot.port && $0.state?.lowercased() == "running" }
             if let current {
-                guard HFRepoID.matches(current.modelIdentity, slot.modelPath), current.jit == true,
+                guard current.matchesUnadaptedModel(slot.modelPath), current.jit == true,
                       let pid = current.pid, pid > 0 else {
                     throw WorkflowEvidenceError.invalid("Endpoint identity changed. Refresh before changing memory management.")
                 }
@@ -513,7 +513,7 @@ final class EndpointSupervisor: ObservableObject {
             slotStates[slot.id] = .degraded(reason: "The endpoint serving profile is invalid."); return
         }
         if let ours = running.first(where: { $0.port == slot.port }) {
-            if HFRepoID.matches(ours.modelIdentity, slot.modelPath) {
+            if ours.matchesUnadaptedModel(slot.modelPath) {
                 if slot.servingProfile != nil && !ServingProfile.matchesReceipt(ours, previewHash: slot.profilePreviewHash) {
                     slotStates[slot.id] = .degraded(reason: "The running endpoint does not match the confirmed serving profile. Re-enable the profile."); return
                 }
@@ -540,10 +540,9 @@ final class EndpointSupervisor: ObservableObject {
                 recordIntentionalServe(slot)
             } else {
                 pendingUserServeBySlot.removeValue(forKey: slot.id)
+                let name = ours.modelIdentity.isEmpty ? "unknown" : URL(fileURLWithPath: ours.modelIdentity).lastPathComponent
                 slotStates[slot.id] = .modelMismatch(
-                    servedModel: ours.modelIdentity.isEmpty
-                        ? "unknown"
-                        : URL(fileURLWithPath: ours.modelIdentity).lastPathComponent,
+                    servedModel: ours.adapterSummary.map { name + " · " + $0 } ?? name,
                     port: slot.port
                 )
             }
