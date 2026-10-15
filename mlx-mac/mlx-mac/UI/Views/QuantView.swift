@@ -514,6 +514,7 @@ struct QuantView: View {
                 if showsControlledStudies {
                     LabPanel(lab: appHost.lab, installer: appHost.runtimeInstaller, agentPath: appHost.config.mlxAgentPath)
                 } else {
+                if shownRun == nil { setupBar }
                 resultsArea
                 WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
                     environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile,
@@ -523,7 +524,7 @@ struct QuantView: View {
                     metric: $workflowChartMetric, inspectedModelPath: $inspectedWorkflowModelPath)
                 if let importMessage { Text(importMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
                 ErrorBanner(text: importError)
-                setupBar
+                if shownRun != nil { setupBar }
                 DisclosureGroup("Model fit and workflow evidence") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                         Text(selectionReason)
@@ -1185,12 +1186,14 @@ struct QuantView: View {
             WorkbenchSurface {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                     runHeader
-                    ContentUnavailableView {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                         Label(ComparePresentation.emptyTitle(for: mode), systemImage: "chart.bar.xaxis")
-                    } description: {
-                        Text("Choose models below and run the comparison.")
+                            .font(WorkbenchTypography.label)
+                        Text("Choose a mode, models and prompts, then Run comparison.")
+                            .font(WorkbenchTypography.secondary)
                     }
-                    .frame(maxWidth: .infinity, minHeight: WorkbenchSize.Compare.emptyMinimumHeight)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
