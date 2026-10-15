@@ -16,8 +16,9 @@ struct ModelActions {
     /// "destination already exists" blocker.
     var canPrepare: Bool { model.readiness != .ready }
 
-    /// Run and Compare serve chat models only; other types are not offered them.
+    /// Run serves chat models. Compare also supports ready media models.
     var canServe: Bool { ModelTaskPresentation.isServable(model) }
+    var canCompare: Bool { ComparisonModelRequest(model: model) != nil }
 
     func copyPath() {
         let pasteboard = NSPasteboard.general
@@ -36,6 +37,8 @@ struct ModelActions {
     }
 
     func compare() {
+        guard let request = ComparisonModelRequest(model: model) else { return }
+        appHost.modelComparisonRequest = request
         appHost.selectedModelPath = model.item.path
         onRouteSelection(.compare)
     }
@@ -431,6 +434,8 @@ struct ModelDetailsView: View {
                 Button("Select for Run") { actions.run() }
                     .fixedSize()
             }
+        }
+        if actions.canCompare {
             Button("Select for Compare") { actions.compare() }
                 .fixedSize()
         }

@@ -5,11 +5,13 @@
 ## Run a comparison
 
 1. Choose a mode. The picker is segmented when it fits and a menu otherwise.
-2. Fill up to four model slots. Each slot lists only ready models whose task type the mode accepts.
+2. Fill up to four model slots. Each slot lists only ready models whose task type and runtime support the mode.
 3. Choose a prompt set.
 4. **Run comparison**. A setup message names whatever blocks the run: a pending prompt-set save, a missing or empty prompt set, no model selected, or the first unavailable slot.
 
 Models run one at a time. Chat serves each model on a loopback server, warms it up, replays the prompts and stops it before the next model; warm-up output is excluded from results. Other modes run each model per prompt through the engine's `convert describe`, `transcribe`, `speak`, `music`, `generate` or `video` commands.
+
+From **Library**, **Select for Compare** opens the model's supported mode with that model in lane A. Lane B waits for your selection; **Run comparison** starts the work. Vision-language models open Chat by default; choose Vision or Video understanding for media input. Strata is text-only and is excluded from both media-input modes. If a comparison, save, editor or profile verification is in progress, finish it and choose **Use selected Library model** to apply the pending selection.
 
 ### Cancel and recover cleanup
 

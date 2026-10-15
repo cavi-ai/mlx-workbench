@@ -587,6 +587,8 @@ struct QuantView: View {
         .task(id: isRouteActive) { consumeImportRequest() }
         .task(id: isRouteActive) { consumeProfileComparisonRequest() }
         .onChange(of: appHost.servingProfileComparisonRequest?.id) { _, _ in consumeProfileComparisonRequest() }
+        .task(id: isRouteActive) { consumeModelComparisonRequest() }
+        .onChange(of: appHost.modelComparisonRequest?.id) { _, _ in consumeModelComparisonRequest() }
         .sheet(item: $pendingReuseSetup) { setup in
             MusicComparisonSetupSheet(setup: setup,
                 availablePaths: Set(readyModels.map { $0.item.path }), name: shortName,
@@ -681,6 +683,40 @@ struct QuantView: View {
         guard isRouteActive, appHost.workflowReportImportRequested else { return }
         appHost.workflowReportImportRequested = false
         importReport()
+    }
+
+    private var canApplyLibrarySelection: Bool {
+        comparison.activeRunID == nil && !comparison.savingPromptSet && servingProfiles.activeID == nil
+            && !showingSetEditor && pendingPromptSetEdit == nil && pendingGeneralPromptSetEdit == nil
+            && pendingMusicPromptSetCopy == nil && pendingGeneralPromptSetCopy == nil
+            && pendingReuseSetup == nil && pendingGeneralReuseSetup == nil && pendingPromptSetRename == nil
+    }
+
+    private func consumeModelComparisonRequest() {
+        guard isRouteActive, let request = appHost.modelComparisonRequest else { return }
+        showsControlledStudies = false
+        guard canApplyLibrarySelection else {
+            reuseError = "Finish the current comparison, save, editor or profile verification, then use the selected Library model."
+            return
+        }
+        guard let model = request.resolve(in: appHost.librarySnapshot?.models ?? []) else {
+            reuseError = "The selected Library model is no longer ready for this comparison mode. Refresh Library and select it again."
+            appHost.modelComparisonRequest = nil
+            return
+        }
+        reusedPromptSet = nil
+        changeMode(to: request.mode)
+        if !modePromptSets.contains(where: { $0.id == selectedPromptSetID }) {
+            selectedPromptSetID = modePromptSets.first?.id ?? ""
+        }
+        variantSlots = [model.item.path, nil]
+        slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
+        strataSettings = [:]; laneSources = [:]; settingsSearchGoal = nil
+        familyFilter = nil; sizeFilter = .all; modelSearch = ""
+        initializedSuggestions = true; manuallySelectedModels = true
+        selectedRunID = nil; reuseError = nil
+        selectionReason = "Selected from Library. Add another model or run this model against the chosen prompts."
+        appHost.modelComparisonRequest = nil
     }
 
     private func consumeProfileComparisonRequest() {
@@ -911,6 +947,10 @@ struct QuantView: View {
             if appHost.servingProfileComparisonRequest != nil {
                 Button("Use requested profiles") { consumeProfileComparisonRequest() }
                     .disabled(comparison.activeRunID != nil || comparison.savingPromptSet || servingProfiles.activeID != nil)
+            }
+            if appHost.modelComparisonRequest != nil {
+                Button("Use selected Library model") { consumeModelComparisonRequest() }
+                    .disabled(!canApplyLibrarySelection)
             }
             ErrorBanner(text: reuseError)
             ErrorBanner(text: comparison.lastError)

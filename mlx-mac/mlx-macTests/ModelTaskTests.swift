@@ -1,4 +1,6 @@
 import XCTest
+import AppKit
+import SwiftUI
 
 @testable import mlx_workbench
 
@@ -49,9 +51,9 @@ final class ModelTaskTests: XCTestCase {
         XCTAssertEqual(LibraryModel(item: item).capabilities, [])
     }
 
-    /// Run and Compare serve chat models; the inspector and context menu offer them for nothing else.
+    /// Run serves chat models; media comparisons use their own task runners.
     @MainActor
-    func testRunAndCompareAreOfferedOnlyForServableModels() {
+    func testRunIsOfferedOnlyForServableModels() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("actions-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let host = AppHost(
@@ -64,6 +66,101 @@ final class ModelTaskTests: XCTestCase {
             let item = ModelItem(path: "/m/\(type.rawValue)", name: type.rawValue, bytes: 1, modifiedAt: nil, shard: nil, modelKey: nil, architecture: nil, quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil, task: task)
             XCTAssertEqual(ModelActions(appHost: host, model: LibraryModel(item: item), onRouteSelection: { _ in }).canServe, servable, type.rawValue)
         }
+    }
+
+    @MainActor
+    func testLibraryComparisonRequestsSelectTheTaskWithoutStartingWork() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("compare-actions-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let host = AppHost(catalogStore: CatalogStore(appSupportDirectory: { root }), config: Config.defaults())
+        let workflow = host.modelWorkflow.workflow
+        var routes: [AppRoute] = []
+        let cases: [(ModelTaskType, ComparisonMode?)] = [
+            (.textLLM, .chat), (.visionLanguage, .chat), (.speechToText, .speechToText),
+            (.textToSpeech, .textToSpeech), (.musicGeneration, .musicGeneration),
+            (.imageGeneration, .imageGeneration), (.videoGeneration, .videoGeneration),
+            (.classification, nil), (.embedding, nil), (.speculativeDraft, nil), (.other, nil)
+        ]
+        for (type, mode) in cases {
+            let model = comparisonModel(type)
+            let actions = ModelActions(appHost: host, model: model, onRouteSelection: { routes.append($0) })
+            host.modelComparisonRequest = nil
+            let previousRoutes = routes.count
+            XCTAssertEqual(actions.canCompare, mode != nil, type.rawValue)
+            actions.compare()
+            XCTAssertEqual(host.modelComparisonRequest?.mode, mode, type.rawValue)
+            XCTAssertEqual(routes.count, previousRoutes + (mode == nil ? 0 : 1))
+            if mode != nil {
+                let request = try XCTUnwrap(host.modelComparisonRequest)
+                XCTAssertEqual(request.modelPath, model.item.path)
+                XCTAssertEqual(routes.last, .compare)
+                actions.compare()
+                XCTAssertNotEqual(host.modelComparisonRequest?.id, request.id)
+            }
+        }
+        XCTAssertNil(host.comparison.activeRunID)
+        XCTAssertTrue(host.comparison.runs.isEmpty)
+        XCTAssertTrue(host.comparison.promptSets.filter { $0.origin == .userCreated }.isEmpty)
+        XCTAssertEqual(host.modelWorkflow.workflow, workflow)
+    }
+
+    func testComparisonRequestRejectsUnavailableOrChangedTask() throws {
+        let model = comparisonModel(.speechToText)
+        let request = try XCTUnwrap(ComparisonModelRequest(model: model))
+        XCTAssertEqual(request.resolve(in: [model]), model)
+        XCTAssertNil(request.resolve(in: []))
+        let unavailable = LibraryModel(item: model.item, readiness: .needsRuntime)
+        XCTAssertNil(ComparisonModelRequest(model: unavailable))
+        XCTAssertNil(request.resolve(in: [unavailable]))
+        let changed = comparisonModel(.textToSpeech, path: model.item.path)
+        XCTAssertNil(request.resolve(in: [changed]))
+    }
+
+    @MainActor
+    func testLibraryHandoffUpdatesAnAlreadyMountedComparison() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("compare-handoff-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let host = AppHost(catalogStore: CatalogStore(appSupportDirectory: { root }), config: Config.defaults())
+        let types: [ModelTaskType] = [.speechToText, .imageGeneration, .textToSpeech, .videoGeneration]
+        let models = types.map { comparisonModel($0) }
+        host.librarySnapshot = LibrarySnapshot(models: models, groups: [], hardware: host.hardwareProfile, generatedAt: Date())
+        let view = NSHostingView(rootView: QuantView(appHost: host)
+            .environment(\.isRouteActive, true).frame(width: 1190, height: 900)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1190, height: 900),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
+        defer { window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        try await Task.sleep(for: .milliseconds(200))
+        for model in models {
+            ModelActions(appHost: host, model: model, onRouteSelection: { XCTAssertEqual($0, .compare) }).compare()
+            for _ in 0..<40 where host.modelComparisonRequest != nil { try await Task.sleep(for: .milliseconds(25)) }
+            XCTAssertNil(host.modelComparisonRequest)
+            try await Task.sleep(for: .milliseconds(100)); view.layoutSubtreeIfNeeded()
+            let popups = descendants(view).compactMap { $0 as? NSPopUpButton }
+            let mode = try XCTUnwrap(popups.first { $0.itemTitles.contains("Video understanding") })
+            XCTAssertEqual(mode.title, ComparisonMode.preferred(for: model.item)?.title)
+            XCTAssertTrue(popups.contains { $0.title.hasPrefix(model.displayName) }, "The Library model must occupy lane A.")
+            XCTAssertTrue(popups.contains { $0.title == "Choose a model" }, "Lane B must await explicit selection.")
+            XCTAssertNil(host.comparison.activeRunID)
+            XCTAssertTrue(host.comparison.runs.isEmpty)
+            if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] {
+                let directory = URL(fileURLWithPath: folder)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: directory.appendingPathComponent("library-\(model.item.task!.type.rawValue).png"))
+            }
+        }
+    }
+
+    private func comparisonModel(_ type: ModelTaskType, path: String? = nil) -> LibraryModel {
+        LibraryModel(item: ModelItem(path: path ?? "/m/\(type.rawValue)", name: type.rawValue, bytes: 1, modifiedAt: nil,
+            shard: nil, modelKey: nil, architecture: nil, quantization: nil, parameters: nil, structure: nil,
+            signature: nil, companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil,
+            error: nil, task: ModelTask(type: type, useCases: [], source: "registry", confidence: "confirmed")), readiness: .ready)
     }
 
     func testUseCaseTitles() {

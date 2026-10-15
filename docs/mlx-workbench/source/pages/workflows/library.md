@@ -30,6 +30,8 @@ During rendering, **Cancel generation** stops that model's owned worker. The pan
 
 Actions: **Select for Run**, **Select for Compare**, **Prepare to run**, **Reveal in Finder**, **Copy Path**.
 
+**Select for Compare** is available for ready chat, speech, music, image and video models. It opens the matching comparison mode and selects the model without starting a run. Run remains a chat-serving action. Runtime restrictions take precedence over task labels: Strata supports Chat only.
+
 ### Delete a model
 
 **Delete…** moves a model to the Trash after a review that rechecks its identity, its folders and whether it is serving. Trash keeps the disk space until you empty it. For quarantine with restore, use [Reclaim](reclaim.md).

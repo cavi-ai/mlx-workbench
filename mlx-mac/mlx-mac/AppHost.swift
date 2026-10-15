@@ -21,6 +21,7 @@ class AppHost: ObservableObject {
     /// One-shot navigation intent; client configuration still requires its own preview.
     @Published var clientWiringRequest: ClientWiringRequest?
     @Published var servingProfileComparisonRequest: ServingProfileComparisonSetup?
+    @Published var modelComparisonRequest: ComparisonModelRequest?
     /// Consumed only when Compare becomes active; importing still requires review.
     @Published var workflowReportImportRequested = false
     @Published var benchmarkResults: [RecommendationBenchmarkResult] = []

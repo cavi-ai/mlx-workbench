@@ -126,9 +126,9 @@ enum ComparisonViewLogic {
             }
         }
     }
-    /// Ready models whose task type the mode accepts.
+    /// Ready models whose task and runtime support the mode.
     static func candidates(from models: [LibraryModel], mode: ComparisonMode) -> [LibraryModel] {
-        models.filter { $0.readiness == .ready && mode.accepts($0.item.task?.type) }
+        models.filter { $0.readiness == .ready && mode.supports($0.item) }
     }
 
     static func promptSets(_ sets: [PromptSet], for mode: ComparisonMode) -> [PromptSet] {
