@@ -15,6 +15,8 @@ and is versioned independently; submodule bumps are recorded here.
 ### Changed
 
 - Clients: refresh installed-client detection and show supported clients in the empty board.
+- Training: expose batch size, choose fresh adapter output folders, and keep unavailable base selections editable.
+- Engine: validate training dataset splits and cached MLX-LM architectures during preview, and use the selected Hugging Face cache for the recorded base identity.
 
 ## [0.5.0] - 2026-10-12
 ### Added

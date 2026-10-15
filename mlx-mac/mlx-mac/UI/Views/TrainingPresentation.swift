@@ -120,10 +120,13 @@ struct TrainingPresentation: Equatable {
         )
     }
 
-    /// Hugging Face repo ids of the Library's cached models, sorted, so a base model can be picked instead of typed.
+    /// Known language models and legacy untyped cache entries are candidates;
+    /// the engine's preview checks the actual MLX-LM architecture registry.
     static func baseModels(_ snapshot: LibrarySnapshot?) -> [String] {
         var identities: Set<String> = []
         for model in snapshot?.models ?? [] {
+            guard model.item.draft == nil else { continue }
+            if let type = model.item.task?.type, type != .textLLM && type != .visionLanguage { continue }
             for path in [model.item.path] + model.outputPaths {
                 if let repoID = HFRepoID.forPath(path) {
                     identities.insert(repoID)
@@ -156,7 +159,7 @@ struct TrainingPresentation: Equatable {
 struct TrainingBaseModelChoice: Equatable {
     private(set) var choosesCustom = true
 
-    func showsField(cached: [String]) -> Bool { cached.isEmpty || choosesCustom }
+    func showsField(repo: String, cached: [String]) -> Bool { choosesCustom || !cached.contains(repo) }
 
     func selection(repo: String, cached: [String]) -> String {
         !choosesCustom && cached.contains(repo) ? repo : ""
@@ -165,6 +168,11 @@ struct TrainingBaseModelChoice: Equatable {
     /// The repo id the draft takes after a pick; the custom choice clears it.
     mutating func select(_ identity: String) -> String {
         choosesCustom = identity.isEmpty
+        return identity
+    }
+
+    mutating func edit(_ identity: String) -> String {
+        choosesCustom = true
         return identity
     }
 }

@@ -619,39 +619,64 @@ final class TrainingPresentationTests: XCTestCase {
         XCTAssertFalse(historyOnly.showsNoEvaluations)
     }
 
-    func testBaseModelsAreTheSortedCachedRepoIDs() {
-        func model(_ path: String) -> LibraryModel {
+    func testBaseModelsKeepLanguageAndLegacyCandidatesAndOmitKnownNonLanguageTasks() {
+        func model(_ path: String, task: ModelTaskType? = nil, draft: ModelDraft? = nil) -> LibraryModel {
             let item = ModelItem(
                 path: path, name: "m", bytes: 1, modifiedAt: nil, shard: nil, modelKey: "m", architecture: nil,
                 quantization: nil, parameters: nil, structure: nil, signature: nil, companion: nil, readable: true,
-                status: "ready", outputs: [], tensorCount: nil, error: nil, task: nil
+                status: "ready", outputs: [], tensorCount: nil, error: nil,
+                task: task.map { ModelTask(type: $0, useCases: [], source: "registry", confidence: "confirmed") }, draft: draft
             )
             return LibraryModel(item: item, readiness: .ready)
         }
-        let snapshot = LibrarySnapshot(
-            models: [
+        var models = [
                 model("/c/models--org--zeta/snapshots/a"), model("/c/models--org--alpha/snapshots/b"),
                 model("/c/models--org--alpha/snapshots/c"), model("/models/local-mlx"),
-            ],
+                model("/c/models--org--text/snapshots/a", task: .textLLM),
+                model("/c/models--org--vision/snapshots/a", task: .visionLanguage),
+                model("/c/models--org--legacy-draft/snapshots/a", draft: ModelDraft(port: nil, target: "org/base", blockSize: 8)),
+            ]
+        for type in ModelTaskType.allCases where ![.textLLM, .visionLanguage].contains(type) {
+            models.append(model("/c/models--org--\(type.rawValue)/snapshots/a", task: type))
+        }
+        let snapshot = LibrarySnapshot(
+            models: models,
             groups: [], hardware: HardwareProfile(chip: "Test", model: nil, memoryBytes: 0, macOSVersion: nil),
             generatedAt: TF.now
         )
-        XCTAssertEqual(TrainingPresentation.baseModels(snapshot), ["org/alpha", "org/zeta"])
+        let candidates = TrainingPresentation.baseModels(snapshot)
+        XCTAssertEqual(candidates, ["org/alpha", "org/text", "org/vision", "org/zeta"])
         XCTAssertEqual(TrainingPresentation.baseModels(nil), [])
+        let custom = TrainingBaseModelChoice()
+        XCTAssertEqual(custom.selection(repo: "org/speech_to_text", cached: candidates), "")
+        XCTAssertTrue(custom.showsField(repo: "org/speech_to_text", cached: candidates))
     }
 
     func testTypingACachedIDKeepsTheFieldAndPickingItHidesTheField() {
         let cached = ["org/alpha", "org/zeta"]
         var choice = TrainingBaseModelChoice()
-        XCTAssertTrue(choice.showsField(cached: cached))
+        XCTAssertTrue(choice.showsField(repo: "", cached: cached))
         XCTAssertEqual(choice.selection(repo: "org/alpha", cached: cached), "")
-        XCTAssertTrue(choice.showsField(cached: cached), "typing a cached id must not hide the focused field")
+        XCTAssertTrue(choice.showsField(repo: "org/alpha", cached: cached), "typing a cached id must not hide the focused field")
         XCTAssertEqual(choice.select("org/alpha"), "org/alpha")
-        XCTAssertFalse(choice.showsField(cached: cached))
+        XCTAssertFalse(choice.showsField(repo: "org/alpha", cached: cached))
         XCTAssertEqual(choice.selection(repo: "org/alpha", cached: cached), "org/alpha")
         XCTAssertEqual(choice.select(""), "")
-        XCTAssertTrue(choice.showsField(cached: cached))
-        XCTAssertTrue(TrainingBaseModelChoice().showsField(cached: []))
+        XCTAssertTrue(choice.showsField(repo: "", cached: cached))
+        XCTAssertTrue(TrainingBaseModelChoice().showsField(repo: "", cached: []))
+    }
+
+    func testAnUnavailableCachedSelectionRemainsVisibleForCorrection() {
+        var choice = TrainingBaseModelChoice()
+        let repo = choice.select("org/alpha")
+        let remaining = ["org/zeta"]
+        XCTAssertEqual(repo, "org/alpha")
+        XCTAssertEqual(choice.selection(repo: repo, cached: remaining), "")
+        XCTAssertTrue(choice.showsField(repo: repo, cached: remaining))
+        let edited = choice.edit("org/zeta")
+        XCTAssertEqual(edited, "org/zeta")
+        XCTAssertTrue(choice.showsField(repo: edited, cached: remaining), "Typing a cached ID must keep the correction field visible")
+        XCTAssertEqual(choice.selection(repo: edited, cached: remaining), "")
     }
 
     func testRetainedEvidenceCarriesTheInspectedShortID() {

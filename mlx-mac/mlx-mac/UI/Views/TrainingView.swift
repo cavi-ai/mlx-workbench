@@ -235,12 +235,16 @@ struct TrainingView: View {
         TrainingPreviewGuidance.resolve(draft: session.draft, operation: session.operation)
     }
 
-    private var showsCustomRepoField: Bool { baseChoice.showsField(cached: baseModels) }
+    private var showsCustomRepoField: Bool { baseChoice.showsField(repo: session.draft.repo, cached: baseModels) }
+
+    private var customRepoInput: Binding<String> {
+        Binding(get: { session.draft.repo }, set: { session.draft.repo = baseChoice.edit($0) })
+    }
 
     private func formSection(_ proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             SectionTitle(text: "LoRA fine-tune")
-            Text("Requires a cached Hugging Face base model and the mlx-lm training runtime. Training does not download models.")
+            Text("Requires a cached Hugging Face language-model base and the mlx-lm training runtime. Training does not download models.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
             requestSignature(repo: session.draft.repo, data: session.draft.data, output: session.draft.output)
@@ -251,11 +255,12 @@ struct TrainingView: View {
                         Text("Custom repo id…").tag("")
                         ForEach(baseModels, id: \.self) { identity in Text(identity).tag(identity) }
                     }.frame(maxWidth: WorkbenchSize.Training.baseModelMenuWidth, alignment: .leading)
+                        .help("Language-model candidates from Library. Preview checks whether MLX-LM recognizes the cached architecture.")
                 }
                 if showsCustomRepoField {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         fieldLabel("Base model repo id")
-                        TextField("Base model repo id", text: $session.draft.repo)
+                        TextField("Base model repo id", text: customRepoInput)
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Base model repo id")
                             .focused($focusedField, equals: .repo)
