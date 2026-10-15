@@ -506,7 +506,7 @@ class AppHost: ObservableObject {
     func saveSettingsConfig(_ newConfig: Config) async -> Bool {
         do {
             let normalized = try Self.normalizeAndValidateForSave(newConfig)
-            let saved = try configModule.save(normalized)
+            let saved = try configModule.saveSettings(normalized)
             await api.setAgentPath(saved.mlxAgentPath)
             config = saved
             agentHealth = Self.checkAgentHealth(path: saved.mlxAgentPath, cli: cli)
@@ -526,6 +526,11 @@ class AppHost: ObservableObject {
         // The installed mlx-lm version may have changed; the watch
         // fingerprint must reflect the new runtime.
         WatchCoordinator.invalidateEnvironmentProbe()
+    }
+
+    var catalogRefreshUnavailableReason: String? {
+        if !catalogClient.isConfigured { return catalogClient.unavailableMessage }
+        return isRefreshingCatalog ? "Catalog metadata is being refreshed." : nil
     }
 
     func refreshCatalog() async {

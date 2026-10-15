@@ -199,6 +199,14 @@ struct ConfigModule {
     }
 
     func save(_ value: Config) throws -> Config {
+        try save(value, preserving: [])
+    }
+
+    func saveSettings(_ value: Config) throws -> Config {
+        try save(value, preserving: ["host", "port"])
+    }
+
+    private func save(_ value: Config, preserving keys: Set<String>) throws -> Config {
         let merged = coerce(encode(value))
         let location = URL(fileURLWithPath: configPath())
         try FileManager.default.createDirectory(
@@ -213,7 +221,12 @@ struct ConfigModule {
             }
             persisted = dictionary
         }
-        persisted.merge(encode(merged)) { _, managed in managed }
+        var fields = encode(merged)
+        if !keys.isEmpty {
+            let stored = encode(coerce(persisted))
+            for key in keys where persisted[key] != nil { fields[key] = stored[key] }
+        }
+        persisted.merge(fields) { _, managed in managed }
         let data = try JSONSerialization.data(withJSONObject: persisted, options: [.sortedKeys, .prettyPrinted])
         // Unique temp + replace-on-existing: re-saving a config that already
         // exists must succeed (moveItem refuses to overwrite), and a stale
@@ -235,7 +248,7 @@ struct ConfigModule {
         }
         // Litter from the pre-replace fixed-name temp writer, if any.
         try? FileManager.default.removeItem(at: location.appendingPathExtension(".tmp"))
-        return merged
+        return coerce(persisted)
     }
 
     func scanRoots(value: Config, home: URL = WorkbenchStatePaths.userHome()) -> [String] {

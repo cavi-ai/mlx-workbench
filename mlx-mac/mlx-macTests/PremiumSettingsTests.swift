@@ -6,6 +6,19 @@ import XCTest
 
 @MainActor
 final class PremiumSettingsTests: XCTestCase {
+    func testSettingsSaveNormalizesInvalidStoredConnectionValues() throws {
+        let url = temporaryConfigURL()
+        let store = ConfigModule(pathOverride: url.path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["host": "0.0.0.0", "port": 70000]).write(to: url)
+        let saved = try store.saveSettings(Config.defaults(ggufRoots: []))
+        let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        XCTAssertEqual(raw["host"] as? String, "127.0.0.1")
+        XCTAssertEqual(raw["port"] as? Int, 8765)
+        XCTAssertEqual(saved.host, "127.0.0.1")
+        XCTAssertEqual(saved.port, 8765)
+    }
+
     func testSettingsSaveUpdatesPersistedConfigAndExecutionCheckoutTogether() async throws {
         let url = temporaryConfigURL()
         let module = ConfigModule(pathOverride: url.path)

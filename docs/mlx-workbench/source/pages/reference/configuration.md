@@ -47,7 +47,7 @@ The app reads `~/.config/mlx-workbench/config.json`. A missing or unreadable fil
 | `reclaim_stale_days` | Advisors → Stale after | `60` | Days without use before Reclaim flags a model, 2–365 |
 | `comparison_max_tokens` | Advisors → Comparison max tokens | `512` | Per-prompt cap during measured comparisons, 64–4096 |
 
-Values outside a key's range fall back to its default. Saving from Settings merges the fields it manages into the existing file and keeps every other key, then replaces the file atomically through a temporary file. Settings also keeps a loopback host and port under **Integration**; non-loopback hosts are rejected.
+Values outside a key's range fall back to its default. Saving from Settings merges the fields it manages into the existing file and keeps every other key, then replaces the file atomically through a temporary file. Valid legacy `host` and `port` values are preserved from the stored file, including edits made after opening the form. The native app has no Workbench API server; manage model servers and endpoint ports in **Run**, also reachable through **Settings → Serving → Open Run**.
 
 ## Discovery
 
