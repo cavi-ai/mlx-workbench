@@ -5,6 +5,91 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testComparisonRecoveryChecksReceiptIdentityAndNeverStopsAReplacement() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("comparison-receipt-\(UUID().uuidString)")
+        let receipt = root.appendingPathComponent(".mlx-agent-receipts/serve/9997.json")
+        try FileManager.default.createDirectory(at: receipt.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let expected = ComparisonServerReceipt(port: 9997, pid: 131071, modelIdentity: "/Models/a", previewHash: "owned", startedAt: "original")
+        let original: [String: Any] = ["port": 9997, "pid": 131071, "path": "/Models/a", "preview_hash": "owned", "started_at": "original"]
+        let base: [String: Any] = ["port": 9997, "pid": 131071, "path": "/Models/a", "started_at": "original",
+            "receipt": receipt.path, "alive": true, "argv_match": true]
+        for scenario in 0..<9 {
+            var row = base, file = original
+            if scenario == 1 { file["preview_hash"] = "different" }
+            if scenario == 2 { row["started_at"] = "replacement" }
+            if scenario == 6 { row["pid"] = 131072 }
+            if scenario == 8 { file["started_at"] = "replacement" }
+            try JSONSerialization.data(withJSONObject: file).write(to: receipt)
+            let recorder = AgentCallRecorder()
+            let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", receiptDirectory: root.path, command: { path, argv, scout, timeout in
+                recorder.record(path: path, argv: argv, isScout: scout, timeout: timeout)
+                if argv.contains("status") {
+                    if scenario == 5 { return [:] }
+                    return ["servers": scenario == 3 || scenario == 7 ? [] : [row]]
+                }
+                if scenario == 4 { throw BridgeError.skillOutputUnreadable }
+                return ["status": "stopped"]
+            })
+            let expectFailure = [1, 2, 5, 7, 8].contains(scenario)
+            do {
+                try await api.recoverComparisonServer(expected, mayBeAlive: { _ in ![3, 4, 5, 6].contains(scenario) })
+                XCTAssertFalse(expectFailure, "scenario \(scenario)")
+            } catch { XCTAssertTrue(expectFailure, "scenario \(scenario): \(error)") }
+            XCTAssertEqual(recorder.values.filter { $0.argv.contains("stop") }.count, [0, 4].contains(scenario) ? 1 : 0)
+        }
+    }
+    func testCancelledInvocationDoesNotLaunchAndCleanupIgnoresTaskCancellation() async throws {
+        let token = CLIInvocationCancellation(); token.cancel()
+        XCTAssertThrowsError(try CLIProcess().run(agentPath: "/missing", argv: ["convert", "video"], cancellation: token)) {
+            XCTAssertTrue($0 is CancellationError)
+        }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            XCTAssertEqual(argv, ["serve", "stop"])
+            return ["stopped": true]
+        })
+        let cleanup = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await api.raw(["serve", "stop"])["stopped"] as? Bool
+        }
+        let stopped = try await cleanup.value
+        XCTAssertEqual(stopped, true)
+    }
+    func testCancelMediaRequestStopsItsAgentAndBackendWithoutStoppingAnotherProcess() async throws {
+        let pids = FileManager.default.temporaryDirectory.appendingPathComponent("cancel-media-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: pids) }
+        let agent = try FixtureAgent(spawningBackendRecordingPIDsTo: pids)
+        defer { agent.remove() }
+        let registry = CLIProcessRegistry(notificationCenter: NotificationCenter(), terminationGrace: 0.2)
+        defer { registry.terminateAll(grace: 0.2) }
+        let other = Process(); other.executableURL = URL(fileURLWithPath: "/bin/sleep"); other.arguments = ["60"]
+        try other.run()
+        defer {
+            if other.isRunning { other.terminate() }
+            XCTAssertTrue(processIsGone(other.processIdentifier))
+        }
+        let api = WorkbenchAPI(cli: CLIProcess(registry: registry, terminationGrace: 0.2), agentPath: agent.root.path)
+        let finished = expectation(description: "cancelled media invocation returned")
+        let task = Task {
+            do { _ = try await api.describe(path: "/Models/test", prompt: "test", image: "/test.png", video: nil, maxTokens: 8)
+                XCTFail("Cancelled media invocation must not return a result")
+            } catch { XCTAssertTrue(error is CancellationError, "Unexpected error: \(error)") }
+            finished.fulfill()
+        }
+        var spawned: SpawnedAgent?
+        for _ in 0..<500 where spawned == nil {
+            spawned = SpawnedAgent(contentsOf: pids)
+            if spawned == nil { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        let live = try XCTUnwrap(spawned)
+        task.cancel()
+        await fulfillment(of: [finished], timeout: 5)
+        XCTAssertTrue(processIsGone(live.agent, within: 0.5))
+        XCTAssertTrue(processIsGone(live.backend, within: 0.5))
+        XCTAssertTrue(other.isRunning)
+        registry.terminateAll(grace: 0.2)
+        await task.value
+    }
     func testAdoptStartCreatesParentAndStatusReusesTheStateFile() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-adopt-\(UUID().uuidString)", isDirectory: true)

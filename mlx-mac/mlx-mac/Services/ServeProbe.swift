@@ -228,12 +228,18 @@ struct ProbeServePreview: Sendable {
 
 struct ProbeRunResult: Equatable, Sendable {
     let port: Int
-    /// Prompt id → sample. Guaranteed to contain every requested prompt id.
+    /// Completed prompt samples; cancellation and cleanup errors may carry a partial run.
     let samples: [String: ProbeSample]
     var servingEvidence: ProbeServingEvidence? = nil
     /// Endpoint start through readiness, before warm-up and prompt timing.
     var startupSeconds: Double? = nil
     var systemMemory: SystemMemoryEvidence? = nil
+    var ownedServer: ComparisonServerReceipt? = nil
+}
+
+struct ServeProbeCancelled: LocalizedError {
+    let partial: ProbeRunResult
+    var errorDescription: String? { "The comparison was cancelled." }
 }
 
 /// One prompt to send through a probed endpoint. The canary suite and
@@ -264,14 +270,14 @@ extension EndpointProbing {
 enum ServeProbeError: LocalizedError {
     case noEphemeralPort
     case servePreviewMissingHash
-    case stopFailed(String)
+    case stopFailed(String, port: Int? = nil, partial: ProbeRunResult? = nil)
     case serverNeverReady(timeout: TimeInterval)
 
     var errorDescription: String? {
         switch self {
         case .noEphemeralPort:
             return "Could not reserve an ephemeral loopback port for the verification server."
-        case .stopFailed(let detail):
+        case .stopFailed(let detail, _, _):
             return "Could not stop the comparison server: \(detail). Further variants were not started."
         case .servePreviewMissingHash:
             return "The serve preview did not include a preview hash."
@@ -291,6 +297,7 @@ struct ServeLifecycle: Sendable {
     var unload: (@Sendable (_ port: Int, _ expectedPID: Int) async throws -> Void)? = nil
     var configureMemory: (@Sendable (_ port: Int, _ expectedPID: Int, _ policy: EndpointMemoryPolicy) async throws -> Void)? = nil
     var reviewedPreview: (@Sendable (_ modelPath: String, _ port: Int) async throws -> ProbeServePreview)? = nil
+    var startWithReceipt: (@Sendable (_ modelPath: String, _ port: Int, _ previewHash: String) async throws -> ComparisonServerReceipt?)? = nil
 }
 
 extension ServeLifecycle {
@@ -324,6 +331,11 @@ extension ServeLifecycle {
             reviewedPreview: { modelPath, port in
                 let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions)
                 return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
+            },
+            startWithReceipt: { path, port, hash in
+                let response = try await api.serveStart(repo: path, runtime: runtime, port: port, previewHash: hash,
+                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions)
+                return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
             }
         )
     }
@@ -349,7 +361,9 @@ struct ServeProbe: Sendable {
 
     /// Serves `modelPath` on an ephemeral loopback port, runs `prompts`
     /// sequentially, and stops the server even when a probe throws.
-    func run(modelPath: String, prompts: [ProbePrompt], warmup: [ProbePrompt] = []) async throws -> ProbeRunResult {
+    func run(modelPath: String, prompts: [ProbePrompt], warmup: [ProbePrompt] = [], warmEachPrompt: Bool = false,
+             onServerStarted: (@Sendable (ComparisonServerReceipt) async throws -> Void)? = nil) async throws -> ProbeRunResult {
+        try Task.checkCancellation()
         guard let port = pickPort() else { throw ServeProbeError.noEphemeralPort }
         let preview: ProbeServePreview
         if let reviewedPreview = lifecycle.reviewedPreview {
@@ -358,6 +372,7 @@ struct ServeProbe: Sendable {
             preview = ProbeServePreview(hash: try await lifecycle.preview(modelPath, port))
         }
         guard !preview.hash.isEmpty else { throw ServeProbeError.servePreviewMissingHash }
+        try Task.checkCancellation()
         if let expected = expectedServingEvidence {
             guard expected.modelFingerprint?.isEmpty == false, expected.runtimeFingerprint?.isEmpty == false,
                   let actual = preview.evidence, actual.runtime == expected.runtime,
@@ -379,18 +394,37 @@ struct ServeProbe: Sendable {
             }
         }
         let startup = Date()
-        do { try await lifecycle.start(modelPath, port, preview.hash) }
+        var ownedServer: ComparisonServerReceipt?
+        let requiresReceipt = onServerStarted != nil && lifecycle.startWithReceipt != nil
+        do {
+            try Task.checkCancellation()
+            if onServerStarted != nil, let start = lifecycle.startWithReceipt {
+                ownedServer = try await start(modelPath, port, preview.hash)
+            } else { try await lifecycle.start(modelPath, port, preview.hash) }
+        }
         catch {
             sampling?.cancel(); await sampling?.value
             throw error
         }
 
         let baseURL = URL(string: "http://127.0.0.1:\(port)")!
+        var samples: [String: ProbeSample] = [:]
+        var startupSeconds: Double?
+        var systemMemory: SystemMemoryEvidence?
+        func snapshot() -> ProbeRunResult {
+            ProbeRunResult(port: port, samples: samples, servingEvidence: preview.evidence,
+                startupSeconds: startupSeconds, systemMemory: systemMemory, ownedServer: ownedServer)
+        }
         do {
+            if requiresReceipt && ownedServer == nil {
+                throw WorkflowEvidenceError.invalid("The confirmed comparison server did not return valid ownership evidence.")
+            }
+            if let ownedServer { try await onServerStarted?(ownedServer) }
+            try Task.checkCancellation()
             guard await waitUntilReady(baseURL: baseURL) else {
                 throw ServeProbeError.serverNeverReady(timeout: readyTimeout)
             }
-            let startupSeconds = Date().timeIntervalSince(startup)
+            startupSeconds = Date().timeIntervalSince(startup)
             let modelID = await resolveModelID(baseURL: baseURL, modelPath: modelPath)
             // Warm the same loaded model that will produce the measurements.
             // Warm-up responses never enter the returned samples.
@@ -399,28 +433,37 @@ struct ServeProbe: Sendable {
                 _ = try await prober.chat(baseURL: baseURL, model: modelID,
                     prompt: prompt.prompt, maxTokens: prompt.maxTokens, tool: prompt.tool)
             }
-            var samples: [String: ProbeSample] = [:]
             for prompt in prompts {
                 try Task.checkCancellation()
-                samples[prompt.id] = try await prober.chat(
+                if warmEachPrompt {
+                    _ = try await prober.chat(baseURL: baseURL, model: modelID,
+                        prompt: prompt.prompt, maxTokens: 1, tool: prompt.tool)
+                    try Task.checkCancellation()
+                }
+                let sample = try await prober.chat(
                     baseURL: baseURL,
                     model: modelID,
                     prompt: prompt.prompt,
                     maxTokens: prompt.maxTokens,
                     tool: prompt.tool
                 )
+                try Task.checkCancellation()
+                samples[prompt.id] = sample
             }
             sampling?.cancel(); await sampling?.value
-            let systemMemory = await memory?.finish()
+            systemMemory = await memory?.finish()
             do { try await lifecycle.stop(port) }
-            catch { throw ServeProbeError.stopFailed(error.localizedDescription) }
-            return ProbeRunResult(port: port, samples: samples, servingEvidence: preview.evidence,
-                startupSeconds: startupSeconds, systemMemory: systemMemory)
+            catch { throw ServeProbeError.stopFailed(error.localizedDescription, port: port, partial: snapshot()) }
+            if Task.isCancelled { throw ServeProbeCancelled(partial: snapshot()) }
+            return snapshot()
         } catch {
             sampling?.cancel(); await sampling?.value
             if case ServeProbeError.stopFailed = error { throw error }
+            if error is ServeProbeCancelled { throw error }
+            systemMemory = await memory?.finish()
             do { try await lifecycle.stop(port) }
-            catch { throw ServeProbeError.stopFailed(error.localizedDescription) }
+            catch { throw ServeProbeError.stopFailed(error.localizedDescription, port: port, partial: snapshot()) }
+            if Task.isCancelled || error is CancellationError { throw ServeProbeCancelled(partial: snapshot()) }
             throw error
         }
     }

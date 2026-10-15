@@ -820,6 +820,10 @@ struct ComparisonMemoryTradeoffView: View {
                 Text("Recorded search target: \(goal.contextTokens) context tokens · \(goal.headroomGB.formatted()) GB headroom")
                     .font(WorkbenchTypography.secondary)
                 Text("Latency objective: \(objective.title)").font(WorkbenchTypography.secondary)
+                Text(goal.warmEachPrompt == true
+                    ? "Prompt warm-up: one-token request before each measured prompt; warm-up responses excluded."
+                    : "Prompt warm-up: shared warm-up request only.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
                 if let id = run.settingsSearchCandidateID, let lane = lanes.first(where: { $0.resultKey == id }) {
                     Text("Fastest observed qualifying \(objective.title.lowercased()): lane \(lane.letter). Save this lane as a serving profile and verify it before serving.")
                         .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)

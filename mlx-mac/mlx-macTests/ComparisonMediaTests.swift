@@ -42,6 +42,19 @@ private struct IdleProber: EndpointProbing {
 
 private enum StubMediaError: Error { case chatNotExpected, modelFailed }
 
+private actor DelayedCancellationMediaRunner: ComparisonMediaRunner {
+    private(set) var requests: [MediaRunRequest] = []
+    private var continuation: CheckedContinuation<MediaRunOutput, Never>?
+    func run(_ request: MediaRunRequest) async throws -> MediaRunOutput {
+        requests.append(request)
+        return await withCheckedContinuation { continuation = $0 }
+    }
+    func finish() {
+        continuation?.resume(returning: MediaRunOutput(seconds: 1, audioSeconds: 2))
+        continuation = nil
+    }
+}
+
 @MainActor
 private final class PromptPreviewFixture: ObservableObject {
     @Published var url: URL
@@ -190,6 +203,66 @@ private actor StubMediaRunner: ComparisonMediaRunner {
 }
 
 final class ComparisonMediaTests: XCTestCase {
+    @MainActor
+    func testCancellationWaitsForAnUncooperativeRunnerAndDiscardsItsLateResult() async throws {
+        let runner = DelayedCancellationMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        coordinator.start(variants: [("/Models/a", nil)], promptSet: promptSet(for: .textToSpeech))
+        for _ in 0..<500 {
+            if await runner.requests.count == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        coordinator.cancel()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNotNil(coordinator.activeRunID)
+        XCTAssertTrue(coordinator.isCancelling)
+        await runner.finish()
+        await waitForRun(coordinator)
+        XCTAssertNil(coordinator.activeRunID)
+        XCTAssertEqual(coordinator.runs.first?.state, .cancelled)
+        XCTAssertTrue(try XCTUnwrap(coordinator.runs.first).results.isEmpty)
+        let requests = await runner.requests
+        XCTAssertEqual(requests.count, 1)
+    }
+
+    @MainActor
+    func testCancelBeforeMediaTaskStartsDoesNotPrepareInputsOrCallRunner() async throws {
+        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        coordinator.start(variants: [("/Models/a", nil)], promptSet: promptSet(for: .vision))
+        let id = try XCTUnwrap(coordinator.activeRunID)
+        coordinator.cancel()
+        await waitForRun(coordinator)
+        XCTAssertEqual(coordinator.runs.first?.state, .cancelled)
+        let requests = await runner.requests
+        XCTAssertTrue(requests.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("outputs/\(id.uuidString)").path))
+    }
+    @MainActor
+    func testCancelMediaKeepsFinishedSamplesAndSkipsRemainingPromptsAndModels() async throws {
+        let runner = StubMediaRunner(gated: true)
+        await runner.release(1)
+        let coordinator = makeCoordinator(runner: runner)
+        let set = PromptSet(id: "cancel", name: "Cancel media", useCase: nil,
+            prompts: [PromptEntry(id: "a", text: "First"), PromptEntry(id: "b", text: "Second"), PromptEntry(id: "c", text: "Third")],
+            origin: .userCreated, mode: .textToSpeech)
+        coordinator.start(variants: [("/Models/first", nil), ("/Models/later", nil)], promptSet: set)
+        for _ in 0..<500 {
+            if await runner.requests.count == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        coordinator.cancel()
+        for _ in 0..<100 where coordinator.activeRunID != nil { try await Task.sleep(for: .milliseconds(10)) }
+        let stoppedBeforeRelease = coordinator.activeRunID == nil
+        await runner.release(20)
+        await waitForRun(coordinator)
+        XCTAssertTrue(stoppedBeforeRelease)
+        let run = try XCTUnwrap(coordinator.runs.first)
+        XCTAssertEqual(run.state, .cancelled)
+        XCTAssertEqual(run.results.count, 1)
+        XCTAssertEqual(run.results.first?.samples.map(\.promptID), ["a"])
+        let requests = await runner.requests
+        XCTAssertEqual(requests.map(\.entry.id), ["a", "b"])
+        XCTAssertEqual(requests.map(\.modelPath), ["/Models/first", "/Models/first"])
+    }
     private var root: URL!
 
     override func setUpWithError() throws {
@@ -4488,11 +4561,12 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(coordinator.runs.isEmpty)
 
         coordinator.start(variants: [("/m", nil)], promptSet: promptSet(for: .imageGeneration))
-        let runID = try XCTUnwrap(coordinator.activeRunID)
+        XCTAssertNil(coordinator.activeRunID)
+        XCTAssertNotNil(coordinator.lastError)
         await waitForRun(coordinator)
 
         for id in saved { XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(id).path), "\(id)") }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(runID).path))
+        XCTAssertTrue(coordinator.runs.isEmpty)
     }
 
     @MainActor

@@ -271,7 +271,7 @@ extension ComparePresentation {
     /// One lane per run variant in run order; results are matched by model path.
     static func lanes(for run: ComparisonRun) -> [CompareLane] {
         let values = run.results.compactMap { run.metricValue(of: $0) }
-        let ranked = values.count >= 2
+        let ranked = run.state != .cancelled && run.state != .interrupted && values.count >= 2
         let best = run.effectiveMode.primaryMetric.higherIsBetter ? values.max() : values.min()
         let leaders = Set(run.leaders.map(\.id))
         return run.variants.enumerated().map { index, path in
@@ -804,6 +804,7 @@ struct QuantView: View {
 
     private var runUnavailableReason: String? {
         if servingProfiles.activeID != nil { return "Wait for serving-profile verification to finish." }
+        if let reason = comparison.runStateUnavailableReason { return reason }
         if let reason = ComparePresentation.runUnavailableReason(slots: variantSlots, activeRunID: comparison.activeRunID,
             availablePaths: Set(readyModels.map { $0.item.path }), hasPromptSet: selectedPromptSet != nil,
             savingPromptSet: comparison.savingPromptSet, hasPrompts: selectedPromptSet?.prompts.isEmpty == false) { return reason }
@@ -896,7 +897,9 @@ struct QuantView: View {
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
             if comparison.activeRunID != nil {
-                ProgressView(comparison.progressMessage ?? "Measuring…")
+                ComparisonProgressControls(message: comparison.progressMessage ?? "Measuring…",
+                    isCancelling: comparison.isCancelling, cleanupPending: comparison.cleanupPending,
+                    onCancel: comparison.cancel, onRetry: comparison.retryCleanup)
             }
             if reusedPromptSet != nil {
                 Text("Reused setup · temporary. Change models below, then run a new comparison.")
@@ -1158,6 +1161,11 @@ struct QuantView: View {
             ComparisonHistoryPicker(runs: comparison.runs, selection: shownRunBinding)
                 .frame(maxWidth: WorkbenchSize.Compare.historyMaximum, alignment: .leading)
                 .disabled(comparison.activeRunID != nil)
+            if let run = shownRun, run.state == .cancelled || run.state == .interrupted {
+                Text(run.state == .cancelled ? "Cancelled · recorded samples retained" : "Interrupted · comparison did not finish")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let run = shownRun, run.state == .completed {
                 Button {
                     do {
@@ -1519,6 +1527,31 @@ struct QuantView: View {
     }
 }
 
+struct ComparisonProgressControls: View {
+    let message: String
+    let isCancelling: Bool
+    let cleanupPending: Bool
+    let onCancel: () -> Void
+    let onRetry: () -> Void
+
+    var body: some View {
+        HStack(spacing: WorkbenchSpacing.sm) {
+            if !cleanupPending || isCancelling { ProgressView().controlSize(.small).accessibilityHidden(true) }
+            Text(message).font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: WorkbenchSpacing.sm)
+            if cleanupPending {
+                Button("Retry cleanup", action: onRetry).disabled(isCancelling)
+                    .help("Retry stopping this comparison's owned server before starting another run.")
+                    .accessibilityIdentifier("comparison-retry-cleanup")
+            } else {
+                Button(isCancelling ? "Cancelling…" : "Cancel comparison", action: onCancel).disabled(isCancelling)
+                    .help("Stop this comparison's owned work and retain recorded samples. Server startup may need to finish before cleanup.")
+                    .accessibilityIdentifier("comparison-cancel")
+            }
+        }
+    }
+}
+
 struct StrataSettingsSearchSheet: View {
     let models: [LibraryModel]
     let onUse: (LibraryModel, StrataSettingsSearchSetup) -> String?
@@ -1529,6 +1562,7 @@ struct StrataSettingsSearchSheet: View {
     @State private var headroom = "8"
     @State private var context = 8192
     @State private var objective = StrataSettingsSearchObjective.firstAnswer
+    @State private var warmEachPrompt = false
     @State private var error: String?
 
     init(models: [LibraryModel], onUse: @escaping (LibraryModel, StrataSettingsSearchSetup) -> String?) {
@@ -1540,7 +1574,7 @@ struct StrataSettingsSearchSheet: View {
               let upper = Double(upperBudget.trimmingCharacters(in: .whitespaces)),
               let target = Double(headroom.trimmingCharacters(in: .whitespaces)) else { return nil }
         return StrataSettingsSearchSetup(lowerExpertMemoryGB: lower, upperExpertMemoryGB: upper, contextTokens: context,
-            headroomGB: target, objective: objective)
+            headroomGB: target, objective: objective, warmEachPrompt: warmEachPrompt)
     }
     private var validation: String? { setup?.validationError ?? (setup == nil ? "Enter numeric expert budgets and a headroom target." : nil) }
     var body: some View {
@@ -1556,6 +1590,9 @@ struct StrataSettingsSearchSheet: View {
                 ForEach(StrataSettingsSearchObjective.allCases) { Text($0.title).tag($0) }
             }
             Text(objective.explanation)
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            Toggle("Warm each prompt before measuring", isOn: $warmEachPrompt)
+            Text("Adds a one-token request immediately before each measured prompt. Warm-up responses are excluded from samples; total run time increases. Recorded cache counts still determine comparability.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Text("Expert budgets (GB)")

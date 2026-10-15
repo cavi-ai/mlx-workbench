@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 // MARK: - WorkbenchAPI
 //
@@ -10,7 +11,7 @@ actor WorkbenchAPI {
     typealias AgentCommand = @Sendable (_ agentPath: String, _ argv: [String], _ isScout: Bool, _ timeout: TimeInterval?) throws -> [String: Any]
 
     private let cli: CLIProcess
-    private let command: AgentCommand
+    private let command: AgentCommand?
     private var agentPath: String
     private let receiptDirectory: String
 
@@ -21,7 +22,7 @@ actor WorkbenchAPI {
         command: AgentCommand? = nil
     ) {
         self.cli = cli
-        self.command = command ?? { try cli.run(agentPath: $0, argv: $1, isScout: $2, timeout: $3) }
+        self.command = command
         self.agentPath = agentPath
         self.receiptDirectory = receiptDirectory
     }
@@ -36,20 +37,30 @@ actor WorkbenchAPI {
 
     /// Blocking subprocess waits belong on a dispatch worker, not Swift's cooperative pool.
     /// Suspending this actor also lets serve status, scan and endpoint reconciliation proceed.
-    func raw(_ argv: [String], isScout: Bool = false, timeout: TimeInterval? = nil) async throws -> [String: Any] {
+    func raw(_ argv: [String], isScout: Bool = false, timeout: TimeInterval? = nil, cancellable: Bool = false) async throws -> [String: Any] {
         let command = self.command
+        let cli = self.cli
         let agentPath = self.agentPath
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    continuation.resume(returning: try command(agentPath, argv, isScout, timeout))
-                } catch { continuation.resume(throwing: error) }
+        let cancellation = cancellable ? CLIInvocationCancellation() : nil
+        return try await withTaskCancellationHandler {
+            if cancellable { try Task.checkCancellation() }
+            return try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        if cancellation?.isRequested == true { throw CancellationError() }
+                        let result: [String: Any]
+                        if let command { result = try command(agentPath, argv, isScout, timeout) }
+                        else { result = try cli.run(agentPath: agentPath, argv: argv, isScout: isScout, timeout: timeout, cancellation: cancellation) }
+                        if cancellation?.isRequested == true { throw CancellationError() }
+                        continuation.resume(returning: result)
+                    } catch { continuation.resume(throwing: error) }
+                }
             }
-        }
+        } onCancel: { cancellation?.cancel() }
     }
 
     private func runOffActor<T: Decodable & Sendable>(_ type: T.Type, _ argv: [String], timeout: TimeInterval) async throws -> T {
-        try Self.decode(type, from: await raw(argv, timeout: timeout))
+        try Self.decode(type, from: await raw(argv, timeout: timeout, cancellable: true))
     }
 
     func health() -> (ok: Bool, path: String, cli: String, message: String) {
@@ -529,6 +540,40 @@ actor WorkbenchAPI {
             "serve", "stop", "--port", String(port),
             "--receipts-dir", receiptDirectory,
         ])
+    }
+
+    /// Recover a recorded comparison's server through the existing receipt-owned stop boundary.
+    func recoverComparisonServer(_ expected: ComparisonServerReceipt,
+        mayBeAlive: @Sendable (Int) -> Bool = WorkbenchAPI.processOrGroupMayBeAlive) async throws {
+        guard expected.isValid else { throw WorkflowEvidenceError.invalid("Recorded comparison server ownership is invalid.") }
+        let data = try await raw(["serve", "status", "--receipts-dir", receiptDirectory])
+        guard let rows = data["servers"] as? [[String: Any]], let servers = Self.servers(from: data), rows.count == servers.count,
+              servers.allSatisfy({ ($0.pid ?? 0) > 0 && (1...65535).contains($0.port ?? 0) && $0.state != nil }) else {
+            throw WorkflowEvidenceError.invalid("Server status is unavailable; comparison cleanup remains pending.")
+        }
+        let matching = servers.filter { $0.port == expected.port }
+        guard matching.count <= 1 else { throw WorkflowEvidenceError.invalid("Server ownership is ambiguous; no process was stopped.") }
+        if let server = matching.first, server.pid == expected.pid, server.modelIdentity == expected.modelIdentity,
+           server.startedAt == expected.startedAt, ["running", "stopped"].contains(server.state ?? ""),
+           server.receipt.map({ URL(fileURLWithPath: $0).standardizedFileURL == URL(fileURLWithPath: receiptDirectory)
+                .appendingPathComponent(".mlx-agent-receipts/serve/\(expected.port).json").standardizedFileURL }) == true,
+           ServingProfile.matchesReceipt(server, previewHash: expected.previewHash, startedAt: expected.startedAt) {
+            do { _ = try await serveStop(port: expected.port); return }
+            catch {
+                // The stop may have removed its receipt before its reply was lost.
+                if !mayBeAlive(expected.pid) { return }
+                throw error
+            }
+        }
+        guard !mayBeAlive(expected.pid) else {
+            throw WorkflowEvidenceError.invalid("The original comparison server's ownership cannot be confirmed. No process was stopped.")
+        }
+    }
+
+    nonisolated static func processOrGroupMayBeAlive(_ pid: Int) -> Bool {
+        guard pid > 0, pid <= Int(Int32.max) else { return true }
+        if kill(pid_t(pid), 0) == 0 || errno != ESRCH { return true }
+        return killpg(pid_t(pid), 0) == 0 || errno != ESRCH
     }
 
     func serveUnload(port: Int, expectedPID: Int) async throws -> [String: Any] {
