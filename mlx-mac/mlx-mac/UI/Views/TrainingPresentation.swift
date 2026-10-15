@@ -7,6 +7,18 @@ struct TrainingPlanSummary: Equatable {
     let baseMissing: Bool
     let trainingExamples: Int?
     let validationExamples: Int?
+    let batchSize: Int?
+
+    var blockingReason: String? {
+        if baseMissing { return "The base model was not found in the local Hugging Face cache. Cache it, then preview again before confirming training." }
+        if validationExamples == 0 { return "Training requires a nonempty valid.jsonl validation set. Add validation examples and preview again." }
+        if let batchSize {
+            if batchSize < 1 || batchSize > 64 { return "The preview reported an invalid batch size. Correct it and preview again." }
+            if let trainingExamples, trainingExamples < batchSize { return "train.jsonl has fewer examples than the batch size. Reduce batch size or add examples, then preview again." }
+            if let validationExamples, validationExamples < batchSize { return "valid.jsonl has fewer examples than the batch size. Reduce batch size or add examples, then preview again." }
+        }
+        return nil
+    }
 
     init(payload: [String: Any]) {
         let plan = WorkbenchAPI.unwrapPlan(payload)
@@ -24,6 +36,7 @@ struct TrainingPlanSummary: Equatable {
         let dataset = plan["dataset"] as? [String: Any]
         trainingExamples = count(dataset?["train_lines"])
         validationExamples = count(dataset?["valid_lines"])
+        batchSize = count(plan["batch_size"])
     }
 }
 

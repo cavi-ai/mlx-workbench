@@ -599,20 +599,22 @@ actor WorkbenchAPI {
             "--port", String(port), "--confirm", "--preview-hash", hash])
     }
 
-    func loraPreview(repo: String, data: String, iters: Int?, out: String?) async throws -> [String: Any] {
+    func loraPreview(repo: String, data: String, iters: Int?, out: String?, batchSize: Int? = nil) async throws -> [String: Any] {
         var argv = ["lora", "start", "--repo", repo, "--data", data, "--receipts-dir", receiptDirectory]
         if let iters { argv.append(contentsOf: ["--iters", String(iters)]) }
+        if let batchSize { argv.append(contentsOf: ["--batch-size", String(batchSize)]) }
         if let out { argv.append(contentsOf: ["--out", out]) }
         return Self.unwrapPlan(try await raw(argv))
     }
 
     func loraStart(repo: String, data: String, previewHash: String,
-                   iters: Int?, out: String?) async throws -> [String: Any] {
+                   iters: Int?, out: String?, batchSize: Int? = nil) async throws -> [String: Any] {
         var argv = [
             "lora", "start", "--repo", repo, "--data", data, "--receipts-dir", receiptDirectory,
             "--confirm", "--preview-hash", previewHash,
         ]
         if let iters { argv.append(contentsOf: ["--iters", String(iters)]) }
+        if let batchSize { argv.append(contentsOf: ["--batch-size", String(batchSize)]) }
         if let out { argv.append(contentsOf: ["--out", out]) }
         return try await raw(argv)
     }

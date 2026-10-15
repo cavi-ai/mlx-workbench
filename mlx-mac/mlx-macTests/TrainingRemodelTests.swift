@@ -31,6 +31,71 @@ private enum TF {
 private struct Boom: Error, LocalizedError { var errorDescription: String? { "boom" } }
 
 @MainActor
+final class TrainingBatchTests: XCTestCase {
+    func testNativeBridgePreservesBatchSizeInPreviewAndConfirmation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["train.jsonl", "valid.jsonl"] {
+            try Data("{\"text\":\"A local example.\"}\n".utf8).write(to: root.appendingPathComponent(name))
+        }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: source.appendingPathComponent("vendor/mlx-agent").path,
+            receiptDirectory: root.path)
+        let repo = "workbench-fixture/uncached-training-input", output = root.appendingPathComponent("adapter").path
+        let plan = try await api.loraPreview(repo: repo, data: root.path, iters: 1, out: output, batchSize: 1)
+        XCTAssertEqual(plan["batch_size"] as? Int, 1)
+        XCTAssertEqual(TrainingPlanSummary(payload: plan).trainingExamples, 1)
+        do {
+            _ = try await api.loraStart(repo: repo, data: root.path, previewHash: "unconfirmed", iters: 1, out: output, batchSize: 1)
+            XCTFail("A deliberately invalid hash must not start training")
+        } catch BridgeError.remote(let code, _, _) { XCTAssertEqual(code, "preview_stale") }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".mlx-agent-receipts").path))
+    }
+
+    func testBatchSizeIsBoundedAndPartOfTheCapturedRequest() async throws {
+        var draft = TrainingDraft(repo: "org/base", data: "/dataset")
+        XCTAssertEqual(draft.request?.batchSize, 4)
+        for invalid in ["", "0", "65", "1.5", "many"] {
+            draft.batchSize = invalid
+            XCTAssertNil(draft.request)
+            XCTAssertNotNil(draft.batchSizeError)
+        }
+        draft.batchSize = "1"
+        XCTAssertEqual(draft.request?.batchSize, 1)
+        var captured: [Int] = []
+        let session = TrainingSession(preview: { request in
+            captured.append(request.batchSize)
+            return ["preview_hash": "reviewed", "batch_size": request.batchSize,
+                "dataset": ["train_lines": 4, "valid_lines": 4]]
+        }, start: { request, _ in XCTAssertEqual(request.batchSize, 1) })
+        session.draft = draft
+        await session.previewTraining()?.value
+        XCTAssertTrue(session.canConfirm)
+        session.draft.batchSize = "2"
+        XCTAssertFalse(session.canConfirm)
+        session.draft.batchSize = "1"
+        await session.previewTraining()?.value
+        await session.confirmTraining()?.value
+        XCTAssertEqual(captured, [1, 1])
+    }
+
+    func testDatasetCountsBlockAnIncompatibleHistoricalPlanWithoutInventingDefaults() {
+        let missingValidation = TrainingPlanSummary(payload: ["batch_size": 4,
+            "dataset": ["train_lines": 8, "valid_lines": 0]])
+        XCTAssertNotNil(missingValidation.blockingReason)
+        let small = TrainingPlanSummary(payload: ["batch_size": 4,
+            "dataset": ["train_lines": 1, "valid_lines": 4]])
+        XCTAssertNotNil(small.blockingReason)
+        XCTAssertNil(TrainingPlanSummary(payload: ["batch_size": 1,
+            "dataset": ["train_lines": 1, "valid_lines": 1]]).blockingReason)
+        XCTAssertNil(TrainingPlanSummary(payload: [:]).batchSize)
+        XCTAssertNil(TrainingPlanSummary(payload: [:]).blockingReason)
+    }
+}
+
+@MainActor
 final class TrainedAdapterRuntimeTests: XCTestCase {
     func testCompletedLocalAdapterServesThroughRunAndStops() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -768,10 +833,12 @@ final class TrainingRenderTests: XCTestCase {
                 let session = TrainingSession(preview: { _ in previewCalls += 1; return payload },
                     start: { _, _ in XCTFail("Rendering must not start training") })
                 if planned {
-                    session.draft = TrainingDraft(repo: repo, data: dataset)
+                    session.draft = TrainingDraft(repo: repo, data: dataset,
+                        iterations: (plan["iters"] as? Int).map(String.init) ?? "100", output: plan["out"] as? String ?? "",
+                        batchSize: (plan["batch_size"] as? Int).map(String.init) ?? "4")
                     await session.previewTraining()?.value
                     XCTAssertNotNil(session.preview)
-                    XCTAssertEqual(session.canConfirm, !TrainingPlanSummary(payload: payload).baseMissing)
+                    XCTAssertEqual(session.canConfirm, TrainingPlanSummary(payload: payload).blockingReason == nil)
                 }
                 let records = loader(jobs: [], evaluations: [])
                 await records.refresh()
