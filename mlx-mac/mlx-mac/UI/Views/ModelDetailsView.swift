@@ -284,13 +284,14 @@ struct ModelDetailsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 header
+                actionRow
+                Divider()
                 LibraryInspectorFit(
                     resources: appHost.resources,
                     reserveGB: appHost.config.fitReserveGB,
                     hardware: appHost.hardwareProfile,
                     model: model
                 )
-                actionRow
 
                 if showsImageGeneration {
                     WorkbenchSurface {
@@ -302,16 +303,20 @@ struct ModelDetailsView: View {
                     }
                 }
 
-                WorkbenchSurface {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                        SectionTitle(text: "Details")
-                        DetailGrid(rows: ModelDetailsPresentation.displayRows(for: model, prepareDestination: prepareDestination))
-                    }
+                Divider()
+                DisclosureGroup("Model details") {
+                    DetailGrid(rows: ModelDetailsPresentation.displayRows(for: model, prepareDestination: prepareDestination))
+                        .padding(.top, WorkbenchSpacing.sm)
                 }
 
-                WorkbenchSurface { verificationSection }
-                WorkbenchSurface { performanceSection }
-                WorkbenchSurface { lineageSection }
+                verificationSection
+                Divider()
+                DisclosureGroup("Measured performance") {
+                    performanceSection.padding(.top, WorkbenchSpacing.sm)
+                }
+                DisclosureGroup("Model lineage") {
+                    lineageSection.padding(.top, WorkbenchSpacing.sm)
+                }
 
                 if let error = model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
                     WorkbenchSurface {
@@ -322,7 +327,7 @@ struct ModelDetailsView: View {
                     }
                 }
 
-                WorkbenchSurface {
+                Group {
                     DisclosureGroup("Raw model evidence") {
                         let evidence = LibraryPresentation.userFacingEvidence(model.evidence)
                             + ["signature=\(ModelDetailsPresentation.known(model.item.signature))"]
@@ -338,7 +343,7 @@ struct ModelDetailsView: View {
                     }
                 }
             }
-            .padding(WorkbenchSpacing.md)
+            .padding(WorkbenchSpacing.lg)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -371,7 +376,7 @@ struct ModelDetailsView: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                 Text(model.displayName)
-                    .font(WorkbenchTypography.title)
+                    .font(WorkbenchTypography.inspectorTitle)
                     .lineLimit(2)
                     .truncationMode(.tail)
                 ViewThatFits(in: .horizontal) {
@@ -418,11 +423,15 @@ struct ModelDetailsView: View {
     private var primaryAction: some View {
         if actions.canPrepare {
             Button("Prepare to run") { actions.prepare() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.workbenchPrimary)
                 .fixedSize()
         } else if actions.canServe {
-            Button("Select for Run") { actions.run() }
-                .buttonStyle(.borderedProminent)
+            Button { actions.run() } label: {
+                Label("Run model", systemImage: "play.fill")
+            }
+                .buttonStyle(.workbenchPrimary)
+                .controlSize(.large)
+                .help("Open the server preview for this model")
                 .fixedSize()
         }
     }
@@ -436,7 +445,8 @@ struct ModelDetailsView: View {
             }
         }
         if actions.canCompare {
-            Button("Select for Compare") { actions.compare() }
+            Button("Compare") { actions.compare() }
+                .foregroundStyle(WorkbenchColor.ink)
                 .fixedSize()
         }
     }
@@ -476,7 +486,7 @@ struct ModelDetailsView: View {
             if model.readiness == .ready {
                 if verifyIsPrimary {
                     Button("Verify now") { verifyNow() }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.workbenchPrimary)
                         .disabled(appHost.verification.activeModelPath != nil)
                 } else {
                     Button("Verify now") { verifyNow() }
