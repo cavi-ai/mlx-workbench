@@ -47,10 +47,10 @@ See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.m
 
 | Area | Screens | Highlights |
 |---|---|---|
-| Workbench | Overview, Library | Model budget, fit per model, model details and lineage |
+| Workbench | Overview, Library | Model budget, fit per model, model details and lineage, LM Studio source |
 | Lifecycle | Prepare, Compare, Run | Previewed conversion, quality gate canaries, measured comparisons in eight modes, always-on endpoints with load on request |
 | Operations | Activity, Reclaim, Clients, Health | Job timeline, quarantine and Trash with restore, client config wiring with rollback, runtime readiness |
-| Lab | Discover, LM Studio, Studies, Training, Adopt | Hub candidates with fit, LM Studio's downloads, text LoRA training with evaluation, controlled studies |
+| Lab | Discover, Studies, Training | Hub candidates and task recommendations, controlled studies, text LoRA training with evaluation |
 
 Qwen3.8-Flash-Next can also run on the optional [Strata runtime](docs/mlx-workbench/source/pages/workflows/strata.md) from a prepared GGUF pair.
 

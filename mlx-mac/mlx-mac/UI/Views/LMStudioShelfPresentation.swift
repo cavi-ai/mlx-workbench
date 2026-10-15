@@ -205,13 +205,20 @@ struct LMStudioSummary: Equatable {
     let mlxModels: Int
     let ggufToConvert: Int
     let mlxFitNow: Int
+    var mlxWithoutFitEstimate: Int = 0
     let totalBytes: Int64
+
+    private var fitCountItem: Item {
+        if mlxWithoutFitEstimate == 0 { return Item(figure: "\(mlxFitNow)", label: "fit now") }
+        if mlxWithoutFitEstimate == mlxModels { return Item(figure: "—", label: "fit unknown") }
+        return Item(figure: "\(mlxFitNow)", label: "known to fit")
+    }
 
     var items: [Item] {
         [
             Item(figure: "\(mlxModels)", label: mlxModels == 1 ? "MLX model" : "MLX models"),
             Item(figure: "\(ggufToConvert)", label: "GGUF to convert"),
-            Item(figure: "\(mlxFitNow)", label: "fit now"),
+            fitCountItem,
             Item(figure: ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file), label: "on disk"),
         ]
     }
@@ -391,6 +398,7 @@ struct LMStudioShelfPresentation: Equatable {
                     mlxModels: mlx.count,
                     ggufToConvert: gguf.filter { $0.action == .prepare }.count,
                     mlxFitNow: mlx.filter { $0.fit.tone == .fits }.count,
+                    mlxWithoutFitEstimate: mlx.filter { $0.fit.state != .estimated }.count,
                     totalBytes: (mlx + gguf).reduce(0) { $0 + $1.bytes }
                 )
             )

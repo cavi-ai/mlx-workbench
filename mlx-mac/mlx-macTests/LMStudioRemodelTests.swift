@@ -505,6 +505,32 @@ final class LMStudioRowsTests: XCTestCase {
         XCTAssertEqual(LMStudioSummary(mlxModels: 1, ggufToConvert: 0, mlxFitNow: 0, totalBytes: 0).items[0].label, "MLX model")
     }
 
+    func testSummaryDistinguishesUnknownPartialAndKnownFitCounts() {
+        let model = F.mlx("/lm/p/a-8bit")
+        for hasProbed in [false, true] {
+            let summary = F.present(snapshot: F.snapshot([model]), memory: nil, hasProbed: hasProbed).summary
+            XCTAssertEqual(summary.items[2], .init(figure: "—", label: "fit unknown"))
+        }
+        let readingAvailable = F.present(snapshot: F.snapshot([model]), memory: F.memory(), hasProbed: false).summary
+        XCTAssertEqual(readingAvailable.items[2], .init(figure: "1", label: "fit now"))
+        let unestimated = F.mlx("/lm/p/unknown-8bit", bytes: 0)
+        let partial = F.present(snapshot: F.snapshot([model, unestimated])).summary
+        XCTAssertEqual(partial.items[2], .init(figure: "1", label: "known to fit"))
+        let huge = F.mlx("/lm/p/huge-8bit", bytes: 200_000_000_000)
+        let knownZero = F.present(snapshot: F.snapshot([huge])).summary
+        XCTAssertEqual(knownZero.items[2], .init(figure: "0", label: "fit now"))
+        XCTAssertEqual(F.present(snapshot: F.snapshot([]), memory: nil).summary.items[2], .init(figure: "0", label: "fit now"))
+    }
+
+    func testLibraryRevealRequiresTheRequestedModelInTheCurrentSnapshot() {
+        let model = F.mlx("/lm/p/requested-8bit")
+        let request = LibraryRevealRequest(modelPath: model.item.path)
+        XCTAssertEqual(request.resolvedPath(in: F.snapshot([model])), model.item.path)
+        XCTAssertNil(request.resolvedPath(in: nil))
+        XCTAssertNil(request.resolvedPath(in: F.snapshot([F.mlx("/lm/p/other-8bit")])))
+        XCTAssertNotEqual(request, LibraryRevealRequest(modelPath: model.item.path), "Repeated explicit reveals need distinct identities.")
+    }
+
     func testLaneTitlesNameTheFormat() {
         XCTAssertEqual(LMStudioLane(format: .mlx, rows: [], notice: nil).title, "MLX models")
         XCTAssertEqual(LMStudioLane(format: .gguf, rows: [], notice: nil).title, "GGUF files")
@@ -918,6 +944,85 @@ final class LMStudioResolutionLoaderTests: XCTestCase {
 
 @MainActor
 final class LMStudioRenderTests: XCTestCase {
+    func testLibrarySourceControlPreservesSelectionAndLegacyRequests() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_LIBRARY_SOURCE_CAPTURE"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_LIBRARY_SOURCE_CAPTURE for native Library source checks.")
+        }
+        let root = URL(fileURLWithPath: path)
+        let home = root.appendingPathComponent(UUID().uuidString)
+        let settings = home.appendingPathComponent(".lmstudio/settings.json")
+        let folder = home.appendingPathComponent("downloads")
+        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["downloadsFolder": folder.path]).write(to: settings)
+        let models = [F.mlx(folder.path + "/publisher/fixture-mlx"), F.gguf(folder.path + "/publisher/fixture-GGUF/fixture-Q4.gguf")]
+        let snapshot = LibrarySnapshot(models: models, groups: models.map { ModelGroup(variants: [$0]) },
+            hardware: F.hardware, generatedAt: Date())
+        let app = host(snapshot: snapshot)
+        app.config.ggufRoots = [folder.path]; app.config.mlxRoots = [folder.path]
+        app.scannedRoots = ScanRoots(gguf: [folder.path], mlx: [folder.path])
+        app.selectedModelPath = models[0].item.path
+        app.configPath = root.appendingPathComponent("config.json").path
+        let configBytes = try JSONEncoder().encode(app.config)
+        try configBytes.write(to: URL(fileURLWithPath: app.configPath))
+        let workflow = app.modelWorkflow.workflow
+        let hosting = NSHostingView(rootView: LibraryWorkspace(appHost: app, sourceHome: home)
+            .environment(\.isRouteActive, true).frame(width: 814, height: 1000)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 814, height: 1000),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
+        defer { window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func capture(_ name: String, from view: NSView? = nil) throws {
+            let target = view ?? hosting
+            target.layoutSubtreeIfNeeded()
+            let image = try XCTUnwrap(target.bitmapImageRepForCachingDisplay(in: target.bounds))
+            target.cacheDisplay(in: target.bounds, to: image)
+            try XCTUnwrap(image.representation(using: .png, properties: [:]))
+                .write(to: root.appendingPathComponent(name + ".png"))
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        try capture("all-models")
+        let picker = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSSegmentedControl }
+            .first { $0.segmentCount == 2 && $0.label(forSegment: 0) == "All models" })
+        let action = try XCTUnwrap(picker.action)
+        picker.selectedSegment = 1
+        XCTAssertTrue(picker.sendAction(action, to: picker.target))
+        try await Task.sleep(for: .milliseconds(400))
+        try capture("lm-studio-source")
+        XCTAssertEqual(picker.selectedSegment, 1)
+        picker.selectedSegment = 0
+        XCTAssertTrue(picker.sendAction(action, to: picker.target))
+        try await Task.sleep(for: .milliseconds(250))
+        try capture("all-models-return")
+        XCTAssertEqual(app.selectedModelPath, models[0].item.path)
+        hosting.rootView = LibraryWorkspace(appHost: app, lmStudioRequested: true, sourceHome: home)
+            .environment(\.isRouteActive, true).frame(width: 814, height: 1000)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(picker.selectedSegment, 1)
+        try capture("legacy-lm-studio-request")
+        XCTAssertEqual(app.selectedModelPath, models[0].item.path)
+        XCTAssertEqual(app.modelWorkflow.workflow, workflow)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: app.configPath)), configBytes)
+        XCTAssertNil(app.lastError)
+        let revealHosting = NSHostingView(rootView: LibraryView(appHost: app,
+            revealRequest: LibraryRevealRequest(modelPath: models[1].item.path))
+            .environment(\.isRouteActive, true).frame(width: 814, height: 1000)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        window.contentView = revealHosting
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(app.selectedModelPath, models[1].item.path)
+        XCTAssertEqual(app.modelWorkflow.workflow, workflow)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: app.configPath)), configBytes)
+        let detailsHosting = NSHostingView(rootView: ModelDetailsView(appHost: app, model: models[1], onRouteSelection: { _ in })
+            .frame(width: 430, height: 1000).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        window.contentView = detailsHosting
+        try await Task.sleep(for: .milliseconds(250))
+        try capture("revealed-model-details", from: detailsHosting)
+    }
+
     private func config() -> Config {
         Config(
             schemaVersion: Config.SCHEMA_VERSION, ggufRoots: ["/m"], mlxRoots: [], outputDir: "/out/mlx",

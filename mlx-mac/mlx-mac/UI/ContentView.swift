@@ -131,8 +131,9 @@ struct ContentView: View {
         switch route {
         case .overview:
             HomeView(appHost: appHost, onRouteSelection: navigate)
-        case .library:
-            LibraryView(appHost: appHost, onRouteSelection: navigate)
+        case .library, .lmStudio:
+            LibraryWorkspace(appHost: appHost,
+                lmStudioRequested: selectedRouteID == AppRoute.lmStudio.rawValue, onRouteSelection: navigate)
         case .prepare:
             ConvertView(appHost: appHost, onRouteSelection: navigate)
         case .compare:
@@ -150,8 +151,6 @@ struct ContentView: View {
         case .discover, .adopt:
             DiscoveryWorkspace(appHost: appHost,
                 recommendationRequested: selectedRouteID == AppRoute.adopt.rawValue, onRouteSelection: navigate)
-        case .lmStudio:
-            LMStudioView(appHost: appHost, onRouteSelection: navigate)
         case .studies:
             StudiesView(lab: appHost.lab, installer: appHost.runtimeInstaller, agentPath: appHost.config.mlxAgentPath)
         case .training:

@@ -18,7 +18,7 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
 
         XCTAssertEqual(AppRoute.grouped.map(\.group), [.workbench, .lifecycle, .operations, .lab, .settings])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 3, 4, 4, 1])
+        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 3, 4, 3, 1])
     }
 
     func testLegacyAdoptUsesTheDiscoverDestinationWithoutADuplicatePage() {
@@ -27,9 +27,16 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(AppRoute.discover.navigationDestination, .discover)
         XCTAssertFalse(AppRoute.grouped.flatMap(\.routes).contains(.adopt))
         XCTAssertEqual(ContentView.mountedRoutes(for: [.adopt, .discover, .library]), [.library, .discover])
-        for route in AppRoute.allCases where route != .adopt {
+        for route in AppRoute.allCases where route != .adopt && route != .lmStudio {
             XCTAssertEqual(route.navigationDestination, route)
         }
+    }
+
+    func testLegacyLMStudioUsesTheLibraryDestinationWithoutADuplicatePage() {
+        XCTAssertEqual(AppRoute(rawID: "lmstudio"), .lmStudio)
+        XCTAssertEqual(AppRoute.lmStudio.navigationDestination, .library)
+        XCTAssertFalse(AppRoute.grouped.flatMap(\.routes).contains(.lmStudio))
+        XCTAssertEqual(ContentView.mountedRoutes(for: [.lmStudio, .library, .discover]), [.library, .discover])
     }
 
     func testRouteMetadataMatchesTheSiliconInstrumentBenchInformationArchitecture() {

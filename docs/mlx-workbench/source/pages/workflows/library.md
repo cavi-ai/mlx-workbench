@@ -8,6 +8,10 @@
 
 **Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. Families with multiple variants expand to show their models; single variants appear directly in the table.
 
+The **Source** picker switches between **All models** and **LM Studio**. Switching sources preserves the main table's filters and selected model, without changing configuration or starting conversion or serving.
+
+**Show in Library** on a source model opens **All models**, clears search and readiness/quantization filters, and selects the model in the inspector. This explicit reveal leaves column and grouping preferences intact.
+
 | Column | Meaning |
 |---|---|
 | Quantization | Declared bits or quant type |
@@ -61,13 +65,15 @@ The engine labels each model with a task type. The type decides what the app off
 
 Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embeddings and output head, so they are never served on their own.
 
-## LM Studio
+## LM Studio source
 
-**LM Studio** lists the models in LM Studio's downloads folder from the last Library scan; it does not scan on its own. The folder comes from `downloadsFolder` in `~/.lmstudio/settings.json`. The screen states, per format, whether the last scan reaches that folder.
+Choose **Library → Source → LM Studio** to list models in LM Studio's downloads folder from the last Library scan; it does not scan on its own. The folder comes from `downloadsFolder` in `~/.lmstudio/settings.json`. The view states, per format, whether the last scan reaches that folder. Existing saved LM Studio navigation opens this source inside Library.
 
 Two lanes are ranked by fit:
 
 - **MLX**: models that run as they are; **Run…** opens Run.
 - **GGUF**: files that need converting; **Prepare…** opens Prepare, or **Run…** when a converted output already exists. Split GGUF files are summed; vision projector files appear as tags.
+
+The fit summary shows **fit unknown** until the MLX models have fit estimates. A partial set of estimates is labeled **known to fit**; a complete set uses **fit now**. Zero is shown only as the known count, never as a substitute for unavailable estimates.
 
 The screen never writes configuration. When the scan does not reach the folder, add it to your roots in Settings.
