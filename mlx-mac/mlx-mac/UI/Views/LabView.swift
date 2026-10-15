@@ -236,8 +236,9 @@ struct LabJobRowView: View {
 
 struct LabJobRows: View {
     @ObservedObject var lab: LabCoordinator
+    var jobs: [LabJob]? = nil
     var body: some View {
-        ForEach((lab.snapshot.queue ?? []).map(LabJobRow.init)) { row in
+        ForEach((jobs ?? lab.snapshot.queue ?? []).map(LabJobRow.init)) { row in
             LabJobRowView(row: row, runDisabled: lab.runningJobID != nil,
                           run: { run(row.id) }, cancel: { cancel(row.id) })
         }

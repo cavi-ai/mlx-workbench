@@ -29,7 +29,11 @@ A notification announces each terminal state: completed, verified, verification 
 
 ## Activity
 
-**Activity** shows conversion, server, experiment and training jobs on a timeline grouped by day. Each conversion has a stage track, its state and one action.
+**Activity** puts active comparisons and in-flight conversions before older records. Study and training work that is queued, running, failed or in an unknown state stays prominent; successful and cancelled jobs remain in expandable history. Failed conversions appear under **Needs attention**. Other conversion records stay grouped by creation day. Each conversion has a stage track, its state and one action.
+
+Empty study and training sections are omitted. Their status failures stay visible with the latest available records, rather than appearing as empty history. **Open Studies** and **Open Training** lead to their full workflows.
+
+**Refresh** reads conversion, serving, study, training and queue status without starting work. A successful conversion read does not clear a training failure. If serving status is unavailable, existing server rows are labeled as last known and Activity does not claim that no server is running.
 
 - Confirmed conversions are written to a durable queue before launch and drain first in, first out.
 - Actual running state comes from engine receipts, never from the queue alone.
@@ -37,7 +41,7 @@ A notification announces each terminal state: completed, verified, verification 
 - **Retry** reuses the reviewed plan. Moving a queued item with ↑ and ↓ does not approve a new plan.
 - Failed launches keep their error and remediation.
 
-The engine owns the shared conversion queue. **Import existing queue** adopts a `convert-queue.json` from an earlier Workbench installation; stop the former server first. Import preserves the source file and an exact backup, and refuses invalid state.
+The engine owns the shared conversion queue. It is collapsed when empty; queued records or a queue error keep it visible. **Import existing queue** adopts a `convert-queue.json` from an earlier Workbench installation; stop the former server first. Import preserves the source file and an exact backup, and refuses invalid state.
 
 ## Clean up the source
 
