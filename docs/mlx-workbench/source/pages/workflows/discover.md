@@ -1,8 +1,8 @@
-# Discover and Adopt
+# Discover
 
-Both screens ask the engine about Hugging Face Hub candidates. Neither downloads weights; downloads go through [Add from Hugging Face](hugging-face.md).
+**Discover** offers **Browse candidates** and **Recommend for a task**. Both ask the engine about Hugging Face Hub candidates. Neither downloads weights; downloads go through [Add from Hugging Face](hugging-face.md). Switching modes preserves their current drafts and results without starting either operation.
 
-## Discover
+## Browse candidates
 
 **Discover** runs the engine's `discover` command for a role and lists ranked candidates from remote catalog metadata.
 
@@ -14,11 +14,11 @@ Each candidate shows its license, a fit bar for this Mac and an **In Library** m
 
 The separate **Catalog metadata** section shows cached metadata. **Refresh Metadata** is disabled when no metadata provider is configured; its help explains why. Role-based discovery and cached entries remain available.
 
-## Adopt
+## Recommend for a task
 
-**Adopt** runs the engine's `adopt` flow for one role. The engine verifies candidates with deterministic role probes against your local runtime before it recommends one; see the MLX Agent [Adopt](https://cavi-ai.xyz/docs/mlx-agent) documentation.
+This mode runs the engine's `adopt` flow for one role. It builds a shortlist and checks installed candidates through local runtimes, using generation and role probes where supported. Verification can load a model into RAM. A recommendation's evidence strength shows whether it came from runtime checks, metadata or heuristics; it is not a Workbench conversion verification verdict.
 
-1. Pick the requested **Role**. **Fast** uses heuristic-only discovery enrichment; **Offline** uses cached discovery and makes no metadata network requests.
-2. **Start**. **Refresh** reads the adoption's current status.
+1. Pick the requested **Role**. **Fast** uses heuristic-only discovery enrichment; installed candidates still receive runtime verification prompts. **Offline metadata** uses cached discovery and makes no metadata network requests; local runtime probes still run.
+2. **Verify and recommend** starts the checks. **Refresh** reads the recommendation's saved status.
 
-The recommendation shows its fit on this Mac and a next step: **Run…** for a model you have, or **Add from Hugging Face…** for one you do not. Each adoption keeps its own state file, and a failed refresh keeps the last known result, labeled **Last known state**.
+The recommendation shows its fit on this Mac and a next step: **Run…** for a model you have, or **Add from Hugging Face…** for one you do not. Each request keeps its own state file, and a failed refresh keeps the last known result, labeled **Last known state**. Existing saved Adopt navigation opens this mode in Discover.

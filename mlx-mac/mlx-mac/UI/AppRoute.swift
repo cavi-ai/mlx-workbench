@@ -44,6 +44,9 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Legacy destinations keep their identifiers while sharing the current page.
+    var navigationDestination: AppRoute { self == .adopt ? .discover : self }
+
     /// UserDefaults key for the persisted selection; shared by the window
     /// and the ⌘, command so both address the same destination.
     static let selectionStorageKey = "mlx-workbench.selectedRoute"
@@ -57,7 +60,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     /// remains `AppRoute.allCases`; this projection cannot introduce routes.
     static var grouped: [(group: Group, routes: [AppRoute])] {
         Group.allCases.map { group in
-            (group: group, routes: allCases.filter { $0.group == group })
+            (group: group, routes: allCases.filter { $0.group == group && $0.navigationDestination == $0 })
         }
     }
 
@@ -122,7 +125,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .reclaim: return "Review evidence-backed disk reclaim opportunities."
         case .clientSetup: return "Preview and apply configuration wiring for local clients."
         case .health: return "Inspect runtime and environment health findings."
-        case .discover: return "Explore catalog metadata and model candidates."
+        case .discover: return "Browse model candidates or request a recommendation for a task."
         case .lmStudio: return "See LM Studio's models: what runs here and what needs converting."
         case .studies: return "Change one variable at a time and review generated clips blind."
         case .training: return "Review local training and fine-tuning tools."

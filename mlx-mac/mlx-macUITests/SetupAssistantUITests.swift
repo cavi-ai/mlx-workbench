@@ -222,7 +222,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         if let root { try? FileManager.default.removeItem(at: root) }
     }
 
-    private func launch(appearance: String, route: String = "doctor", isolatedHome: Bool = false, configURL: URL? = nil) {
+    private func launch(appearance: String, route: String = "doctor", isolatedHome: Bool = false, configURL: URL? = nil,
+                        forcedRoute: String? = nil) {
         if appearance == "Light" || appearance == "Dark" {
             let requested: XCUIDevice.Appearance = appearance == "Dark" ? .dark : .light
             XCUIDevice.shared.appearance = requested
@@ -236,6 +237,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         // NSArgumentDomain overrides writes to AppStorage. A mutable route
         // must be selected through the UI rather than forced as a launch default.
         app.launchArguments = ["-mlx-workbench.setupCompleted.v1", "YES"]
+        if let forcedRoute { app.launchArguments += ["-mlx-workbench.selectedRoute", forcedRoute] }
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 30))
         resizeWindow(width: 1050, height: 720)
@@ -294,18 +296,19 @@ final class WorkbenchReviewUITests: XCTestCase {
 
     private var routes: [String] {
         ["Overview", "Library", "Prepare", "Compare", "Run", "Activity", "Reclaim", "Clients",
-         "Health", "Discover", "LM Studio", "Training", "Adopt", "Settings"]
+         "Health", "Discover", "LM Studio", "Studies", "Training", "Settings"]
     }
 
     private func assertPageContent(_ route: String) {
         let titles = ["Library": "No models found", "Prepare": "Choose a model to prepare",
                       "Run": "Serve a model", "Activity": "Servers", "Reclaim": "Quarantine",
                       "Clients": "Client wiring", "Health": "Model inventory findings",
-                      "Discover": "Discovery", "Training": "LoRA fine-tune", "Adopt": "Adopt a role"]
+                      "Discover": "Discovery", "Training": "LoRA fine-tune"]
         let element: XCUIElement
         if let title = titles[route] { element = app.staticTexts[title].firstMatch }
         else if route == "Settings" { element = app.staticTexts["Engine status"].firstMatch }
         else if route == "LM Studio" { element = app.buttons["Scan Again"] }
+        else if route == "Studies" { element = app.buttons["New experiment…"] }
         else if route == "Overview" { element = app.buttons["Open Health"] }
         else { element = app.buttons["New set…"] }
         XCTAssertTrue(element.waitForExistence(timeout: 20), "Missing \(route) content")
@@ -1102,6 +1105,14 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
     }
 
+    func testLegacyAdoptRouteOpensDiscoverRecommendations() throws {
+        launch(appearance: "Light", route: "adopt", isolatedHome: true, forcedRoute: "adopt")
+        XCTAssertTrue(app.buttons["adopt-start"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons["Discover"].value as? String, "Selected")
+        XCTAssertFalse(app.buttons["Adopt"].exists)
+        capture("Discover-legacy-adopt")
+    }
+
     func testAdoptionHandoffAndRecovery() throws {
         let before = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
         let repository = "mlx-community/Qwen-Coding-Long-Repository-Name-For-Local-Adoption-4bit"
@@ -1109,8 +1120,14 @@ final class WorkbenchReviewUITests: XCTestCase {
             for flag in ["fail-adopt-start", "fail-adopt-status", "adopt-no-recommendation", "adopt-unknown"] {
                 try? FileManager.default.removeItem(at: root.appendingPathComponent(flag))
             }
+            func selectRecommendations() {
+                select("Discover")
+                let mode = app.segmentedControls["discovery-mode"].buttons["Recommend for a task"]
+                XCTAssertTrue(mode.waitForExistence(timeout: 10))
+                mode.click()
+            }
             launch(appearance: appearance, isolatedHome: true)
-            select("Adopt")
+            selectRecommendations()
             resizeWindow(width: 1024, height: 680)
             XCTAssertEqual(app.windows.firstMatch.frame.width, 1024, accuracy: 2)
             XCTAssertEqual(app.windows.firstMatch.frame.height, 680, accuracy: 2)
@@ -1148,13 +1165,20 @@ final class WorkbenchReviewUITests: XCTestCase {
             let fast = app.checkBoxes["Fast"]
             fast.click()
             XCTAssertEqual(fast.value as? Int, 1)
-            app.checkBoxes["Offline"].click()
+            app.checkBoxes["Offline metadata"].click()
             var start: XCUIElement { app.buttons["adopt-start"] }
             var refresh: XCUIElement { app.buttons["adopt-refresh"] }
             let callsBeforeHiddenReturn = try calls()
+            app.segmentedControls["discovery-mode"].buttons["Browse candidates"].click()
+            app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+            selectRecommendations()
+            XCTAssertEqual(picker.value as? String, "Coding")
+            XCTAssertEqual(fast.value as? Int, 1)
+            XCTAssertEqual(app.checkBoxes["Offline metadata"].value as? Int, 1)
+            XCTAssertEqual(try calls(), callsBeforeHiddenReturn, "Mode changes and Return in Browse must not start verification")
             select("Library")
             app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
-            select("Adopt")
+            selectRecommendations()
             XCTAssertEqual(try calls(), callsBeforeHiddenReturn, "A hidden Adopt route must not handle Return")
             start.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
             XCTAssertTrue(app.descendants(matching: .any)["adopt-progress"].waitForExistence(timeout: 5))
@@ -1162,7 +1186,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertFalse(picker.isEnabled)
             capture("Adopt-\(appearance)-starting")
             select("Library")
-            select("Adopt")
+            selectRecommendations()
             XCTAssertTrue(text(containing: repository).waitForExistence(timeout: 15))
             capture("Adopt-\(appearance)-recommendation-standard")
             XCTAssertTrue(refresh.isEnabled)

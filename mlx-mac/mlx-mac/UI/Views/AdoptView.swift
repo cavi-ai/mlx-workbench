@@ -19,7 +19,7 @@ struct AdoptView: View {
 
         var label: String {
             switch self {
-            case .start: return "Starting adoption…"
+            case .start: return "Checking candidates…"
             case .refresh: return "Refreshing status…"
             }
         }
@@ -95,9 +95,13 @@ struct AdoptView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text("Adopt a role")
+            Text("Recommend for a task")
                 .font(WorkbenchTypography.label)
                 .foregroundStyle(WorkbenchColor.muted)
+            Text("Build a shortlist for one role and check installed candidates through local runtimes. Verification can load a model into RAM. Adding a recommended model is a separate action.")
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             ReclaimFlowLayout(spacing: WorkbenchSpacing.sm, lineSpacing: WorkbenchSpacing.xs) {
                 Picker("Role", selection: $role) {
                     ForEach(AdoptRole.choices, id: \.self) { choice in
@@ -110,24 +114,24 @@ struct AdoptView: View {
                 .controlRow()
                 .accessibilityIdentifier("adopt-role")
                 Toggle("Fast", isOn: $fast)
-                    .help("Heuristic-only discovery enrichment")
+                    .help("Use name heuristics for discovery enrichment. Installed candidates still receive runtime verification prompts.")
                     .disabled(isBusy)
                     .controlRow()
-                Toggle("Offline", isOn: $offline)
+                Toggle("Offline metadata", isOn: $offline)
                     .help("Cached discovery; no metadata network requests")
                     .disabled(isBusy)
                     .controlRow()
-                Button("Start") { startAdopt() }
+                Button("Verify and recommend") { startAdopt() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(isRouteActive ? .defaultAction : nil)
                     .disabled(!isRouteActive || isBusy || !AdoptRole.choices.contains(role))
-                    .help("Start adoption in a new state file for the selected role.")
+                    .help("Inspect a shortlist and send verification prompts to installed candidates through local runtimes.")
                     .controlRow()
                     .accessibilityIdentifier("adopt-start")
                 Button("Refresh") { refreshStatus() }
                     .buttonStyle(.bordered)
                     .disabled(isBusy || workflow == nil)
-                    .help(workflow == nil ? "Start adoption before refreshing its status." : "Refresh the captured workflow's state file.")
+                    .help(workflow == nil ? "Request a recommendation before refreshing its status." : "Read this recommendation workflow's saved status.")
                     .controlRow()
                     .accessibilityIdentifier("adopt-refresh")
                 if let operation {

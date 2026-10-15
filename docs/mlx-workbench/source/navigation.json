@@ -20,7 +20,7 @@
         { "title": "Compare", "path": "workflows/compare.md" },
         { "title": "Clients", "path": "workflows/clients.md" },
         { "title": "Reclaim", "path": "workflows/reclaim.md" },
-        { "title": "Discover and Adopt", "path": "workflows/discover.md" },
+        { "title": "Discover", "path": "workflows/discover.md" },
         { "title": "Health and alerts", "path": "workflows/health.md" },
         { "title": "Training and studies", "path": "workflows/training.md" },
         { "title": "Strata", "path": "workflows/strata.md" }

@@ -18,7 +18,18 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(routes.map(\.order), Array(0..<routes.count))
 
         XCTAssertEqual(AppRoute.grouped.map(\.group), [.workbench, .lifecycle, .operations, .lab, .settings])
-        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 3, 4, 5, 1])
+        XCTAssertEqual(AppRoute.grouped.map { $0.routes.count }, [2, 3, 4, 4, 1])
+    }
+
+    func testLegacyAdoptUsesTheDiscoverDestinationWithoutADuplicatePage() {
+        XCTAssertEqual(AppRoute(rawID: "adopt"), .adopt)
+        XCTAssertEqual(AppRoute.adopt.navigationDestination, .discover)
+        XCTAssertEqual(AppRoute.discover.navigationDestination, .discover)
+        XCTAssertFalse(AppRoute.grouped.flatMap(\.routes).contains(.adopt))
+        XCTAssertEqual(ContentView.mountedRoutes(for: [.adopt, .discover, .library]), [.library, .discover])
+        for route in AppRoute.allCases where route != .adopt {
+            XCTAssertEqual(route.navigationDestination, route)
+        }
     }
 
     func testRouteMetadataMatchesTheSiliconInstrumentBenchInformationArchitecture() {

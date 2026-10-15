@@ -53,8 +53,8 @@ final class AdoptPresentationTests: XCTestCase {
     }
 
     func testIdleSentenceNamesTheDraftRole() {
-        XCTAssertEqual(AdoptRecommendationState.idleSentence(role: "general"), "Start to find a General model for this Mac.")
-        XCTAssertEqual(AdoptRecommendationState.idleSentence(role: "tool-use"), "Start to find a Tool use model for this Mac.")
+        XCTAssertEqual(AdoptRecommendationState.idleSentence(role: "general"), "Verify and recommend to find a General model for this Mac.")
+        XCTAssertEqual(AdoptRecommendationState.idleSentence(role: "tool-use"), "Verify and recommend to find a Tool use model for this Mac.")
     }
 
     func testLibraryMatchIsSharedWithDiscover() {
@@ -176,6 +176,76 @@ final class AdoptSourceTests: XCTestCase {
 @MainActor
 final class AdoptRenderTests: XCTestCase {
     private typealias F = AdoptFixtures
+
+    func testDiscoverModesSwitchThroughTheNativeControl() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_DISCOVERY_CAPTURE"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_DISCOVERY_CAPTURE for native Discover mode checks.")
+        }
+        let root = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let app = host(library: [])
+        let page = DiscoveryWorkspace(appHost: app).environment(\.isRouteActive, true)
+        let hosting = NSHostingView(rootView: page.frame(width: 814, height: 900)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 814, height: 900),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
+        defer { window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func capture(_ name: String) throws {
+            hosting.layoutSubtreeIfNeeded()
+            let image = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: image)
+            try XCTUnwrap(image.representation(using: .png, properties: [:]))
+                .write(to: root.appendingPathComponent(name + ".png"))
+        }
+        try await Task.sleep(for: .milliseconds(250))
+        let browseRole = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSPopUpButton }
+            .first { $0.itemTitles.contains("Any") })
+        let browseMenu = try XCTUnwrap(browseRole.menu)
+        let codingIndex = browseRole.indexOfItem(withTitle: "Coding")
+        XCTAssertGreaterThanOrEqual(codingIndex, 0)
+        browseMenu.performActionForItem(at: codingIndex)
+        try await Task.sleep(for: .milliseconds(100))
+        try capture("browse")
+        let picker = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSSegmentedControl }
+            .first { $0.segmentCount == 2 && $0.label(forSegment: 0) == "Browse candidates" })
+        XCTAssertEqual(picker.selectedSegment, 0)
+        let action = try XCTUnwrap(picker.action)
+        picker.selectedSegment = 1
+        XCTAssertTrue(picker.sendAction(action, to: picker.target))
+        try await Task.sleep(for: .milliseconds(250))
+        let recommendRole = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSPopUpButton }
+            .first { $0.itemTitles.contains("General") && !$0.itemTitles.contains("Any") })
+        let recommendMenu = try XCTUnwrap(recommendRole.menu)
+        let toolUseIndex = recommendRole.indexOfItem(withTitle: "Tool use")
+        XCTAssertGreaterThanOrEqual(toolUseIndex, 0)
+        recommendMenu.performActionForItem(at: toolUseIndex)
+        try await Task.sleep(for: .milliseconds(100))
+        try capture("recommend")
+        XCTAssertEqual(picker.selectedSegment, 1)
+        picker.selectedSegment = 0
+        XCTAssertTrue(picker.sendAction(action, to: picker.target))
+        try await Task.sleep(for: .milliseconds(250))
+        try capture("browse-return")
+        XCTAssertEqual(picker.selectedSegment, 0)
+        XCTAssertEqual(descendants(hosting).compactMap { $0 as? NSPopUpButton }
+            .first { $0.itemTitles.contains("Any") }?.titleOfSelectedItem, "Coding")
+        picker.selectedSegment = 1
+        XCTAssertTrue(picker.sendAction(action, to: picker.target))
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(descendants(hosting).compactMap { $0 as? NSPopUpButton }
+            .first { $0.itemTitles.contains("General") && !$0.itemTitles.contains("Any") }?.titleOfSelectedItem, "Tool use")
+        try capture("recommend-return")
+        picker.selectedSegment = 0
+        XCTAssertTrue(picker.sendAction(action, to: picker.target))
+        hosting.rootView = DiscoveryWorkspace(appHost: app, recommendationRequested: true)
+            .environment(\.isRouteActive, true).frame(width: 814, height: 900)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(picker.selectedSegment, 1, "A legacy Adopt request opens the retained recommendation mode.")
+        try capture("legacy-adopt-request")
+    }
 
     private func config() -> Config {
         Config(
