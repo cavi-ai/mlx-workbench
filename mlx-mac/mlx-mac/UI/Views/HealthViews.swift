@@ -290,6 +290,24 @@ struct HealthHeroView: View {
     }
 }
 
+/// The base probe does not inspect isolated model runtimes.
+struct HealthRuntimeScopeView: View {
+    let onOpenRun: () -> Void
+
+    var body: some View {
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                SectionTitle(text: "Model-specific runtimes")
+                Text("The checks above cover the base conversion tools and mlx-lm server. Optional backends and Strata use separate environments. Preview serving in Run to check the selected model's runtime before confirmation.")
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Run", action: onOpenRun).buttonStyle(.bordered)
+            }
+        }
+    }
+}
+
 // MARK: - Evidence
 
 /// The environment fingerprint and how many verified models were verified under it.
