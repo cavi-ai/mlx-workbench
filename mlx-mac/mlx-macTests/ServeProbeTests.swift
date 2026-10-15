@@ -82,7 +82,7 @@ final class ServeProbeTests: XCTestCase {
             let task = Task { try await probe.run(modelPath: "/Models/strata", prompts: prompts, warmEachPrompt: true) }
             do { _ = try await task.value; XCTFail("Warm-up failure or cancellation must stop the run") }
             catch {
-                if cancel { XCTAssertTrue(error is CancellationError) }
+                if cancel { XCTAssertTrue(error is ServeProbeCancelled) }
                 else { XCTAssertEqual(error as? WarmupRecordingProber.Failure, .warmup) }
             }
             let requests = await prober.requests, lifecycle = await events.values

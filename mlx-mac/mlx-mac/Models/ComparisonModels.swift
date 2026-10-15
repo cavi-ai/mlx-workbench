@@ -1141,6 +1141,8 @@ enum ComparisonRunState: String, Codable, Sendable {
     case running
     case completed
     case failed
+    case cancelled
+    case interrupted
 }
 
 struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {

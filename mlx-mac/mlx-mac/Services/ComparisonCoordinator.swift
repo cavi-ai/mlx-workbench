@@ -19,6 +19,42 @@ final class ComparisonCoordinator: ObservableObject {
     @Published private(set) var persistenceError: String?
     @Published private(set) var promptSetManagementError: String?
     @Published private(set) var savingPromptSet = false
+    @Published private(set) var isCancelling = false
+    @Published private(set) var cleanupPending = false
+    private var runTask: Task<Void, Never>?
+    private var pendingCleanup: (() async throws -> Void)?
+    private var cleanupCompletionState: ComparisonRunState = .failed
+
+    func cancel() {
+        guard activeRunID != nil, !isCancelling, !cleanupPending else { return }
+        isCancelling = true
+        progressMessage = "Cancelling… Waiting for owned work and cleanup to finish."
+        runTask?.cancel()
+    }
+
+    func retryCleanup() {
+        guard let id = activeRunID, cleanupPending, !isCancelling, let cleanup = pendingCleanup else { return }
+        isCancelling = true
+        progressMessage = "Retrying comparison server cleanup…"
+        runTask = Task {
+            do { try await cleanup(); finishRun(id, state: cleanupCompletionState) }
+            catch {
+                lastError = "Comparison server cleanup failed: \(AppHost.render(error))"
+                progressMessage = "Cleanup failed. Retry cleanup before starting another comparison."
+                isCancelling = false; runTask = nil
+            }
+        }
+    }
+
+    private func finishRun(_ id: UUID, state: ComparisonRunState) {
+        guard activeRunID == id, let index = runs.firstIndex(where: { $0.id == id }) else { return }
+        runs[index].state = state; runs[index].finishedAt = now()
+        persist(runs[index])
+        activeRunID = nil; progressMessage = nil; isCancelling = false
+        cleanupPending = false; pendingCleanup = nil; runTask = nil
+        if state == .cancelled { lastError = nil }
+        onBenchmarks?(state == .completed ? benchmarks(for: runs[index]) : [])
+    }
 
     private let probe: ServeProbe
     private let strataProbe: (@Sendable (StrataComparisonOptions) -> ServeProbe)?
@@ -72,12 +108,9 @@ final class ComparisonCoordinator: ObservableObject {
         do {
             runs = try runStore.load().sorted { $0.startedAt > $1.startedAt }
             runsLoaded = true
-            // A run interrupted by an app quit can never resume its in-flight
-            // probe; reconcile it to completed with its partial (real,
-            // measured) results instead of leaving a phantom running run.
+            // Interrupted runs retain measurements but cannot supply a completed cohort.
             for index in runs.indices where runs[index].state == .running {
-                runs[index].state = .completed
-                runs[index].finishedAt = runs[index].finishedAt ?? now()
+                runs[index].state = .interrupted
                 try? runStore.upsert(runs[index], id: \.id)
             }
         } catch {
@@ -527,13 +560,13 @@ final class ComparisonCoordinator: ObservableObject {
         activeRunID = run.id
 
         if mode == .chat {
-            Task { [probe, now] in
+            runTask = Task { [probe, now] in
                 await execute(runID: run.id, variants: variants, promptSet: promptSet, probe: probe, now: now,
                               strataOptions: strataOptions, laneConfigurations: laneConfigurations,
                               warmEachPrompt: settingsSearchGoal?.warmEachPrompt == true)
             }
         } else if let mediaRunner, let outputStore {
-            Task {
+            runTask = Task {
                 await executeMedia(
                     runID: run.id, mode: mode, variants: variants, promptSet: promptSet,
                     runner: mediaRunner, store: outputStore
@@ -557,6 +590,7 @@ final class ComparisonCoordinator: ObservableObject {
         runner: ComparisonMediaRunner,
         store: ComparisonOutputStore
     ) async {
+        guard !Task.isCancelled else { finishRun(runID, state: .cancelled); return }
         var setupError: String?
         do {
             try store.createRunDirectory(runID)
@@ -572,6 +606,7 @@ final class ComparisonCoordinator: ObservableObject {
         var inputErrors: [String: String] = [:]
         if setupError == nil, mode.inputKind != nil {
             for entry in promptSet.prompts {
+                if Task.isCancelled { break }
                 progressMessage = "Preparing input for \(entry.id)…"
                 if let builtin = entry.builtinInput {
                     inputLanguages[entry.id] = ComparisonMediaFixtures.language(ofBuiltinInput: builtin)
@@ -611,11 +646,13 @@ final class ComparisonCoordinator: ObservableObject {
             runs[index].inputArtifacts = inputArtifacts
             persist(runs[index])
         }
+        guard !Task.isCancelled else { finishRun(runID, state: .cancelled); return }
         // Reused inputs can belong to the oldest retained run. Copy them into
         // this run before pruning their source folder.
         pruneOutputs(store: store)
 
         for (variantIndex, variant) in variants.enumerated() {
+            guard !Task.isCancelled else { finishRun(runID, state: .cancelled); return }
             guard let runIndex = runs.firstIndex(where: { $0.id == runID }) else { return }
             let name = URL(fileURLWithPath: variant.path).lastPathComponent
             var samples: [ComparisonSample] = []
@@ -623,6 +660,7 @@ final class ComparisonCoordinator: ObservableObject {
                 samples = promptSet.prompts.map { ComparisonMediaScoring.failedSample(promptID: $0.id, message: setupError) }
             } else {
                 for (promptIndex, entry) in promptSet.prompts.enumerated() {
+                    if Task.isCancelled { break }
                     progressMessage = "Measuring \(name) · prompt \(promptIndex + 1) of \(promptSet.prompts.count)…"
                     if let message = inputErrors[entry.id] {
                         samples.append(ComparisonMediaScoring.failedSample(promptID: entry.id, message: message))
@@ -643,6 +681,7 @@ final class ComparisonCoordinator: ObservableObject {
                     )
                     do {
                         let output = try await runner.run(request)
+                        try Task.checkCancellation()
                         if let url = request.outputURL, !FileManager.default.fileExists(atPath: url.path) {
                             throw ComparisonMediaError.outputNotWritten
                         }
@@ -651,11 +690,13 @@ final class ComparisonCoordinator: ObservableObject {
                         }
                         samples.append(ComparisonMediaScoring.sample(mode: mode, entry: entry, output: output, artifact: artifact))
                     } catch {
+                        if Task.isCancelled { break }
                         samples.append(ComparisonMediaScoring.failedSample(promptID: entry.id, message: AppHost.render(error)))
                     }
                 }
             }
 
+            if samples.isEmpty && Task.isCancelled { finishRun(runID, state: .cancelled); return }
             let failures = samples.compactMap(\.error)
             let allFailed = failures.count == samples.count
             let result = VariantResult(
@@ -670,17 +711,13 @@ final class ComparisonCoordinator: ObservableObject {
             )
             runs[runIndex].results.append(result)
             persist(runs[runIndex])
+            if Task.isCancelled { finishRun(runID, state: .cancelled); return }
             if result.error == nil {
                 onVariantMeasured?(variant.path)
             }
         }
 
-        guard let finalIndex = runs.firstIndex(where: { $0.id == runID }) else { return }
-        runs[finalIndex].finishedAt = now()
-        runs[finalIndex].state = .completed
-        persist(runs[finalIndex])
-        activeRunID = nil
-        progressMessage = nil
+        finishRun(runID, state: .completed)
     }
 
     private func execute(
@@ -699,68 +736,55 @@ final class ComparisonCoordinator: ObservableObject {
 
         for (variantIndex, variant) in variants.enumerated() {
             guard let runIndex = runs.firstIndex(where: { $0.id == runID }) else { return }
+            guard !Task.isCancelled else { finishRun(runID, state: .cancelled); return }
             progressMessage = "Measuring \(URL(fileURLWithPath: variant.path).lastPathComponent)…"
-            var cleanupFailed = false
-            let result: VariantResult
+            let options = laneConfigurations?[variantIndex].strataOptions ?? strataOptions[variant.path]
+            var selectedProbe = options.flatMap { self.strataProbe?($0) } ?? probe
+            selectedProbe.memoryProbe = memoryProbe
+            var outcome: ProbeRunResult?
+            var failure: String?
+            var cleanupPort: Int?
+            var cancelled = false
             do {
-                let options = laneConfigurations?[variantIndex].strataOptions ?? strataOptions[variant.path]
-                var selectedProbe = options.flatMap { self.strataProbe?($0) } ?? probe
-                selectedProbe.memoryProbe = memoryProbe
-                let outcome = try await selectedProbe.run(modelPath: variant.path, prompts: prompts,
+                outcome = try await selectedProbe.run(modelPath: variant.path, prompts: prompts,
                     warmup: [ProbePrompt(id: "__warmup", prompt: "Say OK.", maxTokens: 4)], warmEachPrompt: warmEachPrompt)
-                let samples = promptSet.prompts.compactMap { entry in
-                    outcome.samples[entry.id].map {
-                        ComparisonAggregation.sample(from: $0, promptID: entry.id)
-                    }
-                }
-                result = VariantResult(
-                    modelPath: variant.path,
-                    modelSignature: variant.signature,
-                    samples: samples,
-                    aggregateTokensPerSecond: ComparisonAggregation.medianTokensPerSecond(samples),
-                    aggregateTTFTSeconds: ComparisonAggregation.bestTTFT(samples),
-                    error: nil,
-                    environmentFingerprint: environmentFingerprint(),
-                    servingEvidence: outcome.servingEvidence,
-                    startupSeconds: outcome.startupSeconds,
-                    laneID: laneConfigurations?[variantIndex].id,
-                    systemMemory: outcome.systemMemory
-                )
+            } catch let stopped as ServeProbeCancelled {
+                outcome = stopped.partial; cancelled = true
             } catch {
-                if case ServeProbeError.stopFailed = error { cleanupFailed = true }
-                result = VariantResult(
-                    modelPath: variant.path,
-                    modelSignature: variant.signature,
-                    samples: [],
-                    aggregateTokensPerSecond: nil,
-                    aggregateTTFTSeconds: nil,
-                    error: AppHost.render(error),
-                    laneID: laneConfigurations?[variantIndex].id
-                )
+                if case ServeProbeError.stopFailed(_, let port, let partial) = error { cleanupPort = port; outcome = partial }
+                failure = AppHost.render(error)
             }
-            runs[runIndex].results.append(result)
-            persist(runs[runIndex])
-            if cleanupFailed {
+            let samples = promptSet.prompts.compactMap { entry in
+                outcome?.samples[entry.id].map { ComparisonAggregation.sample(from: $0, promptID: entry.id) }
+            }
+            let result = VariantResult(modelPath: variant.path, modelSignature: variant.signature, samples: samples,
+                aggregateTokensPerSecond: ComparisonAggregation.medianTokensPerSecond(samples),
+                aggregateTTFTSeconds: ComparisonAggregation.bestTTFT(samples), error: failure,
+                environmentFingerprint: outcome == nil ? nil : environmentFingerprint(), servingEvidence: outcome?.servingEvidence,
+                startupSeconds: outcome?.startupSeconds, laneID: laneConfigurations?[variantIndex].id, systemMemory: outcome?.systemMemory)
+            if !samples.isEmpty || (!Task.isCancelled && !cancelled) || cleanupPort != nil {
+                runs[runIndex].results.append(result)
+                persist(runs[runIndex])
+            }
+            if let port = cleanupPort {
                 runs[runIndex].state = .failed
                 runs[runIndex].finishedAt = now()
                 persist(runs[runIndex])
-                activeRunID = nil
-                progressMessage = nil
-                onBenchmarks?([])
+                let lifecycle = selectedProbe.lifecycle
+                pendingCleanup = { try await lifecycle.stop(port) }
+                cleanupCompletionState = Task.isCancelled || cancelled ? .cancelled : .failed
+                cleanupPending = true; isCancelling = false; runTask = nil
+                lastError = failure
+                progressMessage = "Cleanup failed. Retry cleanup before starting another comparison."
                 return
             }
+            if Task.isCancelled || cancelled { finishRun(runID, state: .cancelled); return }
             if result.error == nil {
                 onVariantMeasured?(variant.path)
             }
         }
 
-        guard let finalIndex = runs.firstIndex(where: { $0.id == runID }) else { return }
-        runs[finalIndex].finishedAt = now()
-        runs[finalIndex].state = .completed
-        persist(runs[finalIndex])
-        activeRunID = nil
-        progressMessage = nil
-        onBenchmarks?(benchmarks(for: runs[finalIndex]))
+        finishRun(runID, state: .completed)
     }
 
     private func benchmarks(for run: ComparisonRun) -> [RecommendationBenchmarkResult] {

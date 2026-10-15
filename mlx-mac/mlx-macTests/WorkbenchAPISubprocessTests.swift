@@ -30,7 +30,10 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         defer { registry.terminateAll(grace: 0.2) }
         let other = Process(); other.executableURL = URL(fileURLWithPath: "/bin/sleep"); other.arguments = ["60"]
         try other.run()
-        defer { if other.isRunning { other.terminate() }; other.waitUntilExit() }
+        defer {
+            if other.isRunning { other.terminate() }
+            XCTAssertTrue(processIsGone(other.processIdentifier))
+        }
         let api = WorkbenchAPI(cli: CLIProcess(registry: registry, terminationGrace: 0.2), agentPath: agent.root.path)
         let finished = expectation(description: "cancelled media invocation returned")
         let task = Task {

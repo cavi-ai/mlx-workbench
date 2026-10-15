@@ -271,7 +271,7 @@ extension ComparePresentation {
     /// One lane per run variant in run order; results are matched by model path.
     static func lanes(for run: ComparisonRun) -> [CompareLane] {
         let values = run.results.compactMap { run.metricValue(of: $0) }
-        let ranked = values.count >= 2
+        let ranked = run.state != .cancelled && run.state != .interrupted && values.count >= 2
         let best = run.effectiveMode.primaryMetric.higherIsBetter ? values.max() : values.min()
         let leaders = Set(run.leaders.map(\.id))
         return run.variants.enumerated().map { index, path in
@@ -896,7 +896,9 @@ struct QuantView: View {
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
             if comparison.activeRunID != nil {
-                ProgressView(comparison.progressMessage ?? "Measuring…")
+                ComparisonProgressControls(message: comparison.progressMessage ?? "Measuring…",
+                    isCancelling: comparison.isCancelling, cleanupPending: comparison.cleanupPending,
+                    onCancel: comparison.cancel, onRetry: comparison.retryCleanup)
             }
             if reusedPromptSet != nil {
                 Text("Reused setup · temporary. Change models below, then run a new comparison.")
@@ -1158,6 +1160,11 @@ struct QuantView: View {
             ComparisonHistoryPicker(runs: comparison.runs, selection: shownRunBinding)
                 .frame(maxWidth: WorkbenchSize.Compare.historyMaximum, alignment: .leading)
                 .disabled(comparison.activeRunID != nil)
+            if let run = shownRun, run.state == .cancelled || run.state == .interrupted {
+                Text(run.state == .cancelled ? "Cancelled · recorded samples retained" : "Interrupted · comparison did not finish")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let run = shownRun, run.state == .completed {
                 Button {
                     do {
@@ -1516,6 +1523,31 @@ struct QuantView: View {
 
     private func shortName(_ path: String) -> String {
         ComparePresentation.displayName(for: path, models: appHost.librarySnapshot?.models ?? [])
+    }
+}
+
+struct ComparisonProgressControls: View {
+    let message: String
+    let isCancelling: Bool
+    let cleanupPending: Bool
+    let onCancel: () -> Void
+    let onRetry: () -> Void
+
+    var body: some View {
+        HStack(spacing: WorkbenchSpacing.sm) {
+            if !cleanupPending || isCancelling { ProgressView().controlSize(.small).accessibilityHidden(true) }
+            Text(message).font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: WorkbenchSpacing.sm)
+            if cleanupPending {
+                Button("Retry cleanup", action: onRetry).disabled(isCancelling)
+                    .help("Retry stopping this comparison's owned server before starting another run.")
+                    .accessibilityIdentifier("comparison-retry-cleanup")
+            } else {
+                Button(isCancelling ? "Cancelling…" : "Cancel comparison", action: onCancel).disabled(isCancelling)
+                    .help("Stop this comparison's owned work and retain recorded samples. Server startup may need to finish before cleanup.")
+                    .accessibilityIdentifier("comparison-cancel")
+            }
+        }
     }
 }
 

@@ -37,6 +37,58 @@ private struct ComparisonRunFixtureView: View {
 
 final class CompareRemodelTests: XCTestCase {
     @MainActor
+    func testCancellationControlsRequireExplicitClicksAndDisableWhileCleaning() async throws {
+        func button(in view: NSView) -> NSButton? {
+            if let button = view as? NSButton { return button }
+            return view.subviews.compactMap { button(in: $0) }.first
+        }
+        var cancellations = 0, retries = 0
+        for (index, flags) in [(false, false), (true, false), (false, true), (true, true)].enumerated() {
+            let (busy, cleanup) = flags
+            let message = cleanup ? (busy ? "Retrying comparison server cleanup…" : "Cleanup failed. Retry cleanup before starting another comparison.")
+                : (busy ? "Cancelling… Waiting for owned work and cleanup to finish." : "Measuring selected models…")
+            let controls = ComparisonProgressControls(message: message,
+                isCancelling: busy, cleanupPending: cleanup, onCancel: { cancellations += 1 }, onRetry: { retries += 1 })
+            let view = controls.buttonStyle(.borderless).padding(20).frame(width: 680, height: 130)
+                .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 130),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+            let action = try XCTUnwrap(button(in: host))
+            XCTAssertEqual(action.isEnabled, !busy)
+            let before = (cancellations, retries)
+            action.performClick(nil)
+            XCTAssertEqual(cancellations, before.0 + (!busy && !cleanup ? 1 : 0))
+            XCTAssertEqual(retries, before.1 + (!busy && cleanup ? 1 : 0))
+            if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] {
+                let root = URL(fileURLWithPath: path)
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                let styled = NSHostingView(rootView: controls.buttonStyle(.bordered).padding(20).frame(width: 680, height: 130)
+                    .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+                window.contentView = styled
+                try await Task.sleep(for: .milliseconds(100)); styled.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(styled.bitmapImageRepForCachingDisplay(in: styled.bounds))
+                styled.cacheDisplay(in: styled.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: root.appendingPathComponent("cancellation-\(index).png"))
+            }
+        }
+        XCTAssertEqual(cancellations, 1); XCTAssertEqual(retries, 1)
+    }
+
+    func testCancelledAndInterruptedRunsRetainValuesWithoutRankingIncompleteCohorts() {
+        for state in [ComparisonRunState.cancelled, .interrupted] {
+            let stopped = run(.chat, variants: ["/a", "/b", "/c"], results: [result("/a", tps: 50), result("/b", tps: 20)], state: state)
+            let lanes = ComparePresentation.lanes(for: stopped)
+            XCTAssertEqual(lanes[0].value, 50); XCTAssertEqual(lanes[1].value, 20)
+            XCTAssertTrue(lanes.allSatisfy { !$0.isLeader && $0.fraction == nil })
+            XCTAssertEqual(lanes[2].state, .notMeasured)
+        }
+    }
+    @MainActor
     func testSettingsSearchSheetRendersWithoutApplyingOrStarting() async throws {
         guard let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] else {
             throw XCTSkip("Set MLX_WORKBENCH_COMPARISON_RENDER_DIR for native settings-search presentation evidence.")
