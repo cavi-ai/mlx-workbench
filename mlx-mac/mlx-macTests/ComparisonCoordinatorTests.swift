@@ -136,7 +136,9 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertEqual(lanes.map { $0.strataOptions?.speculation }, [false, true, false, true])
         XCTAssertTrue(setup.goal.matches(lanes))
         XCTAssertEqual(setup.goal.effectiveObjective, .firstAnswer)
+        XCTAssertNil(setup.goal.warmEachPrompt)
         var completion = setup; completion.objective = .completedResponse
+        completion.warmEachPrompt = true
         XCTAssertEqual(completion.goal.effectiveObjective, .completedResponse)
         XCTAssertTrue(completion.goal.matches(lanes))
         XCTAssertEqual(try JSONDecoder().decode(StrataSettingsSearchGoal.self, from: JSONEncoder().encode(completion.goal)), completion.goal)
@@ -202,6 +204,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertEqual(completed.results[2].completedResponseSeconds, 5)
         let legacy = try JSONDecoder().decode(StrataSettingsSearchGoal.self, from: Data("{\"contextTokens\":8192,\"headroomGB\":8}".utf8))
         XCTAssertEqual(legacy.effectiveObjective, .firstAnswer)
+        XCTAssertNil(legacy.warmEachPrompt)
         let source = JSONStore<ComparisonRun>(fileURL: temporaryURL("completion-objective.json"))
         let coordinator = ComparisonCoordinator(probe: ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in
             XCTFail("Reading an objective must not serve"); return "unused"
@@ -266,8 +269,10 @@ final class ComparisonCoordinatorTests: XCTestCase {
             let directory = URL(fileURLWithPath: folder)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             var completed = reviewed; completed.settingsSearchGoal?.objective = .completedResponse
+            var warmed = reviewed; warmed.settingsSearchGoal?.warmEachPrompt = true
             for (name, snapshot) in [("cache-matched-suggestion", reviewed), ("cache-missing-suggestion", missingCache),
-                                     ("cache-mismatched-suggestion", changedCache), ("completion-objective-suggestion", completed)] {
+                                     ("cache-mismatched-suggestion", changedCache), ("completion-objective-suggestion", completed),
+                                     ("per-prompt-warmup-suggestion", warmed)] {
                 let view = ScrollView { ComparisonMemoryTradeoffView(run: snapshot).padding(24) }
                     .frame(width: 820, height: 650, alignment: .topLeading)
                     .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
@@ -692,6 +697,33 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertEqual(try ComparisonRunSetup(run: run).strataOptions, run.strataOptions)
         XCTAssertEqual(benchmarks.values.flatMap { $0 }.count, 0)
         XCTAssertTrue(coordinator.aggregateBenchmarks().isEmpty)
+    }
+
+    func testSettingsSearchWarmsEachPromptInEveryLaneAndPersistsOnlyMeasurements() async throws {
+        let events = ComparisonProbeEvents()
+        let factory: @Sendable (StrataComparisonOptions) -> ServeProbe = { _ in
+            ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in await events.record("preview"); return "hash" },
+                start: { _, _, _ in await events.record("start") }, stop: { _ in await events.record("stop") }),
+                prober: RecordingComparisonProber(events: events), pickPort: { 9997 })
+        }
+        let coordinator = ComparisonCoordinator(probe: factory(StrataComparisonOptions()),
+            runStore: JSONStore(fileURL: coordinatorRunStoreURL), promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL),
+            strataProbe: factory)
+        var setup = StrataSettingsSearchSetup(); setup.warmEachPrompt = true
+        let lanes = try setup.lanes(modelPath: "/Models/strata", signature: "model")
+        let set = PromptSet(id: "warmed", name: "Warmed prompts", useCase: nil,
+            prompts: [PromptEntry(id: "a", text: "First"), PromptEntry(id: "b", text: "Second")], origin: .userCreated)
+        let finished = expectation(description: "warmed settings search finished")
+        coordinator.onBenchmarks = { values in XCTAssertTrue(values.isEmpty); finished.fulfill() }
+        coordinator.start(lanes: lanes, promptSet: set, settingsSearchGoal: setup.goal)
+        await fulfillment(of: [finished], timeout: 5)
+        let requests = await events.values
+        XCTAssertEqual(requests, Array(repeating: ["preview", "start", "Say OK.", "First", "First", "Second", "Second", "stop"], count: 4).flatMap { $0 })
+        let saved = try XCTUnwrap(JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL).load().first)
+        XCTAssertEqual(saved.settingsSearchGoal, setup.goal)
+        XCTAssertEqual(saved.settingsSearchGoal?.warmEachPrompt, true)
+        XCTAssertEqual(saved.results.count, 4)
+        XCTAssertTrue(saved.results.allSatisfy { $0.samples.map(\.promptID) == ["a", "b"] && $0.error == nil })
     }
 
     func testWarmupAndMeasurementsShareOneServerAndWarmupIsNotPersisted() async throws {

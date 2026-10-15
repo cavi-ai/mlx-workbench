@@ -349,7 +349,7 @@ struct ServeProbe: Sendable {
 
     /// Serves `modelPath` on an ephemeral loopback port, runs `prompts`
     /// sequentially, and stops the server even when a probe throws.
-    func run(modelPath: String, prompts: [ProbePrompt], warmup: [ProbePrompt] = []) async throws -> ProbeRunResult {
+    func run(modelPath: String, prompts: [ProbePrompt], warmup: [ProbePrompt] = [], warmEachPrompt: Bool = false) async throws -> ProbeRunResult {
         guard let port = pickPort() else { throw ServeProbeError.noEphemeralPort }
         let preview: ProbeServePreview
         if let reviewedPreview = lifecycle.reviewedPreview {
@@ -402,6 +402,11 @@ struct ServeProbe: Sendable {
             var samples: [String: ProbeSample] = [:]
             for prompt in prompts {
                 try Task.checkCancellation()
+                if warmEachPrompt {
+                    _ = try await prober.chat(baseURL: baseURL, model: modelID,
+                        prompt: prompt.prompt, maxTokens: 1, tool: prompt.tool)
+                    try Task.checkCancellation()
+                }
                 samples[prompt.id] = try await prober.chat(
                     baseURL: baseURL,
                     model: modelID,

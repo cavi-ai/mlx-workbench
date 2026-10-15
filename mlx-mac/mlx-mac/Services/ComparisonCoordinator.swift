@@ -529,7 +529,8 @@ final class ComparisonCoordinator: ObservableObject {
         if mode == .chat {
             Task { [probe, now] in
                 await execute(runID: run.id, variants: variants, promptSet: promptSet, probe: probe, now: now,
-                              strataOptions: strataOptions, laneConfigurations: laneConfigurations)
+                              strataOptions: strataOptions, laneConfigurations: laneConfigurations,
+                              warmEachPrompt: settingsSearchGoal?.warmEachPrompt == true)
             }
         } else if let mediaRunner, let outputStore {
             Task {
@@ -689,7 +690,8 @@ final class ComparisonCoordinator: ObservableObject {
         probe: ServeProbe,
         now: () -> Date,
         strataOptions: [String: StrataComparisonOptions],
-        laneConfigurations: [ComparisonLaneConfiguration]?
+        laneConfigurations: [ComparisonLaneConfiguration]?,
+        warmEachPrompt: Bool
     ) async {
         let prompts = promptSet.prompts.map {
             ProbePrompt(id: $0.id, prompt: $0.text, maxTokens: min($0.maxTokens, maxTokensCap()), tool: $0.tool)
@@ -705,7 +707,7 @@ final class ComparisonCoordinator: ObservableObject {
                 var selectedProbe = options.flatMap { self.strataProbe?($0) } ?? probe
                 selectedProbe.memoryProbe = memoryProbe
                 let outcome = try await selectedProbe.run(modelPath: variant.path, prompts: prompts,
-                    warmup: [ProbePrompt(id: "__warmup", prompt: "Say OK.", maxTokens: 4)])
+                    warmup: [ProbePrompt(id: "__warmup", prompt: "Say OK.", maxTokens: 4)], warmEachPrompt: warmEachPrompt)
                 let samples = promptSet.prompts.compactMap { entry in
                     outcome.samples[entry.id].map {
                         ComparisonAggregation.sample(from: $0, promptID: entry.id)

@@ -854,6 +854,7 @@ struct StrataSettingsSearchGoal: Codable, Equatable, Sendable {
     let contextTokens: Int
     let headroomGB: Double
     var objective: StrataSettingsSearchObjective? = nil
+    var warmEachPrompt: Bool? = nil
 
     var effectiveObjective: StrataSettingsSearchObjective { objective ?? .firstAnswer }
 
@@ -875,9 +876,10 @@ struct StrataSettingsSearchSetup: Equatable {
     var contextTokens = 8192
     var headroomGB = 8.0
     var objective: StrataSettingsSearchObjective = .firstAnswer
+    var warmEachPrompt = false
     var goal: StrataSettingsSearchGoal {
         StrataSettingsSearchGoal(contextTokens: contextTokens, headroomGB: headroomGB,
-            objective: objective == .firstAnswer ? nil : objective)
+            objective: objective == .firstAnswer ? nil : objective, warmEachPrompt: warmEachPrompt ? true : nil)
     }
     var validationError: String? {
         guard goal.isValid else { return "Choose a valid fixed context and headroom target from 0 to 1,024 GB." }

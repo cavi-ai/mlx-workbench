@@ -1529,6 +1529,7 @@ struct StrataSettingsSearchSheet: View {
     @State private var headroom = "8"
     @State private var context = 8192
     @State private var objective = StrataSettingsSearchObjective.firstAnswer
+    @State private var warmEachPrompt = false
     @State private var error: String?
 
     init(models: [LibraryModel], onUse: @escaping (LibraryModel, StrataSettingsSearchSetup) -> String?) {
@@ -1540,7 +1541,7 @@ struct StrataSettingsSearchSheet: View {
               let upper = Double(upperBudget.trimmingCharacters(in: .whitespaces)),
               let target = Double(headroom.trimmingCharacters(in: .whitespaces)) else { return nil }
         return StrataSettingsSearchSetup(lowerExpertMemoryGB: lower, upperExpertMemoryGB: upper, contextTokens: context,
-            headroomGB: target, objective: objective)
+            headroomGB: target, objective: objective, warmEachPrompt: warmEachPrompt)
     }
     private var validation: String? { setup?.validationError ?? (setup == nil ? "Enter numeric expert budgets and a headroom target." : nil) }
     var body: some View {
@@ -1556,6 +1557,9 @@ struct StrataSettingsSearchSheet: View {
                 ForEach(StrataSettingsSearchObjective.allCases) { Text($0.title).tag($0) }
             }
             Text(objective.explanation)
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            Toggle("Warm each prompt before measuring", isOn: $warmEachPrompt)
+            Text("Adds a one-token request immediately before each measured prompt. Warm-up responses are excluded from samples; total run time increases. Recorded cache counts still determine comparability.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Text("Expert budgets (GB)")

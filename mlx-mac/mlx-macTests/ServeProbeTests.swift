@@ -4,6 +4,92 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServeProbeTests: XCTestCase {
+    func testLocalPerPromptWarmupWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROMPT_WARMUP_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_PROMPT_WARMUP_MANIFEST for local per-prompt warm-up acceptance.")
+        }
+        struct Manifest: Decodable { let agentPath: String; let profilesFile: String; let evidenceRoot: String }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let source = JSONStore<ServingProfile>(fileURL: URL(fileURLWithPath: manifest.profilesFile))
+        let before = try Data(contentsOf: source.url)
+        let profile = try XCTUnwrap(try source.load().first { $0.hasPassedVerification })
+        let root = URL(fileURLWithPath: manifest.evidenceRoot)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: root.path)
+        let probe = ServeProbe(lifecycle: .verifiedProfile(profile, api: api),
+            prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
+        let prompts = [("first", "17 times 19", 323), ("second", "23 times 17", 391)].map { id, question, _ in
+            ProbePrompt(id: id, prompt: "Calculate \(question). In your final answer, return only JSON with one key named answer and its numeric value.", maxTokens: 1024)
+        }
+        let outcome = try await probe.run(modelPath: profile.modelPath, prompts: prompts,
+            warmup: [ProbePrompt(id: "startup", prompt: "Say OK.", maxTokens: 4)], warmEachPrompt: true)
+        XCTAssertEqual(Set(outcome.samples.keys), ["first", "second"])
+        let samples = try prompts.enumerated().map { index, prompt in
+            let sample = ComparisonAggregation.sample(from: try XCTUnwrap(outcome.samples[prompt.id]), promptID: prompt.id)
+            XCTAssertTrue(sample.hasCompletedAnswer)
+            let work = try XCTUnwrap(sample.promptProcessing)
+            XCTAssertTrue(work.isValid); XCTAssertEqual(work.promptTokens, sample.promptTokens)
+            XCTAssertGreaterThan(work.cachedTokens, 0)
+            XCTAssertLessThanOrEqual(work.processedTokens, 1)
+            let answer = try XCTUnwrap(JSONSerialization.jsonObject(with: Data((sample.fullOutput ?? sample.outputExcerpt).utf8)) as? [String: Int])
+            XCTAssertEqual(answer, ["answer": index == 0 ? 323 : 391])
+            return sample
+        }
+        struct Evidence: Encodable {
+            let warmEachPrompt: Bool
+            let servingEvidence: ProbeServingEvidence?
+            let samples: [ComparisonSample]
+        }
+        try JSONEncoder().encode(Evidence(warmEachPrompt: true, servingEvidence: outcome.servingEvidence, samples: samples))
+            .write(to: root.appendingPathComponent("samples.json"), options: .atomic)
+        XCTAssertEqual(try Data(contentsOf: source.url), before)
+        let servers = try await api.serveStatus()
+        XCTAssertTrue(servers.isEmpty)
+    }
+    func testPerPromptWarmupRunsImmediatelyBeforeItsMeasurementAndPreservesTools() async throws {
+        let events = ProbeEventRecorder(), prober = WarmupRecordingProber()
+        let probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" }, start: { _, _, _ in },
+            stop: { _ in await events.record("stop") }), prober: prober, pickPort: { 9999 })
+        let tool = PromptToolSpec(name: "lookup", description: "Lookup", parametersJSON: "{\"type\":\"object\"}")
+        let prompts = [ProbePrompt(id: "a", prompt: "First", maxTokens: 32, tool: tool),
+                       ProbePrompt(id: "b", prompt: "Second", maxTokens: 64)]
+        let result = try await probe.run(modelPath: "/Models/strata", prompts: prompts,
+            warmup: [ProbePrompt(id: "startup", prompt: "Say OK.", maxTokens: 4)], warmEachPrompt: true)
+        let requests = await prober.requests
+        XCTAssertEqual(requests.map(\.prompt), ["Say OK.", "First", "First", "Second", "Second"])
+        XCTAssertEqual(requests.map(\.maxTokens), [4, 1, 32, 1, 64])
+        XCTAssertEqual(requests.map(\.model), Array(repeating: "served-model", count: 5))
+        XCTAssertEqual(requests.map(\.tool), [nil, tool, tool, nil, nil])
+        XCTAssertEqual(Set(result.samples.keys), ["a", "b"])
+        XCTAssertEqual(result.samples["a"]?.text, "measured First")
+        XCTAssertEqual(result.samples["b"]?.text, "measured Second")
+        let lifecycle = await events.values
+        XCTAssertEqual(lifecycle, ["stop"])
+    }
+    func testPerPromptWarmupIsOptInAndFailuresStopBeforeMeasurement() async throws {
+        let prompts = [ProbePrompt(id: "a", prompt: "First", maxTokens: 32)]
+        let ordinary = WarmupRecordingProber()
+        let base = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" }, start: { _, _, _ in }, stop: { _ in }),
+            prober: ordinary, pickPort: { 9999 })
+        _ = try await base.run(modelPath: "/Models/strata", prompts: prompts)
+        let ordinaryRequests = await ordinary.requests
+        XCTAssertEqual(ordinaryRequests.map(\.maxTokens), [32])
+        for cancel in [false, true] {
+            let events = ProbeEventRecorder()
+            let prober = WarmupRecordingProber(failOnCall: cancel ? nil : 1, cancelOnCall: cancel ? 1 : nil)
+            let probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" }, start: { _, _, _ in },
+                stop: { _ in await events.record("stop") }), prober: prober, pickPort: { 9999 })
+            let task = Task { try await probe.run(modelPath: "/Models/strata", prompts: prompts, warmEachPrompt: true) }
+            do { _ = try await task.value; XCTFail("Warm-up failure or cancellation must stop the run") }
+            catch {
+                if cancel { XCTAssertTrue(error is CancellationError) }
+                else { XCTAssertEqual(error as? WarmupRecordingProber.Failure, .warmup) }
+            }
+            let requests = await prober.requests, lifecycle = await events.values
+            XCTAssertEqual(requests.map(\.maxTokens), [1])
+            XCTAssertEqual(lifecycle, ["stop"])
+        }
+    }
     func testChangedSuggestedFingerprintIsRefusedBeforeStarting() async throws {
         let expected = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "old",
             "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "old-runtime",
@@ -622,6 +708,35 @@ extension ModelListBox: EndpointProbing {
     func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
         record(model)
         return ProbeSample(text: "ok", completionTokens: 5, timeToFirstTokenSeconds: 0.05, durationSeconds: 0.2, metricsEstimated: false)
+    }
+}
+
+private actor WarmupRecordingProber: EndpointProbing {
+    enum Failure: Error, Equatable { case warmup }
+    struct Request: Sendable {
+        let model: String
+        let prompt: String
+        let maxTokens: Int
+        let tool: PromptToolSpec?
+    }
+    private(set) var requests: [Request] = []
+    let failOnCall: Int?
+    let cancelOnCall: Int?
+    init(failOnCall: Int? = nil, cancelOnCall: Int? = nil) {
+        self.failOnCall = failOnCall; self.cancelOnCall = cancelOnCall
+    }
+    func isReady(baseURL: URL) async -> Bool { true }
+    func listModels(baseURL: URL) async -> [String] { ["served-model"] }
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
+        try await chat(baseURL: baseURL, model: model, prompt: prompt, maxTokens: maxTokens, tool: nil)
+    }
+    func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int, tool: PromptToolSpec?) async throws -> ProbeSample {
+        requests.append(Request(model: model, prompt: prompt, maxTokens: maxTokens, tool: tool))
+        if requests.count == failOnCall { throw Failure.warmup }
+        if requests.count == cancelOnCall { withUnsafeCurrentTask { $0?.cancel() } }
+        return ProbeSample(text: maxTokens == 1 ? "warm" : "measured \(prompt)", completionTokens: maxTokens == 1 ? 1 : 10,
+            timeToFirstTokenSeconds: 0.1, durationSeconds: 1, metricsEstimated: false,
+            finishReason: maxTokens == 1 ? "length" : "stop", timeToFirstAnswerSeconds: 0.1)
     }
 }
 
