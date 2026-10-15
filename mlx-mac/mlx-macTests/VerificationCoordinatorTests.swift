@@ -7,6 +7,141 @@ import XCTest
 
 @MainActor
 final class VerificationCoordinatorTests: XCTestCase {
+    func testFailedReportWriteCannotPublishAVerdictOrVerifyTheWorkflow() async throws {
+        let url = temporaryURL("reports.json")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let before = Data("[]".utf8)
+        try before.write(to: url)
+        let store = VerificationStore(fileURL: url, replaceItem: { _, _ in throw WorkflowEvidenceError.invalid("Report write unavailable") })
+        let verification = makeVerification(store: store, responder: passingResponder)
+        let workflow = makeWorkflowCoordinator(), record = makeWorkflow(state: .verifying)
+        workflow.restore(record); verification.attach(to: workflow)
+        var publications = 0
+        verification.onReport = { _ in publications += 1 }
+        verification.beginVerification(recordID: record.id, modelPath: "/Models/source", signature: "signature-1")
+        let finished = await waitFor { verification.activeModelPath == nil }
+        XCTAssertTrue(finished)
+        XCTAssertEqual(workflow.workflow.state, .completed)
+        XCTAssertTrue(workflow.workflow.message?.contains("unverified") == true)
+        XCTAssertTrue(verification.reports.isEmpty)
+        XCTAssertEqual(verification.status(for: "/Models/source", signature: "signature-1"), .unverified)
+        XCTAssertEqual(publications, 0)
+        XCTAssertNotNil(verification.persistenceError)
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+
+    func testKeepAnywayRequiresADurableOverrideBeforeChangingTheWorkflow() async throws {
+        let url = temporaryURL("reports.json"), workflow = makeWorkflowCoordinator()
+        let record = makeWorkflow(state: .verificationFailed)
+        let failed = VerificationReport(id: UUID(), modelPath: "/Models/source", modelSignature: "signature-1",
+            workflowRecordID: record.id, suiteVersion: CanarySuite.version, canaries: [], tokensPerSecond: nil,
+            timeToFirstTokenSeconds: nil, metricsEstimated: false, startedAt: Date(), finishedAt: Date(),
+            outcome: .failed(canaryIDs: ["hello"]))
+        try VerificationStore(fileURL: url).upsert(failed)
+        let before = try Data(contentsOf: url)
+        let store = VerificationStore(fileURL: url, replaceItem: { _, _ in throw WorkflowEvidenceError.invalid("Report write unavailable") })
+        let verification = makeVerification(store: store, responder: passingResponder)
+        workflow.restore(record); verification.attach(to: workflow)
+        verification.keepAnyway(recordID: record.id)
+        XCTAssertEqual(workflow.workflow.state, .verificationFailed)
+        XCTAssertEqual(verification.reports, [failed])
+        XCTAssertNotNil(verification.persistenceError)
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+
+    func testSuccessfulRetryPublishesOnlyAfterTheReportIsSaved() async throws {
+        let url = temporaryURL("reports.json")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("[]".utf8).write(to: url)
+        var writable = false
+        let store = VerificationStore(fileURL: url, replaceItem: { existing, temporary in
+            guard writable else { throw WorkflowEvidenceError.invalid("Report write unavailable") }
+            _ = try FileManager.default.replaceItemAt(existing, withItemAt: temporary)
+        })
+        let verification = makeVerification(store: store, responder: passingResponder)
+        var publications = 0
+        verification.onReport = { report in
+            publications += 1
+            XCTAssertEqual(try? store.load().first?.id, report.id)
+        }
+        verification.verifyNow(modelPath: "/Models/source", signature: "signature-1")
+        let failed = await waitFor { verification.activeModelPath == nil }
+        XCTAssertTrue(failed); XCTAssertEqual(publications, 0)
+        XCTAssertTrue(verification.reports.isEmpty); XCTAssertNotNil(verification.persistenceError)
+        writable = true
+        verification.verifyNow(modelPath: "/Models/source", signature: "signature-1")
+        let saved = await waitFor { verification.activeModelPath == nil }
+        XCTAssertTrue(saved); XCTAssertEqual(publications, 1)
+        XCTAssertNil(verification.persistenceError); XCTAssertNil(verification.lastError)
+        XCTAssertEqual(try store.load().first?.id, verification.reports.first?.id)
+        guard case .verified = verification.status(for: "/Models/source", signature: "signature-1") else {
+            return XCTFail("The saved passing report must supply verified status")
+        }
+    }
+
+    func testLocalVerificationDurabilityWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_VERIFICATION_DURABILITY_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_VERIFICATION_DURABILITY_MANIFEST for real speech-canary persistence acceptance.")
+        }
+        struct Manifest: Decodable { let agentPath: String; let modelPath: String; let evidenceRoot: String }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let root = URL(fileURLWithPath: manifest.evidenceRoot).appendingPathComponent(UUID().uuidString)
+        let reportDirectory = root.appendingPathComponent("reports"), reportsURL = reportDirectory.appendingPathComponent("reports.json")
+        try FileManager.default.createDirectory(at: reportDirectory, withIntermediateDirectories: true)
+        let before = Data("[]".utf8)
+        try before.write(to: reportsURL)
+        let permissions = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: reportDirectory.path)[.posixPermissions])
+        defer { try? FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: reportDirectory.path) }
+        let registry = CLIProcessRegistry(notificationCenter: NotificationCenter())
+        defer { registry.terminateAll(grace: CLIProcess.terminationGrace) }
+        let api = WorkbenchAPI(cli: CLIProcess(registry: registry), agentPath: manifest.agentPath, receiptDirectory: root.path)
+        let probe = ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber())
+        let store = VerificationStore(fileURL: reportsURL)
+        let verification = VerificationCoordinator(probe: probe, store: store)
+        verification.taskType = { _ in .speechToText }
+        verification.speech = SpeechCanaryRunner(synthesize: { try await SpeechClipSynthesizer.make(phrase: $0) },
+            transcribe: { model, clip, language in
+                let result = try await api.transcribe(path: model, audio: clip.path, language: language)
+                XCTAssertTrue(SpeechCanary.evaluate(result).passed, result.text)
+                try JSONEncoder().encode(result).write(to: root.appendingPathComponent("transcript-\(UUID().uuidString).json"))
+                return result
+            })
+        let workflowsURL = root.appendingPathComponent("workflows.json")
+        let workflow = ModelWorkflowCoordinator(api: .live(api: api), persistence: .live(store: ModelWorkflowStore(fileURL: workflowsURL)))
+        let record = ConversionWorkflow(id: UUID(), sourcePath: manifest.modelPath, sourceModelKey: "speech-output", sourceSignature: nil,
+            outputPath: manifest.modelPath, previewHash: nil, jobReceipt: nil, completedModelPath: manifest.modelPath,
+            state: .verifying, serveState: .idle, message: nil, errorMessage: nil, createdAt: Date(), updatedAt: Date(), lastKnownAgentState: nil)
+        workflow.restore(record); verification.attach(to: workflow)
+        var publications = 0
+        verification.onReport = { report in
+            publications += 1
+            XCTAssertEqual(try? store.load().first?.id, report.id)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: reportDirectory.path)
+        verification.beginVerification(recordID: record.id, modelPath: manifest.modelPath, signature: nil)
+        let rejected = await waitFor(timeout: 180) { verification.activeModelPath == nil }
+        guard rejected else { return XCTFail(verification.lastError ?? "Speech canary did not finish") }
+        XCTAssertNotNil(verification.persistenceError)
+        XCTAssertTrue(verification.reports.isEmpty); XCTAssertEqual(publications, 0)
+        XCTAssertEqual(workflow.workflow.state, .completed)
+        XCTAssertEqual(try Data(contentsOf: reportsURL), before)
+        XCTAssertEqual(try ModelWorkflowStore(fileURL: workflowsURL).load().first?.state, .completed)
+        try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: reportDirectory.path)
+        workflow.restore(record)
+        verification.beginVerification(recordID: record.id, modelPath: manifest.modelPath, signature: nil)
+        let accepted = await waitFor(timeout: 180) { verification.activeModelPath == nil }
+        guard accepted else { return XCTFail(verification.lastError ?? "Retry did not finish") }
+        XCTAssertNil(verification.persistenceError); XCTAssertEqual(publications, 1)
+        XCTAssertEqual(workflow.workflow.state, .verified)
+        XCTAssertEqual(try ModelWorkflowStore(fileURL: workflowsURL).load().first?.state, .verified)
+        let saved = try XCTUnwrap(try store.load().first)
+        XCTAssertEqual(saved.canaries.map(\.passed), [true])
+        let reopened = VerificationCoordinator(probe: probe, store: store)
+        guard case .verified = reopened.status(for: manifest.modelPath, signature: nil) else {
+            return XCTFail("Reopening must read the persisted verdict")
+        }
+    }
+
     private func measuredProfileRun(_ profile: ServingProfile) throws -> ComparisonRun {
         let evidence = try XCTUnwrap(ProbeServingEvidence(plan: ["runtime": "strata", "preview_hash": "preview",
             "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "runtime", "strata_speculation": false,
@@ -1240,6 +1375,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     private func makeVerification(
         storeURL: URL? = nil,
+        store: VerificationStore? = nil,
         responder: @escaping @Sendable (String) async throws -> ProbeSample
     ) -> VerificationCoordinator {
         let probe = ServeProbe(
@@ -1254,7 +1390,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         )
         return VerificationCoordinator(
             probe: probe,
-            store: VerificationStore(fileURL: storeURL ?? temporaryURL("reports.json"))
+            store: store ?? VerificationStore(fileURL: storeURL ?? temporaryURL("reports.json"))
         )
     }
 
