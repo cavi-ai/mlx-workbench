@@ -906,6 +906,32 @@ final class ClientsCoordinatorTests: XCTestCase {
 
     private func settle() async { try? await Task.sleep(nanoseconds: 250_000_000) }
 
+    func testRefreshDetectsAddedAndRemovedClientsWithoutWriting() async throws {
+        let directory = home.appendingPathComponent(".config/opencode")
+        let config = directory.appendingPathComponent("opencode.jsonc")
+        try FileManager.default.removeItem(at: directory)
+        let coordinator = makeCoordinator(source: ClientConfigFile.live)
+
+        await coordinator.refreshReadings()
+        XCTAssertTrue(coordinator.installations.isEmpty)
+
+        let original = "{\"theme\":\"dark\"}"
+        try F.write(original, ".config/opencode/opencode.jsonc", in: home)
+        await coordinator.refreshReadings()
+        XCTAssertEqual(coordinator.installations.map(\.clientID), ["opencode"])
+        XCTAssertEqual(coordinator.readings["opencode"]?.reading, .noWorkbenchEntry)
+        XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), original)
+        XCTAssertTrue(coordinator.plans.isEmpty)
+        XCTAssertNil(coordinator.previewHash)
+        XCTAssertTrue(coordinator.transactions.isEmpty)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["opencode.jsonc"])
+
+        try FileManager.default.removeItem(at: directory)
+        await coordinator.refreshReadings()
+        XCTAssertTrue(coordinator.installations.isEmpty)
+        XCTAssertTrue(coordinator.readings.isEmpty)
+    }
+
     func testReadsRunOncePerTriggerAndNeverOnDetectOrPreview() async throws {
         try F.write("{\"theme\":\"dark\"}", ".config/opencode/opencode.jsonc", in: home)
         let counter = ReadCounter()
@@ -1016,6 +1042,35 @@ final class ClientsCoordinatorTests: XCTestCase {
 @MainActor
 final class ClientsRenderTests: XCTestCase {
     private typealias F = ClientsFixtures
+
+    func testEmptyClientSetupRendersAtNarrowAndWideWidths() throws {
+        let home = try F.makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let coordinator = WiringCoordinator(home: home,
+            store: JSONStore<WiringTransaction>(fileURL: home.appendingPathComponent("transactions/wiring.json")))
+        let host = Self.makeHost(coordinator: coordinator, servers: [], home: home)
+        for width: CGFloat in [514, 824] {
+            let view = NSHostingView(rootView: Self.root(host: host, active: false, viewport: width, dark: true))
+            let window = Self.window(for: view, viewport: width, dark: true)
+            defer { window.close() }
+            view.layoutSubtreeIfNeeded()
+            let image = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: image)
+            let png = try XCTUnwrap(image.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = "empty-clients-\(Int(width))"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CLIENTS_CAPTURE"] {
+                let directory = URL(fileURLWithPath: path, isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try png.write(to: directory.appendingPathComponent("empty-clients-\(Int(width)).png"))
+            }
+        }
+        XCTAssertTrue(coordinator.installations.isEmpty)
+        XCTAssertTrue(coordinator.plans.isEmpty)
+        XCTAssertTrue(coordinator.transactions.isEmpty)
+    }
 
     static func makeHost(coordinator: WiringCoordinator, servers: [ServerInfo], home: URL) -> AppHost {
         let api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] }, convertStatus: { [] },

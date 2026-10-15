@@ -296,18 +296,23 @@ private struct ClientsReadingStatusView: View {
 
 private struct ClientsNoClientsView: View {
     var body: some View {
-        HStack(spacing: WorkbenchSize.Clients.rowSymbolGap) {
+        HStack(alignment: .top, spacing: WorkbenchSize.Clients.rowSymbolGap) {
             Image(systemName: "app.dashed")
                 .font(WorkbenchTypography.section)
                 .foregroundStyle(WorkbenchColor.muted)
                 .frame(width: WorkbenchSize.Clients.rowSymbol)
                 .accessibilityHidden(true)
-            Text("No supported clients detected")
-                .font(WorkbenchTypography.cardTitle)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                Text("No supported clients detected")
+                    .font(WorkbenchTypography.cardTitle)
+                Text("Supports \(ClientAdapters.all.filter { !$0.advisoryOnly }.map(\.displayName).formatted(.list(type: .and))). Set up a client, then refresh clients and servers.")
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.horizontal, WorkbenchSpacing.xs)
         .padding(.vertical, WorkbenchSpacing.sm)
-        .help("Supported clients: opencode, Continue, Zed, Aider.")
     }
 }
 

@@ -12,6 +12,10 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
+### Changed
+
+- Clients: refresh installed-client detection and show supported clients in the empty board.
+
 ## [0.5.0] - 2026-10-12
 ### Added
 

@@ -16,11 +16,11 @@ Write targets are a fixed allowlist of these paths. Symbolic links at the config
 
 ## The wiring board
 
-The board reads each writable client's config and draws what it points at against the servers running now. It reads only the URL parts and model names, never writes, and refreshes when you open the screen, refresh servers, or finish a confirm or rollback.
+The board reads each writable client's config and draws what it points at against the servers running now. It reads only the URL parts and model names, never writes, and refreshes when you open the screen, refresh clients and servers, or finish a confirm or rollback. Refresh also detects clients configured or removed while the screen is open. When no clients are detected, the board lists the supported writable clients.
 
 ## Wire a client
 
-1. **Refresh servers**, then choose a running server and the clients to wire.
+1. **Refresh clients and servers**, then choose a running server.
 2. **Preview client wiring** shows the exact change to each config file. The preview binds the server's identity.
 3. **Confirm client wiring** reads fresh serving status first and refuses a server that stopped, was replaced or is ambiguous. It then rechecks each file for changes since the preview, backs it up and writes it atomically.
 
