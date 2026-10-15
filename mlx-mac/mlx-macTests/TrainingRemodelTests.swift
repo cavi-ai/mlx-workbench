@@ -30,6 +30,124 @@ private enum TF {
 
 private struct Boom: Error, LocalizedError { var errorDescription: String? { "boom" } }
 
+@MainActor
+final class TrainingEvaluationSessionTests: XCTestCase {
+    private func plan(_ hash: String = "reviewed") -> LabResponse {
+        LabResponse(plan: .object(["preview_hash": .string(hash)]))
+    }
+    private var retained: LabResponse {
+        LabResponse(report: .object(["outputs": .object(["baseline": .string("Base"), "adapter": .string("Tuned")])]),
+            artifactSHA256: String(repeating: "a", count: 64))
+    }
+
+    func testEditedPromptRejectsDelayedPreviewAndDuplicateActions() async {
+        var completion: CheckedContinuation<LabResponse, Never>?
+        let started = expectation(description: "preview requested")
+        let session = TrainingEvaluationSession(receipt: "/training/receipt.json") { request in
+            XCTAssertEqual(request.operation, "training-preview")
+            XCTAssertEqual(request.prompt, "First prompt")
+            return await withCheckedContinuation { completion = $0; started.fulfill() }
+        }
+        session.prompt = "First prompt"
+        let task = session.previewEvaluation()
+        XCTAssertTrue(session.isBusy)
+        XCTAssertNil(session.previewEvaluation())
+        XCTAssertNil(session.evaluate())
+        await fulfillment(of: [started], timeout: 1)
+        session.prompt = "Edited prompt"
+        completion?.resume(returning: plan())
+        await task?.value
+        XCTAssertNil(session.preview)
+        XCTAssertFalse(session.canEvaluate)
+        XCTAssertTrue(session.canPreview)
+    }
+
+    func testEvaluationUsesReviewedPromptReceiptAndHashAndEditsClearEvidence() async {
+        var calls: [LabRequest] = []
+        let session = TrainingEvaluationSession(receipt: "/training/receipt.json") { request in
+            calls.append(request)
+            return request.operation == "training-preview" ? self.plan() : self.retained
+        }
+        session.prompt = " Compare this prompt "
+        await session.previewEvaluation()?.value
+        XCTAssertTrue(session.canEvaluate)
+        await session.evaluate()?.value
+        XCTAssertEqual(calls.map(\.operation), ["training-preview", "training-evaluate"])
+        XCTAssertEqual(calls.map(\.prompt), [session.prompt, session.prompt])
+        XCTAssertTrue(calls.allSatisfy { $0.receipt == "/training/receipt.json" && $0.maxTokens == 128 })
+        XCTAssertEqual(calls.last?.previewHash, "reviewed")
+        XCTAssertNotNil(session.result?.artifactSHA256)
+        session.prompt = "Different prompt"
+        XCTAssertNil(session.result)
+        XCTAssertNil(session.preview)
+        XCTAssertFalse(session.canEvaluate)
+    }
+
+    func testFailedOrHashlessRepreviewRevokesOldConfirmationAndResults() async {
+        var previews = 0
+        let session = TrainingEvaluationSession(receipt: "/receipt.json") { request in
+            if request.operation == "training-evaluate" { return self.retained }
+            previews += 1
+            if previews == 2 { throw Boom() }
+            return previews == 3 ? LabResponse() : self.plan()
+        }
+        session.prompt = "Prompt"
+        await session.previewEvaluation()?.value
+        await session.evaluate()?.value
+        XCTAssertNotNil(session.result)
+        let retry = session.previewEvaluation()
+        XCTAssertNil(session.result)
+        XCTAssertNil(session.preview)
+        await retry?.value
+        XCTAssertNotNil(session.errorMessage)
+        XCTAssertFalse(session.canEvaluate)
+        await session.previewEvaluation()?.value
+        XCTAssertNotNil(session.errorMessage)
+        XCTAssertNil(session.preview)
+        XCTAssertNil(session.evaluate())
+    }
+
+    func testEditedPromptRejectsDelayedEvaluationAndFailureRemainsRetryable() async {
+        var completion: CheckedContinuation<LabResponse, Never>?
+        let started = expectation(description: "evaluation requested")
+        let session = TrainingEvaluationSession(receipt: "/receipt.json") { request in
+            if request.operation == "training-preview" { return self.plan() }
+            return await withCheckedContinuation { completion = $0; started.fulfill() }
+        }
+        session.prompt = "Prompt"
+        await session.previewEvaluation()?.value
+        let task = session.evaluate()
+        XCTAssertTrue(session.isBusy)
+        XCTAssertNil(session.evaluate())
+        await fulfillment(of: [started], timeout: 1)
+        session.prompt = "Edited"
+        completion?.resume(returning: retained)
+        await task?.value
+        XCTAssertNil(session.result)
+        XCTAssertFalse(session.canEvaluate)
+        XCTAssertTrue(session.canPreview)
+
+        var attempts = 0
+        let retry = TrainingEvaluationSession(receipt: "/receipt.json") { request in
+            if request.operation == "training-preview" { return self.plan() }
+            attempts += 1
+            if attempts == 1 { throw Boom() }
+            return attempts == 2 ? LabResponse() : self.retained
+        }
+        retry.prompt = "Prompt"
+        await retry.previewEvaluation()?.value
+        for _ in 0..<2 {
+            await retry.evaluate()?.value
+            XCTAssertNil(retry.result)
+            XCTAssertNotNil(retry.errorMessage)
+            XCTAssertTrue(retry.canEvaluate)
+        }
+        await retry.evaluate()?.value
+        XCTAssertNotNil(retry.result)
+        XCTAssertNil(retry.errorMessage)
+    }
+}
+
 // MARK: - Presentation
 
 final class TrainingPresentationTests: XCTestCase {
@@ -434,6 +552,55 @@ final class TrainingRenderTests: XCTestCase {
                 XCTAssertEqual(previewCalls, planned ? 1 : 0)
             }
         }
+    }
+
+    func testEvaluationSheetRendersCompletedFailedAndPendingRequests() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_TRAINING_CAPTURE"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_TRAINING_CAPTURE for evaluation sheet captures.")
+        }
+        let directory = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let app = host(), job = try TF.job("done")
+        let plan = LabResponse(plan: .object(["preview_hash": .string("reviewed")]))
+        var fails = false
+        let session = TrainingEvaluationSession(receipt: job.receipt) { request in
+            if fails { throw Boom() }
+            if request.operation == "training-preview" { return plan }
+            return LabResponse(report: .object(["outputs": .object([
+                "baseline": .string("Contact the billing team for help."),
+                "adapter": .string("Contact billing with your order number to request a refund.")])]),
+                artifactSHA256: String(repeating: "a", count: 64))
+        }
+        session.prompt = "How can I request a refund?"
+        await session.previewEvaluation()?.value
+        await session.evaluate()?.value
+        XCTAssertNotNil(session.result)
+        try await attach(TrainingEvaluationSheet(lab: app.lab, job: job, session: session),
+            name: "evaluation-completed", viewport: 740, dark: true, height: 620, captureDirectory: directory)
+        fails = true
+        await session.previewEvaluation()?.value
+        XCTAssertNil(session.result)
+        XCTAssertFalse(session.canEvaluate)
+        try await attach(TrainingEvaluationSheet(lab: app.lab, job: job, session: session),
+            name: "evaluation-repreview-failed", viewport: 740, dark: true, height: 620, captureDirectory: directory)
+
+        let started = expectation(description: "preview pending")
+        var completion: CheckedContinuation<LabResponse, Never>?
+        let pending = TrainingEvaluationSession(receipt: job.receipt) { _ in
+            await withCheckedContinuation { completion = $0; started.fulfill() }
+        }
+        pending.prompt = session.prompt
+        let task = pending.previewEvaluation()
+        await fulfillment(of: [started], timeout: 1)
+        defer { completion?.resume(returning: plan) }
+        XCTAssertTrue(pending.isBusy)
+        XCTAssertFalse(pending.canPreview)
+        XCTAssertFalse(pending.canEvaluate)
+        try await attach(TrainingEvaluationSheet(lab: app.lab, job: job, session: pending),
+            name: "evaluation-preview-pending", viewport: 740, dark: true, height: 620, captureDirectory: directory)
+        completion?.resume(returning: plan); completion = nil
+        await task?.value
+        XCTAssertTrue(pending.canEvaluate)
     }
 
     func testEveryStateRendersDarkAndLightAtEveryWidth() async throws {

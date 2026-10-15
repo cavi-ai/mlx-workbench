@@ -534,30 +534,33 @@ struct TrainingView: View {
     }
 }
 
-private struct TrainingEvaluationSheet: View {
-    @ObservedObject var lab: LabCoordinator
+struct TrainingEvaluationSheet: View {
     let job: TrainingJob
+    @StateObject private var session: TrainingEvaluationSession
     @Environment(\.dismiss) private var dismiss
-    @State private var prompt = ""
-    @State private var preview: LabValue?
-    @State private var result: LabResponse?
-    @State private var busy = false
-    @State private var error: String?
+
+    init(lab: LabCoordinator, job: TrainingJob, session: TrainingEvaluationSession? = nil) {
+        self.job = job
+        _session = StateObject(wrappedValue: session ?? TrainingEvaluationSession(receipt: job.receipt) {
+            try await lab.request($0)
+        })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("Evaluate trained adapter").font(WorkbenchTypography.title)
             Text("Use the same prompt, seed, token limit, and sampling settings for the cached base model and this adapter.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             Text(job.repo).font(WorkbenchTypography.cardTitle)
-            TextField("Evaluation prompt", text: $prompt, axis: .vertical).lineLimit(3...6)
-                .onChange(of: prompt) { preview = nil; result = nil }
-            if let error { Text(error).foregroundStyle(WorkbenchColor.failure) }
-            if let preview {
+            TextField("Evaluation prompt", text: $session.prompt, axis: .vertical).lineLimit(3...6)
+                .disabled(session.isBusy)
+            if let error = session.errorMessage { Text(error).foregroundStyle(WorkbenchColor.failure) }
+            if let preview = session.preview {
                 TrainingRawDisclosure(
-                    title: "Reviewed evaluation recipe", text: preview.jsonText, maxHeight: WorkbenchSize.Training.recipeMaxHeight
+                    title: "Reviewed evaluation recipe", text: preview.plan.jsonText, maxHeight: WorkbenchSize.Training.recipeMaxHeight
                 )
             }
-            if let result, let report = result.report?.object {
+            if let result = session.result, let report = result.report?.object {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading) {
                         Text("Base model").font(WorkbenchTypography.cardTitle)
@@ -572,25 +575,14 @@ private struct TrainingEvaluationSheet: View {
                 Text("These outputs provide comparison evidence. No quality judgment has been recorded.").font(WorkbenchTypography.metadata)
             }
             HStack {
-                Button("Close") { dismiss() }.disabled(busy)
+                Button("Close") { dismiss() }.disabled(session.isBusy)
                 Spacer()
-                Button("Preview") { perform("training-preview") }.disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
-                Button("Run comparison") { perform("training-evaluate") }
-                    .disabled(preview?.object?["preview_hash"]?.text == nil || busy)
+                Button(session.operation == .previewing ? "Previewing…" : "Preview") { session.previewEvaluation() }
+                    .disabled(!session.canPreview)
+                Button(session.operation == .evaluating ? "Running comparison…" : "Run comparison") { session.evaluate() }
+                    .disabled(!session.canEvaluate)
             }
         }.padding(WorkbenchSpacing.pageInset).frame(width: 740)
-    }
-    private func perform(_ operation: String) {
-        busy = true
-        Task {
-            defer { busy = false }
-            do {
-                let response = try await lab.request(LabRequest(operation: operation, receipt: job.receipt,
-                    prompt: prompt, maxTokens: 128, previewHash: preview?.object?["preview_hash"]?.text))
-                if operation == "training-preview" { preview = response.plan }
-                else { result = response }
-                error = nil
-            } catch { self.error = AppHost.render(error) }
-        }
+            .interactiveDismissDisabled(session.isBusy)
     }
 }

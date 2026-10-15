@@ -16,6 +16,8 @@ Each run pins the cached base model, copies the reviewed dataset bytes, records 
 
 **Compare with base** runs a matched evaluation of the base model against base plus the trained adapter on the same prompts. Results are retained under **Retained training evaluations** with their SHA-256. Evaluations are comparison evidence, not a quality verdict, and text LoRA results do not qualify media training.
 
+Preview the evaluation prompt before **Run comparison**. Editing it invalidates the preview and clears the displayed outputs. A new preview clears older confirmation and results before the request begins, including when the new request fails. The prompt and dismissal controls are locked while a request runs. Only paired outputs with a retained report hash are displayed as a completed comparison; failed requests remain retryable.
+
 ## Controlled studies
 
 **Studies**, in the Lab sidebar group, runs A/B experiments that change one variable at a time and reviews the outputs blind. **Compare → Open Studies** opens the same workspace. Returning to Studies refreshes its experiment and adaptive-study lists; navigating does not create or run an experiment.
