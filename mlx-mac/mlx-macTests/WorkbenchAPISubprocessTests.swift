@@ -5,6 +5,54 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testCancelledInvocationDoesNotLaunchAndCleanupIgnoresTaskCancellation() async throws {
+        let token = CLIInvocationCancellation(); token.cancel()
+        XCTAssertThrowsError(try CLIProcess().run(agentPath: "/missing", argv: ["convert", "video"], cancellation: token)) {
+            XCTAssertTrue($0 is CancellationError)
+        }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, argv, _, _ in
+            XCTAssertEqual(argv, ["serve", "stop"])
+            return ["stopped": true]
+        })
+        let cleanup = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await api.raw(["serve", "stop"])["stopped"] as? Bool
+        }
+        let stopped = try await cleanup.value
+        XCTAssertEqual(stopped, true)
+    }
+    func testCancelMediaRequestStopsItsAgentAndBackendWithoutStoppingAnotherProcess() async throws {
+        let pids = FileManager.default.temporaryDirectory.appendingPathComponent("cancel-media-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: pids) }
+        let agent = try FixtureAgent(spawningBackendRecordingPIDsTo: pids)
+        defer { agent.remove() }
+        let registry = CLIProcessRegistry(notificationCenter: NotificationCenter(), terminationGrace: 0.2)
+        defer { registry.terminateAll(grace: 0.2) }
+        let other = Process(); other.executableURL = URL(fileURLWithPath: "/bin/sleep"); other.arguments = ["60"]
+        try other.run()
+        defer { if other.isRunning { other.terminate() }; other.waitUntilExit() }
+        let api = WorkbenchAPI(cli: CLIProcess(registry: registry, terminationGrace: 0.2), agentPath: agent.root.path)
+        let finished = expectation(description: "cancelled media invocation returned")
+        let task = Task {
+            do { _ = try await api.describe(path: "/Models/test", prompt: "test", image: "/test.png", video: nil, maxTokens: 8)
+                XCTFail("Cancelled media invocation must not return a result")
+            } catch { XCTAssertTrue(error is CancellationError, "Unexpected error: \(error)") }
+            finished.fulfill()
+        }
+        var spawned: SpawnedAgent?
+        for _ in 0..<500 where spawned == nil {
+            spawned = SpawnedAgent(contentsOf: pids)
+            if spawned == nil { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        let live = try XCTUnwrap(spawned)
+        task.cancel()
+        await fulfillment(of: [finished], timeout: 5)
+        XCTAssertTrue(processIsGone(live.agent, within: 0.5))
+        XCTAssertTrue(processIsGone(live.backend, within: 0.5))
+        XCTAssertTrue(other.isRunning)
+        registry.terminateAll(grace: 0.2)
+        await task.value
+    }
     func testAdoptStartCreatesParentAndStatusReusesTheStateFile() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("mlx-workbench-adopt-\(UUID().uuidString)", isDirectory: true)

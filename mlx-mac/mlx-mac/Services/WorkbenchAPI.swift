@@ -10,7 +10,7 @@ actor WorkbenchAPI {
     typealias AgentCommand = @Sendable (_ agentPath: String, _ argv: [String], _ isScout: Bool, _ timeout: TimeInterval?) throws -> [String: Any]
 
     private let cli: CLIProcess
-    private let command: AgentCommand
+    private let command: AgentCommand?
     private var agentPath: String
     private let receiptDirectory: String
 
@@ -21,7 +21,7 @@ actor WorkbenchAPI {
         command: AgentCommand? = nil
     ) {
         self.cli = cli
-        self.command = command ?? { try cli.run(agentPath: $0, argv: $1, isScout: $2, timeout: $3) }
+        self.command = command
         self.agentPath = agentPath
         self.receiptDirectory = receiptDirectory
     }
@@ -36,20 +36,30 @@ actor WorkbenchAPI {
 
     /// Blocking subprocess waits belong on a dispatch worker, not Swift's cooperative pool.
     /// Suspending this actor also lets serve status, scan and endpoint reconciliation proceed.
-    func raw(_ argv: [String], isScout: Bool = false, timeout: TimeInterval? = nil) async throws -> [String: Any] {
+    func raw(_ argv: [String], isScout: Bool = false, timeout: TimeInterval? = nil, cancellable: Bool = false) async throws -> [String: Any] {
         let command = self.command
+        let cli = self.cli
         let agentPath = self.agentPath
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    continuation.resume(returning: try command(agentPath, argv, isScout, timeout))
-                } catch { continuation.resume(throwing: error) }
+        let cancellation = cancellable ? CLIInvocationCancellation() : nil
+        return try await withTaskCancellationHandler {
+            if cancellable { try Task.checkCancellation() }
+            return try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        if cancellation?.isRequested == true { throw CancellationError() }
+                        let result: [String: Any]
+                        if let command { result = try command(agentPath, argv, isScout, timeout) }
+                        else { result = try cli.run(agentPath: agentPath, argv: argv, isScout: isScout, timeout: timeout, cancellation: cancellation) }
+                        if cancellation?.isRequested == true { throw CancellationError() }
+                        continuation.resume(returning: result)
+                    } catch { continuation.resume(throwing: error) }
+                }
             }
-        }
+        } onCancel: { cancellation?.cancel() }
     }
 
     private func runOffActor<T: Decodable & Sendable>(_ type: T.Type, _ argv: [String], timeout: TimeInterval) async throws -> T {
-        try Self.decode(type, from: await raw(argv, timeout: timeout))
+        try Self.decode(type, from: await raw(argv, timeout: timeout, cancellable: true))
     }
 
     func health() -> (ok: Bool, path: String, cli: String, message: String) {

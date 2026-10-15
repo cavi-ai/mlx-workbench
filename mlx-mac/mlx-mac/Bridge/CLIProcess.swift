@@ -93,6 +93,14 @@ final class CLIProcessRegistry: @unchecked Sendable {
     }
 }
 
+/// One invocation's cancellation request. Process shutdown stays on its owning worker.
+final class CLIInvocationCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requested = false
+    var isRequested: Bool { lock.withLock { requested } }
+    func cancel() { lock.withLock { requested = true } }
+}
+
 // MARK: - CLIProcess
 //
 // Runs the vendored (or configured) mlx-agent CLI with --json and returns the
@@ -181,7 +189,8 @@ struct CLIProcess {
 
     /// Run one mlx-agent subcommand and return its unwrapped `data` payload.
     func run(agentPath: String, argv: [String], isScout: Bool = false,
-             timeout: TimeInterval? = nil) throws -> [String: Any] {
+             timeout: TimeInterval? = nil, cancellation: CLIInvocationCancellation? = nil) throws -> [String: Any] {
+        if cancellation?.isRequested == true { throw CancellationError() }
         let script = try cliScript(agentPath: agentPath)
         let time = timeout ?? (isScout ? scoutTimeout : defaultTimeout)
         let pythonURL = try pythonExecutable(agentPath: agentPath)
@@ -247,15 +256,25 @@ struct CLIProcess {
         }
         defer { if let group { registry.unregister(group) } }
 
-        let result = exited.wait(timeout: .now() + time)
-        if result == .timedOut {
+        let deadline = Date().addingTimeInterval(time)
+        var didExit = false
+        func checkAbort() throws {
+            let cancelled = cancellation?.isRequested == true
+            guard cancelled || Date() >= deadline else { return }
             if let group { AgentProcessGroup.stop([group], grace: terminationGrace) }
-            _ = exited.wait(timeout: .now() + 5)
+            if !didExit { _ = exited.wait(timeout: .now() + 5) }
             _ = drained.wait(timeout: .now() + 5)
+            if cancelled { throw CancellationError() }
             throw BridgeError.skillTimeout
         }
-
-        drained.wait()
+        while exited.wait(timeout: .now() + 0.05) == .timedOut {
+            try checkAbort()
+        }
+        didExit = true
+        while drained.wait(timeout: .now() + 0.05) == .timedOut {
+            try checkAbort()
+        }
+        if cancellation?.isRequested == true { throw CancellationError() }
 
         guard let stdoutCapture else { throw BridgeError.skillOutputTooLarge }
         guard let stderrCapture else { throw BridgeError.skillOutputTooLarge }
