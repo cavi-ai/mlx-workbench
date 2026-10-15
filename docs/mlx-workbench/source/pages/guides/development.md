@@ -40,8 +40,15 @@ TEST_RUNNER_MLX_WORKBENCH_PYTHON=/absolute/path/to/runtime/bin/python \
 TEST_RUNNER_HF_HUB_OFFLINE=1 TEST_RUNNER_TRANSFORMERS_OFFLINE=1 \
 xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
   -destination 'platform=macOS' \
-  -only-testing:mlx-workbenchTests/TrainedAdapterRuntimeTests test
+  -only-testing:mlx-workbenchTests/TrainedAdapterRuntimeTests/testCompletedLocalAdapterServesThroughRunAndStops test
 ```
+
+To check Training evaluation with the same receipt and runtime, select
+`-only-testing:mlx-workbenchTests/TrainedAdapterRuntimeTests/testCompletedLocalAdapterEvaluationRetainsAndReopensRealOutputs`
+instead. It previews and confirms the native base-versus-adapter comparison,
+retains its outputs in an isolated workspace beneath `.run/`, and reopens the
+report from evaluation history. The training receipt stays unchanged and the
+report records no quality judgment.
 
 To exercise training with a blank output field, provide a cached base smaller
 than 1 GB and a dataset containing one example in each of `train.jsonl` and

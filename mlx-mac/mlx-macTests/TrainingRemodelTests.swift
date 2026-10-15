@@ -167,6 +167,79 @@ final class TrainingBatchTests: XCTestCase {
 
 @MainActor
 final class TrainedAdapterRuntimeTests: XCTestCase {
+    func testCompletedLocalAdapterEvaluationRetainsAndReopensRealOutputs() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let path = environment["MLX_WORKBENCH_REAL_ADAPTER_RECEIPT"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_REAL_ADAPTER_RECEIPT for real adapter evaluation acceptance.")
+        }
+        guard environment["HF_HUB_OFFLINE"] == "1", environment["TRANSFORMERS_OFFLINE"] == "1" else {
+            throw WorkflowEvidenceError.invalid("Real adapter evaluation requires offline model loading.")
+        }
+        let receipt = URL(fileURLWithPath: path).standardizedFileURL
+        let original = try Data(contentsOf: receipt)
+        let record = try XCTUnwrap(JSONSerialization.jsonObject(with: original) as? [String: Any])
+        XCTAssertEqual(record["process_exit_code"] as? Int, 0)
+        XCTAssertEqual(record["exit_status"] as? String, "done")
+        let base = try XCTUnwrap(record["base_identity"] as? [String: Any])
+        let basePath = URL(fileURLWithPath: try XCTUnwrap(base["path"] as? String))
+        let weights = try FileManager.default.contentsOfDirectory(at: basePath, includingPropertiesForKeys: [.fileSizeKey])
+            .filter { $0.pathExtension == "safetensors" }
+        let bytes = try weights.reduce(0) { try $0 + ($1.resolvingSymlinksInPath().resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) }
+        guard bytes > 0, bytes < 1_000_000_000 else {
+            throw WorkflowEvidenceError.invalid("Use an existing base smaller than 1 GB for bounded evaluation acceptance.")
+        }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let evidence = source.appendingPathComponent(".run/real-training-evaluation-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+        let suite = "mlx-workbench.evaluation-acceptance." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(evidence.appendingPathComponent("lab").path, forKey: "mlx-workbench.lab-store")
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: source.appendingPathComponent("vendor/mlx-agent").path,
+            receiptDirectory: evidence.path)
+        let lab = LabCoordinator(api: api, defaults: defaults)
+        let session = TrainingEvaluationSession(receipt: receipt.path) { try await lab.request($0) }
+        session.prompt = "Explain in one sentence why previewing a local model change is useful."
+        await session.previewEvaluation()?.value
+        let preview = try XCTUnwrap(session.preview, session.errorMessage ?? "Missing evaluation preview")
+        XCTAssertEqual(preview.plan.object?["training_receipt"]?.text, receipt.path)
+        XCTAssertEqual(preview.plan.object?["base_path"]?.text, basePath.path)
+        XCTAssertTrue(session.canEvaluate)
+        XCTAssertNil(session.result)
+        let before = try await lab.request(LabRequest(operation: "training-history"))
+        XCTAssertEqual(before.evaluations, [])
+
+        await session.evaluate()?.value
+        let result = try XCTUnwrap(session.result, session.errorMessage ?? "Evaluation returned no retained outputs")
+        let outputs = try XCTUnwrap(result.report?.object?["outputs"]?.object)
+        for variant in ["baseline", "adapter"] {
+            XCTAssertFalse(try XCTUnwrap(outputs[variant]?.text).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        XCTAssertEqual(result.report?.object?["judgment"], .null)
+        XCTAssertEqual(result.artifactSHA256?.count, 64)
+        XCTAssertEqual(result.report?.object?["preview_hash"]?.text, preview.hash)
+
+        let loader = TrainingLoader(jobs: { [] },
+            history: { try await lab.request(LabRequest(operation: "training-history")).evaluations ?? [] },
+            inspect: { try await lab.request(LabRequest(operation: "training-inspect", evaluationID: $0)) })
+        await loader.refreshHistory()?.value
+        XCTAssertNil(loader.historyError)
+        XCTAssertEqual(loader.evaluations.count, 1)
+        let identity = try XCTUnwrap(loader.evaluations.first?.object?["id"]?.text)
+        await loader.inspect(identity)?.value
+        let retained = try XCTUnwrap(loader.inspection, loader.inspectionError ?? "Retained evaluation did not reopen")
+        XCTAssertEqual(retained.recordID, identity)
+        XCTAssertEqual(retained.response.artifactSHA256, result.artifactSHA256)
+        XCTAssertEqual(retained.response.report, result.report)
+        XCTAssertEqual(try Data(contentsOf: receipt), original)
+        try XCTUnwrap(result.report).jsonText.write(to: evidence.appendingPathComponent("report.json"), atomically: true, encoding: .utf8)
+        try JSONSerialization.data(withJSONObject: ["evaluation_id": identity,
+            "artifact_sha256": try XCTUnwrap(result.artifactSHA256), "training_receipt": receipt.path,
+            "history_reopened": true, "quality_improvement_measured": false], options: [.prettyPrinted, .sortedKeys])
+            .write(to: evidence.appendingPathComponent("result.json"))
+        print("Real adapter evaluation evidence: \(evidence.path)")
+    }
+
     func testBlankOutputTrainingCreatesARealAdapterInApplicationSupport() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let repo = environment["MLX_WORKBENCH_REAL_TRAINING_REPO"],
