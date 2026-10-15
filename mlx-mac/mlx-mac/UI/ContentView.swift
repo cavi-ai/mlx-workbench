@@ -142,6 +142,8 @@ struct ContentView: View {
             ScoutView(appHost: appHost)
         case .lmStudio:
             LMStudioView(appHost: appHost, onRouteSelection: navigate)
+        case .studies:
+            StudiesView(lab: appHost.lab, installer: appHost.runtimeInstaller, agentPath: appHost.config.mlxAgentPath)
         case .training:
             TrainingView(appHost: appHost)
         case .adopt:

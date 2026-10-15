@@ -17,6 +17,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     case health = "doctor"
     case discover = "scout"
     case lmStudio = "lmstudio"
+    case studies = "studies"
     case training = "training-studio"
     case adopt = "adopt"
     case settings = "settings"
@@ -65,7 +66,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .overview, .library: return .workbench
         case .prepare, .compare, .run: return .lifecycle
         case .activity, .reclaim, .clientSetup, .health: return .operations
-        case .discover, .lmStudio, .training, .adopt: return .lab
+        case .discover, .lmStudio, .studies, .training, .adopt: return .lab
         case .settings: return .settings
         }
     }
@@ -83,6 +84,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .health: return "Health"
         case .discover: return "Discover"
         case .lmStudio: return "LM Studio"
+        case .studies: return "Studies"
         case .training: return "Training"
         case .adopt: return "Adopt"
         case .settings: return "Settings"
@@ -102,6 +104,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .health: return "stethoscope"
         case .discover: return "magnifyingglass"
         case .lmStudio: return "square.and.arrow.down"
+        case .studies: return "square.split.2x1"
         case .training: return "sparkles"
         case .adopt: return "hand.tap"
         case .settings: return "gearshape"
@@ -121,6 +124,7 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
         case .health: return "Inspect runtime and environment health findings."
         case .discover: return "Explore catalog metadata and model candidates."
         case .lmStudio: return "See LM Studio's models: what runs here and what needs converting."
+        case .studies: return "Change one variable at a time and review generated clips blind."
         case .training: return "Review local training and fine-tuning tools."
         case .adopt: return "Adopt a model role using the available evidence."
         case .settings: return "Configure Workbench paths, runtime, and feature controls."

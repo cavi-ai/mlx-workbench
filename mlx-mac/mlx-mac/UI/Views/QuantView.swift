@@ -424,7 +424,6 @@ extension ComparePresentation {
 }
 
 struct QuantView: View {
-    @State private var showsControlledStudies = false
     @ObservedObject var appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
     @ObservedObject private var servingProfiles: ServingProfileCoordinator
@@ -507,13 +506,11 @@ struct QuantView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                Picker("Workflow", selection: $showsControlledStudies) {
-                    Text("Quick comparison").tag(false)
-                    Text("Controlled studies").tag(true)
-                }.pickerStyle(.segmented)
-                if showsControlledStudies {
-                    LabPanel(lab: appHost.lab, installer: appHost.runtimeInstaller, agentPath: appHost.config.mlxAgentPath)
-                } else {
+                HStack {
+                    Spacer()
+                    StudiesNavigationButton(onRouteSelection: onRouteSelection)
+                }
+                if shownRun == nil { setupBar }
                 resultsArea
                 WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
                     environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile,
@@ -523,7 +520,7 @@ struct QuantView: View {
                     metric: $workflowChartMetric, inspectedModelPath: $inspectedWorkflowModelPath)
                 if let importMessage { Text(importMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
                 ErrorBanner(text: importError)
-                setupBar
+                if shownRun != nil { setupBar }
                 DisclosureGroup("Model fit and workflow evidence") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                         Text(selectionReason)
@@ -548,7 +545,6 @@ struct QuantView: View {
                 }
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
-                }
             }
             .frame(maxWidth: 1100, alignment: .leading)
             .frame(maxWidth: .infinity)
@@ -587,6 +583,8 @@ struct QuantView: View {
         .task(id: isRouteActive) { consumeImportRequest() }
         .task(id: isRouteActive) { consumeProfileComparisonRequest() }
         .onChange(of: appHost.servingProfileComparisonRequest?.id) { _, _ in consumeProfileComparisonRequest() }
+        .task(id: isRouteActive) { consumeModelComparisonRequest() }
+        .onChange(of: appHost.modelComparisonRequest?.id) { _, _ in consumeModelComparisonRequest() }
         .sheet(item: $pendingReuseSetup) { setup in
             MusicComparisonSetupSheet(setup: setup,
                 availablePaths: Set(readyModels.map { $0.item.path }), name: shortName,
@@ -681,6 +679,39 @@ struct QuantView: View {
         guard isRouteActive, appHost.workflowReportImportRequested else { return }
         appHost.workflowReportImportRequested = false
         importReport()
+    }
+
+    private var canApplyLibrarySelection: Bool {
+        comparison.activeRunID == nil && !comparison.savingPromptSet && servingProfiles.activeID == nil
+            && !showingSetEditor && pendingPromptSetEdit == nil && pendingGeneralPromptSetEdit == nil
+            && pendingMusicPromptSetCopy == nil && pendingGeneralPromptSetCopy == nil
+            && pendingReuseSetup == nil && pendingGeneralReuseSetup == nil && pendingPromptSetRename == nil
+    }
+
+    private func consumeModelComparisonRequest() {
+        guard isRouteActive, let request = appHost.modelComparisonRequest else { return }
+        guard canApplyLibrarySelection else {
+            reuseError = "Finish the current comparison, save, editor or profile verification, then use the selected Library model."
+            return
+        }
+        guard let model = request.resolve(in: appHost.librarySnapshot?.models ?? []) else {
+            reuseError = "The selected Library model is no longer ready for this comparison mode. Refresh Library and select it again."
+            appHost.modelComparisonRequest = nil
+            return
+        }
+        reusedPromptSet = nil
+        changeMode(to: request.mode)
+        if !modePromptSets.contains(where: { $0.id == selectedPromptSetID }) {
+            selectedPromptSetID = modePromptSets.first?.id ?? ""
+        }
+        variantSlots = [model.item.path, nil]
+        slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
+        strataSettings = [:]; laneSources = [:]; settingsSearchGoal = nil
+        familyFilter = nil; sizeFilter = .all; modelSearch = ""
+        initializedSuggestions = true; manuallySelectedModels = true
+        selectedRunID = nil; reuseError = nil
+        selectionReason = "Selected from Library. Add another model or run this model against the chosen prompts."
+        appHost.modelComparisonRequest = nil
     }
 
     private func consumeProfileComparisonRequest() {
@@ -911,6 +942,10 @@ struct QuantView: View {
             if appHost.servingProfileComparisonRequest != nil {
                 Button("Use requested profiles") { consumeProfileComparisonRequest() }
                     .disabled(comparison.activeRunID != nil || comparison.savingPromptSet || servingProfiles.activeID != nil)
+            }
+            if appHost.modelComparisonRequest != nil {
+                Button("Use selected Library model") { consumeModelComparisonRequest() }
+                    .disabled(!canApplyLibrarySelection)
             }
             ErrorBanner(text: reuseError)
             ErrorBanner(text: comparison.lastError)
@@ -1145,12 +1180,14 @@ struct QuantView: View {
             WorkbenchSurface {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                     runHeader
-                    ContentUnavailableView {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                         Label(ComparePresentation.emptyTitle(for: mode), systemImage: "chart.bar.xaxis")
-                    } description: {
-                        Text("Choose models below and run the comparison.")
+                            .font(WorkbenchTypography.label)
+                        Text("Choose a mode, models and prompts, then Run comparison.")
+                            .font(WorkbenchTypography.secondary)
                     }
-                    .frame(maxWidth: .infinity, minHeight: WorkbenchSize.Compare.emptyMinimumHeight)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }

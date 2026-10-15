@@ -37,6 +37,51 @@ private struct ComparisonRunFixtureView: View {
 
 final class CompareRemodelTests: XCTestCase {
     @MainActor
+    func testOpenStudiesRequiresAnExplicitClickAndUsesTheStudyRoute() async throws {
+        var destinations: [AppRoute] = []
+        let host = NSHostingView(rootView: StudiesNavigationButton { destinations.append($0) }
+            .buttonStyle(.borderless).padding(20).frame(width: 300, height: 100))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        func button(_ view: NSView) -> NSButton? { (view as? NSButton) ?? view.subviews.compactMap { button($0) }.first }
+        try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+        XCTAssertTrue(destinations.isEmpty)
+        try XCTUnwrap(button(host)).performClick(nil)
+        XCTAssertEqual(destinations, [.studies])
+    }
+
+    @MainActor
+    func testEmptyComparisonLeadsWithSetupAtBothContentWidths() async throws {
+        let app = AppHost(config: Config.defaults())
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        for width: CGFloat in [1190, 814] {
+            let host = NSHostingView(rootView: QuantView(appHost: app).environment(\.isRouteActive, true)
+                .frame(width: width, height: 900).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 900),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(200)); host.layoutSubtreeIfNeeded()
+            let popups = descendants(host).compactMap { $0 as? NSPopUpButton }
+            let mode = try XCTUnwrap(popups.first { $0.itemTitles.contains("Video understanding") })
+            let history = try XCTUnwrap(popups.first { $0.title == "Champions" })
+            XCTAssertGreaterThan(mode.convert(mode.bounds, to: nil).minY, history.convert(history.bounds, to: nil).maxY,
+                "An empty comparison must lead with its mode and setup, before result history.")
+            XCTAssertNil(app.comparison.activeRunID)
+            if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] {
+                let root = URL(fileURLWithPath: folder)
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: root.appendingPathComponent("empty-setup-\(Int(width)).png"))
+            }
+        }
+    }
+
+    @MainActor
     func testCancellationControlsRequireExplicitClicksAndDisableWhileCleaning() async throws {
         func button(in view: NSView) -> NSButton? {
             if let button = view as? NSButton { return button }

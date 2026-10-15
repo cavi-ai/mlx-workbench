@@ -51,6 +51,9 @@ server.
   `MLX Workbench.app` on an `MLX Workbench` volume under `.release/` (ad-hoc
   signed; `DEVELOPER_TEAM=<team id>` archives, exports with Developer ID,
   notarizes through the Xcode account, and staples via `build-swift-devid`).
+- Studies is a Lab sidebar destination using the shared `LabCoordinator`.
+  Compare's Open Studies action routes there. Cached study views refresh their
+  read-only lists on activation; navigation never starts jobs or installs a runtime.
 - `make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json` is the
   opt-in real-data native GGUF-to-Run acceptance surface. Its runner validates
   an explicit allowlisted local source and loopback config, selects only the
@@ -67,8 +70,8 @@ server.
   `mlx-agent intake resolve|fetch|status|port-analysis|port-plan` and
   `backend list|install|remove`. Repo conversions run through
   `ModelWorkflowCoordinator.inspect(intake:…)` with `ConversionWorkflow.sourceRepo/backend/modelType/subfolder/allowedBits` (`modelType` → `convert start --model-type`, which runs a port's own converter; `subfolder` → `--subfolder` and an `org/name/folder` fetch, for checkpoints below the repo root such as Laya's `multilingual`; `allowedBits` from intake's `q_bits` limits Prepare's bit picker, e.g. Laya is 8-bit only);
-  the Quality Gate canary runs only for `ModelTaskType.hasCanary` types (chat models: served canary prompts; speech-to-text: a `say`-synthesized sentence transcribed through `mlx-agent convert transcribe`, passing at ≤25% word error; classification: `DecisionCanary`, a billing ticket answered through `mlx-agent convert decide` that must route to billing and read as a refund request; image generation: `ImageCanary`, a fixed prompt rendered at 512² through `mlx-agent convert generate` that must write a non-blank image), and Run/Compare refuse
-  non-servable types, and Prepare/Activity do not offer Run for them. `config.outputDir` is scanned as an MLX root unless a root's scan already reaches it (`AppHost.isPath`: its symlink-resolved location lies under the root by file identity, below no hidden or skipped folder).
+  the Quality Gate canary runs only for `ModelTaskType.hasCanary` types (chat models: served canary prompts; speech-to-text: a `say`-synthesized sentence transcribed through `mlx-agent convert transcribe`, passing at ≤25% word error; classification: `DecisionCanary`, a billing ticket answered through `mlx-agent convert decide` that must route to billing and read as a refund request; image generation: `ImageCanary`, a fixed prompt rendered at 512² through `mlx-agent convert generate` that must write a non-blank image). Run, endpoints and Prepare/Activity Run actions require
+  servable types. Library offers Compare for ready supported chat and media models; the selected task and model travel through a one-shot request, revalidated by Compare without starting work. Compare filters by task and runtime; Strata is chat-only. `config.outputDir` is scanned as an MLX root unless a root's scan already reaches it (`AppHost.isPath`: its symlink-resolved location lies under the root by file identity, below no hidden or skipped folder).
   Prepare refreshes conversion status while a job is in flight and shows a progress ring (bytes
   written against the intake estimate; indeterminate while the converter loads) with the job log in a
   collapsible section; its bit picker re-targets repo

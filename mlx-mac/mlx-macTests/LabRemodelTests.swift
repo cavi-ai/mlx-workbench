@@ -201,7 +201,8 @@ final class LabSourceGuardTests: XCTestCase {
         let render = String(tail[..<body.lowerBound])
         XCTAssertFalse(render.contains("LabStudyRow("))
         XCTAssertFalse(render.contains("LabStudyRow.init"))
-        XCTAssertTrue(tail[body.lowerBound...].contains("LabStudyRow.init"))
+        let coordinator = try LF.source("../../Services/LabCoordinator.swift")
+        XCTAssertTrue(coordinator.contains("LabStudyRow.init"))
     }
 
     func testSheetsUseTheSectionTitleAndNoFixedWidth() throws {
@@ -229,7 +230,7 @@ final class LabSourceGuardTests: XCTestCase {
             XCTAssertTrue(source.contains("\"\(anchor)\""), anchor)
         }
         XCTAssertTrue(source.contains(".accessibilityIdentifier(\"Blind review…\")"))
-        XCTAssertTrue(try LF.source("QuantView.swift").contains("Text(\"Controlled studies\").tag(true)"))
+        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"open-studies\")"))
         var rest = Substring(source)
         while let open = rest.range(of: "Menu {") {
             let tail = rest[open.upperBound...]
@@ -331,8 +332,7 @@ final class LabRenderTests: XCTestCase {
         XCTAssertNil(lab.error)
         XCTAssertEqual(lab.snapshot.history?.items.count, 3)
         XCTAssertEqual(lab.snapshot.queue?.count, 2)
-        let studies = try await lab.request(LabRequest(operation: "study-list")).studies
-        XCTAssertEqual(studies?.count, 2)
+        XCTAssertEqual(lab.studies.count, 2)
         let reveal = try await lab.request(LabRequest(operation: "reveal", sessionID: "session"))
         XCTAssertEqual(reveal.manifests?.count, 2)
         XCTAssertEqual(reveal.variablePath, "inference_steps")

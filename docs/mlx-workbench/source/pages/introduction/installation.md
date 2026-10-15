@@ -47,8 +47,8 @@ make start
 | Runtime | Install | Used by |
 |---|---|---|
 | mlx-vlm, mlx-audio backends | One click in the Add from Hugging Face window | Vision, audio and other models those backends convert or serve |
-| Study tools | **Compare → Controlled studies → Install study tools** | Controlled experiments |
-| Video runtime | **Compare → Controlled studies → Install video runtime** | Video generation in studies (adds Torch) |
+| Study tools | **Studies → Runtime setup → Install study tools** | Controlled experiments |
+| Video runtime | **Studies → Runtime setup → Install video runtime** | Video generation in studies (adds Torch) |
 | Strata | `make install-strata` | Qwen3.8-Flash-Next GGUF serving; see [Strata](../workflows/strata.md) |
 
 Optional backends install into their own environments from hash-locked requirement files and leave the main `.venv` unchanged.

@@ -528,8 +528,10 @@ struct LibraryView: View {
         if actions.canPrepare {
             Button("Prepare to run") { actions.prepare() }
         }
-        if actions.canServe {
+        if actions.canCompare {
             Button("Select for Compare") { actions.compare() }
+        }
+        if actions.canServe {
             Button("Select for Run") { actions.run() }
         }
         Divider()

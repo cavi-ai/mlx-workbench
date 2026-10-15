@@ -13,6 +13,23 @@ enum ComparisonMediaKind: String, Codable, Sendable {
     case audio
 }
 
+/// A Library selection prepares a comparison; it never starts a task.
+struct ComparisonModelRequest: Identifiable, Equatable {
+    let id = UUID()
+    let modelPath: String
+    let mode: ComparisonMode
+
+    init?(model: LibraryModel) {
+        guard model.readiness == .ready, let mode = ComparisonMode.preferred(for: model.item) else { return nil }
+        modelPath = model.item.path
+        self.mode = mode
+    }
+
+    func resolve(in models: [LibraryModel]) -> LibraryModel? {
+        models.first { $0.item.path == modelPath && $0.readiness == .ready && mode.supports($0.item) }
+    }
+}
+
 /// What a mode's output looks like in the results grid.
 enum ComparisonOutputKind: String, Sendable {
     case text
@@ -118,6 +135,15 @@ enum ComparisonMode: String, Codable, CaseIterable, Identifiable, Sendable {
     func accepts(_ type: ModelTaskType?) -> Bool {
         guard let type else { return self == .chat }
         return acceptedTaskTypes.contains(type)
+    }
+
+    /// Runtime restrictions take precedence over the architecture's task label.
+    func supports(_ item: ModelItem) -> Bool {
+        accepts(item.task?.type) && (item.servingRuntime != "strata" || self == .chat)
+    }
+
+    static func preferred(for item: ModelItem) -> ComparisonMode? {
+        allCases.first { $0.supports(item) }
     }
 
     /// The input file a prompt carries in this mode; nil for text-only prompts.

@@ -4,6 +4,7 @@ import AppKit
 @MainActor
 final class LabCoordinator: ObservableObject {
     @Published private(set) var snapshot = LabResponse()
+    @Published private(set) var studies: [LabStudyRow] = []
     @Published private(set) var isRefreshing = false
     @Published private(set) var runningJobID: String?
     @Published var error: String?
@@ -40,6 +41,7 @@ final class LabCoordinator: ObservableObject {
         store = chosen
         defaults.set(store.path, forKey: "mlx-workbench.lab-store")
         snapshot = LabResponse()
+        studies = []
         await refresh()
     }
     func recover() async {
@@ -56,7 +58,12 @@ final class LabCoordinator: ObservableObject {
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
-        do { snapshot = try await request(LabRequest(operation: "snapshot")); error = nil }
+        do {
+            snapshot = try await request(LabRequest(operation: "snapshot"))
+            let response = try await request(LabRequest(operation: "study-list"))
+            studies = response.studies?.compactMap(LabStudyRow.init(value:)) ?? []
+            error = nil
+        }
         catch { self.error = AppHost.render(error) }
     }
     func run(_ job: LabJob) async {

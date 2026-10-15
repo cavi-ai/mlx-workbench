@@ -577,15 +577,22 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertFalse(ModelTaskType.musicGeneration.hasCanary)
     }
 
-    private func model(_ path: String, type: ModelTaskType?) -> LibraryModel {
+    private func model(_ path: String, type: ModelTaskType?, runtime: String? = nil) -> LibraryModel {
         let task = type.map { ModelTask(type: $0, useCases: [], source: "test", confidence: "likely") }
         let item = ModelItem(
             path: path, name: URL(fileURLWithPath: path).lastPathComponent, bytes: 1000,
             modifiedAt: nil, shard: nil, modelKey: nil, architecture: nil, quantization: "Q4",
             parameters: nil, structure: nil, signature: nil, companion: nil, readable: true,
-            status: "ready", outputs: [], tensorCount: nil, error: nil, task: task
+            status: "ready", outputs: [], tensorCount: nil, error: nil, task: task, servingRuntime: runtime
         )
         return LibraryModel(item: item, readiness: .ready)
+    }
+
+    func testTextOnlyStrataIsNotOfferedForImageOrVideoInput() {
+        let models = [model("/strata", type: .visionLanguage, runtime: "strata"), model("/vlm", type: .visionLanguage)]
+        XCTAssertEqual(ComparisonViewLogic.candidates(from: models, mode: .chat).map(\.item.path), ["/strata", "/vlm"])
+        XCTAssertEqual(ComparisonViewLogic.candidates(from: models, mode: .vision).map(\.item.path), ["/vlm"])
+        XCTAssertEqual(ComparisonViewLogic.candidates(from: models, mode: .videoUnderstanding).map(\.item.path), ["/vlm"])
     }
 
     func testCandidatesFollowTheModesAcceptedTypes() {
