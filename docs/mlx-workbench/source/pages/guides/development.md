@@ -22,9 +22,26 @@ make test-swift
 make start
 ```
 
-`make test-swift` runs the XCTest suite hosted in the app. Hosted unit tests never start live services or touch real state: launch-time live work is skipped under XCTest, and default state paths resolve into a fresh temporary directory per test. UI tests run a separate app process.
+`make test-swift` runs the XCTest suite hosted in the app. By default, hosted tests skip launch-time live work and resolve state paths into a fresh temporary directory per test. Explicit real-runtime acceptance tests require their opt-in environment variables. UI tests run a separate app process.
 
 `tests/fixtures/` is consumed by both the Python suite and the XCTest suite. A fixture change must keep both green.
+
+### Trained adapter acceptance
+
+Use a completed LoRA receipt and an existing MLX-LM runtime to check Run against
+real local artifacts. This bounded test accepts a base smaller than 1 GB, starts
+an owned loopback server, requests a short response and stops the server. It
+leaves the training receipt unchanged and writes results beneath `.run/`.
+It does not train a new adapter or measure quality improvement.
+
+```bash
+TEST_RUNNER_MLX_WORKBENCH_REAL_ADAPTER_RECEIPT=/absolute/path/to/completed-receipt.json \
+TEST_RUNNER_MLX_WORKBENCH_PYTHON=/absolute/path/to/runtime/bin/python \
+TEST_RUNNER_HF_HUB_OFFLINE=1 TEST_RUNNER_TRANSFORMERS_OFFLINE=1 \
+xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+  -destination 'platform=macOS' \
+  -only-testing:mlx-workbenchTests/TrainedAdapterRuntimeTests test
+```
 
 ## Engine boundary
 

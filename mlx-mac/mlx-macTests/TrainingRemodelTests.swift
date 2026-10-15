@@ -30,6 +30,81 @@ private enum TF {
 
 private struct Boom: Error, LocalizedError { var errorDescription: String? { "boom" } }
 
+@MainActor
+final class TrainedAdapterRuntimeTests: XCTestCase {
+    func testCompletedLocalAdapterServesThroughRunAndStops() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let path = environment["MLX_WORKBENCH_REAL_ADAPTER_RECEIPT"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_REAL_ADAPTER_RECEIPT for real adapter-serving acceptance.")
+        }
+        guard environment["HF_HUB_OFFLINE"] == "1", environment["TRANSFORMERS_OFFLINE"] == "1" else {
+            throw WorkflowEvidenceError.invalid("Real adapter acceptance requires offline model loading.")
+        }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let receipt = URL(fileURLWithPath: path).standardizedFileURL
+        let original = try Data(contentsOf: receipt)
+        let record = try XCTUnwrap(JSONSerialization.jsonObject(with: original) as? [String: Any])
+        XCTAssertEqual(record["process_exit_code"] as? Int, 0)
+        XCTAssertEqual(record["exit_status"] as? String, "done")
+        let base = try XCTUnwrap(record["base_identity"] as? [String: Any])
+        let basePath = URL(fileURLWithPath: try XCTUnwrap(base["path"] as? String))
+        let weights = try FileManager.default.contentsOfDirectory(at: basePath, includingPropertiesForKeys: [.fileSizeKey])
+            .filter { $0.pathExtension == "safetensors" }
+        let weightBytes = try weights.reduce(0) { try $0 + ($1.resolvingSymlinksInPath().resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) }
+        guard weightBytes > 0, weightBytes < 1_000_000_000 else {
+            throw WorkflowEvidenceError.invalid("This bounded acceptance requires an existing base smaller than 1 GB.")
+        }
+        let trainingAPI = WorkbenchAPI(cli: CLIProcess(), agentPath: source.appendingPathComponent("vendor/mlx-agent").path,
+            receiptDirectory: receipt.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path)
+        let jobs = try await trainingAPI.trainingStatus().jobs
+        let job = try XCTUnwrap(jobs.first { URL(fileURLWithPath: $0.receipt).standardizedFileURL == receipt })
+        XCTAssertEqual(job.state, "done")
+        XCTAssertNotNil(job.adapterIdentity)
+        let evidence = source.appendingPathComponent(".run/real-trained-adapter-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: source.appendingPathComponent("vendor/mlx-agent").path,
+            receiptDirectory: evidence.path)
+        let coordinator = TrainedAdapterServingCoordinator(api: .live(api))
+        let port = try XCTUnwrap(EphemeralPort.pick())
+        coordinator.portText = String(port)
+        XCTAssertTrue(coordinator.select(job))
+        XCTAssertNil(coordinator.preview)
+        await coordinator.previewServe()?.value
+        let reviewed = try XCTUnwrap(coordinator.preview, coordinator.errorMessage ?? "Missing serving preview")
+        XCTAssertEqual(reviewed.binding.receiptPath, receipt.path)
+        do {
+            await coordinator.confirmServe()?.value
+            let server = try XCTUnwrap(coordinator.runningServer, coordinator.errorMessage ?? "Adapter did not start")
+            XCTAssertTrue(reviewed.binding.matches(server))
+            let baseURL = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)"))
+            let prober = OpenAIEndpointProber(requestTimeout: 60)
+            let prompt = "What should happen before starting a local model server?"
+            let response = try await prober.chat(baseURL: baseURL, model: server.modelIdentity, prompt: prompt, maxTokens: 32)
+            XCTAssertFalse(response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            var result: [String: Any] = ["training_receipt": receipt.path, "serve_plan": reviewed.plan,
+                "server": try JSONSerialization.jsonObject(with: JSONEncoder().encode(server)), "prompt": prompt,
+                "response": response.text, "quality_improvement_measured": false]
+            _ = try await api.serveStop(port: port)
+            let stopped = try await api.serveStatus()
+            let stillRunning = stopped.contains { $0.pid == server.pid && $0.state == "running" }
+            XCTAssertFalse(stillRunning)
+            coordinator.receiveServers(stopped)
+            XCTAssertNil(coordinator.runningServer)
+            let stillReady = await prober.isReady(baseURL: baseURL)
+            XCTAssertFalse(stillReady)
+            XCTAssertEqual(try Data(contentsOf: receipt), original)
+            result["server_stopped"] = !stillRunning && !stillReady
+            try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
+                .write(to: evidence.appendingPathComponent("result.json"))
+            print("Real trained-adapter evidence: \(evidence.path)")
+        } catch {
+            do { _ = try await api.serveStop(port: port) }
+            catch { XCTFail("Adapter acceptance cleanup failed: \(error)") }
+            throw error
+        }
+    }
+}
+
 private enum TrainedServeFixture {
     static let identity: [String: Any] = ["adapter_config.json": ["sha256": String(repeating: "a", count: 64), "bytes": 2],
         "adapters.safetensors": ["sha256": String(repeating: "b", count: 64), "bytes": 100]]
