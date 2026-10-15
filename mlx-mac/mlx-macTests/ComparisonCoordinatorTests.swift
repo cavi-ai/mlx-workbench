@@ -111,6 +111,14 @@ final class ComparisonCoordinatorTests: XCTestCase {
             XCTAssertEqual(answer?["answer"], 323)
         }
         XCTAssertEqual(try Data(contentsOf: profileStore.url), before)
+        if ProcessInfo.processInfo.environment["MLX_WORKBENCH_PAIRED_SPECULATION"] == "1" {
+            let pair = try XCTUnwrap(SpeculationComparison.summaries(in: run).first)
+            XCTAssertNil(pair.unavailableReason, pair.unavailableReason ?? "")
+            XCTAssertEqual(pair.rows.count, prompts.prompts.count)
+            XCTAssertGreaterThan(try XCTUnwrap(pair.medianDecodeRatio), 0)
+            XCTAssertNotNil(pair.offAnswerSeconds); XCTAssertNotNil(pair.onAnswerSeconds)
+            XCTAssertNil(run.qualityReviews)
+        }
         XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
         XCTAssertNil(candidate.verification)
         let servers = try await api.serveStatus()
