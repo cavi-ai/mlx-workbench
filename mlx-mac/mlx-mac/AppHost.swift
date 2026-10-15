@@ -527,6 +527,11 @@ class AppHost: ObservableObject {
         WatchCoordinator.invalidateEnvironmentProbe()
     }
 
+    var catalogRefreshUnavailableReason: String? {
+        if !catalogClient.isConfigured { return catalogClient.unavailableMessage }
+        return isRefreshingCatalog ? "Catalog metadata is being refreshed." : nil
+    }
+
     func refreshCatalog() async {
         guard !isRefreshingCatalog else { return }
         isRefreshingCatalog = true

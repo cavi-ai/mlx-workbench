@@ -12,6 +12,8 @@ Both screens ask the engine about Hugging Face Hub candidates. Neither downloads
 
 Each candidate shows its license, a fit bar for this Mac and an **In Library** mark when it is already on disk. Actions: **Add from Hugging Face…**, **Open on Hugging Face**, **Copy repo id**.
 
+The separate **Catalog metadata** section shows cached metadata. **Refresh Metadata** is disabled when no metadata provider is configured; its help explains why. Role-based discovery and cached entries remain available.
+
 ## Adopt
 
 **Adopt** runs the engine's `adopt` flow for one role. The engine verifies candidates with deterministic role probes against your local runtime before it recommends one; see the MLX Agent [Adopt](https://cavi-ai.xyz/docs/mlx-agent) documentation.

@@ -142,7 +142,8 @@ struct ScoutView: View {
             Task { await appHost.refreshCatalog() }
         }
         .buttonStyle(.bordered)
-        .disabled(appHost.isRefreshingCatalog)
+        .disabled(appHost.catalogRefreshUnavailableReason != nil)
+        .help(appHost.catalogRefreshUnavailableReason ?? "Fetch catalog metadata from the configured provider.")
     }
 
     private var header: some View {
