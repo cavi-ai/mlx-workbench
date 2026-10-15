@@ -1528,6 +1528,7 @@ struct StrataSettingsSearchSheet: View {
     @State private var upperBudget = "4"
     @State private var headroom = "8"
     @State private var context = 8192
+    @State private var objective = StrataSettingsSearchObjective.firstAnswer
     @State private var error: String?
 
     init(models: [LibraryModel], onUse: @escaping (LibraryModel, StrataSettingsSearchSetup) -> String?) {
@@ -1538,7 +1539,8 @@ struct StrataSettingsSearchSheet: View {
         guard let lower = Double(lowerBudget.trimmingCharacters(in: .whitespaces)),
               let upper = Double(upperBudget.trimmingCharacters(in: .whitespaces)),
               let target = Double(headroom.trimmingCharacters(in: .whitespaces)) else { return nil }
-        return StrataSettingsSearchSetup(lowerExpertMemoryGB: lower, upperExpertMemoryGB: upper, contextTokens: context, headroomGB: target)
+        return StrataSettingsSearchSetup(lowerExpertMemoryGB: lower, upperExpertMemoryGB: upper, contextTokens: context,
+            headroomGB: target, objective: objective)
     }
     private var validation: String? { setup?.validationError ?? (setup == nil ? "Enter numeric expert budgets and a headroom target." : nil) }
     var body: some View {
@@ -1550,6 +1552,11 @@ struct StrataSettingsSearchSheet: View {
             Picker("Fixed context", selection: $context) {
                 ForEach([2048, 4096, 8192, 16384, 32768, 65536, 131072], id: \.self) { value in Text("\(value) tokens").tag(value) }
             }
+            Picker("Minimize latency to", selection: $objective) {
+                ForEach(StrataSettingsSearchObjective.allCases) { Text($0.title).tag($0) }
+            }
+            Text(objective.explanation)
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Text("Expert budgets (GB)")
                 TextField("Lower", text: $lowerBudget).frame(width: 80)

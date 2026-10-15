@@ -4,6 +4,39 @@ import SwiftUI
 @testable import mlx_workbench
 
 final class ComparisonInsightsTests: XCTestCase {
+    func testCompletedResponseTimingRequiresEveryFinishedTimedAnswer() throws {
+        func result(_ durations: [Double?], answer: Double? = 1, finish: String = "stop", output: String = "Answer", error: String? = nil) -> VariantResult {
+            VariantResult(modelPath: "/Models/strata", modelSignature: "model", samples: durations.enumerated().map { index, duration in
+                ComparisonSample(promptID: "p\(index)", outputExcerpt: output, tokensPerSecond: nil, timeToFirstTokenSeconds: nil,
+                    error: nil, finishReason: finish, timeToFirstAnswerSeconds: answer, durationSeconds: duration)
+            }, aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: error)
+        }
+        XCTAssertEqual(result([2, 4]).completedResponseSeconds, 3)
+        XCTAssertEqual(result([2, 9, 3]).completedResponseSeconds, 3)
+        XCTAssertEqual(result([Double.greatestFiniteMagnitude, Double.greatestFiniteMagnitude]).completedResponseSeconds, Double.greatestFiniteMagnitude)
+        let invalidDurations: [[Double?]] = [[], [nil], [0], [-1], [.nan], [.infinity], [2, nil], [2, 0.5]]
+        for durations in invalidDurations {
+            XCTAssertNil(result(durations).completedResponseSeconds)
+        }
+        XCTAssertNil(result([2], answer: nil).completedResponseSeconds)
+        XCTAssertNil(result([2], answer: .nan).completedResponseSeconds)
+        XCTAssertNil(result([2], finish: "length").completedResponseSeconds)
+        XCTAssertNil(result([2], output: " ").completedResponseSeconds)
+        XCTAssertNil(result([2], error: "interrupted").completedResponseSeconds)
+        if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROFILE_COMPARE_MANIFEST"] {
+            struct Manifest: Decodable { let evidenceRoot: String }
+            let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+            let url = URL(fileURLWithPath: manifest.evidenceRoot).appendingPathComponent("runs.json")
+            let before = try Data(contentsOf: url)
+            let recorded = try XCTUnwrap(try JSONStore<ComparisonRun>(fileURL: url).load().first { $0.state == .completed })
+            XCTAssertEqual(recorded.results.count, 2)
+            for lane in recorded.results {
+                XCTAssertNotNil(lane.completedResponseSeconds)
+                XCTAssertGreaterThanOrEqual(try XCTUnwrap(lane.completedResponseSeconds), try XCTUnwrap(lane.memoryTradeoffAnswerSeconds))
+            }
+            XCTAssertEqual(try Data(contentsOf: url), before)
+        }
+    }
     private func pairedSpeculationFixture(onCache: Int = 40, onTokens: Int = 100,
                                            onRuntime: String = "runtime", includeCache: Bool = true, budget: Double = 2,
                                            onBudget: Double? = nil, onFinish: String = "stop", onEstimated: Bool = false) -> ComparisonRun {
