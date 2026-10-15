@@ -831,9 +831,31 @@ enum StrataSettingsSearchAssessment: Equatable {
     }
 }
 
+enum StrataSettingsSearchObjective: String, Codable, CaseIterable, Identifiable, Sendable {
+    case firstAnswer
+    case completedResponse
+
+    var id: String { rawValue }
+    var title: String { self == .firstAnswer ? "First answer" : "Completed response" }
+    var axisLabel: String {
+        self == .firstAnswer ? "Median time to first answer (s)" : "Median time to completed response (s)"
+    }
+    var explanation: String {
+        self == .firstAnswer
+            ? "Minimize request-to-first-answer time, including reasoning before the answer begins."
+            : "Minimize request-to-completion time, including reasoning, answer delivery and stream completion. Server startup and warm-up are excluded."
+    }
+    func seconds(in result: VariantResult) -> Double? {
+        self == .firstAnswer ? result.memoryTradeoffAnswerSeconds : result.completedResponseSeconds
+    }
+}
+
 struct StrataSettingsSearchGoal: Codable, Equatable, Sendable {
     let contextTokens: Int
     let headroomGB: Double
+    var objective: StrataSettingsSearchObjective? = nil
+
+    var effectiveObjective: StrataSettingsSearchObjective { objective ?? .firstAnswer }
 
     var isValid: Bool { (512...131072).contains(contextTokens) && headroomGB.isFinite && (0...1024).contains(headroomGB) }
     func matches(_ lanes: [ComparisonLaneConfiguration]) -> Bool {
@@ -852,7 +874,11 @@ struct StrataSettingsSearchSetup: Equatable {
     var upperExpertMemoryGB = 4.0
     var contextTokens = 8192
     var headroomGB = 8.0
-    var goal: StrataSettingsSearchGoal { StrataSettingsSearchGoal(contextTokens: contextTokens, headroomGB: headroomGB) }
+    var objective: StrataSettingsSearchObjective = .firstAnswer
+    var goal: StrataSettingsSearchGoal {
+        StrataSettingsSearchGoal(contextTokens: contextTokens, headroomGB: headroomGB,
+            objective: objective == .firstAnswer ? nil : objective)
+    }
     var validationError: String? {
         guard goal.isValid else { return "Choose a valid fixed context and headroom target from 0 to 1,024 GB." }
         for budget in [lowerExpertMemoryGB, upperExpertMemoryGB] {
@@ -1096,6 +1122,17 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
         let middle = values.count / 2
         return values.count.isMultiple(of: 2) ? (values[middle - 1] + values[middle]) / 2 : values[middle]
     }
+
+    /// Client request-to-stream-completion time, only for complete timed answers.
+    var completedResponseSeconds: Double? {
+        guard error == nil, !samples.isEmpty, samples.allSatisfy({ sample in
+            guard sample.hasCompletedAnswer, let duration = sample.durationSeconds, duration.isFinite, duration > 0,
+                  let answer = sample.timeToFirstAnswerSeconds, answer.isFinite, answer > 0 else { return false }
+            return duration >= answer
+        }) else { return nil }
+        let values = samples.compactMap(\.durationSeconds).sorted(), middle = values.count / 2
+        return values.count.isMultiple(of: 2) ? values[middle - 1] / 2 + values[middle] / 2 : values[middle]
+    }
 }
 
 enum ComparisonRunState: String, Codable, Sendable {
@@ -1171,15 +1208,15 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
         }
         let candidate = results.filter {
             ($0.systemMemory.map { Double($0.minimumAvailableBytes) / 1e9 >= goal.headroomGB } ?? false)
-                && (qualityReviews?[$0.id]?.score ?? 0) >= 4 && $0.memoryTradeoffAnswerSeconds != nil
+                && (qualityReviews?[$0.id]?.score ?? 0) >= 4 && goal.effectiveObjective.seconds(in: $0) != nil
         }.sorted { leftResult, rightResult in
-            let left = leftResult.memoryTradeoffAnswerSeconds!; let right = rightResult.memoryTradeoffAnswerSeconds!
+            let left = goal.effectiveObjective.seconds(in: leftResult)!; let right = goal.effectiveObjective.seconds(in: rightResult)!
             return left == right
                 ? (lanes.firstIndex(where: { $0.id == leftResult.id }) ?? 0) < (lanes.firstIndex(where: { $0.id == rightResult.id }) ?? 0)
                 : left < right
         }.first?.id
         guard let candidate else {
-            return .unavailable("No lane has a task score of 4 or 5, complete timed answers and the requested observed headroom.")
+            return .unavailable("No lane has a task score of 4 or 5, complete answers timed for \(goal.effectiveObjective.title.lowercased()) and the requested observed headroom.")
         }
         return .suggested(candidate)
     }

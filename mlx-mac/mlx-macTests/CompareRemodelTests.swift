@@ -43,10 +43,10 @@ final class CompareRemodelTests: XCTestCase {
         }
         var applied = false
         let view = StrataSettingsSearchSheet(models: [library("/Models/strata")]) { _, _ in applied = true; return nil }
-            .frame(width: 580, height: 480, alignment: .topLeading)
+            .frame(width: 580, height: 560, alignment: .topLeading)
             .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
         let host = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 480), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 560), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
         defer { window.close() }
         try await Task.sleep(for: .milliseconds(250))

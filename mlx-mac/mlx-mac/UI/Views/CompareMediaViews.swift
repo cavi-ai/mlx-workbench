@@ -807,7 +807,9 @@ struct ComparisonMemoryTradeoffView: View {
         guard let evidence = result(lane)?.systemMemory, evidence.isValid else { return nil }
         return evidence
     }
-    private var measured: [CompareLane] { lanes.filter { memory($0) != nil && result($0)?.memoryTradeoffAnswerSeconds != nil } }
+    private var objective: StrataSettingsSearchObjective { run.settingsSearchGoal?.effectiveObjective ?? .firstAnswer }
+    private func seconds(_ lane: CompareLane) -> Double? { result(lane).flatMap { objective.seconds(in: $0) } }
+    private var measured: [CompareLane] { lanes.filter { memory($0) != nil && seconds($0) != nil } }
     private var maximumGB: Double { max(1, lanes.compactMap { memory($0).map { Double($0.totalBytes) / 1e9 } }.max() ?? 128) }
     private func gb(_ bytes: Int64) -> String { String(format: "%.1f GB", Double(bytes) / 1e9) }
 
@@ -817,8 +819,9 @@ struct ComparisonMemoryTradeoffView: View {
             if let goal = run.settingsSearchGoal {
                 Text("Recorded search target: \(goal.contextTokens) context tokens · \(goal.headroomGB.formatted()) GB headroom")
                     .font(WorkbenchTypography.secondary)
+                Text("Latency objective: \(objective.title)").font(WorkbenchTypography.secondary)
                 if let id = run.settingsSearchCandidateID, let lane = lanes.first(where: { $0.resultKey == id }) {
-                    Text("Fastest observed qualifying answer start: lane \(lane.letter). Save this lane as a serving profile and verify it before serving.")
+                    Text("Fastest observed qualifying \(objective.title.lowercased()): lane \(lane.letter). Save this lane as a serving profile and verify it before serving.")
                         .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("No qualifying suggestion. \(run.settingsSearchAssessment.unavailableReason ?? "Review the recorded comparison evidence.")")
@@ -836,14 +839,14 @@ struct ComparisonMemoryTradeoffView: View {
                 Slider(value: $headroomGoalGB, in: 0...maximumGB, step: 0.5)
                     .accessibilityLabel("Observed headroom target in gigabytes")
                 Chart(measured) { lane in
-                    if let memory = memory(lane), let seconds = result(lane)?.memoryTradeoffAnswerSeconds {
+                    if let memory = memory(lane), let seconds = seconds(lane) {
                         PointMark(x: .value("Headroom", Double(memory.minimumAvailableBytes) / 1e9), y: .value("Answer latency", seconds))
                             .foregroundStyle(Double(memory.minimumAvailableBytes) / 1e9 >= headroomGoalGB ? WorkbenchColor.accent : WorkbenchColor.muted)
                             .annotation(position: .top) { Text(lane.letter).font(WorkbenchTypography.label) }
                     }
                 }
                 .chartXAxisLabel("Lowest sampled system headroom (GB)")
-                .chartYAxisLabel("Median time to first answer (s)")
+                .chartYAxisLabel(objective.axisLabel)
                 .frame(height: 220)
                 Text("Points require a finished answer and answer timing for every prompt. Completion does not establish answer quality; use the recorded answers and task ratings.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
@@ -854,12 +857,12 @@ struct ComparisonMemoryTradeoffView: View {
                     if let evidence = memory(lane) {
                         Text("Headroom: \(gb(evidence.baselineAvailableBytes)) before start · \(gb(evidence.minimumAvailableBytes)) sampled minimum · \(gb(evidence.endingAvailableBytes)) before cleanup")
                         Text("\(evidence.sampleCount) readings · \(evidence.missedSamples) unavailable · 0.5 s sampling interval")
-                        if result(lane)?.memoryTradeoffAnswerSeconds != nil {
+                        if seconds(lane) != nil {
                             Text(Double(evidence.minimumAvailableBytes) / 1e9 >= headroomGoalGB ? "Observed minimum meets the selected target." : "Observed minimum is below the selected target.")
                         }
                     } else { Text("System headroom not recorded.") }
-                    if let seconds = result(lane)?.memoryTradeoffAnswerSeconds {
-                        Text(String(format: "Median time to first answer %.2f s", seconds))
+                    if let seconds = seconds(lane) {
+                        Text("\(objective.title): median \(String(format: "%.2f s", seconds))")
                     } else { Text("Answer latency unavailable for a complete prompt cohort.") }
                 }.font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }

@@ -135,6 +135,11 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertEqual(lanes.map { $0.strataOptions?.expertMemoryGB }, [2, 2, 4, 4])
         XCTAssertEqual(lanes.map { $0.strataOptions?.speculation }, [false, true, false, true])
         XCTAssertTrue(setup.goal.matches(lanes))
+        XCTAssertEqual(setup.goal.effectiveObjective, .firstAnswer)
+        var completion = setup; completion.objective = .completedResponse
+        XCTAssertEqual(completion.goal.effectiveObjective, .completedResponse)
+        XCTAssertTrue(completion.goal.matches(lanes))
+        XCTAssertEqual(try JSONDecoder().decode(StrataSettingsSearchGoal.self, from: JSONEncoder().encode(completion.goal)), completion.goal)
         var invalid = setup; invalid.upperExpertMemoryGB = 2
         XCTAssertThrowsError(try invalid.lanes(modelPath: "/Models/strata", signature: nil))
         invalid = setup; invalid.headroomGB = .nan
@@ -143,7 +148,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertFalse(setup.goal.matches(changed))
     }
 
-    func testSettingsSearchSuggestionRequiresQualityHeadroomAndMatchingEvidence() async throws {
+    private func settingsSearchFixture() throws -> ComparisonRun {
         let setup = StrataSettingsSearchSetup()
         let lanes = try setup.lanes(modelPath: "/Models/strata", signature: "model")
         let memory = SystemMemoryEvidence(totalBytes: 128_000_000_000, baselineAvailableBytes: 40_000_000_000,
@@ -156,19 +161,73 @@ final class ComparisonCoordinatorTests: XCTestCase {
                 "strata_speculation": options.speculation, "strata_expert_memory_gb": options.expertMemoryGB!]))
             let sample = ComparisonSample(promptID: "p", outputExcerpt: "323", tokensPerSecond: 10, timeToFirstTokenSeconds: 1,
                 error: nil, promptTokens: 80, finishReason: "stop", timeToFirstAnswerSeconds: Double(index + 1),
+                durationSeconds: [10.0, 8, 4, 6][index],
                 promptProcessing: PromptProcessingEvidence(usage: ["prompt_tokens": 80],
                     timings: ["cache_n": 40, "prompt_n": 40, "prompt_ms": Double(index + 1) * 1000]))
             let second = ComparisonSample(promptID: "q", outputExcerpt: "4", tokensPerSecond: 10, timeToFirstTokenSeconds: 1,
                 error: nil, promptTokens: 100, finishReason: "stop", timeToFirstAnswerSeconds: Double(index + 1),
+                durationSeconds: [12.0, 10, 6, 8][index],
                 promptProcessing: PromptProcessingEvidence(usage: ["prompt_tokens": 100],
                     timings: ["cache_n": 60, "prompt_n": 40, "prompt_ms": 500]))
             return VariantResult(modelPath: lane.modelPath, modelSignature: "model", samples: [sample, second], aggregateTokensPerSecond: 10,
                 aggregateTTFTSeconds: 1, error: nil, servingEvidence: evidence, laneID: lane.id, systemMemory: memory)
         }
-        var run = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil, variants: lanes.map(\.modelPath),
+        return ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil, variants: lanes.map(\.modelPath),
             results: results, startedAt: Date(), finishedAt: Date(), state: .completed,
             promptEntries: [PromptEntry(id: "p", text: "17 * 19"), PromptEntry(id: "q", text: "2 + 2")],
             laneConfigurations: lanes, settingsSearchGoal: setup.goal)
+    }
+
+    func testSettingsSearchObjectiveUsesCompleteResponsesAndPreservesLegacyRanking() throws {
+        var run = try settingsSearchFixture()
+        let lanes = try XCTUnwrap(run.laneConfigurations)
+        run.qualityReviews = Dictionary(uniqueKeysWithValues: lanes.map {
+            ($0.id, ComparisonQualityReview(score: 5, rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: Date()))
+        })
+        func completedRun(change: ((inout [[String: Any]]) -> Void)? = nil) throws -> ComparisonRun {
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(run)) as? [String: Any])
+            var goal = try XCTUnwrap(object["settingsSearchGoal"] as? [String: Any])
+            goal["objective"] = "completedResponse"; object["settingsSearchGoal"] = goal
+            if let change {
+                var values = try XCTUnwrap(object["results"] as? [[String: Any]])
+                var samples = try XCTUnwrap(values[2]["samples"] as? [[String: Any]])
+                change(&samples); values[2]["samples"] = samples; object["results"] = values
+            }
+            return try JSONDecoder().decode(ComparisonRun.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        XCTAssertEqual(run.settingsSearchCandidateID, lanes[0].id)
+        let completed = try completedRun()
+        XCTAssertEqual(completed.settingsSearchCandidateID, lanes[2].id)
+        XCTAssertEqual(try JSONDecoder().decode(ComparisonRun.self, from: JSONEncoder().encode(completed)), completed)
+        XCTAssertEqual(completed.results[2].completedResponseSeconds, 5)
+        let legacy = try JSONDecoder().decode(StrataSettingsSearchGoal.self, from: Data("{\"contextTokens\":8192,\"headroomGB\":8}".utf8))
+        XCTAssertEqual(legacy.effectiveObjective, .firstAnswer)
+        let source = JSONStore<ComparisonRun>(fileURL: temporaryURL("completion-objective.json"))
+        let coordinator = ComparisonCoordinator(probe: ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in
+            XCTFail("Reading an objective must not serve"); return "unused"
+        }, start: { _, _, _ in XCTFail("Reading an objective must not serve") }, stop: { _ in }), prober: OpenAIEndpointProber()),
+            runStore: source, promptSetStore: JSONStore(fileURL: temporaryURL("completion-prompts.json")))
+        try source.upsert(run, id: \.id)
+        XCTAssertEqual(try coordinator.requireCurrentSuggestion(run).id, lanes[0].id)
+        try source.upsert(completed, id: \.id)
+        let saved = try Data(contentsOf: source.url)
+        XCTAssertThrowsError(try coordinator.requireCurrentSuggestion(run))
+        XCTAssertEqual(try coordinator.requireCurrentSuggestion(completed).id, lanes[2].id)
+        XCTAssertEqual(try Data(contentsOf: source.url), saved)
+        for changed in [try completedRun { $0[0].removeValue(forKey: "durationSeconds") },
+                        try completedRun { $0[0]["durationSeconds"] = 0 },
+                        try completedRun { $0[0]["durationSeconds"] = 2 },
+                        try completedRun { $0[0]["finishReason"] = "length" },
+                        try completedRun { $0[0]["error"] = "interrupted" }] {
+            XCTAssertEqual(changed.settingsSearchCandidateID, lanes[3].id)
+        }
+        XCTAssertEqual(run.settingsSearchCandidateID, lanes[0].id)
+    }
+
+    func testSettingsSearchSuggestionRequiresQualityHeadroomAndMatchingEvidence() async throws {
+        let setup = StrataSettingsSearchSetup()
+        var run = try settingsSearchFixture()
+        let lanes = try XCTUnwrap(run.laneConfigurations)
         XCTAssertNil(run.settingsSearchCandidateID)
         run.qualityReviews = Dictionary(uniqueKeysWithValues: lanes.map {
             ($0.id, ComparisonQualityReview(score: 5, rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: Date()))
@@ -206,8 +265,9 @@ final class ComparisonCoordinatorTests: XCTestCase {
         if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] {
             let directory = URL(fileURLWithPath: folder)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var completed = reviewed; completed.settingsSearchGoal?.objective = .completedResponse
             for (name, snapshot) in [("cache-matched-suggestion", reviewed), ("cache-missing-suggestion", missingCache),
-                                     ("cache-mismatched-suggestion", changedCache)] {
+                                     ("cache-mismatched-suggestion", changedCache), ("completion-objective-suggestion", completed)] {
                 let view = ScrollView { ComparisonMemoryTradeoffView(run: snapshot).padding(24) }
                     .frame(width: 820, height: 650, alignment: .topLeading)
                     .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
