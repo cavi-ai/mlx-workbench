@@ -130,7 +130,7 @@ class ReleaseDocsContractTests(unittest.TestCase):
             for section in navigation["sections"]
             for page in section["pages"]
         ]
-        self.assertEqual(len(paths), 8)
+        self.assertEqual(len(paths), 22)
         self.assertEqual(len(paths), len(set(paths)))
         self.assertTrue(all((source / "pages" / path).is_file() for path in paths))
 
@@ -222,7 +222,7 @@ class ReleaseDocsContractTests(unittest.TestCase):
             run_node("scripts/docs/build.mjs", "--version", VERSION, "--output", fresh, *common)
             stale = root / "stale"
             run_node("scripts/docs/build.mjs", "--version", VERSION, "--output", stale, *common)
-            page = stale / "guides" / "configuration.md"
+            page = stale / "reference" / "configuration.md"
             page.write_text("out of date\n")
             run_node("scripts/docs/build.mjs", "--version", VERSION, "--output", stale, *common)
             self.assertEqual(tree_digest(fresh), tree_digest(stale))
@@ -387,6 +387,8 @@ class ReleaseDocsContractTests(unittest.TestCase):
         )
         for phrase in required:
             self.assertIn(phrase, workflow)
+        # make test imports the vendored engine; the checkout must include it.
+        self.assertIn("submodules: true", workflow)
         self.assertIn("GITHUB_SHA: ${{ github.sha }}", workflow)
         self.assertIn('commit="$GITHUB_SHA"', workflow)
         self.assertIn("tag_commit", workflow)

@@ -1,225 +1,65 @@
 # mlx-workbench
 
-Local UI for the [mlx-agent](https://github.com/cavi-ai/mlx-agent) model lifecycle on Apple Silicon.
+A native macOS app for running local models on Apple Silicon. Find a model, convert it to MLX, verify it, serve it on a loopback port, compare it against alternatives and wire it into your coding tools.
 
-MLX Workbench is a native SwiftUI application. Model management, conversion, serving, generation, controlled experiments, and text training use the shared mlx-agent engine through a subprocess boundary.
-
-The Python package supplies configuration and compatibility utilities. `make install` creates a local Python 3.12 environment for the selected engine. The application has no web server.
-
-## Requirements
-
-- macOS on Apple Silicon
-- Git
-- [uv](https://github.com/astral-sh/uv) recommended (or Python 3.12 via Homebrew)
+MLX Workbench is the desktop front end for [mlx-agent](https://github.com/cavi-ai/mlx-agent). Every operation runs through the engine's `scripts/mlx-agent … --json` command line: each change is previewed before you confirm it, launched work leaves an engine receipt, and serving binds to `127.0.0.1`.
 
 ## Install
+
+Requires an Apple Silicon Mac, Git and Python 3.12 ([uv](https://github.com/astral-sh/uv) recommended).
+
+Download `mlx-workbench-<version>.dmg` from the [latest release](https://github.com/cavi-ai/mlx-workbench/releases/latest) and drag **MLX Workbench** into **Applications**. The app runs the engine from a local checkout:
 
 ```bash
 git clone --recurse-submodules https://github.com/cavi-ai/mlx-workbench.git
 cd mlx-workbench
-make install    # submodule + .venv (Python 3.12) + torch/transformers-4/gguf/mlx-lm/accelerate
-make start
+make install
 ```
 
-That is the whole setup. `make install` creates a project `.venv` (not Homebrew system Python) and installs convert/serve packages there. Re-run `make install` anytime to refresh.
+Open the app and set **Settings → Engine → mlx-agent checkout** to the checkout's `vendor/mlx-agent`. The first-launch Setup Assistant walks through the same checks.
 
-The default agent path is `vendor/mlx-agent` (pinned release). Override with Settings, or `$MLX_AGENT_HOME`, for a local mlx-agent checkout. `make install` and `make check` use that resolved configured path first, and initialize the vendored submodule only when no usable agent is configured.
+To build from source instead, run `make start` in the checkout after `make install`; it builds the app with Xcode and opens it.
 
-Qwen3.8-Flash-Next can also use the optional [Strata inference runtime](docs/strata.md) with a prepared local GGUF pair. Its dependencies are isolated from the standard MLX environment.
+## First model
 
-## Native workflows
+1. **Library** lists the GGUF and MLX weights already on disk, with whether each fits in memory now.
+2. Paste a Hugging Face link anywhere with ⇧⌘V. The intake window shows what the model is and how it converts before anything downloads.
+3. **Prepare** previews the conversion, its output size and fit. **Confirm conversion** starts the job; supported task types then run a canary before the model is marked verified.
+4. **Run** previews and starts a loopback server for the verified model.
+5. **Clients** points opencode, Continue, Zed or Aider at that server, with backups and rollback.
 
-`mlx-mac/` is a native SwiftUI app over the same agent boundary — same preview/confirm discipline, same receipts — with these lifecycle workflows:
+See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.md) for the full walkthrough.
 
-- **Conversion Quality Gate**: supported chat, speech-to-text, classification,
-  and image-generation conversions run task-specific canaries before they
-  are marked verified. Chat uses an ephemeral loopback server; other tasks
-  use their engine commands. Tasks without a canary retain their own behavior.
-- **Measured Comparisons**: replay prompt sets (built-in or imported from your opencode history) across variants; measured tok/s and TTFT feed the recommendation engine.
-- **Import OpenCode prompts**: imported prompts become selectable only after the set is saved. A failed save preserves existing sets and reports the import error; retry after resolving the storage problem.
-- **Compare modes**: besides chat, compare vision, video understanding, speech-to-text, text-to-speech, music generation, image generation and video generation models side by side. Each prompt's output is saved (image, audio, video, or text) so you can see and hear the differences next to the speed metric for that mode; the 10 newest runs keep their files. Music prompts carry a caption, lyrics or an instrumental marker, duration, steps and seed; speed does not establish listening quality. Run history is searchable and grouped by mode.
-- **Music listening**: switch A/B at the same elapsed time, pause and scrub with one shared audio player below the chart. Rate each model's listening quality from 1–5; saved ratings award a quality champion independently of generation speed once every variant is reviewed. Shorter clips clamp to their end; independently generated musical phrases may differ.
-- **Speech listening**: completed text-to-speech comparisons offer the same A/B player with pause, scrub and reset. Switching preserves elapsed time and clamps to shorter clips; different speaking rates mean words may not align. Speech keeps its task-quality ratings. Missing clips are excluded, and leaving Compare stops playback.
-- **Image inspection**: click a generated-image thumbnail or **Inspect images** on a completed run to view two models' outputs for the same prompt. Switch models, zoom both panes together and drag either image (or use arrow keys when focused) to pan; **Reset** returns to fit. Each image keeps its aspect ratio and bounds. Rate quality through the existing task-quality menu; unavailable outputs are excluded and save errors remain visible in the viewer.
-- **Text comparison**: completed chat, vision, video-understanding and transcription runs offer **Compare text · A/B** below the charts. Read two models' recorded responses for the same prompt or highlight line differences. New chat runs retain full responses; older excerpts are labeled. Failed or missing outputs cannot produce a diff. Very long responses remain readable in full, with highlighted differences disabled.
-- **Video inspection**: completed video-generation runs offer **Inspect videos** and clickable previews. Compare two models on one elapsed-time control with shared play/pause, seeking and reset; the shorter clip holds its last frame while the longer continues. Audio starts off; choose A or B to hear one clip. Opening the viewer never autoplays, prompt changes reset playback, and closing it releases both players. Model switches preserve elapsed time and playback state. Task-quality ratings stay separate from speed, and unavailable clips or playback errors remain visible.
-- **Input evidence**: new vision, video-understanding and transcription comparisons save one input per prompt before running any model. Every model reads that saved copy, and history previews it even if the original changes or disappears. Saved inputs follow the same ten-run retention as outputs; unavailable copies are labeled and never replaced by the current original. Older user-picked inputs are labeled **Original file · not saved with run**. Text A/B shows the same input status and offers **Show input in Finder** while it is available. Transcription labels the reference transcript, and expected-word checks remain separate from human quality ratings.
-- **Find prompt sets**: the compact prompt-set picker opens a searchable list grouped into temporary setups, saved sets and built-in presets. Search names, prompt text or tool names within the current comparison mode; each row shows its prompt count and the selected set is marked. Searching never changes the selected suite or starts a comparison. Clear the search to see every set again. Customize, Edit, Rename and Remove remain in the adjacent action menu.
-- **Fix prompt settings while editing**: new, edited, customized and reused setups in every comparison mode show a concise warning inside the affected prompt card. Save and Use setup stay disabled until required text, input selections and parameter values are valid. Music validates captions, lyrics, duration, steps and seed with the same rules used for saving. Blank optional settings still use runtime defaults; file availability is checked again when saving or applying.
-- **Customize prompt presets**: choose **Customize copy…** from the menu beside the prompt-set picker to start from a built-in or saved suite in any mode. The editor preserves its prompts, tool schemas and settings under a new set identity; change the suggested name and save explicitly. Opening or canceling the editor leaves the source untouched and never runs a comparison. Saved media copies keep independent input files, so removing the source set does not remove the customized set’s inputs. Edit, Rename and Remove remain limited to saved user-created sets.
-- **Readable input names**: newly saved input copies retain the source filename in prompt editors, reused setups, history and text A/B. Replacing a file updates its name; unavailable copies keep their recorded label and still require replacement. Older records use the basename of their recorded path. Names are labels only; previews and Finder actions always use the actual fenced file location.
-- **Arrange comparison prompts**: in every comparison mode’s new-set, saved-set and reuse editor, use **Add prompt** or a card’s minus button to add/remove prompts while keeping at least one. Open a card’s action menu to **Duplicate prompt**, **Move up** or **Move down**. Duplicates keep the current draft settings and input reference with a new prompt identity; editing the duplicate leaves the source prompt alone. Music duplicates also preserve captions, lyrics, duration, steps and seed. New music prompts use instrumental lyrics, 15 seconds, 30 steps and seed 42; enter a caption before saving. Save or Use setup applies the revised suite to future comparisons. Opening the menu or arranging cards never saves or runs a comparison, and past runs retain their recorded order and results.
-- **Keep new prompts in view**: adding or duplicating a prompt scrolls its new card into view in every prompt editor. Typing, reordering and removing prompts do not request an automatic scroll jump.
-- **Find prompt errors**: multi-prompt editors show a compact **Fix prompt N** action below the cards. It jumps to the first invalid prompt in the current order; correcting the error updates or removes the action. Validation does not scroll automatically or save changes.
-- **Keep unsaved edits**: Cancel after edits in a saved set, new set, customized copy or reused setup offers **Keep editing** and **Discard changes** in the button row. Simply opening a draft does not require confirmation. Discard closes the draft without changing saved sets or recorded runs; interactive dismissal is disabled while edits remain. A successful **Save as prompt set** keeps the reused inputs and clears the confirmation until further edits; failed saves retain it. Save and Use setup remain explicit actions.
-- **Rename consistently**: every comparison mode uses the same compact Rename sheet with inline name validation. Rename is disabled for invalid, unchanged or whitespace-only changes. Edited names use the same **Keep editing / Discard changes** cancellation safeguard; saving changes only the saved name and preserves recorded runs.
-- **Name prompt sets**: new sets, customized copies, reused setups and Rename share inline name feedback. Untouched blank fields stay quiet; clearing an edited name shows a warning. A valid name clears the warning. Editing a name never saves or starts generation.
-- **Understand disabled actions**: hover over Save, Rename or Use setup for the current validation reason or an unchanged-draft explanation. The same guidance is available as an accessibility hint in every comparison mode.
-- **Understand Run comparison**: a compact setup message identifies a pending prompt-set save, a missing or empty prompt set, an empty model selection or the first unavailable model slot. The button shares the explanation through hover and accessibility hints; during a run it asks you to wait. Guidance clears when the setup becomes eligible and never starts a comparison.
-- **Remove prompts deliberately**: the minus button offers **Keep prompt** and **Remove prompt** within the card in every mode. Only explicit removal changes the draft; saved sets and past runs stay intact. The final prompt cannot be removed, and a pending confirmation clears if removal becomes unavailable.
-- **Revert one prompt**: the card's actions menu offers **Revert prompt** in every mode. It restores that card's initial text, input and raw settings while keeping other prompts and their order. Added and duplicated cards retain their own initial values. Revert only changes the draft; unavailable inputs stay unavailable.
-- **Revert a replaced input**: vision, video-understanding and speech-to-text cards offer **Revert input** after choosing a replacement. It restores the input from when the editor opened, including built-in fixtures or saved inputs, while keeping other prompt edits. Missing inputs remain unavailable. Revert does not save, generate or alter files.
-- **Revert saved-set edits**: **Save changes** is disabled until a saved prompt set has draft edits. **Revert changes** restores the prompts, settings and order from when the editor opened, including invalid typed values that have not been saved. Revert only changes the draft; it does not write files, generate output or reload a newer saved version. New sets and customized copies keep their explicit creation flow.
-- **Task quality ratings**: the results for chat, vision, video, speech and image comparisons include a compact **Rate quality** menu for each model. Inspect every prompt's output, then choose a 1–5 task-outcome rating; hover for guidance specific to the task. Ratings are explicit human judgments, separate from speed and automated checks. New ratings require complete, available outputs. Saved ratings remain visible when media is pruned and can be cleared. Quality trophies require every model in the run to be reviewed and share ties; current champions also require matching model identities and environment. Failed saves retain the published rating, and successful retries clear the error.
-- **Reuse music setup**: beside run history, restore a completed music run's recorded captions, lyrics, duration, steps, seed and model selections into a temporary editor. Adjust each prompt, choose **Use setup**, then **Run comparison** to generate a fresh run. Unavailable models remain visible and must be replaced or removed. Saved presets, results and ratings stay intact; older runs without prompt snapshots cannot be reused. Blank settings use the current generation defaults, so reuse does not promise identical audio.
-- **Reuse other comparison setups**: **Reuse setup** also opens completed chat, vision, video, speech and image runs in the shared prompt editor. Adjust the recorded prompts and settings, add/remove prompts, replace missing input files, or **Save as prompt set…** to create an independent copy. Saving copies available input files into separate prompt-set storage, so the saved set survives comparison-cache pruning. Originals stay intact; failed saves roll back their new copies. Removing a saved set reclaims its unreferenced input copies while preserving other sets and historical outputs. **Use setup** restores the recorded model selections to Compare; unavailable models must be replaced or removed before **Run comparison**. Opening, saving and using a setup never starts generation or changes the original run. Reuse keeps the current serving limits and runtime defaults. Temporary setups still use the ten-run input cache; missing saved inputs require explicit replacement. Older runs use current original files or regenerate built-in fixtures, and previously saved sets retain their existing file references.
-- **Save music prompts**: in the reuse editor, choose **Save as prompt set…**, enter a name and save the edited prompts and generation settings for later. The new set appears in the prompt set picker and keeps its own identity, even when its name matches an existing set. Saving does not generate audio or save model selections.
-- **Create music prompts**: choose **New set…** in music generation mode to build a named set with a caption, lyrics (or `[instrumental]`), duration, steps and seed for each prompt. Add or remove prompts while keeping at least one. New prompts start at 15 seconds, 30 steps and seed 42; blank settings use the current generation defaults. **Save prompt set** selects the new set only after it is saved successfully. Invalid settings or failed saves keep the editor open; Cancel discards the draft without writing or generating audio.
-- **Prompt settings in other modes**: **New set…** and **Edit…** use the same styled prompt cards, with add/remove controls and settings for each prompt. Saving keeps independent input copies with new sets and copies replacement files when editing. Unchanged owned files are reused; text/settings edits do not duplicate them. Failed or conflicting saves keep the draft and old files. Unreferenced owned folders are reclaimed after successful edits, while other sets and historical references stay protected. Chat exposes text and a requested token limit while preserving saved tool schemas. Vision/video understanding expose the input file, question, token limit and optional expected words; speech-to-text exposes an audio file and optional reference transcript (needed for word-error-rate scoring); text-to-speech exposes text to speak. Available input files offer a collapsed **Preview input** in new, edited and reused setups: enlarge images, play/scrub audio or view video with transport controls. Previews never autoplay or generate built-in fixtures; replacing an input or closing its preview stops playback. Image generation exposes square size, steps and seed; video generation exposes width, height, frames, frame rate, steps and seed. Video alignment and frame grouping are model-specific and checked by the engine when run. The compact menu also renames or confirms removal of user-created sets in every mode. Saving is explicit, failed saves retain the draft, and Cancel never writes or starts generation. Edits preserve past run snapshots and outputs; current measurements and suggested measured alternatives require the selected prompt settings to match the recorded snapshot.
-- **Manage music prompts**: select a saved music prompt set, then use the compact menu beside the picker to edit its captions, lyrics, duration, steps and seed, rename it or confirm its removal. Editing saves only when you choose **Save changes**; Cancel leaves the set unchanged. If the saved set changed while the editor was open, saving is refused until you reopen it. Built-ins and temporary setups are protected, and management is disabled during a comparison. Past runs keep their recorded names, prompts, audio and listening ratings.
-- **Compare decisions on this Mac**: start with the last intentionally served compatible model and nearby alternatives. Compare local task outcomes, speed, first-token latency, disk size, and estimated memory fit at the chosen context. Workflow reports can be imported explicitly from local JSON and exported with machine and evidence context for an agent; missing or stale measurements stay visible. Reclaim suggestions require comparable task evidence and keep the existing preview/confirm boundary. See the [native Compare guide](mlx-mac/README.md#compare-decisions-and-workflow-evidence).
-- **Cross-client Wiring**: point opencode, Continue, Zed, or Aider at a running local server with atomic config writes, backups, and rollback.
-- **Always-on Endpoint**: a stable loopback port with crash-loop-guarded supervision, optional login item, and a menu-bar status item.
-- **Disk Pressure Advisor**: task-scoped replacement chains show the retained model and reviewed alternatives. Exact duplicate and stale GGUF files can be quarantined after preview. In the native Reclaim tab, **Review model folder…** (also available on replacement candidates) previews a local MLX folder's path, file count and size before quarantine. Put back restores the whole folder; Move to Trash requires another preview. Empty Trash in Finder to free disk space. Folder moves require the same volume, configured MLX roots, independent regular files and a recognized MLX config/weights; active/preferred models, retained chain keepers, shared HF cache snapshots, links and scan roots themselves are protected. Contents and current protection/configuration are rechecked at confirmation. Folder records remain visible in native Reclaim history.
-- **Model Lineage**: a per-model provenance timeline (source → converted → verified → benchmarked → served → wired), exportable as Markdown or JSON.
-- **Watch & Regression Alerts**: upstream Hugging Face digests and macOS/MLX environment-drift re-verification prompts.
-- **Memory-fit Advisor**: fits/tight/won't-fit verdict with a suggested max context before serving.
-- **Live memory header**: system-wide estimated RAM usage and available headroom stay visible across native tabs. Open it for serving-process status, safe Unload controls, and the context used for model-fit reviews. New native endpoints default to **Load on request**: the port stays reachable, and the first inference request loads the selected existing local weights. **Unload** releases a JIT model while keeping that endpoint enabled; the next request loads it again. Existing endpoints retain their previous mode until changed in Run. **Stop server** stops an eager endpoint and disables its restart; model files remain on disk. Active comparison and verification models are protected.
-- **Automatic memory management**: each JIT endpoint has compact controls in Run for idle unload, **Keep loaded after use**, and a headroom reserve. New endpoints unload after 10 idle minutes and check a 2 GB reserve before loading; existing endpoints retain their policy until configured. Streams hold the model until they finish. The cold-load check estimates weights plus runtime allowance and reserve; unavailable measurements block loading, and the failure reason stays visible. Other processes, concurrent endpoint loads and growing contexts can change actual memory use after the check.
+## What it does
 
-Build and run:
+| Area | Screens | Highlights |
+|---|---|---|
+| Workbench | Overview, Library | Model budget, fit per model, model details and lineage |
+| Lifecycle | Prepare, Compare, Run | Previewed conversion, quality gate canaries, measured comparisons in eight modes, always-on endpoints with load on request |
+| Operations | Activity, Reclaim, Clients, Health | Job timeline, quarantine and Trash with restore, client config wiring with rollback, runtime readiness |
+| Lab | Discover, LM Studio, Training, Adopt | Hub candidates with fit, LM Studio's downloads, text LoRA training with evaluation, controlled studies |
+
+Qwen3.8-Flash-Next can also run on the optional [Strata runtime](docs/mlx-workbench/source/pages/workflows/strata.md) from a prepared GGUF pair.
+
+## Documentation
+
+Hosted at [cavi-ai.xyz/docs/mlx-workbench](https://cavi-ai.xyz/docs/mlx-workbench).
+
+- Start: [Overview](docs/mlx-workbench/source/pages/introduction/overview.md), [Installation](docs/mlx-workbench/source/pages/introduction/installation.md), [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.md)
+- Workflows: [Library](docs/mlx-workbench/source/pages/workflows/library.md), [Add from Hugging Face](docs/mlx-workbench/source/pages/workflows/hugging-face.md), [Prepare and verify](docs/mlx-workbench/source/pages/workflows/prepare.md), [Run and endpoints](docs/mlx-workbench/source/pages/workflows/run.md), [Compare](docs/mlx-workbench/source/pages/workflows/compare.md), [Clients](docs/mlx-workbench/source/pages/workflows/clients.md), [Reclaim](docs/mlx-workbench/source/pages/workflows/reclaim.md), [Discover and Adopt](docs/mlx-workbench/source/pages/workflows/discover.md), [Health and alerts](docs/mlx-workbench/source/pages/workflows/health.md), [Training and studies](docs/mlx-workbench/source/pages/workflows/training.md), [Strata](docs/mlx-workbench/source/pages/workflows/strata.md)
+- Reference: [Configuration](docs/mlx-workbench/source/pages/reference/configuration.md), [State and files](docs/mlx-workbench/source/pages/reference/state.md), [Make targets](docs/mlx-workbench/source/pages/reference/make-targets.md)
+- Operate: [Troubleshooting](docs/mlx-workbench/source/pages/guides/troubleshooting.md), [Security model](docs/mlx-workbench/source/pages/security/model.md), [Version and support](docs/mlx-workbench/source/pages/release/version-and-support.md)
+
+## Contributing
 
 ```bash
-make build-swift   # Release build of the native app
-make run-swift     # open it
-make test-swift    # XCTest suite
-# Explicit, real local-model acceptance only:
-make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/to/runtime.json
+make test        # Python compatibility and contract tests
+make test-swift  # XCTest suite for the native app
+make docs-test   # documentation contract tests
 ```
 
-The acceptance target is not part of `make test`: it may perform a real
-conversion and must be given an explicit local runtime manifest. It retains
-the app's preview/confirm and loopback-only boundaries and writes a unique
-evidence directory for each accepted run. See `mlx-mac/README.md` for the
-manifest contract, prerequisites, evidence layout, and failure classes, and
-`mlx-mac/docs/premium/` for the feature specs.
-
-Install from the release DMG: drag **MLX Workbench** to Applications, clone
-this repository with `--recurse-submodules`, run `make install` in the
-checkout, then set **Settings → mlx-agent checkout** to the checkout's
-`vendor/mlx-agent`. The installed app uses that checkout's `.venv` for
-conversions and serving and runs **Install Runtime…** there. **Settings →
-Updates** installs new versions: **Releases** follows published releases,
-**Nightly (main)** follows the nightly build of `main`; each download must
-match its published sha256 and be a notarized Developer ID build of MLX
-Workbench before it replaces the app. `make dmg` builds this distribution app
-without the build machine's source path.
-
-## Run
-
-```bash
-make start     # build and open the SwiftUI application
-make test      # Python compatibility and contract tests
-make test-swift
-```
-
-Quit through the application's menu. The former HTTP launcher and browser assets have been removed.
-
-### Upgrade from v0.4.0
-
-Quit the old DMG application and install the new release DMG manually;
-v0.4.0 does not contain the release installer. Update the runtime checkout
-to the matching release tag, update its submodules, and run `make install`.
-Confirm the engine checkout in Settings. Existing native settings and
-comparison history retain their state locations; model files do not move.
-Stop an earlier browser server before explicitly importing its conversion
-queue in Activity. Browser serve presets are not native endpoint profiles.
-
-## Controlled experiments and training
-
-**Compare → Controlled studies** authors a frozen A/B recipe, queues generation, and retains durable artifacts. Blind review uses shared play/pause, seeking, and frame controls. Scores and preferences become immutable receipts before authorized reveal. Adaptive studies retain progression and stopping evidence.
-
-**Activity** shows experiment, conversion, serving, and text training jobs. Queued conversions from an earlier installation can be explicitly imported after the former server is stopped; the source and an exact backup are preserved.
-
-**Training** validates complete bounded JSONL datasets and previews configuration before launch. Each run pins its cached base model, copies reviewed dataset bytes, records the actual process result, and verifies adapter content. Completed jobs can run a matched base-versus-adapter evaluation. Outputs and frozen recipes are retained in the shared experiment store and remain accessible in evaluation history. Text LoRA training does not establish media training qualification.
-
-**Workspace…** previews adoption of an existing experiment database and artifact store into a new destination. It preserves IDs, hashes, reviews, and sealed assignments, refuses active work or an occupied destination, and leaves the source untouched.
-
-The experiment runtime requires the selected agent's `requirements-lab.txt`. Optional MPS generation uses `requirements-lab-inference.txt`; install it through **Controlled studies → Install runtime…**. Existing model-management, serving, wiring, and cleanup workflows retain their runtime requirements.
-
-## Converting
-
-Every conversion is previewed before it runs. Confirm the command, output path, and preview hash in Prepare. Detached jobs use mlx-agent receipts; Activity shows state and logs.
-
-Imported queued conversions keep their reviewed plans. **Run next** reconciles receipts and starts one pending item when compute is available. Failed launches retain their error and remediation. Retry reuses the reviewed plan; moving queued items does not approve a new plan.
-
-The shared queue lives beside the mlx-agent compute state on macOS. Earlier Workbench queue files remain import sources until explicitly adopted. Source files and an exact backup are preserved.
-
-Conversion uses local source weights. **Add from Hugging Face** is a separate confirmed download. Prefer original floating-point weights when available; conversion cannot recover information removed by prior quantization.
-
-## Add from Hugging Face
-
-Paste a model link into Prepare (or press ⇧⌘V anywhere). Before anything downloads the app shows
-what the model is and how it converts:
-
-| Verdict | What happens |
-|---|---|
-| Convertible | Download, then the usual Prepare preview and confirm |
-| Convertible after install | One click installs the backend (mlx-vlm or mlx-audio) into its own environment |
-| Already MLX | Install its declared backend if needed, then download into the output directory |
-| GGUF repository | Pick a quant file; it downloads into your first GGUF root and opens in Prepare |
-| No MLX converter | Shows which parts already exist in MLX and which are missing; a locally served model can draft a porting plan |
-| Blocked / Hub unreachable | Gated, private, or offline; nothing is downloaded |
-
-Native Run, verification, chat comparisons, and endpoints select the serving backend from the local model's architecture. Optional backends run from their isolated environment, including models already published in MLX format. Prism's `prism_hadamard_qwen35` packs use the pinned MLX-VLM adapter for their signed Hadamard transforms, packed 2-bit weights, and inverse embedding lookup; their weights stay in the published format. Unsupported loaders are refused, and model-repository runtime code is never executed.
-
-mlx-agent also ships MLX ports of architectures the pinned backends lack, so their links resolve as convertible. Edge0/Audio8-ASR-Infinite (streaming English/Chinese speech recognition) converts through mlx-audio; the 4-bit output quantizes the text decoder and keeps the audio tower at bf16 (8.2 GB source, 3.5 GB output).
-
-## Configuration
-
-`~/.config/mlx-workbench/config.json`, editable from Settings. `MLX_WORKBENCH_CONFIG` overrides the location. `MLX_AGENT_HOME` overrides agent discovery when it points at a checkout that contains `scripts/mlx-agent`.
-
-```json
-{
-  "gguf_roots": ["/Users/you/.lmstudio/models"],
-  "mlx_roots": [],
-  "output_dir": "/Users/you/models/mlx",
-  "mlx_agent_path": "",
-  "quarantine_dir": "/Users/you/.local/share/mlx-workbench/quarantine",
-  "q_bits": 4,
-  "signatures": true
-}
-```
-
-Leave `mlx_agent_path` empty to use the vendored submodule (or env / sibling discovery).
-
-## Security
-
-Serving endpoints remain loopback-only. Agent commands use argv tokens rather than shell strings. Preview hashes bind reviewed inputs before conversion and training. Experiment media is integrity-checked and reviewer-scoped; sealed variant assignments are revealed only after an accepted review. Quarantine and cleanup retain native preview, protection, and confirmation checks.
-
-## Updating the mlx-agent pin
-
-```bash
-cd vendor/mlx-agent
-git fetch --tags
-git checkout v0.6.0   # or a newer release tag
-cd ../..
-git add vendor/mlx-agent
-```
-
-## Tests
-
-```bash
-make test
-# or
-python3 -m unittest discover -s tests -t .
-
-# Read-only E2E: verify each scanned model's reported byte count against disk.
-make test-live-scan
-make test-swift-live-scan
-```
-
-## Make targets
-
-| Target | Action |
-| --- | --- |
-| `make install` | Submodule + `.venv` + convert/serve packages |
-| `make start` / `make run` / `make open` | Build and open the SwiftUI application |
-| `make test` | Unittest suite |
-| `make test-live-scan` | Opt-in, read-only local E2E scan; verifies reported model bytes against the filesystem |
-| `make test-swift-live-scan` | Opt-in, read-only native-app E2E scan; verifies reported model bytes against the filesystem |
-| `make check` / `make doctor` | Verify mlx-agent + convert deps |
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [Development](docs/mlx-workbench/source/pages/guides/development.md). The docs are built from `docs/mlx-workbench/source` with `make docs-build` into the release asset `mlx-workbench-docs-v<version>.tar.gz`; the [consumer contract](docs/mlx-workbench/CONSUMER.md) describes it.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). mlx-agent is also MIT; see that repository for its terms.
+MIT. See [LICENSE](LICENSE). mlx-agent is also MIT.
