@@ -466,11 +466,11 @@ struct ServeView: View {
                 .buttonStyle(.bordered)
                 .disabled(!presentation.canPreview || busy)
             Button("Confirm and run", action: confirmServeAction)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.workbenchPrimary)
                 .disabled(busy)
         } else if presentation.canPreview {
             Button("Preview serve", action: previewServeAction)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.workbenchPrimary)
                 .disabled(busy)
             Button("Confirm and run", action: confirmServeAction)
                 .buttonStyle(.bordered)
@@ -842,7 +842,7 @@ struct ServeView: View {
     private func addEndpointButtons(_ presentation: RunPresentation, canAdd: Bool) -> some View {
         HStack(spacing: WorkbenchSpacing.xs) {
             Button("Add endpoint") { addEndpoint(allowUnverified: false) }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.workbenchPrimary)
                 .disabled(!canAdd)
                 .help(presentation.addEndpointBlockedReason ?? "Adds the model shown above as a new endpoint.")
             Menu {
@@ -937,7 +937,7 @@ struct ServeView: View {
                 Button("Cancel") { showLoginItemPreview = false }
                 Spacer()
                 Button("Confirm install") { installLoginItem() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
             }
         }
         .padding(WorkbenchSpacing.md)

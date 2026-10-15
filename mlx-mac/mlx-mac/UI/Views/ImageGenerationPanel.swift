@@ -49,7 +49,7 @@ struct ImageGenerationPanel: View {
             Task { await coordinator.generate(modelPath: modelPath, request: request) }
         }
         if isPrimary {
-            button.buttonStyle(.borderedProminent)
+            button.buttonStyle(.workbenchPrimary)
         } else {
             button.buttonStyle(.bordered)
         }

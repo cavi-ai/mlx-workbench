@@ -556,7 +556,7 @@ struct NextStepPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: WorkbenchSpacing.xs)
                 Button(action.buttonTitle, action: perform)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .accessibilityHint(action.title)
             }
             .frame(maxHeight: .infinity, alignment: .top)

@@ -158,7 +158,7 @@ struct DoctorView: View {
             .controlSize(.small)
         }
         Button(isRunning ? "Checking…" : "Run doctor") { runDoctor() }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.workbenchPrimary)
             .disabled(isRunning)
     }
 

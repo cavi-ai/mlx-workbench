@@ -456,13 +456,13 @@ struct SettingsView: View {
             Button("Update to \(offer.target)") {
                 Task { await updater.apply(offer: offer) }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.workbenchPrimary)
         }
         if case .updated = updater.phase {
             Button(updater.installsReleases ? "Relaunch" : "Rebuild & relaunch") {
                 Task { await updater.rebuildAndRelaunch() }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.workbenchPrimary)
         }
         if case .checking = updater.phase {
             ProgressView().controlSize(.small)
@@ -524,7 +524,7 @@ struct SettingsView: View {
                     .disabled(!isDirty || isSaving)
                     .accessibilityIdentifier("settings-discard")
                 Button("Save") { save() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .disabled(!isDirty || !isValid || isSaving)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("settings-save")

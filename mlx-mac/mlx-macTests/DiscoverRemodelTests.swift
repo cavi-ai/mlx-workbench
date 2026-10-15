@@ -499,7 +499,7 @@ final class DiscoverSourceTests: XCTestCase {
         let views = try source("DiscoverViews.swift")
         XCTAssertFalse(views.contains("List("))
         XCTAssertEqual(scout.components(separatedBy: "List(").count - 1, 1, "only the catalog entries keep a List")
-        XCTAssertEqual((scout + views).components(separatedBy: "borderedProminent").count - 1, 1)
+        XCTAssertEqual((scout + views).components(separatedBy: "workbenchPrimary").count - 1, 1)
         XCTAssertEqual(scout.components(separatedBy: "Button(\"Discover\")").count - 1, 1)
     }
 

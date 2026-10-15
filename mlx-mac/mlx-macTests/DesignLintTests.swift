@@ -1,9 +1,46 @@
 import XCTest
+import AppKit
+import SwiftUI
+
+@testable import mlx_workbench
 
 /// Static checks over the SwiftUI sources so the design tokens stay the only
 /// way to pick a font, a color, a spacing, a radius, a tint or a curve, and
 /// routes stay typed.
 final class DesignLintTests: XCTestCase {
+    /// Contrast is checked after appearance resolution, including the
+    /// foreground used by the custom yellow primary action.
+    @MainActor
+    func testBrandPaletteKeepsReadableTextInBothAppearances() throws {
+        for name in [NSAppearance.Name.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua] {
+            let appearance = try XCTUnwrap(NSAppearance(named: name))
+            appearance.performAsCurrentDrawingAppearance {
+                for background in [WorkbenchColor.canvas, WorkbenchColor.sidebar, WorkbenchColor.surface] {
+                    XCTAssertGreaterThanOrEqual(contrast(WorkbenchColor.ink, background), 4.5, name.rawValue)
+                    XCTAssertGreaterThanOrEqual(contrast(WorkbenchColor.accent, background), 4.5, name.rawValue)
+                }
+                XCTAssertGreaterThanOrEqual(contrast(WorkbenchColor.onAccent, WorkbenchColor.action), 7)
+                XCTAssertGreaterThanOrEqual(contrast(WorkbenchColor.onAccent, WorkbenchColor.actionPressed), 7)
+            }
+        }
+    }
+
+    @MainActor
+    private func contrast(_ foreground: Color, _ background: Color) -> Double {
+        func components(_ color: Color) -> NSColor { NSColor(color).usingColorSpace(.sRGB)! }
+        let fg = components(foreground), bg = components(background)
+        func luminance(_ color: NSColor, over base: NSColor) -> Double {
+            let values = zip([color.redComponent, color.greenComponent, color.blueComponent],
+                             [base.redComponent, base.greenComponent, base.blueComponent]).map { value, base in
+                let channel = Double(value * color.alphaComponent + base * (1 - color.alphaComponent))
+                return channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+            }
+            return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722
+        }
+        let a = luminance(fg, over: bg), b = luminance(bg, over: bg)
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
     private struct Rule {
         let pattern: String
         let reason: String

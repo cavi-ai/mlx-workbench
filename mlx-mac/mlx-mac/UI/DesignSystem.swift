@@ -1,27 +1,38 @@
 import SwiftUI
 import AppKit
 
-/// Semantic colors, resolved by AppKit so they follow the system appearance,
-/// accent, and accessibility settings. Views consume roles, never literals.
+/// The shared black-and-yellow palette. Dynamic AppKit colors also give
+/// isolated light-appearance panels a legible counterpart.
 enum WorkbenchColor {
-    /// Window content background.
-    static let canvas = Color(nsColor: .windowBackgroundColor)
-    /// Cards and grouped sections, one translucent step above the canvas.
-    /// The window and control backgrounds resolve to the same color, so an
-    /// opaque control color leaves cards indistinguishable from the canvas.
-    static let surface = Color(nsColor: .tertiarySystemFill)
-    /// Recessed wells inside a surface: capacity-bar track, slot cells.
-    static let well = Color(nsColor: .secondarySystemFill)
-    /// Text and symbols on a solid accent fill.
-    static let onAccent = Color(nsColor: .alternateSelectedControlTextColor)
+    static let canvas = adaptive("Canvas", dark: 0x111111, light: 0xF8F8F5)
+    static let sidebar = adaptive("Sidebar", dark: 0x0C0C0C, light: 0xEFEFEB)
+    static let surface = adaptive("Surface", dark: 0x191919, light: 0xFFFFFF)
+    static let well = adaptive("Well", dark: 0x272727, light: 0xE5E5DF)
+    /// Yellow controls always use dark text, including in dark appearance.
+    static let onAccent = Color(nsColor: rgb(0x111111))
     static let ink = Color(nsColor: .labelColor)
     static let muted = Color(nsColor: .secondaryLabelColor)
-    static let hairline = Color(nsColor: .separatorColor)
+    static let hairline = adaptive("Hairline", dark: 0x343434, light: 0xD3D3CB)
 
-    static let accent = Color.accentColor
+    static let accent = adaptive("Accent", dark: 0xFFD43B, light: 0x785900)
+    static let action = Color(nsColor: rgb(0xFFD43B))
+    static let actionPressed = Color(nsColor: rgb(0xE7BA24))
     static let success = Color(nsColor: .systemGreen)
     static let warning = Color(nsColor: .systemOrange)
     static let failure = Color(nsColor: .systemRed)
+
+    private static func rgb(_ value: UInt32) -> NSColor {
+        NSColor(srgbRed: Double((value >> 16) & 255) / 255,
+                green: Double((value >> 8) & 255) / 255,
+                blue: Double(value & 255) / 255, alpha: 1)
+    }
+
+    private static func adaptive(_ name: String, dark: UInt32, light: UInt32) -> Color {
+        Color(nsColor: NSColor(name: NSColor.Name("Workbench" + name)) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return rgb(isDark ? dark : light)
+        })
+    }
 }
 
 /// Strengths for tone-tinted fills and strokes. Every translucent tone color
@@ -42,14 +53,17 @@ extension Color {
 }
 
 /// Type roles mapped onto the system text styles so Dynamic Type and the
-/// system font stack apply. One voice: SF Pro everywhere, rounded only for
-/// large numerals. Nothing renders below 11 points (macOS caption and
+/// system font stack apply. One voice: SF Pro with tabular figures for
+/// measurements. Nothing renders below 11 points (macOS caption and
 /// footnote are 10 points).
 enum WorkbenchTypography {
+    static let pageTitle = Font.system(size: 30, weight: .semibold)
+    static let inspectorTitle = Font.system(size: 22, weight: .semibold)
+    static let brand = Font.system(size: 14, weight: .semibold)
     /// The one lead numeral on a page, with tabular digits.
-    static let hero = Font.system(size: WorkbenchSize.heroNumeral, weight: .semibold, design: .rounded).monospacedDigit()
+    static let hero = Font.system(size: WorkbenchSize.heroNumeral, weight: .semibold).monospacedDigit()
     /// Large numerals in stats and meters, with tabular digits.
-    static let display = Font.system(.title, design: .rounded).weight(.semibold).monospacedDigit()
+    static let display = Font.title.weight(.semibold).monospacedDigit()
     /// Sheet and window headings.
     static let title = Font.title2.weight(.semibold)
     /// Section headings inside a page.
@@ -57,8 +71,8 @@ enum WorkbenchTypography {
     /// Card headers.
     static let cardTitle = Font.headline
     static let emphasis = Font.body.weight(.semibold)
-    static let body = Font.body
-    static let secondary = Font.callout
+    static let body = Font.system(size: 14)
+    static let secondary = Font.system(size: 13)
     static let label = Font.subheadline.weight(.medium)
     /// Paths, hashes, receipts: monospaced at body size.
     static let value = Font.body.monospaced()
@@ -108,8 +122,8 @@ enum WorkbenchSize {
     static let contentMaxWidth: CGFloat = 1120
     /// Detail-column content width assumed before the first measurement.
     static let assumedContentWidth: CGFloat = 792
-    static let windowDefaultWidth: CGFloat = 1050
-    static let windowDefaultHeight: CGFloat = 720
+    static let windowDefaultWidth: CGFloat = 1440
+    static let windowDefaultHeight: CGFloat = 900
     static let windowMinimumWidth: CGFloat = 740
     static let windowMinimumHeight: CGFloat = 560
     /// Accent-tinted tile behind a model type symbol in an inspector header.
@@ -118,6 +132,12 @@ enum WorkbenchSize {
     static let barHeightCompact: CGFloat = 12
     /// Common height for mixed controls (menus, toggles, buttons) sharing one line.
     static let controlRowHeight: CGFloat = 28
+    static let brandIcon: CGFloat = 36
+    static let sidebarIdeal: CGFloat = 220
+    static let sidebarMinimum: CGFloat = 200
+    static let sidebarMaximum: CGFloat = 280
+    static let primaryControlHeight: CGFloat = 32
+    static let smallControlHeight: CGFloat = 24
 }
 
 extension WorkbenchSize {
@@ -132,9 +152,12 @@ extension WorkbenchSize {
         static let sizeBarHeight: CGFloat = 4
         static let rowSymbol: CGFloat = 18
 
-        static let inspectorMinimum: CGFloat = 380
-        static let inspectorIdeal: CGFloat = 440
+        static let inspectorMinimum: CGFloat = 320
+        static let inspectorIdeal: CGFloat = 360
         static let inspectorMaximum: CGFloat = 720
+        static let inspectorWindowMinimum: CGFloat = 1100
+        static let inspectorSheetWidth: CGFloat = 560
+        static let inspectorSheetHeight: CGFloat = 720
 
         static let tierHysteresis: CGFloat = 16
         static let tierModified: CGFloat = 780
@@ -155,9 +178,9 @@ extension WorkbenchSize {
         static let sizeMinimum: CGFloat = 72
         static let sizeIdeal: CGFloat = 104
         static let sizeMaximum: CGFloat = 120
-        static let statusMinimum: CGFloat = 100
-        static let statusIdeal: CGFloat = 112
-        static let statusMaximum: CGFloat = 140
+        static let statusMinimum: CGFloat = 140
+        static let statusIdeal: CGFloat = 154
+        static let statusMaximum: CGFloat = 180
         static let modifiedMinimum: CGFloat = 90
         static let modifiedIdeal: CGFloat = 96
         static let modifiedMaximum: CGFloat = 120
@@ -491,8 +514,44 @@ extension WorkbenchSize {
 enum WorkbenchRadius {
     /// Small chips and swatches.
     static let chip: CGFloat = 4
-    static let control: CGFloat = 6
-    static let surface: CGFloat = 10
+    static let control: CGFloat = 8
+    static let surface: CGFloat = 12
+}
+
+/// A branded primary action with an explicit text contrast contract. A
+/// native prominent button otherwise puts white text on the yellow tint.
+struct WorkbenchPrimaryButtonStyle: PrimitiveButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        if configuration.role == .destructive {
+            Button(configuration).buttonStyle(.bordered)
+        } else {
+            Button(role: configuration.role, action: configuration.trigger) {
+                configuration.label
+                    .foregroundStyle(isEnabled ? WorkbenchColor.onAccent : WorkbenchColor.muted)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(WorkbenchColor.action)
+        }
+    }
+}
+
+extension PrimitiveButtonStyle where Self == WorkbenchPrimaryButtonStyle {
+    static var workbenchPrimary: Self { .init() }
+}
+
+extension View {
+    /// Apply at window roots; routes and sheets inherit one coherent theme.
+    func workbenchTheme() -> some View {
+        self.tint(WorkbenchColor.accent)
+            .background(WorkbenchColor.canvas, in: Rectangle())
+            .preferredColorScheme(.dark)
+    }
+
+    func workbenchCanvas() -> some View {
+        background(WorkbenchColor.canvas, in: Rectangle())
+    }
 }
 
 /// Animation curves. Views animate through `workbenchAnimation`, which drops
@@ -570,7 +629,16 @@ private struct RouteActiveKey: EnvironmentKey {
     static let defaultValue = true
 }
 
+private struct WorkbenchViewportKey: EnvironmentKey {
+    static let defaultValue = CGSize(width: WorkbenchSize.windowDefaultWidth, height: WorkbenchSize.windowDefaultHeight)
+}
+
 extension EnvironmentValues {
+    var workbenchViewport: CGSize {
+        get { self[WorkbenchViewportKey.self] }
+        set { self[WorkbenchViewportKey.self] = newValue }
+    }
+
     var isRouteActive: Bool {
         get { self[RouteActiveKey.self] }
         set { self[RouteActiveKey.self] = newValue }

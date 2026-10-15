@@ -120,7 +120,7 @@ struct DuplicatesView: View {
                         Button("Cancel") { reclaim.cancelTrash() }.keyboardShortcut(.cancelAction)
                         Spacer()
                         if reclaim.isApplying { ProgressView().controlSize(.small) }
-                        Button("Move to Trash") { Task { await reclaim.confirmTrash() } }.buttonStyle(.borderedProminent)
+                        Button("Move to Trash") { Task { await reclaim.confirmTrash() } }.buttonStyle(.workbenchPrimary)
                     }.disabled(reclaim.isApplying)
                 }
                 .padding(WorkbenchSpacing.lg).frame(width: 460)
@@ -143,7 +143,7 @@ struct DuplicatesView: View {
                         Button("Quarantine folder") { Task {
                             await reclaim.confirmFolder()
                             if reclaim.lastError == nil { appHost.requestRescan() }
-                        } }.buttonStyle(.borderedProminent)
+                        } }.buttonStyle(.workbenchPrimary)
                     }.disabled(reclaim.isApplying)
                 }.padding(WorkbenchSpacing.lg).frame(width: 480).interactiveDismissDisabled(reclaim.isApplying)
             }

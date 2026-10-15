@@ -359,7 +359,7 @@ final class IntakeSourceTests: XCTestCase {
         var prominent: [String: Int] = [:]
         for branch in branches.prefix(5) {
             let name = String(branch.prefix(while: { $0 != ":" }))
-            prominent[name] = branch.components(separatedBy: ".borderedProminent").count - 1
+            prominent[name] = branch.components(separatedBy: ".workbenchPrimary").count - 1
         }
         XCTAssertEqual(prominent[".convertibleAfterInstall"], 1)
         XCTAssertEqual(prominent[".convertible"], 1)

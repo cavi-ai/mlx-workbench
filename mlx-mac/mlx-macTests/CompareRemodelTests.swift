@@ -18,7 +18,7 @@ private struct ComparisonRunFixtureView: View {
     @ViewBuilder private var runButton: some View {
         if styled {
             ComparisonRunButton(unavailableReason: fixture.reason) { fixture.requests += 1 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.workbenchPrimary)
         } else {
             ComparisonRunButton(unavailableReason: fixture.reason) { fixture.requests += 1 }
                 .buttonStyle(.borderless)

@@ -9,6 +9,7 @@ struct MlxWorkbenchApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(appHost: appHost)
+                .workbenchTheme()
                 .onAppear {
                     appHost.startLiveServices()
                 }
@@ -45,6 +46,7 @@ struct MlxWorkbenchApp: App {
         }
         Window("Add from Hugging Face", id: IntakeWindow.id) {
             IntakeSheet(intake: appHost.intake, appHost: appHost, onRouteSelection: { selectedRouteID = $0.rawValue })
+                .workbenchTheme()
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 720, height: 640)

@@ -19,7 +19,7 @@ extension View {
     @ViewBuilder
     func healthProminence(_ isProminent: Bool) -> some View {
         if isProminent {
-            buttonStyle(.borderedProminent)
+            buttonStyle(.workbenchPrimary)
         } else {
             buttonStyle(.bordered)
         }

@@ -374,7 +374,7 @@ struct TrainingView: View {
     @ViewBuilder
     private var previewButton: some View {
         if session.preview == nil {
-            previewControl.buttonStyle(.borderedProminent)
+            previewControl.buttonStyle(.workbenchPrimary)
         } else {
             previewControl.buttonStyle(.bordered)
         }
@@ -411,7 +411,7 @@ struct TrainingView: View {
                 }
                 operationFeedback
                 Button(session.operation == .submitting ? "Submitting…" : "Confirm & Train") { confirmTraining() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .disabled(!session.canConfirm)
                     .accessibilityIdentifier("training-confirm")
                     .help("Submit the captured training request shown above.")

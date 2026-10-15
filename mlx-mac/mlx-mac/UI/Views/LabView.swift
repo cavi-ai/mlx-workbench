@@ -126,7 +126,7 @@ struct LabHeaderView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack(spacing: WorkbenchSpacing.xs) {
-                Button("New experiment…", action: actions.create).buttonStyle(.borderedProminent)
+                Button("New experiment…", action: actions.create).buttonStyle(.workbenchPrimary)
                 Menu {
                     Button("Import workspace…", action: actions.importWorkspace)
                     Button("Recover interrupted jobs", action: actions.recover).disabled(!canChangeWorkspace)
@@ -301,7 +301,7 @@ struct LabAuthorSheet: View {
                 Spacer()
                 Button("Validate pair") { Task { await validate() } }.disabled(request == nil || busy)
                 Button("Create experiment") { Task { await create() } }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .disabled(previewed == nil || previewed != fingerprint || busy)
             }
             if busy { ProgressView() }
@@ -448,7 +448,7 @@ struct LabReviewSheet: View {
                 Spacer()
                 if receipt == nil {
                     Button("Submit immutable review") { Task { await submit() } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.workbenchPrimary)
                         .disabled(preference.isEmpty || (context.studyID == nil && scores.contains(0)) || busy)
                 }
             }
@@ -568,7 +568,7 @@ struct LabAdoptSheet: View {
                 Spacer()
                 Button("Validate import") { Task { await validate() } }
                     .disabled(busy || database.isEmpty || artifacts.isEmpty || destination.isEmpty)
-                Button("Import with backup") { Task { await adopt() } }.buttonStyle(.borderedProminent)
+                Button("Import with backup") { Task { await adopt() } }.buttonStyle(.workbenchPrimary)
                     .disabled(busy || previewed == nil || previewed != (try? JSONEncoder().encode(request)))
                 if busy { ProgressView().controlSize(.small) }
             }
