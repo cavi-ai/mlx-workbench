@@ -764,6 +764,9 @@ server.
   `config._FOREIGN_KEYS` native premium keys): unknown keys are rejected on
   load and refused on save, so arbitrary fields never enter the shared
   `config.json`.
+- Settings edits only its visible controls and preserves valid stored legacy
+  `host` and `port` through `ConfigModule.saveSettings`, including changes made
+  after opening the form. Serving addresses and ports belong to Run's endpoints.
 - `mlx_workbench/audit.py` appends events to a local audit trail
   (`$XDG_STATE_HOME/mlx-workbench/audit.jsonl`, bounded, best-effort —
   durable stores stay authoritative).

@@ -3,12 +3,10 @@ import SwiftUI
 
 struct SettingsInputValidation {
     enum Field: String, CaseIterable, Hashable {
-        case host, port, fitReserve, staleDays, comparisonTokens
+        case fitReserve, staleDays, comparisonTokens
 
         var label: String {
             switch self {
-            case .host: return "Host"
-            case .port: return "Port"
             case .fitReserve: return "Fit reserve"
             case .staleDays: return "Stale after"
             case .comparisonTokens: return "Comparison max tokens"
@@ -24,28 +22,9 @@ struct SettingsInputValidation {
         var guidance: String { field.label + ": " + instruction }
     }
 
-    var host = "127.0.0.1"
-    var port = "8765"
     var fitReserve = "4"
     var staleDays = "60"
     var comparisonTokens = "512"
-
-    var hostError: String? {
-        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effective = trimmed.isEmpty ? "127.0.0.1" : trimmed
-        guard Config.LOOPBACK_HOSTS.contains(effective) else {
-            return "Loopback only: 127.0.0.1, localhost, or ::1."
-        }
-        return nil
-    }
-
-    var portError: String? {
-        let trimmed = port.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let port = Int(trimmed), (1...65535).contains(port) else {
-            return "Enter an integer between 1 and 65535."
-        }
-        return nil
-    }
 
     var fitReserveError: String? {
         let trimmed = fitReserve.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -73,7 +52,7 @@ struct SettingsInputValidation {
 
     var firstInvalid: InvalidField? {
         let errors: [(Field, String?)] = [
-            (.host, hostError), (.port, portError), (.fitReserve, fitReserveError),
+            (.fitReserve, fitReserveError),
             (.staleDays, staleDaysError), (.comparisonTokens, comparisonTokensError),
         ]
         for (field, instruction) in errors {
@@ -115,11 +94,9 @@ struct SettingsView: View {
     @State private var mlxRoots: [String] = []
     @State private var outputDir = ""
     @State private var mlxAgentPath = ""
-    @State private var host = "127.0.0.1"
     @State private var quarantineDir = ""
     @State private var qBits = 4
     @State private var signatures = true
-    @State private var portText = "8765"
     @State private var verificationEnabled = true
     @State private var watchEnabled = true
     @State private var fitReserveText = "4"
@@ -142,7 +119,7 @@ struct SettingsView: View {
                             engineSection
                             locationsSection
                             storageSection
-                            integrationSection
+                            servingSection
                             conversionSection
                             advisorsSection
                             updatesSection
@@ -324,33 +301,15 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Integration
+    // MARK: - Serving
 
-    private var integrationSection: some View {
-        SettingsSection(title: "Integration") {
-            SettingsRow(label: "Host", message: hostError, stacked: layout.stacksRows) {
-                TextField("Workbench API host", text: $host, prompt: Text("127.0.0.1"))
-                    .textFieldStyle(.roundedBorder)
-                    .labelsHidden()
-                    .accessibilityLabel("Workbench API host")
-                    .accessibilityIdentifier(SettingsInputValidation.Field.host.accessibilityIdentifier)
-                    .id(SettingsInputValidation.Field.host)
-                    .focused($focusedField, equals: .host)
-                    .frame(width: WorkbenchSize.Settings.fieldMedium, alignment: .leading)
-            }
-            SettingsSeparator()
-            SettingsRow(label: "Port", message: portError, stacked: layout.stacksRows) {
-                TextField("Workbench API port", text: $portText, prompt: Text("8765"))
-                    .textFieldStyle(.roundedBorder)
-                    .labelsHidden()
-                    .accessibilityLabel("Workbench API port")
-                    .accessibilityIdentifier(SettingsInputValidation.Field.port.accessibilityIdentifier)
-                    .id(SettingsInputValidation.Field.port)
-                    .focused($focusedField, equals: .port)
-                    .frame(width: WorkbenchSize.Settings.fieldNarrow, alignment: .leading)
+    private var servingSection: some View {
+        SettingsSection(title: "Serving") {
+            SettingsRow(label: "Model endpoints", stacked: layout.stacksRows) {
+                Button("Open Run") { onRouteSelection(.run) }
             }
         } footer: {
-            Text("Loopback host and port for the Workbench API. Non-loopback hosts are rejected.")
+            Text("Manage loopback servers and each endpoint's port in Run.")
         }
     }
 
@@ -613,12 +572,10 @@ struct SettingsView: View {
     // MARK: - Validation
 
     private var validation: SettingsInputValidation {
-        SettingsInputValidation(host: host, port: portText, fitReserve: fitReserveText,
+        SettingsInputValidation(fitReserve: fitReserveText,
             staleDays: staleDaysText, comparisonTokens: comparisonMaxTokensText)
     }
 
-    private var hostError: String? { validation.hostError }
-    private var portError: String? { validation.portError }
     private var fitReserveError: String? { validation.fitReserveError }
     private var staleDaysError: String? { validation.staleDaysError }
     private var comparisonTokensError: String? { validation.comparisonTokensError }
@@ -657,8 +614,8 @@ struct SettingsView: View {
         [
             ggufRoots.joined(separator: "\n"),
             mlxRoots.joined(separator: "\n"),
-            outputDir, mlxAgentPath, host, quarantineDir,
-            "\(qBits)", "\(signatures)", portText,
+            outputDir, mlxAgentPath, quarantineDir,
+            "\(qBits)", "\(signatures)",
             "\(verificationEnabled)", "\(watchEnabled)",
             fitReserveText, staleDaysText, comparisonMaxTokensText,
         ].joined(separator: "\u{1F}")
@@ -674,11 +631,9 @@ struct SettingsView: View {
         mlxRoots = config.mlxRoots
         outputDir = config.outputDir
         mlxAgentPath = config.mlxAgentPath
-        host = config.host
         quarantineDir = config.quarantineDir
         qBits = config.qBits
         signatures = config.signatures
-        portText = "\(config.port)"
         verificationEnabled = config.verificationEnabled
         watchEnabled = config.watchEnabled
         fitReserveText = String(format: "%g", config.fitReserveGB)
@@ -694,30 +649,25 @@ struct SettingsView: View {
         notice = nil
         noticeIsError = true
         // Validation above guarantees these parses succeed.
-        let port = Int(portText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? appHost.config.port
         let reserve = Double(fitReserveText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? appHost.config.fitReserveGB
         let staleDays = Int(staleDaysText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? appHost.config.reclaimStaleDays
         let maxTokens = Int(comparisonMaxTokensText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? appHost.config.comparisonMaxTokens
         let roots = ggufRoots.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         let mlx = mlxRoots.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        let newConfig = Config(
-            schemaVersion: Config.SCHEMA_VERSION,
-            ggufRoots: roots.isEmpty ? Config.discoverGgufRoots() : roots,
-            mlxRoots: mlx,
-            outputDir: outputDir.isEmpty ? Config.defaults(ggufRoots: []).outputDir : outputDir,
-            mlxAgentPath: mlxAgentPath,
-            quarantineDir: quarantineDir.isEmpty ? Config.defaults(ggufRoots: []).quarantineDir : quarantineDir,
-            qBits: qBits,
-            signatures: signatures,
-            host: host.isEmpty ? "127.0.0.1" : host,
-            port: port,
-            verificationEnabled: verificationEnabled,
-            watchEnabled: watchEnabled,
-            fitReserveGB: reserve,
-            reclaimStaleDays: staleDays,
-            comparisonMaxTokens: maxTokens
-        )
-        Task {
+        var newConfig = appHost.config
+        newConfig.ggufRoots = roots.isEmpty ? Config.discoverGgufRoots() : roots
+        newConfig.mlxRoots = mlx
+        newConfig.outputDir = outputDir.isEmpty ? Config.defaults(ggufRoots: []).outputDir : outputDir
+        newConfig.mlxAgentPath = mlxAgentPath
+        newConfig.quarantineDir = quarantineDir.isEmpty ? Config.defaults(ggufRoots: []).quarantineDir : quarantineDir
+        newConfig.qBits = qBits
+        newConfig.signatures = signatures
+        newConfig.verificationEnabled = verificationEnabled
+        newConfig.watchEnabled = watchEnabled
+        newConfig.fitReserveGB = reserve
+        newConfig.reclaimStaleDays = staleDays
+        newConfig.comparisonMaxTokens = maxTokens
+        Task { [newConfig] in
             defer { isSaving = false }
             guard await appHost.saveSettingsConfig(newConfig) else {
                 notice = appHost.lastError ?? "Settings could not be saved."

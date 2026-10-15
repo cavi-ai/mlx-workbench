@@ -505,7 +505,7 @@ class AppHost: ObservableObject {
     func saveSettingsConfig(_ newConfig: Config) async -> Bool {
         do {
             let normalized = try Self.normalizeAndValidateForSave(newConfig)
-            let saved = try configModule.save(normalized)
+            let saved = try configModule.saveSettings(normalized)
             await api.setAgentPath(saved.mlxAgentPath)
             config = saved
             agentHealth = Self.checkAgentHealth(path: saved.mlxAgentPath, cli: cli)

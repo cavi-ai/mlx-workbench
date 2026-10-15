@@ -607,13 +607,57 @@ final class SettingsRouteTests: XCTestCase {
 // MARK: - Save validation
 
 final class SettingsInputValidationTests: XCTestCase {
+    @MainActor
+    func testSettingsRenderingAndPersistencePreserveUnexposedConnectionValues() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("settings-save-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("config.json"), module = ConfigModule(pathOverride: root.appendingPathComponent("config.json").path)
+        var config = SettingsFixtures.config(gguf: [root.appendingPathComponent("models").path])
+        config.host = "::1"; config.port = 54321; config.watchEnabled = false
+        _ = try module.save(config)
+        var original = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        original["future_feature"] = "preserve-me"
+        try JSONSerialization.data(withJSONObject: original).write(to: url, options: .atomic)
+        let host = AppHost(configModule: module, config: config, configPath: url.path,
+            runtimeReport: SettingsFixtures.runtimeReport(ok: true),
+            modelWorkflowAPI: SettingsFixtures.idleWorkflowAPI(), modelWorkflowPersistence: SettingsFixtures.idleWorkflowPersistence())
+        let view = NSHostingView(rootView: SettingsView(appHost: host, onRouteSelection: { _ in })
+            .environment(\.isRouteActive, true).frame(width: 1000, height: 2200)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 2200),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
+        defer { window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        try await Task.sleep(for: .milliseconds(250)); view.layoutSubtreeIfNeeded()
+        let fields = descendants(view).compactMap { $0 as? NSTextField }.filter(\.isEditable)
+        XCTAssertFalse(fields.contains { $0.stringValue == "::1" }, "Legacy API host must not be an editable Settings field.")
+        XCTAssertFalse(fields.contains { $0.stringValue == "54321" }, "Legacy API port must not be an editable Settings field.")
+        original["host"] = "localhost"
+        original["port"] = 54322
+        try JSONSerialization.data(withJSONObject: original).write(to: url, options: .atomic)
+        // The VM UI suite exercises Save; this checks its persistence boundary separately from rendering.
+        var edited = host.config
+        edited.qBits = 8
+        let accepted = await host.saveSettingsConfig(edited)
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(host.config.qBits, 8)
+        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        XCTAssertEqual(saved["q_bits"] as? Int, 8)
+        XCTAssertEqual(saved["host"] as? String, "localhost")
+        XCTAssertEqual(saved["port"] as? Int, 54322)
+        XCTAssertEqual(host.config.host, "localhost")
+        XCTAssertEqual(host.config.port, 54322)
+        XCTAssertEqual(saved["future_feature"] as? String, "preserve-me")
+    }
+
     func testFirstInvalidFieldFollowsScreenOrderAndAdvancesAfterCorrection() {
-        var validation = SettingsInputValidation(host: "remote", port: "0", fitReserve: "17",
+        var validation = SettingsInputValidation(fitReserve: "17",
             staleDays: "1", comparisonTokens: "63")
-        let fields = SettingsInputValidation.Field.allCases
-        XCTAssertEqual(fields, [.host, .port, .fitReserve, .staleDays, .comparisonTokens])
+        let fields: [SettingsInputValidation.Field] = [.fitReserve, .staleDays, .comparisonTokens]
+        XCTAssertEqual(SettingsInputValidation.Field.allCases, fields)
         let corrections: [(WritableKeyPath<SettingsInputValidation, String>, String)] = [
-            (\.host, "localhost"), (\.port, "8765"), (\.fitReserve, "4"),
+            (\.fitReserve, "4"),
             (\.staleDays, "60"), (\.comparisonTokens, "512"),
         ]
         for (index, correction) in corrections.enumerated() {
@@ -627,8 +671,6 @@ final class SettingsInputValidationTests: XCTestCase {
 
     func testEachFieldNamesItsExistingValidationInstruction() {
         let cases: [(SettingsInputValidation.Field, WritableKeyPath<SettingsInputValidation, String>, String)] = [
-            (.host, \.host, "Loopback only: 127.0.0.1, localhost, or ::1."),
-            (.port, \.port, "Enter an integer between 1 and 65535."),
             (.fitReserve, \.fitReserve, "Enter a number between 0 and 16."),
             (.staleDays, \.staleDays, "Enter an integer between 2 and 365."),
             (.comparisonTokens, \.comparisonTokens, "Enter an integer between 64 and 4096."),
@@ -641,20 +683,8 @@ final class SettingsInputValidationTests: XCTestCase {
         }
     }
 
-    func testHostRetainsLoopbackWhitespaceAndEmptyDefaultRules() {
-        for host in ["", " \n ", "127.0.0.1", " localhost\n", " ::1 "] {
-            let validation = SettingsInputValidation(host: host)
-            XCTAssertNil(validation.firstInvalid, host)
-            XCTAssertEqual(validation.host, host, "Reading guidance must preserve raw input")
-        }
-        for host in ["0.0.0.0", "example.com", "LOCALHOST", "http://localhost", "127.0.0.2"] {
-            XCTAssertEqual(SettingsInputValidation(host: host).firstInvalid?.field, .host, host)
-        }
-    }
-
     func testNumericBoundsAndWhitespaceRemainAccepted() {
         let cases: [(WritableKeyPath<SettingsInputValidation, String>, [String])] = [
-            (\.port, ["1", "65535", " 8765\n"]),
             (\.fitReserve, ["0", "16", " 4.5\n"]),
             (\.staleDays, ["2", "365", " 60\n"]),
             (\.comparisonTokens, ["64", "4096", " 512\n"]),
@@ -671,7 +701,6 @@ final class SettingsInputValidationTests: XCTestCase {
 
     func testNumericOutOfRangeMalformedAndNonfiniteInputsRemainRejected() {
         let cases: [(SettingsInputValidation.Field, WritableKeyPath<SettingsInputValidation, String>, [String])] = [
-            (.port, \.port, ["", "abc", "0", "65536", "2.5", "999999999999999999999999999"]),
             (.fitReserve, \.fitReserve, ["", "abc", "-0.1", "16.1", "nan", "inf", "-inf"]),
             (.staleDays, \.staleDays, ["", "abc", "1", "366", "2.5", "999999999999999999999999999"]),
             (.comparisonTokens, \.comparisonTokens, ["", "abc", "63", "4097", "64.5", "999999999999999999999999999"]),
@@ -696,11 +725,11 @@ final class SettingsSourceContractTests: XCTestCase {
 
     func testEveryLabelledFieldAppearsInTheUITestsDocumentOrder() throws {
         let text = try source("SettingsView.swift")
-        let labels = ["mlx-agent checkout", "Output directory", "Quarantine directory", "Workbench API host",
-                      "Workbench API port", "Fit reserve in gigabytes", "Stale after days", "Comparison maximum tokens"]
+        let labels = ["mlx-agent checkout", "Output directory", "Quarantine directory",
+                      "Fit reserve in gigabytes", "Stale after days", "Comparison maximum tokens"]
         let indices = try labels.map { label in try XCTUnwrap(text.range(of: "\"\(label)\"")?.lowerBound, label) }
         XCTAssertEqual(indices, indices.sorted())
-        let sections = ["engineSection", "locationsSection", "storageSection", "integrationSection",
+        let sections = ["engineSection", "locationsSection", "storageSection", "servingSection",
                         "conversionSection", "advisorsSection", "updatesSection"]
         let body = try XCTUnwrap(text.range(of: "var body: some View"))
         let bodyOrder = try sections.map {
@@ -785,10 +814,9 @@ final class SettingsSourceContractTests: XCTestCase {
             "Default bits", "4-bit", "8-bit", "Sign converted outputs", "Verify conversions (canary quality gate)",
             "Watch & regression alerts", "Unsaved changes", "All changes saved", "Saved to \\(appHost.configPath)",
             "Settings could not be saved.", "Discard", "Save", ".keyboardShortcut(.defaultAction)",
-            "Enter an integer between 1 and 65535.", "Loopback only: 127.0.0.1, localhost, or ::1.",
             "Enter a number between 0 and 16.", "Enter an integer between 2 and 365.", "Enter an integer between 64 and 4096.",
             "Directory does not exist yet.", "Path exists but is not a directory.",
-            "Workbench API host", "Workbench API port", "Fit reserve in gigabytes", "Stale after days",
+            "Serving", "Open Run", "Fit reserve in gigabytes", "Stale after days",
             "Comparison maximum tokens", "Output directory", "Quarantine directory", "mlx-agent checkout",
             "Channel", "Open Health", "Rescan",
         ]
@@ -800,7 +828,7 @@ final class SettingsSourceContractTests: XCTestCase {
     func testPromptsCarryThePlaceholders() throws {
         let text = try source("SettingsView.swift")
         XCTAssertFalse(text.contains("TextField(placeholder"))
-        XCTAssertEqual(text.components(separatedBy: "prompt: Text(").count - 1, 4)
+        XCTAssertEqual(text.components(separatedBy: "prompt: Text(").count - 1, 2)
     }
 
     func testFigureMotionIsGatedAndKeyedOnTheSnapshot() throws {
@@ -911,8 +939,8 @@ final class SettingsRenderTests: XCTestCase {
                 SettingsLedgerRowView(row: row, stacksFigures: false, isRouteActive: true, stamp: F.stamp, isScanning: false, onRescan: {}, onRemove: {})
             }
             SettingsStatusLabel(word: "Checked when you save", detail: nil, symbol: "questionmark.circle", tone: .neutral)
-            SettingsRow(label: "Port", message: "Enter an integer between 1 and 65535.", stacked: false) {
-                TextField("Workbench API port", text: .constant("70000"), prompt: Text("8765")).textFieldStyle(.roundedBorder)
+            SettingsRow(label: "Fit reserve", message: "Enter a number between 0 and 16.", stacked: false) {
+                TextField("Fit reserve in gigabytes", text: .constant("17"), prompt: Text("4")).textFieldStyle(.roundedBorder)
             }
             SettingsRow(label: "Output directory", warning: SettingsDirectoryState.missing.warning, stacked: false) {
                 TextField("Output directory", text: .constant("~/models/mlx"), prompt: Text("~/models/mlx")).textFieldStyle(.roundedBorder)

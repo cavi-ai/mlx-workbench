@@ -615,7 +615,7 @@ final class WorkbenchReviewUITests: XCTestCase {
     func testSettingsInputsExposeSemanticLabels() {
         launch(appearance: "Light", route: "settings")
         XCTAssertTrue(app.textFields["mlx-agent checkout"].waitForExistence(timeout: 10))
-        let labels = ["Output directory", "Quarantine directory", "Workbench API host", "Workbench API port",
+        let labels = ["Output directory", "Quarantine directory",
                       "Fit reserve in gigabytes", "Stale after days", "Comparison maximum tokens"]
         for label in labels {
             let field = app.textFields[label]
@@ -629,20 +629,23 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     func testSettingsValidationRecoveryAndSaveFeedback() throws {
-        let before = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
         let configURL = root.appendingPathComponent(String(repeating: "settings-", count: 18) + "config.json")
         var initial = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("config.json"))) as? [String: Any])
         initial["future_feature"] = "preserve-me"
+        initial["host"] = "::1"
+        initial["port"] = 54321
         let original = try JSONSerialization.data(withJSONObject: initial)
         for appearance in ["Light", "Dark"] {
             try original.write(to: configURL)
             launch(appearance: appearance, route: "settings", isolatedHome: true, configURL: configURL)
             resizeWindow(width: 1024, height: 680)
             capture("Settings-\(appearance)-clean")
-            let host = app.textFields["Workbench API host"]
-            let port = app.textFields["Workbench API port"]
+            XCTAssertFalse(app.textFields["Workbench API host"].exists)
+            XCTAssertFalse(app.textFields["Workbench API port"].exists)
             let reserve = app.textFields["Fit reserve in gigabytes"]
-            let scroll = app.scrollViews.containing(.textField, identifier: "Workbench API host").firstMatch
+            let staleDays = app.textFields["Stale after days"]
+            let maxTokens = app.textFields["Comparison maximum tokens"]
+            let scroll = app.scrollViews.containing(.textField, identifier: "Fit reserve in gigabytes").firstMatch
             func reveal(_ field: XCUIElement) {
                 XCTAssertTrue(field.waitForExistence(timeout: 10))
                 for _ in 0..<8 where !scroll.frame.contains(field.frame) || !field.isHittable {
@@ -660,31 +663,25 @@ final class WorkbenchReviewUITests: XCTestCase {
                 XCTAssertTrue(element.waitForExistence(timeout: 5))
                 return element.value as? String ?? element.label
             }
-            reveal(host)
-            replace(host, with: "example.com")
-            reveal(port)
-            replace(port, with: "abc")
             reveal(reserve)
             replace(reserve, with: "invalid")
             app.typeText("!")
             XCTAssertEqual(reserve.value as? String, "invalid!", "Validation feedback must not steal input focus")
-            XCTAssertEqual(host.value as? String, "example.com")
-            XCTAssertFalse(host.isHittable, "Editing a later field must not jump to the first invalid input")
-            let save = before ? app.buttons["Save"].firstMatch : app.buttons["settings-save"]
+            reveal(staleDays); replace(staleDays, with: "1")
+            reveal(maxTokens); replace(maxTokens, with: "63")
+            app.typeText("!")
+            XCTAssertEqual(maxTokens.value as? String, "63!", "Validation feedback must not move focus to an earlier field")
+            let save = app.buttons["settings-save"]
             XCTAssertFalse(save.isEnabled)
             XCTAssertEqual(try Data(contentsOf: configURL), original)
             capture("Settings-\(appearance)-multiple-invalid")
             resizeWindow(width: 740, height: 680)
             XCTAssertEqual(app.windows.firstMatch.frame.width, 740, accuracy: 2)
             XCTAssertEqual(app.windows.firstMatch.frame.height, 680, accuracy: 2)
-            reveal(reserve)
-            XCTAssertFalse(host.isHittable, "Recovery must begin with the first invalid input offscreen")
+            for _ in 0..<4 where reserve.isHittable { scroll.scroll(byDeltaX: 0, deltaY: -350) }
+            XCTAssertFalse(reserve.isHittable, "Recovery must begin with the first invalid input offscreen")
             capture("Settings-\(appearance)-multiple-invalid-narrow")
-            if before {
-                reveal(host); replace(host, with: "localhost")
-                reveal(port); replace(port, with: "8788 ")
-                reveal(reserve); replace(reserve, with: "8")
-            } else {
+            do {
                 let fix = app.buttons["settings-fix-field"]
                 let guidance = app.staticTexts["settings-save-guidance"]
                 let windowFrame = app.windows.firstMatch.frame
@@ -698,25 +695,24 @@ final class WorkbenchReviewUITests: XCTestCase {
                 XCTAssertTrue(windowFrame.contains(guidanceFrame), "Feedback \(guidanceFrame) must remain inside window \(windowFrame); Save \(save.frame)")
                 XCTAssertTrue(app.windows.firstMatch.frame.contains(save.frame), "Save must remain inside the window")
                 XCTAssertTrue(fix.isHittable, "Recovery must remain visible in the pinned bar")
-                XCTAssertTrue(feedbackText("settings-save-guidance").contains("Host"))
-                fix.click()
-                XCTAssertTrue(host.isHittable)
-                XCTAssertEqual(host.value as? String, "example.com")
-                XCTAssertEqual(port.value as? String, "abc")
-                XCTAssertEqual(reserve.value as? String, "invalid!")
-                XCTAssertEqual(try Data(contentsOf: configURL), original)
-                focusedReplace("localhos")
-                app.typeText("t")
-                XCTAssertEqual(host.value as? String, "localhost", "Fix field must focus the actual input")
-                XCTAssertTrue(feedbackText("settings-save-guidance").contains("Port"))
-                fix.click()
-                focusedReplace("8788")
-                app.typeText(" ")
-                XCTAssertEqual(port.value as? String, "8788 ")
                 XCTAssertTrue(feedbackText("settings-save-guidance").contains("Fit reserve"))
                 fix.click()
+                XCTAssertTrue(reserve.isHittable)
+                XCTAssertEqual(staleDays.value as? String, "1")
+                XCTAssertEqual(maxTokens.value as? String, "63!")
+                XCTAssertEqual(reserve.value as? String, "invalid!")
+                XCTAssertEqual(try Data(contentsOf: configURL), original)
                 focusedReplace("8")
-                XCTAssertEqual(reserve.value as? String, "8")
+                XCTAssertEqual(reserve.value as? String, "8", "Fix field must focus the actual input")
+                XCTAssertTrue(feedbackText("settings-save-guidance").contains("Stale after"))
+                fix.click()
+                focusedReplace("90")
+                app.typeText(" ")
+                XCTAssertEqual(staleDays.value as? String, "90 ")
+                XCTAssertTrue(feedbackText("settings-save-guidance").contains("Comparison max tokens"))
+                fix.click()
+                focusedReplace("1024")
+                XCTAssertEqual(maxTokens.value as? String, "1024")
                 XCTAssertFalse(fix.exists)
             }
             XCTAssertTrue(save.isEnabled)
@@ -726,19 +722,19 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(text(containing: "Saved to").waitForExistence(timeout: 10))
             let savedBytes = try Data(contentsOf: configURL)
             let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: savedBytes) as? [String: Any])
-            XCTAssertEqual(saved["host"] as? String, "localhost")
-            XCTAssertEqual(saved["port"] as? Int, 8788)
+            XCTAssertEqual(saved["host"] as? String, "::1")
+            XCTAssertEqual(saved["port"] as? Int, 54321)
             XCTAssertEqual(saved["fit_reserve_gb"] as? Double, 8)
+            XCTAssertEqual(saved["reclaim_stale_days"] as? Int, 90)
+            XCTAssertEqual(saved["comparison_max_tokens"] as? Int, 1024)
             XCTAssertEqual(saved["future_feature"] as? String, "preserve-me")
             capture("Settings-\(appearance)-saved-narrow")
             resizeWindow(width: 1024, height: 680)
             capture("Settings-\(appearance)-saved")
-            reveal(port)
-            replace(port, with: "abc")
-            if !before {
-                XCTAssertTrue(feedbackText("settings-save-guidance").contains("Port"), "A prior success must not obscure validation")
-            }
-            replace(port, with: "8789")
+            reveal(maxTokens)
+            replace(maxTokens, with: "abc")
+            XCTAssertTrue(feedbackText("settings-save-guidance").contains("Comparison max tokens"), "A prior success must not obscure validation")
+            replace(maxTokens, with: "2048")
             // A real read failure on a test-owned config exercises the existing
             // persistence boundary without a production error-injection seam.
             try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: configURL.path)
@@ -751,21 +747,17 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertGreaterThan(expectedFailure.count, 180)
             save.click()
             XCTAssertTrue(text(containing: expectedFailure).waitForExistence(timeout: 10))
-            if !before {
-                XCTAssertEqual(feedbackText("settings-save-error"), expectedFailure)
-                XCTAssertTrue(app.windows.firstMatch.frame.contains(app.staticTexts["settings-save-error"].frame))
-            }
-            XCTAssertEqual(port.value as? String, "8789", "Save failure must retain the draft")
+            XCTAssertEqual(feedbackText("settings-save-error"), expectedFailure)
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(app.staticTexts["settings-save-error"].frame))
+            XCTAssertEqual(maxTokens.value as? String, "2048", "Save failure must retain the draft")
             XCTAssertTrue(save.isEnabled)
             capture("Settings-\(appearance)-save-failed")
             resizeWindow(width: 740, height: 680)
-            if !before {
-                XCTAssertEqual(feedbackText("settings-save-error"), expectedFailure)
-                XCTAssertTrue(app.windows.firstMatch.frame.contains(app.staticTexts["settings-save-error"].frame))
-                XCTAssertTrue(app.windows.firstMatch.frame.contains(save.frame))
-            }
+            XCTAssertEqual(feedbackText("settings-save-error"), expectedFailure)
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(app.staticTexts["settings-save-error"].frame))
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(save.frame))
             capture("Settings-\(appearance)-save-failed-narrow")
-            if !before {
+            do {
                 resizeWindow(width: 740, height: 560)
                 let minimumFrame = app.windows.firstMatch.frame
                 XCTAssertEqual(minimumFrame.width, 740, accuracy: 2)
@@ -786,7 +778,9 @@ final class WorkbenchReviewUITests: XCTestCase {
             save.click()
             XCTAssertTrue(text(containing: "Saved to").waitForExistence(timeout: 10))
             let retried = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
-            XCTAssertEqual(retried["port"] as? Int, 8789)
+            XCTAssertEqual(retried["host"] as? String, "::1")
+            XCTAssertEqual(retried["port"] as? Int, 54321)
+            XCTAssertEqual(retried["comparison_max_tokens"] as? Int, 2048)
             XCTAssertEqual(retried["future_feature"] as? String, "preserve-me")
             app.terminate()
         }
