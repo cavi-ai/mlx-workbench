@@ -9,6 +9,7 @@ struct ContentView: View {
     @ObservedObject private var setup: SetupCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
     @ObservedObject private var verification: VerificationCoordinator
+    @ObservedObject private var trainedAdapters: TrainedAdapterServingCoordinator
     /// Persisted across launches; legacy/unknown values resolve to Overview.
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
     /// The workflow outcome last seen on Prepare or Activity; a failure stays in the toolbar until then.
@@ -23,6 +24,7 @@ struct ContentView: View {
         _setup = ObservedObject(wrappedValue: appHost.setup)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
         _verification = ObservedObject(wrappedValue: appHost.verification)
+        _trainedAdapters = ObservedObject(wrappedValue: appHost.trainedAdapters)
     }
 
     private var selectedRoute: AppRoute {
@@ -154,7 +156,7 @@ struct ContentView: View {
         case .studies:
             StudiesView(lab: appHost.lab, installer: appHost.runtimeInstaller, agentPath: appHost.config.mlxAgentPath)
         case .training:
-            TrainingView(appHost: appHost)
+            TrainingView(appHost: appHost, onRouteSelection: navigate)
         case .settings:
             SettingsView(appHost: appHost, onRouteSelection: navigate)
         }
@@ -181,7 +183,8 @@ struct ContentView: View {
     /// The selected model is context for the lifecycle tabs only; elsewhere
     /// the title stands alone.
     private var subtitle: String {
-        Self.subtitle(route: selectedRoute, workflow: modelWorkflow.workflow, selectedModelPath: appHost.selectedModelPath)
+        if selectedRoute == .run, let job = trainedAdapters.selectedJob { return job.repo + " · trained adapter" }
+        return Self.subtitle(route: selectedRoute, workflow: modelWorkflow.workflow, selectedModelPath: appHost.selectedModelPath)
     }
 
     /// Prepare names the workflow's source, which can differ from the Library

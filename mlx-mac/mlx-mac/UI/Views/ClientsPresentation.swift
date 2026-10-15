@@ -301,7 +301,7 @@ struct ClientsPresentation: Equatable {
 
         var endpoints = running.sorted { ($0.port ?? 0) < ($1.port ?? 0) }.map { server in
             ClientsEndpointRow(
-                id: server.id, kind: .running, name: URL(fileURLWithPath: server.modelIdentity).lastPathComponent,
+                id: server.id, kind: .running, name: URL(fileURLWithPath: server.modelIdentity).lastPathComponent + (server.adapterSummary.map { " · " + $0 } ?? ""),
                 port: server.port, identity: server.modelIdentity, isSelected: server.id == selectedServerID
             )
         }

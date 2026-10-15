@@ -127,7 +127,7 @@ struct ModelFlightPathPresentation: Equatable {
             verificationDetail = "The canary suite is running."
         }
         let measured = completedRuns.contains { run in run.state == .completed && run.results.contains { result in result.modelPath == path && result.modelSignature == signature && result.error == nil && !result.samples.isEmpty } }
-        let serverConfirms = servers.contains { $0.state?.lowercased() == "running" && HFRepoID.matches($0.modelIdentity, path) }
+        let serverConfirms = servers.contains { $0.state?.lowercased() == "running" && $0.matchesUnadaptedModel(path) }
         let stateConfirms: Bool
         if case .running(let servedPath, _) = endpointState { stateConfirms = HFRepoID.matches(servedPath, path) } else { stateConfirms = false }
         let serving = serverConfirms && stateConfirms

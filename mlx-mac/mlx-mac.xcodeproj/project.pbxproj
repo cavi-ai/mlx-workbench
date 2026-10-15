@@ -98,6 +98,8 @@
 		27ABCD000000000000000021 /* PortAnalysisPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000021 /* PortAnalysisPanel.swift */; };
 		27ABCD000000000000000022 /* ConversionProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000022 /* ConversionProgressView.swift */; };
 		27ABCD000000000000000024 /* ImageGenerationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000024 /* ImageGenerationCoordinator.swift */; };
+		C45B761B10694CDEB19C0101 /* TrainedAdapterServing.swift in Sources */ = {isa = PBXBuildFile; fileRef = C45B761B10694CDEB19C0102; };
+		C45B761B10694CDEB19C0103 /* TrainedAdapterRunPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C45B761B10694CDEB19C0104; };
 		27ABCD000000000000000025 /* ImageGenerationPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000025 /* ImageGenerationPanel.swift */; };
 		27ABCD000000000000000012 /* IntakeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000012 /* IntakeCoordinator.swift */; };
 		27ABCD000000000000000009 /* IntakeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000009 /* IntakeModels.swift */; };
@@ -324,6 +326,8 @@
 		27ABCD100000000000000021 /* PortAnalysisPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PortAnalysisPanel.swift; path = UI/Views/PortAnalysisPanel.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000022 /* ConversionProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ConversionProgressView.swift; path = UI/Views/ConversionProgressView.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000024 /* ImageGenerationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ImageGenerationCoordinator.swift; path = Services/ImageGenerationCoordinator.swift; sourceTree = "<group>"; };
+		C45B761B10694CDEB19C0102 /* TrainedAdapterServing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainedAdapterServing.swift; path = Services/TrainedAdapterServing.swift; sourceTree = "<group>"; };
+		C45B761B10694CDEB19C0104 /* TrainedAdapterRunPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainedAdapterRunPanel.swift; path = UI/Views/TrainedAdapterRunPanel.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000025 /* ImageGenerationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ImageGenerationPanel.swift; path = UI/Views/ImageGenerationPanel.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000012 /* IntakeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeCoordinator.swift; path = Services/IntakeCoordinator.swift; sourceTree = "<group>"; };
 		27ABCD100000000000000009 /* IntakeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakeModels.swift; path = Models/IntakeModels.swift; sourceTree = "<group>"; };
@@ -652,6 +656,8 @@
 				27ABCD100000000000000021 /* PortAnalysisPanel.swift */,
 				27ABCD100000000000000022 /* ConversionProgressView.swift */,
 				27ABCD100000000000000024 /* ImageGenerationCoordinator.swift */,
+				C45B761B10694CDEB19C0102 /* TrainedAdapterServing.swift */,
+				C45B761B10694CDEB19C0104 /* TrainedAdapterRunPanel.swift */,
 				27ABCD100000000000000025 /* ImageGenerationPanel.swift */,
 				27ABCD100000000000000012 /* IntakeCoordinator.swift */,
 				27ABCD100000000000000009 /* IntakeModels.swift */,
@@ -1029,6 +1035,8 @@
 				27ABCD000000000000000021 /* PortAnalysisPanel.swift in Sources */,
 				27ABCD000000000000000022 /* ConversionProgressView.swift in Sources */,
 				27ABCD000000000000000024 /* ImageGenerationCoordinator.swift in Sources */,
+				C45B761B10694CDEB19C0101 /* TrainedAdapterServing.swift in Sources */,
+				C45B761B10694CDEB19C0103 /* TrainedAdapterRunPanel.swift in Sources */,
 				27ABCD000000000000000025 /* ImageGenerationPanel.swift in Sources */,
 				27ABCD000000000000000012 /* IntakeCoordinator.swift in Sources */,
 				27ABCD000000000000000009 /* IntakeModels.swift in Sources */,

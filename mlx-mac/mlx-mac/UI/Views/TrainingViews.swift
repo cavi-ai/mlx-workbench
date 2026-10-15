@@ -54,6 +54,8 @@ struct TrainingJobActions {
     let openLog: (String) -> Void
     let cancel: (TrainingJobRow) -> Void
     var cancelingPIDs: Set<Int> = []
+    var serve: ((TrainingJobRow) -> Void)? = nil
+    var isServingBusy = false
 }
 
 struct TrainingJobRowView: View {
@@ -85,6 +87,10 @@ struct TrainingJobRowView: View {
                 ReclaimFlowLayout(spacing: WorkbenchSpacing.xs, lineSpacing: WorkbenchSpacing.xs) {
                     if row.canCompare {
                         Button("Compare with base") { actions.compare(row) }.buttonStyle(.bordered).controlSize(.small)
+                        if let serve = actions.serve {
+                            Button("Use in Run") { serve(row) }.buttonStyle(.bordered).controlSize(.small)
+                                .disabled(actions.isServingBusy).help("Review serving this adapter with its pinned base model.")
+                        }
                     }
                     if let log = row.logPath {
                         Button("Open log") { actions.openLog(log) }.buttonStyle(.bordered).controlSize(.small)

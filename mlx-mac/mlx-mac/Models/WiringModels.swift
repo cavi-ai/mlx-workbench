@@ -32,14 +32,12 @@ struct ClientWiringRequest: Equatable {
 
 enum ClientWiringSelection {
     static func matchingServers(request: ClientWiringRequest, servers: [ServerInfo]) -> [ServerInfo] {
-        servers.filter { WireEndpoint(server: $0) != nil && HFRepoID.matches($0.modelIdentity, request.modelPath)
+        servers.filter { WireEndpoint(server: $0) != nil && $0.matchesUnadaptedModel(request.modelPath)
             && (request.preferredPort == nil || $0.port == request.preferredPort) }
     }
 
     static func sameServer(_ before: ServerInfo, _ current: ServerInfo) -> Bool {
-        WireEndpoint(server: current) != nil && before.modelIdentity == current.modelIdentity && before.port == current.port
-            && before.pid == current.pid && before.runtime == current.runtime
-            && before.startedAt == current.startedAt && before.receipt == current.receipt
+        WireEndpoint(server: current) != nil && before.sameProcess(as: current)
     }
 }
 

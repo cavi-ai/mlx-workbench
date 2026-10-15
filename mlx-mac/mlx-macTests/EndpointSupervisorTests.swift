@@ -5,6 +5,48 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testAdapterStatusCannotMatchAnUnadaptedModelAndProcessIdentityRetainsItsContents() throws {
+        let source: [String: Any] = ["repo": "org/base", "port": 8766, "pid": 42, "state": "running",
+            "adapter_path": "/adapters/tuned", "adapter_identity": ["adapters.safetensors": ["sha256": "first", "bytes": 4]]]
+        let server = try JSONDecoder().decode(ServerInfo.self, from: JSONSerialization.data(withJSONObject: source))
+        let bridged = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [source]])?.first)
+        XCTAssertEqual(bridged.adapterPath, server.adapterPath)
+        XCTAssertEqual(bridged.adapterIdentity, server.adapterIdentity)
+        XCTAssertFalse(bridged.matchesUnadaptedModel("org/base"))
+        XCTAssertEqual(server.adapterPath, "/adapters/tuned")
+        XCTAssertFalse(server.matchesUnadaptedModel("org/base"))
+        var changed = source
+        changed["adapter_identity"] = ["adapters.safetensors": ["sha256": "second", "bytes": 4]]
+        let replacement = try JSONDecoder().decode(ServerInfo.self, from: JSONSerialization.data(withJSONObject: changed))
+        XCTAssertFalse(server.sameProcess(as: replacement))
+        XCTAssertFalse(ClientWiringSelection.sameServer(server, replacement))
+        XCTAssertTrue(ClientWiringSelection.matchingServers(request: .init(modelPath: "org/base", preferredPort: nil), servers: [server]).isEmpty)
+        let unknown = ServerInfo(repo: "org/base", state: "running", adapterStatus: "unknown")
+        XCTAssertFalse(unknown.matchesUnadaptedModel("org/base"))
+        XCTAssertTrue(ServerInfo(repo: "org/base", state: "running").matchesUnadaptedModel("org/base"))
+        let malformed = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [["repo": "org/base", "adapter_path": 42]]])?.first)
+        XCTAssertFalse(malformed.matchesUnadaptedModel("org/base"))
+    }
+
+    func testBaseEndpointDoesNotAdoptOrConfigureAnAdapterServerOnItsPort() async throws {
+        let world = FakeServeWorld(), recorder = LifecycleRecorder()
+        world.recorder = recorder
+        let adapter = ServerInfo(path: "/Models/a", port: 8766, pid: 42, state: "running", jit: true,
+            modelState: "loaded", adapterPath: "/adapters/tuned")
+        var lifecycle = world.lifecycle
+        lifecycle.configureMemory = { _, _, _ in XCTFail("A base endpoint must not configure an adapter server") }
+        let supervisor = EndpointSupervisor(lifecycle: lifecycle, statusProvider: { [adapter] },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        await supervisor.enable(modelPath: "/Models/a", port: 8766, loadOnRequest: true)
+        let id = try XCTUnwrap(supervisor.fleet.slots.first?.id)
+        guard case .modelMismatch(let name, _)? = supervisor.slotStates[id] else { return XCTFail("Adapter server must not be adopted as the base") }
+        XCTAssertTrue(name.contains("Adapter: tuned"))
+        XCTAssertTrue(recorder.events.isEmpty)
+        await supervisor.setSlotMemoryPolicy(id: id, .init(idleTimeoutSeconds: 60, keepLoaded: true, minimumHeadroomGB: 4))
+        XCTAssertNotNil(supervisor.lastError)
+        XCTAssertTrue(recorder.events.isEmpty)
+    }
+
     func testNewEndpointDefaultsToJITWithoutEagerStart() async throws {
         let world = FakeServeWorld()
         let recorder = LifecycleRecorder()

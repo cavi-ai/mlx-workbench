@@ -10,6 +10,30 @@
 
 Run lists every running server with **Stop** or **Unload**. Refreshing Run only reads serving status.
 
+Model-only Run and endpoint setup do not reuse a server reported with an adapter
+as its base model. Unknown adapter metadata also prevents adoption. A conflicting
+endpoint names the adapter when its path is available. Model handoffs to Clients
+match servers without adapters; selecting a server directly in Clients keeps
+its adapter identity attached to the confirmation checks.
+
+## Serve a trained adapter
+
+In Training, choose **Use in Run** on a completed job. This stages the receipt
+without starting a server or changing your selected Library model. **Preview
+adapter serve** rechecks the receipt, pinned base snapshot and adapter files.
+Review the paths and port, then choose **Confirm and run adapter**.
+
+Changed or missing artifacts require a fresh preview. Run refuses an occupied
+port or a second server for the same training artifacts. The running server's
+adapter label also appears in Activity, Clients and the memory header; use the
+existing server controls to stop it. **Use Library model** returns to the regular
+Run controls without stopping servers.
+
+Trained adapters use explicit MLX-LM serving. They do not inherit the base
+model's quality verdict and cannot be added as Always-on endpoints from this
+panel. Historical training receipts without a pinned base identity cannot be
+used here.
+
 ## Always-on endpoints
 
 The **Endpoints** section keeps chosen models serving on stable ports. The app reconciles each endpoint's desired state against the engine's serving status and restarts a crashed endpoint, with a crash-loop guard per endpoint.

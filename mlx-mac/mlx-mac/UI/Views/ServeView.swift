@@ -27,6 +27,7 @@ struct ServeView: View {
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var endpoint: EndpointSupervisor
     @ObservedObject private var profiles: ServingProfileCoordinator
+    @ObservedObject private var trainedAdapters: TrainedAdapterServingCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
     private let onRouteSelection: (AppRoute) -> Void
     @State private var runtime = "auto"
@@ -54,6 +55,7 @@ struct ServeView: View {
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
         _profiles = ObservedObject(wrappedValue: appHost.servingProfiles)
+        _trainedAdapters = ObservedObject(wrappedValue: appHost.trainedAdapters)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -87,9 +89,14 @@ struct ServeView: View {
         GeometryReader { viewport in
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                    heroRegion(presentation)
-                    serveSection(presentation)
-                    endpointSection(presentation)
+                    if trainedAdapters.selectedJob != nil {
+                        TrainedAdapterRunPanel(coordinator: trainedAdapters) { await modelWorkflow.refreshServers() }
+                        nowServingSection(presentation)
+                    } else {
+                        heroRegion(presentation)
+                        serveSection(presentation)
+                    }
+                    endpointSection(presentation, allowAdd: trainedAdapters.selectedJob == nil)
                 }
                 .frame(maxWidth: WorkbenchSize.Run.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
@@ -98,6 +105,8 @@ struct ServeView: View {
             .onChange(of: viewport.size.width, initial: true) { _, width in viewportWidth = width }
         }
         .task { await modelWorkflow.refreshServers() }
+        .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
+        .onChange(of: modelWorkflow.serversError) { _, error in trainedAdapters.receiveServers(modelWorkflow.servers, error: error) }
         .onChange(of: isRouteActive) { _, active in
             if active { Task { await modelWorkflow.refreshServers() } }
         }
@@ -163,7 +172,8 @@ struct ServeView: View {
 
     private func servingRow(_ server: ServerInfo, presentation: RunPresentation) -> some View {
         let model = RunModels.model(for: server.modelIdentity, in: models)
-        let name = RunModels.name(for: server.modelIdentity, model: model)
+        let baseName = RunModels.name(for: server.modelIdentity, model: model)
+        let name = server.adapterSummary.map { baseName + " · " + $0 } ?? baseName
         let isSelected = presentation.activeServer == server
         let protected = AppHost.isProtectedServer(server, protected: appHost.protectedServingModels)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -504,7 +514,7 @@ struct ServeView: View {
         return candidate
     }
 
-    private func endpointSection(_ presentation: RunPresentation) -> some View {
+    private func endpointSection(_ presentation: RunPresentation, allowAdd: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             HStack(alignment: .firstTextBaseline) {
                 SectionTitle(text: "Endpoints")
@@ -538,7 +548,9 @@ struct ServeView: View {
                 }
             }
             if endpoint.fleet.slots.isEmpty {
-                if let reason = presentation.addEndpointBlockedReason {
+                if !allowAdd {
+                    designedState(symbol: "point.3.connected.trianglepath.dotted", text: "No saved endpoints.")
+                } else if let reason = presentation.addEndpointBlockedReason {
                     designedState(symbol: "point.3.connected.trianglepath.dotted", text: reason)
                 } else {
                     designedState(symbol: "point.3.connected.trianglepath.dotted", text: "No endpoints yet. Add one for the model above.")
@@ -548,7 +560,8 @@ struct ServeView: View {
                     slotRow(slot)
                 }
             }
-            addEndpointControls(presentation)
+            if allowAdd { addEndpointControls(presentation) }
+            else { Text("Always-on endpoints use Library models. This trained adapter uses explicit serving above.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
             if endpoint.fleet.slots.contains(where: { $0.role != nil }) {
                 HStack(spacing: WorkbenchSpacing.xs) {
                     Button("Wire roles…") { showFleetRouter = true }

@@ -266,7 +266,7 @@ struct WireView: View {
             Picker("Endpoint", selection: $selectedServerID) {
                 Text("Choose a running server…").tag(String?.none)
                 ForEach(runningServers) { server in
-                    Text("\(URL(fileURLWithPath: server.modelIdentity).lastPathComponent) :\(server.port.map(String.init) ?? "?")")
+                    Text("\(URL(fileURLWithPath: server.modelIdentity).lastPathComponent)\(server.adapterSummary.map { " · " + $0 } ?? "") :\(server.port.map(String.init) ?? "?")")
                         .tag(String?.some(server.id))
                 }
             }
