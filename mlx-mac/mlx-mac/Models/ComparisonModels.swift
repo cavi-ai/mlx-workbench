@@ -816,7 +816,21 @@ enum BuiltinPromptSets {
 
 // MARK: Runs and results
 
-/// A lane's serving choice. Its identity is independent of the real model path.
+/// Read-only eligibility for a recorded four-lane settings search.
+enum StrataSettingsSearchAssessment: Equatable {
+    case suggested(String)
+    case unavailable(String)
+
+    var candidateID: String? {
+        if case .suggested(let id) = self { return id }
+        return nil
+    }
+    var unavailableReason: String? {
+        if case .unavailable(let reason) = self { return reason }
+        return nil
+    }
+}
+
 struct StrataSettingsSearchGoal: Codable, Equatable, Sendable {
     let contextTokens: Int
     let headroomGB: Double
@@ -1114,12 +1128,17 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     var laneConfigurations: [ComparisonLaneConfiguration]? = nil
     var settingsSearchGoal: StrataSettingsSearchGoal? = nil
 
-    var settingsSearchCandidateID: String? {
+    var settingsSearchCandidateID: String? { settingsSearchAssessment.candidateID }
+
+    var settingsSearchAssessment: StrataSettingsSearchAssessment {
         guard state == .completed, effectiveMode == .chat, hasValidLaneIdentities, let goal = settingsSearchGoal,
               let lanes = laneConfigurations, goal.matches(lanes), results.count == 4,
               Set(results.map(\.id)) == Set(lanes.map(\.id)), let prompts = promptEntries, !prompts.isEmpty,
-              Set(prompts.map(\.id)).count == prompts.count else { return nil }
+              Set(prompts.map(\.id)).count == prompts.count else {
+            return .unavailable("Complete the four-lane settings search with its recorded prompt cohort.")
+        }
         var fingerprints: Set<[String]> = []
+        var cacheWork: [String: PromptProcessingEvidence] = [:]
         for lane in lanes {
             guard let result = results.first(where: { $0.id == lane.id }), result.error == nil, result.modelPath == lane.modelPath,
                   result.modelSignature == lane.modelSignature,
@@ -1128,13 +1147,29 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
                   evidence.contextTokens == goal.contextTokens, evidence.expertMemoryGB == lane.strataOptions?.expertMemoryGB,
                   evidence.speculation == lane.strataOptions?.speculation,
                   let memory = result.systemMemory, memory.isValid,
-                  result.samples.count == prompts.count, Set(result.samples.map(\.promptID)) == Set(prompts.map(\.id)),
-                  let review = qualityReviews?[lane.id], review.rubricID == ComparisonQualityReview.taskOutcomeRubric,
-                  (1...5).contains(review.score) else { return nil }
+                  result.samples.count == prompts.count, Set(result.samples.map(\.promptID)) == Set(prompts.map(\.id)) else {
+                return .unavailable("Each lane needs matching runtime settings, valid memory evidence and the complete recorded prompt cohort.")
+            }
+            guard let review = qualityReviews?[lane.id], review.rubricID == ComparisonQualityReview.taskOutcomeRubric,
+                  (1...5).contains(review.score) else {
+                return .unavailable("Review every lane's task quality before choosing a suggestion.")
+            }
+            for sample in result.samples {
+                guard let work = sample.promptProcessing, work.isValid, work.promptTokens == sample.promptTokens else {
+                    return .unavailable("Cache work is missing or invalid for a recorded prompt. Run a new comparison to capture it.")
+                }
+                if let baseline = cacheWork[sample.promptID],
+                   baseline.promptTokens != work.promptTokens || baseline.cachedTokens != work.cachedTokens || baseline.processedTokens != work.processedTokens {
+                    return .unavailable("Recorded cache work differs between lanes. Compare the per-prompt cache counts before running again.")
+                }
+                cacheWork[sample.promptID] = work
+            }
             fingerprints.insert([model, runtime])
         }
-        guard fingerprints.count == 1, Set(results.compactMap { $0.systemMemory?.totalBytes }).count == 1 else { return nil }
-        return results.filter {
+        guard fingerprints.count == 1, Set(results.compactMap { $0.systemMemory?.totalBytes }).count == 1 else {
+            return .unavailable("Recorded model/runtime fingerprints or total system memory differ between lanes.")
+        }
+        let candidate = results.filter {
             ($0.systemMemory.map { Double($0.minimumAvailableBytes) / 1e9 >= goal.headroomGB } ?? false)
                 && (qualityReviews?[$0.id]?.score ?? 0) >= 4 && $0.memoryTradeoffAnswerSeconds != nil
         }.sorted { leftResult, rightResult in
@@ -1143,6 +1178,10 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
                 ? (lanes.firstIndex(where: { $0.id == leftResult.id }) ?? 0) < (lanes.firstIndex(where: { $0.id == rightResult.id }) ?? 0)
                 : left < right
         }.first?.id
+        guard let candidate else {
+            return .unavailable("No lane has a task score of 4 or 5, complete timed answers and the requested observed headroom.")
+        }
+        return .suggested(candidate)
     }
 
     var variantIdentities: [String] { hasValidLaneIdentities ? laneConfigurations?.map(\.id) ?? variants : variants }

@@ -821,7 +821,7 @@ struct ComparisonMemoryTradeoffView: View {
                     Text("Fastest observed qualifying answer start: lane \(lane.letter). Save this lane as a serving profile and verify it before serving.")
                         .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text("No qualifying suggestion. Complete all four lanes, review each lane's task quality, and check headroom and runtime evidence.")
+                    Text("No qualifying suggestion. \(run.settingsSearchAssessment.unavailableReason ?? "Review the recorded comparison evidence.")")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
                 }
             }

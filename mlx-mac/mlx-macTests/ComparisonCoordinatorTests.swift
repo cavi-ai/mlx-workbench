@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 import XCTest
 
 @testable import mlx_workbench
@@ -153,12 +155,19 @@ final class ComparisonCoordinatorTests: XCTestCase {
                 "strata_model_fingerprint": "model", "strata_runtime_fingerprint": "runtime", "strata_context_tokens": options.contextTokens,
                 "strata_speculation": options.speculation, "strata_expert_memory_gb": options.expertMemoryGB!]))
             let sample = ComparisonSample(promptID: "p", outputExcerpt: "323", tokensPerSecond: 10, timeToFirstTokenSeconds: 1,
-                error: nil, finishReason: "stop", timeToFirstAnswerSeconds: Double(index + 1))
-            return VariantResult(modelPath: lane.modelPath, modelSignature: "model", samples: [sample], aggregateTokensPerSecond: 10,
+                error: nil, promptTokens: 80, finishReason: "stop", timeToFirstAnswerSeconds: Double(index + 1),
+                promptProcessing: PromptProcessingEvidence(usage: ["prompt_tokens": 80],
+                    timings: ["cache_n": 40, "prompt_n": 40, "prompt_ms": Double(index + 1) * 1000]))
+            let second = ComparisonSample(promptID: "q", outputExcerpt: "4", tokensPerSecond: 10, timeToFirstTokenSeconds: 1,
+                error: nil, promptTokens: 100, finishReason: "stop", timeToFirstAnswerSeconds: Double(index + 1),
+                promptProcessing: PromptProcessingEvidence(usage: ["prompt_tokens": 100],
+                    timings: ["cache_n": 60, "prompt_n": 40, "prompt_ms": 500]))
+            return VariantResult(modelPath: lane.modelPath, modelSignature: "model", samples: [sample, second], aggregateTokensPerSecond: 10,
                 aggregateTTFTSeconds: 1, error: nil, servingEvidence: evidence, laneID: lane.id, systemMemory: memory)
         }
         var run = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "p", useCase: nil, variants: lanes.map(\.modelPath),
-            results: results, startedAt: Date(), finishedAt: Date(), state: .completed, promptEntries: [PromptEntry(id: "p", text: "17 * 19")],
+            results: results, startedAt: Date(), finishedAt: Date(), state: .completed,
+            promptEntries: [PromptEntry(id: "p", text: "17 * 19"), PromptEntry(id: "q", text: "2 + 2")],
             laneConfigurations: lanes, settingsSearchGoal: setup.goal)
         XCTAssertNil(run.settingsSearchCandidateID)
         run.qualityReviews = Dictionary(uniqueKeysWithValues: lanes.map {
@@ -166,6 +175,55 @@ final class ComparisonCoordinatorTests: XCTestCase {
         })
         XCTAssertEqual(run.settingsSearchCandidateID, lanes[0].id)
         let reviewed = run
+        func changingSamples(_ update: (inout [[String: Any]]) -> Void) throws -> ComparisonRun {
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(reviewed)) as? [String: Any])
+            var values = try XCTUnwrap(object["results"] as? [[String: Any]])
+            var samples = try XCTUnwrap(values[3]["samples"] as? [[String: Any]])
+            update(&samples); values[3]["samples"] = samples; object["results"] = values
+            return try JSONDecoder().decode(ComparisonRun.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        func changingCache(_ update: (inout [String: Any]) -> Void) throws -> ComparisonRun {
+            try changingSamples { update(&$0[0]) }
+        }
+        let missingCache = try changingCache { $0.removeValue(forKey: "promptProcessing") }
+        XCTAssertNil(missingCache.settingsSearchCandidateID)
+        XCTAssertEqual(missingCache.settingsSearchAssessment.unavailableReason,
+            "Cache work is missing or invalid for a recorded prompt. Run a new comparison to capture it.")
+        let changedCache = try changingCache {
+            $0["promptProcessing"] = ["promptTokens": 80, "cachedTokens": 79, "processedTokens": 1, "processingSeconds": 0.1]
+        }
+        XCTAssertNil(changedCache.settingsSearchCandidateID)
+        XCTAssertEqual(changedCache.settingsSearchAssessment.unavailableReason,
+            "Recorded cache work differs between lanes. Compare the per-prompt cache counts before running again.")
+        for changed in [try changingCache { $0["promptTokens"] = 81 },
+                        try changingCache { $0["promptProcessing"] = ["promptTokens": 80, "cachedTokens": 40, "processedTokens": 39, "processingSeconds": 1] }] {
+            XCTAssertNil(changed.settingsSearchCandidateID)
+        }
+        XCTAssertNil(reviewed.settingsSearchAssessment.unavailableReason)
+        XCTAssertEqual(try changingSamples { $0.reverse() }.settingsSearchCandidateID, lanes[0].id)
+        XCTAssertNil(try changingSamples { $0[1] = $0[0] }.settingsSearchCandidateID)
+        XCTAssertNil(try changingSamples { $0[1].removeValue(forKey: "promptProcessing") }.settingsSearchCandidateID)
+        if let folder = ProcessInfo.processInfo.environment["MLX_WORKBENCH_COMPARISON_RENDER_DIR"] {
+            let directory = URL(fileURLWithPath: folder)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            for (name, snapshot) in [("cache-matched-suggestion", reviewed), ("cache-missing-suggestion", missingCache),
+                                     ("cache-mismatched-suggestion", changedCache)] {
+                let view = ScrollView { ComparisonMemoryTradeoffView(run: snapshot).padding(24) }
+                    .frame(width: 820, height: 650, alignment: .topLeading)
+                    .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+                let host = NSHostingView(rootView: view)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 650),
+                    styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                defer { window.close() }
+                try await Task.sleep(for: .milliseconds(250))
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: directory.appendingPathComponent("\(name).png"))
+            }
+        }
         let source = JSONStore<ComparisonRun>(fileURL: temporaryURL("suggestions.json"))
         try source.upsert(reviewed, id: \.id)
         let comparison = ComparisonCoordinator(probe: ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "unused" },
@@ -178,6 +236,12 @@ final class ComparisonCoordinatorTests: XCTestCase {
                 start: { _, _, _ in XCTFail("Failed verification must not start") }, stop: { _ in }), prober: OpenAIEndpointProber())
         })
         profiles.suggestionSource = { try comparison.requireCurrentSuggestion($0) }
+        try source.upsert(changedCache, id: \.id)
+        XCTAssertThrowsError(try comparison.requireCurrentSuggestion(changedCache))
+        XCTAssertNil(profiles.createSuggestedProfile(run: changedCache, name: "Unequal cache"))
+        XCTAssertTrue(try profileStore.load().isEmpty)
+        XCTAssertEqual(try source.load().first, changedCache)
+        try source.upsert(reviewed, id: \.id)
         let draft = try XCTUnwrap(profiles.createSuggestedProfile(run: reviewed, name: "Suggested"))
         XCTAssertEqual(draft.sourceRunID, reviewed.id)
         XCTAssertEqual(draft.sourceLaneID, lanes[0].id)
