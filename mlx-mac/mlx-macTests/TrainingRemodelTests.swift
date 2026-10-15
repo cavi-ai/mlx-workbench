@@ -33,6 +33,34 @@ private struct Boom: Error, LocalizedError { var errorDescription: String? { "bo
 // MARK: - Presentation
 
 final class TrainingPresentationTests: XCTestCase {
+    func testTrainingPlanShowsCapturedOutputAndDatasetCounts() {
+        let payload: [String: Any] = ["preview_hash": "h", "out": "model-lora",
+            "base_identity": ["path": "/cache/snapshots/revision"],
+            "dataset": ["train_lines": 12, "valid_lines": 0]]
+        let summary = TrainingPlanSummary(payload: payload)
+        XCTAssertEqual(summary.outputPath, "model-lora")
+        XCTAssertEqual(summary.basePath, "/cache/snapshots/revision")
+        XCTAssertEqual(summary.trainingExamples, 12)
+        XCTAssertEqual(summary.validationExamples, 0)
+        XCTAssertFalse(summary.baseMissing)
+        XCTAssertEqual(TrainingPlanSummary(payload: ["plan": payload]), summary)
+    }
+
+    func testTrainingPlanDoesNotInventMissingLegacyFieldsOrCounts() {
+        let legacy = TrainingPlanSummary(payload: ["preview_hash": "h"])
+        XCTAssertNil(legacy.outputPath)
+        XCTAssertNil(legacy.basePath)
+        XCTAssertNil(legacy.trainingExamples)
+        XCTAssertNil(legacy.validationExamples)
+        XCTAssertFalse(legacy.baseMissing, "An older preview without identity is not proof of a missing model")
+        let missing = TrainingPlanSummary(payload: ["base_identity": NSNull(), "out": " ",
+            "dataset": ["train_lines": -1, "valid_lines": "unknown"]])
+        XCTAssertTrue(missing.baseMissing)
+        XCTAssertNil(missing.outputPath)
+        XCTAssertNil(missing.trainingExamples)
+        XCTAssertNil(missing.validationExamples)
+    }
+
     func testEveryAgentStateMapsToAStatus() throws {
         let running = TrainingJobRow(job: try TF.job("running"), home: TF.home).status
         XCTAssertEqual(running.label, "Running")
@@ -343,7 +371,8 @@ final class TrainingRenderTests: XCTestCase {
         )
     }
 
-    private func attach<Content: View>(_ view: Content, name: String, viewport: CGFloat, dark: Bool, height: CGFloat = 1300) async throws {
+    private func attach<Content: View>(_ view: Content, name: String, viewport: CGFloat, dark: Bool, height: CGFloat = 1300,
+                                     captureDirectory: URL? = nil) async throws {
         let hosting = NSHostingView(rootView: view.frame(width: viewport, height: height).background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: viewport, height: height), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -361,6 +390,9 @@ final class TrainingRenderTests: XCTestCase {
         attachment.name = "\(name)-\(dark ? "dark" : "light")-\(Int(viewport))"
         attachment.lifetime = .keepAlways
         add(attachment)
+        if let captureDirectory {
+            try png.write(to: captureDirectory.appendingPathComponent("\(name)-\(Int(viewport)).png"))
+        }
     }
 
     private func loader(jobs: [TrainingJob], evaluations: [LabValue], jobsError: String? = nil, historyError: String? = nil) -> TrainingLoader {
@@ -371,6 +403,37 @@ final class TrainingRenderTests: XCTestCase {
             render: { $0.localizedDescription },
             seededJobs: jobs, seededEvaluations: evaluations
         )
+    }
+
+    func testTrainingSetupAndCapturedPlanRenderAtNarrowAndRegularWidths() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_TRAINING_CAPTURE"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_TRAINING_CAPTURE for training setup captures.")
+        }
+        let directory = URL(fileURLWithPath: path)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("preview.json"))) as? [String: Any])
+        let payload = try XCTUnwrap(envelope["data"] as? [String: Any])
+        let plan = WorkbenchAPI.unwrapPlan(payload)
+        let repo = try XCTUnwrap(plan["repo"] as? String)
+        let dataset = try XCTUnwrap(plan["data"] as? String)
+        for planned in [false, true] {
+            for width in [CGFloat(514), 814] {
+                var previewCalls = 0
+                let session = TrainingSession(preview: { _ in previewCalls += 1; return payload },
+                    start: { _, _ in XCTFail("Rendering must not start training") })
+                if planned {
+                    session.draft = TrainingDraft(repo: repo, data: dataset)
+                    await session.previewTraining()?.value
+                    XCTAssertNotNil(session.preview)
+                    XCTAssertEqual(session.canConfirm, !TrainingPlanSummary(payload: payload).baseMissing)
+                }
+                let records = loader(jobs: [], evaluations: [])
+                await records.refresh()
+                let view = TrainingView(appHost: host(), loader: records, session: session)
+                try await attach(view.environment(\.isRouteActive, false), name: planned ? "plan" : "setup",
+                    viewport: width, dark: true, height: planned ? 1600 : 1000, captureDirectory: directory)
+                XCTAssertEqual(previewCalls, planned ? 1 : 0)
+            }
+        }
     }
 
     func testEveryStateRendersDarkAndLightAtEveryWidth() async throws {
