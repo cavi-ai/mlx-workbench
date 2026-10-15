@@ -844,7 +844,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertFalse(refreshPreview.isEnabled)
             capture("Clients-\(appearance)-refreshing-preview")
             try FileManager.default.removeItem(at: root.appendingPathComponent("slow-server-status"))
-            XCTAssertTrue(app.buttons["Refresh servers"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["Refresh clients and servers"].waitForExistence(timeout: 10))
             XCTAssertEqual(try Data(contentsOf: config), original, "Refreshing a preview must not write")
 
             endpoint.click()
@@ -889,7 +889,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             app.buttons["Preview client wiring"].click()
             XCTAssertTrue(confirm.waitForExistence(timeout: 10))
             try Data().write(to: root.appendingPathComponent("fail-server-status"))
-            app.buttons["Refresh servers"].click()
+            app.buttons["Refresh clients and servers"].click()
             XCTAssertTrue(text(containing: "Server status unavailable.").waitForExistence(timeout: 10))
             XCTAssertFalse(confirm.isEnabled)
             XCTAssertEqual(reviewedModel.value as? String, "org/Qwen-second")

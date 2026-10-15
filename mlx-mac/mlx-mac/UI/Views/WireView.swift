@@ -214,7 +214,6 @@ struct WireView: View {
         .task(id: isRouteActive) {
             hasServerStatus = false
             guard isRouteActive else { return }
-            wiring.detect()
             await refreshServers()
         }
         .sheet(item: $capture, onDismiss: {
@@ -254,7 +253,7 @@ struct WireView: View {
     // MARK: Header
 
     private var refreshButton: some View {
-        Button(isRefreshingServer ? "Refreshing servers…" : "Refresh servers") {
+        Button(isRefreshingServer ? "Refreshing…" : "Refresh clients and servers") {
             Task { await refreshServers() }
         }
         .frame(minWidth: WorkbenchSize.Clients.refreshWidth, alignment: .trailing)

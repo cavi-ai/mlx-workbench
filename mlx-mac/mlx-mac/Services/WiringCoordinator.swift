@@ -99,9 +99,10 @@ final class WiringCoordinator: ObservableObject {
         }
     }
 
-    /// Read every writable client's config off the main actor and publish the result,
+    /// Detect clients again, then read every writable client's config off the main actor and publish the result,
     /// unless a newer read or a confirm/rollback outcome superseded this one.
     func refreshReadings() async {
+        detect()
         readGeneration &+= 1
         await readConfigs(generation: readGeneration)
     }
