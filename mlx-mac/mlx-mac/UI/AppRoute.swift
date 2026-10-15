@@ -45,7 +45,13 @@ enum AppRoute: String, CaseIterable, Hashable, Identifiable {
     var id: String { rawValue }
 
     /// Legacy destinations keep their identifiers while sharing the current page.
-    var navigationDestination: AppRoute { self == .adopt ? .discover : self }
+    var navigationDestination: AppRoute {
+        switch self {
+        case .adopt: return .discover
+        case .lmStudio: return .library
+        default: return self
+        }
+    }
 
     /// UserDefaults key for the persisted selection; shared by the window
     /// and the ⌘, command so both address the same destination.

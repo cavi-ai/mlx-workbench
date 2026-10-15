@@ -918,6 +918,70 @@ final class LMStudioResolutionLoaderTests: XCTestCase {
 
 @MainActor
 final class LMStudioRenderTests: XCTestCase {
+    func testLibrarySourceControlPreservesSelectionAndLegacyRequests() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_LIBRARY_SOURCE_CAPTURE"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_LIBRARY_SOURCE_CAPTURE for native Library source checks.")
+        }
+        let root = URL(fileURLWithPath: path)
+        let home = root.appendingPathComponent(UUID().uuidString)
+        let settings = home.appendingPathComponent(".lmstudio/settings.json")
+        let folder = home.appendingPathComponent("downloads")
+        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["downloadsFolder": folder.path]).write(to: settings)
+        let models = [F.mlx(folder.path + "/publisher/fixture-mlx"), F.gguf(folder.path + "/publisher/fixture-GGUF/fixture-Q4.gguf")]
+        let snapshot = LibrarySnapshot(models: models, groups: models.map { ModelGroup(variants: [$0]) },
+            hardware: F.hardware, generatedAt: Date())
+        let app = host(snapshot: snapshot)
+        app.config.ggufRoots = [folder.path]; app.config.mlxRoots = [folder.path]
+        app.scannedRoots = ScanRoots(gguf: [folder.path], mlx: [folder.path])
+        app.selectedModelPath = models[0].item.path
+        app.configPath = root.appendingPathComponent("config.json").path
+        let configBytes = try JSONEncoder().encode(app.config)
+        try configBytes.write(to: URL(fileURLWithPath: app.configPath))
+        let workflow = app.modelWorkflow.workflow
+        let hosting = NSHostingView(rootView: LibraryWorkspace(appHost: app, sourceHome: home)
+            .environment(\.isRouteActive, true).frame(width: 814, height: 1000)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 814, height: 1000),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
+        defer { window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func capture(_ name: String) throws {
+            hosting.layoutSubtreeIfNeeded()
+            let image = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: image)
+            try XCTUnwrap(image.representation(using: .png, properties: [:]))
+                .write(to: root.appendingPathComponent(name + ".png"))
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        try capture("all-models")
+        let picker = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSSegmentedControl }
+            .first { $0.segmentCount == 2 && $0.label(forSegment: 0) == "All models" })
+        let action = try XCTUnwrap(picker.action)
+        picker.selectedSegment = 1
+        XCTAssertTrue(picker.sendAction(action, to: picker.target))
+        try await Task.sleep(for: .milliseconds(400))
+        try capture("lm-studio-source")
+        XCTAssertEqual(picker.selectedSegment, 1)
+        picker.selectedSegment = 0
+        XCTAssertTrue(picker.sendAction(action, to: picker.target))
+        try await Task.sleep(for: .milliseconds(250))
+        try capture("all-models-return")
+        XCTAssertEqual(app.selectedModelPath, models[0].item.path)
+        hosting.rootView = LibraryWorkspace(appHost: app, lmStudioRequested: true, sourceHome: home)
+            .environment(\.isRouteActive, true).frame(width: 814, height: 1000)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(picker.selectedSegment, 1)
+        try capture("legacy-lm-studio-request")
+        XCTAssertEqual(app.selectedModelPath, models[0].item.path)
+        XCTAssertEqual(app.modelWorkflow.workflow, workflow)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: app.configPath)), configBytes)
+        XCTAssertNil(app.lastError)
+    }
+
     private func config() -> Config {
         Config(
             schemaVersion: Config.SCHEMA_VERSION, ggufRoots: ["/m"], mlxRoots: [], outputDir: "/out/mlx",

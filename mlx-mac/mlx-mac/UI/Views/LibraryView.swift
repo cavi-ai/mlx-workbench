@@ -213,6 +213,70 @@ enum LibraryPresentation {
 
 // MARK: - LibraryView
 
+enum LibrarySource: String, CaseIterable, Identifiable {
+    case allModels, lmStudio
+    var id: Self { self }
+    var title: String { self == .allModels ? "All models" : "LM Studio" }
+}
+
+/// Source-specific views share Library's inventory and preserve the main table's state.
+struct LibraryWorkspace: View {
+    let appHost: AppHost
+    let lmStudioRequested: Bool
+    let sourceHome: URL
+    let onRouteSelection: (AppRoute) -> Void
+    @Environment(\.isRouteActive) private var isRouteActive
+    @State private var source: LibrarySource
+    @State private var visitedSources: Set<LibrarySource>
+
+    init(appHost: AppHost, initialSource: LibrarySource = .allModels, lmStudioRequested: Bool = false,
+         sourceHome: URL = WorkbenchStatePaths.userHome(), onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
+        self.appHost = appHost
+        self.lmStudioRequested = lmStudioRequested
+        self.sourceHome = sourceHome
+        self.onRouteSelection = onRouteSelection
+        let initial = lmStudioRequested ? LibrarySource.lmStudio : initialSource
+        _source = State(initialValue: initial)
+        _visitedSources = State(initialValue: [initial])
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Picker("Source", selection: $source) {
+                ForEach(LibrarySource.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 350)
+            .padding(.horizontal, WorkbenchSpacing.pageInset)
+            .padding(.top, WorkbenchSpacing.pageInset)
+            .accessibilityIdentifier("library-source")
+            ZStack {
+                ForEach(LibrarySource.allCases.filter { visitedSources.contains($0) }) { destination in
+                    let active = source == destination
+                    sourceView(destination)
+                        .environment(\.isRouteActive, isRouteActive && active)
+                        .opacity(active ? 1 : 0)
+                        .allowsHitTesting(active)
+                        .accessibilityHidden(!active)
+                        .zIndex(active ? 1 : 0)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onChange(of: source) { _, selected in visitedSources.insert(selected) }
+        .onChange(of: lmStudioRequested) { _, requested in
+            if requested { source = .lmStudio; visitedSources.insert(.lmStudio) }
+        }
+    }
+
+    @ViewBuilder private func sourceView(_ source: LibrarySource) -> some View {
+        switch source {
+        case .allModels: LibraryView(appHost: appHost, onRouteSelection: onRouteSelection)
+        case .lmStudio: LMStudioView(appHost: appHost, home: sourceHome, onRouteSelection: onRouteSelection)
+        }
+    }
+}
+
 struct LibraryView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var reclaim: ReclaimCoordinator

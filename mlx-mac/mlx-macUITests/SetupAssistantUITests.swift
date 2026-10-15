@@ -296,7 +296,7 @@ final class WorkbenchReviewUITests: XCTestCase {
 
     private var routes: [String] {
         ["Overview", "Library", "Prepare", "Compare", "Run", "Activity", "Reclaim", "Clients",
-         "Health", "Discover", "LM Studio", "Studies", "Training", "Settings"]
+         "Health", "Discover", "Studies", "Training", "Settings"]
     }
 
     private func assertPageContent(_ route: String) {
@@ -307,7 +307,6 @@ final class WorkbenchReviewUITests: XCTestCase {
         let element: XCUIElement
         if let title = titles[route] { element = app.staticTexts[title].firstMatch }
         else if route == "Settings" { element = app.staticTexts["Engine status"].firstMatch }
-        else if route == "LM Studio" { element = app.buttons["Scan Again"] }
         else if route == "Studies" { element = app.buttons["New experiment…"] }
         else if route == "Overview" { element = app.buttons["Open Health"] }
         else { element = app.buttons["New set…"] }
@@ -399,7 +398,8 @@ final class WorkbenchReviewUITests: XCTestCase {
                        "Both Discover actions must reach the CLI")
         capture("Discover-failed-recovery")
 
-        select("LM Studio")
+        select("Library")
+        app.segmentedControls["library-source"].buttons["LM Studio"].click()
         XCTAssertTrue(app.buttons["Scan Again"].waitForExistence(timeout: 15))
         XCTAssertFalse(app.textFields.firstMatch.exists, "The shelf reads LM Studio's folders; it takes no typed path")
         capture("LMStudio-shelf")
@@ -1103,6 +1103,14 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("ManualWire-\(appearance)-preview-error")
             app.terminate()
         }
+    }
+
+    func testLegacyLMStudioRouteOpensTheLibrarySource() throws {
+        launch(appearance: "Light", route: "lmstudio", isolatedHome: true, forcedRoute: "lmstudio")
+        XCTAssertTrue(app.buttons["Scan Again"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons["Library"].value as? String, "Selected")
+        XCTAssertTrue(app.segmentedControls["library-source"].buttons["LM Studio"].isSelected)
+        capture("Library-legacy-lmstudio")
     }
 
     func testLegacyAdoptRouteOpensDiscoverRecommendations() throws {

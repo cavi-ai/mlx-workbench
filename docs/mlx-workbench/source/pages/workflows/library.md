@@ -8,6 +8,8 @@
 
 **Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. Families with multiple variants expand to show their models; single variants appear directly in the table.
 
+The **Source** picker switches between **All models** and **LM Studio**. Switching sources preserves the main table's filters and selected model, without changing configuration or starting conversion or serving.
+
 | Column | Meaning |
 |---|---|
 | Quantization | Declared bits or quant type |
@@ -61,9 +63,9 @@ The engine labels each model with a task type. The type decides what the app off
 
 Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embeddings and output head, so they are never served on their own.
 
-## LM Studio
+## LM Studio source
 
-**LM Studio** lists the models in LM Studio's downloads folder from the last Library scan; it does not scan on its own. The folder comes from `downloadsFolder` in `~/.lmstudio/settings.json`. The screen states, per format, whether the last scan reaches that folder.
+Choose **Library → Source → LM Studio** to list models in LM Studio's downloads folder from the last Library scan; it does not scan on its own. The folder comes from `downloadsFolder` in `~/.lmstudio/settings.json`. The view states, per format, whether the last scan reaches that folder. Existing saved LM Studio navigation opens this source inside Library.
 
 Two lanes are ranked by fit:
 

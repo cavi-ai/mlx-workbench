@@ -30,7 +30,7 @@ The sidebar groups fifteen screens.
 | Group | Screen | Purpose |
 |---|---|---|
 | Workbench | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
-| | **Library** | Local GGUF and MLX weights, fit now, details, lineage and deletion |
+| | **Library** | Local GGUF and MLX weights, fit now, details, lineage, deletion and LM Studio source |
 | Lifecycle | **Prepare** | Preview and confirm conversions; follow verification |
 | | **Compare** | Measured model comparisons with recorded prompts and outputs |
 | | **Run** | Loopback servers, memory runway, always-on endpoints and serving profiles |
@@ -39,7 +39,6 @@ The sidebar groups fifteen screens.
 | | **Clients** | Config wiring for local clients, with rollback |
 | | **Health** | Runtime readiness, model health and the Setup Assistant |
 | Lab | **Discover** | Browse Hugging Face Hub candidates or request a task recommendation |
-| | **LM Studio** | Models in LM Studio's downloads folder, ready to run or prepare |
 | | **Studies** | Controlled experiments, generation jobs and blind review |
 | | **Training** | Text LoRA training and base-versus-adapter evaluation |
 | Settings | **Settings** | Engine, model locations, storage, defaults, advisors and updates |
