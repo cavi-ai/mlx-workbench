@@ -149,10 +149,10 @@ struct SetupAssistantView: View {
                     coordinator.finish()
                     appHost.requestRescan()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.workbenchPrimary)
             } else {
                 Button("Continue") { coordinator.advance() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
             }
         }
         .buttonStyle(.bordered)

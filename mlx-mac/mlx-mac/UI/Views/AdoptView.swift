@@ -118,7 +118,7 @@ struct AdoptView: View {
                     .disabled(isBusy)
                     .controlRow()
                 Button("Start") { startAdopt() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .keyboardShortcut(isRouteActive ? .defaultAction : nil)
                     .disabled(!isRouteActive || isBusy || !AdoptRole.choices.contains(role))
                     .help("Start adoption in a new state file for the selected role.")

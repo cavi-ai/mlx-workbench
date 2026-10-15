@@ -423,12 +423,13 @@ struct LibraryNameCell: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.hairline) {
                 Text(row.name)
                     .font(row.isFamily ? WorkbenchTypography.emphasis : WorkbenchTypography.body)
+                    .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.ink)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 subline
             }
         }
-        .padding(.vertical, WorkbenchSpacing.xxxs)
+        .padding(.vertical, WorkbenchSpacing.xs)
     }
 
     @ViewBuilder
@@ -439,7 +440,7 @@ struct LibraryNameCell: View {
         } else if !row.subline.isEmpty {
             Text(row.subline)
                 .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
+                .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.muted)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -479,9 +480,11 @@ struct LibraryReadinessCell: View {
 
 struct LibraryQuantCell: View {
     let row: LibraryRow
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         Text(row.quantization)
+            .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.ink)
             .font(WorkbenchTypography.tabular)
             .lineLimit(1)
     }
@@ -495,6 +498,7 @@ struct LibrarySizeCell: View {
 
     private var number: some View {
         Text(LibraryTablePresentation.byteCount(row.bytes))
+            .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.ink)
             .font(WorkbenchTypography.tabular)
             .lineLimit(1)
     }
@@ -533,11 +537,12 @@ struct LibrarySizeCell: View {
 
 struct LibraryModifiedCell: View {
     let row: LibraryRow
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         Text(LibraryTablePresentation.modifiedText(row.modifiedAt))
             .font(WorkbenchTypography.secondaryTabular)
-            .foregroundStyle(WorkbenchColor.muted)
+            .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : WorkbenchColor.muted)
             .lineLimit(1)
     }
 }

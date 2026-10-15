@@ -867,11 +867,11 @@ final class HealthSourceContractTests: XCTestCase {
 
     func testHeroHasOneProminentControlAndTheNewButtonsAreBorderless() throws {
         let views = try Fixture.source("UI/Views/HealthViews.swift")
-        XCTAssertEqual(views.components(separatedBy: ".borderedProminent").count - 1, 1, "healthProminence only")
+        XCTAssertEqual(views.components(separatedBy: ".workbenchPrimary").count - 1, 1, "healthProminence only")
         XCTAssertNotNil(views.range(of: #"Button\(EnvironmentEvidence\.reviewTitle, action: onReview\)\s+\.buttonStyle\(\.borderless\)"#, options: .regularExpression))
         XCTAssertTrue(views.contains(#"Button("Copy command")"#))
         let doctor = try Fixture.source("UI/Views/DoctorView.swift")
-        XCTAssertEqual(doctor.components(separatedBy: ".borderedProminent").count - 1, 1, "Run doctor")
+        XCTAssertEqual(doctor.components(separatedBy: ".workbenchPrimary").count - 1, 1, "Run doctor")
         XCTAssertTrue(doctor.contains("onRouteSelection(.overview)"))
     }
 

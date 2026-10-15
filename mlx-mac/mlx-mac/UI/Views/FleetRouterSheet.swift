@@ -138,14 +138,14 @@ struct FleetRouterSheet: View {
             switch step {
             case .plan:
                 Button("Render preview") { renderPreview() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(plan.isEmpty)
             case .working:
                 EmptyView()
             case .preview:
                 Button("Confirm apply") { confirmApply() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .keyboardShortcut(.defaultAction)
             case .applied:
                 EmptyView()

@@ -280,11 +280,10 @@ struct WorkbenchSurface<Content: View>: View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(WorkbenchColor.surface, in: shape)
-            .background(style == .tinted ? WorkbenchColor.accent.opacity(.wash) : Color.clear, in: shape)
+            .background(style == .tinted ? WorkbenchColor.accent.opacity(.wash) : WorkbenchColor.surface, in: shape)
             .overlay {
                 RoundedRectangle(cornerRadius: WorkbenchRadius.surface, style: .continuous)
-                    .strokeBorder(stroke, lineWidth: WorkbenchSpacing.hairline)
+                    .strokeBorder(style == .tinted ? stroke : Color.clear, lineWidth: WorkbenchSpacing.hairline)
             }
     }
 }
@@ -449,7 +448,7 @@ struct RuntimeInstallView: View {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                 HStack(spacing: WorkbenchSpacing.sm) {
                     Button("Install Runtime…") { showConfirm = true }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.workbenchPrimary)
                         .disabled(!installer.canInstall)
                     if installer.state == .running {
                         ProgressView()
@@ -547,6 +546,28 @@ struct SectionTitle: View {
         Text(text)
             .font(WorkbenchTypography.section)
             .foregroundStyle(WorkbenchColor.ink)
+    }
+}
+
+/// A stable title and one quiet description give every route the same
+/// reading hierarchy, while each screen keeps its task-specific controls.
+struct WorkbenchPageHeading: View {
+    let route: AppRoute
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Text(route.label)
+                .font(WorkbenchTypography.pageTitle)
+                .foregroundStyle(WorkbenchColor.ink)
+                .accessibilityAddTraits(.isHeader)
+            Text(route.pageDescription)
+                .font(WorkbenchTypography.body)
+                .foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, WorkbenchSpacing.pageInset)
+        .padding(.vertical, WorkbenchSpacing.lg)
     }
 }
 

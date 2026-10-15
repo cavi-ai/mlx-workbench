@@ -14,6 +14,7 @@ struct ContentView: View {
     /// The workflow outcome last seen on Prepare or Activity; a failure stays in the toolbar until then.
     @AppStorage(Self.acknowledgedOutcomeStorageKey) private var acknowledgedOutcome = ""
     @State private var visitedRoutes: Set<AppRoute> = []
+    @State private var viewport = CGSize(width: WorkbenchSize.windowDefaultWidth, height: WorkbenchSize.windowDefaultHeight)
 
     init(appHost: AppHost) {
         _appHost = StateObject(wrappedValue: appHost)
@@ -38,12 +39,14 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             AppSidebar(selectedRoute: selectedRouteBinding, badges: sidebarBadges)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
+                .navigationSplitViewColumnWidth(min: WorkbenchSize.sidebarMinimum, ideal: WorkbenchSize.sidebarIdeal, max: WorkbenchSize.sidebarMaximum)
         } detail: {
             visitedDestinations
+                .workbenchCanvas()
                 .workbenchScrollEdge()
                 .navigationTitle(selectedRoute.label)
                 .navigationSubtitle(subtitle)
+                .toolbarBackground(WorkbenchColor.canvas, for: .windowToolbar)
                 .toolbar {
 #if compiler(>=6.2)
                     if #available(macOS 26.0, *) {
@@ -59,6 +62,8 @@ struct ContentView: View {
                 }
         }
         .frame(minWidth: WorkbenchSize.windowMinimumWidth, minHeight: WorkbenchSize.windowMinimumHeight)
+        .environment(\.workbenchViewport, viewport)
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { viewport = $0 }
         .background { routeShortcutButtons }
         .onChange(of: selectedRouteID) { _, _ in
             visitedRoutes.insert(selectedRoute)
@@ -106,7 +111,10 @@ struct ContentView: View {
         ZStack {
             ForEach(Self.mountedRoutes(for: visitedRoutes), id: \.self) { route in
                 let isActive = route == selectedRoute
-                routeDestination(route)
+                VStack(spacing: 0) {
+                    if route != .library { WorkbenchPageHeading(route: route) }
+                    routeDestination(route)
+                }
                     .environment(\.isRouteActive, isActive)
                     .opacity(isActive ? 1 : 0)
                     .allowsHitTesting(isActive)

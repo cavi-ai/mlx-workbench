@@ -210,7 +210,7 @@ struct ScoutView: View {
 
     private var discoverButton: some View {
         Button("Discover") { discover() }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.workbenchPrimary)
             .disabled(isScouting)
     }
 

@@ -47,7 +47,7 @@ extension View {
     @ViewBuilder
     func reclaimButtonStyle(_ action: ReclaimAction, primary: ReclaimAction?) -> some View {
         if action == primary {
-            buttonStyle(.borderedProminent)
+            buttonStyle(.workbenchPrimary)
         } else {
             buttonStyle(.bordered)
         }

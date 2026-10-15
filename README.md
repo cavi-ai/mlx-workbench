@@ -4,6 +4,19 @@ A native macOS app for running local models on Apple Silicon. Find a model, conv
 
 MLX Workbench is the desktop front end for [mlx-agent](https://github.com/cavi-ai/mlx-agent). Every operation runs through the engine's `scripts/mlx-agent … --json` command line: each change is previewed before you confirm it, launched work leaves an engine receipt, and serving binds to `127.0.0.1`.
 
+![MLX Workbench Library with the model inspector](docs/images/library.png)
+
+The native Library keeps model readiness and memory fit beside the selected model. Screenshots show illustrative inventory.
+
+<details>
+<summary>Prepare and compare models</summary>
+
+![Prepare a local model or add one from Hugging Face](docs/images/prepare.png)
+
+![Choose models and prompts for a measured comparison](docs/images/compare.png)
+
+</details>
+
 ## Install
 
 Requires an Apple Silicon Mac, Git and Python 3.12 ([uv](https://github.com/astral-sh/uv) recommended).
@@ -37,7 +50,7 @@ See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.m
 | Workbench | Overview, Library | Model budget, fit per model, model details and lineage |
 | Lifecycle | Prepare, Compare, Run | Previewed conversion, quality gate canaries, measured comparisons in eight modes, always-on endpoints with load on request |
 | Operations | Activity, Reclaim, Clients, Health | Job timeline, quarantine and Trash with restore, client config wiring with rollback, runtime readiness |
-| Lab | Discover, LM Studio, Training, Adopt | Hub candidates with fit, LM Studio's downloads, text LoRA training with evaluation, controlled studies |
+| Lab | Discover, LM Studio, Studies, Training, Adopt | Hub candidates with fit, LM Studio's downloads, text LoRA training with evaluation, controlled studies |
 
 Qwen3.8-Flash-Next can also run on the optional [Strata runtime](docs/mlx-workbench/source/pages/workflows/strata.md) from a prepared GGUF pair.
 

@@ -1387,7 +1387,7 @@ struct ComparisonPromptSetEditor: View {
                         if error == nil { dismiss() }
                     }
                 }
-                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
+                .buttonStyle(.workbenchPrimary).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(draft.validationError != nil || !draft.hasChanges)
                 .comparisonPromptActionHint(draft.validationError
@@ -1906,7 +1906,7 @@ struct ComparisonRunSetupSheet: View {
                         if error == nil { dismiss() }
                     } catch { self.error = error.localizedDescription }
                 }
-                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent).keyboardShortcut(.defaultAction)
+                .buttonStyle(.workbenchPrimary).tint(WorkbenchColor.accent).keyboardShortcut(.defaultAction)
                 .disabled(setup.draft.validationError != nil)
                 .comparisonPromptActionHint(setup.draft.validationError
                     ?? "Use these prompts and model selections for a new comparison.")
@@ -2014,7 +2014,7 @@ struct MusicPromptSetCreateSheet: View {
                     error = onSave(draft)
                     if error == nil { dismiss() }
                 }
-                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
+                .buttonStyle(.workbenchPrimary).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(draft.validationError != nil)
                 .comparisonPromptActionHint(draft.validationError ?? "Save this prompt set.")
@@ -2089,7 +2089,7 @@ struct MusicPromptSetEditSheet: View {
                     error = onSave(edit)
                     if error == nil { dismiss() }
                 }
-                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
+                .buttonStyle(.workbenchPrimary).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction).disabled(edit.validationError != nil || !edit.hasChanges)
                 .comparisonPromptActionHint(edit.validationError
                     ?? (edit.hasChanges ? "Save changes to this prompt set." : "No changes to save."))
@@ -2131,7 +2131,7 @@ struct PromptSetRenameSheet: View {
                     error = onRename(draft.normalizedName)
                     if error == nil { dismiss() }
                 }
-                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
+                .buttonStyle(.workbenchPrimary).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!draft.canRename)
                 .comparisonPromptActionHint(draft.validationError
@@ -2238,7 +2238,7 @@ struct MusicComparisonSetupSheet: View {
                     do { onApply(setup, try setup.promptSet()); dismiss() }
                     catch { applyError = error.localizedDescription }
                 }
-                .buttonStyle(.borderedProminent).tint(WorkbenchColor.accent)
+                .buttonStyle(.workbenchPrimary).tint(WorkbenchColor.accent)
                 .keyboardShortcut(.defaultAction).disabled(setup.validationError != nil)
                 .comparisonPromptActionHint(setup.validationError
                     ?? "Use these music prompts and model selections for a new comparison.")

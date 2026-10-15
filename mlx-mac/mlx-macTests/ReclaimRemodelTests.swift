@@ -468,11 +468,11 @@ final class ReclaimProminenceTests: XCTestCase {
     }
 
     func testProminentStylesAreConfinedToTheDeclaredRegions() throws {
-        XCTAssertEqual(Fixture.occurrences(of: ".borderedProminent", in: try Fixture.source("Views/ReclaimViews.swift")), 1)
+        XCTAssertEqual(Fixture.occurrences(of: ".workbenchPrimary", in: try Fixture.source("Views/ReclaimViews.swift")), 1)
         // Sheet confirms: Move to Trash and Quarantine folder.
-        XCTAssertEqual(Fixture.occurrences(of: ".borderedProminent", in: try Fixture.source("Views/DuplicatesView.swift")), 2)
+        XCTAssertEqual(Fixture.occurrences(of: ".workbenchPrimary", in: try Fixture.source("Views/DuplicatesView.swift")), 2)
         // Sheet confirms: Move originals to Trash and Restore originals.
-        XCTAssertEqual(Fixture.occurrences(of: ".borderedProminent", in: try Fixture.source("Views/SourceCleanupSection.swift")), 2)
+        XCTAssertEqual(Fixture.occurrences(of: ".workbenchPrimary", in: try Fixture.source("Views/SourceCleanupSection.swift")), 2)
     }
 
     func testSurfaceAndBorderedActionsAreConfinedToTheLeadControls() throws {

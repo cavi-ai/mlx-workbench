@@ -6,7 +6,7 @@
 
 ## Library
 
-**Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. Models are grouped by family, with a heading and a count per family.
+**Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. Families with multiple variants expand to show their models; single variants appear directly in the table.
 
 | Column | Meaning |
 |---|---|
@@ -20,15 +20,21 @@ Columns collapse as the window narrows. Filters narrow the list by quantization 
 
 ### Model details
 
-Select a model to open the inspector. It shows the model's details and runtime, and for a speculative-decoding drafter, its target model. It also holds:
+In wide windows, the first selected model opens the inspector beside the table.
+In compact windows, selecting a model opens its details in a sheet. Use
+**Inspector** in the toolbar or ⌥⌘I to hide or show details. Actions and the current memory fit come first;
+expand **Model details** for paths, runtime and other technical facts,
+including a speculative-decoding drafter's target. The inspector also holds:
 
-- **Lineage**: a provenance timeline of source, converted, verified, benchmarked, served, wired and quarantined events, built from the records the app already keeps. Events whose model signature no longer matches are dimmed. Export it as Markdown or JSON.
-- **Performance**: throughput and first-token latency aggregated from past comparisons.
+- **Model lineage**: a provenance timeline of source, converted, verified, benchmarked, served, wired and quarantined events, built from the records the app already keeps. Events whose model signature no longer matches are dimmed. Export it as Markdown or JSON.
+- **Measured performance**: throughput and first-token latency aggregated from past comparisons.
 - **Generate**, for image-generation models: prompt, size, steps and seed. Each run writes a new PNG to `~/Pictures/MLX Workbench`.
 
 During rendering, **Cancel generation** stops that model's owned worker. The panel stays busy until the worker returns, and another model's panel cannot cancel it. Cancellation keeps any files already written and does not publish a late image as a completed result. After cleanup, Generate accepts a new request with a distinct output filename, including retries within the same second.
 
-Actions: **Select for Run**, **Select for Compare**, **Prepare to run**, **Reveal in Finder**, **Copy Path**.
+Actions: **Run model** opens the existing server preview flow; **Compare**
+selects the model for comparison. Models needing conversion offer **Prepare
+to run**. **Reveal in Finder** and **Copy Path** are in the model's action menu.
 
 **Select for Compare** is available for ready chat, speech, music, image and video models. It opens the matching comparison mode and selects the model without starting a run. Run remains a chat-serving action. Runtime restrictions take precedence over task labels: Strata supports Chat only.
 

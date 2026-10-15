@@ -1146,7 +1146,7 @@ struct QuantView: View {
 
     private var runButton: some View {
         ComparisonRunButton(unavailableReason: runUnavailableReason, action: startRun)
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.workbenchPrimary)
     }
 
     @ViewBuilder private var inlineControls: some View {
@@ -1386,13 +1386,13 @@ struct QuantView: View {
                     let profile = try servingProfiles.prepareMeasuredVerification(run: run, laneID: lane.resultKey)
                     profileSaveRequest = ServingProfileSaveRequest(run: run, laneID: lane.resultKey, letter: lane.letter, action: .verifyMeasured(profile))
                 } catch { profileActionError = AppHost.render(error) }
-            }.buttonStyle(.borderedProminent).controlSize(.small)
+            }.buttonStyle(.workbenchPrimary).controlSize(.small)
                 .disabled(comparison.activeRunID != nil || servingProfiles.activeID != nil)
         }
         if run.settingsSearchCandidateID == lane.resultKey {
             Button("Save and verify suggestion…") {
                 profileSaveRequest = ServingProfileSaveRequest(run: run, laneID: lane.resultKey, letter: lane.letter, action: .verifySuggestion)
-            }.buttonStyle(.borderedProminent).controlSize(.small)
+            }.buttonStyle(.workbenchPrimary).controlSize(.small)
                 .disabled(comparison.activeRunID != nil || servingProfiles.activeID != nil)
         }
         if run.effectiveMode == .chat, run.state == .completed,
