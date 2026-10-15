@@ -37,6 +37,7 @@ struct ImageGenerationPanel: View {
                     .disabled(!isPrimary || coordinator.isGenerating || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 progress
             }
+            ImageGenerationCancelButton(coordinator: coordinator, modelPath: modelPath)
             outcome
         }
     }
@@ -60,7 +61,8 @@ struct ImageGenerationPanel: View {
             ProgressView().controlSize(.small)
             TimelineView(.periodic(from: startedAt, by: 1)) { context in
                 Text(path == modelPath
-                     ? "Rendering… \(ConversionProgressReader.elapsedText(seconds: max(0, Int(context.date.timeIntervalSince(startedAt)))))"
+                     ? (coordinator.isCancelling ? "Cancelling… Waiting for the image worker to stop." :
+                        "Rendering… \(ConversionProgressReader.elapsedText(seconds: max(0, Int(context.date.timeIntervalSince(startedAt)))))")
                      : "Another model is rendering.")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
@@ -92,8 +94,27 @@ struct ImageGenerationPanel: View {
             }
         case let .failed(path, message) where path == modelPath:
             ErrorBanner(text: message)
+        case let .cancelled(path) where path == modelPath:
+            Text("Generation cancelled. Any written output files were kept.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
         default:
             EmptyView()
+        }
+    }
+}
+
+struct ImageGenerationCancelButton: View {
+    @ObservedObject var coordinator: ImageGenerationCoordinator
+    let modelPath: String
+
+    var body: some View {
+        if case .generating(let path, _) = coordinator.state, path == modelPath {
+            Button(coordinator.isCancelling ? "Cancelling…" : "Cancel generation") {
+                coordinator.cancel(modelPath: modelPath)
+            }
+            .disabled(coordinator.isCancelling)
+            .help("Stop this image generation's owned worker. Wait for cleanup before generating again.")
+            .accessibilityIdentifier("image-generation-cancel")
         }
     }
 }

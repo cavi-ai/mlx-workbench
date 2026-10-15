@@ -26,6 +26,8 @@ Select a model to open the inspector. It shows the model's details and runtime, 
 - **Performance**: throughput and first-token latency aggregated from past comparisons.
 - **Generate**, for image-generation models: prompt, size, steps and seed. Each run writes a new PNG to `~/Pictures/MLX Workbench`.
 
+During rendering, **Cancel generation** stops that model's owned worker. The panel stays busy until the worker returns, and another model's panel cannot cancel it. Cancellation keeps any files already written and does not publish a late image as a completed result. After cleanup, Generate accepts a new request with a distinct output filename, including retries within the same second.
+
 Actions: **Select for Run**, **Select for Compare**, **Prepare to run**, **Reveal in Finder**, **Copy Path**.
 
 ### Delete a model
