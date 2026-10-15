@@ -65,7 +65,10 @@ final class TrainingSession: ObservableObject {
 
     var isBusy: Bool { operation != nil }
     var canPreview: Bool { !isBusy && draft.request != nil }
-    var canConfirm: Bool { !isBusy && preview != nil && preview?.request == draft.request }
+    var canConfirm: Bool {
+        guard !isBusy, let preview, preview.request == draft.request else { return false }
+        return !TrainingPlanSummary(payload: preview.payload).baseMissing
+    }
 
     @discardableResult
     func previewTraining() -> Task<Void, Never>? {
@@ -207,6 +210,9 @@ struct TrainingView: View {
     private func formSection(_ proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             SectionTitle(text: "LoRA fine-tune")
+            Text("Requires a cached Hugging Face base model and the mlx-lm training runtime. Training does not download models.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             requestSignature(repo: session.draft.repo, data: session.draft.data, output: session.draft.output)
             Divider()
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
@@ -234,6 +240,19 @@ struct TrainingView: View {
                             .focused($focusedField, equals: .data)
                         Button("Choose…") { chooseDataset() }.buttonStyle(.bordered).controlSize(.small)
                     }
+                    Text("Choose a directory containing train.jsonl. A valid.jsonl validation set is optional.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    DisclosureGroup("Dataset format") {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            Text("Each line must be one JSON object with nonempty text or a messages array. Do not include blank lines.")
+                                .font(WorkbenchTypography.secondary)
+                            Text(#"{"text":"A complete training example."}"#)
+                                .font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                            Text("Preview checks the files before offering a training plan.")
+                                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        }.fixedSize(horizontal: false, vertical: true).padding(.top, WorkbenchSpacing.xs)
+                    }.font(WorkbenchTypography.secondary)
                 }.id(TrainingField.data)
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: WorkbenchSpacing.md) { trainingFields }
@@ -397,24 +416,35 @@ struct TrainingView: View {
     }
 
     private func planSection(_ preview: TrainingPreview) -> some View {
-        WorkbenchSurface(.tinted) {
+        let summary = TrainingPlanSummary(payload: preview.payload)
+        return WorkbenchSurface(.tinted) {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                     SectionTitle(text: "Training plan")
                     Text("Captured from your preview. Editing the setup requires a new preview.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
-                requestSignature(repo: preview.request.repo, data: preview.request.data, output: preview.request.output ?? "")
+                requestSignature(repo: preview.request.repo, data: preview.request.data,
+                    output: summary.outputPath ?? preview.request.output ?? "")
                 planRow("Iterations", String(preview.request.iterations))
-                if preview.request.output == nil {
-                    Text("No output directory entered.").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                if let count = summary.trainingExamples { planRow("Training examples", String(count)) }
+                if let count = summary.validationExamples { planRow("Validation examples", String(count)) }
+                if let path = summary.basePath { planRow("Captured base model", path) }
+                if summary.baseMissing {
+                    Label("The base model was not found in the local Hugging Face cache. Cache it, then preview again before confirming training.", systemImage: "exclamationmark.triangle")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if summary.outputPath == nil && preview.request.output == nil {
+                    Text("This preview did not report an output directory. Inspect the raw plan before confirming.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 }
                 operationFeedback
                 Button(session.operation == .submitting ? "Submitting…" : "Confirm & Train") { confirmTraining() }
                     .buttonStyle(.workbenchPrimary)
                     .disabled(!session.canConfirm)
                     .accessibilityIdentifier("training-confirm")
-                    .help("Submit the captured training request shown above.")
+                    .help(summary.baseMissing ? "Cache the base model, then preview again." : "Submit the captured training request shown above.")
                 Divider()
                 RawJSONDisclosure("Raw plan payload", value: preview.payload)
             }
@@ -504,30 +534,33 @@ struct TrainingView: View {
     }
 }
 
-private struct TrainingEvaluationSheet: View {
-    @ObservedObject var lab: LabCoordinator
+struct TrainingEvaluationSheet: View {
     let job: TrainingJob
+    @StateObject private var session: TrainingEvaluationSession
     @Environment(\.dismiss) private var dismiss
-    @State private var prompt = ""
-    @State private var preview: LabValue?
-    @State private var result: LabResponse?
-    @State private var busy = false
-    @State private var error: String?
+
+    init(lab: LabCoordinator, job: TrainingJob, session: TrainingEvaluationSession? = nil) {
+        self.job = job
+        _session = StateObject(wrappedValue: session ?? TrainingEvaluationSession(receipt: job.receipt) {
+            try await lab.request($0)
+        })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("Evaluate trained adapter").font(WorkbenchTypography.title)
             Text("Use the same prompt, seed, token limit, and sampling settings for the cached base model and this adapter.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             Text(job.repo).font(WorkbenchTypography.cardTitle)
-            TextField("Evaluation prompt", text: $prompt, axis: .vertical).lineLimit(3...6)
-                .onChange(of: prompt) { preview = nil; result = nil }
-            if let error { Text(error).foregroundStyle(WorkbenchColor.failure) }
-            if let preview {
+            TextField("Evaluation prompt", text: $session.prompt, axis: .vertical).lineLimit(3...6)
+                .disabled(session.isBusy)
+            if let error = session.errorMessage { Text(error).foregroundStyle(WorkbenchColor.failure) }
+            if let preview = session.preview {
                 TrainingRawDisclosure(
-                    title: "Reviewed evaluation recipe", text: preview.jsonText, maxHeight: WorkbenchSize.Training.recipeMaxHeight
+                    title: "Reviewed evaluation recipe", text: preview.plan.jsonText, maxHeight: WorkbenchSize.Training.recipeMaxHeight
                 )
             }
-            if let result, let report = result.report?.object {
+            if let result = session.result, let report = result.report?.object {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading) {
                         Text("Base model").font(WorkbenchTypography.cardTitle)
@@ -542,25 +575,14 @@ private struct TrainingEvaluationSheet: View {
                 Text("These outputs provide comparison evidence. No quality judgment has been recorded.").font(WorkbenchTypography.metadata)
             }
             HStack {
-                Button("Close") { dismiss() }.disabled(busy)
+                Button("Close") { dismiss() }.disabled(session.isBusy)
                 Spacer()
-                Button("Preview") { perform("training-preview") }.disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
-                Button("Run comparison") { perform("training-evaluate") }
-                    .disabled(preview?.object?["preview_hash"]?.text == nil || busy)
+                Button(session.operation == .previewing ? "Previewing…" : "Preview") { session.previewEvaluation() }
+                    .disabled(!session.canPreview)
+                Button(session.operation == .evaluating ? "Running comparison…" : "Run comparison") { session.evaluate() }
+                    .disabled(!session.canEvaluate)
             }
         }.padding(WorkbenchSpacing.pageInset).frame(width: 740)
-    }
-    private func perform(_ operation: String) {
-        busy = true
-        Task {
-            defer { busy = false }
-            do {
-                let response = try await lab.request(LabRequest(operation: operation, receipt: job.receipt,
-                    prompt: prompt, maxTokens: 128, previewHash: preview?.object?["preview_hash"]?.text))
-                if operation == "training-preview" { preview = response.plan }
-                else { result = response }
-                error = nil
-            } catch { self.error = AppHost.render(error) }
-        }
+            .interactiveDismissDisabled(session.isBusy)
     }
 }

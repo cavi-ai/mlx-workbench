@@ -248,6 +248,7 @@
 		6C7A0C52AA77A71EA41F6133 /* LabWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9CB1A694F41D8E826B681FE; };
 		CB2380DF8ECDC3072CE227AB /* LabModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4761F36CE14D0095A922997; };
 		876242A70DBBF73ACD2AC44F /* LabCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4341FC77B8D7EDF0C8F28D87; };
+		7BEA4B05396A4387BD5732E1 /* TrainingEvaluationSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22846EFA81924F6E97D1B315; };
 		C33AF97B1AA1B312EB6F02BF /* LabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB6BA6036AACD20164BB94B; };
 26UIBLD201 /* UnifiedWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF201 /* UnifiedWorkflowUITests.swift */; };
 /* End PBXBuildFile section */
@@ -505,6 +506,7 @@
 		E9CB1A694F41D8E826B681FE /* LabWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabWorkspaceTests.swift; sourceTree = "<group>"; };
 		D4761F36CE14D0095A922997 /* LabModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabModels.swift; path = Models/LabModels.swift; sourceTree = "<group>"; };
 		4341FC77B8D7EDF0C8F28D87 /* LabCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabCoordinator.swift; path = Services/LabCoordinator.swift; sourceTree = "<group>"; };
+		22846EFA81924F6E97D1B315 /* TrainingEvaluationSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingEvaluationSession.swift; path = Services/TrainingEvaluationSession.swift; sourceTree = "<group>"; };
 		4CB6BA6036AACD20164BB94B /* LabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabView.swift; path = UI/Views/LabView.swift; sourceTree = "<group>"; };
 26UIREF201 /* UnifiedWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedWorkflowUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -627,6 +629,7 @@
 				24FREF000006 /* WorkbenchAPI.swift */,
 				4CB6BA6036AACD20164BB94B /* LabView.swift */,
 				4341FC77B8D7EDF0C8F28D87 /* LabCoordinator.swift */,
+				22846EFA81924F6E97D1B315 /* TrainingEvaluationSession.swift */,
 				D4761F36CE14D0095A922997 /* LabModels.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
@@ -959,6 +962,7 @@
 				24BBLD000006 /* x */,
 				CB2380DF8ECDC3072CE227AB /* LabModels.swift in Sources */,
 				876242A70DBBF73ACD2AC44F /* LabCoordinator.swift in Sources */,
+				7BEA4B05396A4387BD5732E1 /* TrainingEvaluationSession.swift in Sources */,
 				C33AF97B1AA1B312EB6F02BF /* LabView.swift in Sources */,
 				24BBLD000007 /* x */,
 				24BBLD000008 /* x */,

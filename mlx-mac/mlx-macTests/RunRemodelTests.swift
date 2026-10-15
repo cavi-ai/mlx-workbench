@@ -259,6 +259,23 @@ final class RunRemodelTests: XCTestCase {
         XCTAssertEqual(session.notice, "Training submitted. See Activity.")
     }
 
+    func testTrainingCannotConfirmAnExplicitlyMissingCachedBase() async {
+        var starts = 0
+        var missing = true
+        let session = TrainingSession(preview: { _ in
+            missing ? ["preview_hash": "missing", "base_identity": NSNull()] : ["preview_hash": "legacy"]
+        }, start: { _, _ in starts += 1 })
+        session.draft = TrainingDraft(repo: "org/model", data: "/data")
+        await session.previewTraining()?.value
+        XCTAssertNotNil(session.preview)
+        XCTAssertFalse(session.canConfirm)
+        XCTAssertNil(session.confirmTraining())
+        XCTAssertEqual(starts, 0)
+        missing = false
+        await session.previewTraining()?.value
+        XCTAssertTrue(session.canConfirm, "Older previews without base identity retain their confirmation contract")
+    }
+
     func testTrainingMissingHashAndPreviewFailureRemainRetryable() async {
         struct Offline: LocalizedError { var errorDescription: String? { "offline" } }
         var attempts = 0
