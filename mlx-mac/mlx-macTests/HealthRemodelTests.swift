@@ -1,5 +1,7 @@
 import Foundation
 import XCTest
+import AppKit
+import SwiftUI
 
 @testable import mlx_workbench
 
@@ -101,13 +103,43 @@ private enum Fixture {
 // MARK: - AC1 chain truth table
 
 final class HealthChainTests: XCTestCase {
+    @MainActor
+    func testHealthRuntimeScopeRendersAtWideAndCompactWidths() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_HEALTH_CAPTURE"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_HEALTH_CAPTURE to inspect the native Health layout.")
+        }
+        let root = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for missing in [false, true] {
+            var config = Config.defaults(ggufRoots: [])
+            config.watchEnabled = false
+            let app = AppHost(config: config, discoveredRoots: [], vendorAgentPath: "/agent",
+                configPath: root.appendingPathComponent("config.json").path,
+                agentHealth: Fixture.agentReady, runtimeReport: Fixture.report(missingRun: missing))
+            for width: CGFloat in [814, 1190] {
+                let host = NSHostingView(rootView: DoctorView(appHost: app)
+                    .frame(width: width, height: 1000).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 1000),
+                    styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                defer { window.close() }
+                try await Task.sleep(for: .milliseconds(200))
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: root.appendingPathComponent("health-\(missing ? "missing-base" : "base-passed")-\(Int(width)).png"))
+            }
+        }
+    }
+
     private func words(_ chain: HealthChain) -> [String] { chain.links.map(\.stateWord) }
 
     func testAllReady() {
         let chain = Fixture.chain()
         XCTAssertEqual(chain.verdict, .ready)
-        XCTAssertEqual(chain.verdict.text, "Ready to prepare and run")
-        XCTAssertEqual(chain.links.map(\.title), ["mlx-agent", "Python", "Prepare", "Run"])
+        XCTAssertEqual(chain.verdict.text, "Base runtime checks passed")
+        XCTAssertEqual(chain.links.map(\.title), ["mlx-agent", "Base Python", "Base conversion", "Base serving"])
         XCTAssertEqual(words(chain), ["Found", "Found", "Ready", "Ready"])
         XCTAssertEqual(chain.foundation.map(\.id), [.agent, .python])
         XCTAssertEqual(chain.capabilities.map(\.id), [.prepare, .run])
@@ -147,14 +179,14 @@ final class HealthChainTests: XCTestCase {
         XCTAssertTrue(report.serve.ok)
         let chain = Fixture.chain(Fixture.agentReady, report)
         XCTAssertEqual(chain.verdict, .pythonMissing)
-        XCTAssertEqual(chain.verdict.text, "Python wasn't found")
+        XCTAssertEqual(chain.verdict.text, "Base Python wasn't found")
         XCTAssertEqual(words(chain), ["Found", "Not found", "Waiting on Python", "Waiting on Python"])
     }
 
     func testPrepareMissingOnly() {
         let chain = Fixture.chain(Fixture.agentReady, Fixture.report(missingPrepare: ["torch"]))
         XCTAssertEqual(chain.verdict, .prepareNeedsSetup)
-        XCTAssertEqual(chain.verdict.text, "Prepare needs setup")
+        XCTAssertEqual(chain.verdict.text, "Base conversion needs setup")
         XCTAssertEqual(words(chain), ["Found", "Found", "Missing 1", "Ready"])
         XCTAssertEqual(chain.capabilities[0].parts.map(\.isPresent), [false, true, true, true, true])
     }
@@ -162,7 +194,7 @@ final class HealthChainTests: XCTestCase {
     func testRunMissingOnly() {
         let chain = Fixture.chain(Fixture.agentReady, Fixture.report(missingRun: true))
         XCTAssertEqual(chain.verdict, .runNeedsSetup)
-        XCTAssertEqual(chain.verdict.text, "Run needs setup")
+        XCTAssertEqual(chain.verdict.text, "Base serving needs setup")
         XCTAssertEqual(words(chain), ["Found", "Found", "Ready", "Missing 1"])
         XCTAssertEqual(chain.capabilities[1].parts.map(\.isPresent), [false])
     }
@@ -170,7 +202,7 @@ final class HealthChainTests: XCTestCase {
     func testBothMissing() {
         let chain = Fixture.chain(Fixture.agentReady, Fixture.report(missingPrepare: ["torch", "gguf"], missingRun: true))
         XCTAssertEqual(chain.verdict, .prepareAndRunNeedSetup)
-        XCTAssertEqual(chain.verdict.text, "Prepare and Run need setup")
+        XCTAssertEqual(chain.verdict.text, "Base runtimes need setup")
         XCTAssertEqual(words(chain), ["Found", "Found", "Missing 2", "Missing 1"])
     }
 
@@ -204,7 +236,7 @@ final class HealthChainTests: XCTestCase {
                         var agentReady = false
                         if case .ready = agent { agentReady = true }
                         XCTAssertEqual(chain.verdict.isReady, agentReady && report.ok, "\(agent) \(python ?? "nil") \(convertBroken) \(runBroken)")
-                        XCTAssertEqual(chain.verdict.text == "Ready to prepare and run", chain.verdict.isReady)
+                        XCTAssertEqual(chain.verdict.text == "Base runtime checks passed", chain.verdict.isReady)
                         XCTAssertFalse(chain.capabilities[1].stateWord.contains("Prepare"), "Run never waits on Prepare")
                         XCTAssertEqual(chain.foundation[1].stateWord, python == nil ? "Not found" : "Found", "Python shows its own state")
                     }

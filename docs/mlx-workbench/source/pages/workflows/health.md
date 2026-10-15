@@ -2,7 +2,9 @@
 
 ## Health
 
-**Health** leads with runtime readiness: whether Prepare and Run can work on this Mac (**Ready to prepare and run**, **Prepare needs setup**, **Run needs setup**). It names what is missing, such as the engine checkout or the Python interpreter, with a command to copy or a link to the right setting. When the runtime is missing, **Install Runtime…** runs `make install` in the engine checkout.
+**Health** leads with checks of the engine checkout, base Python environment, conversion tools and mlx-lm server (**Base runtime checks passed**, **Base conversion needs setup**, **Base serving needs setup**). It names missing components, with a command to copy or a link to the right setting. **Install Runtime…** runs `make install` in the engine checkout to install the base dependencies.
+
+These checks do not establish readiness of isolated optional backends or Strata. **Model-specific runtimes → Open Run** leads to serving preview, which checks the selected model's runtime before confirmation. A successful base check does not prove that every model can run, and a missing base component does not establish that an isolated runtime is unavailable.
 
 It also counts verified models whose verification still matches this environment, and lists model health findings from the engine's `doctor models` scan:
 
