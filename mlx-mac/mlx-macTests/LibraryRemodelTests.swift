@@ -6,6 +6,18 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryRemodelTests: XCTestCase {
+    func testInspectorKeepsTheCompactTableVisibleAndItsSheetInsideTheWindow() {
+        for size in [CGSize(width: 740, height: 560), CGSize(width: 960, height: 720)] {
+            XCTAssertFalse(LibraryInspectorPresentation.usesColumn(in: size))
+            let sheet = LibraryInspectorPresentation.sheetSize(in: size)
+            XCTAssertLessThan(sheet.width, size.width)
+            XCTAssertLessThan(sheet.height, size.height)
+            XCTAssertGreaterThanOrEqual(sheet.width, WorkbenchSize.Library.inspectorMinimum)
+        }
+        XCTAssertTrue(LibraryInspectorPresentation.usesColumn(in: CGSize(width: 1100, height: 720)))
+        XCTAssertTrue(LibraryInspectorPresentation.usesColumn(in: CGSize(width: 1440, height: 1024)))
+    }
+
     private let hardware = HardwareProfile(chip: "M4", model: "Mac16,1", memoryBytes: 64_000_000_000, macOSVersion: "14.0")
     private let reserveGB = 4.0
     private let context = FitAdvisor.defaultContextTokens

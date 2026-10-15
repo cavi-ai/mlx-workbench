@@ -1,5 +1,32 @@
 import Foundation
 
+/// Captured plan fields only; older previews do not acquire inferred defaults.
+struct TrainingPlanSummary: Equatable {
+    let outputPath: String?
+    let basePath: String?
+    let baseMissing: Bool
+    let trainingExamples: Int?
+    let validationExamples: Int?
+
+    init(payload: [String: Any]) {
+        let plan = WorkbenchAPI.unwrapPlan(payload)
+        func nonempty(_ value: Any?) -> String? {
+            guard let text = value as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return text
+        }
+        func count(_ value: Any?) -> Int? {
+            guard let count = value as? Int, count >= 0 else { return nil }
+            return count
+        }
+        outputPath = nonempty(plan["out"])
+        basePath = nonempty((plan["base_identity"] as? [String: Any])?["path"])
+        baseMissing = plan["base_identity"] is NSNull
+        let dataset = plan["dataset"] as? [String: Any]
+        trainingExamples = count(dataset?["train_lines"])
+        validationExamples = count(dataset?["valid_lines"])
+    }
+}
+
 // MARK: - Rows
 
 /// One training job as the list draws it; the agent's state string maps to a

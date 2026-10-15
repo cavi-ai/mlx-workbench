@@ -164,13 +164,14 @@ struct ActivityGroup: Identifiable, Equatable {
 
 struct ActivityPage: Equatable {
     let inFlight: [ActivityRowPresentation]
+    let needsAttention: [ActivityRowPresentation]
     let groups: [ActivityGroup]
 
-    var isEmpty: Bool { inFlight.isEmpty && groups.isEmpty }
+    var isEmpty: Bool { inFlight.isEmpty && needsAttention.isEmpty && groups.isEmpty }
 }
 
 enum ActivityTimeline {
-    /// In-flight records first, then the rest grouped by the day they were created, newest first.
+    /// In-flight records and failures first, then remaining records grouped by creation day.
     /// Both the grouping and the relative time read `createdAt`; `updatedAt` is rewritten by
     /// status normalisation and never says when a conversion happened.
     static func page(
@@ -184,11 +185,12 @@ enum ActivityTimeline {
             .sorted { ($0.workflow.createdAt, $0.workflow.updatedAt) > ($1.workflow.createdAt, $1.workflow.updatedAt) }
             .map { ActivityRowPresentation(card: $0, snapshot: snapshot, verification: verification[$0.id], now: now) }
         let inFlight = rows.filter(\.isActive)
-        let settled = Dictionary(grouping: rows.filter { !$0.isActive }) { calendar.startOfDay(for: $0.workflow.createdAt) }
+        let needsAttention = rows.filter(\.showsTrackCaption)
+        let settled = Dictionary(grouping: rows.filter { !$0.isActive && !$0.showsTrackCaption }) { calendar.startOfDay(for: $0.workflow.createdAt) }
         let groups = settled.keys.sorted(by: >).map { day in
             ActivityGroup(day: day, title: title(forDay: day, now: now, calendar: calendar), rows: settled[day] ?? [])
         }
-        return ActivityPage(inFlight: inFlight, groups: groups)
+        return ActivityPage(inFlight: inFlight, needsAttention: needsAttention, groups: groups)
     }
 
     static func title(forDay day: Date, now: Date, calendar: Calendar = .current) -> String {
@@ -202,6 +204,26 @@ enum ActivityTimeline {
         formatter.locale = calendar.locale ?? .current
         formatter.setLocalizedDateFormatFromTemplate(calendar.isDate(day, equalTo: now, toGranularity: .year) ? "EEEMMMd" : "yMMMd")
         return formatter.string(from: day)
+    }
+}
+
+/// Optional task failures do not share the conversion status error's lifetime.
+struct ActivityTrainingState {
+    private(set) var jobs: [TrainingJob] = []
+    private(set) var error: String?
+
+    mutating func received(_ jobs: [TrainingJob]) { self.jobs = jobs; error = nil }
+    mutating func failed(_ message: String) { error = message }
+}
+
+enum ActivityJobPriority {
+    /// Unknown states remain prominent rather than being treated as finished.
+    static func study(_ job: LabJob, runningJobID: String? = nil) -> Bool {
+        job.id == runningJobID || job.error?.isEmpty == false || !["completed", "cancelled"].contains(job.state)
+    }
+
+    static func training(_ job: TrainingJob) -> Bool {
+        !["done", "cancelled"].contains(job.state)
     }
 }
 

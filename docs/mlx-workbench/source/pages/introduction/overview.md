@@ -8,6 +8,10 @@ These pages describe release {{RELEASE_TAG}} from commit `{{RELEASE_COMMIT}}`.
 
 ## Choose a path
 
+The workspace uses dark surfaces, yellow primary actions and a grouped
+sidebar. Warnings, failures and verification states keep their own labels
+and symbols. Each screen opens with its title and a short description.
+
 | You want to | Start with |
 |---|---|
 | Install the app and its engine | [Installation](installation.md) |

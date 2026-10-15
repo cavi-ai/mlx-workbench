@@ -231,20 +231,20 @@ struct IntakeSheet: View {
             switch resolution.verdict {
             case .convertibleAfterInstall:
                 Button("Install \(resolution.backend ?? "backend")") { Task { await intake.installBackend() } }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .disabled(intake.isBusy)
             case .convertible:
                 Button("Download and prepare") { Task { await finish(resolution) } }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .disabled(intake.isBusy)
             case .alreadyMLX:
                 if let backend = resolution.backend, !resolution.backendInstalled {
                     Button("Install \(backend)") { Task { await intake.installBackend() } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.workbenchPrimary)
                         .disabled(intake.isBusy)
                 } else {
                     Button(isInLibrary(resolution) ? "Show in Library" : "Download") { Task { await finish(resolution) } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.workbenchPrimary)
                         .disabled(intake.isBusy)
                 }
             case .gguf:
@@ -255,7 +255,7 @@ struct IntakeSheet: View {
                 }
                 .frame(maxWidth: 420)
                 Button("Download and prepare") { Task { await finish(resolution) } }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .disabled(intake.isBusy || intake.selectedGGUF == nil)
             case .unknown:
                 Button("Retry") { Task { await intake.resolve() } }

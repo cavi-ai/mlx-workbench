@@ -4,9 +4,9 @@
 
 ## Serve a model
 
-1. Select a model. Image, speech and other non-servable types get no verdict and no serve actions.
+1. Select a ready model in Library, then open Run. Existing models can be served without a conversion record. Image, speech and other non-servable types get no verdict and no serve actions. An unfinished or failed current workflow for the selected output links back to **Prepare** for review.
 2. Read the memory runway: what is already loaded, what this model needs (weights, KV cache and runtime overhead) and whether it **fits**, is **tight** or **won't fit** at the chosen context. A won't-fit verdict suggests a maximum context. Unavailable memory readings show as unknown.
-3. **Preview serve** shows the engine's plan. **Confirm and run** starts it.
+3. **Preview serve** checks the selected runtime and shows the engine's plan. The default **Auto** uses the model's declared runtime, including an installed isolated Strata runtime. A missing base runtime does not block this check; an unavailable selected runtime fails the preview. **Confirm and run** is available only after a successful preview and starts the server.
 
 Run lists every running server with **Stop** or **Unload**. Refreshing Run only reads serving status.
 

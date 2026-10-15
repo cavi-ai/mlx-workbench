@@ -17,6 +17,17 @@ enum LibraryLoadState: Equatable {
     }
 }
 
+enum LibraryInspectorPresentation {
+    static func usesColumn(in viewport: CGSize) -> Bool {
+        viewport.width >= WorkbenchSize.Library.inspectorWindowMinimum
+    }
+
+    static func sheetSize(in viewport: CGSize) -> CGSize {
+        CGSize(width: min(WorkbenchSize.Library.inspectorSheetWidth, viewport.width - WorkbenchSpacing.pageInset * 2),
+               height: min(WorkbenchSize.Library.inspectorSheetHeight, viewport.height - WorkbenchSpacing.pageInset * 4))
+    }
+}
+
 struct LibraryGroupViewModel: Identifiable, Equatable, Hashable {
     let sourceGroup: ModelGroup
     let variants: [LibraryModel]
@@ -221,6 +232,7 @@ struct LibraryView: View {
     @AppStorage("library.groupMode") private var groupModeRaw = LibraryGroupMode.family.rawValue
     @Environment(\.isRouteActive) private var isRouteActive
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.workbenchViewport) private var viewport
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -249,7 +261,7 @@ struct LibraryView: View {
     private var rows: [LibraryRow] {
         (LibraryGroupMode(rawValue: groupModeRaw) ?? .family) == .type
             ? LibraryTablePresentation.typeRows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
-            : LibraryTablePresentation.familyRows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
+            : LibraryTablePresentation.rows(groups: groups, sortOrder: sortOrder, contextTokens: contextTokens)
     }
 
     private var visiblePaths: [String] {
@@ -274,13 +286,21 @@ struct LibraryView: View {
     /// must not keep a trailing column open over another tab.
     private var inspectorBinding: Binding<Bool> {
         Binding(
-            get: { showInspector && isRouteActive },
+            get: { showInspector && isRouteActive && usesInspectorColumn },
             set: { showInspector = $0 }
         )
     }
 
+    private var usesInspectorColumn: Bool { LibraryInspectorPresentation.usesColumn(in: viewport) }
+
+    private var inspectorSheetBinding: Binding<Bool> {
+        Binding(get: { showInspector && isRouteActive && !usesInspectorColumn && reclaim.libraryTrashPlan == nil },
+                set: { showInspector = $0 })
+    }
+
     var body: some View {
         content
+            .safeAreaInset(edge: .top, spacing: 0) { WorkbenchPageHeading(route: .library) }
             .sheet(isPresented: Binding(get: { reclaim.libraryTrashPlan != nil && isRouteActive }, set: { if !$0 { reclaim.cancelLibraryTrash() } })) {
                 if let plan = reclaim.libraryTrashPlan {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -301,7 +321,7 @@ struct LibraryView: View {
                                     await reclaim.confirmLibraryTrash()
                                     if reclaim.lastError == nil { appHost.requestRescan() }
                                 }
-                            }.buttonStyle(.borderedProminent)
+                            }.buttonStyle(.workbenchPrimary)
                         }.disabled(reclaim.isApplying)
                     }.padding(WorkbenchSpacing.lg).frame(width: 480)
                         .interactiveDismissDisabled(reclaim.isApplying)
@@ -314,6 +334,27 @@ struct LibraryView: View {
                         ideal: WorkbenchSize.Library.inspectorIdeal,
                         max: WorkbenchSize.Library.inspectorMaximum
                     )
+            }
+            .sheet(isPresented: inspectorSheetBinding) {
+                let size = LibraryInspectorPresentation.sheetSize(in: viewport)
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Model details").font(WorkbenchTypography.cardTitle)
+                        Spacer()
+                        Button("Done") { showInspector = false }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                    .padding(WorkbenchSpacing.md)
+                    Divider()
+                    inspector
+                }
+                .frame(width: size.width, height: size.height)
+            }
+            .onChange(of: usesInspectorColumn) { _, isWide in
+                if !isWide { showInspector = false }
+            }
+            .onChange(of: isRouteActive) { _, isActive in
+                if !isActive, !usesInspectorColumn { showInspector = false }
             }
             .onReceive(appHost.resources.$contextTokens.removeDuplicates()) { contextTokens = $0 }
             .routeSearchable(text: $search, prompt: "Search family, variant, path, key, or evidence", isActive: isRouteActive)
@@ -371,7 +412,7 @@ struct LibraryView: View {
                 FailureNotice(error: error, details: .whenDifferent)
             } actions: {
                 Button("Retry scan") { appHost.requestRescan() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .disabled(appHost.isScanning)
                 Button("Open Settings") { onRouteSelection(.settings) }
             }
@@ -383,7 +424,7 @@ struct LibraryView: View {
                 Text("Run a local scan to populate the native Library inventory.")
             } actions: {
                 Button("Scan library") { appHost.requestRescan() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.workbenchPrimary)
                     .disabled(appHost.isScanning)
                 Button("Open Settings") { onRouteSelection(.settings) }
             }
@@ -445,7 +486,8 @@ struct LibraryView: View {
         } rows: {
             tableRows(rows)
         }
-        .tableStyle(.inset(alternatesRowBackgrounds: true))
+        .tableStyle(.inset(alternatesRowBackgrounds: false))
+        .scrollContentBackground(.hidden)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
             tier = LibraryColumnTier.resolve(width: width, previous: tier)
         }
@@ -693,11 +735,13 @@ struct LibraryView: View {
     }
 
     private func syncSelection() {
+        let hadSelection = selection != nil
         let candidate = LibraryPresentation.selectionCandidate(
             in: groups,
             currentPath: appHost.selectedModelPath
         )
         appHost.selectedModelPath = candidate
+        if !hadSelection, candidate != nil, usesInspectorColumn { showInspector = true }
         if selection == nil || LibraryTablePresentation.modelPath(forSelection: selection) != candidate {
             selection = candidate
         }

@@ -123,6 +123,8 @@ struct AdoptView: View {
                     .controlRow()
                 Button("Verify and recommend") { startAdopt() }
                     .buttonStyle(.borderedProminent)
+                Button("Start") { startAdopt() }
+                    .buttonStyle(.workbenchPrimary)
                     .keyboardShortcut(isRouteActive ? .defaultAction : nil)
                     .disabled(!isRouteActive || isBusy || !AdoptRole.choices.contains(role))
                     .help("Inspect a shortlist and send verification prompts to installed candidates through local runtimes.")

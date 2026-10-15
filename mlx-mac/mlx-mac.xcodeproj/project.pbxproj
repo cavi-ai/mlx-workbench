@@ -109,6 +109,7 @@
 		RUNRWYB1 /* RunRunwayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = RUNRWYF1 /* RunRunwayView.swift */; };
 		RUNRMDB1 /* RunRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RUNRMDF1 /* RunRemodelTests.swift */; };
 		ACTPRSB1 /* ActivityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACTPRSF1 /* ActivityPresentation.swift */; };
+		ACTJOBSB1 /* ActivityJobSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACTJOBSF1 /* ActivityJobSections.swift */; };
 		ACTVWSB1 /* ActivityViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACTVWSF1 /* ActivityViews.swift */; };
 		FAILNTB1 /* FailureNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAILNTF1 /* FailureNotice.swift */; };
 		DSCPRSB1 /* DiscoverPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCPRSF1 /* DiscoverPresentation.swift */; };
@@ -247,6 +248,7 @@
 		6C7A0C52AA77A71EA41F6133 /* LabWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9CB1A694F41D8E826B681FE; };
 		CB2380DF8ECDC3072CE227AB /* LabModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4761F36CE14D0095A922997; };
 		876242A70DBBF73ACD2AC44F /* LabCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4341FC77B8D7EDF0C8F28D87; };
+		7BEA4B05396A4387BD5732E1 /* TrainingEvaluationSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22846EFA81924F6E97D1B315; };
 		C33AF97B1AA1B312EB6F02BF /* LabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB6BA6036AACD20164BB94B; };
 26UIBLD201 /* UnifiedWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF201 /* UnifiedWorkflowUITests.swift */; };
 /* End PBXBuildFile section */
@@ -333,6 +335,7 @@
 		RUNRWYF1 /* RunRunwayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RunRunwayView.swift; path = UI/Views/RunRunwayView.swift; sourceTree = "<group>"; };
 		RUNRMDF1 /* RunRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RunRemodelTests.swift; path = RunRemodelTests.swift; sourceTree = "<group>"; };
 		ACTPRSF1 /* ActivityPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ActivityPresentation.swift; path = UI/Views/ActivityPresentation.swift; sourceTree = "<group>"; };
+		ACTJOBSF1 /* ActivityJobSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ActivityJobSections.swift; path = UI/Views/ActivityJobSections.swift; sourceTree = "<group>"; };
 		ACTVWSF1 /* ActivityViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ActivityViews.swift; path = UI/Views/ActivityViews.swift; sourceTree = "<group>"; };
 		FAILNTF1 /* FailureNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FailureNotice.swift; path = UI/Views/FailureNotice.swift; sourceTree = "<group>"; };
 		DSCPRSF1 /* DiscoverPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverPresentation.swift; path = UI/Views/DiscoverPresentation.swift; sourceTree = "<group>"; };
@@ -503,6 +506,7 @@
 		E9CB1A694F41D8E826B681FE /* LabWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabWorkspaceTests.swift; sourceTree = "<group>"; };
 		D4761F36CE14D0095A922997 /* LabModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabModels.swift; path = Models/LabModels.swift; sourceTree = "<group>"; };
 		4341FC77B8D7EDF0C8F28D87 /* LabCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabCoordinator.swift; path = Services/LabCoordinator.swift; sourceTree = "<group>"; };
+		22846EFA81924F6E97D1B315 /* TrainingEvaluationSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingEvaluationSession.swift; path = Services/TrainingEvaluationSession.swift; sourceTree = "<group>"; };
 		4CB6BA6036AACD20164BB94B /* LabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabView.swift; path = UI/Views/LabView.swift; sourceTree = "<group>"; };
 26UIREF201 /* UnifiedWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedWorkflowUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -625,6 +629,7 @@
 				24FREF000006 /* WorkbenchAPI.swift */,
 				4CB6BA6036AACD20164BB94B /* LabView.swift */,
 				4341FC77B8D7EDF0C8F28D87 /* LabCoordinator.swift */,
+				22846EFA81924F6E97D1B315 /* TrainingEvaluationSession.swift */,
 				D4761F36CE14D0095A922997 /* LabModels.swift */,
 				24FREF025 /* CatalogClient.swift */,
 				24FREF026 /* CatalogStore.swift */,
@@ -658,6 +663,7 @@
 				29ABCD100000000000000002 /* CompareVideoInspection.swift */,
 				2AABCD100000000000000001 /* CompareTextInspection.swift */,
 				ACTPRSF1 /* ActivityPresentation.swift */,
+				ACTJOBSF1 /* ActivityJobSections.swift */,
 				RCLPRSF1 /* ReclaimPresentation.swift */,
 				HLTPRSF1 /* HealthPresentation.swift */,
 				HLTVWSF1 /* HealthViews.swift */,
@@ -956,6 +962,7 @@
 				24BBLD000006 /* x */,
 				CB2380DF8ECDC3072CE227AB /* LabModels.swift in Sources */,
 				876242A70DBBF73ACD2AC44F /* LabCoordinator.swift in Sources */,
+				7BEA4B05396A4387BD5732E1 /* TrainingEvaluationSession.swift in Sources */,
 				C33AF97B1AA1B312EB6F02BF /* LabView.swift in Sources */,
 				24BBLD000007 /* x */,
 				24BBLD000008 /* x */,
@@ -974,6 +981,7 @@
 				29ABCD000000000000000002 /* CompareVideoInspection.swift in Sources */,
 				2AABCD000000000000000001 /* CompareTextInspection.swift in Sources */,
 				ACTPRSB1 /* ActivityPresentation.swift in Sources */,
+				ACTJOBSB1 /* ActivityJobSections.swift in Sources */,
 				RCLPRSB1 /* ReclaimPresentation.swift in Sources */,
 				HLTPRSB1 /* HealthPresentation.swift in Sources */,
 				HLTVWSB1 /* HealthViews.swift in Sources */,

@@ -83,6 +83,7 @@ struct DoctorView: View {
                         onOpenSettings: { onRouteSelection(.settings) },
                         onReviewOnOverview: { onRouteSelection(.overview) }
                     )
+                    HealthRuntimeScopeView(onOpenRun: { onRouteSelection(.run) })
                     findingsSection
                 }
                 .frame(maxWidth: WorkbenchSize.Health.contentMaxWidth, alignment: .leading)
@@ -158,7 +159,7 @@ struct DoctorView: View {
             .controlSize(.small)
         }
         Button(isRunning ? "Checking…" : "Run doctor") { runDoctor() }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.workbenchPrimary)
             .disabled(isRunning)
     }
 

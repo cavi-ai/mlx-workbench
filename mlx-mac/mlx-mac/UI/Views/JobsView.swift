@@ -143,6 +143,7 @@ struct JobsView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var verification: VerificationCoordinator
+    @ObservedObject private var lab: LabCoordinator
     private let onRouteSelection: (AppRoute) -> Void
 
     @State private var isRefreshing = false
@@ -150,7 +151,8 @@ struct JobsView: View {
     @State private var selectedLog: LogSelection?
     @State private var webQueue = WebConvertQueue.Snapshot(items: [], path: "", problem: nil)
     @State private var isCompact = false
-    @State private var trainingJobs: [TrainingJob] = []
+    @State private var trainingState = ActivityTrainingState()
+    @State private var showsEmptyQueue = false
     @State private var queueBusy = false
     @State private var queueImport: QueueImport?
     @State private var verificationStatuses: [UUID: VerificationStatus] = [:]
@@ -168,6 +170,7 @@ struct JobsView: View {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _verification = ObservedObject(wrappedValue: appHost.verification)
+        _lab = ObservedObject(wrappedValue: appHost.lab)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -193,41 +196,30 @@ struct JobsView: View {
             cards: cards, snapshot: appHost.librarySnapshot, verification: verificationStatuses, now: Date()
         )
         let inFlight = ActivityPoll.inFlightIDs(workflow: modelWorkflow.workflow, history: modelWorkflow.history)
+        let studyJobs = lab.snapshot.queue ?? []
+        let currentStudies = lab.error != nil ? studyJobs : studyJobs.filter { ActivityJobPriority.study($0, runningJobID: lab.runningJobID) }
+        let earlierStudies = lab.error != nil ? [] : studyJobs.filter { !ActivityJobPriority.study($0, runningJobID: lab.runningJobID) }
+        let currentTraining = trainingState.error != nil ? trainingState.jobs : trainingState.jobs.filter(ActivityJobPriority.training)
+        let earlierTraining = trainingState.error != nil ? [] : trainingState.jobs.filter { !ActivityJobPriority.training($0) }
         GeometryReader { viewport in
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                     ErrorBanner(text: statusError)
                     ErrorBanner(text: modelWorkflow.persistenceError)
                     ActivityComparisonSection(comparison: appHost.comparison) { onRouteSelection(.compare) }
-                    WorkbenchSurface {
-                        VStack(alignment: .leading) {
-                            Text("Experiment jobs").font(WorkbenchTypography.cardTitle)
-                            LabJobRows(lab: appHost.lab)
-                        }
-                    }
-                    WorkbenchSurface {
-                        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                            Text("Training jobs").font(WorkbenchTypography.cardTitle)
-                            ForEach(trainingJobs) { job in
-                                HStack {
-                                    Text(job.repo + " · " + job.state).font(WorkbenchTypography.secondary)
-                                    Spacer()
-                                    if job.state == "running" {
-                                        Button("Cancel training") {
-                                            Task {
-                                                do { _ = try await appHost.api.trainingStop(pid: job.pid); await refresh() }
-                                                catch { statusError = AppHost.render(error) }
-                                            }
-                                        }
-                                    }
-                                    Button("Open Training") { onRouteSelection(.training) }
-                                }
-                            }
-                        }
-                    }
-                    conversions(page)
+                    if !page.inFlight.isEmpty { rowSection("In flight", rows: page.inFlight) }
+                    ActivityStudySection(lab: lab, jobs: currentStudies, error: lab.error,
+                        isWorking: lab.runningJobID != nil, onOpen: { onRouteSelection(.studies) })
+                    ActivityTrainingSection(jobs: currentTraining, error: trainingState.error,
+                        onOpen: { onRouteSelection(.training) }, onCancel: cancelTraining)
+                    if !page.needsAttention.isEmpty { rowSection("Needs attention", rows: page.needsAttention) }
                     serversSection
                     queueSection
+                    conversions(page)
+                    ActivityStudySection(lab: lab, jobs: earlierStudies, error: nil, historical: true,
+                        onOpen: { onRouteSelection(.studies) })
+                    ActivityTrainingSection(jobs: earlierTraining, error: nil, historical: true,
+                        onOpen: { onRouteSelection(.training) }, onCancel: cancelTraining)
                 }
                 .frame(maxWidth: WorkbenchSize.Run.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
@@ -290,7 +282,6 @@ struct JobsView: View {
         if page.isEmpty {
             designedState(symbol: "clock.arrow.circlepath", text: "No conversions yet; the ones you start in Prepare appear here.")
         } else {
-            if !page.inFlight.isEmpty { rowSection("In flight", rows: page.inFlight) }
             ForEach(page.groups) { rowSection($0.title, rows: $0.rows) }
         }
     }
@@ -331,11 +322,19 @@ struct JobsView: View {
         let split = ActivityServerRow.split(modelWorkflow.servers, models: appHost.librarySnapshot?.models ?? [], now: Date())
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Servers")
+            if let error = modelWorkflow.serversError {
+                ErrorBanner(text: error)
+                if !modelWorkflow.servers.isEmpty {
+                    Text("Showing last known server records.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+            }
             if split.running.isEmpty && split.earlier.isEmpty {
-                designedState(symbol: "server.rack", text: "No server records yet; serving a model from Run adds one.")
+                if modelWorkflow.serversError == nil {
+                    designedState(symbol: "server.rack", text: "No server records yet; serving a model from Run adds one.")
+                }
             } else {
                 if split.running.isEmpty {
-                    designedState(symbol: "server.rack", text: "No server is running.")
+                    if modelWorkflow.serversError == nil { designedState(symbol: "server.rack", text: "No server is running.") }
                 } else {
                     serverSurface(split.running, style: isCompact ? .twoLine : .wide)
                 }
@@ -405,38 +404,46 @@ struct JobsView: View {
 
     private var queueSection: some View {
         WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            if webQueue.items.isEmpty && webQueue.problem == nil {
+                DisclosureGroup("Conversion queue", isExpanded: $showsEmptyQueue) {
+                    queueContents(showTitle: false).padding(.top, WorkbenchSpacing.sm)
+                }
+            } else { queueContents(showTitle: true) }
+        }
+    }
+
+    private func queueContents(showTitle: Bool) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            HStack {
+                if showTitle { Text("Conversion queue").font(WorkbenchTypography.cardTitle) }
+                Spacer()
+                Button("Import existing queue") { importQueue() }.disabled(queueBusy)
+                Button("Run next") { queueAction(["operation": .string("run")]) }
+                    .disabled(queueBusy || !webQueue.items.contains { $0.state == .queued || $0.state == .starting })
+            }
+            Text("Reviewed conversion plans are retained by mlx-agent. Run next starts one plan; refresh reconciles its receipt.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            if let problem = webQueue.problem { Text(problem).foregroundStyle(WorkbenchColor.failure) }
+            ForEach(webQueue.items) { item in
+                Divider()
                 HStack {
-                    Text("Conversion queue").font(WorkbenchTypography.cardTitle)
+                    VStack(alignment: .leading) {
+                        Text(item.label).font(WorkbenchTypography.cardTitle)
+                        Text("\(item.state.rawValue) · q\(item.qBits) · \(item.path ?? item.repo ?? "")").font(WorkbenchTypography.metadata)
+                        if let failure = item.failure { Text(failure.message + " " + failure.remediation).foregroundStyle(WorkbenchColor.failure) }
+                    }
                     Spacer()
-                    Button("Import existing queue") { importQueue() }.disabled(queueBusy)
-                    Button("Run next") { queueAction(["operation": .string("run")]) }
-                        .disabled(queueBusy || !webQueue.items.contains { $0.state == .queued || $0.state == .starting })
-                }
-                Text("Reviewed conversion plans are retained by mlx-agent. Run next starts one plan; refresh reconciles its receipt.")
-                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-                if let problem = webQueue.problem { Text(problem).foregroundStyle(WorkbenchColor.failure) }
-                ForEach(webQueue.items) { item in
-                    Divider()
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(item.label).font(WorkbenchTypography.cardTitle)
-                            Text("\(item.state.rawValue) · q\(item.qBits) · \(item.path ?? item.repo ?? "")").font(WorkbenchTypography.metadata)
-                            if let failure = item.failure { Text(failure.message + " " + failure.remediation).foregroundStyle(WorkbenchColor.failure) }
-                        }
-                        Spacer()
-                        if item.state == .queued {
-                            Button("↑") { queueAction(["operation": .string("move"), "id": .string(item.id), "direction": .string("up")]) }
-                            Button("↓") { queueAction(["operation": .string("move"), "id": .string(item.id), "direction": .string("down")]) }
-                        }
-                        if item.state == .failed {
-                            Button("Retry") { queueAction(["operation": .string("retry"), "id": .string(item.id)]) }
-                        }
-                        if item.state != .starting {
-                            Button("Remove") { queueAction(["operation": .string("cancel"), "id": .string(item.id)]) }
-                        }
-                    }.disabled(queueBusy)
-                }
+                    if item.state == .queued {
+                        Button("↑") { queueAction(["operation": .string("move"), "id": .string(item.id), "direction": .string("up")]) }
+                        Button("↓") { queueAction(["operation": .string("move"), "id": .string(item.id), "direction": .string("down")]) }
+                    }
+                    if item.state == .failed {
+                        Button("Retry") { queueAction(["operation": .string("retry"), "id": .string(item.id)]) }
+                    }
+                    if item.state != .starting {
+                        Button("Remove") { queueAction(["operation": .string("cancel"), "id": .string(item.id)]) }
+                    }
+                }.disabled(queueBusy)
             }
         }
     }
@@ -477,8 +484,8 @@ struct JobsView: View {
         isRefreshing = true
         defer { isRefreshing = false }
         await appHost.lab.refresh()
-        do { trainingJobs = try await appHost.api.trainingStatus().jobs }
-        catch { statusError = AppHost.render(error) }
+        do { trainingState.received(try await appHost.api.trainingStatus().jobs) }
+        catch { trainingState.failed("Training status unavailable: \(AppHost.render(error))") }
         do { webQueue = try await appHost.api.conversionQueue(.object(["operation": .string("snapshot")])).snapshot() }
         catch { webQueue = .init(items: webQueue.items, path: webQueue.path, problem: AppHost.render(error)) }
         do {
@@ -488,6 +495,14 @@ struct JobsView: View {
         } catch {
             statusError = "Live conversion status unavailable: \(AppHost.render(error)). Showing last known activity."
             await appHost.refreshWorkflowStatus()
+        }
+        await modelWorkflow.refreshServers()
+    }
+
+    private func cancelTraining(_ job: TrainingJob) {
+        Task {
+            do { _ = try await appHost.api.trainingStop(pid: job.pid); await refresh() }
+            catch { trainingState.failed("Training cancellation failed: \(AppHost.render(error))") }
         }
     }
 

@@ -655,6 +655,24 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         XCTAssertTrue(try store.load().isEmpty)
     }
 
+    func testPreparingTheSameOutputCannotBypassAnUnsettledOrFailedWorkflow() async throws {
+        let snapshot = snapshotWithEquivalentMLX(), model = try XCTUnwrap(snapshotWithEquivalentMLX().models.first)
+        for state: ConversionWorkflowState in [.queued, .running, .verifying, .verificationFailed, .failed] {
+            let store = makeStore(), host = await makeHost(snapshot: snapshot, store: store)
+            await MainActor.run {
+                let base = makeWorkflow(state: state, receipt: nil)
+                let record = ConversionWorkflow(id: base.id, sourcePath: base.sourcePath, sourceModelKey: base.sourceModelKey,
+                    sourceSignature: base.sourceSignature, outputPath: existingMLXPath, previewHash: nil, jobReceipt: nil,
+                    completedModelPath: existingMLXPath, state: state, serveState: .idle, message: nil, errorMessage: nil,
+                    createdAt: base.createdAt, updatedAt: base.updatedAt, lastKnownAgentState: nil)
+                host.modelWorkflow.restore(record)
+                host.modelWorkflow.prepareServe(model: model, exactPath: existingMLXPath)
+                XCTAssertEqual(host.modelWorkflow.workflow, record, state.rawValue)
+            }
+            XCTAssertTrue(try store.load().isEmpty)
+        }
+    }
+
     func testPreparingToServeAnotherModelLeavesTheCurrentConversionAlone() async throws {
         let store = makeStore()
         let snapshot = snapshotWithEquivalentMLX()

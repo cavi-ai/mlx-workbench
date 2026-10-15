@@ -798,7 +798,7 @@ final class LMStudioSourceTests: XCTestCase {
 
     func testNoProminentButtonNoPaintedCanvasAndTheResolverRunsOffTheMainActor() throws {
         let all = try files.map(source).joined(separator: "\n")
-        XCTAssertFalse(all.contains("borderedProminent"))
+        XCTAssertFalse(all.contains("workbenchPrimary"))
         XCTAssertFalse(all.contains(".background(WorkbenchColor.canvas"))
         let page = try source("LMStudioView.swift")
         XCTAssertTrue(page.contains("Task.detached(priority: .utility)"))

@@ -1405,7 +1405,7 @@ final class SetupAssistantUITests: XCTestCase {
         capture("07-skip-returned")
     }
 
-    func testLibraryFamilyContextMenuReviewsDeletionWithoutDeletingOnCancel() throws {
+    func testLibraryModelInspectionAndDeletionReviewDoNotMutateTheModel() throws {
         let root = URL(fileURLWithPath: configPath).deletingLastPathComponent()
         let model = root.appendingPathComponent("models/Qwen3-4B-4bit")
         let script = root.appendingPathComponent("agent/scripts/mlx-agent")
@@ -1438,25 +1438,52 @@ final class SetupAssistantUITests: XCTestCase {
         let library = app.buttons["Library"].firstMatch
         XCTAssertTrue(library.waitForExistence(timeout: 45))
         library.click()
-        let family = app.staticTexts["Qwen3"].firstMatch
-        XCTAssertTrue(family.waitForExistence(timeout: 45))
+        let modelRow = app.staticTexts["Qwen3-4B-4bit"].firstMatch
+        XCTAssertTrue(modelRow.waitForExistence(timeout: 45))
         XCTAssertTrue(app.buttons["Settings"].exists)
         XCTAssertTrue(app.buttons["Discover"].exists)
-        capture("08-library-visible-family-and-sidebar")
-        family.click()
+        capture("08-library-visible-model-and-sidebar")
+        modelRow.click()
         capture("08b-library-inspector-after-selection")
-        family.rightClick()
+        modelRow.rightClick()
         let delete = app.menuItems["Delete…"]
         XCTAssertTrue(delete.waitForExistence(timeout: 10))
         capture("09-library-delete-context-menu")
         delete.click()
         let sheet = app.sheets.firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 30))
-        XCTAssertTrue(sheet.staticTexts[model.path].exists)
-        XCTAssertTrue(sheet.buttons["Move to Trash"].exists)
         capture("10-library-delete-review")
+        let reviewedPath = sheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", model.path, model.path)).firstMatch
+        XCTAssertTrue(reviewedPath.waitForExistence(timeout: 5), sheet.debugDescription)
+        XCTAssertTrue(sheet.buttons["Move to Trash"].exists)
         sheet.buttons["Cancel"].click()
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
+
+        let window = app.windows.firstMatch
+        let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+            .withOffset(CGVector(dx: 0, dy: 20))
+        if let screen = NSScreen.main?.frame, window.frame.maxX > screen.maxX - 4 {
+            titlebar.press(forDuration: 0.1, thenDragTo: titlebar.withOffset(CGVector(
+                dx: screen.maxX - window.frame.maxX - 8, dy: 0)))
+        }
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
+            .withOffset(CGVector(dx: -2, dy: -2))
+        let target = window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 738, dy: 558))
+        corner.press(forDuration: 0.1, thenDragTo: target)
+        XCTAssertEqual(window.frame.width, 740, accuracy: 2)
+        XCTAssertFalse(app.sheets.firstMatch.exists)
+        app.typeKey("i", modifierFlags: [.command, .option])
+        let details = app.sheets.firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 10))
+        XCTAssertTrue(details.buttons["Done"].isHittable)
+        XCTAssertGreaterThanOrEqual(details.frame.minX, window.frame.minX)
+        XCTAssertLessThanOrEqual(details.frame.maxX, window.frame.maxX)
+        capture("11-library-compact-inspector")
+        details.buttons["Done"].click()
+        XCTAssertTrue(details.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(modelRow.isHittable)
         XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
     }
 }

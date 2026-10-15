@@ -279,7 +279,7 @@ final class AppHostHealthTests: XCTestCase {
     func testRunPresentationShowsAuthoritativeActiveServer() {
         let model = makeOperationalModel(path: "/models/atlas-mlx", status: "ready")
         let server = ServerInfo(repo: model.item.path, runtime: "mlx_lm", port: 8766, pid: 412, state: "running", logPath: "/logs/serve.log", startedAt: "2026-08-25T12:00:00Z", receipt: "serve-receipt")
-        let presentation = RunPresentation(workflow: makeOperationalWorkflow(state: .completed, serveState: .running, completedModelPath: model.item.path), model: model, servers: [server], runtimeAvailable: true, runtimeMessage: "ready")
+        let presentation = RunPresentation(workflow: makeOperationalWorkflow(state: .completed, serveState: .running, completedModelPath: model.item.path), model: model, servers: [server])
         XCTAssertEqual(presentation.modelPath, model.item.path)
         XCTAssertEqual(presentation.activeServer?.port, 8766)
         XCTAssertEqual(presentation.activeServer?.pid, 412)
@@ -287,14 +287,13 @@ final class AppHostHealthTests: XCTestCase {
         XCTAssertEqual(presentation.activeServer?.logPath, "/logs/serve.log")
     }
 
-    func testRunPresentationExplainsMissingRuntime() {
-        let presentation = RunPresentation(workflow: makeOperationalWorkflow(state: .completed, completedModelPath: "/models/atlas-mlx"), model: makeOperationalModel(path: "/models/atlas-mlx", status: "ready"), servers: [], runtimeAvailable: false, runtimeMessage: "mlx_lm.server is missing")
-        XCTAssertEqual(presentation.remediation, "mlx_lm.server is missing")
-        XCTAssertFalse(presentation.canPreview)
+    func testRunRequiresRuntimeValidationThroughPreviewBeforeConfirmation() {
+        let presentation = RunPresentation(workflow: makeOperationalWorkflow(state: .completed, completedModelPath: "/models/atlas-mlx"), model: makeOperationalModel(path: "/models/atlas-mlx", status: "ready"), servers: [])
+        XCTAssertTrue(presentation.canPreview)
         XCTAssertFalse(presentation.canConfirm)
     }
 
-    func testRunPresentationRejectsArbitraryReadyLibrarySelection() {
+    func testReadySelectionCannotReuseAnotherModelsConfirmation() {
         let selected = makeOperationalModel(path: "/models/arbitrary-mlx", status: "ready")
         let workflow = makeOperationalWorkflow(
             state: .completed,
@@ -304,15 +303,13 @@ final class AppHostHealthTests: XCTestCase {
         let presentation = RunPresentation(
             workflow: workflow,
             model: selected,
-            servers: [],
-            runtimeAvailable: true,
-            runtimeMessage: "ready"
+            servers: []
         )
 
         XCTAssertNil(presentation.modelPath)
-        XCTAssertFalse(presentation.canPreview)
+        XCTAssertTrue(presentation.canPreview)
         XCTAssertFalse(presentation.canConfirm)
-        XCTAssertNotNil(presentation.selectionError)
+        XCTAssertNil(presentation.selectionError)
     }
 
     func testRunPresentationMatchesOnlySelectedModelsServer() {
@@ -321,11 +318,11 @@ final class AppHostHealthTests: XCTestCase {
         let selected = ServerInfo(repo: model.item.path, runtime: "mlx_lm", port: 9002, pid: 2, state: "running", logPath: "/logs/selected.log", startedAt: nil, receipt: "selected")
         let workflow = makeOperationalWorkflow(state: .completed, completedModelPath: model.item.path)
 
-        let multiple = RunPresentation(workflow: workflow, model: model, servers: [unrelated, selected], runtimeAvailable: true, runtimeMessage: "ready")
+        let multiple = RunPresentation(workflow: workflow, model: model, servers: [unrelated, selected])
         XCTAssertEqual(multiple.activeServer, selected)
         XCTAssertFalse(multiple.canPreview)
 
-        let unrelatedOnly = RunPresentation(workflow: workflow, model: model, servers: [unrelated], runtimeAvailable: true, runtimeMessage: "ready")
+        let unrelatedOnly = RunPresentation(workflow: workflow, model: model, servers: [unrelated])
         XCTAssertNil(unrelatedOnly.activeServer)
         XCTAssertTrue(unrelatedOnly.canPreview)
     }

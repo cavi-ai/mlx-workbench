@@ -167,7 +167,7 @@ final class AdoptSourceTests: XCTestCase {
     func testOnlyTheFitViewObservesTheMemoryMonitor() throws {
         let text = try source("AdoptView.swift")
         XCTAssertEqual(text.components(separatedBy: "@ObservedObject var resources").count - 1, 1)
-        XCTAssertEqual(text.components(separatedBy: ".borderedProminent").count - 1, 1)
+        XCTAssertEqual(text.components(separatedBy: ".workbenchPrimary").count - 1, 1)
     }
 }
 

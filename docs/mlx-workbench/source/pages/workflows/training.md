@@ -6,15 +6,17 @@ Training and controlled studies run on the engine's shared experiment store, whi
 
 **Training** fine-tunes a LoRA adapter on your own text.
 
-1. Choose a **Base model** from your cached models or enter a **Custom repo id…**.
-2. Choose a **Dataset**: a complete, bounded JSONL file. The dataset is validated before a plan is offered.
+1. Choose a **Base model** from your cached models or enter a **Custom repo id…**. Training requires a local Hugging Face cache snapshot and the mlx-lm training runtime; it never downloads a model.
+2. Choose a **Dataset path**: a directory containing `train.jsonl`, with optional `valid.jsonl`. Each line is one JSON object with nonempty `text` or a `messages` array of objects with string `role` and `content`. Blank lines are refused. The dataset is validated before a plan is offered.
 3. Set **Iterations** and an optional output directory. Invalid fields offer **Fix field**.
-4. **Preview** captures the exact request as a training plan. Editing any input invalidates the preview.
+4. **Preview Training** captures the request as a training plan. Review the reported adapter output directory, dataset example counts and cached base path. If the preview reports a missing base snapshot, confirmation is disabled: cache the model, then preview again. Older previews may not report these fields. Editing any input invalidates the preview.
 5. **Confirm & Train** submits the job; it appears under **Training jobs** and in Activity.
 
 Each run pins the cached base model, copies the reviewed dataset bytes, records the actual process result and verifies the adapter content. **Open log** and **Inspect** show a job's details; failed jobs can be retried.
 
 **Compare with base** runs a matched evaluation of the base model against base plus the trained adapter on the same prompts. Results are retained under **Retained training evaluations** with their SHA-256. Evaluations are comparison evidence, not a quality verdict, and text LoRA results do not qualify media training.
+
+Preview the evaluation prompt before **Run comparison**. Editing it invalidates the preview and clears the displayed outputs. A new preview clears older confirmation and results before the request begins, including when the new request fails. The prompt and dismissal controls are locked while a request runs. Only paired outputs with a retained report hash are displayed as a completed comparison; failed requests remain retryable.
 
 ## Controlled studies
 

@@ -953,7 +953,7 @@ private extension View {
     @ViewBuilder
     func prepareButtonStyle(prominent: Bool) -> some View {
         if prominent {
-            buttonStyle(.borderedProminent)
+            buttonStyle(.workbenchPrimary)
         } else {
             buttonStyle(.bordered)
         }

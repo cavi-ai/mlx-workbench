@@ -132,7 +132,7 @@ struct SourceCleanupSection: View {
                         }
                         await reclaim.confirmSource(current)
                         rescan()
-                    } }.buttonStyle(.borderedProminent)
+                    } }.buttonStyle(.workbenchPrimary)
                 }.disabled(reclaim.isApplying)
             }.padding(WorkbenchSpacing.lg).frame(width: 540).interactiveDismissDisabled(reclaim.isApplying)
         }
@@ -161,7 +161,7 @@ struct SourceCleanupSection: View {
                     Button("Cancel") { reclaim.cancelSourceRestore() }.keyboardShortcut(.cancelAction)
                     Spacer()
                     Button("Restore originals") { Task { await reclaim.confirmSourceRestore(); rescan() } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.workbenchPrimary)
                 }.disabled(reclaim.isApplying)
             }.padding(WorkbenchSpacing.lg).frame(width: 540).interactiveDismissDisabled(reclaim.isApplying)
         }

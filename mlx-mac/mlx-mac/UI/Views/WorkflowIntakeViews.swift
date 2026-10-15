@@ -62,7 +62,7 @@ struct WorkflowCaptureRequestView: View {
                     NSPasteboard.general.clearContents()
                     guard NSPasteboard.general.setString(text, forType: .string) else { throw WorkflowEvidenceError.invalid("could not copy capture request") }
                     note = "Request copied. Ask the agent to fill reportDraft and save that object as JSON."
-                } }.buttonStyle(.borderedProminent).disabled(selectedModel == nil)
+                } }.buttonStyle(.workbenchPrimary).disabled(selectedModel == nil)
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 520)
         .onAppear {
@@ -141,7 +141,7 @@ struct WorkflowImportPreviewView: View {
             HStack {
                 Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Import \(preview.newRecords.count) records", action: onConfirm).buttonStyle(.borderedProminent).disabled(preview.newRecords.isEmpty)
+                Button("Import \(preview.newRecords.count) records", action: onConfirm).buttonStyle(.workbenchPrimary).disabled(preview.newRecords.isEmpty)
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 600)
     }
@@ -235,7 +235,7 @@ struct AgentModelGuidanceView: View {
                         guard NSPasteboard.general.setString(text, forType: .string) else { throw WorkflowEvidenceError.invalid("could not copy guidance") }
                         note = "Copied task guidance and its source evidence."; error = nil
                     } catch { self.error = AppHost.render(error) }
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(.workbenchPrimary)
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 640).disabled(isPreparing)
             .interactiveDismissDisabled(isPreparing)
@@ -317,7 +317,7 @@ struct ModelGuidanceReviewView: View {
                 Button("Back", action: onBack).keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(isApplying ? "Checking and applying…" : "Use model") { apply() }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .buttonStyle(.workbenchPrimary).keyboardShortcut(.defaultAction)
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 560).disabled(isApplying)
             .interactiveDismissDisabled(isApplying)

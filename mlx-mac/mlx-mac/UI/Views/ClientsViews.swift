@@ -26,7 +26,7 @@ extension View {
     @ViewBuilder
     func clientsProminence(_ isProminent: Bool) -> some View {
         if isProminent {
-            buttonStyle(.borderedProminent)
+            buttonStyle(.workbenchPrimary)
         } else {
             buttonStyle(.bordered)
         }

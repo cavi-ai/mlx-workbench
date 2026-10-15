@@ -106,15 +106,15 @@ enum HealthVerdict: Equatable {
 
     var text: String {
         switch self {
-        case .ready: return "Ready to prepare and run"
+        case .ready: return "Base runtime checks passed"
         case .agentNotConfigured: return "mlx-agent isn't configured"
         case .agentNotFound: return "mlx-agent wasn't found"
         case .agentNotUsable: return "mlx-agent can't be used"
-        case .pythonMissing: return "Python wasn't found"
-        case .prepareAndRunNeedSetup: return "Prepare and Run need setup"
-        case .prepareNeedsSetup: return "Prepare needs setup"
-        case .runNeedsSetup: return "Run needs setup"
-        case .runtimeNeedsSetup: return "The runtime needs setup"
+        case .pythonMissing: return "Base Python wasn't found"
+        case .prepareAndRunNeedSetup: return "Base runtimes need setup"
+        case .prepareNeedsSetup: return "Base conversion needs setup"
+        case .runNeedsSetup: return "Base serving needs setup"
+        case .runtimeNeedsSetup: return "The base runtime needs setup"
         }
     }
 
@@ -163,14 +163,14 @@ enum HealthPresentation {
 
         let gate: Gate = !agentReady ? .agent : (pythonBlocks ? .python : .open)
         let prepare = capabilityLink(
-            .prepare, title: "Prepare", gate: gate, ok: report.convert.ok,
+            .prepare, title: "Base conversion", gate: gate, ok: report.convert.ok,
             missing: report.convert.missingModules.count + report.convert.missingExecutables.count,
             parts: prepareParts.map { name in
                 HealthPart(name: name, isPresent: report.convert.modules[name] ?? report.convert.executables[name] ?? false)
             }
         )
         let run = capabilityLink(
-            .run, title: "Run", gate: gate, ok: report.serve.ok,
+            .run, title: "Base serving", gate: gate, ok: report.serve.ok,
             missing: report.serve.missingExecutables.count,
             parts: runParts.map { HealthPart(name: $0, isPresent: report.serve.executables[$0] ?? false) }
         )
@@ -223,9 +223,9 @@ enum HealthPresentation {
 
     private static func pythonLink(_ python: String?) -> HealthLink {
         if let python {
-            return HealthLink(id: .python, title: "Python", stateWord: "Found", tone: .positive, detail: python, detailIsPath: true, parts: [])
+            return HealthLink(id: .python, title: "Base Python", stateWord: "Found", tone: .positive, detail: python, detailIsPath: true, parts: [])
         }
-        return HealthLink(id: .python, title: "Python", stateWord: "Not found", tone: .negative, detail: "No interpreter was resolved.", detailIsPath: false, parts: [])
+        return HealthLink(id: .python, title: "Base Python", stateWord: "Not found", tone: .negative, detail: "No interpreter was resolved.", detailIsPath: false, parts: [])
     }
 
     private static func capabilityLink(

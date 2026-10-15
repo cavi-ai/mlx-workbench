@@ -599,7 +599,7 @@ struct WireView: View {
             reviewedValue("Config file", value: preview.request.path, id: "manual-wire-reviewed-path")
             reviewedValue("Target runtime", value: preview.request.target, id: "manual-wire-reviewed-target")
             Button("Confirm manual wiring") { manual.confirmWiring() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.workbenchPrimary)
                 .disabled(!manual.canConfirm)
                 .help("Write the reviewed model and target runtime to the reviewed config file.")
                 .accessibilityIdentifier("manual-wire-confirm")

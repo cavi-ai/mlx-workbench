@@ -18,7 +18,7 @@ mlx-agent is vendored at `vendor/mlx-agent`. Prefer bumping the submodule to a t
 - `vendor/mlx-agent/` — git submodule (CLI source of truth)
 - `.venv/` — local Python 3.12 + convert/serve packages (gitignored)
 - `mlx-mac/` — native SwiftUI app; `mlx-mac/assets/app-icon.svg` is the icon
-  master (regenerate `AppIcon.appiconset` PNGs from it with ImageMagick)
+  master (regenerate the PNGs with `python3 scripts/export_app_icon.py`)
 - `tests/` — unittest, fake subprocess runner (no live Hub)
 - `Makefile` — `install` / `start` / `test` / `dmg` / …
 
@@ -26,8 +26,9 @@ mlx-agent is vendored at `vendor/mlx-agent`. Prefer bumping the submodule to a t
 
 The app icon lives in `mlx-mac/assets/app-icon.svg` (1024×1024 squircle) and
 is compiled into the app from `AppIcon.appiconset` at build time. After
-changing the SVG, re-render the PNGs into the appiconset (16–1024 px, the
-standard macOS ladder) and commit both.
+changing the SVG's embedded artwork, install ImageMagick and run `python3 scripts/export_app_icon.py`
+to export the appiconset (16–1024 px), sidebar image and preview. Commit the
+master and its exports together.
 
 `make dmg` builds the distribution app (no build-machine source path) and
 packages it as `MLX Workbench.app` in a compressed DMG with an
