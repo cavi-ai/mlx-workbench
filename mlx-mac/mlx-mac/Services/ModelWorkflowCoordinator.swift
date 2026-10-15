@@ -487,6 +487,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     }
 
     func prepareServe(model: LibraryModel, exactPath: String? = nil) {
+        guard model.readiness == .ready, !isServeSubmissionInFlight else { return }
         guard ModelTaskPresentation.isServable(model) else {
             let title = model.item.task?.type.title ?? "This"
             update(serveState: .failed, message: "\(title) models are not servable by mlx-lm.", errorMessage: "\(title) models are not servable by mlx-lm.")
@@ -496,6 +497,9 @@ final class ModelWorkflowCoordinator: ObservableObject {
             model,
             preferred: exactPath ?? workflow.completedModelPath ?? workflow.outputPath
         )
+        if RunPresentation.requiresWorkflowReview(workflow.state),
+           ([workflow.outputPath] + [workflow.completedModelPath].compactMap { $0 })
+            .contains(where: { canonicalPath($0) == canonicalPath(selectedPath) }) { return }
         if servingProfile?.modelPath != selectedPath { servingProfile = nil }
         servePreviewHash = nil
         servePreviewIntent = nil

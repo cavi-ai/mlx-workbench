@@ -1,4 +1,6 @@
 import XCTest
+import AppKit
+import SwiftUI
 
 @testable import mlx_workbench
 
@@ -73,9 +75,9 @@ private enum Fixture {
 
     static func presentation(
         _ workflow: ConversionWorkflow, model: LibraryModel?, servers: [ServerInfo] = [],
-        runtime: Bool = true, inFlight: Bool = false
+        inFlight: Bool = false
     ) -> RunPresentation {
-        RunPresentation(workflow: workflow, model: model, servers: servers, runtimeAvailable: runtime, runtimeMessage: "missing", serveInFlight: inFlight)
+        RunPresentation(workflow: workflow, model: model, servers: servers, serveInFlight: inFlight)
     }
 
     static let hardware = HardwareProfile(chip: "M4", model: "Mac16,1", memoryBytes: 32 * gb, macOSVersion: "15.0")
@@ -104,6 +106,63 @@ private enum Fixture {
 
 @MainActor
 final class RunRemodelTests: XCTestCase {
+    func testExistingStrataModelCanReachARealPreviewWithTheBaseRuntimeMissing() async throws {
+        guard let manifest = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RUN_PREVIEW_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_RUN_PREVIEW_MANIFEST for a local model preview; no server is started.")
+        }
+        struct Inputs: Decodable { let agentPath: String; let modelPath: String; let evidenceRoot: String }
+        let input = try JSONDecoder().decode(Inputs.self, from: Data(contentsOf: URL(fileURLWithPath: manifest)))
+        let root = URL(fileURLWithPath: input.evidenceRoot)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var config = Config.defaults(ggufRoots: [])
+        config.mlxAgentPath = input.agentPath; config.mlxRoots = [input.modelPath]
+        config.outputDir = root.appendingPathComponent("outputs").path; config.watchEnabled = false
+        let store = ModelWorkflowStore(fileURL: root.appendingPathComponent("workflows-\(UUID().uuidString).json"))
+        let app = AppHost(config: config, discoveredRoots: [], vendorAgentPath: input.agentPath,
+            configPath: root.appendingPathComponent("config.json").path, modelWorkflowPersistence: .live(store: store))
+        XCTAssertFalse(app.runtimeReport.serve.ok, "This acceptance requires the base mlx-lm check to be unavailable.")
+        await app.rescan()
+        let model = try XCTUnwrap(app.librarySnapshot?.models.first { $0.item.path == input.modelPath })
+        XCTAssertEqual(model.item.servingRuntime, "strata")
+        app.selectedModelPath = model.item.path
+        let before = try await app.api.serveStatus()
+        guard !before.contains(where: { HFRepoID.matches($0.modelIdentity, input.modelPath) }) else {
+            throw XCTSkip("The selected model already has a server; its ownership is left unchanged.")
+        }
+        let initial = RunPresentation(workflow: app.modelWorkflow.workflow, model: model, servers: before)
+        XCTAssertTrue(initial.canPrepareSelection)
+        XCTAssertTrue(initial.canPreview)
+        XCTAssertFalse(initial.canConfirm)
+        let host = NSHostingView(rootView: ServeView(appHost: app, onRouteSelection: { _ in })
+            .environment(\.isRouteActive, true).frame(width: 1190, height: 1100)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1190, height: 1100),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        func capture(_ name: String) throws {
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: root.appendingPathComponent(name))
+        }
+        try await Task.sleep(for: .milliseconds(200)); try capture("before-preview.png")
+        app.modelWorkflow.prepareServe(model: model)
+        await app.modelWorkflow.previewServe(runtime: "auto", port: nil)
+        XCTAssertEqual(app.modelWorkflow.workflow.serveState, .readyToConfirm, app.modelWorkflow.workflow.errorMessage ?? "")
+        let prepared = RunPresentation(workflow: app.modelWorkflow.workflow, model: model, servers: app.modelWorkflow.servers)
+        XCTAssertTrue(prepared.canConfirm)
+        XCTAssertTrue(try store.load().isEmpty, "Preparing a serving target must not create a conversion receipt.")
+        let after = try await app.api.serveStatus()
+        XCTAssertFalse(after.contains { HFRepoID.matches($0.modelIdentity, input.modelPath) })
+        try await Task.sleep(for: .milliseconds(200)); try capture("preview-ready.png")
+        let result: [String: Any] = ["baseRuntimeAvailable": app.runtimeReport.serve.ok, "modelRuntime": model.item.servingRuntime!,
+            "previewState": app.modelWorkflow.workflow.serveState.rawValue, "canConfirm": prepared.canConfirm,
+            "serverStarted": false, "modelPath": model.item.path]
+        try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys, .prettyPrinted])
+            .write(to: root.appendingPathComponent("result.json"))
+    }
+
     func testOptionalPortDistinguishesAutomaticValidAndInvalidInput() {
         XCTAssertEqual(RunPortInput(" \n"), .automatic)
         XCTAssertNil(RunPortInput("").error)
@@ -386,14 +445,18 @@ final class RunRemodelTests: XCTestCase {
     private var path: String { "/models/atlas-mlx" }
 
     private func makeCoordinator(
-        counter: CallCounter, servers: [ServerInfo], statusError: Error? = nil
+        counter: CallCounter, servers: [ServerInfo], statusError: Error? = nil, previewError: Error? = nil
     ) -> ModelWorkflowCoordinator {
         let done = Job(receipt: "r1", repo: nil, source: nil, qBits: 4, out: "/models/atlas-mlx", pid: nil, logPath: nil, startedAt: nil, completedAt: nil, state: "done")
         let api = ModelWorkflowAPI(
             convertPreview: { _, _, _ in counter.hit("convertPreview"); return [:] },
             convertStart: { _, _, _, _ in counter.hit("convertStart"); return [:] },
             convertStatus: { counter.hit("convertStatus"); return [done] },
-            servePreview: { _, _, _ in counter.hit("servePreview"); return ["preview_hash": "h"] },
+            servePreview: { _, _, _ in
+                counter.hit("servePreview")
+                if let previewError { throw previewError }
+                return ["preview_hash": "h"]
+            },
             serveStart: { _, _, _, _ in counter.hit("serveStart"); return ["receipt": "r"] },
             serveStatus: {
                 counter.hit("serveStatus")
@@ -424,6 +487,21 @@ final class RunRemodelTests: XCTestCase {
         }
         XCTAssertEqual(verifier.begun, 0)
         XCTAssertEqual(coordinator.workflow, before)
+    }
+
+    func testRejectedRuntimePreviewCannotConfirmOrStartServing() async {
+        struct MissingRuntime: LocalizedError { var errorDescription: String? { "Selected runtime is unavailable." } }
+        let counter = CallCounter()
+        let coordinator = makeCoordinator(counter: counter, servers: [], previewError: MissingRuntime())
+        coordinator.restore(Fixture.workflow(state: .completed, completedModelPath: path))
+        await coordinator.previewServe(runtime: "auto", port: nil)
+        let presentation = Fixture.presentation(coordinator.workflow, model: Fixture.model(path: path))
+        XCTAssertEqual(presentation.stage, .failed)
+        XCTAssertFalse(presentation.canConfirm)
+        XCTAssertEqual(coordinator.workflow.errorMessage, "Selected runtime is unavailable.")
+        await coordinator.confirmServe(runtime: "auto", port: nil)
+        XCTAssertEqual(counter.count("servePreview"), 1)
+        XCTAssertEqual(counter.count("serveStart"), 0)
     }
 
     func testOperationalRefreshReadsConversionJobsWhichRunMustNotDo() async {
@@ -466,6 +544,31 @@ extension RunRemodelTests {
         XCTAssertTrue(completed.canPreview)
     }
 
+    func testRuntimeValidationBelongsToTheServePreviewBeforeConfirmation() {
+        let model = Fixture.model(path: path)
+        let presentation = Fixture.presentation(Fixture.workflow(state: .completed, completedModelPath: path), model: model)
+        XCTAssertTrue(presentation.canPreview)
+        XCTAssertEqual(presentation.stage, .eligible)
+        XCTAssertFalse(presentation.canConfirm)
+    }
+
+    func testReadyLibrarySelectionCanPreviewWithoutAConversionRecord() {
+        let model = Fixture.model(path: path)
+        let presentation = Fixture.presentation(Fixture.workflow(), model: model)
+        XCTAssertTrue(presentation.canPrepareSelection)
+        XCTAssertTrue(presentation.canPreview)
+        XCTAssertFalse(presentation.canConfirm)
+        XCTAssertNil(presentation.selectionError)
+        XCTAssertFalse(Fixture.presentation(Fixture.workflow(), model: model, inFlight: true).canPrepareSelection)
+        for state: ConversionWorkflowState in [.queued, .running, .verifying, .verificationFailed, .failed] {
+            let blocked = Fixture.presentation(Fixture.workflow(state: state, completedModelPath: path), model: model)
+            XCTAssertTrue(blocked.needsWorkflowReview, state.rawValue)
+            XCTAssertFalse(blocked.canPrepareSelection, state.rawValue)
+            XCTAssertFalse(blocked.canPreview, state.rawValue)
+            XCTAssertNotNil(blocked.selectionError, state.rawValue)
+        }
+    }
+
     func testVerifyingWorkflowIsNotEligible() {
         let model = Fixture.model(path: path)
         let presentation = Fixture.presentation(Fixture.workflow(state: .verifying, completedModelPath: path), model: model)
@@ -498,12 +601,11 @@ extension RunRemodelTests {
 
     func testStagesFollowServeStateAndServers() {
         let model = Fixture.model(path: path)
-        func stage(_ serveState: ServeWorkflowState, servers: [ServerInfo] = [], runtime: Bool = true, inFlight: Bool = false) -> RunPresentation.Stage {
-            Fixture.presentation(Fixture.workflow(state: .verified, serveState: serveState, completedModelPath: path), model: model, servers: servers, runtime: runtime, inFlight: inFlight).stage
+        func stage(_ serveState: ServeWorkflowState, servers: [ServerInfo] = [], inFlight: Bool = false) -> RunPresentation.Stage {
+            Fixture.presentation(Fixture.workflow(state: .verified, serveState: serveState, completedModelPath: path), model: model, servers: servers, inFlight: inFlight).stage
         }
         XCTAssertEqual(Fixture.presentation(Fixture.workflow(), model: nil).stage, .noModel)
         XCTAssertEqual(stage(.idle), .eligible)
-        XCTAssertEqual(stage(.idle, runtime: false), .runtimeMissing)
         XCTAssertEqual(stage(.previewing), .starting)
         XCTAssertEqual(stage(.readyToConfirm, inFlight: true), .starting)
         XCTAssertEqual(stage(.readyToConfirm), .readyToConfirm)
