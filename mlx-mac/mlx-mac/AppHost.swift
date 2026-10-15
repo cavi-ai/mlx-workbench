@@ -55,6 +55,7 @@ class AppHost: ObservableObject {
     let intake: IntakeCoordinator
     /// Prompt → PNG for converted image-generation models.
     let imageGeneration: ImageGenerationCoordinator
+    let trainedAdapters: TrainedAdapterServingCoordinator
     /// First-launch setup assistant state (persisted once completed).
     let setup: SetupCoordinator
     /// In-app updates (official tags or beta/main) for checkout-run installs.
@@ -170,6 +171,7 @@ class AppHost: ObservableObject {
         self.imageGeneration = ImageGenerationCoordinator(render: { path, out, request in
             try await api.generate(path: path, out: out.path, request: request)
         })
+        self.trainedAdapters = TrainedAdapterServingCoordinator(api: .live(api))
         self.setup = setup ?? SetupCoordinator()
         self.updater = updater ?? UpdateCoordinator(installed: .running())
         let verificationCoordinator = self.verification

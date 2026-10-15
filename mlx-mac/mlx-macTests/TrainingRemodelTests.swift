@@ -30,6 +30,110 @@ private enum TF {
 
 private struct Boom: Error, LocalizedError { var errorDescription: String? { "boom" } }
 
+private enum TrainedServeFixture {
+    static let identity: [String: Any] = ["adapter_config.json": ["sha256": String(repeating: "a", count: 64), "bytes": 2],
+        "adapters.safetensors": ["sha256": String(repeating: "b", count: 64), "bytes": 100]]
+    static let binding: [String: Any] = ["training_receipt": "/receipts/trained.json", "training_receipt_sha256": String(repeating: "c", count: 64),
+        "training_run_id": "run-a", "base_repo": "org/base", "base_path": "/models/base", "base_fingerprint": String(repeating: "d", count: 64),
+        "adapter_path": "/adapters/tuned", "adapter_identity": identity]
+    static let hash = String(repeating: "e", count: 64)
+    static var plan: [String: Any] { ["runtime": "mlx_lm", "port": 8766, "path": "/models/base", "adapter_path": "/adapters/tuned",
+        "adapter_identity": identity, "training_binding": binding, "preview_hash": hash] }
+    static var receipt: [String: Any] { plan.merging(["pid": 77, "started_at": "2026-10-15T00:00:00Z"]) { _, new in new } }
+    static func job() throws -> TrainingJob {
+        let identity = try JSONDecoder().decode(LabValue.self, from: JSONSerialization.data(withJSONObject: identity))
+        return TrainingJob(receipt: "/receipts/trained.json", repo: "org/base", out: "/adapters/tuned", pid: 9, state: "done", logPath: nil, adapterIdentity: identity)
+    }
+    static func server() throws -> ServerInfo {
+        let row = receipt.merging(["state": "running"]) { _, new in new }
+        return try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [row]])?.first)
+    }
+}
+
+@MainActor
+final class TrainedAdapterServingTests: XCTestCase {
+    func testSelectionDoesNotStartAndConfirmationUsesTheReviewedPairAndPort() async throws {
+        var starts = 0, running = false
+        let coordinator = TrainedAdapterServingCoordinator(api: .init(preview: { receipt, _ in
+            XCTAssertEqual(receipt, "/receipts/trained.json"); return TrainedServeFixture.plan
+        }, start: { receipt, port, hash in
+            XCTAssertEqual(receipt, "/receipts/trained.json"); XCTAssertEqual(port, 8766); XCTAssertEqual(hash, TrainedServeFixture.hash)
+            starts += 1; running = true; return ["receipt": TrainedServeFixture.receipt]
+        }, status: { running ? [try TrainedServeFixture.server()] : [] }))
+        XCTAssertTrue(coordinator.select(try TrainedServeFixture.job()))
+        XCTAssertEqual(starts, 0)
+        XCTAssertFalse(coordinator.canConfirm)
+        await coordinator.previewServe()?.value
+        XCTAssertEqual(starts, 0)
+        XCTAssertTrue(coordinator.canConfirm)
+        await coordinator.confirmServe()?.value
+        XCTAssertEqual(starts, 1)
+        XCTAssertEqual(coordinator.runningServer?.adapterPath, "/adapters/tuned")
+        XCTAssertNotNil(coordinator.runningServer?.trainingBinding)
+        XCTAssertFalse(try TrainedServeFixture.server().matchesUnadaptedModel("/models/base"))
+    }
+
+    func testPortEditsAndDelayedPreviewsNeverGrantOldConfirmation() async throws {
+        var completion: CheckedContinuation<[String: Any], Never>?
+        let started = expectation(description: "preview started")
+        let coordinator = TrainedAdapterServingCoordinator(api: .init(preview: { _, _ in
+            await withCheckedContinuation { completion = $0; started.fulfill() }
+        }, start: { _, _, _ in XCTFail("Must preview the edited port"); return [:] }, status: { [] }))
+        XCTAssertTrue(coordinator.select(try TrainedServeFixture.job()))
+        let task = coordinator.previewServe()
+        XCTAssertTrue(coordinator.isBusy)
+        XCTAssertNil(coordinator.previewServe())
+        XCTAssertNil(coordinator.confirmServe())
+        await fulfillment(of: [started], timeout: 1)
+        coordinator.portText = "8767"
+        completion?.resume(returning: TrainedServeFixture.plan)
+        await task?.value
+        XCTAssertNil(coordinator.preview)
+        XCTAssertFalse(coordinator.canConfirm)
+        XCTAssertNil(coordinator.confirmServe())
+    }
+
+    func testMissingBindingOrConflictingServerCannotConfirm() async throws {
+        var legacy = true
+        let coordinator = TrainedAdapterServingCoordinator(api: .init(preview: { _, _ in
+            legacy ? ["preview_hash": TrainedServeFixture.hash] : TrainedServeFixture.plan
+        }, start: { _, _, _ in XCTFail("Must not start"); return [:] }, status: {
+            [ServerInfo(path: "/models/base", port: 8766, pid: 1, state: "running")]
+        }))
+        XCTAssertTrue(coordinator.select(try TrainedServeFixture.job()))
+        await coordinator.previewServe()?.value
+        XCTAssertFalse(coordinator.canConfirm)
+        XCTAssertNotNil(coordinator.errorMessage)
+        legacy = false
+        await coordinator.previewServe()?.value
+        XCTAssertFalse(coordinator.canConfirm)
+        XCTAssertNotNil(coordinator.errorMessage)
+    }
+
+    func testMismatchedStartReceiptDoesNotBecomeRunningOrRemainConfirmable() async throws {
+        let coordinator = TrainedAdapterServingCoordinator(api: .init(preview: { _, _ in TrainedServeFixture.plan },
+            start: { _, _, _ in ["receipt": TrainedServeFixture.receipt.merging(["preview_hash": "wrong"]) { _, new in new }] },
+            status: { [] }))
+        XCTAssertTrue(coordinator.select(try TrainedServeFixture.job()))
+        await coordinator.previewServe()?.value
+        await coordinator.confirmServe()?.value
+        XCTAssertNil(coordinator.runningServer)
+        XCTAssertFalse(coordinator.canConfirm)
+        XCTAssertNotNil(coordinator.errorMessage)
+    }
+
+    func testExistingPairOnAnotherPortDoesNotCreateAnotherServer() async throws {
+        let row = TrainedServeFixture.receipt.merging(["port": 9876, "state": "running"]) { _, new in new }
+        let existing = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [row]])?.first)
+        let coordinator = TrainedAdapterServingCoordinator(api: .init(preview: { _, _ in TrainedServeFixture.plan },
+            start: { _, _, _ in XCTFail("Must not load a duplicate server"); return [:] }, status: { [existing] }))
+        XCTAssertTrue(coordinator.select(try TrainedServeFixture.job()))
+        await coordinator.previewServe()?.value
+        XCTAssertFalse(coordinator.canConfirm)
+        XCTAssertTrue(coordinator.errorMessage?.contains("9876") == true)
+    }
+}
+
 @MainActor
 final class TrainingEvaluationSessionTests: XCTestCase {
     private func plan(_ hash: String = "reviewed") -> LabResponse {
@@ -464,6 +568,56 @@ final class TrainingSourceTests: XCTestCase {
 
 @MainActor
 final class TrainingRenderTests: XCTestCase {
+    func testTrainedAdapterRunUsesEnginePreviewAndRejectsChangedFixture() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_TRAINED_ADAPTER_CAPTURE"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_TRAINED_ADAPTER_CAPTURE for the isolated engine receipt fixture.")
+        }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let root = URL(fileURLWithPath: path).standardizedFileURL
+        XCTAssertEqual(root.deletingLastPathComponent(), source.appendingPathComponent(".run"))
+        XCTAssertTrue(root.lastPathComponent.hasPrefix("trained-adapter-"))
+        guard root.deletingLastPathComponent() == source.appendingPathComponent(".run"),
+              root.lastPathComponent.hasPrefix("trained-adapter-"), root.resolvingSymlinksInPath() == root else {
+            throw CocoaError(.fileReadNoPermission)
+        }
+        let adapterConfig = root.appendingPathComponent("adapter/adapter_config.json")
+        guard adapterConfig.resolvingSymlinksInPath() == adapterConfig else { throw CocoaError(.fileReadNoPermission) }
+        let original = try Data(contentsOf: adapterConfig)
+        defer { if adapterConfig.resolvingSymlinksInPath() == adapterConfig { try? original.write(to: adapterConfig) } }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: source.appendingPathComponent("vendor/mlx-agent").path,
+            receiptDirectory: root.appendingPathComponent("state").path)
+        let jobs = try await api.trainingStatus().jobs
+        let job = try XCTUnwrap(jobs.first)
+        XCTAssertEqual(job.state, "done")
+        let coordinator = TrainedAdapterServingCoordinator(api: .live(api))
+        XCTAssertTrue(coordinator.select(job))
+        XCTAssertNil(coordinator.preview)
+        for width in [CGFloat(514), 814] {
+            try await attach(TrainedAdapterRunPanel(coordinator: coordinator, refresh: {}).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top), name: "trained-staged", viewport: width,
+                dark: true, height: 900, captureDirectory: root)
+        }
+        await coordinator.previewServe()?.value
+        XCTAssertTrue(coordinator.canConfirm, coordinator.errorMessage ?? "Missing confirmation")
+        let reviewed = try XCTUnwrap(coordinator.preview)
+        XCTAssertEqual(reviewed.binding.receiptPath, job.receipt)
+        XCTAssertEqual(reviewed.binding.adapterIdentity, job.adapterIdentity)
+        for width in [CGFloat(514), 814] {
+            try await attach(TrainedAdapterRunPanel(coordinator: coordinator, refresh: {}).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top), name: "trained-reviewed", viewport: width,
+                dark: true, height: 1300, captureDirectory: root)
+        }
+        guard adapterConfig.resolvingSymlinksInPath() == adapterConfig else { throw CocoaError(.fileReadNoPermission) }
+        try Data("{\"fixture_changed\":true}".utf8).write(to: adapterConfig)
+        await coordinator.confirmServe()?.value
+        XCTAssertNil(coordinator.runningServer)
+        XCTAssertFalse(coordinator.canConfirm)
+        XCTAssertNotNil(coordinator.errorMessage)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("state/.mlx-agent-receipts/serve").path))
+        for width in [CGFloat(514), 814] {
+            try await attach(TrainedAdapterRunPanel(coordinator: coordinator, refresh: {}).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top), name: "trained-drift-refused", viewport: width,
+                dark: true, height: 1000, captureDirectory: root)
+        }
+    }
+
     private func config() -> Config {
         Config(
             schemaVersion: Config.SCHEMA_VERSION, ggufRoots: ["/m"], mlxRoots: [], outputDir: "/out/mlx",

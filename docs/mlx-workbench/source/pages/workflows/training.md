@@ -14,6 +14,10 @@ Training and controlled studies run on the engine's shared experiment store, whi
 
 Each run pins the cached base model, copies the reviewed dataset bytes, records the actual process result and verifies the adapter content. **Open log** and **Inspect** show a job's details; failed jobs can be retried.
 
+**Use in Run** stages a completed job's recorded base and adapter in
+[Run](run.md#serve-a-trained-adapter). It does not start inference. Preview and
+confirmation recheck the artifacts before starting an explicit adapter server.
+
 **Compare with base** runs a matched evaluation of the base model against base plus the trained adapter on the same prompts. Results are retained under **Retained training evaluations** with their SHA-256. Evaluations are comparison evidence, not a quality verdict, and text LoRA results do not qualify media training.
 
 Preview the evaluation prompt before **Run comparison**. Editing it invalidates the preview and clears the displayed outputs. A new preview clears older confirmation and results before the request begins, including when the new request fails. The prompt and dismissal controls are locked while a request runs. Only paired outputs with a retained report hash are displayed as a completed comparison; failed requests remain retryable.

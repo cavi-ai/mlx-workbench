@@ -78,7 +78,8 @@ struct SystemResourceHeader: View {
                 ForEach(servers) { server in
                     HStack(spacing: WorkbenchSpacing.sm) {
                         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
-                            Text(HFRepoID.forPath(server.modelIdentity) ?? URL(fileURLWithPath: server.modelIdentity).lastPathComponent)
+                            Text((HFRepoID.forPath(server.modelIdentity) ?? URL(fileURLWithPath: server.modelIdentity).lastPathComponent)
+                                + (server.adapterSummary.map { " · " + $0 } ?? ""))
                                 .font(WorkbenchTypography.label).lineLimit(1)
                                 .help(server.modelIdentity)
                             Text("Port \(server.port.map(String.init) ?? "unknown") · PID \(server.pid.map(String.init) ?? "unknown")")

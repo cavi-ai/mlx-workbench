@@ -280,7 +280,8 @@ struct ActivityServerRow: Identifiable, Equatable {
         id = "\(index)-\(server.id)"
         stateWord = WorkbenchStatus(rawValue: word).label
         isRunning = server.state?.lowercased() == "running"
-        name = RunModels.name(for: identity, model: RunModels.model(for: identity, in: models))
+        let baseName = RunModels.name(for: identity, model: RunModels.model(for: identity, in: models))
+        name = server.adapterSummary.map { baseName + " · " + $0 } ?? baseName
         self.identity = identity
         endpoint = server.port.map { RunFormat.endpoint(port: $0) } ?? "No port"
         if let raw = server.startedAt, !raw.isEmpty {

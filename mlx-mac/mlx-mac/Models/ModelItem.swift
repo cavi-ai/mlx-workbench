@@ -225,6 +225,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let adapterPath: String?
     let adapterIdentity: LabValue?
     let adapterStatus: String?
+    let trainingBinding: TrainedAdapterBinding?
 
     enum CodingKeys: String, CodingKey {
         case repo, path, runtime, port, pid, state, receipt
@@ -237,6 +238,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case adapterPath = "adapter_path"
         case adapterIdentity = "adapter_identity"
         case adapterStatus = "adapter_status"
+        case trainingBinding = "training_binding"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -259,7 +261,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         loadBlockedReason: String? = nil,
         adapterPath: String? = nil,
         adapterIdentity: LabValue? = nil,
-        adapterStatus: String? = nil
+        adapterStatus: String? = nil,
+        trainingBinding: TrainedAdapterBinding? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -279,6 +282,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.adapterPath = adapterPath
         self.adapterIdentity = adapterIdentity
         self.adapterStatus = adapterStatus
+        self.trainingBinding = trainingBinding
     }
 
     /// The identity serve reports for this server's model: the repo id for
@@ -291,7 +295,7 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     /// Model-only workflows cannot substitute an adapter server, including
     /// historical servers whose adapter metadata could not be established.
     func matchesUnadaptedModel(_ modelPath: String) -> Bool {
-        adapterPath == nil && adapterIdentity == nil && adapterStatus == nil
+        adapterPath == nil && adapterIdentity == nil && adapterStatus == nil && trainingBinding == nil
             && HFRepoID.matches(modelIdentity, modelPath)
     }
 
@@ -299,13 +303,13 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         if let adapterPath, !adapterPath.isEmpty {
             return "Adapter: " + URL(fileURLWithPath: adapterPath).lastPathComponent
         }
-        return adapterIdentity != nil || adapterStatus != nil ? "Adapter identity unavailable" : nil
+        return adapterIdentity != nil || adapterStatus != nil || trainingBinding != nil ? "Adapter identity unavailable" : nil
     }
 
     func sameProcess(as other: ServerInfo) -> Bool {
         modelIdentity == other.modelIdentity && port == other.port && pid == other.pid &&
         runtime == other.runtime && receipt == other.receipt && startedAt == other.startedAt &&
-        adapterPath == other.adapterPath && adapterIdentity == other.adapterIdentity && adapterStatus == other.adapterStatus
+        adapterPath == other.adapterPath && adapterIdentity == other.adapterIdentity && adapterStatus == other.adapterStatus && trainingBinding == other.trainingBinding
     }
 
     var residencySummary: String {

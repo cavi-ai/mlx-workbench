@@ -588,6 +588,17 @@ actor WorkbenchAPI {
 
     // MARK: - LoRA / Fuse
 
+    func trainedAdapterPreview(receipt: String, port: Int?) async throws -> [String: Any] {
+        var argv = ["serve", "start", "--training-receipt", receipt, "--runtime", "auto", "--receipts-dir", receiptDirectory]
+        if let port { argv += ["--port", String(port)] }
+        return Self.unwrapPlan(try await raw(argv))
+    }
+
+    func trainedAdapterStart(receipt: String, port: Int, hash: String) async throws -> [String: Any] {
+        try await raw(["serve", "start", "--training-receipt", receipt, "--runtime", "auto", "--receipts-dir", receiptDirectory,
+            "--port", String(port), "--confirm", "--preview-hash", hash])
+    }
+
     func loraPreview(repo: String, data: String, iters: Int?, out: String?) async throws -> [String: Any] {
         var argv = ["lora", "start", "--repo", repo, "--data", data, "--receipts-dir", receiptDirectory]
         if let iters { argv.append(contentsOf: ["--iters", String(iters)]) }
@@ -660,7 +671,7 @@ actor WorkbenchAPI {
     static func servers(from data: [String: Any], key: String = "servers") -> [ServerInfo]? {
         guard let raw = data[key] as? [[String: Any]] else { return nil }
         return raw.map { r in
-            let adapterFields = r.filter { ["adapter_path", "adapter_identity", "adapter_status"].contains($0.key) }
+            let adapterFields = r.filter { ["adapter_path", "adapter_identity", "adapter_status", "training_binding"].contains($0.key) }
             let adapter = (try? JSONSerialization.data(withJSONObject: adapterFields))
                 .flatMap { try? JSONDecoder().decode(ServerInfo.self, from: $0) }
             return ServerInfo(
@@ -681,7 +692,8 @@ actor WorkbenchAPI {
                 loadBlockedReason: r.string("load_blocked_reason"),
                 adapterPath: adapter?.adapterPath,
                 adapterIdentity: adapter?.adapterIdentity,
-                adapterStatus: adapter == nil ? "unknown" : adapter?.adapterStatus
+                adapterStatus: adapter == nil ? "unknown" : adapter?.adapterStatus,
+                trainingBinding: adapter?.trainingBinding
             )
         }
     }

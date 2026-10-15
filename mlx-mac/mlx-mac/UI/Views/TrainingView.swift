@@ -142,6 +142,8 @@ struct TrainingPreviewGuidance: Equatable {
 
 struct TrainingView: View {
     @ObservedObject var appHost: AppHost
+    @ObservedObject private var trainedAdapters: TrainedAdapterServingCoordinator
+    private let onRouteSelection: (AppRoute) -> Void
     @StateObject private var session: TrainingSession
     @StateObject private var loader: TrainingLoader
     @State private var evaluationJob: TrainingJob?
@@ -157,9 +159,12 @@ struct TrainingView: View {
     /// `seedRetained` lets a render hold the page with an inspected evaluation open.
     init(
         appHost: AppHost, loader: TrainingLoader? = nil, session: TrainingSession? = nil,
-        seedRetained: TrainingRetainedEvidence? = nil
+        seedRetained: TrainingRetainedEvidence? = nil,
+        onRouteSelection: @escaping (AppRoute) -> Void = { _ in }
     ) {
         self.appHost = appHost
+        _trainedAdapters = ObservedObject(wrappedValue: appHost.trainedAdapters)
+        self.onRouteSelection = onRouteSelection
         seededRetained = seedRetained
         _retainedExpanded = State(initialValue: seedRetained != nil)
         _loader = StateObject(wrappedValue: loader ?? TrainingLoader(
@@ -475,7 +480,10 @@ struct TrainingView: View {
                 actions: TrainingJobActions(
                     compare: { row in evaluationJob = loader.jobs.first { $0.id == row.id } },
                     openLog: { NSWorkspace.shared.open(URL(fileURLWithPath: $0)) },
-                    cancel: { cancelTraining($0) }, cancelingPIDs: cancelingPIDs
+                    cancel: { cancelTraining($0) }, cancelingPIDs: cancelingPIDs,
+                    serve: { row in
+                        if let job = loader.jobs.first(where: { $0.id == row.id }), trainedAdapters.select(job) { onRouteSelection(.run) }
+                    }, isServingBusy: trainedAdapters.isBusy
                 )
             )
             if let cancelError {
