@@ -9,7 +9,6 @@ struct RunPresentation: Equatable {
         case noModel
         case nonServable
         case notEligible
-        case runtimeMissing
         case eligible
         case readyToConfirm
         case starting
@@ -24,8 +23,6 @@ struct RunPresentation: Equatable {
     let workflow: ConversionWorkflow
     let model: LibraryModel?
     let servers: [ServerInfo]
-    let runtimeAvailable: Bool
-    let runtimeMessage: String
     var serveInFlight = false
 
     /// The path Run and the window subtitle name: the workflow's output, else the Library selection.
@@ -58,20 +55,35 @@ struct RunPresentation: Equatable {
         })
     }
     var canPreview: Bool {
-        selectedCompletedModel != nil && isServable && runtimeAvailable
+        (selectedCompletedModel != nil || canPrepareSelection) && isServable
             && workflow.serveState != .previewing && activeServer == nil
     }
     var canConfirm: Bool {
-        selectedCompletedModel != nil && isServable && runtimeAvailable && workflow.serveState == .readyToConfirm
+        selectedCompletedModel != nil && isServable && workflow.serveState == .readyToConfirm && !serveInFlight
     }
-    var remediation: String? { runtimeAvailable ? nil : runtimeMessage }
+
+    static func requiresWorkflowReview(_ state: ConversionWorkflowState) -> Bool {
+        state.isInFlight || state == .verificationFailed || state == .failed
+    }
+
+    var needsWorkflowReview: Bool {
+        guard let model, Self.requiresWorkflowReview(workflow.state) else { return false }
+        let paths = Set([model.item.path] + model.outputPaths)
+        return paths.contains(workflow.outputPath) || workflow.completedModelPath.map(paths.contains) == true
+    }
+
+    /// A ready Library selection can become an unsaved serving target. Its own
+    /// unsettled or failed conversion must still be resolved in Prepare.
+    var canPrepareSelection: Bool {
+        stage == .notEligible && model?.readiness == .ready && isServable && !needsWorkflowReview
+            && !serveInFlight && workflow.serveState != .previewing
+    }
 
     var stage: Stage {
         guard model != nil else { return .noModel }
         guard isServable else { return .nonServable }
         guard selectedCompletedModel != nil else { return .notEligible }
         if activeServer != nil { return .running }
-        guard runtimeAvailable else { return .runtimeMissing }
         if serveInFlight || workflow.serveState == .previewing { return .starting }
         switch workflow.serveState {
         case .readyToConfirm: return .readyToConfirm
@@ -102,9 +114,14 @@ struct RunPresentation: Equatable {
     }
 
     var selectionError: String? {
-        stage == .notEligible
-            ? "Run requires a ready Library model that exactly matches the completed workflow output."
-            : nil
+        guard stage == .notEligible, !canPrepareSelection else { return nil }
+        if needsWorkflowReview {
+            return workflow.state.isInFlight
+                ? "This model's conversion or verification is still in progress. Review it in Prepare."
+                : "This model belongs to a failed workflow. Review verification or recovery in Prepare before serving."
+        }
+        if serveInFlight || workflow.serveState == .previewing { return "Wait for the current serving request to finish." }
+        return "This model is not ready to serve. Review its setup in Library."
     }
 
     /// Conversion messages stay off Run; serve feedback shows once a serve flow has started.

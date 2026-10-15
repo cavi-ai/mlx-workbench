@@ -71,8 +71,6 @@ struct ServeView: View {
             workflow: modelWorkflow.workflow,
             model: selectedModel,
             servers: modelWorkflow.servers,
-            runtimeAvailable: appHost.runtimeReport.serve.ok,
-            runtimeMessage: appHost.runtimeReport.serve.message,
             serveInFlight: modelWorkflow.isServeSubmissionInFlight
         )
     }
@@ -314,16 +312,16 @@ struct ServeView: View {
                     Button("Open Library") { onRouteSelection(.library) }
                         .buttonStyle(.bordered)
                 case .notEligible:
-                    if let error = presentation.selectionError { InlineMessage(kind: .info, text: error) }
-                    Button("Open Library") { onRouteSelection(.library) }
-                        .buttonStyle(.bordered)
-                case .runtimeMissing:
-                    InlineMessage(
-                        kind: .error,
-                        text: "Run runtime unavailable: \(presentation.remediation ?? "unknown"). Health installs the required runtime."
-                    )
-                    Button("Open Health") { onRouteSelection(.health) }
-                        .buttonStyle(.bordered)
+                    if presentation.canPrepareSelection {
+                        serveControls(presentation)
+                    } else {
+                        if let error = presentation.selectionError { InlineMessage(kind: .info, text: error) }
+                        if presentation.needsWorkflowReview {
+                            Button("Review Prepare") { onRouteSelection(.prepare) }.buttonStyle(.bordered)
+                        } else {
+                            Button("Open Library") { onRouteSelection(.library) }.buttonStyle(.bordered)
+                        }
+                    }
                 default:
                     serveControls(presentation)
                 }
@@ -370,6 +368,12 @@ struct ServeView: View {
 
     @ViewBuilder
     private func serveControls(_ presentation: RunPresentation) -> some View {
+        HStack {
+            Text("Preview checks this model's serving runtime before confirmation.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            Spacer()
+            Button("Open Health") { onRouteSelection(.health) }.buttonStyle(.bordered)
+        }
         if isCompact {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 HStack(spacing: WorkbenchSpacing.sm) {
@@ -439,7 +443,12 @@ struct ServeView: View {
     }
 
     private func previewServeAction() {
-        guard portInput.error == nil else { return }
+        guard portInput.error == nil, presentation.canPreview else { return }
+        if presentation.canPrepareSelection {
+            guard let model = selectedModel else { return }
+            modelWorkflow.prepareServe(model: model)
+        }
+        guard presentation.selectedCompletedModel != nil else { return }
         let port = portInput.port
         let runtime = runtime
         Task { await modelWorkflow.previewServe(runtime: runtime, port: port) }
