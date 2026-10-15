@@ -99,6 +99,46 @@ enum ActivityPresentation {
     }
 }
 
+struct ActivityComparisonSection: View {
+    @ObservedObject var comparison: ComparisonCoordinator
+    let onOpen: () -> Void
+
+    var body: some View {
+        if comparison.activeRunID != nil || comparison.runStateUnavailableReason != nil {
+            WorkbenchSurface {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                    HStack {
+                        Text("Comparison").font(WorkbenchTypography.cardTitle)
+                        Spacer()
+                        Button("Open Compare", action: onOpen)
+                            .help("Open the comparison setup and recorded results.")
+                            .accessibilityIdentifier("activity-open-comparison")
+                    }
+                    if let run = comparison.runs.first(where: { $0.id == comparison.activeRunID }) {
+                        Text(run.promptSetName).font(WorkbenchTypography.emphasis)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(run.variants.isEmpty ? run.effectiveMode.title :
+                            "\(run.effectiveMode.title) · \(run.variants.count) \(run.variants.count == 1 ? "lane" : "lanes")")
+                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    }
+                    if comparison.activeRunID != nil {
+                        ComparisonProgressControls(message: comparison.progressMessage ?? "Measuring…",
+                            isCancelling: comparison.isCancelling, cleanupPending: comparison.cleanupPending,
+                            onCancel: comparison.cancel, onRetry: comparison.retryCleanup)
+                    }
+                    if let reason = comparison.runStateUnavailableReason {
+                        Text(reason).font(WorkbenchTypography.secondary)
+                            .foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+                    }
+                    ErrorBanner(text: comparison.lastError)
+                    ErrorBanner(text: comparison.persistenceError)
+                }
+            }
+            .accessibilityIdentifier("activity-comparison")
+        }
+    }
+}
+
 struct JobsView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
@@ -158,6 +198,7 @@ struct JobsView: View {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                     ErrorBanner(text: statusError)
                     ErrorBanner(text: modelWorkflow.persistenceError)
+                    ActivityComparisonSection(comparison: appHost.comparison) { onRouteSelection(.compare) }
                     WorkbenchSurface {
                         VStack(alignment: .leading) {
                             Text("Experiment jobs").font(WorkbenchTypography.cardTitle)

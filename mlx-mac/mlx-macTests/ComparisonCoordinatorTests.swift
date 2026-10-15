@@ -7,6 +7,105 @@ import XCTest
 
 @MainActor
 final class ComparisonCoordinatorTests: XCTestCase {
+    func testActivityComparisonRecoveryIsExplicitAndUpdatesAfterCleanup() async throws {
+        let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL), run = cleanupRun()
+        try store.upsert(run, id: \.id)
+        let before = try Data(contentsOf: store.url), events = ComparisonProbeEvents()
+        let coordinator = makeCoordinator(recoverCleanup: { _ in await events.record("recover") })
+        var opened = 0
+        let view = ActivityComparisonSection(comparison: coordinator, onOpen: { opened += 1 })
+            .buttonStyle(.borderless).padding(20).frame(width: 700, height: 240)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 240),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        func buttons(_ view: NSView) -> [NSButton] {
+            (view as? NSButton).map { [$0] } ?? view.subviews.flatMap { buttons($0) }
+        }
+        try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+        let calls = await events.values
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: store.url), before)
+        let actions = buttons(host)
+        XCTAssertEqual(actions.count, 2)
+        // SwiftUI draws these labels inside AppKit buttons with empty native titles.
+        let open = try XCTUnwrap(actions.first)
+        open.performClick(nil)
+        XCTAssertEqual(opened, 1)
+        XCTAssertEqual(try Data(contentsOf: store.url), before)
+        let retry = try XCTUnwrap(actions.last)
+        retry.performClick(nil)
+        let finished = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(finished)
+        try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+        XCTAssertTrue(buttons(host).isEmpty, "Idle comparisons must not leave an empty Activity card.")
+        XCTAssertNil(try store.load().first?.pendingServerCleanup)
+        let recovered = await events.values
+        XCTAssertEqual(recovered, ["recover"])
+    }
+
+    func testActivityComparisonRunningAndUnavailableStates() async throws {
+        let gate = ProbeGate(), coordinator = makeCoordinator(gate: gate)
+        coordinator.start(variants: [("/Models/a", nil)], promptSet: BuiltinPromptSets.coding)
+        let unreadable = temporaryURL("runs.json")
+        try FileManager.default.createDirectory(at: unreadable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("invalid".utf8).write(to: unreadable)
+        let unavailable = makeCoordinator(runStoreURL: unreadable)
+        XCTAssertNotNil(unavailable.runStateUnavailableReason)
+        let cleanupStore = JSONStore<ComparisonRun>(fileURL: temporaryURL("runs.json"))
+        try cleanupStore.upsert(cleanupRun(), id: \.id)
+        let cleanup = makeCoordinator(runStoreURL: cleanupStore.url)
+
+        func buttons(_ view: NSView) -> [NSButton] {
+            (view as? NSButton).map { [$0] } ?? view.subviews.flatMap { buttons($0) }
+        }
+        var opened = 0
+        for (state, subject) in [("running", coordinator), ("cleanup", cleanup), ("unavailable", unavailable)] {
+            for width: CGFloat in [520, 900] {
+                let card = ActivityComparisonSection(comparison: subject, onOpen: { opened += 1 })
+                let host = NSHostingView(rootView: card.buttonStyle(.borderless).padding(20)
+                    .frame(width: width, height: 300).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 300),
+                    styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                defer { window.close() }
+                try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+                XCTAssertEqual(buttons(host).count, state == "unavailable" ? 1 : 2)
+                if state == "unavailable" {
+                    try XCTUnwrap(buttons(host).first).performClick(nil)
+                    XCTAssertNil(subject.activeRunID)
+                    XCTAssertEqual(try Data(contentsOf: unreadable), Data("invalid".utf8))
+                }
+                if let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_ACTIVITY_COMPARISON_RENDER_DIR"] {
+                    let root = URL(fileURLWithPath: path)
+                    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                    let styled = NSHostingView(rootView: card.buttonStyle(.bordered).padding(20)
+                        .frame(width: width, height: 300).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
+                    window.contentView = styled
+                    try await Task.sleep(for: .milliseconds(100)); styled.layoutSubtreeIfNeeded()
+                    let bitmap = try XCTUnwrap(styled.bitmapImageRepForCachingDisplay(in: styled.bounds))
+                    styled.cacheDisplay(in: styled.bounds, to: bitmap)
+                    try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                        .write(to: root.appendingPathComponent("\(state)-\(Int(width)).png"))
+                    window.contentView = host
+                }
+                if state == "running", width == 900 {
+                    try XCTUnwrap(buttons(host).last).performClick(nil)
+                    XCTAssertTrue(coordinator.isCancelling)
+                    try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+                    XCTAssertFalse(try XCTUnwrap(buttons(host).last).isEnabled)
+                }
+            }
+        }
+        XCTAssertEqual(opened, 2)
+        await gate.open()
+        let finished = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(finished)
+        XCTAssertEqual(coordinator.runs.first?.state, .cancelled)
+        XCTAssertTrue(cleanup.cleanupPending)
+    }
+
     private func cleanupRun(_ pid: Int = 131071) -> ComparisonRun {
         var run = makeRun(results: [], state: .failed)
         run.pendingServerCleanup = ComparisonCleanup(server: ComparisonServerReceipt(port: 9997, pid: pid,

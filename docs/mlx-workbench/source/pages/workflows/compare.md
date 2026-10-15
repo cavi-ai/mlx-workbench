@@ -15,6 +15,8 @@ Models run one at a time. Chat serves each model on a loopback server, warms it 
 
 **Cancel comparison** stops the run's owned chat request/server or media subprocess group, retains recorded samples and skips remaining prompts and models. Run stays blocked until the worker and cleanup return. Server startup may need to finish before its receipt can be stopped. Failed server cleanup offers **Retry cleanup**.
 
+**Activity** also shows the active comparison's prompt set, mode and progress, with the same **Cancel comparison** or **Retry cleanup** action. **Open Compare** returns to its setup and recorded results. Unavailable saved comparison state appears there with its storage error; settled comparisons leave no empty card.
+
 Confirmed chat-server ownership is saved before warm-up or measured prompts. Unresolved cleanup survives restart and blocks new comparisons until explicit **Retry cleanup** checks the original server's receipt and process identity. Changed ownership is not stopped; an already-exited original needs no signal. The cleanup record clears only after a successful durable save. Unreadable comparison state blocks new runs, and failed ownership saves stop before inference.
 
 Cancelled runs and runs interrupted by an app restart remain explicit in history and do not supply completed-run recommendations, champions or winner promotion. An interrupted run with no recorded completion time keeps that time unavailable.
