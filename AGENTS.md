@@ -5,8 +5,10 @@ server.
 
 ## Current truth docs
 
-- `README.md` is the primary operator guide.
-- `docs/mlx-workbench` contains versioned guide pages and documentation tests.
+- `README.md` is the entry point; `docs/mlx-workbench/source/pages` is the
+  operator guide, published per release to cavi-ai.xyz/docs/mlx-workbench
+  (`docs/mlx-workbench/CONSUMER.md`). Behavior changes update the matching
+  page in the same change.
 - `Makefile` defines the supported local command surface.
 - `mlx_workbench/__init__.py` (`__version__`) is the single version source of
   truth; `CHANGELOG.md` records releases. Use `make version-bump V=x.y.z` to

@@ -1,0 +1,83 @@
+# Compare
+
+**Compare** measures ready models against the same prompts on this Mac and keeps every output, so you judge quality from what the models produced and speed from what was measured. Its picker switches between **Quick comparison** and **Controlled studies** ([Training and studies](training.md)).
+
+## Run a comparison
+
+1. Choose a mode. The picker is segmented when it fits and a menu otherwise.
+2. Fill up to four model slots. Each slot lists only ready models whose task type the mode accepts.
+3. Choose a prompt set.
+4. **Run comparison**. A setup message names whatever blocks the run: a pending prompt-set save, a missing or empty prompt set, no model selected, or the first unavailable slot.
+
+Models run one at a time. Chat serves each model on a loopback server, warms it up, replays the prompts and stops it before the next model; warm-up output is excluded from results. Other modes run each model per prompt through the engine's `convert describe`, `transcribe`, `speak`, `music`, `generate` or `video` commands.
+
+## Modes
+
+| Mode | Accepts | Input | Output | Lane metric |
+|---|---|---|---|---|
+| Chat | Text LLM, vision-language | Text | Text | Decode speed (tok/s) |
+| Vision | Vision-language | Image | Text | Generation speed (tok/s) |
+| Video understanding | Vision-language | Video | Text | Generation speed (tok/s) |
+| Speech to text | Speech-to-text | Audio | Text, scored by word error rate | Real-time factor |
+| Text to speech | Text-to-speech | Text | Audio | Real-time factor |
+| Music generation | Music generation | Caption, lyrics, duration, steps, seed | Audio | Real-time factor |
+| Image generation | Image generation | Prompt, size, steps, seed | Image | Seconds per step |
+| Video generation | Video generation | Prompt, size, frames, frame rate, steps, seed | Video | Seconds per frame |
+
+Prompts can carry an expected-words check (all must appear, case-insensitive; `a|b` accepts either). Speech to text scores against a reference transcript. Built-in media inputs are generated at run time: images and video with CoreGraphics and AVFoundation, speech with `say`. The repository holds no binary fixtures.
+
+## Results
+
+Results lead with one lettered lane per model, A to D in run order, carrying the mode's metric as the largest number and a bar relative to the best lane. Below the lanes is one row per prompt and one column per lane: text, an image thumbnail, an audio player or a video player.
+
+Chat results show answer text separately from a collapsible **Reasoning** section, with the finish reason, generated token count, total duration and time until answer text begins. **Token limit reached** labels incomplete output. Prompt tokens give a prefill estimate, always labeled as an estimate. The builtin tool-calling set counts streamed tool calls and checks their arguments against the schema.
+
+## Inspect outputs side by side
+
+| Completed run | Inspector |
+|---|---|
+| Chat, vision, video understanding, speech to text | **Compare text · A/B**: read two models' recorded responses for one prompt, or highlight line differences |
+| Music, text to speech | A/B listening: one player, pause and scrub; switching models keeps the elapsed time |
+| Image generation | **Inspect images**: two outputs with linked zoom and pan; arrow keys pan the focused image |
+| Video generation | **Inspect videos**: two clips on one elapsed-time control; audio off by default, one clip at a time when on |
+
+Shorter clips hold at their end. Missing outputs are excluded and labeled.
+
+## Rate quality
+
+Each lane has a **Rate quality** menu with a 1–5 task-outcome rating; music lanes carry a 1–5 listening rating instead. Ratings are human judgments, stored separately from speed and automated checks. A new rating needs a completed run with every output available; saved ratings stay visible after media is pruned and can be cleared.
+
+A quality champion needs every model in the run reviewed under the same rubric; ties are shared. A current champion also needs matching model identities and environment.
+
+## Prompt sets
+
+The prompt-set picker opens a searchable list grouped into temporary setups, saved sets and built-ins, with prompt counts. Searching matches names, prompt text and tool names and never changes the selection. The menu beside it holds:
+
+- **New set…** and **Edit…**: per-prompt cards with the mode's settings, Add prompt, Duplicate, Move up and Move down, Revert prompt and a confirmed remove. A warning inside each card names invalid values, and **Fix prompt N** jumps to the first one. Save stays disabled until the draft is valid and changed.
+- **Customize copy…**: a new, independent set from any built-in or saved set.
+- **Rename…** and **Remove…**: saved user sets only. Removal changes no past run.
+- **Import OpenCode prompts**: imported prompts become selectable once the set is saved.
+
+Cancel on an edited draft offers **Keep editing** or **Discard changes**. Saving copies picked input files into the set's own storage, so a saved set survives output pruning and never changes your original files.
+
+**Reuse setup** on a completed run copies its prompts, settings and model selections into a temporary editor. **Use setup** restores them to Compare; **Save as prompt set…** saves an independent copy. Models no longer available stay selected and block the run until replaced or removed.
+
+## Storage and retention
+
+Outputs are saved to `~/Library/Application Support/mlx-workbench/comparison-outputs/<run-id>/`. New media runs first save one copy of each input. When a media run starts, the output folders of all but the 10 newest media runs are removed; run records are kept and a missing file shows as **output pruned**. History is a searchable popover grouped by mode.
+
+## Act on the result
+
+- **Promote winner**, on a completed chat run, saves the winner as the preferred model for its use case and can enable or swap the always-on endpoint, keeping verified gating. Wiring and reclaim keep their own previews.
+- Measured chat speed feeds the recommendation engine as local benchmark evidence. Media runs do not.
+- Measurements count as current only when the selected prompt set still matches the recorded prompts exactly.
+
+## Workflow evidence
+
+**Import workflow report…** reads `WorkflowReport` JSON files (schema 1) recorded by an external harness. Imports preview new and duplicate observations and model and environment status before you confirm. Charts above the setup show runtime, timing breakdown, task quality and recorded peak memory for comparable observations; a **Quality vs runtime** scatter pairs score and runtime from the same report. Missing timings show as **Breakdown unknown**, never inferred.
+
+From the charts, **Compare these models** loads the cohort's ready models into the current mode without starting a run, and **Use model…** opens a review of the role preference and optional endpoint change. Exports carry the measurements and machine context for an agent; they are advisory.
+
+## Strata lanes
+
+A prepared Strata model can run in two lanes with different speculation, expert-memory and context settings, and **Find best settings…** prepares a four-lane settings search. See [Strata](strata.md).
