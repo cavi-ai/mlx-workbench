@@ -109,6 +109,7 @@
 		RUNRWYB1 /* RunRunwayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = RUNRWYF1 /* RunRunwayView.swift */; };
 		RUNRMDB1 /* RunRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RUNRMDF1 /* RunRemodelTests.swift */; };
 		ACTPRSB1 /* ActivityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACTPRSF1 /* ActivityPresentation.swift */; };
+		ACTJOBSB1 /* ActivityJobSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACTJOBSF1 /* ActivityJobSections.swift */; };
 		ACTVWSB1 /* ActivityViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACTVWSF1 /* ActivityViews.swift */; };
 		FAILNTB1 /* FailureNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAILNTF1 /* FailureNotice.swift */; };
 		DSCPRSB1 /* DiscoverPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCPRSF1 /* DiscoverPresentation.swift */; };
@@ -333,6 +334,7 @@
 		RUNRWYF1 /* RunRunwayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RunRunwayView.swift; path = UI/Views/RunRunwayView.swift; sourceTree = "<group>"; };
 		RUNRMDF1 /* RunRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RunRemodelTests.swift; path = RunRemodelTests.swift; sourceTree = "<group>"; };
 		ACTPRSF1 /* ActivityPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ActivityPresentation.swift; path = UI/Views/ActivityPresentation.swift; sourceTree = "<group>"; };
+		ACTJOBSF1 /* ActivityJobSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ActivityJobSections.swift; path = UI/Views/ActivityJobSections.swift; sourceTree = "<group>"; };
 		ACTVWSF1 /* ActivityViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ActivityViews.swift; path = UI/Views/ActivityViews.swift; sourceTree = "<group>"; };
 		FAILNTF1 /* FailureNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FailureNotice.swift; path = UI/Views/FailureNotice.swift; sourceTree = "<group>"; };
 		DSCPRSF1 /* DiscoverPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverPresentation.swift; path = UI/Views/DiscoverPresentation.swift; sourceTree = "<group>"; };
@@ -658,6 +660,7 @@
 				29ABCD100000000000000002 /* CompareVideoInspection.swift */,
 				2AABCD100000000000000001 /* CompareTextInspection.swift */,
 				ACTPRSF1 /* ActivityPresentation.swift */,
+				ACTJOBSF1 /* ActivityJobSections.swift */,
 				RCLPRSF1 /* ReclaimPresentation.swift */,
 				HLTPRSF1 /* HealthPresentation.swift */,
 				HLTVWSF1 /* HealthViews.swift */,
@@ -974,6 +977,7 @@
 				29ABCD000000000000000002 /* CompareVideoInspection.swift in Sources */,
 				2AABCD000000000000000001 /* CompareTextInspection.swift in Sources */,
 				ACTPRSB1 /* ActivityPresentation.swift in Sources */,
+				ACTJOBSB1 /* ActivityJobSections.swift in Sources */,
 				RCLPRSB1 /* ReclaimPresentation.swift in Sources */,
 				HLTPRSB1 /* HealthPresentation.swift in Sources */,
 				HLTVWSB1 /* HealthViews.swift in Sources */,
