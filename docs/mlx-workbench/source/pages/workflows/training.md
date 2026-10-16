@@ -37,16 +37,40 @@ confirmation recheck the artifacts before starting an explicit adapter server.
 
 **Compare with base** runs a matched evaluation of the base model against base plus the trained adapter on the same prompts. Results are retained under **Retained training evaluations** with their SHA-256. Evaluations are comparison evidence, not a quality verdict, and text LoRA results do not qualify media training.
 
-Preview the evaluation prompt before **Run comparison**. Editing it invalidates the preview and clears the displayed outputs. A new preview clears older confirmation and results before the request begins, including when the new request fails. The prompt and dismissal controls are locked while a request runs. Only paired outputs with a retained report hash are displayed as a completed comparison; failed requests remain retryable.
+Choose **Single prompt** and a token limit, or capture an existing chat prompt set.
+Sets are managed in **Compare**, support 1–16 text-only prompts and 1–512 tokens
+per prompt, and exclude tools, media and expected-word scoring. Prompt text,
+order, identities and token limits are frozen for the evaluation; later edits to
+the source set do not change it. Choose evaluation prompts kept separate from
+training data; the app does not check that separation.
+
+**Preview** captures the recipe before **Run comparison**. Editing an input
+invalidates it and clears displayed outputs. Each variant loads once for the
+suite, uses temperature zero, and resets seed 42 for every prompt. Results are
+accepted only when every prompt has both outputs and the pinned inputs still
+match. The prompt picker shows each recorded pair and its token limit.
+
+Record **Base model**, **Trained adapter**, **Tie** or **Neither**, with optional
+notes, then **Save review**. Each preference is tied to the retained report hash;
+reviews do not rewrite the frozen generation report or mark an adapter verified.
+Failed saves retain the outputs and draft. Prompt switches retain unsaved review
+drafts; closing requires explicit discard when any remain. Setup changes and
+generation are blocked until those drafts are saved. Requests lock dismissal.
+
+History shows suite names and prompt counts for new evaluations. **Inspect**
+verifies the retained artifact; **Review outputs** reopens its recorded pairs
+and saved preferences without generating again. Legacy single-prompt evaluations
+remain readable and reviewable when their recorded schema and identity support it.
 
 ## Controlled studies
 
 **Studies**, in the Lab sidebar group, runs A/B experiments that change one variable at a time and reviews the outputs blind. **Compare → Open Studies** opens the same workspace. Returning to Studies refreshes its experiment and adaptive-study lists; navigating does not create or run an experiment.
 
 1. **Install study tools** once. **Install video runtime** adds the optional Torch runtime for video generation.
-2. **New experiment…**: start from a frozen recipe from the engine and choose the variable to change (inference steps, guidance or seed). **Validate pair**, then **Create experiment**. Model and runtime identities stay attached to both candidates.
-3. Run the queued generation jobs. Artifacts are stored durably and integrity-checked.
-4. **Blind review…** plays both clips with shared play, pause, seeking and frame controls, without showing which candidate is which. Scores and preferences become immutable receipts before the assignment is revealed.
+2. **New experiment… → Cached model**: choose an existing cached revision of **Wan 2.1 T2V 1.3B (Diffusers/MPS)**, enter a prompt and baseline settings, then **Capture recipe**. The engine checks the cached pipeline, assets and weight shards and records content hashes, installed runtime versions and platform identity. Capture never downloads weights or loads a model. Missing weights or runtime dependencies block capture; **Refresh availability** checks again after setup. MLX video conversions are a different format and cannot substitute for these Diffusers weights.
+3. Choose the variable to change (inference steps, guidance or seed) and its alternate value. **Validate pair**, then **Create experiment** queues two jobs. Editing a captured baseline requires another capture; editing the pair requires validation again. **Recipe file** preserves importing an existing frozen recipe. Model and runtime identities stay attached to both candidates.
+4. Run the queued generation jobs explicitly. Captured recipes recheck model assets, weights, runtime versions and platform before loading and after generation. Changed identities require a new recipe. Artifacts are stored durably and integrity-checked. Capture and validation alone do not prove that generation will succeed or assess output quality.
+5. **Blind review…** plays both clips with shared play, pause, seeking and frame controls, without showing which candidate is which. Scores and preferences become immutable receipts before the assignment is revealed.
 
 Adaptive studies keep their progression and stopping evidence. **Recover interrupted jobs** reconciles jobs after a crash.
 

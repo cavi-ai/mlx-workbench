@@ -257,6 +257,7 @@ struct LabJobRows: View {
 
 struct LabAuthorSheet: View {
     @ObservedObject var lab: LabCoordinator
+    @StateObject private var recipe: StudyRecipeSession
     @Environment(\.dismiss) private var dismiss
     @State private var baseline: LabValue?
     @State private var recipeName = ""
@@ -266,11 +267,20 @@ struct LabAuthorSheet: View {
     @State private var previewed: Data?
     @State private var busy = false
     @State private var error: String?
+    @State private var recipeSource = "cache"
+
+    init(lab: LabCoordinator) {
+        self.lab = lab
+        _recipe = StateObject(wrappedValue: StudyRecipeSession(request: { try await lab.request($0) }))
+    }
+
+    private var selectedBaseline: LabValue? { recipeSource == "cache" ? recipe.manifest : baseline }
 
     private var draft: LabDraft? {
-        guard var fields = baseline?.object, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        let sharedPrompt = recipeSource == "cache" ? recipe.draft.prompt : prompt
+        guard var fields = selectedBaseline?.object, !sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let value = Double(alternate), value.isFinite else { return nil }
-        fields["prompt"] = .string(prompt)
+        fields["prompt"] = .string(sharedPrompt)
         let alternateValue: LabValue
         if variable == "guidance_scale" { alternateValue = .number(value) }
         else {
@@ -280,35 +290,59 @@ struct LabAuthorSheet: View {
         return LabDraft(baseline: .object(fields), variablePath: variable, alternateValue: alternateValue)
     }
     private var request: LabRequest? { draft.map { LabRequest(operation: "preview", draft: $0) } }
-    private var fingerprint: Data? { request.flatMap { try? JSONEncoder().encode($0) } }
+    private var fingerprint: Data? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return request.flatMap { try? encoder.encode($0) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("New controlled experiment").font(WorkbenchTypography.section)
-            Button(recipeName.isEmpty ? "Choose generation recipe…" : recipeName) { chooseRecipe() }
-            Text("Use a frozen recipe from the engine. Model and runtime identities stay attached to both candidates.")
-                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            TextField("Shared prompt", text: $prompt, axis: .vertical).lineLimit(3...6)
-            Picker("Change", selection: $variable) {
-                Text("Inference steps").tag("inference_steps")
-                Text("Guidance").tag("guidance_scale")
-                Text("Seed").tag("seed")
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    Picker("Recipe source", selection: $recipeSource) {
+                        Text("Cached model").tag("cache")
+                        Text("Recipe file").tag("file")
+                    }.pickerStyle(.segmented)
+                    if recipeSource == "cache" { StudyRecipeFields(session: recipe) }
+                    else {
+                        Button(recipeName.isEmpty ? "Choose generation recipe…" : recipeName) { chooseRecipe() }
+                        Text("Import a frozen recipe. Model and runtime identities stay attached to both candidates.")
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        TextField("Shared prompt", text: $prompt, axis: .vertical).lineLimit(3...6)
+                    }
+                }.padding(.trailing, WorkbenchSpacing.xs)
+            }.disabled(busy || recipe.isBusy)
+            if selectedBaseline != nil {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Picker("Change", selection: $variable) {
+                        Text("Inference steps").tag("inference_steps")
+                        Text("Guidance").tag("guidance_scale")
+                        Text("Seed").tag("seed")
+                    }
+                    if let value = selectedBaseline?.object?[variable]?.decimal {
+                        Text("Baseline: " + value.formatted()).font(WorkbenchTypography.secondary)
+                    }
+                    LabeledContent("Alternate value") { TextField("Alternate value", text: $alternate) }
+                }.disabled(busy || recipe.isBusy)
             }
-            if let value = baseline?.object?[variable]?.decimal { Text("Baseline: " + value.formatted()) }
-            TextField("Alternate value", text: $alternate)
             ErrorBanner(text: error)
             HStack {
-                Button("Cancel") { dismiss() }
+                Button("Cancel") { dismiss() }.disabled(busy || recipe.isBusy)
                 Spacer()
-                Button("Validate pair") { Task { await validate() } }.disabled(request == nil || busy)
+                Button("Validate pair") { Task { await validate() } }.disabled(request == nil || busy || recipe.isBusy)
                 Button("Create experiment") { Task { await create() } }
                     .buttonStyle(.workbenchPrimary)
-                    .disabled(previewed == nil || previewed != fingerprint || busy)
+                    .disabled(previewed == nil || previewed != fingerprint || busy || recipe.isBusy)
             }
             if busy { ProgressView() }
         }
         .padding(WorkbenchSpacing.pageInset)
-        .frame(minWidth: WorkbenchSize.Lab.authorMinWidth, idealWidth: WorkbenchSize.Lab.authorIdealWidth)
+        .frame(minWidth: WorkbenchSize.Lab.authorMinWidth, idealWidth: WorkbenchSize.Lab.authorIdealWidth,
+               minHeight: 600, idealHeight: 730, maxHeight: 780)
+        .interactiveDismissDisabled(busy || recipe.isBusy)
+        .task { await recipe.load() }
     }
     private func chooseRecipe() {
         let panel = NSOpenPanel()

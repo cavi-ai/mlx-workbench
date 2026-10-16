@@ -133,12 +133,18 @@ struct TrainingEvaluationRow: Equatable, Identifiable {
     let id: String
     let shortID: String
     let dateText: String?
+    let title: String?
+    let promptCount: Int?
 
     init?(value: LabValue, now: Date) {
         guard let record = value.object, let identity = record["id"]?.text else { return nil }
         id = identity
         shortID = String(identity.prefix(TrainingPresentation.shortIDLength))
         dateText = record["created_at"]?.text.map { TrainingPresentation.dateText($0, now: now) }
+        title = record["suite_name"]?.text
+        if let count = record["prompt_count"]?.decimal, count.rounded() == count, count >= 1, count <= 16 {
+            promptCount = Int(count)
+        } else { promptCount = nil }
     }
 }
 

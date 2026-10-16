@@ -238,6 +238,7 @@ struct TrainingView: View {
     @StateObject private var session: TrainingSession
     @StateObject private var loader: TrainingLoader
     @State private var evaluationJob: TrainingJob?
+    @State private var evaluationReview: TrainingEvaluationReviewContext?
     @State private var retainedExpanded = false
     private let seededRetained: TrainingRetainedEvidence?
     @State private var cancelError: String?
@@ -295,7 +296,13 @@ struct TrainingView: View {
                 .frame(maxWidth: .infinity, alignment: .top)
             }
         }
-        .sheet(item: $evaluationJob) { job in TrainingEvaluationSheet(lab: appHost.lab, job: job) }
+        .sheet(item: $evaluationJob, onDismiss: { Task { await loader.refreshIfIdle() } }) { job in
+            TrainingEvaluationSheet(lab: appHost.lab, job: job, promptSets: appHost.comparison.promptSets,
+                                    managePromptSets: { onRouteSelection(.compare) })
+        }
+        .sheet(item: $evaluationReview, onDismiss: {
+            if let identity = loader.inspection?.recordID { loader.inspect(identity) }
+        }) { context in TrainingEvaluationSheet(lab: appHost.lab, retained: context.response) }
         .onChange(of: appHost.librarySnapshot?.generatedAt, initial: true) {
             baseModels = TrainingPresentation.baseModels(appHost.librarySnapshot)
         }
@@ -633,8 +640,17 @@ struct TrainingView: View {
                     await task.value
                     if loader.inspectionError == nil, loader.inspection?.recordID == identity { retainedExpanded = true }
                 }
-            }, refresh: { loader.refreshHistory() }, inspectionError: loader.inspectionError
+            }, refresh: { loader.refreshHistory() }, inspectionError: loader.inspectionError,
+            review: reviewContext.map { context in { evaluationReview = context } }
         )
+    }
+
+    private var reviewContext: TrainingEvaluationReviewContext? {
+        guard let inspection = loader.inspection, let report = inspection.response.report,
+              inspection.response.evaluationID == inspection.recordID,
+              inspection.response.artifactSHA256?.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil,
+              (try? TrainingEvaluationSample.parse(report)) != nil else { return nil }
+        return TrainingEvaluationReviewContext(id: inspection.recordID, response: inspection.response)
     }
 
     private func confirmTraining() {
@@ -665,58 +681,5 @@ struct TrainingView: View {
         let trimmed = session.draft.data.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { panel.directoryURL = URL(fileURLWithPath: trimmed) }
         if panel.runModal() == .OK, let url = panel.url { session.draft.data = url.path }
-    }
-}
-
-struct TrainingEvaluationSheet: View {
-    let job: TrainingJob
-    @StateObject private var session: TrainingEvaluationSession
-    @Environment(\.dismiss) private var dismiss
-
-    init(lab: LabCoordinator, job: TrainingJob, session: TrainingEvaluationSession? = nil) {
-        self.job = job
-        _session = StateObject(wrappedValue: session ?? TrainingEvaluationSession(receipt: job.receipt) {
-            try await lab.request($0)
-        })
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text("Evaluate trained adapter").font(WorkbenchTypography.title)
-            Text("Use the same prompt, seed, token limit, and sampling settings for the cached base model and this adapter.")
-                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            Text(job.repo).font(WorkbenchTypography.cardTitle)
-            TextField("Evaluation prompt", text: $session.prompt, axis: .vertical).lineLimit(3...6)
-                .disabled(session.isBusy)
-            if let error = session.errorMessage { Text(error).foregroundStyle(WorkbenchColor.failure) }
-            if let preview = session.preview {
-                TrainingRawDisclosure(
-                    title: "Reviewed evaluation recipe", text: preview.plan.jsonText, maxHeight: WorkbenchSize.Training.recipeMaxHeight
-                )
-            }
-            if let result = session.result, let report = result.report?.object {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading) {
-                        Text("Base model").font(WorkbenchTypography.cardTitle)
-                        Text(report["outputs"]?.object?["baseline"]?.text ?? "").textSelection(.enabled)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    VStack(alignment: .leading) {
-                        Text("Trained adapter").font(WorkbenchTypography.cardTitle)
-                        Text(report["outputs"]?.object?["adapter"]?.text ?? "").textSelection(.enabled)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }
-                Text("Retained evaluation SHA-256: " + (result.artifactSHA256 ?? "")).accessibilityIdentifier("training-evaluation-evidence").font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                Text("These outputs provide comparison evidence. No quality judgment has been recorded.").font(WorkbenchTypography.metadata)
-            }
-            HStack {
-                Button("Close") { dismiss() }.disabled(session.isBusy)
-                Spacer()
-                Button(session.operation == .previewing ? "Previewing…" : "Preview") { session.previewEvaluation() }
-                    .disabled(!session.canPreview)
-                Button(session.operation == .evaluating ? "Running comparison…" : "Run comparison") { session.evaluate() }
-                    .disabled(!session.canEvaluate)
-            }
-        }.padding(WorkbenchSpacing.pageInset).frame(width: 740)
-            .interactiveDismissDisabled(session.isBusy)
     }
 }

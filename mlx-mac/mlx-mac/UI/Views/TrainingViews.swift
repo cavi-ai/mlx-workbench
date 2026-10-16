@@ -206,6 +206,7 @@ struct TrainingEvaluationsCard: View {
     let inspect: (String) -> Void
     var refresh: (() -> Void)? = nil
     var inspectionError: String? = nil
+    var review: (() -> Void)? = nil
 
     var body: some View {
         WorkbenchSurface {
@@ -233,10 +234,13 @@ struct TrainingEvaluationsCard: View {
                     ForEach(rows) { row in
                         Divider()
                         HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.sm) {
-                            Text(row.shortID)
-                                .font(WorkbenchTypography.value)
+                            Text(row.title ?? row.shortID)
+                                .font(WorkbenchTypography.emphasis)
                                 .foregroundStyle(WorkbenchColor.ink)
                                 .help(row.id)
+                            if let count = row.promptCount {
+                                Text("\(count) prompt\(count == 1 ? "" : "s")").font(WorkbenchTypography.metadata)
+                            }
                             if let date = row.dateText {
                                 Text(date)
                                     .font(WorkbenchTypography.metadata)
@@ -265,6 +269,10 @@ struct TrainingEvaluationsCard: View {
                     Text("Retained evaluation: \(retained.evaluationID)")
                         .font(WorkbenchTypography.emphasis).textSelection(.enabled)
                         .accessibilityIdentifier("training-retained-evaluation")
+                    if let review {
+                        Button("Review outputs", action: review).buttonStyle(.bordered).controlSize(.small)
+                            .accessibilityIdentifier("training-review-retained")
+                    }
                     TrainingRawDisclosure(
                         title: "Evaluation \(retained.shortID): outputs and frozen recipe",
                         text: retained.reportText + "\n\nSHA-256: " + retained.sha256,
