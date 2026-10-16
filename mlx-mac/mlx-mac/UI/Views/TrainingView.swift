@@ -1,6 +1,29 @@
 import AppKit
 import SwiftUI
 
+/// Changes the arrangement without replacing focused text fields when validation changes their size.
+private struct TrainingFieldsLayout: Layout {
+    private func arrangement(width: CGFloat?, subviews: Subviews) -> AnyLayout {
+        let row = AnyLayout(HStackLayout(alignment: .top, spacing: WorkbenchSpacing.md))
+        var cache = row.makeCache(subviews: subviews)
+        let ideal = row.sizeThatFits(proposal: .unspecified, subviews: subviews, cache: &cache)
+        return ideal.width <= (width ?? .infinity)
+            ? row : AnyLayout(VStackLayout(alignment: .leading, spacing: WorkbenchSpacing.sm))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let layout = arrangement(width: proposal.width, subviews: subviews)
+        var childCache = layout.makeCache(subviews: subviews)
+        return layout.sizeThatFits(proposal: proposal, subviews: subviews, cache: &childCache)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let layout = arrangement(width: bounds.width, subviews: subviews)
+        var childCache = layout.makeCache(subviews: subviews)
+        layout.placeSubviews(in: bounds, proposal: proposal, subviews: subviews, cache: &childCache)
+    }
+}
+
 struct TrainingDraft: Equatable {
     var repo = ""
     var data = ""
@@ -289,10 +312,7 @@ struct TrainingView: View {
                         }.fixedSize(horizontal: false, vertical: true).padding(.top, WorkbenchSpacing.xs)
                     }.font(WorkbenchTypography.secondary)
                 }.id(TrainingField.data)
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: WorkbenchSpacing.md) { trainingFields }
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) { trainingFields }
-                }
+                TrainingFieldsLayout { trainingFields }
             }.disabled(session.isBusy)
             previewActions(proxy)
             if session.preview == nil { operationFeedback }

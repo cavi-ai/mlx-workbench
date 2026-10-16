@@ -99,7 +99,13 @@ final class WorkbenchReviewUITests: XCTestCase {
                 sys.exit(2)
             data = {'candidates': []}
         elif args[:2] == ['serve', 'status'] and (root / 'servers.json').exists():
-            time.sleep(2 if (root / 'slow-server-status').exists() else 0.3)
+            deadline = time.monotonic() + 20
+            while (root / 'slow-server-status').exists():
+                if time.monotonic() > deadline:
+                    print('Server status fixture was not released.', file=sys.stderr)
+                    sys.exit(2)
+                time.sleep(0.05)
+            time.sleep(0.3)
             if (root / 'fail-server-status').exists():
                 print('Fixture server status failed.', file=sys.stderr)
                 sys.exit(2)
@@ -175,6 +181,12 @@ final class WorkbenchReviewUITests: XCTestCase {
                 data = {'preview': preview, 'requires_confirmation': True}
         elif args[:2] in (['adopt', 'start'], ['adopt', 'status']):
             time.sleep(1.5)
+            deadline = time.monotonic() + 20
+            while (root / 'hold-adopt-request').exists():
+                if time.monotonic() > deadline:
+                    print('Adoption fixture was not released.', file=sys.stderr)
+                    sys.exit(2)
+                time.sleep(0.05)
             if '--state' not in args:
                 print('No adoption state path was supplied.', file=sys.stderr)
                 sys.exit(2)
@@ -285,6 +297,22 @@ final class WorkbenchReviewUITests: XCTestCase {
         let button = app.buttons[route].firstMatch
         XCTAssertTrue(button.waitForExistence(timeout: 10), route)
         button.click()
+    }
+
+    private func selectRadioOption(_ label: String, in group: String) {
+        let option = app.radioGroups[group].radioButtons[label]
+        XCTAssertTrue(option.waitForExistence(timeout: 10))
+        XCTAssertTrue(option.isEnabled)
+        let window = app.windows.firstMatch
+        let frame = option.frame
+        XCTAssertTrue(frame.midX.isFinite && frame.midY.isFinite && frame.width > 0 && frame.height > 0)
+        XCTAssertTrue(window.frame.contains(frame), "\(label) must be visible: \(frame)")
+        if option.value as? Int != 1 {
+            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: frame.midX - window.frame.minX, dy: frame.midY - window.frame.minY
+            )).click()
+        }
+        XCTAssertEqual(option.value as? Int, 1, app.debugDescription)
     }
 
     private func replace(_ field: XCUIElement, with value: String) {
@@ -399,7 +427,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Discover-failed-recovery")
 
         select("Library")
-        app.segmentedControls["library-source"].buttons["LM Studio"].click()
+        selectRadioOption("LM Studio", in: "library-source")
         XCTAssertTrue(app.buttons["Scan Again"].waitForExistence(timeout: 15))
         XCTAssertFalse(app.textFields.firstMatch.exists, "The shelf reads LM Studio's folders; it takes no typed path")
         capture("LMStudio-shelf")
@@ -839,7 +867,7 @@ final class WorkbenchReviewUITests: XCTestCase {
 
             try Data().write(to: root.appendingPathComponent("slow-server-status"))
             refreshPreview.click()
-            XCTAssertTrue(app.buttons["Refreshing servers…"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["Refreshing…"].waitForExistence(timeout: 10))
             XCTAssertFalse(confirm.isEnabled)
             XCTAssertFalse(refreshPreview.isEnabled)
             capture("Clients-\(appearance)-refreshing-preview")
@@ -1109,7 +1137,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         launch(appearance: "Light", route: "lmstudio", isolatedHome: true, forcedRoute: "lmstudio")
         XCTAssertTrue(app.buttons["Scan Again"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.buttons["Library"].value as? String, "Selected")
-        XCTAssertTrue(app.segmentedControls["library-source"].buttons["LM Studio"].isSelected)
+        XCTAssertEqual(app.radioGroups["library-source"].radioButtons["LM Studio"].value as? Int, 1)
         capture("Library-legacy-lmstudio")
     }
 
@@ -1130,9 +1158,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             }
             func selectRecommendations() {
                 select("Discover")
-                let mode = app.segmentedControls["discovery-mode"].buttons["Recommend for a task"]
-                XCTAssertTrue(mode.waitForExistence(timeout: 10))
-                mode.click()
+                selectRadioOption("Recommend for a task", in: "discovery-mode")
             }
             launch(appearance: appearance, isolatedHome: true)
             selectRecommendations()
@@ -1170,24 +1196,26 @@ final class WorkbenchReviewUITests: XCTestCase {
                 XCTAssertEqual(picker.value as? String, title)
             }
             chooseRole("Coding")
-            let fast = app.checkBoxes["Fast"]
+            let recommendations = app.scrollViews.containing(.popUpButton, identifier: "adopt-role").firstMatch
+            let fast = recommendations.checkBoxes["Fast"]
             fast.click()
             XCTAssertEqual(fast.value as? Int, 1)
-            app.checkBoxes["Offline metadata"].click()
+            recommendations.checkBoxes["Offline metadata"].click()
             var start: XCUIElement { app.buttons["adopt-start"] }
             var refresh: XCUIElement { app.buttons["adopt-refresh"] }
             let callsBeforeHiddenReturn = try calls()
-            app.segmentedControls["discovery-mode"].buttons["Browse candidates"].click()
+            selectRadioOption("Browse candidates", in: "discovery-mode")
             app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
             selectRecommendations()
             XCTAssertEqual(picker.value as? String, "Coding")
             XCTAssertEqual(fast.value as? Int, 1)
-            XCTAssertEqual(app.checkBoxes["Offline metadata"].value as? Int, 1)
+            XCTAssertEqual(recommendations.checkBoxes["Offline metadata"].value as? Int, 1)
             XCTAssertEqual(try calls(), callsBeforeHiddenReturn, "Mode changes and Return in Browse must not start verification")
             select("Library")
             app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
             selectRecommendations()
             XCTAssertEqual(try calls(), callsBeforeHiddenReturn, "A hidden Adopt route must not handle Return")
+            try Data().write(to: root.appendingPathComponent("hold-adopt-request"))
             start.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
             XCTAssertTrue(app.descendants(matching: .any)["adopt-progress"].waitForExistence(timeout: 5))
             XCTAssertFalse(start.isEnabled)
@@ -1195,6 +1223,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Adopt-\(appearance)-starting")
             select("Library")
             selectRecommendations()
+            try FileManager.default.removeItem(at: root.appendingPathComponent("hold-adopt-request"))
             XCTAssertTrue(text(containing: repository).waitForExistence(timeout: 15))
             capture("Adopt-\(appearance)-recommendation-standard")
             XCTAssertTrue(refresh.isEnabled)
@@ -1211,10 +1240,12 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(text(containing: repository).exists, "Draft edits retain the recorded recommendation")
             let recordedRole = app.staticTexts["adopt-requested-role"]
             XCTAssertEqual(recordedRole.value as? String ?? recordedRole.label, "Coding")
+            try Data().write(to: root.appendingPathComponent("hold-adopt-request"))
             refresh.click()
             XCTAssertTrue(app.descendants(matching: .any)["adopt-progress"].waitForExistence(timeout: 5))
             XCTAssertFalse(refresh.isEnabled)
             capture("Adopt-\(appearance)-refreshing")
+            try FileManager.default.removeItem(at: root.appendingPathComponent("hold-adopt-request"))
             XCTAssertTrue(refresh.waitForExistence(timeout: 10))
             XCTAssertTrue(text(containing: repository).waitForExistence(timeout: 10))
             let predicate = NSPredicate(format: "enabled == true")
@@ -1293,6 +1324,11 @@ final class WorkbenchReviewUITests: XCTestCase {
                 capture("\(appearance)-standard-\(route)")
             }
             resizeWindow(width: 740, height: 560)
+            let window = app.windows.firstMatch
+            let split = app.splitGroups.firstMatch
+            XCTAssertTrue(split.exists)
+            XCTAssertLessThanOrEqual(split.frame.height, window.frame.height + 1,
+                                     "Retained pages must fit the resized window")
             for route in routes {
                 select(route)
                 assertPageContent(route)
