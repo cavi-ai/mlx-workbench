@@ -588,6 +588,13 @@ actor WorkbenchAPI {
 
     // MARK: - LoRA / Fuse
 
+    func trainingInspection(repo: String?, data: String?, batchSize: Int) async throws -> TrainingInspection {
+        var argv = ["lora", "inspect", "--batch-size", String(batchSize)]
+        if let repo, !repo.isEmpty { argv += ["--repo", repo] }
+        if let data, !data.isEmpty { argv += ["--data", data] }
+        return try await runOffActor(TrainingInspection.self, argv, timeout: 120)
+    }
+
     func trainedAdapterPreview(receipt: String, port: Int?) async throws -> [String: Any] {
         var argv = ["serve", "start", "--training-receipt", receipt, "--runtime", "auto", "--receipts-dir", receiptDirectory]
         if let port { argv += ["--port", String(port)] }

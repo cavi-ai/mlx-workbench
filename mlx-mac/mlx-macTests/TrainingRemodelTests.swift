@@ -31,6 +31,112 @@ private enum TF {
 private struct Boom: Error, LocalizedError { var errorDescription: String? { "boom" } }
 
 @MainActor
+final class TrainingInspectionTests: XCTestCase {
+    private func report(repo: String? = nil, data: String? = nil, batchSize: Int = 4) throws -> TrainingInspection {
+        let checks = ["runtime", "base", "train", "valid"].map { id in
+            ["id": id, "status": "ready", "message": "Checked \(id)"]
+        }
+        var object: [String: Any] = ["schema_version": 1, "ready": true, "batch_size": batchSize, "checks": checks]
+        if let repo { object["repo"] = repo }
+        if let data { object["data"] = data }
+        return try JSONDecoder().decode(TrainingInspection.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+
+    func testCheckingDoesNotPreviewOrSubmitAndEditsInvalidateTheResult() async throws {
+        var inspected: [TrainingDraft] = []
+        let result = try report()
+        let session = TrainingSession(preview: { _ in XCTFail("Inspection must not preview"); return [:] },
+            start: { _, _ in XCTFail("Inspection must not train") }, inspect: { inspected.append($0); return result })
+        XCTAssertTrue(session.canInspect)
+        await session.inspectTraining()?.value
+        XCTAssertEqual(inspected, [TrainingDraft()])
+        XCTAssertTrue(try XCTUnwrap(session.inspection).ready)
+        XCTAssertNil(session.preview)
+        XCTAssertFalse(session.canConfirm)
+        session.draft.data = "/different"
+        XCTAssertNil(session.inspection)
+    }
+
+    func testInspectionDiscardsStaleResponsesAndFailedRechecksClearOldResults() async throws {
+        let result = try report()
+        var continuation: CheckedContinuation<TrainingInspection, Error>?
+        var fails = false
+        let session = TrainingSession(preview: { _ in [:] }, start: { _, _ in }, inspect: { _ in
+            if fails { throw Boom() }
+            return try await withCheckedThrowingContinuation { continuation = $0 }
+        })
+        let task = session.inspectTraining()
+        while continuation == nil { await Task.yield() }
+        XCTAssertFalse(session.canInspect)
+        session.draft.repo = "org/changed"
+        continuation?.resume(returning: result)
+        await task?.value
+        XCTAssertNil(session.inspection)
+        continuation = nil
+        let second = session.inspectTraining()
+        while continuation == nil { await Task.yield() }
+        continuation?.resume(returning: try report(repo: "org/changed"))
+        await second?.value
+        XCTAssertNotNil(session.inspection)
+        fails = true
+        await session.inspectTraining()?.value
+        XCTAssertNil(session.inspection)
+        XCTAssertNotNil(session.errorMessage)
+    }
+
+    func testBridgeRunsIndependentInspectionWithoutConfirmationOrReceipts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("{\"text\":\"One example\"}\nnot json\n".utf8).write(to: root.appendingPathComponent("train.jsonl"))
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: source.appendingPathComponent("vendor/mlx-agent").path, receiptDirectory: root.path)
+        let report = try await api.trainingInspection(repo: "workbench-fixture/uncached", data: root.path, batchSize: 4)
+        XCTAssertFalse(report.ready)
+        XCTAssertEqual(report.checks.map(\.id), [.runtime, .base, .train, .valid])
+        XCTAssertTrue(report.checks.first { $0.id == .train }?.message.contains("line 2") == true)
+        XCTAssertEqual(report.checks.first { $0.id == .valid }?.code, "validation_required")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".mlx-agent-receipts").path))
+    }
+}
+
+@MainActor
+final class TrainingInspectionContractTests: XCTestCase {
+    func testKnownBlockersPreventConfirmationAndMismatchNeverPublishes() async throws {
+        var object: [String: Any] = ["schema_version": 1, "ready": false, "batch_size": 4,
+            "repo": "org/base", "data": "/dataset", "checks": [
+                ["id": "runtime", "status": "blocked", "message": "Training runtime missing"],
+                ["id": "base", "status": "ready", "message": "Cached"],
+                ["id": "train", "status": "ready", "message": "4 examples"],
+                ["id": "valid", "status": "ready", "message": "4 examples"]]]
+        var response = try JSONDecoder().decode(TrainingInspection.self, from: JSONSerialization.data(withJSONObject: object))
+        let session = TrainingSession(preview: { _ in ["preview_hash": "reviewed"] },
+            start: { _, _ in XCTFail("A known blocker must prevent submission") }, inspect: { _ in response })
+        session.draft = TrainingDraft(repo: "org/base", data: "/dataset")
+        await session.inspectTraining()?.value
+        await session.previewTraining()?.value
+        XCTAssertFalse(session.canConfirm)
+        XCTAssertEqual(session.confirmationBlocker, "Training runtime missing")
+        XCTAssertNil(session.confirmTraining())
+        object["repo"] = "org/different"
+        response = try JSONDecoder().decode(TrainingInspection.self, from: JSONSerialization.data(withJSONObject: object))
+        await session.inspectTraining()?.value
+        XCTAssertNil(session.inspection)
+        XCTAssertNil(session.preview, "Rechecking must revoke the prior confirmation")
+        XCTAssertNotNil(session.errorMessage)
+    }
+
+    func testInspectionRejectsIncompleteReportsAndInvalidBatchSizes() throws {
+        let invalid = #"{"schema_version":1,"ready":true,"batch_size":4,"checks":[{"id":"runtime","status":"ready","message":"Found"}]}"#
+        XCTAssertThrowsError(try JSONDecoder().decode(TrainingInspection.self, from: Data(invalid.utf8)))
+        let session = TrainingSession(preview: { _ in [:] }, start: { _, _ in }, inspect: { _ in throw Boom() })
+        session.draft.batchSize = "0"
+        XCTAssertFalse(session.canInspect)
+        XCTAssertNil(session.inspectTraining())
+    }
+}
+
+@MainActor
 final class TrainingOutputTests: XCTestCase {
     func testBlankOutputCapturesAFreshDestinationWithoutChangingTheDraft() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

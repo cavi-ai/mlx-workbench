@@ -144,6 +144,19 @@ final class WorkbenchReviewUITests: XCTestCase {
                         'artifact_sha256': 'fixture-evaluation-sha256'}
             else:
                 data = {}
+        elif args[:2] == ['lora', 'inspect']:
+            time.sleep(0.5)
+            if (root / 'fail-training-setup').exists():
+                print('Fixture setup inspection failed.', file=sys.stderr)
+                sys.exit(2)
+            blocked = (root / 'invalid-training-data').exists()
+            checks = [dict(id=key, status='ready', message='Training executable found.' if key == 'runtime' else 'Cached base found.' if key == 'base' else '8 examples; enough for batch size 4.')
+                      for key in ['runtime', 'base', 'train', 'valid']]
+            if blocked:
+                checks[2].update(status='blocked', code='dataset_invalid', message='train.jsonl line 2 is not valid JSON.', remediation='Correct line 2, then check setup again.')
+            data = dict(schema_version=1, ready=not blocked, checks=checks, batch_size=int(args[args.index('--batch-size') + 1]),
+                        repo=args[args.index('--repo') + 1] if '--repo' in args else None,
+                        data=args[args.index('--data') + 1] if '--data' in args else None)
         elif args[:2] == ['lora', 'start']:
             time.sleep(1)
             confirming = '--confirm' in args
@@ -460,7 +473,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
         for appearance in ["Light", "Dark"] {
             for name in ["fail-training-status", "fail-training-history", "fail-training-preview", "fail-training-submit",
-                         "slow-training-status", "slow-training-history", "fail-training-inspect"] { try flag(name, false) }
+                         "slow-training-status", "slow-training-history", "fail-training-inspect",
+                         "fail-training-setup", "invalid-training-data"] { try flag(name, false) }
             try write("training-jobs.json", [])
             try write("training-history.json", [])
             launch(appearance: appearance, route: "training-studio", isolatedHome: true)
@@ -502,6 +516,28 @@ final class WorkbenchReviewUITests: XCTestCase {
                 reveal(fix); fix.click(); app.typeText(root.path)
                 XCTAssertEqual(dataset.value as? String, root.path)
                 XCTAssertTrue(preview.isEnabled)
+                let check = app.buttons["training-check-setup"]
+                try flag("invalid-training-data", true)
+                reveal(check); check.click()
+                XCTAssertTrue(text(containing: "train.jsonl line 2 is not valid JSON.").waitForExistence(timeout: 10))
+                XCTAssertFalse(app.buttons["training-confirm"].exists, "Inspection cannot authorize training")
+                reveal(app.staticTexts["training-inspection-valid"])
+                XCTAssertTrue(message("training-inspection-valid").contains("8 examples"))
+                capture("Training-\(appearance)-setup-blocked")
+                resizeWindow(width: 740, height: 560)
+                reveal(app.staticTexts["training-inspection-valid"])
+                capture("Training-\(appearance)-setup-blocked-minimum")
+                resizeWindow(width: 1024, height: 680)
+                try flag("invalid-training-data", false)
+                reveal(check); check.click()
+                XCTAssertTrue(text(containing: "Local setup checks passed").waitForExistence(timeout: 10))
+                reveal(app.staticTexts["training-inspection-summary"])
+                capture("Training-\(appearance)-setup-ready")
+                try flag("fail-training-setup", true)
+                reveal(check); check.click()
+                XCTAssertTrue(text(containing: "Fixture setup inspection failed.").waitForExistence(timeout: 10))
+                XCTAssertFalse(app.staticTexts["training-inspection-summary"].exists)
+                try flag("fail-training-setup", false)
                 reveal(iterations); replace(iterations, with: "0")
                 XCTAssertFalse(preview.isEnabled)
                 XCTAssertTrue(message("training-guidance").contains("positive whole number"))

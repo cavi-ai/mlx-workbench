@@ -1,5 +1,48 @@
 import SwiftUI
 
+struct TrainingInspectionPanel: View {
+    let inspection: TrainingInspection
+    let repair: (TrainingField) -> Void
+    let openHealth: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Text(inspection.ready ? "Local setup checks passed" : "Training setup needs attention")
+                .font(WorkbenchTypography.emphasis)
+                .accessibilityIdentifier("training-inspection-summary")
+            ForEach(inspection.checks) { check in
+                HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
+                    Image(systemName: check.status == .ready ? "checkmark.circle" : "exclamationmark.circle")
+                        .foregroundStyle(check.status == .ready ? WorkbenchColor.success : WorkbenchColor.warning)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        Text(check.title).font(WorkbenchTypography.label)
+                        Text(check.message).font(WorkbenchTypography.secondary)
+                            .accessibilityIdentifier("training-inspection-\(check.id.rawValue)")
+                        if let remediation = check.remediation {
+                            Text(remediation).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        }
+                        if let field = check.repairField {
+                            Button("Fix field") { repair(field) }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .accessibilityIdentifier("training-inspection-fix-\(check.id.rawValue)")
+                        } else if check.id == .runtime && check.status == .blocked {
+                            Button("Open Health", action: openHealth).buttonStyle(.bordered).controlSize(.small)
+                        }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Text("Checks executable availability and local inputs without loading the model. Preview rechecks the files; training still requires confirmation.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(WorkbenchSpacing.sm)
+        .background(WorkbenchColor.canvas, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+    }
+}
+
 /// Raw evidence stays one click away and collapsed by default.
 struct TrainingRawDisclosure: View {
     let title: String

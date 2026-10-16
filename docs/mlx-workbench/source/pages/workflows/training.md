@@ -6,6 +6,18 @@ Text LoRA training records local job receipts and adapter outputs. Controlled st
 
 **Training** fine-tunes a LoRA adapter on your own text.
 
+**Check setup** inspects the local training executable, cached base architecture,
+and both dataset splits independently. Each split shows its example count or an
+actionable error, including the file and line for malformed records. A valid
+split keeps its count when another check fails. **Fix field** returns to the
+relevant input; a missing runtime offers **Open Health**.
+
+Checking setup never downloads a model, splits data, creates an adapter or starts
+training. It checks executable availability without loading the model; it does
+not measure memory fit or guarantee that training will succeed. Editing the
+request clears the report. **Preview Training** and confirmation still recheck
+the inputs independently; inspection does not authorize a training run.
+
 1. Choose a **Base model** from the cached language-model candidates or enter a **Custom repo id…**. Known speech, media, embedding and drafter entries are omitted from the picker; legacy entries without task metadata remain candidates. Preview checks the cached architecture against the MLX-LM registry, including supported aliases. Some vision-language bases have an MLX-LM text loader and remain candidates. Other backend loaders cannot be substituted for text LoRA. Training requires a local Hugging Face cache snapshot and the mlx-lm training runtime; it never downloads a model.
 2. Choose a **Dataset path**: a directory containing both `train.jsonl` and `valid.jsonl`. Each line is one JSON object with nonempty `text` or a `messages` array of objects with string `role` and `content`. Blank lines are refused. Supply training and validation examples separately; the app does not split or duplicate your data.
 3. Set **Iterations**, **Batch size** (1–64, default 4) and an optional output directory. Each dataset split must contain at least one full batch. Preview rejects missing validation data or too few examples before starting a job; reduce batch size or add examples, then preview again. Invalid fields offer **Fix field**.

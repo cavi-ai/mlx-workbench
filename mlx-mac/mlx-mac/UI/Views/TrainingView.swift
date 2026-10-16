@@ -77,41 +77,78 @@ struct TrainingPreview {
 
 @MainActor
 final class TrainingSession: ObservableObject {
-    enum Operation: Equatable { case previewing, submitting }
+    enum Operation: Equatable { case inspecting, previewing, submitting }
     @Published var draft = TrainingDraft() {
         didSet {
             guard draft != oldValue else { return }
             revision += 1
             preview = nil
+            inspection = nil
             errorMessage = nil
             notice = nil
         }
     }
     @Published private(set) var preview: TrainingPreview?
+    @Published private(set) var inspection: TrainingInspection?
     @Published private(set) var operation: Operation?
     @Published private(set) var errorMessage: String?
     @Published private(set) var notice: String?
     private var revision = 0
     private let previewOperation: (TrainingRequest) async throws -> [String: Any]
     private let startOperation: (TrainingRequest, String) async throws -> Void
+    private let inspectionOperation: ((TrainingDraft) async throws -> TrainingInspection)?
     private let outputDestination: () -> URL
 
     init(preview: @escaping (TrainingRequest) async throws -> [String: Any],
          start: @escaping (TrainingRequest, String) async throws -> Void,
+         inspect: ((TrainingDraft) async throws -> TrainingInspection)? = nil,
          outputDestination: @escaping () -> URL = {
              WorkbenchStatePaths.applicationSupport().appendingPathComponent("trained-adapters", isDirectory: true)
                  .appendingPathComponent(UUID().uuidString, isDirectory: true)
          }) {
         previewOperation = preview
         startOperation = start
+        inspectionOperation = inspect
         self.outputDestination = outputDestination
     }
 
     var isBusy: Bool { operation != nil }
     var canPreview: Bool { !isBusy && draft.request != nil }
+    var canInspect: Bool { !isBusy && draft.batchSizeError == nil && inspectionOperation != nil }
     var canConfirm: Bool {
         guard !isBusy, let preview, preview.sourceDraft == draft else { return false }
-        return TrainingPlanSummary(payload: preview.payload).blockingReason == nil
+        return confirmationBlocker == nil
+    }
+    var confirmationBlocker: String? {
+        guard let preview else { return nil }
+        return TrainingPlanSummary(payload: preview.payload).blockingReason
+            ?? inspection?.checks.first(where: { $0.status == .blocked })?.message
+    }
+
+    @discardableResult
+    func inspectTraining() -> Task<Void, Never>? {
+        guard canInspect, let inspectionOperation else { return nil }
+        let captured = draft, revision = revision
+        operation = .inspecting
+        inspection = nil
+        preview = nil
+        errorMessage = nil
+        notice = nil
+        return Task {
+            defer { operation = nil }
+            do {
+                let result = try await inspectionOperation(captured)
+                guard self.revision == revision else { return }
+                guard result.matches(captured) else {
+                    errorMessage = "Setup inspection returned different inputs. Check setup again."
+                    return
+                }
+                inspection = result
+            } catch {
+                guard self.revision == revision else { return }
+                errorMessage = AppHost.render(error)
+            }
+        }
     }
 
     @discardableResult
@@ -171,7 +208,13 @@ struct TrainingPreviewGuidance: Equatable {
 
     static func resolve(draft: TrainingDraft, operation: TrainingSession.Operation?) -> Self? {
         if let operation {
-            return Self(message: operation == .previewing ? "Preparing training preview…" : "Submitting training…", field: nil)
+            let message: String
+            switch operation {
+            case .inspecting: message = "Checking training setup…"
+            case .previewing: message = "Preparing training preview…"
+            case .submitting: message = "Submitting training…"
+            }
+            return Self(message: message, field: nil)
         }
         if draft.repo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return Self(message: "Enter a base model repo id to preview training.", field: .repo)
@@ -226,6 +269,14 @@ struct TrainingView: View {
             },
             start: { request, hash in
                 _ = try await appHost.api.loraStart(repo: request.repo, data: request.data, previewHash: hash, iters: request.iterations, out: request.output, batchSize: request.batchSize)
+            },
+            inspect: { draft in
+                guard let batchSize = Int(draft.batchSize.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                    throw BridgeError.skillOutputUnreadable
+                }
+                return try await appHost.api.trainingInspection(repo: draft.repo.trimmingCharacters(in: .whitespacesAndNewlines),
+                    data: draft.data.trimmingCharacters(in: .whitespacesAndNewlines),
+                    batchSize: batchSize)
             }
         ))
     }
@@ -314,6 +365,14 @@ struct TrainingView: View {
                 }.id(TrainingField.data)
                 TrainingFieldsLayout { trainingFields }
             }.disabled(session.isBusy)
+            Button(session.operation == .inspecting ? "Checking setup…" : "Check setup") { session.inspectTraining() }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(!session.canInspect)
+                .accessibilityIdentifier("training-check-setup")
+                .help(session.draft.batchSizeError ?? "Check the local runtime, cached base and both dataset splits without starting training.")
+            if let inspection = session.inspection {
+                TrainingInspectionPanel(inspection: inspection, repair: { reveal($0, proxy: proxy) }, openHealth: { onRouteSelection(.health) })
+            }
             previewActions(proxy)
             if session.preview == nil { operationFeedback }
         }.formSection {}
@@ -516,7 +575,7 @@ struct TrainingView: View {
                     .buttonStyle(.workbenchPrimary)
                     .disabled(!session.canConfirm)
                     .accessibilityIdentifier("training-confirm")
-                    .help(summary.blockingReason ?? "Submit the captured training request shown above.")
+                    .help(session.confirmationBlocker ?? "Submit the captured training request shown above.")
                 Divider()
                 RawJSONDisclosure("Raw plan payload", value: preview.payload)
             }
