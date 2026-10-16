@@ -124,6 +124,7 @@
 		LABPRSB1 /* LabPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = LABPRSF1 /* LabPresentation.swift */; };
 		LABRMDB1 /* LabRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LABRMDF1 /* LabRemodelTests.swift */; };
 		TRNVWSB1 /* TrainingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNVWSF1 /* TrainingViews.swift */; };
+		TRNEVALB1 /* TrainingEvaluationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNEVALF1 /* TrainingEvaluationSheet.swift */; };
 		ADPRMDB1 /* AdoptRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADPRMDF1 /* AdoptRemodelTests.swift */; };
 		ADPPRSB1 /* AdoptPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADPPRSF1 /* AdoptPresentation.swift */; };
 		INTPRSB1 /* IntakePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = INTPRSF1 /* IntakePresentation.swift */; };
@@ -365,6 +366,7 @@
 		MNUBRTF1 /* MenuBarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MenuBarTests.swift; path = MenuBarTests.swift; sourceTree = "<group>"; };
 		TRNPRSF1 /* TrainingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingPresentation.swift; path = UI/Views/TrainingPresentation.swift; sourceTree = "<group>"; };
 		TRNVWSF1 /* TrainingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingViews.swift; path = UI/Views/TrainingViews.swift; sourceTree = "<group>"; };
+		TRNEVALF1 /* TrainingEvaluationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingEvaluationSheet.swift; path = UI/Views/TrainingEvaluationSheet.swift; sourceTree = "<group>"; };
 		ADPRMDF1 /* AdoptRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdoptRemodelTests.swift; path = AdoptRemodelTests.swift; sourceTree = "<group>"; };
 		ADPPRSF1 /* AdoptPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdoptPresentation.swift; path = UI/Views/AdoptPresentation.swift; sourceTree = "<group>"; };
 		INTPRSF1 /* IntakePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakePresentation.swift; path = UI/Views/IntakePresentation.swift; sourceTree = "<group>"; };
@@ -689,6 +691,7 @@
 				ADPPRSF1 /* AdoptPresentation.swift */,
 				INTPRSF1 /* IntakePresentation.swift */,
 				TRNVWSF1 /* TrainingViews.swift */,
+				TRNEVALF1 /* TrainingEvaluationSheet.swift */,
 				24FREF000013 /* HomeView.swift */,
 				28OVWF01 /* OverviewComponents.swift */,
 				24FREF000014 /* ScoutView.swift */,
@@ -1007,6 +1010,7 @@
 				ADPPRSB1 /* AdoptPresentation.swift in Sources */,
 				INTPRSB1 /* IntakePresentation.swift in Sources */,
 				TRNVWSB1 /* TrainingViews.swift in Sources */,
+				TRNEVALB1 /* TrainingEvaluationSheet.swift in Sources */,
 				24BBLD000013 /* x */,
 				28OVWB01 /* OverviewComponents.swift in Sources */,
 				24BBLD000014 /* x */,

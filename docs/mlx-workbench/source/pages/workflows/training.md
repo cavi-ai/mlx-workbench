@@ -37,7 +37,30 @@ confirmation recheck the artifacts before starting an explicit adapter server.
 
 **Compare with base** runs a matched evaluation of the base model against base plus the trained adapter on the same prompts. Results are retained under **Retained training evaluations** with their SHA-256. Evaluations are comparison evidence, not a quality verdict, and text LoRA results do not qualify media training.
 
-Preview the evaluation prompt before **Run comparison**. Editing it invalidates the preview and clears the displayed outputs. A new preview clears older confirmation and results before the request begins, including when the new request fails. The prompt and dismissal controls are locked while a request runs. Only paired outputs with a retained report hash are displayed as a completed comparison; failed requests remain retryable.
+Choose **Single prompt** and a token limit, or capture an existing chat prompt set.
+Sets are managed in **Compare**, support 1–16 text-only prompts and 1–512 tokens
+per prompt, and exclude tools, media and expected-word scoring. Prompt text,
+order, identities and token limits are frozen for the evaluation; later edits to
+the source set do not change it. Choose evaluation prompts kept separate from
+training data; the app does not check that separation.
+
+**Preview** captures the recipe before **Run comparison**. Editing an input
+invalidates it and clears displayed outputs. Each variant loads once for the
+suite, uses temperature zero, and resets seed 42 for every prompt. Results are
+accepted only when every prompt has both outputs and the pinned inputs still
+match. The prompt picker shows each recorded pair and its token limit.
+
+Record **Base model**, **Trained adapter**, **Tie** or **Neither**, with optional
+notes, then **Save review**. Each preference is tied to the retained report hash;
+reviews do not rewrite the frozen generation report or mark an adapter verified.
+Failed saves retain the outputs and draft. Prompt switches retain unsaved review
+drafts; closing requires explicit discard when any remain. Setup changes and
+generation are blocked until those drafts are saved. Requests lock dismissal.
+
+History shows suite names and prompt counts for new evaluations. **Inspect**
+verifies the retained artifact; **Review outputs** reopens its recorded pairs
+and saved preferences without generating again. Legacy single-prompt evaluations
+remain readable and reviewable when their recorded schema and identity support it.
 
 ## Controlled studies
 

@@ -603,8 +603,10 @@ final class TrainingEvaluationSessionTests: XCTestCase {
     private func plan(_ hash: String = "reviewed") -> LabResponse {
         LabResponse(plan: .object(["preview_hash": .string(hash)]))
     }
-    private var retained: LabResponse {
-        LabResponse(report: .object(["outputs": .object(["baseline": .string("Base"), "adapter": .string("Tuned")])]),
+    private func retained(_ prompt: String = "Prompt") -> LabResponse {
+        LabResponse(evaluationID: "text_eval_fixture", report: .object(["schema_version": .string("text-training-evaluation/1"),
+            "prompt": .string(prompt), "max_tokens": .integer(128), "preview_hash": .string("reviewed"),
+            "outputs": .object(["baseline": .string("Base"), "adapter": .string("Tuned")])]),
             artifactSHA256: String(repeating: "a", count: 64))
     }
 
@@ -634,7 +636,7 @@ final class TrainingEvaluationSessionTests: XCTestCase {
         var calls: [LabRequest] = []
         let session = TrainingEvaluationSession(receipt: "/training/receipt.json") { request in
             calls.append(request)
-            return request.operation == "training-preview" ? self.plan() : self.retained
+            return request.operation == "training-preview" ? self.plan() : self.retained(request.prompt ?? "Prompt")
         }
         session.prompt = " Compare this prompt "
         await session.previewEvaluation()?.value
@@ -654,7 +656,7 @@ final class TrainingEvaluationSessionTests: XCTestCase {
     func testFailedOrHashlessRepreviewRevokesOldConfirmationAndResults() async {
         var previews = 0
         let session = TrainingEvaluationSession(receipt: "/receipt.json") { request in
-            if request.operation == "training-evaluate" { return self.retained }
+            if request.operation == "training-evaluate" { return self.retained(request.prompt ?? "Prompt") }
             previews += 1
             if previews == 2 { throw Boom() }
             return previews == 3 ? LabResponse() : self.plan()
@@ -689,7 +691,7 @@ final class TrainingEvaluationSessionTests: XCTestCase {
         XCTAssertNil(session.evaluate())
         await fulfillment(of: [started], timeout: 1)
         session.prompt = "Edited"
-        completion?.resume(returning: retained)
+        completion?.resume(returning: retained())
         await task?.value
         XCTAssertNil(session.result)
         XCTAssertFalse(session.canEvaluate)
@@ -700,7 +702,7 @@ final class TrainingEvaluationSessionTests: XCTestCase {
             if request.operation == "training-preview" { return self.plan() }
             attempts += 1
             if attempts == 1 { throw Boom() }
-            return attempts == 2 ? LabResponse() : self.retained
+            return attempts == 2 ? LabResponse() : self.retained()
         }
         retry.prompt = "Prompt"
         await retry.previewEvaluation()?.value
@@ -713,6 +715,109 @@ final class TrainingEvaluationSessionTests: XCTestCase {
         await retry.evaluate()?.value
         XCTAssertNotNil(retry.result)
         XCTAssertNil(retry.errorMessage)
+    }
+}
+
+@MainActor
+final class TrainingEvaluationSuiteSessionTests: XCTestCase {
+    private var set: PromptSet {
+        PromptSet(id: "evaluation", name: "Held-out questions", useCase: nil, prompts: [
+            PromptEntry(id: "first", text: "Explain previews.", maxTokens: 32),
+            PromptEntry(id: "second", text: "Explain rollback.", maxTokens: 64)], origin: .userCreated)
+    }
+    private func response(_ suite: TrainingEvaluationSuite) -> LabResponse {
+        let snapshot = try! JSONDecoder().decode(LabValue.self, from: JSONEncoder().encode(suite))
+        return LabResponse(evaluationID: "text_eval_suite", reviews: [], report: .object([
+            "schema_version": .string("text-training-evaluation/2"), "preview_hash": .string("reviewed"),
+            "prompt_suite": snapshot,
+            "samples": .array(suite.prompts.map { prompt in .object(["id": .string(prompt.id),
+                "prompt": .string(prompt.text), "max_tokens": .integer(prompt.maxTokens),
+                "outputs": .object(["baseline": .string("Base " + prompt.text), "adapter": .string("Adapter " + prompt.text)])]) })]),
+            artifactSHA256: String(repeating: "a", count: 64))
+    }
+    private func plan(_ suite: TrainingEvaluationSuite) throws -> LabResponse {
+        LabResponse(plan: .object(["preview_hash": .string("reviewed"),
+            "prompt_suite": try JSONDecoder().decode(LabValue.self, from: JSONEncoder().encode(suite))]))
+    }
+
+    func testSuiteSnapshotsPreserveEntriesAndRejectUnsupportedSettings() throws {
+        var source = set
+        let snapshot = try TrainingEvaluationSuite(source)
+        source.prompts[0].text = "Later edit"
+        XCTAssertEqual(snapshot.prompts[0].text, "Explain previews.")
+        XCTAssertEqual(snapshot.prompts.map(\.maxTokens), [32, 64])
+        source.prompts[0].inputPath = "/input"
+        XCTAssertThrowsError(try TrainingEvaluationSuite(source))
+        source = set; source.prompts[0].expectedKeywords = ["preview"]
+        XCTAssertThrowsError(try TrainingEvaluationSuite(source))
+        source = set; source.prompts[0].maxTokens = 513
+        XCTAssertThrowsError(try TrainingEvaluationSuite(source))
+    }
+
+    func testSuitePreviewAndEvaluationUseIdenticalCapturedInputsAndRejectPartialResults() async throws {
+        let suite = try TrainingEvaluationSuite(set)
+        var calls: [LabRequest] = []
+        var partial = true
+        let session = TrainingEvaluationSession(receipt: "/receipt") { request in
+            calls.append(request)
+            if request.operation == "training-preview" { return try self.plan(suite) }
+            var result = self.response(suite)
+            if partial, var report = result.report?.object, case .array(let values) = report["samples"] {
+                report["samples"] = .array(Array(values.prefix(1))); result.report = .object(report)
+            }
+            return result
+        }
+        session.selectSuite(set)
+        await session.previewEvaluation()?.value
+        XCTAssertTrue(session.canEvaluate)
+        await session.evaluate()?.value
+        XCTAssertNil(session.result)
+        XCTAssertNotNil(session.errorMessage)
+        partial = false
+        await session.evaluate()?.value
+        XCTAssertEqual(session.samples.count, 2)
+        XCTAssertTrue(calls.allSatisfy { $0.promptSuite == suite && $0.prompt == nil && $0.maxTokens == nil })
+        session.useSinglePrompt()
+        XCTAssertNil(session.result)
+        XCTAssertNil(session.preview)
+    }
+
+    func testFailedReviewKeepsOutputsAndDraftsAndSuccessfulReviewSurvivesReopening() async throws {
+        let suite = try TrainingEvaluationSuite(set)
+        var fails = true
+        let session = TrainingEvaluationSession(receipt: "/receipt") { request in
+            if request.operation == "training-preview" { return try self.plan(suite) }
+            if request.operation == "training-evaluate" { return self.response(suite) }
+            if fails { throw Boom() }
+            XCTAssertEqual(request.promptID, "first")
+            let review = TrainingEvaluationReview(id: "review_1", evaluationID: "text_eval_suite",
+                artifactSHA256: String(repeating: "a", count: 64), promptID: "first", reviewerID: "reviewer",
+                preference: request.preference!, notes: request.notes!, createdAt: "2026-10-16T00:00:00Z")
+            return LabResponse(evaluationID: "text_eval_suite", reviews: [review], artifactSHA256: review.artifactSHA256,
+                               reviewID: review.id)
+        }
+        session.selectSuite(set)
+        await session.previewEvaluation()?.value; await session.evaluate()?.value
+        session.updateReview("first", .init(preference: "adapter", notes: "More specific"))
+        session.selectedPromptID = "second"
+        XCTAssertEqual(session.draft("first").notes, "More specific")
+        session.selectedPromptID = "first"
+        XCTAssertTrue(session.hasUnsavedReviews)
+        XCTAssertFalse(session.canPreview)
+        await session.saveReview()?.value
+        XCTAssertNotNil(session.reviewError)
+        XCTAssertEqual(session.samples.count, 2)
+        XCTAssertEqual(session.draft("first").notes, "More specific")
+        fails = false
+        await session.saveReview()?.value
+        XCTAssertFalse(session.hasUnsavedReviews)
+        XCTAssertFalse(session.canSaveReview)
+        let reopened = TrainingEvaluationSession(receipt: "", retained: try XCTUnwrap(session.result)) { _ in
+            XCTFail("Opening retained evidence must not generate"); return LabResponse()
+        }
+        XCTAssertTrue(reopened.isRetainedOnly)
+        XCTAssertFalse(reopened.canPreview)
+        XCTAssertEqual(reopened.reviews.first?.preference, "adapter")
     }
 }
 
@@ -1211,7 +1316,9 @@ final class TrainingRenderTests: XCTestCase {
         let session = TrainingEvaluationSession(receipt: job.receipt) { request in
             if fails { throw Boom() }
             if request.operation == "training-preview" { return plan }
-            return LabResponse(report: .object(["outputs": .object([
+            return LabResponse(evaluationID: "text_eval_capture", report: .object([
+                "schema_version": .string("text-training-evaluation/1"), "prompt": .string(request.prompt ?? ""),
+                "max_tokens": .integer(128), "preview_hash": .string("reviewed"), "outputs": .object([
                 "baseline": .string("Contact the billing team for help."),
                 "adapter": .string("Contact billing with your order number to request a refund.")])]),
                 artifactSHA256: String(repeating: "a", count: 64))
