@@ -251,15 +251,7 @@ struct LibraryWorkspace: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Picker("Source", selection: $source) {
-                ForEach(LibrarySource.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 350)
-            .padding(.horizontal, WorkbenchSpacing.pageInset)
-            .padding(.top, WorkbenchSpacing.pageInset)
-            .accessibilityIdentifier("library-source")
+        GeometryReader { geometry in
             ZStack {
                 ForEach(LibrarySource.allCases.filter { visitedSources.contains($0) }) { destination in
                     let active = source == destination
@@ -271,7 +263,19 @@ struct LibraryWorkspace: View {
                         .zIndex(active ? 1 : 0)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Picker("Source", selection: $source) {
+                ForEach(LibrarySource.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 350)
+            .padding(.horizontal, WorkbenchSpacing.pageInset)
+            .padding(.top, WorkbenchSpacing.pageInset)
+            .accessibilityIdentifier("library-source")
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onChange(of: source) { _, selected in visitedSources.insert(selected) }
         .onChange(of: lmStudioRequested) { _, requested in

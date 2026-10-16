@@ -2932,7 +2932,15 @@ final class ComparisonMediaTests: XCTestCase {
             XCTAssertGreaterThan(abs(added - initial), 100, "Adding must reveal the new card")
             if music { fixture.music.duplicatePrompt(id: fixture.music[0].id) }
             else { fixture.draft.duplicatePrompt(id: fixture.draft.prompts[0].id) }
-            try await Task.sleep(for: .milliseconds(250))
+            let expectedDuplicateOffset = initial + (initialDocumentHeight + WorkbenchSpacing.md) / 4
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(3))
+            // AppKit may commit the scroll after the SwiftUI layout pass.
+            // Wait for the same exact position asserted below, not a fixed delay.
+            repeat {
+                try await Task.sleep(for: .milliseconds(25))
+                host.layoutSubtreeIfNeeded()
+            } while abs(scroll.documentVisibleRect.minY - expectedDuplicateOffset) > 2 && clock.now < deadline
             host.layoutSubtreeIfNeeded()
             let duplicated = scroll.documentVisibleRect.minY
             XCTAssertGreaterThan(abs(duplicated - added), 100, "Duplicating must reveal the new adjacent card")

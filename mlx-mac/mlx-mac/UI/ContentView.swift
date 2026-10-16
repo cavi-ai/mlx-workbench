@@ -111,19 +111,23 @@ struct ContentView: View {
 
     @ViewBuilder
     private var visitedDestinations: some View {
-        ZStack {
-            ForEach(Self.mountedRoutes(for: visitedRoutes), id: \.self) { route in
-                let isActive = route == selectedRoute
-                VStack(spacing: 0) {
-                    if route != .library { WorkbenchPageHeading(route: route) }
-                    routeDestination(route)
+        // Retained pages must not impose their intrinsic minimum on the split view.
+        GeometryReader { geometry in
+            ZStack {
+                ForEach(Self.mountedRoutes(for: visitedRoutes), id: \.self) { route in
+                    let isActive = route == selectedRoute
+                    VStack(spacing: 0) {
+                        if route != .library { WorkbenchPageHeading(route: route) }
+                        routeDestination(route)
+                    }
+                        .environment(\.isRouteActive, isActive)
+                        .opacity(isActive ? 1 : 0)
+                        .allowsHitTesting(isActive)
+                        .accessibilityHidden(!isActive)
+                        .zIndex(isActive ? 1 : 0)
                 }
-                    .environment(\.isRouteActive, isActive)
-                    .opacity(isActive ? 1 : 0)
-                    .allowsHitTesting(isActive)
-                    .accessibilityHidden(!isActive)
-                    .zIndex(isActive ? 1 : 0)
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

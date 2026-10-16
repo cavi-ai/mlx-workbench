@@ -94,15 +94,50 @@ def guest(input_dir, output_dir):
     input_dir, output_dir = Path(input_dir), Path(output_dir)
     manifest = json.loads((input_dir / "source-manifest.json").read_text())
     output_dir.mkdir(parents=True, exist_ok=True)
+    # macOS can retain a scaled desktop mode independently of Tart's virtual
+    # display size. Select the intended logical mode before launching windows.
+    display = subprocess.check_output(["/usr/bin/swift", "-e", """
+import CoreGraphics
+import Foundation
+let display = CGMainDisplayID()
+guard let before = CGDisplayCopyDisplayMode(display),
+      let modes = CGDisplayCopyAllDisplayModes(display, nil) as? [CGDisplayMode],
+      let target = modes.first(where: { $0.width == 1440 && $0.height == 1000 }) else {
+    fatalError("The guest display does not offer the required 1440x1000 desktop mode.")
+}
+var configuration: CGDisplayConfigRef?
+guard CGBeginDisplayConfiguration(&configuration) == .success,
+      let configuration else {
+    fatalError("The guest display configuration could not begin.")
+}
+guard CGConfigureDisplayWithDisplayMode(configuration, display, target, nil) == .success else {
+    CGCancelDisplayConfiguration(configuration)
+    fatalError("The guest desktop mode could not be configured.")
+}
+guard CGCompleteDisplayConfiguration(configuration, .forSession) == .success,
+      let after = CGDisplayCopyDisplayMode(display),
+      after.width == 1440 && after.height == 1000 else {
+    fatalError("The guest display did not enter the required desktop mode.")
+}
+let evidence = ["before": ["width": before.width, "height": before.height],
+                "after": ["width": after.width, "height": after.height]]
+let data = try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys])
+print(String(decoding: data, as: UTF8.self))
+"""], text=True, timeout=60)
+    (output_dir / "display-preflight.json").write_text(display)
     checked(["/usr/bin/open", "-a", "Calculator"], timeout=10)
     probe = subprocess.check_output(["/usr/bin/osascript", "-l", "JavaScript", "-e", """
 ObjC.import('AppKit');
+const screen = $.NSScreen.mainScreen.frame.size;
+if (screen.width !== 1440 || screen.height !== 1000) {
+    throw new Error('The guest desktop did not retain its required 1440x1000 mode. No tests were started.');
+}
 const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;
 const bundle = ObjC.unwrap(app.bundleIdentifier);
 if (bundle !== 'com.apple.calculator') {
     throw new Error('Guest Launch Services did not activate Calculator. No tests were started.');
 }
-JSON.stringify({bundle_id: bundle, pid: app.processIdentifier});
+JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.width, height: screen.height});
 """], text=True, timeout=30)
     (output_dir / "gui-preflight.json").write_text(probe)
     checked(["/usr/sbin/screencapture", "-x", str(output_dir / "guest-preflight.png")], timeout=10)
@@ -201,7 +236,7 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier});
                 selection += "/testRouteCaptures"
             run(name, ["xcodebuild", "-xctestrun", str(runfile), "-destination", "platform=macOS,arch=arm64",
                        "-resultBundlePath", str(output_dir / f"{name}.xcresult"), f"-only-testing:{selection}",
-                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 13)
+                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 15)
 
 
 def wait_for_guest(tart, vm, running, env, timeout=300):
