@@ -6,6 +6,14 @@ struct TrainingDraft: Equatable {
     var data = ""
     var iterations = "100"
     var output = ""
+    var batchSize = "4"
+
+    var batchSizeError: String? {
+        guard let value = Int(batchSize.trimmingCharacters(in: .whitespacesAndNewlines)), (1...64).contains(value) else {
+            return "Enter a batch size from 1 to 64."
+        }
+        return nil
+    }
 
     var iterationsError: String? {
         guard let value = Int(iterations.trimmingCharacters(in: .whitespacesAndNewlines)), value > 0 else {
@@ -18,9 +26,10 @@ struct TrainingDraft: Equatable {
         let repo = repo.trimmingCharacters(in: .whitespacesAndNewlines)
         let data = data.trimmingCharacters(in: .whitespacesAndNewlines)
         let output = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !repo.isEmpty, !data.isEmpty, iterationsError == nil,
-              let iterations = Int(iterations.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
-        return TrainingRequest(repo: repo, data: data, iterations: iterations, output: output.isEmpty ? nil : output)
+        guard !repo.isEmpty, !data.isEmpty, iterationsError == nil, batchSizeError == nil,
+              let iterations = Int(iterations.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let batchSize = Int(batchSize.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        return TrainingRequest(repo: repo, data: data, iterations: iterations, output: output.isEmpty ? nil : output, batchSize: batchSize)
     }
 }
 
@@ -29,9 +38,15 @@ struct TrainingRequest: Equatable {
     let data: String
     let iterations: Int
     let output: String?
+    let batchSize: Int
+
+    init(repo: String, data: String, iterations: Int, output: String?, batchSize: Int = 4) {
+        self.repo = repo; self.data = data; self.iterations = iterations; self.output = output; self.batchSize = batchSize
+    }
 }
 
 struct TrainingPreview {
+    let sourceDraft: TrainingDraft
     let request: TrainingRequest
     let hash: String
     let payload: [String: Any]
@@ -56,23 +71,32 @@ final class TrainingSession: ObservableObject {
     private var revision = 0
     private let previewOperation: (TrainingRequest) async throws -> [String: Any]
     private let startOperation: (TrainingRequest, String) async throws -> Void
+    private let outputDestination: () -> URL
 
     init(preview: @escaping (TrainingRequest) async throws -> [String: Any],
-         start: @escaping (TrainingRequest, String) async throws -> Void) {
+         start: @escaping (TrainingRequest, String) async throws -> Void,
+         outputDestination: @escaping () -> URL = {
+             WorkbenchStatePaths.applicationSupport().appendingPathComponent("trained-adapters", isDirectory: true)
+                 .appendingPathComponent(UUID().uuidString, isDirectory: true)
+         }) {
         previewOperation = preview
         startOperation = start
+        self.outputDestination = outputDestination
     }
 
     var isBusy: Bool { operation != nil }
     var canPreview: Bool { !isBusy && draft.request != nil }
     var canConfirm: Bool {
-        guard !isBusy, let preview, preview.request == draft.request else { return false }
-        return !TrainingPlanSummary(payload: preview.payload).baseMissing
+        guard !isBusy, let preview, preview.sourceDraft == draft else { return false }
+        return TrainingPlanSummary(payload: preview.payload).blockingReason == nil
     }
 
     @discardableResult
     func previewTraining() -> Task<Void, Never>? {
-        guard canPreview, let request = draft.request else { return nil }
+        guard canPreview, let input = draft.request else { return nil }
+        let sourceDraft = draft
+        let request = TrainingRequest(repo: input.repo, data: input.data, iterations: input.iterations,
+            output: input.output ?? outputDestination().path, batchSize: input.batchSize)
         let revision = revision
         operation = .previewing
         preview = nil
@@ -82,14 +106,14 @@ final class TrainingSession: ObservableObject {
             defer { operation = nil }
             do {
                 let payload = try await previewOperation(request)
-                guard self.revision == revision, draft.request == request else { return }
+                guard self.revision == revision, draft == sourceDraft else { return }
                 let nested = payload["plan"] as? [String: Any]
                 guard let hash = (payload["preview_hash"] as? String ?? nested?["preview_hash"] as? String),
                       !hash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     errorMessage = "Training preview did not include a confirmation hash. Preview again before training."
                     return
                 }
-                preview = TrainingPreview(request: request, hash: hash, payload: payload)
+                preview = TrainingPreview(sourceDraft: sourceDraft, request: request, hash: hash, payload: payload)
             } catch {
                 guard self.revision == revision else { return }
                 errorMessage = AppHost.render(error)
@@ -116,7 +140,7 @@ final class TrainingSession: ObservableObject {
     }
 }
 
-enum TrainingField: Hashable { case repo, data, iterations }
+enum TrainingField: Hashable { case repo, data, iterations, batchSize }
 
 struct TrainingPreviewGuidance: Equatable {
     let message: String
@@ -133,6 +157,7 @@ struct TrainingPreviewGuidance: Equatable {
             return Self(message: "Choose a dataset directory to preview training.", field: .data)
         }
         if let error = draft.iterationsError { return Self(message: error, field: .iterations) }
+        if let error = draft.batchSizeError { return Self(message: error, field: .batchSize) }
         return nil
     }
 }
@@ -174,10 +199,10 @@ struct TrainingView: View {
         ))
         _session = StateObject(wrappedValue: session ?? TrainingSession(
             preview: { request in
-                try await appHost.api.loraPreview(repo: request.repo, data: request.data, iters: request.iterations, out: request.output)
+                try await appHost.api.loraPreview(repo: request.repo, data: request.data, iters: request.iterations, out: request.output, batchSize: request.batchSize)
             },
             start: { request, hash in
-                _ = try await appHost.api.loraStart(repo: request.repo, data: request.data, previewHash: hash, iters: request.iterations, out: request.output)
+                _ = try await appHost.api.loraStart(repo: request.repo, data: request.data, previewHash: hash, iters: request.iterations, out: request.output, batchSize: request.batchSize)
             }
         ))
     }
@@ -210,12 +235,16 @@ struct TrainingView: View {
         TrainingPreviewGuidance.resolve(draft: session.draft, operation: session.operation)
     }
 
-    private var showsCustomRepoField: Bool { baseChoice.showsField(cached: baseModels) }
+    private var showsCustomRepoField: Bool { baseChoice.showsField(repo: session.draft.repo, cached: baseModels) }
+
+    private var customRepoInput: Binding<String> {
+        Binding(get: { session.draft.repo }, set: { session.draft.repo = baseChoice.edit($0) })
+    }
 
     private func formSection(_ proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             SectionTitle(text: "LoRA fine-tune")
-            Text("Requires a cached Hugging Face base model and the mlx-lm training runtime. Training does not download models.")
+            Text("Requires a cached Hugging Face language-model base and the mlx-lm training runtime. Training does not download models.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
             requestSignature(repo: session.draft.repo, data: session.draft.data, output: session.draft.output)
@@ -226,11 +255,12 @@ struct TrainingView: View {
                         Text("Custom repo id…").tag("")
                         ForEach(baseModels, id: \.self) { identity in Text(identity).tag(identity) }
                     }.frame(maxWidth: WorkbenchSize.Training.baseModelMenuWidth, alignment: .leading)
+                        .help("Language-model candidates from Library. Preview checks whether MLX-LM recognizes the cached architecture.")
                 }
                 if showsCustomRepoField {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         fieldLabel("Base model repo id")
-                        TextField("Base model repo id", text: $session.draft.repo)
+                        TextField("Base model repo id", text: customRepoInput)
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Base model repo id")
                             .focused($focusedField, equals: .repo)
@@ -245,7 +275,7 @@ struct TrainingView: View {
                             .focused($focusedField, equals: .data)
                         Button("Choose…") { chooseDataset() }.buttonStyle(.bordered).controlSize(.small)
                     }
-                    Text("Choose a directory containing train.jsonl. A valid.jsonl validation set is optional.")
+                    Text("Choose a directory containing train.jsonl and valid.jsonl. Each split needs at least one full batch of examples.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     DisclosureGroup("Dataset format") {
@@ -344,9 +374,25 @@ struct TrainingView: View {
             }
         }.id(TrainingField.iterations)
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+            fieldLabel("Batch size")
+            TextField("Batch size", text: $session.draft.batchSize)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: WorkbenchSize.Training.iterationsWidth)
+                .accessibilityLabel("Batch size")
+                .focused($focusedField, equals: .batchSize)
+                .help("Examples per training batch, from 1 to 64. Both dataset splits must contain at least this many examples.")
+            if let error = session.draft.batchSizeError {
+                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }.id(TrainingField.batchSize)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
             fieldLabel("Output (optional)")
             TextField("Output (optional)", text: $session.draft.output)
                 .textFieldStyle(.roundedBorder).accessibilityLabel("Output directory")
+            Text("Leave blank for a new adapter folder in Workbench’s application data.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -432,11 +478,12 @@ struct TrainingView: View {
                 requestSignature(repo: preview.request.repo, data: preview.request.data,
                     output: summary.outputPath ?? preview.request.output ?? "")
                 planRow("Iterations", String(preview.request.iterations))
+                planRow("Requested batch size", String(preview.request.batchSize))
                 if let count = summary.trainingExamples { planRow("Training examples", String(count)) }
                 if let count = summary.validationExamples { planRow("Validation examples", String(count)) }
                 if let path = summary.basePath { planRow("Captured base model", path) }
-                if summary.baseMissing {
-                    Label("The base model was not found in the local Hugging Face cache. Cache it, then preview again before confirming training.", systemImage: "exclamationmark.triangle")
+                if let reason = summary.blockingReason {
+                    Label(reason, systemImage: "exclamationmark.triangle")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -449,7 +496,7 @@ struct TrainingView: View {
                     .buttonStyle(.workbenchPrimary)
                     .disabled(!session.canConfirm)
                     .accessibilityIdentifier("training-confirm")
-                    .help(summary.baseMissing ? "Cache the base model, then preview again." : "Submit the captured training request shown above.")
+                    .help(summary.blockingReason ?? "Submit the captured training request shown above.")
                 Divider()
                 RawJSONDisclosure("Raw plan payload", value: preview.payload)
             }

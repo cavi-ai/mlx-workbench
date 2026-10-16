@@ -22,9 +22,49 @@ make test-swift
 make start
 ```
 
-`make test-swift` runs the XCTest suite hosted in the app. Hosted unit tests never start live services or touch real state: launch-time live work is skipped under XCTest, and default state paths resolve into a fresh temporary directory per test. UI tests run a separate app process.
+`make test-swift` runs the XCTest suite hosted in the app. By default, hosted tests skip launch-time live work and resolve state paths into a fresh temporary directory per test. Explicit real-runtime acceptance tests require their opt-in environment variables. UI tests run a separate app process.
 
 `tests/fixtures/` is consumed by both the Python suite and the XCTest suite. A fixture change must keep both green.
+
+### Trained adapter acceptance
+
+Use a completed LoRA receipt and an existing MLX-LM runtime to check Run against
+real local artifacts. This bounded test accepts a base smaller than 1 GB, starts
+an owned loopback server, requests a short response and stops the server. It
+leaves the training receipt unchanged and writes results beneath `.run/`.
+It does not train a new adapter or measure quality improvement.
+
+```bash
+TEST_RUNNER_MLX_WORKBENCH_REAL_ADAPTER_RECEIPT=/absolute/path/to/completed-receipt.json \
+TEST_RUNNER_MLX_WORKBENCH_PYTHON=/absolute/path/to/runtime/bin/python \
+TEST_RUNNER_HF_HUB_OFFLINE=1 TEST_RUNNER_TRANSFORMERS_OFFLINE=1 \
+xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+  -destination 'platform=macOS' \
+  -only-testing:mlx-workbenchTests/TrainedAdapterRuntimeTests/testCompletedLocalAdapterServesThroughRunAndStops test
+```
+
+To check Training evaluation with the same receipt and runtime, select
+`-only-testing:mlx-workbenchTests/TrainedAdapterRuntimeTests/testCompletedLocalAdapterEvaluationRetainsAndReopensRealOutputs`
+instead. It previews and confirms the native base-versus-adapter comparison,
+retains its outputs in an isolated workspace beneath `.run/`, and reopens the
+report from evaluation history. The training receipt stays unchanged and the
+report records no quality judgment.
+
+To exercise training with a blank output field, provide a cached base smaller
+than 1 GB and a dataset containing one example in each of `train.jsonl` and
+`valid.jsonl`. This opt-in test previews and confirms one iteration with batch
+size 1, checks the completed receipt and adapter identity, and retains its
+isolated application-data tree beneath `.run/`.
+
+```bash
+TEST_RUNNER_MLX_WORKBENCH_REAL_TRAINING_REPO=publisher/model \
+TEST_RUNNER_MLX_WORKBENCH_REAL_TRAINING_DATA=/absolute/path/to/dataset \
+TEST_RUNNER_MLX_WORKBENCH_PYTHON=/absolute/path/to/runtime/bin/python \
+TEST_RUNNER_HF_HUB_OFFLINE=1 TEST_RUNNER_TRANSFORMERS_OFFLINE=1 \
+xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
+  -destination 'platform=macOS' \
+  -only-testing:mlx-workbenchTests/TrainedAdapterRuntimeTests/testBlankOutputTrainingCreatesARealAdapterInApplicationSupport test
+```
 
 ## Engine boundary
 

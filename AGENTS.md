@@ -781,6 +781,20 @@ server.
 - `mlx_workbench/audit.py` appends events to a local audit trail
   (`$XDG_STATE_HOME/mlx-workbench/audit.jsonl`, bounded, best-effort —
   durable stores stay authoritative).
+- Native `TrainingSession` retains the raw form snapshot separately from the
+  resolved training request. A blank output selects a fresh
+  `<Application Support>/mlx-workbench/trained-adapters/<uuid>` destination for
+  each preview; confirmation reuses that captured path. Explicit output paths
+  are preserved, edits invalidate confirmation, and preview creates no adapter
+  folder. Batch size is captured from the form (1–64, default 4); both dataset
+  splits must contain at least one full batch. The engine checks split counts
+  before offering a plan, and native confirmation also checks reported counts.
+  Cached-base choices retain text, vision-language and legacy untyped entries;
+  known non-language models and drafters are omitted. An unavailable selection
+  remains visible as editable text. Preview validates cached `model_type`
+  against the MLX-LM registry and records its declared loader and registry
+  source in the base identity. `--hf-cache` selects the cache used for both
+  identity capture and the local-model gate; no weights are loaded by preview.
 - Convert/serve Python deps are pinned in `requirements.txt` (exact
   versions), and the agent's lab operations (Training, experiments) in
   `vendor/mlx-agent/requirements-lab.txt`; `make install` installs both and `make pip-audit` checks the

@@ -7,6 +7,18 @@ struct TrainingPlanSummary: Equatable {
     let baseMissing: Bool
     let trainingExamples: Int?
     let validationExamples: Int?
+    let batchSize: Int?
+
+    var blockingReason: String? {
+        if baseMissing { return "The base model was not found in the local Hugging Face cache. Cache it, then preview again before confirming training." }
+        if validationExamples == 0 { return "Training requires a nonempty valid.jsonl validation set. Add validation examples and preview again." }
+        if let batchSize {
+            if batchSize < 1 || batchSize > 64 { return "The preview reported an invalid batch size. Correct it and preview again." }
+            if let trainingExamples, trainingExamples < batchSize { return "train.jsonl has fewer examples than the batch size. Reduce batch size or add examples, then preview again." }
+            if let validationExamples, validationExamples < batchSize { return "valid.jsonl has fewer examples than the batch size. Reduce batch size or add examples, then preview again." }
+        }
+        return nil
+    }
 
     init(payload: [String: Any]) {
         let plan = WorkbenchAPI.unwrapPlan(payload)
@@ -24,6 +36,7 @@ struct TrainingPlanSummary: Equatable {
         let dataset = plan["dataset"] as? [String: Any]
         trainingExamples = count(dataset?["train_lines"])
         validationExamples = count(dataset?["valid_lines"])
+        batchSize = count(plan["batch_size"])
     }
 }
 
@@ -107,10 +120,13 @@ struct TrainingPresentation: Equatable {
         )
     }
 
-    /// Hugging Face repo ids of the Library's cached models, sorted, so a base model can be picked instead of typed.
+    /// Known language models and legacy untyped cache entries are candidates;
+    /// the engine's preview checks the actual MLX-LM architecture registry.
     static func baseModels(_ snapshot: LibrarySnapshot?) -> [String] {
         var identities: Set<String> = []
         for model in snapshot?.models ?? [] {
+            guard model.item.draft == nil else { continue }
+            if let type = model.item.task?.type, type != .textLLM && type != .visionLanguage { continue }
             for path in [model.item.path] + model.outputPaths {
                 if let repoID = HFRepoID.forPath(path) {
                     identities.insert(repoID)
@@ -143,7 +159,7 @@ struct TrainingPresentation: Equatable {
 struct TrainingBaseModelChoice: Equatable {
     private(set) var choosesCustom = true
 
-    func showsField(cached: [String]) -> Bool { cached.isEmpty || choosesCustom }
+    func showsField(repo: String, cached: [String]) -> Bool { choosesCustom || !cached.contains(repo) }
 
     func selection(repo: String, cached: [String]) -> String {
         !choosesCustom && cached.contains(repo) ? repo : ""
@@ -152,6 +168,11 @@ struct TrainingBaseModelChoice: Equatable {
     /// The repo id the draft takes after a pick; the custom choice clears it.
     mutating func select(_ identity: String) -> String {
         choosesCustom = identity.isEmpty
+        return identity
+    }
+
+    mutating func edit(_ identity: String) -> String {
+        choosesCustom = true
         return identity
     }
 }
