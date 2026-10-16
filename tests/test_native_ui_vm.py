@@ -79,6 +79,32 @@ class NativeUIVMTests(unittest.TestCase):
                 vm.guest("/nonexistent-input", "/nonexistent-output")
         probe.assert_called_once_with(["sysctl", "-n", "hw.model"], text=True)
 
+    def test_display_setup_failure_prevents_gui_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source-manifest.json").write_text('{"preflight_only": true}')
+            failure = subprocess.CalledProcessError(1, ["/usr/bin/swift"])
+            with patch.object(vm.os, "getuid", return_value=501), \
+                    patch.object(vm.subprocess, "check_output", side_effect=["VirtualMac2,1", "501", "Aqua", failure]), \
+                    patch.object(vm, "checked") as launch:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    vm.guest(root, root / "output")
+            launch.assert_not_called()
+            self.assertFalse((root / "output/gui-preflight.json").exists())
+
+    def test_preflight_records_display_mode_before_gui_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source-manifest.json").write_text('{"preflight_only": true}')
+            display = '{"before":{"width":1024,"height":768},"after":{"width":1440,"height":1000}}'
+            with patch.object(vm.os, "getuid", return_value=501), \
+                    patch.object(vm.subprocess, "check_output", side_effect=["VirtualMac2,1", "501", "Aqua", display, "{}"]), \
+                    patch.object(vm, "checked") as launch:
+                vm.guest(root, root / "output")
+            self.assertEqual((root / "output/display-preflight.json").read_text(), display)
+            self.assertTrue((root / "output/gui-preflight.json").is_file())
+            self.assertEqual(launch.call_args_list[0].args[0], ["/usr/bin/open", "-a", "Calculator"])
+
     def test_zero_tests_and_skipped_ui_tests_cannot_pass(self):
         zero = {"result": "Passed", "totalTestCount": 0, "passedTests": 0, "failedTests": 0}
         with self.assertRaises(RuntimeError):
