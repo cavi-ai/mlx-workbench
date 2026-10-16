@@ -292,19 +292,81 @@ struct HealthHeroView: View {
 
 /// The base probe does not inspect isolated model runtimes.
 struct HealthRuntimeScopeView: View {
+    @ObservedObject var backends: HealthBackendSession
+    @ObservedObject var intake: IntakeCoordinator
+    let source: String
+    let onRefresh: () -> Void
+    let onAddModel: () -> Void
     let onOpenRun: () -> Void
+    @Environment(\.isRouteActive) private var isRouteActive
 
     var body: some View {
         WorkbenchSurface {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
                 SectionTitle(text: "Model-specific runtimes")
-                Text("The checks above cover the base conversion tools and mlx-lm server. Optional backends and Strata use separate environments. Preview serving in Run to check the selected model's runtime before confirmation.")
+                Text("The checks above cover the base conversion tools and mlx-lm server. The optional MLX backends below use separate environments. Installed is an installation record, not proof that a model can run.")
                     .font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Open Run", action: onOpenRun).buttonStyle(.bordered)
+                HStack {
+                    Button(backends.isRefreshing ? "Refreshing backends…" : "Refresh backends", action: onRefresh)
+                        .buttonStyle(.bordered).disabled(backends.isRefreshing)
+                    if backends.isRefreshing { ProgressView().controlSize(.small) }
+                }
+                if let checkedAt = backends.checkedAt {
+                    Text("Checked " + checkedAt.formatted(date: .abbreviated, time: .standard))
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
+                if backends.isStale {
+                    Text(backends.isRefreshing ? "Previous result while refreshing." : "Last available result; the latest refresh failed.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                        .accessibilityIdentifier("health-backends-stale")
+                }
+                ErrorBanner(text: backends.error)
+                if backends.snapshot == nil, !backends.isRefreshing, backends.error == nil {
+                    Text("Optional backend installations have not been checked.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+                if backends.snapshot != nil, backends.rows.isEmpty {
+                    Text("No optional MLX backends were reported.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+                ForEach(backends.rows) { row in
+                    Divider()
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.id).font(WorkbenchTypography.emphasis).textSelection(.enabled)
+                            Spacer(minLength: WorkbenchSpacing.xs)
+                            Text(row.status).font(WorkbenchTypography.secondary)
+                                .foregroundStyle(backends.isStale ? WorkbenchColor.muted : row.tone.color)
+                                .fixedSize()
+                                .accessibilityIdentifier("health-backend-" + row.id + "-status")
+                        }
+                        Text("Target version: " + row.version).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                        if !row.tasks.isEmpty {
+                            Text(row.tasks).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                Text("For a missing backend, choose a model in Add from Hugging Face to review its installation. Strata is separate from this list. For serving-capable models, Run checks the selected runtime before confirmation.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.sm) { actions }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { actions }
+                }
             }
         }
+        .task(id: isRouteActive ? source : nil) {
+            if isRouteActive { await backends.refresh(source: source) }
+        }
+    }
+
+    @ViewBuilder private var actions: some View {
+        Button("Add from Hugging Face…", action: onAddModel).buttonStyle(.bordered).disabled(intake.isBusy)
+            .help(intake.isBusy ? "An intake is in progress" : "Choose a model and review its required backend before installing")
+        Button("Open Run", action: onOpenRun).buttonStyle(.bordered)
     }
 }
 

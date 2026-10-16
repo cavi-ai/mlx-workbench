@@ -5,6 +5,103 @@ import SwiftUI
 
 @testable import mlx_workbench
 
+final class HealthBackendTests: XCTestCase {
+    @MainActor
+    func testHealthReadsBackendStatusThroughTheRealAgent() async throws {
+        let checkout = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let agent = checkout.appendingPathComponent("vendor/mlx-agent")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("health-backends-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.path, receiptDirectory: root.path)
+        let session = HealthBackendSession(fetch: { try await api.backendList() })
+        await session.refresh(source: agent.path)
+        XCTAssertNil(session.error)
+        XCTAssertTrue(Set(session.rows.map(\.id)).isSuperset(of: ["mlx-audio", "mlx-vlm", "mflux"]))
+        XCTAssertNotNil(session.checkedAt)
+        XCTAssertFalse(session.rows.contains { $0.status == "Ready" })
+    }
+
+    private func list(state: String = "installed", schema: String = "backends/1") throws -> BackendList {
+        let data: [String: Any] = ["schema": schema, "root": "/fixture/backends", "backends": [
+            ["id": "mlx-audio", "version": "1.0", "builtin": false, "state": state,
+             "categories": ["speech_to_text", "text_to_speech"], "model_types": 2, "registry_source": "installed"],
+            ["id": "mlx-lm", "version": "1.0", "builtin": true, "state": "installed",
+             "categories": ["text_llm"], "model_types": 1, "registry_source": "installed"]]]
+        return try JSONDecoder().decode(BackendList.self, from: JSONSerialization.data(withJSONObject: data))
+    }
+
+    func testBackendRowsDescribeInstallationWithoutClaimingModelReadiness() throws {
+        let rows = try list().backends.filter { !$0.builtin }.map(HealthBackendRow.init)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].status, "Installed")
+        XCTAssertEqual(rows[0].tasks, "Speech-to-text · Text-to-speech")
+        XCTAssertEqual(rows[0].version, "1.0")
+        let unknown = HealthBackendRow(entry: try list(state: "future-state").backends[0])
+        XCTAssertEqual(unknown.status, "Unknown")
+        XCTAssertEqual(unknown.tone, .pending)
+    }
+
+    @MainActor
+    func testFailedRefreshRetainsDatedSnapshotAndRetryClearsFailure() async throws {
+        var fails = false
+        let instant = Date(timeIntervalSince1970: 100)
+        let session = HealthBackendSession(fetch: {
+            if fails { throw NSError(domain: "backend-status", code: 1) }
+            return try self.list()
+        }, now: { instant })
+        XCTAssertNil(session.snapshot)
+        await session.refresh(source: "/agent")
+        XCTAssertEqual(session.rows.map(\.id), ["mlx-audio"])
+        XCTAssertEqual(session.checkedAt, instant)
+        fails = true
+        await session.refresh(source: "/agent")
+        XCTAssertNotNil(session.error)
+        XCTAssertTrue(session.isStale)
+        XCTAssertEqual(session.rows.count, 1)
+        XCTAssertEqual(session.checkedAt, instant)
+        fails = false
+        await session.refresh(source: "/agent")
+        XCTAssertNil(session.error)
+        XCTAssertFalse(session.isStale)
+    }
+
+    @MainActor
+    func testChangingEngineDropsPreviousSnapshotAndMalformedReplyDoesNotReplaceIt() async throws {
+        var schema = "backends/1"
+        let session = HealthBackendSession(fetch: { try self.list(schema: schema) })
+        await session.refresh(source: "/first")
+        schema = "future"
+        await session.refresh(source: "/first")
+        XCTAssertEqual(session.rows.count, 1)
+        XCTAssertTrue(session.isStale)
+        await session.refresh(source: "/second")
+        XCTAssertNil(session.snapshot)
+        XCTAssertNil(session.checkedAt)
+        XCTAssertNotNil(session.error)
+    }
+
+    @MainActor
+    func testOldEngineReplyCannotReplaceNewerSnapshot() async throws {
+        var first: CheckedContinuation<BackendList, Error>?
+        var calls = 0
+        let session = HealthBackendSession(fetch: {
+            calls += 1
+            if calls == 1 { return try await withCheckedThrowingContinuation { first = $0 } }
+            return try self.list(state: "absent")
+        })
+        let old = Task { await session.refresh(source: "/first") }
+        for _ in 0..<100 where first == nil { await Task.yield() }
+        let pending = try XCTUnwrap(first)
+        await session.refresh(source: "/second")
+        pending.resume(returning: try list())
+        await old.value
+        XCTAssertEqual(session.rows.first?.status, "Not installed")
+        XCTAssertNil(session.error)
+        XCTAssertFalse(session.isRefreshing)
+    }
+}
+
 // MARK: - Fixtures
 
 private enum Fixture {

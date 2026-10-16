@@ -1,5 +1,28 @@
 import SwiftUI
 
+/// Installation records do not establish model execution readiness.
+struct HealthBackendRow: Equatable, Identifiable {
+    let id: String
+    let version: String
+    let tasks: String
+    let status: String
+    let tone: HealthTone
+
+    init(entry: BackendEntry) {
+        id = entry.id
+        version = entry.version
+        tasks = entry.categories.map { ModelTaskType(rawValue: $0)?.title ?? $0.replacingOccurrences(of: "_", with: " ").capitalized }
+            .joined(separator: " · ")
+        switch entry.state {
+        case .installed: status = "Installed"; tone = .positive
+        case .installing: status = "Installing"; tone = .caution
+        case .failed: status = "Install failed"; tone = .negative
+        case .absent: status = "Not installed"; tone = .pending
+        case .unknown: status = "Unknown"; tone = .pending
+        }
+    }
+}
+
 // MARK: - Layout
 
 /// Health's width thresholds, derived from the width the page is offered and

@@ -52,12 +52,15 @@ struct DoctorView: View {
     @State private var checkState: DoctorCheckState = .notRun
     @State private var lastCheckedAt: Date?
     @State private var layout = HealthLayout()
+    @StateObject private var backends: HealthBackendSession
+    @Environment(\.openWindow) private var openWindow
 
     private var isRunning: Bool { checkState.isRunning }
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         self.onRouteSelection = onRouteSelection
+        _backends = StateObject(wrappedValue: HealthBackendSession(fetch: { try await appHost.api.backendList() }))
     }
 
     var body: some View {
@@ -83,7 +86,18 @@ struct DoctorView: View {
                         onOpenSettings: { onRouteSelection(.settings) },
                         onReviewOnOverview: { onRouteSelection(.overview) }
                     )
-                    HealthRuntimeScopeView(onOpenRun: { onRouteSelection(.run) })
+                    HealthRuntimeScopeView(
+                        backends: backends,
+                        intake: appHost.intake,
+                        source: appHost.config.mlxAgentPath,
+                        onRefresh: { Task { await backends.refresh(source: appHost.config.mlxAgentPath) } },
+                        onAddModel: {
+                            guard !appHost.intake.isBusy else { return }
+                            appHost.intake.open(with: "")
+                            openWindow(id: IntakeWindow.id)
+                        },
+                        onOpenRun: { onRouteSelection(.run) }
+                    )
                     findingsSection
                 }
                 .frame(maxWidth: WorkbenchSize.Health.contentMaxWidth, alignment: .leading)

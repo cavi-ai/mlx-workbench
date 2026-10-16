@@ -86,6 +86,13 @@ final class WorkbenchReviewUITests: XCTestCase {
                 sys.exit(2)
             data = {'models': [], 'outputs': [], 'pending': [], 'duplicates': [],
                     'totals': {'gguf': 0, 'pending': 0, 'converted': 0, 'unreadable': 0, 'bytes': 0, 'reclaimable_bytes': 0}}
+        elif args[:2] == ['backend', 'list']:
+            time.sleep(0.2)
+            if (root / 'fail-backends').exists():
+                print('Fixture backend status unavailable.', file=sys.stderr)
+                sys.exit(2)
+            entries = json.loads((root / 'backends.json').read_text()) if (root / 'backends.json').exists() else []
+            data = {'schema':'backends/1', 'root':'/fixture/backends', 'backends':entries}
         elif args and args[0] == 'doctor':
             time.sleep(0.5)
             if (root / 'fail-doctor').exists():
@@ -457,6 +464,24 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     func testHealthAndDiscoveryResultsAndRecovery() throws {
+        func statusText(_ element: XCUIElement) -> String { element.value as? String ?? element.label }
+        func entries(_ audioState: String) -> [[String: Any]] {
+            [("mlx-audio", audioState, "speech_to_text"), ("mflux", "absent", "image_generation"),
+             ("mlx-vlm", "failed", "vision_language"), ("future-backend", "future-state", "future_task")].map { id, state, task in
+                ["id": id, "version": "1.0", "builtin": false, "state": state,
+                 "categories": [task], "model_types": 1, "registry_source": "snapshot"]
+            }
+        }
+        func writeBackends(_ state: String) throws {
+            try JSONSerialization.data(withJSONObject: entries(state)).write(to: root.appendingPathComponent("backends.json"))
+        }
+        func reveal(_ element: XCUIElement) {
+            let scroll = app.scrollViews.containing(.button, identifier: "Refresh backends").firstMatch
+            for _ in 0..<8 where !element.isHittable {
+                scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 300 : -300)
+            }
+            XCTAssertTrue(element.isHittable)
+        }
         defer {
             if let calls = try? String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8) {
                 let attachment = XCTAttachment(string: calls)
@@ -465,7 +490,45 @@ final class WorkbenchReviewUITests: XCTestCase {
                 add(attachment)
             }
         }
+        try writeBackends("installed")
         launch(appearance: "Light")
+        let audio = app.staticTexts["health-backend-mlx-audio-status"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 15))
+        XCTAssertEqual(statusText(audio), "Installed")
+        XCTAssertEqual(statusText(app.staticTexts["health-backend-mflux-status"]), "Not installed")
+        XCTAssertEqual(statusText(app.staticTexts["health-backend-mlx-vlm-status"]), "Install failed")
+        XCTAssertEqual(statusText(app.staticTexts["health-backend-future-backend-status"]), "Unknown")
+        let refresh = app.buttons["Refresh backends"]
+        reveal(refresh)
+        capture("Health-backends-installation-status")
+        try Data().write(to: root.appendingPathComponent("fail-backends"))
+        refresh.click()
+        XCTAssertTrue(text(containing: "Fixture backend status unavailable").waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["health-backends-stale"].exists)
+        XCTAssertEqual(statusText(audio), "Installed")
+        capture("Health-backends-retained-after-failure")
+        try FileManager.default.removeItem(at: root.appendingPathComponent("fail-backends"))
+        try writeBackends("absent")
+        refresh.click()
+        let recovered = expectation(for: NSPredicate(format: "value == %@ OR label == %@", "Not installed", "Not installed"), evaluatedWith: audio)
+        wait(for: [recovered], timeout: 15)
+        XCTAssertFalse(app.staticTexts["health-backends-stale"].exists)
+        resizeWindow(width: 814, height: 900)
+        reveal(refresh)
+        capture("Health-backends-compact-recovery")
+        let add = app.buttons["Add from Hugging Face…"].firstMatch
+        reveal(add)
+        add.click()
+        let intake = app.windows["Add from Hugging Face"]
+        XCTAssertTrue(intake.waitForExistence(timeout: 10))
+        XCTAssertEqual(intake.textFields["https://huggingface.co/org/name"].value as? String, "")
+        intake.buttons["Close"].click()
+        let run = app.buttons["Open Run"]
+        reveal(run)
+        run.click()
+        XCTAssertTrue(app.staticTexts["Serve a model"].waitForExistence(timeout: 10))
+        select("Health")
+        resizeWindow(width: 1050, height: 720)
         let idle = "Inventory has not been checked. Run doctor to check local model files."
         XCTAssertTrue(app.staticTexts[idle].waitForExistence(timeout: 10))
         app.buttons["Run doctor"].click()
@@ -496,6 +559,9 @@ final class WorkbenchReviewUITests: XCTestCase {
             .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
         XCTAssertEqual(calls.filter { $0.first == "discover" }.count, 2,
                        "Both Discover actions must reach the CLI")
+        XCTAssertGreaterThanOrEqual(calls.filter { Array($0.prefix(2)) == ["backend", "list"] }.count, 3)
+        XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["backend", "install"] })
+        XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["intake", "fetch"] })
         capture("Discover-failed-recovery")
 
         select("Library")

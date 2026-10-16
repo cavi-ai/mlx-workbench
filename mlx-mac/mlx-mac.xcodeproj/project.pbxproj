@@ -256,6 +256,7 @@
 26UIBLD201 /* UnifiedWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF201 /* UnifiedWorkflowUITests.swift */; };
 		SRSESB1 /* StudyRecipeSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRSESF1 /* StudyRecipeSession.swift */; };
 		SRFLDB1 /* StudyRecipeFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRFLDF1 /* StudyRecipeFields.swift */; };
+		HLTBKDB1 /* HealthBackendSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = HLTBKDF1 /* HealthBackendSession.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -519,6 +520,7 @@
 26UIREF201 /* UnifiedWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedWorkflowUITests.swift; sourceTree = "<group>"; };
 		SRSESF1 /* StudyRecipeSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyRecipeSession.swift; path = Services/StudyRecipeSession.swift; sourceTree = "<group>"; };
 		SRFLDF1 /* StudyRecipeFields.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyRecipeFields.swift; path = UI/Views/StudyRecipeFields.swift; sourceTree = "<group>"; };
+		HLTBKDF1 /* HealthBackendSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HealthBackendSession.swift; path = Services/HealthBackendSession.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -691,6 +693,7 @@
 				LMSPRSF1 /* LMStudioShelfPresentation.swift */,
 				LMSVWSF1 /* LMStudioShelfViews.swift */,
 				TRNPRSF1 /* TrainingPresentation.swift */,
+				HLTBKDF1 /* HealthBackendSession.swift */,
 				SRSESF1 /* StudyRecipeSession.swift */,
 				SRFLDF1 /* StudyRecipeFields.swift */,
 				LABPRSF1 /* LabPresentation.swift */,
@@ -1012,6 +1015,7 @@
 				LMSPRSB1 /* LMStudioShelfPresentation.swift in Sources */,
 				LMSVWSB1 /* LMStudioShelfViews.swift in Sources */,
 				TRNPRSB1 /* TrainingPresentation.swift in Sources */,
+				HLTBKDB1 /* HealthBackendSession.swift in Sources */,
 				SRSESB1 /* StudyRecipeSession.swift in Sources */,
 				SRFLDB1 /* StudyRecipeFields.swift in Sources */,
 				LABPRSB1 /* LabPresentation.swift in Sources */,
