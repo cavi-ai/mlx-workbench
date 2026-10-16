@@ -67,9 +67,10 @@ remain readable and reviewable when their recorded schema and identity support i
 **Studies**, in the Lab sidebar group, runs A/B experiments that change one variable at a time and reviews the outputs blind. **Compare → Open Studies** opens the same workspace. Returning to Studies refreshes its experiment and adaptive-study lists; navigating does not create or run an experiment.
 
 1. **Install study tools** once. **Install video runtime** adds the optional Torch runtime for video generation.
-2. **New experiment…**: start from a frozen recipe from the engine and choose the variable to change (inference steps, guidance or seed). **Validate pair**, then **Create experiment**. Model and runtime identities stay attached to both candidates.
-3. Run the queued generation jobs. Artifacts are stored durably and integrity-checked.
-4. **Blind review…** plays both clips with shared play, pause, seeking and frame controls, without showing which candidate is which. Scores and preferences become immutable receipts before the assignment is revealed.
+2. **New experiment… → Cached model**: choose an existing cached revision of **Wan 2.1 T2V 1.3B (Diffusers/MPS)**, enter a prompt and baseline settings, then **Capture recipe**. The engine checks the cached pipeline, assets and weight shards and records content hashes, installed runtime versions and platform identity. Capture never downloads weights or loads a model. Missing weights or runtime dependencies block capture; **Refresh availability** checks again after setup. MLX video conversions are a different format and cannot substitute for these Diffusers weights.
+3. Choose the variable to change (inference steps, guidance or seed) and its alternate value. **Validate pair**, then **Create experiment** queues two jobs. Editing a captured baseline requires another capture; editing the pair requires validation again. **Recipe file** preserves importing an existing frozen recipe. Model and runtime identities stay attached to both candidates.
+4. Run the queued generation jobs explicitly. Captured recipes recheck model assets, weights, runtime versions and platform before loading and after generation. Changed identities require a new recipe. Artifacts are stored durably and integrity-checked. Capture and validation alone do not prove that generation will succeed or assess output quality.
+5. **Blind review…** plays both clips with shared play, pause, seeking and frame controls, without showing which candidate is which. Scores and preferences become immutable receipts before the assignment is revealed.
 
 Adaptive studies keep their progression and stopping evidence. **Recover interrupted jobs** reconciles jobs after a crash.
 

@@ -124,6 +124,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         elif args and args[0] == 'lab' and 'workspace' in args:
             request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
             operation = request['operation']
+            with (root / 'workspace-requests.jsonl').open('a') as stream:
+                stream.write(json.dumps(request) + '\\n')
             if operation == 'training-history':
                 deadline = time.monotonic() + 20
                 while (root / 'slow-training-history').exists():
@@ -181,6 +183,24 @@ final class WorkbenchReviewUITests: XCTestCase {
                 else:
                     data = {'report': {'recipe': 'fixture frozen recipe', 'outputs': {'baseline': 'fixture base output', 'adapter': 'fixture adapter output'}},
                             'artifact_sha256': 'fixture-evaluation-sha256'}
+            elif operation == 'recipe-catalog':
+                data = {'recipes': [{'model_id':'Wan-AI/Wan2.1-T2V-1.3B-Diffusers',
+                    'display_name':'Wan 2.1 T2V 1.3B (MPS)', 'revisions':['a'*40],
+                    'unavailable_reason':'Install video runtime in Studies → Runtime setup.' if (root / 'missing-study-runtime').exists() else None}]}
+            elif operation == 'recipe-prepare':
+                time.sleep(0.5)
+                if (root / 'fail-study-capture').exists():
+                    print('Fixture cache changed. Capture again.', file=sys.stderr); sys.exit(2)
+                manifest = dict(request['settings'])
+                manifest.update(model_revision=manifest.pop('revision'), model_id='Wan-AI/Wan2.1-T2V-1.3B-Diffusers',
+                    adapter_id='diffusers.wan2.1-t2v-1.3b.mps.v1', model_checksum='sha256:'+'b'*64,
+                    source_checksums={'model_index.json':'c'*64}, runtime_versions={'python':'3.12'})
+                data = {'manifest': manifest}
+            elif operation == 'preview':
+                data = {'changed_paths':[request['draft']['variable_path']]}
+            elif operation == 'create':
+                (root / 'study-created.json').write_text(json.dumps(request['draft']))
+                data = {'experiment_id':'exp_fixture', 'job_ids':['job_a','job_b']}
             else:
                 data = {}
         elif args[:2] == ['lora', 'inspect']:
@@ -305,7 +325,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 30))
         resizeWindow(width: 1050, height: 720)
-        let destinations = ["doctor": "Health", "models": "Library", "training-studio": "Training", "settings": "Settings"]
+        let destinations = ["doctor": "Health", "models": "Library", "training-studio": "Training", "settings": "Settings", "studies": "Studies"]
         if let destination = destinations[route] { select(destination) }
     }
 
@@ -498,6 +518,68 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Training-edited-preview-invalidated")
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("--confirm"))
+    }
+
+    func testStudyRecipeCaptureAndQueue() throws {
+        for appearance in ["Light", "Dark"] {
+            launch(appearance: appearance, route: "studies")
+            XCTAssertTrue(app.buttons["New experiment…"].waitForExistence(timeout: 15))
+            app.buttons["New experiment…"].click()
+            let captureRecipe = app.buttons["Capture recipe"]
+            XCTAssertTrue(captureRecipe.waitForExistence(timeout: 15))
+            XCTAssertFalse(captureRecipe.isEnabled)
+            let prompt = app.textFields["Shared prompt"].exists ? app.textFields["Shared prompt"] : app.textViews["Shared prompt"]
+            replace(prompt, with: "A boat on a quiet lake")
+            XCTAssertTrue(captureRecipe.isEnabled)
+            try Data().write(to: root.appendingPathComponent("fail-study-capture"))
+            captureRecipe.click()
+            XCTAssertTrue(text(containing: "Fixture cache changed").waitForExistence(timeout: 15))
+            XCTAssertFalse(app.buttons["Validate pair"].isEnabled)
+            try FileManager.default.removeItem(at: root.appendingPathComponent("fail-study-capture"))
+            captureRecipe.click()
+            XCTAssertTrue(app.staticTexts["study-recipe-captured"].waitForExistence(timeout: 15))
+            XCTAssertTrue(app.buttons["Validate pair"].isEnabled)
+            XCTAssertTrue(app.textFields["Alternate value"].isHittable)
+            replace(app.textFields["Alternate value"], with: "9")
+            replace(app.textFields["Width"], with: "257")
+            XCTAssertFalse(app.buttons["Validate pair"].isEnabled)
+            XCTAssertFalse(captureRecipe.isEnabled)
+            replace(app.textFields["Width"], with: "256")
+            captureRecipe.click()
+            XCTAssertTrue(app.staticTexts["study-recipe-captured"].waitForExistence(timeout: 15))
+            app.buttons["Validate pair"].click()
+            let create = app.buttons["Create experiment"]
+            let enabled = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: create)
+            wait(for: [enabled], timeout: 15)
+            capture("Studies-recipe-validated-\(appearance)")
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            screen.name = "Studies-recipe-confirmation-screen-\(appearance)"
+            screen.lifetime = .keepAlways
+            add(screen)
+            create.click()
+            let dismissed = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.sheets.firstMatch)
+            wait(for: [dismissed], timeout: 15)
+            let saved = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("study-created.json"))) as? [String: Any])
+            XCTAssertEqual(saved["variable_path"] as? String, "inference_steps")
+            XCTAssertEqual(saved["alternate_value"] as? Int, 9)
+            XCTAssertEqual((saved["baseline"] as? [String: Any])?["prompt"] as? String, "A boat on a quiet lake")
+            try Data().write(to: root.appendingPathComponent("missing-study-runtime"))
+            app.buttons["New experiment…"].click()
+            XCTAssertTrue(text(containing: "Install video runtime").waitForExistence(timeout: 15))
+            XCTAssertFalse(app.buttons["Capture recipe"].isEnabled)
+            let imported = app.radioButtons["Recipe file"]
+            XCTAssertTrue(imported.exists)
+            imported.click()
+            XCTAssertTrue(app.buttons["Choose generation recipe…"].waitForExistence(timeout: 5))
+            capture("Studies-recipe-import-\(appearance)")
+            app.sheets.buttons["Cancel"].click()
+            try FileManager.default.removeItem(at: root.appendingPathComponent("missing-study-runtime"))
+            app.terminate()
+        }
+        let requests = try String(contentsOf: root.appendingPathComponent("workspace-requests.jsonl"), encoding: .utf8)
+            .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        XCTAssertFalse(requests.contains { ["run", "study-run"].contains($0["operation"] as? String ?? "") })
+        XCTAssertEqual(requests.filter { $0["operation"] as? String == "create" }.count, 2)
     }
 
     func testTrainingWorkflowGuidanceAndResults() throws {

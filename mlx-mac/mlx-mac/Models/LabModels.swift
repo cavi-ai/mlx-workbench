@@ -76,13 +76,14 @@ struct LabRequest: Codable, Sendable {
     var promptSuite: TrainingEvaluationSuite? = nil
     var promptID: String? = nil
     var artifactSHA256: String? = nil
+    var settings: LabValue? = nil
     enum CodingKeys: String, CodingKey {
         case operation, draft, experimentID = "experiment_id", jobID = "job_id"
         case workerID = "worker_id", sessionID = "session_id", preference, scores, notes
         case studyID = "study_id", manifest
         case evaluationID = "evaluation_id"
         case receipt, prompt, maxTokens = "max_tokens"
-        case sourceDatabase = "source_database", sourceArtifacts = "source_artifacts", destination, previewHash = "preview_hash"
+        case sourceDatabase = "source_database", sourceArtifacts = "source_artifacts", destination, previewHash = "preview_hash", settings
         case promptSuite = "prompt_suite", promptID = "prompt_id", artifactSHA256 = "artifact_sha256"
     }
 }
@@ -134,9 +135,11 @@ struct LabResponse: Decodable, Sendable {
     var baselineValue: LabValue? = nil
     var alternateValue: LabValue? = nil
     var manifests: [String: LabValue]? = nil
+    var recipes: [StudyRecipeOption]? = nil
+    var manifest: LabValue? = nil
     enum CodingKeys: String, CodingKey {
         case evaluationID = "evaluation_id", reviews
-        case studies, study
+        case studies, study, recipes, manifest
         case plan, report, artifactSHA256 = "artifact_sha256", evaluations
         case history, queue, experimentID = "experiment_id", sessionID = "session_id", prompt, left, right, status
         case errorCode = "error_code", errorMessage = "error_message", changedPaths = "changed_paths"
