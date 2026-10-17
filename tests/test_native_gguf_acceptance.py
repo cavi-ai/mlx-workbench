@@ -29,7 +29,7 @@ class NativeGGUFAcceptanceContractTests(unittest.TestCase):
                 "print(json.dumps({'status':'ok','data':{'servers':[]}}))\n"
             )
             with patch("socket.getfqdn", side_effect=AssertionError("Loopback status must not require DNS")), \
-                    acceptance.serving_status_bridge(manifest, dict(os.environ, MLX_WORKBENCH_PYTHON=sys.executable)) as url:
+                    acceptance.runtime_status_bridge(manifest, dict(os.environ, MLX_WORKBENCH_PYTHON=sys.executable)) as url:
                 with urlopen(url, timeout=5) as response:
                     self.assertEqual(json.load(response)["data"]["servers"], [])
                 arguments = json.loads(recorded.read_text())
@@ -39,6 +39,60 @@ class NativeGGUFAcceptanceContractTests(unittest.TestCase):
                     urlopen(url + "?command=stop", timeout=5)
                 self.assertEqual(error.exception.code, 404)
                 self.assertEqual(json.loads(recorded.read_text()), arguments)
+
+    def test_training_acceptance_requires_a_pinned_cache_snapshot(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = acceptance.load_manifest(str(self._runtime_fixture(root)))
+            from dataclasses import replace
+            source = root / "hub/models--example--base/snapshots/revision"
+            source.mkdir(parents=True)
+            ref = source.parents[1] / "refs/main"
+            ref.parent.mkdir()
+            ref.write_text("revision")
+            self.assertEqual(acceptance.training_repo(replace(manifest, source_path=source)), "example/base")
+            ref.write_text("another-revision")
+            with self.assertRaises(acceptance.ManifestError):
+                acceptance.training_repo(replace(manifest, source_path=source))
+            with self.assertRaises(acceptance.ManifestError):
+                acceptance.training_repo(manifest)
+
+    def test_training_workflow_selects_only_the_real_training_case(self):
+        args = acceptance.parse_args(["--manifest", "/runtime.json", "--source-format", "mlx", "--workflow", "training"])
+        self.assertEqual(args.workflow, "training")
+        command = acceptance.xcodebuild_command("xcodebuild", Path("/evidence"), "mlx", "training")
+        self.assertIn("-only-testing:mlx-workbenchUITests/GGUFToRunRealDataUITests/testRealMLXTrainingAndEvaluation", command)
+
+    def test_training_status_bridge_runs_only_lora_status(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = acceptance.load_manifest(str(self._runtime_fixture(root)))
+            recorded = root / "arguments.json"
+            (manifest.agent_home / "scripts/mlx-agent").write_text(
+                "import json,pathlib,sys\n"
+                f"pathlib.Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+                "print(json.dumps({'status':'ok','data':{'jobs':[]}}))\n")
+            with acceptance.runtime_status_bridge(manifest, dict(os.environ, MLX_WORKBENCH_PYTHON=sys.executable), "training") as url:
+                with urlopen(url, timeout=5) as response:
+                    self.assertEqual(json.load(response)["data"]["jobs"], [])
+                self.assertEqual(json.loads(recorded.read_text())[:2], ["lora", "status"])
+
+    def test_training_cleanup_stops_only_the_matching_owned_job(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = acceptance.load_manifest(str(self._runtime_fixture(root)))
+            environment = dict(os.environ, TASK6_TRAINING_ROOT=str(root / "evidence"), TASK6_TRAINING_REPO="example/base")
+            jobs = [
+                {"out": str(root / "evidence/adapter"), "repo": "example/base", "state": "running", "pid": 101},
+                {"out": str(root / "other/adapter"), "repo": "example/base", "state": "running", "pid": 102},
+                {"out": str(root / "evidence/adapter"), "repo": "other/base", "state": "running", "pid": 103},
+                {"out": str(root / "evidence/adapter"), "repo": "example/base", "state": "done", "pid": 104},
+            ]
+            result = subprocess.CompletedProcess([], 0, stdout=json.dumps({"status": "ok", "data": {"jobs": jobs}}))
+            with patch.object(acceptance.subprocess, "run", return_value=result) as run:
+                acceptance.cleanup_training(manifest, environment)
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args_list[1].args[0][2:6], ["lora", "stop", "--pid", "101"])
 
     def _runtime_fixture(self, root: Path, *, host: str = "127.0.0.1") -> Path:
         models = root / "models"
