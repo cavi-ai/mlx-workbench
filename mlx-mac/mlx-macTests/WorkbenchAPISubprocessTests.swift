@@ -56,6 +56,18 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         XCTAssertEqual(stopped, true)
     }
     func testCancelMediaRequestStopsItsAgentAndBackendWithoutStoppingAnotherProcess() async throws {
+        try await assertCancellationStopsOwnedProcesses { api, _ in
+            _ = try await api.describe(path: "/Models/test", prompt: "test", image: "/test.png", video: nil, maxTokens: 8)
+        }
+    }
+    func testCancelRecommendationStopsItsAgentAndBackendWithoutStoppingAnotherProcess() async throws {
+        try await assertCancellationStopsOwnedProcesses { api, state in
+            _ = try await api.adoptStart(role: "coding", state: state, fast: true, offline: true)
+        }
+    }
+    private func assertCancellationStopsOwnedProcesses(
+        request: @escaping @Sendable (WorkbenchAPI, String) async throws -> Void
+    ) async throws {
         let pids = FileManager.default.temporaryDirectory.appendingPathComponent("cancel-media-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: pids) }
         let agent = try FixtureAgent(spawningBackendRecordingPIDsTo: pids)
@@ -69,10 +81,10 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
             XCTAssertTrue(processIsGone(other.processIdentifier))
         }
         let api = WorkbenchAPI(cli: CLIProcess(registry: registry, terminationGrace: 0.2), agentPath: agent.root.path)
-        let finished = expectation(description: "cancelled media invocation returned")
+        let finished = expectation(description: "cancelled invocation returned")
         let task = Task {
-            do { _ = try await api.describe(path: "/Models/test", prompt: "test", image: "/test.png", video: nil, maxTokens: 8)
-                XCTFail("Cancelled media invocation must not return a result")
+            do { try await request(api, pids.appendingPathExtension("state").path)
+                XCTFail("Cancelled invocation must not return a result")
             } catch { XCTAssertTrue(error is CancellationError, "Unexpected error: \(error)") }
             finished.fulfill()
         }
