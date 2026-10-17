@@ -12,6 +12,13 @@ struct SetupAssistantView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject var coordinator: SetupCoordinator
 
+    private var readiness: SetupReadiness {
+        let connected: Bool
+        if case .ready = appHost.agentHealth { connected = true } else { connected = false }
+        return SetupReadiness(agentReady: connected, convertReady: appHost.runtimeReport.convert.ok,
+                              serveReady: appHost.runtimeReport.serve.ok)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
             header
@@ -125,10 +132,29 @@ struct SetupAssistantView: View {
 
     private var doneStep: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text("Setup complete. Scan the library to build the model inventory, then Home will point at the next safe action.")
+            Text(readiness.title).font(WorkbenchTypography.emphasis)
+                .accessibilityIdentifier("setup-readiness-title")
+            Text(readiness.summary)
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                Label(readiness.needsEngine ? "Engine needs attention" : "Engine connected",
+                      systemImage: readiness.needsEngine ? "exclamationmark.circle" : "checkmark.circle")
+                    .font(WorkbenchTypography.body)
+                if readiness.needsEngine {
+                    Button("Review engine") { coordinator.revisit(.agent) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+                Label(readiness.runtimeMessage,
+                      systemImage: readiness.needsRuntime ? "exclamationmark.circle" : "checkmark.circle")
+                    .font(WorkbenchTypography.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                if readiness.needsRuntime {
+                    Button("Review runtime") { coordinator.revisit(.runtime) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+            }
         }
     }
 
@@ -141,13 +167,13 @@ struct SetupAssistantView: View {
                     .foregroundStyle(WorkbenchColor.muted)
             }
             Spacer()
-            if !coordinator.isFirst && !coordinator.isLast {
+            if !coordinator.isFirst {
                 Button("Back") { coordinator.retreat() }
             }
             if coordinator.isLast {
-                Button("Scan my library") {
+                Button(readiness.finishTitle) {
                     coordinator.finish()
-                    appHost.requestRescan()
+                    if readiness.isReady { appHost.requestRescan() }
                 }
                 .buttonStyle(.workbenchPrimary)
             } else {

@@ -127,7 +127,7 @@ struct ContentView: View {
                         .zIndex(isActive ? 1 : 0)
                 }
             }
-            .frame(width: geometry.size.width, height: geometry.size.height)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

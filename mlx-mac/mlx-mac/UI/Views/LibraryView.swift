@@ -326,32 +326,18 @@ struct LibraryWorkspace: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                ForEach(LibrarySource.allCases.filter { visitedSources.contains($0) }) { destination in
-                    let active = source == destination
-                    sourceView(destination)
-                        .environment(\.isRouteActive, isRouteActive && active)
-                        .opacity(active ? 1 : 0)
-                        .allowsHitTesting(active)
-                        .accessibilityHidden(!active)
-                        .zIndex(active ? 1 : 0)
-                }
+        ZStack {
+            ForEach(LibrarySource.allCases.filter { visitedSources.contains($0) }) { destination in
+                let active = source == destination
+                sourceView(destination)
+                    .environment(\.isRouteActive, isRouteActive && active)
+                    .opacity(active ? 1 : 0)
+                    .allowsHitTesting(active)
+                    .accessibilityHidden(!active)
+                    .zIndex(active ? 1 : 0)
             }
-            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Picker("Source", selection: $source) {
-                ForEach(LibrarySource.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 350)
-            .padding(.horizontal, WorkbenchSpacing.pageInset)
-            .padding(.top, WorkbenchSpacing.pageInset)
-            .accessibilityIdentifier("library-source")
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
         .onChange(of: source) { _, selected in visitedSources.insert(selected) }
         .onChange(of: lmStudioRequested) { _, requested in
             if requested { source = .lmStudio; visitedSources.insert(.lmStudio) }
@@ -362,8 +348,14 @@ struct LibraryWorkspace: View {
 
     @ViewBuilder private func sourceView(_ source: LibrarySource) -> some View {
         switch source {
-        case .allModels: LibraryView(appHost: appHost, revealRequest: revealRequest, onRouteSelection: onRouteSelection)
-        case .lmStudio: LMStudioView(appHost: appHost, home: sourceHome, onRouteSelection: navigateFromSource)
+        case .allModels:
+            LibraryView(appHost: appHost, revealRequest: revealRequest, sourceSelection: $source,
+                        onRouteSelection: onRouteSelection)
+        case .lmStudio:
+            VStack(spacing: 0) {
+                LibrarySourcePicker(selection: $source)
+                LMStudioView(appHost: appHost, home: sourceHome, onRouteSelection: navigateFromSource)
+            }
         }
     }
 
@@ -384,11 +376,28 @@ struct LibraryWorkspace: View {
     }
 }
 
+private struct LibrarySourcePicker: View {
+    @Binding var selection: LibrarySource
+
+    var body: some View {
+        Picker("Source", selection: $selection) {
+            ForEach(LibrarySource.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 350)
+        .padding(.horizontal, WorkbenchSpacing.pageInset)
+        .padding(.top, WorkbenchSpacing.pageInset)
+        .accessibilityIdentifier("library-source")
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct LibraryView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var reclaim: ReclaimCoordinator
     private let onRouteSelection: (AppRoute) -> Void
     let revealRequest: LibraryRevealRequest?
+    private let sourceSelection: Binding<LibrarySource>?
 
     @State private var search = ""
     @State private var readinessFilter: ModelReadiness?
@@ -408,9 +417,10 @@ struct LibraryView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.workbenchViewport) private var viewport
 
-    init(appHost: AppHost, revealRequest: LibraryRevealRequest? = nil, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
+    init(appHost: AppHost, revealRequest: LibraryRevealRequest? = nil, sourceSelection: Binding<LibrarySource>? = nil, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         self.revealRequest = revealRequest
+        self.sourceSelection = sourceSelection
         _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
         self.onRouteSelection = onRouteSelection
     }
@@ -475,6 +485,8 @@ struct LibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let sourceSelection { LibrarySourcePicker(selection: sourceSelection) }
+            WorkbenchPageHeading(route: .library)
             if let revealError {
                 InlineMessage(kind: .warning, text: revealError,
                     action: (title: "Dismiss", perform: { self.revealError = nil }))
@@ -483,7 +495,6 @@ struct LibraryView: View {
             }
             content
         }
-            .safeAreaInset(edge: .top, spacing: 0) { WorkbenchPageHeading(route: .library) }
             .sheet(isPresented: Binding(get: { reclaim.libraryTrashPlan != nil && isRouteActive }, set: { if !$0 { reclaim.cancelLibraryTrash() } })) {
                 if let plan = reclaim.libraryTrashPlan {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
