@@ -164,7 +164,8 @@ final class InferenceTaskTests: XCTestCase {
     func testResultProjectionKeepsUnknownFieldsAndMissingMetricsUnknown() throws {
         let raw = JSONValue.object([
             "answers": .object([
-                "route": .object(["type": .string("choice"), "future_metric": .number(0.7)]),
+                "route": .object(["type": .string("choice"), "choice": .string("billing"), "confidence": .number(0.8),
+                                  "probabilities": .object(["billing": .number(0.8)]), "future_metric": .number(0.7)]),
                 "rating": .object(["type": .string("score"), "score": .number(2.5), "legend": .object(["0": .string("low")]), "probabilities": .object(["0": .number(0.4)])]),
             ]),
             "future_top_level": .array([.string("preserved")]),
@@ -172,10 +173,12 @@ final class InferenceTaskTests: XCTestCase {
         let projection = TaskResultProjection(raw: raw)
         XCTAssertEqual(projection.raw, raw)
         XCTAssertEqual(projection.answers["route"]?.type, "choice")
-        XCTAssertNil(projection.answers["route"]?.choice)
-        XCTAssertNil(projection.answers["route"]?.confidence)
+        XCTAssertEqual(projection.answers["route"]?.choice, "billing")
+        XCTAssertEqual(projection.answers["route"]?.confidence, 0.8)
+        XCTAssertEqual(projection.answers["route"]?.probabilities?["billing"], .number(0.8))
         XCTAssertEqual(projection.answers["rating"]?.score, 2.5)
         XCTAssertNil(projection.answers["rating"]?.confidence)
+        XCTAssertEqual(projection.answers["rating"]?.legend?["0"], .string("low"))
         XCTAssertEqual(projection.raw.objectValue?["future_top_level"], .array([.string("preserved")]))
     }
 
@@ -223,6 +226,19 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertThrowsError(try draft.request(modelPath: "/Models/music"))
     }
 
+    func testInvalidMusicReuseLeavesExistingDraftUntouched() throws {
+        var draft = MusicTaskDraft(caption: "Keep this setup", lyrics: "Keep these words", duration: 8, steps: 12, seed: 7)
+        let invalid = TaskRequest(kind: .musicGeneration, modelPath: "/Models/music", parameters: [
+            "caption": .string("Invalid recorded setup"), "duration": .number(361),
+        ])
+        XCTAssertThrowsError(try draft.load(invalid))
+        XCTAssertEqual(draft.caption, "Keep this setup")
+        XCTAssertEqual(draft.lyrics, "Keep these words")
+        XCTAssertEqual(draft.duration, 8)
+        XCTAssertEqual(draft.steps, 12)
+        XCTAssertEqual(draft.seed, 7)
+    }
+
     @MainActor
     func testCoordinatorStartsOnlyReadyMatchingModelAndRetainsDraft() async throws {
         let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
@@ -267,6 +283,168 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertTrue(recentAfterRefresh.isEmpty)
     }
 
+    @MainActor
+    func testCancelIntentIsClearedWhenCapabilitiesRejectOrFailBeforeStart() async throws {
+        let rejected = try JSONDecoder().decode(TaskCapabilities.self, from: Data(#"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[]}"#.utf8))
+        let activeRecord = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        for failure in [FakeInferenceTaskAPI.FirstCapabilityOutcome.rejected, .failed] {
+            let api = FakeInferenceTaskAPI(record: activeRecord, capabilities: Self.taskCapabilities,
+                                           firstCapabilities: rejected, firstCapabilityOutcome: failure,
+                                           gateFirstCapabilities: true)
+            let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+            coordinator.classificationDraft.state = "Refund request"
+            coordinator.classificationDraft.questions[0].instructions = "Choose the correct team"
+            let model = Self.libraryModel(type: .classification)
+            let attempt = Task { await coordinator.start(kind: .classification, model: model) }
+            await api.waitForFirstCapabilities()
+            coordinator.requestCancelDuringStart()
+            await api.releaseFirstCapabilities()
+            await attempt.value
+
+            let pendingAfterFailure = coordinator.cancellationPending
+            XCTAssertFalse(pendingAfterFailure)
+            let nextAttempt = Task { await coordinator.start(kind: .classification, model: model) }
+            await nextAttempt.value
+            let cancelledIDs = await api.cancelledIDs()
+            XCTAssertTrue(cancelledIDs.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testCancelDuringStartUsesOnlyTheReturnedTaskID() async throws {
+        let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, gateFirstCapabilities: true)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+        coordinator.classificationDraft.state = "Refund request"
+        coordinator.classificationDraft.questions[0].instructions = "Choose the correct team"
+        let attempt = Task { await coordinator.start(kind: .classification, model: Self.libraryModel(type: .classification)) }
+        await api.waitForFirstCapabilities()
+        coordinator.requestCancelDuringStart()
+        await api.releaseFirstCapabilities()
+        await attempt.value
+
+        let cancelledIDs = await api.cancelledIDs()
+        XCTAssertEqual(cancelledIDs, [record.id])
+    }
+
+    @MainActor
+    func testReuseUsesTheClickedRecentRecordWithoutASelectedTask() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let model = Self.libraryModel(type: .classification)
+        let request = TaskRequest(kind: .classification, modelPath: model.item.path, parameters: [
+            "state": .string("Refund request from the history row"),
+            "questions": .object(["route": .object(["type": .string("choice"), "instructions": .string("Choose a team"), "criteria": .array([.string("billing"), .string("support")])])]),
+        ])
+        let requestData = try JSONEncoder().encode(request)
+        let requestURL = try fixture.write("request.json", data: requestData)
+        let reference = fixture.reference(requestURL, data: requestData)
+        let record = try Self.taskRecord(id: fixture.taskID, kind: "classification", state: "succeeded",
+                                         modelPath: model.item.path, request: reference)
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, listedRecords: [record])
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+        await coordinator.refreshRecent()
+        let selectionBeforeReuse = coordinator.selectedTask
+        XCTAssertNil(selectionBeforeReuse)
+
+        await coordinator.reuse(id: record.id, for: model)
+
+        let reusedState = coordinator.classificationDraft.state
+        let error = coordinator.error
+        XCTAssertEqual(reusedState, "Refund request from the history row")
+        XCTAssertNil(error)
+    }
+
+    @MainActor
+    func testStatusReadFailureKeepsLastKnownTaskAndShowsReadError() async throws {
+        let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, listedRecords: [record], statusFails: true)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+        await coordinator.refreshRecent()
+        await coordinator.selectTask(id: record.id)
+
+        let selectedID = coordinator.selectedTask?.id
+        let readError = coordinator.readError
+        XCTAssertEqual(selectedID, record.id)
+        XCTAssertNotNil(readError)
+        await api.allowStatusReads()
+        await coordinator.refresh(id: record.id)
+        let recoveredError = coordinator.readError
+        XCTAssertNil(recoveredError)
+    }
+
+    @MainActor
+    func testHistoryReadFailureKeepsLastKnownRowsAndCanRetry() async throws {
+        let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, listedRecords: [record])
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+        await coordinator.refreshRecent()
+        await api.failListReads()
+        await coordinator.refreshRecent()
+        let staleRows = coordinator.recent
+        let readError = coordinator.readError
+        XCTAssertEqual(staleRows.map(\.id), [record.id])
+        XCTAssertNotNil(readError)
+        await api.allowListReads()
+        await coordinator.refreshRecent()
+        let recoveredRows = coordinator.recent
+        let recoveredError = coordinator.readError
+        XCTAssertEqual(recoveredRows.map(\.id), [record.id])
+        XCTAssertNil(recoveredError)
+    }
+
+    @MainActor
+    func testPollingStopsAfterExplicitDeactivation() async throws {
+        let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, listedRecords: [record])
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"), pollInterval: .milliseconds(1))
+        await coordinator.refreshRecent()
+        await coordinator.selectTask(id: record.id)
+        let callsBeforePolling = await api.statusCallCount()
+        coordinator.startPolling(id: record.id, owner: "model-inspector")
+        await api.waitForStatusCall(after: callsBeforePolling)
+        coordinator.startPolling(id: record.id, owner: "recent-task-sheet")
+        coordinator.stopPolling(owner: "recent-task-sheet")
+        let callsAfterSheetCloses = await api.statusCallCount()
+        await api.waitForStatusCall(after: callsAfterSheetCloses)
+        let callsAfterInspectorContinues = await api.statusCallCount()
+        XCTAssertGreaterThan(callsAfterInspectorContinues, callsAfterSheetCloses)
+        coordinator.stopPolling(owner: "model-inspector")
+        let callsAtStop = await api.statusCallCount()
+        try await Task.sleep(for: .milliseconds(20))
+        let callsAfterStop = await api.statusCallCount()
+        XCTAssertEqual(callsAfterStop, callsAtStop)
+    }
+
+    @MainActor
+    func testExportAudioCopiesOnlyVerifiedTaskOwnedWAV() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let request = TaskRequest(kind: .musicGeneration, modelPath: "/Models/music", parameters: ["caption": .string("Quiet piano")])
+        let requestData = try JSONEncoder().encode(request)
+        let requestURL = try fixture.write("request.json", data: requestData)
+        let requestReference = fixture.reference(requestURL, data: requestData)
+        let record = try Self.taskRecord(id: fixture.taskID, kind: "music_generation", state: "succeeded",
+                                         modelPath: request.modelPath, request: requestReference)
+        let audioData = Data([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45])
+        let audioURL = try fixture.write("output.wav", data: audioData)
+        let audioReference = fixture.reference(audioURL, data: audioData)
+        let encodedReference = try JSONEncoder().encode(audioReference)
+        let outputValue = try JSONDecoder().decode(JSONValue.self, from: encodedReference)
+        let resultData = try JSONEncoder().encode(JSONValue.object(["output_artifact": outputValue]))
+        let resultURL = try fixture.write("result.json", data: resultData)
+        let resultReference = fixture.reference(resultURL, data: resultData)
+        let response = TaskResultResponse(task: record, artifact: resultReference, inline: true,
+                                          result: .object(["output_artifact": outputValue]))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, resultResponse: response)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+        let destination = fixture.root.appendingPathComponent("exports/result.wav")
+
+        try await coordinator.exportAudio(id: record.id, to: destination)
+
+        XCTAssertEqual(try Data(contentsOf: destination), audioData)
+    }
+
     private static let taskCapabilities = try! JSONDecoder().decode(TaskCapabilities.self, from: Data(#"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[{"kind":"classification","result_schema":"decide/1","cancellation":true,"requires_local_model":true,"model_verification":true},{"kind":"music_generation","result_schema":"music/1","cancellation":true,"requires_local_model":true,"model_verification":true}]}"#.utf8))
 
     private static func libraryModel(type: ModelTaskType) -> LibraryModel {
@@ -276,6 +454,12 @@ final class InferenceTaskTests: XCTestCase {
                              outputs: [], tensorCount: nil, error: nil,
                              task: ModelTask(type: type, useCases: [], source: "test", confidence: "high"))
         return LibraryModel(item: item, readiness: .ready)
+    }
+
+    private static func taskRecord(id: String, kind: String, state: String, modelPath: String,
+                                   request: TaskArtifactReference) throws -> TaskRecord {
+        let summary = #"{"schema":"task-run/1","id":"\#(id)","kind":"\#(kind)","state":"\#(state)","model_path":"\#(modelPath)","created_at":"2026-10-17T12:00:00+00:00","started_at":null,"completed_at":"2026-10-17T12:01:00+00:00","cancel_requested":false,"identity":{"backend":"mlx-embeddings","backend_version":"1.0.0","engine_version":"0.7.0","python_version":"3.12.0","model_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"request":{"path":"\#(request.path)","sha256":"\#(request.sha256)","bytes":\#(request.bytes)},"result":null,"error":null,"supervisor":null,"execution":null,"execution_unresolved":false}"#
+        return try JSONDecoder().decode(TaskRecord.self, from: Data(summary.utf8))
     }
 
     func testArtifactVerifierAcceptsTaskOwnedJSONAndAudioAndDecodesRequest() async throws {
@@ -358,31 +542,98 @@ final class InferenceTaskTests: XCTestCase {
 }
 
 private actor FakeInferenceTaskAPI: InferenceTaskAPI {
+    enum FirstCapabilityOutcome { case rejected, failed }
+
     private let record: TaskRecord
     private let capabilities: TaskCapabilities
     private let startUnknown: Bool
+    private let firstCapabilities: TaskCapabilities?
+    private let firstCapabilityOutcome: FirstCapabilityOutcome?
+    private let gateFirstCapabilities: Bool
+    private let listedRecords: [TaskRecord]
+    private var statusFails: Bool
+    private var listFails = false
+    private let resultResponse: TaskResultResponse?
     private var requests: [TaskRequest] = []
+    private var capabilityCalls = 0
+    private var firstCapabilitiesReached = false
+    private var firstCapabilitiesWaiter: CheckedContinuation<Void, Never>?
+    private var firstCapabilitiesRelease: CheckedContinuation<Void, Never>?
+    private var statusCalls = 0
+    private var statusWaiter: CheckedContinuation<Void, Never>?
+    private var statusWaitAfter = 0
+    private var cancelled: [String] = []
 
-    init(record: TaskRecord, capabilities: TaskCapabilities, startUnknown: Bool = false) {
+    init(record: TaskRecord, capabilities: TaskCapabilities, startUnknown: Bool = false,
+         firstCapabilities: TaskCapabilities? = nil, firstCapabilityOutcome: FirstCapabilityOutcome? = nil,
+         gateFirstCapabilities: Bool = false, listedRecords: [TaskRecord] = [], statusFails: Bool = false,
+         resultResponse: TaskResultResponse? = nil) {
         self.record = record
         self.capabilities = capabilities
         self.startUnknown = startUnknown
+        self.firstCapabilities = firstCapabilities
+        self.firstCapabilityOutcome = firstCapabilityOutcome
+        self.gateFirstCapabilities = gateFirstCapabilities
+        self.listedRecords = listedRecords
+        self.statusFails = statusFails
+        self.resultResponse = resultResponse
     }
 
-    func taskCapabilities() async throws -> TaskCapabilities { capabilities }
+    func taskCapabilities() async throws -> TaskCapabilities {
+        capabilityCalls += 1
+        if capabilityCalls == 1 && gateFirstCapabilities {
+            firstCapabilitiesReached = true
+            firstCapabilitiesWaiter?.resume()
+            firstCapabilitiesWaiter = nil
+            await withCheckedContinuation { firstCapabilitiesRelease = $0 }
+        }
+        if capabilityCalls == 1, let firstCapabilityOutcome {
+            switch firstCapabilityOutcome {
+            case .rejected: return firstCapabilities ?? capabilities
+            case .failed: throw TaskProtocolError.unsupportedCapability
+            }
+        }
+        return capabilities
+    }
     func taskStart(_ request: TaskRequest) async throws -> TaskRecord {
         requests.append(request)
         if startUnknown { throw TaskStartOutcomeUnknown() }
         return record
     }
-    func taskStatus(id: String) async throws -> TaskRecord { record }
-    func taskList(limit: Int) async throws -> TaskPage { TaskPage(tasks: [], hasMore: false) }
-    func taskResult(id: String) async throws -> TaskResultResponse { throw TaskProtocolError.unsupportedCapability }
-    func taskCancel(id: String) async throws -> TaskRecord { record }
+    func taskStatus(id: String) async throws -> TaskRecord {
+        statusCalls += 1
+        if statusCalls > statusWaitAfter { statusWaiter?.resume(); statusWaiter = nil }
+        if statusFails { throw TaskProtocolError.unsupportedCapability }
+        return record
+    }
+    func taskList(limit: Int) async throws -> TaskPage {
+        if listFails { throw TaskProtocolError.unsupportedCapability }
+        return TaskPage(tasks: listedRecords, hasMore: false)
+    }
+    func taskResult(id: String) async throws -> TaskResultResponse {
+        guard let resultResponse else { throw TaskProtocolError.unsupportedCapability }
+        return resultResponse
+    }
+    func taskCancel(id: String) async throws -> TaskRecord { cancelled.append(id); return record }
     func taskVerifyModel(id: String) async throws -> TaskModelVerification {
         TaskModelVerification(id: id, modelPath: record.modelPath, modelFingerprint: "test", matches: true)
     }
     func startEvidence() -> [TaskRequest] { requests }
+    func cancelledIDs() -> [String] { cancelled }
+    func waitForFirstCapabilities() async {
+        if firstCapabilitiesReached { return }
+        await withCheckedContinuation { firstCapabilitiesWaiter = $0 }
+    }
+    func releaseFirstCapabilities() { firstCapabilitiesRelease?.resume(); firstCapabilitiesRelease = nil }
+    func waitForStatusCall(after previousCount: Int) async {
+        if statusCalls > previousCount { return }
+        statusWaitAfter = previousCount
+        await withCheckedContinuation { statusWaiter = $0 }
+    }
+    func statusCallCount() -> Int { statusCalls }
+    func allowStatusReads() { statusFails = false }
+    func failListReads() { listFails = true }
+    func allowListReads() { listFails = false }
 }
 
 private struct TaskAcceptanceReceipt: Codable {

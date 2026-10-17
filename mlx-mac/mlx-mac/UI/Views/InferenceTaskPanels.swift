@@ -18,16 +18,18 @@ struct InferenceTaskPanel: View {
             }
         }
         .task { if isRouteActive { await coordinator.refreshRecent() } }
-        .task(id: coordinator.selectedTask?.id) {
-            while !Task.isCancelled && isRouteActive {
-                guard let task = coordinator.selectedTask, task.state.isActive else { break }
-                try? await Task.sleep(for: .seconds(2))
-                if Task.isCancelled { break }
-                await coordinator.refresh(id: task.id)
+        .task(id: "\(isRouteActive):\(coordinator.selectedTask?.id ?? ""):\(coordinator.selectedTask?.state.wireValue ?? "")") {
+            guard isRouteActive, let task = coordinator.selectedTask, task.state.isActive else {
+                coordinator.stopPolling(owner: "model-inspector")
+                return
             }
+            coordinator.startPolling(id: task.id, owner: "model-inspector")
+        }
+        .onChange(of: isRouteActive) { _, active in
+            if !active { coordinator.stopPolling(owner: "model-inspector"); coordinator.stopPlayback() }
         }
         .onChange(of: model.item.path) { _, _ in coordinator.stopPlayback() }
-        .onDisappear { coordinator.stopPlayback() }
+        .onDisappear { coordinator.stopPolling(owner: "model-inspector"); coordinator.stopPlayback() }
     }
 
     private var classifier: some View {
@@ -37,7 +39,7 @@ struct InferenceTaskPanel: View {
                 .frame(minHeight: 72, maxHeight: 120)
                 .accessibilityIdentifier("task-classification-state")
             if let validationError = coordinator.classificationDraft.validationError,
-               coordinator.classificationDraft.state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || coordinator.classificationDraft.questions.isEmpty {
+               coordinator.classificationDraft.state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || coordinator.classificationDraft.questions.isEmpty || Set(coordinator.classificationDraft.questions.map(\.name)).count != coordinator.classificationDraft.questions.count {
                 Text(validationError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
             ForEach($coordinator.classificationDraft.questions) { $question in
@@ -101,13 +103,12 @@ struct InferenceTaskPanel: View {
     private func taskActions(kind: TaskKind) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             if let error = coordinator.error { InlineMessage(kind: .warning, text: error) }
-            if let readError = coordinator.readError { InlineMessage(kind: .warning, text: "Recent tasks could not refresh: \(readError)") }
             HStack {
                 Button(coordinator.busy ? "Starting…" : "Start") { Task { await coordinator.start(kind: kind, model: model) } }
                     .buttonStyle(.borderedProminent).disabled(!coordinator.canStart || !coordinator.isDraftValid(for: kind)).accessibilityIdentifier("task-start")
                 if let task = coordinator.selectedTask, task.state.isActive {
                     Button("Cancel") { Task { await coordinator.cancel(id: task.id) } }.accessibilityIdentifier("task-cancel")
-                    Button("Refresh") { Task { await coordinator.refresh(id: task.id) } }.accessibilityIdentifier("task-status")
+                    Button("Refresh") { Task { await coordinator.refresh(id: task.id) } }.accessibilityIdentifier("task-refresh")
                 } else if coordinator.busy {
                     Button("Cancel") { coordinator.requestCancelDuringStart() }.accessibilityIdentifier("task-cancel")
                 }
@@ -143,6 +144,29 @@ struct RecentTaskList: View {
                 Spacer()
                 Button("Refresh") { Task { await coordinator.refreshRecent() } }
             }
+            if let readError = coordinator.readError {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                        Text("Could not refresh task history: \(readError)")
+                        if let known = coordinator.selectedTask {
+                            Text("Showing last known status: \(known.state.wireValue.capitalized).")
+                                .font(WorkbenchTypography.secondary)
+                        }
+                    }
+                    Spacer()
+                    Button("Retry") {
+                        if let selected = coordinator.selectedTask {
+                            Task {
+                                if selected.state.isActive { await coordinator.refresh(id: selected.id) }
+                                else { await coordinator.inspect(id: selected.id) }
+                            }
+                        } else { Task { await coordinator.refreshRecent() } }
+                    }
+                }
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.failure)
+                .accessibilityIdentifier("task-read-error")
+            }
             if visibleTasks.isEmpty {
                 Text("No recent inference tasks.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
@@ -163,9 +187,12 @@ struct RecentTaskList: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("task-history-row-\(task.id)")
-                    if model?.item.path == task.modelPath {
-                        Button("Reuse") { if let model { Task { await coordinator.reuse(id: task.id, for: model) } } }
-                            .disabled(task.kind.modelTaskType != model?.item.task?.type || model?.readiness != .ready)
+                    if task.kind.modelTaskType != nil {
+                        let reason = reuseUnavailableReason(task)
+                        Button("Reuse") { if let model, reason == nil { Task { await coordinator.reuse(id: task.id, for: model) } } }
+                            .disabled(reason != nil)
+                            .help(reason ?? "Fill the task form from this recorded request")
+                            .accessibilityHint(reason ?? "Fills the task form without starting a new task")
                             .accessibilityIdentifier("task-reuse")
                     }
                 }
@@ -174,10 +201,15 @@ struct RecentTaskList: View {
             if let task = coordinator.selectedTask {
                 Divider()
                 Text("\(task.kind.title) · \(task.state.wireValue.capitalized)").font(WorkbenchTypography.value)
+                    .accessibilityIdentifier("task-status")
                 Text("Recorded model: \(task.modelPath)").font(WorkbenchTypography.secondary).textSelection(.enabled)
                 Text("Engine \(task.identity.engineVersion ?? "unknown") · \(task.identity.backend ?? "backend unknown") \(task.identity.backendVersion ?? "") · Python \(task.identity.pythonVersion ?? "unknown")")
                     .font(WorkbenchTypography.secondary).textSelection(.enabled)
                 if let taskError = task.error { InlineMessage(kind: .warning, text: "\(taskError.message) · \(taskError.remediation)") }
+                if task.kind == .classification,
+                   let raw = coordinator.selectedResult?.result ?? coordinator.verifiedResult?.json {
+                    ClassificationTaskAnswerSummary(projection: TaskResultProjection(raw: raw))
+                }
                 if let raw = coordinator.verifiedResult?.json {
                     Text(raw.prettyJSON).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                 } else if coordinator.selectedResult != nil {
@@ -187,6 +219,18 @@ struct RecentTaskList: View {
                     HStack {
                         Button(audio.activeURL == output.url && audio.isPlaying ? "Pause" : "Play WAV") { audio.toggle(output.url) }
                             .accessibilityIdentifier(audio.isPlaying ? "task-audio-pause" : "task-audio-play")
+                        Button("Export WAV…") {
+                            let panel = NSSavePanel()
+                            panel.nameFieldStringValue = "task-\(task.id)-output.wav"
+                            panel.begin { response in
+                                guard response == .OK, let url = panel.url else { return }
+                                Task {
+                                    do { try await coordinator.exportAudio(id: task.id, to: url); exportError = nil }
+                                    catch { exportError = AppHost.render(error) }
+                                }
+                            }
+                        }
+                        .accessibilityIdentifier("task-export-audio")
                         if audio.activeURL == output.url {
                             Slider(value: Binding(get: { audio.position }, set: { audio.seek(to: $0) }), in: 0...max(audio.duration, 0.01))
                         }
@@ -208,6 +252,45 @@ struct RecentTaskList: View {
         }
         .onChange(of: coordinator.selectedTask?.id) { _, _ in audio.stop() }
         .onDisappear { audio.stop() }
+    }
+
+    private func reuseUnavailableReason(_ task: TaskRecord) -> String? {
+        guard let model else { return "Select the matching Ready model in Library to reuse this request." }
+        guard model.readiness == .ready else { return "Reuse requires a Ready model." }
+        guard model.item.path == task.modelPath else { return "Select the model recorded for this task." }
+        guard model.item.task?.type == task.kind.modelTaskType else { return "The selected model does not support this task type." }
+        return nil
+    }
+}
+
+private struct ClassificationTaskAnswerSummary: View {
+    let projection: TaskResultProjection
+
+    var body: some View {
+        if !projection.answers.isEmpty {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                SectionTitle(text: "Classification answers")
+                ForEach(projection.answers.keys.sorted(), id: \.self) { name in
+                    if let answer = projection.answers[name] {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                            Text(name).font(WorkbenchTypography.value)
+                            if let type = answer.type { Text("Type: \(type)") }
+                            if let choice = answer.choice { Text("Choice: \(choice)") }
+                            if let score = answer.score { Text("Score: \(score.formatted())") }
+                            if let noul = answer.noul { Text("True/false value: \(noul.formatted())") }
+                            if let legend = answer.legend { Text("Legend: \(JSONValue.object(legend).prettyJSON)") }
+                            if let probabilities = answer.probabilities { Text("Probabilities: \(JSONValue.object(probabilities).prettyJSON)") }
+                            if let confidence = answer.confidence { Text("Confidence: \(confidence.formatted())") }
+                            if let activityProbability = answer.activityProbability { Text("Activity probability: \(activityProbability.formatted())") }
+                        }
+                        .font(WorkbenchTypography.secondary)
+                        .textSelection(.enabled)
+                        .padding(WorkbenchSpacing.sm)
+                        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+        }
     }
 }
 

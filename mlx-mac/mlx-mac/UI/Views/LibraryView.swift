@@ -546,7 +546,7 @@ struct LibraryView: View {
                 .frame(width: size.width, height: size.height)
             }
             .sheet(isPresented: $showRecentTasks) {
-                LibraryRecentTasks(coordinator: appHost.inferenceTasks)
+                LibraryRecentTasks(coordinator: appHost.inferenceTasks, model: selectedModel)
             }
             .onChange(of: usesInspectorColumn) { _, isWide in
                 if !isWide { showInspector = false }

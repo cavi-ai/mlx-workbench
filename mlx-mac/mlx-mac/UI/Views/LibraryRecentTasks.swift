@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LibraryRecentTasks: View {
     @ObservedObject var coordinator: InferenceTaskCoordinator
+    var model: LibraryModel?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.isRouteActive) private var isRouteActive
 
@@ -12,18 +13,21 @@ struct LibraryRecentTasks: View {
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }
-            RecentTaskList(coordinator: coordinator)
+            RecentTaskList(coordinator: coordinator, model: model)
         }
         .padding(WorkbenchSpacing.lg)
         .frame(minWidth: 560, minHeight: 520)
         .task { if isRouteActive { await coordinator.refreshRecent() } }
-        .task(id: coordinator.selectedTask?.id) {
-            while !Task.isCancelled && isRouteActive {
-                guard let task = coordinator.selectedTask, task.state.isActive else { break }
-                try? await Task.sleep(for: .seconds(2))
-                if Task.isCancelled { break }
-                await coordinator.refresh(id: task.id)
+        .task(id: "\(isRouteActive):\(coordinator.selectedTask?.id ?? ""):\(coordinator.selectedTask?.state.wireValue ?? "")") {
+            guard isRouteActive, let task = coordinator.selectedTask, task.state.isActive else {
+                coordinator.stopPolling(owner: "recent-task-sheet")
+                return
             }
+            coordinator.startPolling(id: task.id, owner: "recent-task-sheet")
         }
+        .onChange(of: isRouteActive) { _, active in
+            if !active { coordinator.stopPolling(owner: "recent-task-sheet"); coordinator.stopPlayback() }
+        }
+        .onDisappear { coordinator.stopPolling(owner: "recent-task-sheet"); coordinator.stopPlayback() }
     }
 }
