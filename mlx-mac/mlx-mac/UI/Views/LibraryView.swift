@@ -521,7 +521,7 @@ struct LibraryView: View {
                         .interactiveDismissDisabled(reclaim.isApplying)
                 }
             }
-            .inspector(isPresented: inspectorBinding) {
+            .libraryInspector(isPresented: inspectorBinding) {
                 inspector
                     .inspectorColumnWidth(
                         min: WorkbenchSize.Library.inspectorMinimum,
@@ -933,6 +933,20 @@ struct LibraryView: View {
         if !hadSelection, candidate != nil, usesInspectorColumn { showInspector = true }
         if selection == nil || LibraryTablePresentation.modelPath(forSelection: selection) != candidate {
             selection = candidate
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func libraryInspector<Inspector: View>(
+        isPresented: Binding<Bool>,
+        @ViewBuilder content: () -> Inspector
+    ) -> some View {
+        if isPresented.wrappedValue {
+            self.inspector(isPresented: isPresented) { content() }
+        } else {
+            self
         }
     }
 }
