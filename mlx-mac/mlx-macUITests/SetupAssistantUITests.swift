@@ -2,6 +2,7 @@ import Darwin
 import SystemConfiguration
 import XCTest
 import AppKit
+import AVFoundation
 
 enum NativeUITestEnvironment {
     private struct IsolationError: LocalizedError {
@@ -75,7 +76,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("models"), withIntermediateDirectories: true)
         let python = """
-        import hashlib, json, pathlib, sys, time
+        import hashlib, json, os, pathlib, sys, time
         root = pathlib.Path(__file__).resolve().parents[2]
         args = sys.argv[1:]
         with (root / 'calls.jsonl').open('a') as f:
@@ -86,6 +87,8 @@ final class WorkbenchReviewUITests: XCTestCase {
                 sys.exit(2)
             data = {'models': [], 'outputs': [], 'pending': [], 'duplicates': [],
                     'totals': {'gguf': 0, 'pending': 0, 'converted': 0, 'unreadable': 0, 'bytes': 0, 'reclaimable_bytes': 0}}
+            if (root / 'scan-result.json').exists():
+                data = json.loads((root / 'scan-result.json').read_text())
         elif args[:2] == ['backend', 'list']:
             time.sleep(0.2)
             if (root / 'fail-backends').exists():
@@ -190,6 +193,20 @@ final class WorkbenchReviewUITests: XCTestCase {
                 else:
                     data = {'report': {'recipe': 'fixture frozen recipe', 'outputs': {'baseline': 'fixture base output', 'adapter': 'fixture adapter output'}},
                             'artifact_sha256': 'fixture-evaluation-sha256'}
+            elif operation == 'snapshot' and (root / 'study-review-enabled').exists():
+                data = {'history': {'items': [{'id':'exp_fixture', 'sealed':not (root / 'study-reviewed.json').exists(),
+                    'states':['completed','completed'], 'evidence_completeness':'complete'}]}, 'queue':[]}
+            elif operation == 'review-start':
+                data = {'session_id':'review_fixture', 'prompt':'Two moving squares'}
+            elif operation == 'review-media':
+                data = {'left':str(root / 'review-left.mp4'), 'right':str(root / 'review-right.mp4')}
+            elif operation == 'review-submit':
+                (root / 'study-reviewed.json').write_text(json.dumps(request))
+                data = {'review_id':'review_fixture', 'revision':1}
+            elif operation == 'reveal':
+                assert (root / 'study-reviewed.json').exists()
+                data = {'review_id':'review_fixture', 'revision':1, 'canonical_by_display':{'left':'baseline','right':'alternate'},
+                    'variable_path':'inference_steps', 'baseline_value':8, 'alternate_value':9}
             elif operation == 'recipe-catalog':
                 data = {'recipes': [{'model_id':'Wan-AI/Wan2.1-T2V-1.3B-Diffusers',
                     'display_name':'Wan 2.1 T2V 1.3B (MPS)', 'revisions':['a'*40],
@@ -259,6 +276,16 @@ final class WorkbenchReviewUITests: XCTestCase {
                     preview.pop('preview_hash')
                 data = {'preview': preview, 'requires_confirmation': True}
         elif args[:2] in (['adopt', 'start'], ['adopt', 'status']):
+            if args[1] == 'start' and (root / 'hold-adopt-cancellation').exists():
+                state_path = pathlib.Path(args[args.index('--state') + 1])
+                role = args[args.index('--role') + 1]
+                state_path.write_text(json.dumps({'workflow_id': 'stopped-' + state_path.stem,
+                    'request': {'roles': [role]}, 'status': 'running', 'phase': 'verify', 'recommendations': []}))
+                (root / 'adopt-cancellation-pid').write_text(str(os.getpid()))
+                deadline = time.monotonic() + 60
+                while (root / 'hold-adopt-cancellation').exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                sys.exit(2)
             time.sleep(1.5)
             deadline = time.monotonic() + 20
             while (root / 'hold-adopt-request').exists():
@@ -461,6 +488,47 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No models found"].waitForExistence(timeout: 20))
         XCTAssertFalse(app.staticTexts["Library scan failed"].exists)
         capture("Library-retry-empty-success")
+        let addModel = app.buttons["Add from Hugging Face…"]
+        XCTAssertTrue(addModel.isHittable)
+        XCTAssertTrue(app.buttons["Open Settings"].isHittable)
+        XCTAssertTrue(app.buttons["Scan again"].isHittable)
+        resizeWindow(width: 740, height: 612)
+        XCTAssertTrue(addModel.isHittable)
+        XCTAssertTrue(app.buttons["Open Settings"].isHittable)
+        XCTAssertTrue(app.buttons["Scan again"].isHittable)
+        capture("Library-empty-compact-actions")
+        addModel.click()
+        let intake = app.windows["Add from Hugging Face"]
+        XCTAssertTrue(intake.waitForExistence(timeout: 10))
+        let source = intake.textFields["https://huggingface.co/org/name"]
+        XCTAssertTrue(source.exists)
+        XCTAssertEqual(source.value as? String ?? "", "")
+        intake.buttons["Close"].click()
+        XCTAssertTrue(intake.waitForNonExistence(timeout: 10))
+        app.buttons["Open Settings"].click()
+        XCTAssertTrue(app.staticTexts["Engine status"].waitForExistence(timeout: 10))
+        select("Library")
+        resizeWindow(width: 1050, height: 720)
+        let model: [String: Any] = ["path": root.appendingPathComponent("models/existing.gguf").path,
+                                   "name": "Existing model", "bytes": 1024, "status": "ready", "outputs": [],
+                                   "readable": true, "architecture": "llama", "quantization": "Q4_K_M",
+                                   "model_key": "existing"]
+        try JSONSerialization.data(withJSONObject: ["models": [model], "outputs": [], "pending": [],
+            "duplicates": [], "totals": ["gguf": 1, "pending": 0, "converted": 0, "unreadable": 0,
+                                          "bytes": 1024, "reclaimable_bytes": 0]])
+            .write(to: root.appendingPathComponent("scan-result.json"))
+        app.buttons["Scan again"].click()
+        XCTAssertTrue(text(containing: "Existing model").waitForExistence(timeout: 20))
+        app.popUpButtons["Readiness"].click()
+        app.menuItems["Needs Conversion"].click()
+        XCTAssertTrue(app.buttons["Clear filters"].waitForExistence(timeout: 10))
+        XCTAssertFalse(addModel.exists)
+        capture("Library-filtered-recovery")
+        app.buttons["Clear filters"].click()
+        XCTAssertTrue(text(containing: "Existing model").waitForExistence(timeout: 10))
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("\"intake\", \"fetch\""))
+        XCTAssertFalse(calls.contains("\"backend\", \"install\""))
     }
 
     func testHealthAndDiscoveryResultsAndRecovery() throws {
@@ -588,6 +656,9 @@ final class WorkbenchReviewUITests: XCTestCase {
 
     func testStudyRecipeCaptureAndQueue() throws {
         for appearance in ["Light", "Dark"] {
+            for file in ["study-review-enabled", "study-reviewed.json"] {
+                try? FileManager.default.removeItem(at: root.appendingPathComponent(file))
+            }
             launch(appearance: appearance, route: "studies")
             XCTAssertTrue(app.buttons["New experiment…"].waitForExistence(timeout: 15))
             app.buttons["New experiment…"].click()
@@ -640,12 +711,122 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Studies-recipe-import-\(appearance)")
             app.sheets.buttons["Cancel"].click()
             try FileManager.default.removeItem(at: root.appendingPathComponent("missing-study-runtime"))
+            try Data().write(to: root.appendingPathComponent("study-review-enabled"))
+            let clips = ["review-left.mp4", "review-right.mp4"].map { root.appendingPathComponent($0) }
+            for clip in clips { try Data("Invalid video".utf8).write(to: clip) }
+            select("Library"); select("Studies")
+            resizeWindow(width: 1050, height: 900)
+            let review = app.buttons["Blind review…"]
+            XCTAssertTrue(review.waitForExistence(timeout: 15))
+            review.click()
+            let sheet = app.sheets.firstMatch
+            XCTAssertTrue(sheet.staticTexts["Blind video review"].waitForExistence(timeout: 10))
+            sheet.radioButtons["Left"].click()
+            let scores = sheet.popUpButtons.matching(NSPredicate(format: "identifier != %@", "study-review-audio"))
+            XCTAssertEqual(scores.count, 10)
+            for picker in scores.allElementsBoundByIndex {
+                picker.click()
+                picker.menuItems["5"].click()
+                XCTAssertEqual(picker.value as? String, "5")
+            }
+            let submit = sheet.buttons["Submit immutable review"]
+            XCTAssertFalse(submit.isEnabled, "Unavailable clips must block a new immutable review even with complete scores")
+            XCTAssertTrue(text(containing: "Video unavailable").waitForExistence(timeout: 10))
+            capture("Studies-review-unavailable-\(appearance)")
+            try writeStudyReviewClip(to: clips[0], frames: 45)
+            try writeStudyReviewClip(to: clips[1], frames: 30)
+            sheet.buttons["Retry videos"].click()
+            let playable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: submit)
+            XCTAssertEqual(XCTWaiter.wait(for: [playable], timeout: 15), .completed)
+            XCTAssertFalse(text(containing: "Video unavailable").exists)
+            XCTAssertTrue(sheet.buttons["Play together"].isEnabled)
+            let framesReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: sheet.buttons["Next frame"])
+            XCTAssertEqual(XCTWaiter.wait(for: [framesReady], timeout: 10), .completed)
+            let position = sheet.staticTexts["study-review-position"]
+            func elapsed() -> String { "\(position.value as? String ?? "")|\(position.label)" }
+            let beforeStep = elapsed()
+            sheet.buttons["Next frame"].click()
+            let stepped = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                elapsed() != beforeStep
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [stepped], timeout: 5), .completed, "Before: \(beforeStep), after: \(elapsed())")
+            sheet.buttons["Play together"].click()
+            XCTAssertTrue(sheet.buttons["Pause"].isEnabled)
+            sheet.buttons["Pause"].click()
+            capture("Studies-review-playable-\(appearance)")
+            submit.click()
+            XCTAssertTrue(text(containing: "Review saved: review_fixture").waitForExistence(timeout: 15))
+            XCTAssertFalse(submit.exists)
+            sheet.buttons["Close"].click()
+            for clip in clips { try Data("Unavailable again".utf8).write(to: clip) }
+            review.click()
+            XCTAssertTrue(text(containing: "Review saved: review_fixture").waitForExistence(timeout: 15))
+            XCTAssertFalse(app.sheets.buttons["Submit immutable review"].exists)
+            XCTAssertTrue(text(containing: "Video unavailable").waitForExistence(timeout: 10))
+            capture("Studies-review-retained-without-media-\(appearance)")
+            app.sheets.buttons["Close"].click()
             app.terminate()
         }
         let requests = try String(contentsOf: root.appendingPathComponent("workspace-requests.jsonl"), encoding: .utf8)
             .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
         XCTAssertFalse(requests.contains { ["run", "study-run"].contains($0["operation"] as? String ?? "") })
         XCTAssertEqual(requests.filter { $0["operation"] as? String == "create" }.count, 2)
+        XCTAssertEqual(requests.filter { $0["operation"] as? String == "review-submit" }.count, 2)
+    }
+
+    private func writeStudyReviewClip(to url: URL, frames: Int) throws {
+        try FileManager.default.removeItem(at: url)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 128, AVVideoHeightKey: 128])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: 128, kCVPixelBufferHeightKey as String: 128])
+        XCTAssertTrue(writer.canAdd(input)); writer.add(input)
+        XCTAssertTrue(writer.startWriting()); writer.startSession(atSourceTime: .zero)
+        for frame in 0..<frames {
+            let deadline = Date().addingTimeInterval(10)
+            while !input.isReadyForMoreMediaData && Date() < deadline { Thread.sleep(forTimeInterval: 0.005) }
+            XCTAssertTrue(input.isReadyForMoreMediaData)
+            let pool = try XCTUnwrap(adaptor.pixelBufferPool)
+            var buffer: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
+            let pixel = try XCTUnwrap(buffer)
+            CVPixelBufferLockBaseAddress(pixel, [])
+            let context = try XCTUnwrap(CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: 128, height: 128,
+                bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue))
+            context.setFillColor(CGColor(gray: 0.1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 128, height: 128))
+            context.setFillColor(CGColor(red: 1, green: 0.8, blue: 0, alpha: 1))
+            context.fill(CGRect(x: frame * 2 % 100, y: 48, width: 24, height: 24))
+            CVPixelBufferUnlockBaseAddress(pixel, [])
+            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 15)))
+        }
+        input.markAsFinished(); writer.endSession(atSourceTime: CMTime(value: Int64(frames), timescale: 15))
+        let finished = DispatchSemaphore(value: 0)
+        writer.finishWriting { finished.signal() }
+        XCTAssertEqual(finished.wait(timeout: .now() + 10), .success)
+        XCTAssertEqual(writer.status, .completed)
+    }
+
+    func testRunningTrainingJobRefreshesToCompletion() throws {
+        let file = root.appendingPathComponent("training-jobs.json")
+        var job: [String: Any] = ["receipt": "fixture-trained-adapter", "repo": "fixture/base",
+                                  "out": root.appendingPathComponent("adapter").path, "pid": 123, "state": "running"]
+        try JSONSerialization.data(withJSONObject: [job]).write(to: file)
+        launch(appearance: "Dark", route: "training-studio", isolatedHome: true)
+        resizeWindow(width: 1024, height: 680)
+        XCTAssertTrue(app.buttons["Cancel training"].waitForExistence(timeout: 15))
+        job["state"] = "done"
+        job["adapter_identity"] = ["sha256": "fixture-adapter-identity"]
+        try JSONSerialization.data(withJSONObject: [job]).write(to: file)
+        let compare = app.buttons["Compare with base"]
+        XCTAssertTrue(compare.waitForExistence(timeout: 15), "A finished job must expose evaluation without a manual refresh")
+        XCTAssertFalse(app.buttons["Cancel training"].exists)
+        let scroll = app.scrollViews.containing(.textField, identifier: "Base model repo id").firstMatch
+        for _ in 0..<8 where !compare.isHittable { scroll.scroll(byDeltaX: 0, deltaY: -280) }
+        XCTAssertTrue(compare.isHittable)
+        capture("Training-completed-without-refresh")
     }
 
     func testTrainingWorkflowGuidanceAndResults() throws {
@@ -801,6 +982,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             reveal(compareAdapter); compareAdapter.click()
             let evaluationSheet = app.sheets.firstMatch
             XCTAssertTrue(evaluationSheet.waitForExistence(timeout: 10))
+            XCTAssertTrue(evaluationSheet.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Workspace:' OR value BEGINSWITH 'Workspace:'")).firstMatch.waitForExistence(timeout: 10))
             func revealEvaluation(_ element: XCUIElement) {
                 XCTAssertTrue(element.waitForExistence(timeout: 10))
                 let scroll = evaluationSheet.scrollViews.firstMatch
@@ -837,6 +1019,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             let reviewRetained = app.buttons["training-review-retained"]
             reveal(reviewRetained); reviewRetained.click()
             XCTAssertTrue(app.sheets.firstMatch.staticTexts["Review retained evaluation"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.sheets.firstMatch.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Workspace:' OR value BEGINSWITH 'Workspace:'")).firstMatch.exists)
             XCTAssertFalse(app.sheets.firstMatch.buttons["Run comparison"].exists)
             XCTAssertTrue(app.sheets.firstMatch.debugDescription.contains("More actionable."))
             capture("Training-\(appearance)-evaluation-suite-reopened")
@@ -1471,6 +1654,8 @@ final class WorkbenchReviewUITests: XCTestCase {
             recommendations.checkBoxes["Offline metadata"].click()
             var start: XCUIElement { app.buttons["adopt-start"] }
             var refresh: XCUIElement { app.buttons["adopt-refresh"] }
+            XCTAssertEqual(start.label, "Verify and recommend")
+            XCTAssertFalse(recommendations.buttons["Start"].exists)
             let callsBeforeHiddenReturn = try calls()
             selectRadioOption("Browse candidates", in: "discovery-mode")
             app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
@@ -1578,6 +1763,55 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(text(containing: "No recommendation reported").waitForExistence(timeout: 15))
             XCTAssertFalse(text(containing: repository).exists)
             capture("Adopt-\(appearance)-missing-fields")
+
+            try FileManager.default.removeItem(at: root.appendingPathComponent("adopt-unknown"))
+            try FileManager.default.removeItem(at: root.appendingPathComponent("adopt-no-recommendation"))
+            let hold = root.appendingPathComponent("hold-adopt-cancellation")
+            let pidFile = root.appendingPathComponent("adopt-cancellation-pid")
+            try? FileManager.default.removeItem(at: pidFile)
+            try Data().write(to: hold)
+            start.click()
+            let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                FileManager.default.fileExists(atPath: pidFile.path)
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 10), .completed)
+            let cancelledStart = try XCTUnwrap(calls().last { $0.prefix(2) == ["adopt", "start"] })
+            let cancelledPath = cancelledStart[try XCTUnwrap(cancelledStart.firstIndex(of: "--state")) + 1]
+            let savedState = try Data(contentsOf: URL(fileURLWithPath: cancelledPath))
+            let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8)))
+            let stop = app.buttons["adopt-stop"]
+            XCTAssertTrue(stop.waitForExistence(timeout: 5))
+            XCTAssertTrue(stop.isHittable)
+            XCTAssertFalse(start.isEnabled)
+            capture("Adopt-\(appearance)-stop-standard")
+            resizeWindow(width: 740, height: 680)
+            XCTAssertTrue(stop.isHittable)
+            capture("Adopt-\(appearance)-stop-compact")
+            stop.click()
+            let stopped = app.descendants(matching: .any)["adopt-stopped"].firstMatch
+            XCTAssertTrue(stopped.waitForExistence(timeout: 10))
+            XCTAssertTrue(start.isEnabled)
+            XCTAssertFalse(stop.exists)
+            XCTAssertFalse(text(containing: "Waiting for the agent's recommendation").exists)
+            XCTAssertTrue(text(containing: "No recommendation reported").exists)
+            let processStatus = kill(pid, 0), processError = errno
+            XCTAssertEqual(processStatus, -1, "The cancelled recommendation process must have exited")
+            XCTAssertEqual(processError, ESRCH)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: cancelledPath)), savedState)
+            XCTAssertFalse(text(containing: repository).exists)
+            capture("Adopt-\(appearance)-stopped")
+            refresh.click()
+            let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: refresh)
+            XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 10), .completed)
+            XCTAssertTrue(stopped.exists, "Reading partial saved state must retain the stopped notice")
+            try FileManager.default.removeItem(at: hold)
+            resizeWindow(width: 1024, height: 680)
+            start.click()
+            XCTAssertTrue(text(containing: repository).waitForExistence(timeout: 15))
+            XCTAssertFalse(stopped.exists)
+            let restarted = try XCTUnwrap(calls().last { $0.prefix(2) == ["adopt", "start"] })
+            XCTAssertNotEqual(restarted[try XCTUnwrap(restarted.firstIndex(of: "--state")) + 1], cancelledPath)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: cancelledPath)), savedState)
             app.terminate()
         }
     }

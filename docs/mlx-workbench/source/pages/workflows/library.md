@@ -22,6 +22,11 @@ The **Source** picker switches between **All models** and **LM Studio**. Switchi
 
 Columns collapse as the window narrows. Filters narrow the list by quantization and readiness. **Refresh** rescans; a failed scan offers **Retry scan**.
 
+When a scan finds no models, **Add from Hugging Face…** opens intake for review,
+**Open Settings** lets you choose model folders, and **Scan again** refreshes the inventory.
+Opening intake does not download a model. If search or filters hide existing models,
+**Clear search** and **Clear filters** reveal them without adding another model.
+
 ### Model details
 
 In wide windows, the first selected model opens the inspector beside the table.

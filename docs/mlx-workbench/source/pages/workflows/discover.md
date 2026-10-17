@@ -21,4 +21,10 @@ This mode runs the engine's `adopt` flow for one role. It builds a shortlist and
 1. Pick the requested **Role**. **Fast** uses heuristic-only discovery enrichment; installed candidates still receive runtime verification prompts. **Offline metadata** uses cached discovery and makes no metadata network requests; local runtime probes still run.
 2. **Verify and recommend** starts the checks. **Refresh** reads the recommendation's saved status.
 
+**Stop checks** cancels Workbench's current verification request. Controls stay busy
+until its process exits. Saved results are kept and may be partial or still say
+`running`; **Refresh** reads that saved state, while **Verify and recommend** starts
+a new workflow. A local runtime may finish an in-flight prompt and keep its model
+loaded after Workbench stops checking.
+
 The recommendation shows its fit on this Mac and a next step: **Run…** for a model you have, or **Add from Hugging Face…** for one you do not. Each request keeps its own state file, and a failed refresh keeps the last known result, labeled **Last known state**. Existing saved Adopt navigation opens this mode in Discover.

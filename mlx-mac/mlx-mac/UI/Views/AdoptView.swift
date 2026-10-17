@@ -14,7 +14,7 @@ struct AdoptView: View {
         var response: AdoptResult?
     }
 
-    enum Operation {
+    enum Operation: Equatable {
         case start, refresh
 
         var label: String {
@@ -29,6 +29,9 @@ struct AdoptView: View {
     @State private var fast = false
     @State private var offline = false
     @State private var operation: Operation?
+    @State private var adoptTask: Task<Void, Never>?
+    @State private var isStopping = false
+    @State private var checksWereStopped = false
     @State private var workflow: WorkflowContext?
     @State private var errorMessage: String?
     @State private var isLastKnownState = false
@@ -61,6 +64,13 @@ struct AdoptView: View {
                 WorkbenchSurface {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                         controls
+                        if checksWereStopped {
+                            Text("Checks stopped in Workbench. Saved results may be partial or still say running. A local runtime may finish its current prompt and keep its model loaded.")
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("adopt-stopped")
+                        }
                         Divider()
                         AdoptRecommendationView(
                             resources: resources,
@@ -68,6 +78,7 @@ struct AdoptView: View {
                             draftRole: role,
                             requestedRole: workflow?.requestedRole,
                             response: workflow?.response,
+                            isChecking: operation == .start,
                             isLastKnown: isLastKnownState,
                             libraryModels: libraryModels,
                             reserveGB: appHost.config.fitReserveGB,
@@ -122,14 +133,20 @@ struct AdoptView: View {
                     .disabled(isBusy)
                     .controlRow()
                 Button("Verify and recommend") { startAdopt() }
-                    .buttonStyle(.borderedProminent)
-                Button("Start") { startAdopt() }
                     .buttonStyle(.workbenchPrimary)
                     .keyboardShortcut(isRouteActive ? .defaultAction : nil)
                     .disabled(!isRouteActive || isBusy || !AdoptRole.choices.contains(role))
                     .help("Inspect a shortlist and send verification prompts to installed candidates through local runtimes.")
                     .controlRow()
                     .accessibilityIdentifier("adopt-start")
+                if operation == .start {
+                    Button("Stop checks") { stopAdopt() }
+                        .buttonStyle(.bordered)
+                        .disabled(!isRouteActive || isStopping || adoptTask == nil)
+                        .help("Stop this recommendation check. Saved evidence is kept; local runtimes may finish an in-flight prompt or retain their model.")
+                        .controlRow()
+                        .accessibilityIdentifier("adopt-stop")
+                }
                 Button("Refresh") { refreshStatus() }
                     .buttonStyle(.bordered)
                     .disabled(isBusy || workflow == nil)
@@ -137,7 +154,7 @@ struct AdoptView: View {
                     .controlRow()
                     .accessibilityIdentifier("adopt-refresh")
                 if let operation {
-                    ProgressView(operation.label)
+                    ProgressView(isStopping ? "Stopping checks…" : operation.label)
                         .controlSize(.small)
                         .controlRow()
                         .accessibilityIdentifier("adopt-progress")
@@ -194,17 +211,32 @@ struct AdoptView: View {
         workflow = WorkflowContext(requestedRole: requestedRole, statePath: statePath)
         errorMessage = nil
         isLastKnownState = false
+        checksWereStopped = false
         operation = .start
-        Task {
-            defer { operation = nil }
+        adoptTask = Task {
+            defer {
+                operation = nil
+                adoptTask = nil
+                isStopping = false
+            }
             do {
-                workflow?.response = try await appHost.api.adoptStart(
+                let response = try await appHost.api.adoptStart(
                     role: requestedRole, state: statePath, fast: requestedFast, offline: requestedOffline
                 )
+                try Task.checkCancellation()
+                workflow?.response = response
+            } catch is CancellationError {
+                checksWereStopped = true
             } catch {
-                errorMessage = "Adoption failed. \(error.localizedDescription) Start again to try a new workflow, or refresh this state file."
+                errorMessage = "Recommendation check failed. \(error.localizedDescription) Verify and recommend to start a new check, or refresh its saved state."
             }
         }
+    }
+
+    private func stopAdopt() {
+        guard operation == .start, !isStopping, let adoptTask else { return }
+        isStopping = true
+        adoptTask.cancel()
     }
 
     private func refreshStatus() {
@@ -243,6 +275,7 @@ struct AdoptRecommendationView: View {
     let draftRole: String
     let requestedRole: String?
     let response: AdoptResult?
+    let isChecking: Bool
     let isLastKnown: Bool
     let libraryModels: [String: LibraryModel]
     let reserveGB: Double
@@ -317,7 +350,7 @@ struct AdoptRecommendationView: View {
             Group {
                 switch state {
                 case .idle:
-                    Text(AdoptRecommendationState.pendingSentence)
+                    Text(isChecking ? AdoptRecommendationState.pendingSentence : AdoptRecommendationState.noRecommendationSentence)
                         .font(WorkbenchTypography.secondary)
                         .foregroundStyle(WorkbenchColor.muted)
                 case .noRecommendation:
