@@ -668,7 +668,7 @@ struct LibraryView: View {
             .customizationID("model")
             .disabledCustomizationBehavior(.visibility)
 
-            TableColumn("Fits now", value: \.fitSortKey) { row in
+            TableColumn(LibraryFitPresentation.title, value: \.fitSortKey) { row in
                 LibraryFitCell(
                     row: row,
                     resources: appHost.resources,

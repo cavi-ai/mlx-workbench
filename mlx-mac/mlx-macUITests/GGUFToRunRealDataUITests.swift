@@ -167,6 +167,84 @@ final class GGUFToRunRealDataUITests: XCTestCase {
 
     /// Uses the existing ready model directly, without conversion or download.
     @MainActor
+    func testRealMLXTrainingAndEvaluation() throws {
+        let repo = try XCTUnwrap(configuredValue("TASK6_TRAINING_REPO"))
+        let source = try XCTUnwrap(runtimeValues["TASK6_SOURCE_PATH"])
+        let root = URL(fileURLWithPath: try XCTUnwrap(configuredValue("TASK6_TRAINING_ROOT")))
+        let dataset = root.appendingPathComponent("dataset"), output = root.appendingPathComponent("adapter")
+        let training = app.buttons["Training"].firstMatch
+        XCTAssertTrue(training.waitForExistence(timeout: 30)); clickVisibleButton(training)
+        let scroll = app.scrollViews.containing(.textField, identifier: "Base model repo id").firstMatch
+        func reveal(_ element: XCUIElement) {
+            XCTAssertTrue(element.waitForExistence(timeout: 20))
+            for _ in 0..<12 {
+                if scroll.frame.contains(element.frame) && element.isHittable { return }
+                scroll.scroll(byDeltaX: 0, deltaY: element.frame.minY < scroll.frame.minY ? 300 : -300)
+            }
+            XCTAssertTrue(scroll.frame.contains(element.frame)); XCTAssertTrue(element.isHittable)
+        }
+        func replace(_ name: String, _ value: String) {
+            let field = app.textFields[name]
+            reveal(field); field.click(); app.typeKey("a", modifierFlags: .command); app.typeText(value)
+        }
+        replace("Base model repo id", repo)
+        replace("Dataset path", dataset.path)
+        replace("Iterations", "1")
+        replace("Batch size", "1")
+        replace("Output directory", output.path)
+        let preview = app.buttons["training-preview"]
+        reveal(preview); clickVisibleButton(preview)
+        let confirm = app.buttons["training-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 120))
+        let capturedBase = app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", source, source)).firstMatch
+        reveal(capturedBase)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.path), "Preview must not create an adapter.")
+        capture("training-01-reviewed-plan", note: "The preview captured the exact allowlisted cached base and one iteration.")
+        reveal(confirm); clickVisibleButton(confirm)
+        var job: [String: Any]?
+        let deadline = Date().addingTimeInterval(600)
+        repeat {
+            let jobs = try authoritativeRuntimeStatus()["jobs"] as? [[String: Any]] ?? []
+            job = jobs.first { $0["out"] as? String == output.path && $0["repo"] as? String == repo }
+            if let state = job?["state"] as? String, state != "running" && state != "starting" { break }
+            Thread.sleep(forTimeInterval: 5)
+        } while Date() < deadline
+        let completed = try XCTUnwrap(job)
+        XCTAssertEqual(completed["state"] as? String, "done", String(describing: completed))
+        let identity = try XCTUnwrap(completed["adapter_identity"] as? [String: Any])
+        let weights = try XCTUnwrap(identity["adapters.safetensors"] as? [String: Any])
+        XCTAssertGreaterThan(try XCTUnwrap(weights["bytes"] as? Int), 0)
+        XCTAssertEqual((weights["sha256"] as? String)?.count, 64)
+        let receipt = try XCTUnwrap(completed["receipt"] as? String)
+        let refresh = app.buttons["training-refresh-jobs"]
+        reveal(refresh); clickVisibleButton(refresh)
+        let compare = app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@", "training-job-" + receipt, "Compare with base")).firstMatch
+        reveal(compare); clickVisibleButton(compare)
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 20))
+        let prompt = sheet.textFields["Evaluation prompt"]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.click(); app.typeKey("a", modifierFlags: .command); app.typeText("Name one color.")
+        let tokens = sheet.textFields["Token limit"]
+        tokens.click(); app.typeKey("a", modifierFlags: .command); app.typeText("8")
+        sheet.buttons["Preview"].click()
+        let run = sheet.buttons["Run comparison"]
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: run)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 120), .completed)
+        run.click()
+        XCTAssertTrue(sheet.staticTexts["training-evaluation-retained"].waitForExistence(timeout: 600))
+        let evidence = sheet.staticTexts["training-evaluation-evidence"]
+        XCTAssertTrue(evidence.exists)
+        let digest = (evidence.value as? String ?? evidence.label).components(separatedBy: ": ").last ?? ""
+        XCTAssertEqual(digest.count, 64)
+        capture("training-02-retained-evaluation", note: "The completed real adapter and base produced a retained matched evaluation.")
+        sheet.buttons["Close"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        let history = app.buttons["training-refresh-history"]
+        reveal(history); clickVisibleButton(history)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "training-inspect-")).firstMatch.waitForExistence(timeout: 30))
+    }
+
     func testRealMLXToRunningGoldenPath() async throws {
         let sourcePath = try XCTUnwrap(runtimeValues["TASK6_SOURCE_PATH"])
         let query = try XCTUnwrap(runtimeValues["TASK6_MODEL_QUERY"])
@@ -269,7 +347,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["MLX_AGENT_HOME"] = runtimeValues["TASK6_AGENT_HOME"]
         app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = runtimeValues["TASK6_CONFIG_PATH"]
-        for key in ["MLX_WORKBENCH_PYTHON", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_HUB_DISABLE_TELEMETRY"] {
+        for key in ["MLX_WORKBENCH_PYTHON", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_HUB_DISABLE_TELEMETRY", "HF_HUB_CACHE"] {
             app.launchEnvironment[key] = ProcessInfo.processInfo.environment[key]
         }
         // The setup assistant overlays the window on first launch; the golden
@@ -562,6 +640,12 @@ final class GGUFToRunRealDataUITests: XCTestCase {
     }
 
     private func authoritativeServerReceipts() throws -> [ServerReceiptEvidence] {
+        let data = try authoritativeRuntimeStatus()
+        guard let rawServers = data["servers"] as? [[String: Any]] else { throw HarnessError.serverStatusUnreadable }
+        return decodeServerReceipts(rawServers)
+    }
+
+    private func authoritativeRuntimeStatus() throws -> [String: Any] {
         guard let agentHome = runtimeValues["TASK6_AGENT_HOME"] else {
             throw HarnessError.missingAgentHome
         }
@@ -598,11 +682,13 @@ final class GGUFToRunRealDataUITests: XCTestCase {
             throw HarnessError.serverStatusFailed(stderr)
         }
         guard let payload = try JSONSerialization.jsonObject(with: stdout) as? [String: Any],
-              let data = payload["data"] as? [String: Any],
-              let rawServers = data["servers"] as? [[String: Any]] else {
+              let data = payload["data"] as? [String: Any] else {
             throw HarnessError.serverStatusUnreadable
         }
+        return data
+    }
 
+    private func decodeServerReceipts(_ rawServers: [[String: Any]]) -> [ServerReceiptEvidence] {
         return rawServers.compactMap { raw in
             guard let receipt = raw["receipt"] as? String,
                   let repo = (raw["path"] as? String) ?? (raw["repo"] as? String),

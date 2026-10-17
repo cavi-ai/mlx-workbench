@@ -78,13 +78,19 @@ struct DiscoverFitField: View {
     }
 
     private func resultsHeader(count: Int) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("Candidates (\(count))")
-                .font(WorkbenchTypography.section)
-                .foregroundStyle(WorkbenchColor.ink)
-            Spacer()
-            Button("Clear", action: onClear)
-                .buttonStyle(.bordered)
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Candidates (\(count))")
+                    .font(WorkbenchTypography.section)
+                    .foregroundStyle(WorkbenchColor.ink)
+                Spacer()
+                Button("Clear", action: onClear)
+                    .buttonStyle(.bordered)
+            }
+            Text("Memory fit is an estimate. Use Recommend for a task to check installed candidates through local runtimes.")
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

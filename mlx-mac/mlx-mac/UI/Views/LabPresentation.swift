@@ -86,7 +86,7 @@ struct LabStudyRow: Equatable, Identifiable {
 enum LabPresentation {
     static let shortIDLength = 8
     static let finishedJobStates: Set<String> = ["completed", "failed", "cancelled"]
-    static let emptySentence = "No controlled experiments in this workspace."
+    static let emptySentence = "No controlled experiments in this workspace. New experiment… captures or imports a recipe; generation starts only when you run its queued jobs."
     static let maxProgressItems = 4
 
     /// The part of an engine id after its kind prefix, cut to a readable length.

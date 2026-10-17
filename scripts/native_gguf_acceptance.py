@@ -41,6 +41,7 @@ MLX_ONLY_TEST = (
     "mlx-workbenchUITests/GGUFToRunRealDataUITests/"
     "testRealMLXToRunningGoldenPath"
 )
+TRAINING_ONLY_TEST = "mlx-workbenchUITests/GGUFToRunRealDataUITests/testRealMLXTrainingAndEvaluation"
 
 
 class ManifestError(ValueError):
@@ -199,7 +200,38 @@ def write_outcome(
     temporary.replace(destination)
 
 
-def xcodebuild_command(xcodebuild: str, evidence: Path, source_format: str = "gguf") -> list[str]:
+def training_repo(manifest: RuntimeManifest) -> str:
+    source = manifest.source_path
+    parts = source.parent.parent.name.split("--")
+    if source.parent.name != "snapshots" or len(parts) != 3 or parts[0] != "models" or not all(parts[1:]):
+        raise ManifestError("training source must be a Hugging Face cache snapshot")
+    try:
+        revision = (source.parent.parent / "refs/main").read_text().strip()
+    except OSError as error:
+        raise ManifestError("training source requires a readable cached main revision") from error
+    if revision != source.name:
+        raise ManifestError("training source must match the cache's current main revision")
+    return "/".join(parts[1:])
+
+
+def cleanup_training(manifest: RuntimeManifest, environment: dict[str, str]) -> None:
+    """Stop only a running job at this acceptance run's exact output path."""
+    command = [environment.get("MLX_WORKBENCH_PYTHON", sys.executable),
+               str(manifest.agent_home / "scripts/mlx-agent")]
+    receipts = str(Path.home() / "Library/Application Support/mlx-workbench")
+    result = subprocess.run(command + ["lora", "status", "--receipts-dir", receipts, "--json"],
+                            env=environment, capture_output=True, timeout=30, check=True)
+    payload = json.loads(result.stdout)
+    if payload.get("status") != "ok" or not isinstance(payload.get("data", {}).get("jobs"), list):
+        raise RuntimeError("Training cleanup could not read authoritative job status")
+    output = str(Path(environment["TASK6_TRAINING_ROOT"]) / "adapter")
+    for job in payload["data"]["jobs"]:
+        if job.get("out") == output and job.get("repo") == environment["TASK6_TRAINING_REPO"] and job.get("state") == "running":
+            subprocess.run(command + ["lora", "stop", "--pid", str(job["pid"]), "--receipts-dir", receipts, "--json"],
+                           env=environment, capture_output=True, timeout=30, check=True)
+
+
+def xcodebuild_command(xcodebuild: str, evidence: Path, source_format: str = "gguf", workflow: str = "serving") -> list[str]:
     return [
         xcodebuild,
         "-project",
@@ -216,7 +248,7 @@ def xcodebuild_command(xcodebuild: str, evidence: Path, source_format: str = "gg
         str(evidence / "result.xcresult"),
         "-parallel-testing-enabled",
         "NO",
-        f"-only-testing:{MLX_ONLY_TEST if source_format == 'mlx' else ONLY_TEST}",
+        f"-only-testing:{TRAINING_ONLY_TEST if workflow == 'training' else MLX_ONLY_TEST if source_format == 'mlx' else ONLY_TEST}",
         "test",
     ]
 
@@ -239,12 +271,13 @@ def run_xcodebuild(command: list[str], environment: dict[str, str], log_path: Pa
 
 
 @contextmanager
-def serving_status_bridge(manifest: RuntimeManifest, environment: dict[str, str]):
+def serving_status_bridge(manifest: RuntimeManifest, environment: dict[str, str], workflow: str = "serving"):
     """Query real process status outside XCTest's sandbox; accept no commands."""
     route = "/status/" + secrets.token_urlsafe(32)
     receipts = Path.home() / "Library/Application Support/mlx-workbench"
+    operation = {"serving": "serve", "training": "lora"}[workflow]
     command = [environment.get("MLX_WORKBENCH_PYTHON", sys.executable),
-               str(manifest.agent_home / "scripts/mlx-agent"), "serve", "status",
+               str(manifest.agent_home / "scripts/mlx-agent"), operation, "status",
                "--receipts-dir", str(receipts), "--json"]
 
     class Handler(BaseHTTPRequestHandler):
@@ -285,14 +318,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, help="absolute path to the local runtime manifest")
     parser.add_argument("--source-format", choices=("gguf", "mlx"), default="gguf")
+    parser.add_argument("--workflow", choices=("serving", "training"), default="serving")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
+        if args.workflow == "training" and args.source_format != "mlx":
+            raise ManifestError("training acceptance requires --source-format mlx")
         manifest = load_manifest(args.manifest, args.source_format)
-        evidence = create_evidence_directory(manifest.evidence_root, args.source_format)
+        repo = training_repo(manifest) if args.workflow == "training" else None
+        evidence = create_evidence_directory(manifest.evidence_root, "training" if repo else args.source_format)
     except ManifestError as error:
         print(f"manifest-invalid: {error}", file=sys.stderr)
         return EXIT_MANIFEST_INVALID
@@ -323,6 +360,13 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_PREREQUISITE
 
     environment = dict(os.environ)
+    if repo:
+        environment.update(TASK6_TRAINING_REPO=repo, HF_HUB_CACHE=str(manifest.source_path.parents[2]),
+                           TASK6_TRAINING_ROOT=str(evidence), HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", HF_HUB_DISABLE_TELEMETRY="1")
+        dataset = evidence / "dataset"
+        dataset.mkdir()
+        for split, text in (("train", "The morning sky is blue."), ("valid", "The evening sky is dark.")):
+            (dataset / f"{split}.jsonl").write_text(json.dumps({"text": text}) + "\n")
     environment.update(
         {
             "TASK6_RUNTIME_MANIFEST": str(manifest.path),
@@ -336,14 +380,22 @@ def main(argv: list[str] | None = None) -> int:
     # xcodebuild forwards TEST_RUNNER_* variables into its test process.
     for key in ("TASK6_RUNTIME_MANIFEST", "TASK6_SOURCE_PATH", "TASK6_MODEL_QUERY", "TASK6_AGENT_HOME",
                 "TASK6_CONFIG_PATH", "TASK6_EVIDENCE_DIR", "MLX_WORKBENCH_PYTHON", "HF_HUB_OFFLINE",
-                "TRANSFORMERS_OFFLINE", "HF_HUB_DISABLE_TELEMETRY"):
+                "TRANSFORMERS_OFFLINE", "HF_HUB_DISABLE_TELEMETRY", "TASK6_TRAINING_REPO", "TASK6_TRAINING_ROOT", "HF_HUB_CACHE"):
         if key in environment:
             environment[f"TEST_RUNNER_{key}"] = environment[key]
-    command = xcodebuild_command(xcodebuild, evidence, args.source_format)
+    command = xcodebuild_command(xcodebuild, evidence, args.source_format, args.workflow)
     try:
-        with serving_status_bridge(manifest, environment) as status_url:
+        with serving_status_bridge(manifest, environment, args.workflow) as status_url:
             environment["TEST_RUNNER_TASK6_STATUS_URL"] = status_url
-            exit_code = run_xcodebuild(command, environment, evidence / "xcodebuild.log")
+            try:
+                exit_code = run_xcodebuild(command, environment, evidence / "xcodebuild.log")
+            finally:
+                if repo:
+                    cleanup_training(manifest, environment)
+    except (subprocess.SubprocessError, RuntimeError, ValueError) as error:
+        write_outcome(evidence, classification="acceptance-failed", xcodebuild_exit_code=None,
+                      detail=f"runtime status or cleanup failed: {error}")
+        return EXIT_ACCEPTANCE_FAILED
     except OSError as error:
         detail = f"could not launch xcodebuild: {error}"
         write_outcome(

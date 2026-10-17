@@ -406,7 +406,7 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func selectRadioOption(_ label: String, in group: String) {
-        let option = app.radioGroups[group].radioButtons[label]
+        let option = app.radioGroups[group].firstMatch.radioButtons[label]
         XCTAssertTrue(option.waitForExistence(timeout: 10))
         XCTAssertTrue(option.isEnabled)
         let window = app.windows.firstMatch
@@ -2118,6 +2118,8 @@ final class SetupAssistantUITests: XCTestCase {
         XCTAssertLessThanOrEqual(sourcePicker.frame.maxY, heading.frame.minY)
         capture("08-library-visible-model-and-sidebar")
         modelRow.doubleClick()
+        let memoryFit = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "Memory fit: ")).firstMatch
+        XCTAssertTrue(memoryFit.waitForExistence(timeout: 10))
         capture("08b-library-inspector-after-selection")
         if screen.width < 1100 {
             let details = app.sheets.firstMatch
