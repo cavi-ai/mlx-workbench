@@ -38,6 +38,8 @@ including a speculative-decoding drafter's target. The inspector also holds:
 - **Model lineage**: a provenance timeline of source, converted, verified, benchmarked, served, wired and quarantined events, built from the records the app already keeps. Events whose model signature no longer matches are dimmed. Export it as Markdown or JSON.
 - **Measured performance**: throughput and first-token latency aggregated from past comparisons.
 - **Generate**, for image-generation models: prompt, size, steps and seed. Each run writes a new PNG to `~/Pictures/MLX Workbench`.
+- **Classify**, for ready classification models: a state description and questions with choice, score or probability answers.
+- **Generate music**, for ready music models: caption, optional lyrics, duration, steps and seed, with playback of completed audio.
 
 During rendering, **Cancel generation** stops that model's owned worker. The panel stays busy until the worker returns, and another model's panel cannot cancel it. Cancellation keeps any files already written and does not publish a late image as a completed result. After cleanup, Generate accepts a new request with a distinct output filename, including retries within the same second.
 
@@ -46,6 +48,56 @@ selects the model for comparison. Models needing conversion offer **Prepare
 to run**. **Reveal in Finder** and **Copy Path** are in the model's action menu.
 
 **Select for Compare** is available for ready chat, speech, music, image and video models. It opens the matching comparison mode and selects the model without starting a run. Run remains a chat-serving action. Runtime restrictions take precedence over task labels: Strata supports Chat only.
+
+### Classification and music tasks
+
+Choose a ready model and fill its task form in the inspector. **Start** submits
+one task to the engine and shows its ID and state. Editing inputs does not run
+the model. If the engine is busy or its backend is unavailable, the form keeps
+your inputs and shows the error.
+
+For **Classify**, describe the **State** and add at least one question with
+instructions. Choice questions use two or more ordered labels; score questions
+use two or more ordered level descriptions. A probability question (`noul`)
+can include descriptions of its false and true outcomes. Results show the
+model's returned answers, probabilities and score legend when available.
+Missing fields remain unavailable. These are model predictions, without
+ground-truth checks or an automatic quality verdict.
+
+For **Generate music**, enter a caption and optional lyrics. Blank lyrics mean
+instrumental music. Defaults are 15 seconds, 30 steps and seed 42. The engine
+accepts captions up to 2,000 characters, lyrics up to 10,000, duration above
+zero through 360 seconds, 1–30 steps and seeds from 0 through 4,294,967,295.
+Completed tasks offer WAV playback and recorded generation settings. A valid
+audio file does not establish musical quality. Playback stops when you leave
+the inspector or select another model or task.
+
+**Recent tasks** in the inspector shows the selected model's tasks. The Library
+toolbar also opens Recent tasks independently of model selection, so recorded
+results remain accessible when their model is no longer in the Library. The
+list contains at most the engine's 100 most recent records. Failed refreshes
+label the last known data and offer Retry.
+
+The engine retains accepted inputs, task records and output files; agents
+using the same engine store can inspect the same task IDs. Closing Workbench
+does not cancel a task. Reopening refreshes its state without starting it
+again. **Cancel** requests that the engine stop the identified task; its row
+remains active until the engine reports a terminal state. If Start loses its
+response, **Start outcome unknown** offers Refresh without automatically
+resubmitting the request or guessing its task ID.
+
+**Reuse** verifies the retained request and fills a new draft without changing
+the original task or starting another one. It requires the matching model to
+be ready and unchanged. Missing or changed request files prevent reuse;
+recorded results remain readable. Result and audio files are checked before
+display, playback or export. Missing or changed outputs show an error and do
+not trigger generation.
+
+**Export** saves verified result JSON or audio to a destination you choose.
+Private input content is not included by default. Workbench does not delete
+engine task artifacts, and Compare's ten-run media retention does not apply
+to these tasks. Use [Compare](compare.md) for matched model runs and listening
+ratings.
 
 ### Delete a model
 

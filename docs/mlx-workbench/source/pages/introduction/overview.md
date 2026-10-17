@@ -2,7 +2,7 @@
 
 MLX Workbench {{PRODUCT_VERSION}} is a native SwiftUI app for the local model lifecycle on Apple Silicon. It inventories the weights on your Mac, converts them to MLX, verifies the result, serves models on loopback ports, measures them against each other and wires them into local clients.
 
-The app is the desktop front end for [MLX Agent](https://github.com/cavi-ai/mlx-agent). It runs the selected engine's `scripts/mlx-agent` with argv tokens and `--json`, and renders the result. The engine owns execution: conversion jobs and their queue, serving processes, experiments and training receipts. The app has no web server and no background UI service.
+The app is the desktop front end for [MLX Agent](https://github.com/cavi-ai/mlx-agent). It runs the selected engine's `scripts/mlx-agent` with argv tokens and `--json`, and renders the result. The engine owns execution: conversion jobs and their queue, serving processes, classification and music tasks, experiments and training receipts. The app has no web server and no background UI service.
 
 These pages describe release {{RELEASE_TAG}} from commit `{{RELEASE_COMMIT}}`.
 
@@ -19,6 +19,7 @@ and symbols. Each screen opens with its title and a short description.
 | Bring in a model from Hugging Face Hub | [Add from Hugging Face](../workflows/hugging-face.md) |
 | Keep a model serving for your coding tools | [Run and endpoints](../workflows/run.md), then [Clients](../workflows/clients.md) |
 | Decide between quantizations or models | [Compare](../workflows/compare.md) |
+| Classify content or generate music with one model | [Library tasks](../workflows/library.md#classification-and-music-tasks) |
 | Free disk space safely | [Reclaim](../workflows/reclaim.md) |
 | Fine-tune on your own text | [Training and studies](../workflows/training.md) |
 | Change paths, defaults or the engine | [Configuration](../reference/configuration.md) |
@@ -30,7 +31,7 @@ The sidebar groups fifteen screens.
 | Group | Screen | Purpose |
 |---|---|---|
 | Workbench | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
-| | **Library** | Local GGUF and MLX weights, fit now, details, lineage, deletion and LM Studio source |
+| | **Library** | Local weights, fit, details, classification and music tasks, lineage, deletion and LM Studio source |
 | Lifecycle | **Prepare** | Preview and confirm conversions; follow verification |
 | | **Compare** | Measured model comparisons with recorded prompts and outputs |
 | | **Run** | Loopback servers, memory runway, always-on endpoints and serving profiles |
