@@ -137,6 +137,27 @@ class NativeUIVMTests(unittest.TestCase):
             vm.validate_test_summary(skipped, expected_ui_tests=6)
         vm.validate_test_summary(dict(skipped, passedTests=6, skippedTests=0), expected_ui_tests=6)
 
+    def test_runtime_input_list_is_written_outside_the_read_only_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs, output = root / "input", root / "output"
+            inputs.mkdir()
+            output.mkdir()
+            (inputs / "source-manifest.json").write_text(json.dumps({
+                "run_id": "fixture", "files": [], "runtime_bundle": True,
+            }))
+            with patch.object(vm.os, "getuid", return_value=501), \
+                    patch.object(vm.os, "chdir"), \
+                    patch.object(vm.subprocess, "check_output", side_effect=["VirtualMac2,1", "501", "Aqua", "{}", "{}"]), \
+                    patch.object(vm, "checked"), \
+                    patch.object(vm.subprocess, "run", side_effect=RuntimeError("build boundary")) as build:
+                with self.assertRaisesRegex(RuntimeError, "build boundary"):
+                    vm.guest(inputs, output)
+            listing = output / "runtime-inputs.xcfilelist"
+            self.assertEqual(listing.read_text(), str(inputs / "runtime-bundle") + "\n")
+            self.assertFalse((inputs / listing.name).exists())
+            self.assertIn("MLX_WORKBENCH_RUNTIME_INPUTS=" + str(listing), build.call_args.args[0])
+
 
 if __name__ == "__main__":
     unittest.main()

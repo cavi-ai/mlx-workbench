@@ -171,6 +171,12 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
     dd = checkout / ".build/native-ui"
     common = ["xcodebuild", "-project", "mlx-mac/mlx-mac.xcodeproj", "-configuration", "Debug",
               "-destination", "platform=macOS,arch=arm64", "-derivedDataPath", str(dd)]
+    if manifest.get("runtime_bundle"):
+        payload = input_dir / "runtime-bundle"
+        inputs = output_dir / "runtime-inputs.xcfilelist"
+        inputs.write_text(str(payload) + "\n")
+        common += ["MLX_WORKBENCH_RUNTIME_BUNDLE_ROOT=" + str(payload),
+                   "MLX_WORKBENCH_RUNTIME_INPUTS=" + str(inputs)]
 
     def run(name, command, expected_ui_tests=None):
         print(f"Running {name} inside {model}", flush=True)
@@ -209,6 +215,10 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
     if len(runfiles) != 1:
         raise RuntimeError("Expected exactly one native UI test runner.")
     template = plistlib.loads(runfiles[0].read_bytes())
+    if manifest.get("runtime_bundle"):
+        for configuration in template["TestConfigurations"]:
+            for target in configuration["TestTargets"]:
+                target.setdefault("EnvironmentVariables", {})["MLX_WORKBENCH_RUNTIME_PAYLOAD"] = str(input_dir / "runtime-bundle")
     if manifest.get("ui_test"):
         for stage in (["before", "after"] if (input_dir / "baseline.app").exists() else ["after"]):
             data = plistlib.loads(plistlib.dumps(template))
@@ -298,6 +308,12 @@ def host(args):
         checked(["ditto", str(baseline), str(input_dir / "baseline.app")])
         binary = baseline / "Contents/MacOS/mlx-workbench"
         manifest["baseline_binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
+    if args.runtime_bundle:
+        from runtime_bundle import resolve_bundle, verify_bundle
+        payload = resolve_bundle(Path(args.runtime_bundle))
+        shutil.copytree(payload, input_dir / "runtime-bundle")
+        verify_bundle(input_dir / "runtime-bundle")
+        manifest["runtime_bundle"] = True
     (input_dir / "source-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     output_dir.mkdir(parents=True)
     vm = run_id
@@ -338,6 +354,7 @@ def main():
     parser.add_argument("--tart", help="Path to the Tart executable")
     parser.add_argument("--vm-home", default=str(Path(__file__).resolve().parent.parent / ".build/native-ui-vms"))
     parser.add_argument("--baseline-app", help="Optional preserved app for matching before captures")
+    parser.add_argument("--runtime-bundle", help="Verified source payload to include before normal app code signing")
     parser.add_argument("--desktop-size", choices=("1024x768", "1440x1000"), default="1440x1000",
                         help="Configure the guest desktop before launching the UI test runner")
     parser.add_argument("--unit-test", help="Run only this XCTest identifier for failure diagnosis; no full-suite or UI acceptance")

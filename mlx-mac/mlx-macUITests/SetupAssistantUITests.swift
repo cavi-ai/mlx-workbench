@@ -3,6 +3,7 @@ import SystemConfiguration
 import XCTest
 import AppKit
 import AVFoundation
+import CryptoKit
 
 enum NativeUITestEnvironment {
     private struct IsolationError: LocalizedError {
@@ -1968,10 +1969,11 @@ final class SetupAssistantUITests: XCTestCase {
             .path
     }
 
-    private func launch(firstRun: Bool = true, python: String? = nil) {
+    private func launch(firstRun: Bool = true, python: String? = nil, home: URL? = nil) {
         app = XCUIApplication()
         app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = configPath
         if let python { app.launchEnvironment["MLX_WORKBENCH_PYTHON"] = python }
+        if let home { app.launchEnvironment["CFFIXED_USER_HOME"] = home.path }
         if firstRun {
             app.launchArguments = ["-mlx-workbench.setupCompleted.v1", "NO"]
         }
@@ -1986,6 +1988,52 @@ final class SetupAssistantUITests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    func testBundledEnginePreparationConfirmsAndPersistsPackagedSources() throws {
+        let configURL = URL(fileURLWithPath: configPath)
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = configURL.deletingLastPathComponent().appendingPathComponent("existing-agent").path
+        try JSONSerialization.data(withJSONObject: ["mlx_agent_path": original, "bundle_test_marker": true]).write(to: configURL)
+        let home = configURL.deletingLastPathComponent().appendingPathComponent("home")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        launch(python: "/usr/bin/false", home: home)
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 15))
+        let use = sheet.buttons["setup-bundled-runtime"]
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RUNTIME_PAYLOAD"] else {
+            XCTAssertFalse(use.exists, "An ordinary development build has no bundled runtime")
+            return
+        }
+        let payload = URL(fileURLWithPath: path)
+        let metadata = try Data(contentsOf: payload.appendingPathComponent("manifest.json"))
+        let identity = SHA256.hash(data: metadata).map { String(format: "%02x", $0) }.joined()
+        let root = home
+            .appendingPathComponent("Library/Application Support/mlx-workbench/runtimes/" + identity)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        XCTAssertTrue(use.waitForExistence(timeout: 15))
+        use.click()
+        app.sheets.buttons["Cancel"].firstMatch.click()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path), "Cancelling confirmation must not copy sources")
+        use.click()
+        app.sheets.buttons["Prepare engine"].firstMatch.click()
+        XCTAssertTrue(sheet.staticTexts["setup-bundled-runtime-prepared"].waitForExistence(timeout: 30))
+        let saved = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
+        XCTAssertEqual(saved["mlx_agent_path"] as? String, root.appendingPathComponent("vendor/mlx-agent").path)
+        XCTAssertEqual(saved["bundle_test_marker"] as? Bool, true)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("manifest.json")), metadata)
+        let manifest = try XCTUnwrap(try JSONSerialization.jsonObject(with: metadata) as? [String: Any])
+        for file in try XCTUnwrap(manifest["files"] as? [[String: Any]]) {
+            let name = try XCTUnwrap(file["path"] as? String)
+            let digest = SHA256.hash(data: try Data(contentsOf: root.appendingPathComponent(name)))
+                .map { String(format: "%02x", $0) }.joined()
+            XCTAssertEqual(digest, file["sha256"] as? String, name)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".venv").path))
+        capture("Bundled-engine-prepared")
+        sheet.buttons["Continue"].click()
+        XCTAssertTrue(sheet.buttons["Install Runtime…"].waitForExistence(timeout: 15))
+        capture("Bundled-engine-dependencies-remain-explicit")
     }
 
     func testFirstLaunchWalksEveryStepAndPersistsCompletion() throws {

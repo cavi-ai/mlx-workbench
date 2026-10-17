@@ -19,6 +19,8 @@ The `Makefile` is the supported command surface. Run `make help` for the short l
 |---|---|
 | `make start`, `make run`, `make open` | Build the Release app and open it |
 | `make build-swift` | Build the Release app into `.run/swift-build` |
+| `make prepare-runtime-bundle` | Validate the pinned engine and package tracked runtime sources with a hash manifest under `.run/bundled-runtime` |
+| `make build-swift-dist` | Build the distribution app with the prepared runtime source bundle |
 | `make run-swift` | Open the built app |
 | `make dmg` | Package a distribution build as a DMG under `.release/`; add `DEVELOPER_TEAM=<team id>` to sign with Developer ID and notarize, `DMG_CHANNEL=nightly` for a nightly name |
 
