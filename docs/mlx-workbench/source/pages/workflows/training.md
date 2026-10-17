@@ -88,3 +88,9 @@ Changing workspaces clears the previous workspace's records and messages, then
 refreshes the selected workspace. Each refresh reads both lists from one workspace
 and publishes them only if that refresh is still current. A failed refresh keeps
 the last successfully loaded experiment and study lists together and shows the error.
+
+Experiment drafts and blind reviews show the workspace they opened in. If that
+workspace changes, the dialog keeps its draft but disables further workspace
+actions; close it and reopen from the selected workspace. A request already in
+progress may have completed in its original workspace, so refresh that workspace
+before retrying. Returning to the same folder still requires reopening the dialog.
