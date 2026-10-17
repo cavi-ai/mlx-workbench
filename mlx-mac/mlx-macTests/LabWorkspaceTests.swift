@@ -5,6 +5,104 @@ import SwiftUI
 
 final class LabWorkspaceTests: XCTestCase {
     @MainActor
+    func testScopedDialogRequestsRejectChangedWorkspacesBeforeDispatch() async throws {
+        let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)
+        defer { fixture.releaseAll(); harness.cleanup() }
+        let workspace = harness.lab.workspaceContext
+        await harness.lab.refresh()
+        XCTAssertTrue(harness.lab.isCurrent(workspace), "Refreshing must not invalidate an open dialog")
+        _ = try await harness.lab.request(LabRequest(operation: "preview"), in: workspace)
+        XCTAssertEqual(fixture.count("first:preview"), 1)
+        await harness.lab.useStore(harness.second)
+        for operation in ["recipe-catalog", "recipe-prepare", "create", "review-start", "review-media", "review-submit", "reveal", "study-submit", "study-create", "study-run"] {
+            do {
+                _ = try await harness.lab.request(LabRequest(operation: operation), in: workspace)
+                XCTFail("A stale dialog must not send " + operation)
+            } catch { XCTAssertTrue(error is LabWorkspaceChangedError, "\(error)") }
+            XCTAssertEqual(fixture.count("first:" + operation), 0)
+            XCTAssertEqual(fixture.count("second:" + operation), 0)
+        }
+        await harness.lab.useStore(harness.first)
+        XCTAssertFalse(harness.lab.isCurrent(workspace), "Returning to the same path requires a fresh dialog")
+    }
+
+    @MainActor
+    func testScopedDialogsRejectLateRepliesAndFailuresWithoutRerouting() async throws {
+        for operation in ["create", "review-submit"] {
+            for fails in [false, true] {
+                let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)
+                defer { fixture.releaseAll(); harness.cleanup() }
+                let workspace = harness.lab.workspaceContext
+                if fails { fixture.fail("first:" + operation) }
+                let gate = fixture.hold("first:" + operation)
+                let pending = Task { try await harness.lab.request(LabRequest(operation: operation), in: workspace) }
+                await expectWorkspaceCall(fixture, "first:" + operation)
+                await harness.lab.useStore(harness.second)
+                gate.signal()
+                do { _ = try await pending.value; XCTFail("A late dialog reply must not be accepted") }
+                catch { XCTAssertTrue(error is LabWorkspaceChangedError, "\(error)") }
+                XCTAssertEqual(fixture.count("first:" + operation), 1)
+                XCTAssertEqual(fixture.count("second:" + operation), 0)
+                XCTAssertNil(harness.lab.error)
+            }
+        }
+    }
+
+    @MainActor
+    func testReviewStartCannotContinueWithMediaFromAnotherWorkspace() async throws {
+        let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)
+        defer { fixture.releaseAll(); harness.cleanup() }
+        let workspace = harness.lab.workspaceContext
+        let gate = fixture.hold("first:review-start")
+        let pending = Task {
+            _ = try await harness.lab.request(LabRequest(operation: "review-start"), in: workspace)
+            return try await harness.lab.request(LabRequest(operation: "review-media"), in: workspace)
+        }
+        await expectWorkspaceCall(fixture, "first:review-start")
+        await harness.lab.useStore(harness.second)
+        gate.signal()
+        do { _ = try await pending.value; XCTFail("The old review chain must stop") }
+        catch { XCTAssertTrue(error is LabWorkspaceChangedError) }
+        XCTAssertEqual(fixture.count("first:review-media"), 0)
+        XCTAssertEqual(fixture.count("second:review-media"), 0)
+    }
+
+    @MainActor
+    func testAuthorSheetKeepsItsOpenedWorkspaceWhenSwiftUIRebuildsIt() async throws {
+        func buttons(_ view: NSView) -> [NSButton] {
+            (view as? NSButton).map { [$0] } ?? view.subviews.flatMap { buttons($0) }
+        }
+        func scrollViews(_ view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews($0) }
+        }
+        func refreshButton(_ view: NSView) -> NSButton? {
+            guard let scroll = scrollViews(view).max(by: { ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0) }) else { return nil }
+            // Revision picker, Capture recipe and Refresh availability, in content order.
+            let controls = buttons(scroll)
+            return controls.count == 3 ? controls.last : nil
+        }
+        let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)
+        defer { fixture.releaseAll(); harness.cleanup() }
+        let host = NSHostingView(rootView: LabAuthorSheet(lab: harness.lab).buttonStyle(.borderless))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 760),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        await expectWorkspaceCall(fixture, "first:recipe-catalog")
+        for _ in 0..<100 where refreshButton(host)?.isEnabled != true { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(try XCTUnwrap(refreshButton(host), "Native buttons: \(buttons(host).map { String(describing: type(of: $0)) + ":" + $0.title })").isEnabled)
+        await harness.lab.useStore(harness.second)
+        host.rootView = LabAuthorSheet(lab: harness.lab).buttonStyle(.borderless)
+        for _ in 0..<100 where refreshButton(host)?.isEnabled != false { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(try XCTUnwrap(refreshButton(host)).isEnabled)
+        XCTAssertEqual(fixture.count("second:recipe-catalog"), 0)
+        await harness.lab.useStore(harness.first)
+        host.rootView = LabAuthorSheet(lab: harness.lab).buttonStyle(.borderless)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(try XCTUnwrap(refreshButton(host)).isEnabled)
+    }
+
+    @MainActor
     func testWorkspaceSwitchStartsItsOwnRefreshAndIgnoresOldCompletions() async throws {
         for operation in ["snapshot", "study-list"] {
             let fixture = WorkspaceRefreshFixture()
@@ -354,6 +452,10 @@ private final class WorkspaceRefreshFixture: @unchecked Sendable {
                     "queue": [["id": "job_" + suffix, "experiment_id": "exp_" + suffix, "state": "queued"]]]
         }
         if operation == "study-list" { return ["studies": [["study_id": "study_" + suffix]]] }
+        if operation == "recipe-catalog" {
+            return ["recipes": [["model_id": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "display_name": "Wan",
+                                 "revisions": [String(repeating: "a", count: 40)]]]]
+        }
         return ["status": "completed"]
     }
 }

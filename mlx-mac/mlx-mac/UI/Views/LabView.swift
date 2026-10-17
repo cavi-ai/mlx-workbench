@@ -92,15 +92,19 @@ struct LabPanel: View {
         .sheet(item: $review) { context in LabReviewSheet(lab: lab, context: context) }
     }
     private func openReview(_ id: String, reviewed: Bool) async {
+        let workspace = lab.workspaceContext
         isOpeningReview = true
         defer { isOpeningReview = false }
         do {
-            let session = try await lab.request(LabRequest(operation: "review-start", experimentID: id))
+            let session = try await lab.request(LabRequest(operation: "review-start", experimentID: id), in: workspace)
             guard let sessionID = session.sessionID else { throw BridgeError.skillOutputUnreadable }
-            let media = try await lab.request(LabRequest(operation: "review-media", sessionID: sessionID))
+            let media = try await lab.request(LabRequest(operation: "review-media", sessionID: sessionID), in: workspace)
             guard let left = media.left, let right = media.right else { throw BridgeError.skillOutputUnreadable }
-            review = LabReviewContext(id: sessionID, prompt: session.prompt ?? "", left: URL(fileURLWithPath: left), right: URL(fileURLWithPath: right), reviewed: reviewed)
-        } catch { lab.error = AppHost.render(error) }
+            review = LabReviewContext(id: sessionID, prompt: session.prompt ?? "", left: URL(fileURLWithPath: left), right: URL(fileURLWithPath: right), reviewed: reviewed, workspace: workspace)
+        } catch {
+            guard lab.isCurrent(workspace) else { return }
+            lab.error = AppHost.render(error)
+        }
     }
 }
 
@@ -255,9 +259,31 @@ struct LabJobRows: View {
 
 // MARK: - Author sheet
 
+struct LabWorkspaceLabel: View {
+    @ObservedObject var lab: LabCoordinator
+    let workspace: LabWorkspaceContext
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Text("Workspace: " + LabPresentation.storePath(workspace.store.path))
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                .lineLimit(1).truncationMode(.middle).help(workspace.store.path)
+            if !lab.isCurrent(workspace) {
+                Text("Workspace changed while this dialog was open. Reopen it before continuing.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(LabWorkspaceChangedError().localizedDescription)
+                    .accessibilityHint(LabWorkspaceChangedError().localizedDescription)
+                    .accessibilityIdentifier("study-workspace-changed")
+            }
+        }
+    }
+}
+
 struct LabAuthorSheet: View {
     @ObservedObject var lab: LabCoordinator
     @StateObject private var recipe: StudyRecipeSession
+    @State private var workspace: LabWorkspaceContext
     @Environment(\.dismiss) private var dismiss
     @State private var baseline: LabValue?
     @State private var recipeName = ""
@@ -271,7 +297,9 @@ struct LabAuthorSheet: View {
 
     init(lab: LabCoordinator) {
         self.lab = lab
-        _recipe = StateObject(wrappedValue: StudyRecipeSession(request: { try await lab.request($0) }))
+        let workspace = lab.workspaceContext
+        _workspace = State(initialValue: workspace)
+        _recipe = StateObject(wrappedValue: StudyRecipeSession(request: { try await lab.request($0, in: workspace) }))
     }
 
     private var selectedBaseline: LabValue? { recipeSource == "cache" ? recipe.manifest : baseline }
@@ -299,6 +327,7 @@ struct LabAuthorSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text("New controlled experiment").font(WorkbenchTypography.section)
+            LabWorkspaceLabel(lab: lab, workspace: workspace)
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
                     Picker("Recipe source", selection: $recipeSource) {
@@ -313,7 +342,7 @@ struct LabAuthorSheet: View {
                         TextField("Shared prompt", text: $prompt, axis: .vertical).lineLimit(3...6)
                     }
                 }.padding(.trailing, WorkbenchSpacing.xs)
-            }.disabled(busy || recipe.isBusy)
+            }.disabled(busy || recipe.isBusy || !lab.isCurrent(workspace))
             if selectedBaseline != nil {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                     Picker("Change", selection: $variable) {
@@ -325,16 +354,16 @@ struct LabAuthorSheet: View {
                         Text("Baseline: " + value.formatted()).font(WorkbenchTypography.secondary)
                     }
                     LabeledContent("Alternate value") { TextField("Alternate value", text: $alternate) }
-                }.disabled(busy || recipe.isBusy)
+                }.disabled(busy || recipe.isBusy || !lab.isCurrent(workspace))
             }
             ErrorBanner(text: error)
             HStack {
                 Button("Cancel") { dismiss() }.disabled(busy || recipe.isBusy)
                 Spacer()
-                Button("Validate pair") { Task { await validate() } }.disabled(request == nil || busy || recipe.isBusy)
+                Button("Validate pair") { Task { await validate() } }.disabled(request == nil || busy || recipe.isBusy || !lab.isCurrent(workspace))
                 Button("Create experiment") { Task { await create() } }
                     .buttonStyle(.workbenchPrimary)
-                    .disabled(previewed == nil || previewed != fingerprint || busy || recipe.isBusy)
+                    .disabled(previewed == nil || previewed != fingerprint || busy || recipe.isBusy || !lab.isCurrent(workspace))
             }
             if busy { ProgressView() }
         }
@@ -361,17 +390,19 @@ struct LabAuthorSheet: View {
         } catch { self.error = AppHost.render(error) }
     }
     private func validate() async {
-        guard let request, let captured = fingerprint else { return }
+        guard lab.isCurrent(workspace), let request, let captured = fingerprint else { return }
         busy = true; defer { busy = false }
-        do { _ = try await lab.request(request); previewed = captured; error = nil }
+        do { _ = try await lab.request(request, in: workspace); previewed = captured; error = nil }
         catch { previewed = nil; self.error = AppHost.render(error) }
     }
     private func create() async {
-        guard let draft, previewed == fingerprint else { return }
+        guard lab.isCurrent(workspace), let draft, previewed == fingerprint else { return }
         busy = true; defer { busy = false }
         do {
-            _ = try await lab.request(LabRequest(operation: "create", draft: draft))
-            await lab.refresh(); dismiss()
+            _ = try await lab.request(LabRequest(operation: "create", draft: draft), in: workspace)
+            await lab.refresh()
+            guard lab.isCurrent(workspace) else { return }
+            dismiss()
         } catch { self.error = AppHost.render(error) }
     }
 }
@@ -385,6 +416,7 @@ struct LabReviewContext: Identifiable {
     let right: URL
     var reviewed = false
     var studyID: String? = nil
+    var workspace: LabWorkspaceContext? = nil
 }
 
 struct LabVideoSurface: NSViewRepresentable {
@@ -401,6 +433,7 @@ struct LabVideoSurface: NSViewRepresentable {
 struct LabReviewSheet: View {
     @ObservedObject var lab: LabCoordinator
     let context: LabReviewContext
+    @State private var workspace: LabWorkspaceContext
     @Environment(\.dismiss) private var dismiss
     @StateObject private var transport = VideoComparisonPlayer()
     @State private var playbackAttempt = 0
@@ -415,12 +448,18 @@ struct LabReviewSheet: View {
     private let dimensions = ["prompt_adherence", "visual_quality", "motion_quality", "temporal_consistency", "character_consistency"]
     private let labels = ["Prompt adherence", "Visual quality", "Motion quality", "Temporal consistency", "Character consistency"]
 
+    init(lab: LabCoordinator, context: LabReviewContext) {
+        self.lab = lab
+        self.context = context
+        _workspace = State(initialValue: context.workspace ?? lab.workspaceContext)
+    }
+
     private var canReview: Bool {
         !transport.isLoading && transport.failure == nil && transport.players.count == 2 &&
         transport.players.allSatisfy { $0.status == .readyToPlay && $0.currentItem?.status == .readyToPlay }
     }
     private var canSubmit: Bool {
-        !busy && !context.reviewed && receipt == nil && canReview &&
+        !busy && lab.isCurrent(workspace) && !context.reviewed && receipt == nil && canReview &&
         ["left", "tie", "right"].contains(preference) &&
         (context.studyID != nil || (scores.count == 10 && scores.allSatisfy { (1...5).contains($0) }))
     }
@@ -428,6 +467,7 @@ struct LabReviewSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             Text("Blind video review").font(WorkbenchTypography.section)
+            LabWorkspaceLabel(lab: lab, workspace: workspace)
             Text(context.prompt)
             HStack {
                 ForEach(0..<2) { index in
@@ -488,7 +528,7 @@ struct LabReviewSheet: View {
                         }
                         TextField("Review notes (optional)", text: $notes)
                     }
-                }.disabled(busy)
+                }.disabled(busy || !lab.isCurrent(workspace))
             } else {
                 Text(receipt ?? "").textSelection(.enabled)
                 if let reveal {
@@ -499,7 +539,7 @@ struct LabReviewSheet: View {
                     Text("\(variable): \(baseline) → \(alternate)")
                     TrainingRawDisclosure(title: "Frozen manifests", text: manifestText(reveal))
                 } else {
-                    Button("Reveal candidate identities") { Task { await showReveal() } }.disabled(busy || context.studyID != nil)
+                    Button("Reveal candidate identities") { Task { await showReveal() } }.disabled(busy || context.studyID != nil || !lab.isCurrent(workspace))
                 }
             }
             ErrorBanner(text: error)
@@ -554,11 +594,11 @@ struct LabReviewSheet: View {
         }.labelsHidden().frame(width: WorkbenchSize.Lab.scoreControlWidth)
     }
     private func showReveal() async {
-        guard !busy else { return }
+        guard !busy, lab.isCurrent(workspace) else { return }
         busy = true; defer { busy = false }
         error = nil
         do {
-            reveal = try await lab.request(LabRequest(operation: "reveal", sessionID: context.id))
+            reveal = try await lab.request(LabRequest(operation: "reveal", sessionID: context.id), in: workspace)
             receipt = "Review saved: " + (reveal?.reviewID ?? "") + " · revision " + String(reveal?.revision ?? 1)
         } catch { self.error = AppHost.render(error) }
     }
@@ -569,7 +609,7 @@ struct LabReviewSheet: View {
         do {
             if let studyID = context.studyID {
                 _ = try await lab.request(LabRequest(operation: "study-submit", sessionID: context.id,
-                    preference: preference, studyID: studyID))
+                    preference: preference, studyID: studyID), in: workspace)
                 receipt = "Preference retained for this comparison."
                 await lab.refresh()
                 return
@@ -578,7 +618,7 @@ struct LabReviewSheet: View {
                 LabScore(displayPosition: index < 5 ? "left" : "right", dimension: dimensions[index % 5], score: value)
             }
             let result = try await lab.request(LabRequest(operation: "review-submit", sessionID: context.id,
-                preference: preference, scores: rubric, notes: notes.isEmpty ? nil : notes))
+                preference: preference, scores: rubric, notes: notes.isEmpty ? nil : notes), in: workspace)
             receipt = "Review saved: " + (result.reviewID ?? "") + " · revision " + String(result.revision ?? 1)
             await lab.refresh()
         } catch { self.error = AppHost.render(error) }
@@ -765,14 +805,21 @@ private struct AdaptiveStudiesPanel: View {
         await lab.refresh()
     }
     private func perform(_ operation: String, id: String) {
+        let workspace = lab.workspaceContext
         busy = true
         Task {
             defer { busy = false }
-            do { _ = try await lab.request(LabRequest(operation: operation, studyID: id)); await refresh(); await lab.refresh() }
-            catch { lab.error = AppHost.render(error) }
+            do {
+                _ = try await lab.request(LabRequest(operation: operation, studyID: id), in: workspace)
+                await refresh()
+            } catch {
+                guard lab.isCurrent(workspace) else { return }
+                lab.error = AppHost.render(error)
+            }
         }
     }
     private func importRecipe() {
+        let workspace = lab.workspaceContext
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
@@ -785,21 +832,28 @@ private struct AdaptiveStudiesPanel: View {
                 guard properties.isRegularFile == true, properties.isSymbolicLink != true,
                       (properties.fileSize ?? Int.max) <= 1_048_576 else { throw BridgeError.skillOutputUnreadable }
                 let manifest = try JSONDecoder().decode(LabValue.self, from: Data(contentsOf: url))
-                _ = try await lab.request(LabRequest(operation: "study-create", manifest: manifest))
+                _ = try await lab.request(LabRequest(operation: "study-create", manifest: manifest), in: workspace)
                 await refresh()
-            } catch { lab.error = AppHost.render(error) }
+            } catch {
+                guard lab.isCurrent(workspace) else { return }
+                lab.error = AppHost.render(error)
+            }
         }
     }
     private func openReview(_ id: String, session: String, prompt: String) {
+        let workspace = lab.workspaceContext
         busy = true
         Task {
             defer { busy = false }
             do {
-                let result = try await lab.request(LabRequest(operation: "review-media", sessionID: session))
+                let result = try await lab.request(LabRequest(operation: "review-media", sessionID: session), in: workspace)
                 guard let left = result.left, let right = result.right else { throw BridgeError.skillOutputUnreadable }
                 review = LabReviewContext(id: session, prompt: prompt, left: URL(fileURLWithPath: left),
-                    right: URL(fileURLWithPath: right), reviewed: false, studyID: id)
-            } catch { lab.error = AppHost.render(error) }
+                    right: URL(fileURLWithPath: right), reviewed: false, studyID: id, workspace: workspace)
+            } catch {
+                guard lab.isCurrent(workspace) else { return }
+                lab.error = AppHost.render(error)
+            }
         }
     }
 }

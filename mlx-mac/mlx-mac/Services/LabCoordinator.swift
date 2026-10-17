@@ -1,6 +1,17 @@
 import Foundation
 import AppKit
 
+struct LabWorkspaceContext: Equatable, Sendable {
+    let store: URL
+    fileprivate let revision: UUID
+}
+
+struct LabWorkspaceChangedError: LocalizedError {
+    var errorDescription: String? {
+        "The workspace changed. An action already in progress may have completed in the original workspace. Open that workspace and refresh before trying again."
+    }
+}
+
 @MainActor
 final class LabCoordinator: ObservableObject {
     @Published private(set) var snapshot = LabResponse()
@@ -11,10 +22,15 @@ final class LabCoordinator: ObservableObject {
     @Published var notice: String?
     private let api: WorkbenchAPI
     private let defaults: UserDefaults
-    private var workspaceRevision = 0
+    private var workspaceRevision = UUID()
     private var refreshRevision = 0
     @Published private(set) var store: URL
     let reviewerID: String
+
+    var workspaceContext: LabWorkspaceContext { LabWorkspaceContext(store: store, revision: workspaceRevision) }
+    func isCurrent(_ context: LabWorkspaceContext) -> Bool {
+        context.revision == workspaceRevision && context.store == store
+    }
 
     init(api: WorkbenchAPI, defaults: UserDefaults = .standard) {
         self.api = api
@@ -40,7 +56,7 @@ final class LabCoordinator: ObservableObject {
         await useStore(chosen.resolvingSymlinksInPath())
     }
     func useStore(_ chosen: URL) async {
-        workspaceRevision += 1
+        workspaceRevision = UUID()
         refreshRevision += 1
         isRefreshing = false
         store = chosen
@@ -65,6 +81,17 @@ final class LabCoordinator: ObservableObject {
     }
     func request(_ request: LabRequest) async throws -> LabResponse {
         try await api.labWorkspace(request: request, store: store, reviewer: reviewerID)
+    }
+    func request(_ request: LabRequest, in context: LabWorkspaceContext) async throws -> LabResponse {
+        guard isCurrent(context) else { throw LabWorkspaceChangedError() }
+        do {
+            let response = try await api.labWorkspace(request: request, store: context.store, reviewer: reviewerID)
+            guard isCurrent(context) else { throw LabWorkspaceChangedError() }
+            return response
+        } catch {
+            guard isCurrent(context) else { throw LabWorkspaceChangedError() }
+            throw error
+        }
     }
     func refresh() async {
         guard !isRefreshing else { return }
