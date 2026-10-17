@@ -12,6 +12,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class MakefileStopTests(unittest.TestCase):
 
+    def test_install_stops_after_environment_creation_failure(self):
+        for executable in ("uv", "python3.12"):
+            with self.subTest(executable=executable), TemporaryDirectory() as directory:
+                root = Path(directory)
+                bin_dir = root / "bin"
+                bin_dir.mkdir()
+                creator = bin_dir / executable
+                creator.write_text(
+                    "#!/bin/sh\necho 'Fixture environment creation failed' >&2\nexit 57\n",
+                    encoding="utf-8",
+                )
+                creator.chmod(0o755)
+                environment = dict(os.environ)
+                environment["PATH"] = str(bin_dir) + os.pathsep + "/usr/bin:/bin"
+
+                result = subprocess.run(
+                    ["make", "install-convert", "VENV=" + str(root / "venv"),
+                     "PYTHON=" + sys.executable],
+                    cwd=ROOT, env=environment, capture_output=True, text=True, timeout=10,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Fixture environment creation failed", result.stderr)
+                self.assertNotIn("venv created:", result.stdout)
+                self.assertNotIn("Installing into", result.stdout)
+
     def test_check_accepts_a_healthy_agent_from_the_configured_external_checkout(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
