@@ -493,7 +493,11 @@ struct WireView: View {
         if let request = appHost.clientWiringRequest {
             let matching = ClientWiringSelection.matchingServers(request: request, servers: runningServers)
             selectedServerID = matching.count == 1 ? matching[0].id : nil
-            if matching.isEmpty { serverMessage = "The chosen model is not running. Start it in Run, then refresh here." }
+            if matching.isEmpty {
+                serverMessage = request.expectedServer == nil
+                    ? "The chosen model is not running. Start it in Run, then refresh here."
+                    : "The selected server changed or stopped. Refresh Run and choose Configure clients again."
+            }
             else if matching.count > 1 { serverMessage = "The chosen model has multiple running endpoints. Choose the port to wire." }
             appHost.clientWiringRequest = nil
         } else if !runningServers.contains(where: { $0.id == selectedServerID }) { selectedServerID = nil }

@@ -249,6 +249,59 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: config), edited)
     }
 
+    func testRunHandoffSelectsTheExactAdapterServerAmongMatchingModelEndpoints() throws {
+        let base = ServerInfo(repo: "org/base", runtime: "mlx_lm", port: 8766, pid: 1, state: "running")
+        let adapter = ServerInfo(repo: "org/base", runtime: "mlx_lm", port: 8767, pid: 2, state: "running",
+            receipt: "/receipts/adapter.json", adapterPath: "/adapters/tuned", adapterIdentity: .object(["sha256": .string("first")]))
+        let request = try XCTUnwrap(ClientWiringRequest.forServer(adapter))
+        XCTAssertEqual(request.modelPath, "org/base")
+        XCTAssertEqual(request.preferredPort, 8767)
+        XCTAssertEqual(request.expectedServer, adapter)
+        XCTAssertEqual(ClientWiringSelection.matchingServers(request: request, servers: [base, adapter]), [adapter])
+        XCTAssertTrue(ClientWiringSelection.matchingServers(request: .init(modelPath: "org/base", preferredPort: nil), servers: [adapter]).isEmpty,
+                      "A model-only handoff must still exclude adapter substitutions")
+    }
+
+    func testRunHandoffRejectsChangedProcessAndAdapterIdentity() throws {
+        let source: [String: Any] = ["repo": "org/base", "runtime": "mlx_lm", "port": 8767, "pid": 42, "state": "running",
+            "receipt": "/receipts/first.json", "started_at": "first-start", "adapter_path": "/adapters/tuned",
+            "adapter_identity": ["adapters.safetensors": ["sha256": "first", "bytes": 4]]]
+        func server(_ fields: [String: Any]) throws -> ServerInfo {
+            try JSONDecoder().decode(ServerInfo.self, from: JSONSerialization.data(withJSONObject: fields))
+        }
+        let original = try server(source), request = try XCTUnwrap(ClientWiringRequest.forServer(original))
+        let changes: [(String, Any)] = [("pid", 43), ("receipt", "/receipts/second.json"), ("runtime", "other"),
+            ("started_at", "second-start"), ("adapter_path", "/adapters/other"),
+            ("adapter_identity", ["adapters.safetensors": ["sha256": "second", "bytes": 4]])]
+        for (key, value) in changes {
+            let replacement = try server(source.merging([key: value]) { _, new in new })
+            XCTAssertTrue(ClientWiringSelection.matchingServers(request: request, servers: [replacement]).isEmpty, key)
+        }
+    }
+
+    func testRunHandoffRequiresAValidEndpointAndConsistentRequest() throws {
+        for invalid in [ServerInfo(path: "/models/a", port: 0, state: "running"),
+                        ServerInfo(path: "/models/a", port: 70000, state: "running"),
+                        ServerInfo(port: 8766, state: "running"),
+                        ServerInfo(path: "/models/a", port: 8766, state: "stopped")] {
+            XCTAssertNil(ClientWiringRequest.forServer(invalid))
+        }
+        let server = ServerInfo(path: "/models/a", port: 8766, pid: 42, state: "running")
+        for inconsistent in [ClientWiringRequest(modelPath: "/models/other", preferredPort: 8766, expectedServer: server),
+                             ClientWiringRequest(modelPath: "/models/a", preferredPort: 8767, expectedServer: server)] {
+            XCTAssertTrue(ClientWiringSelection.matchingServers(request: inconsistent, servers: [server]).isEmpty)
+        }
+    }
+
+    func testRunHandoffSurvivesJITResidencyChangesOnTheSameEndpoint() throws {
+        let unloaded = ServerInfo(path: "/models/a", runtime: "mlx_lm", port: 8766, pid: 42, state: "running",
+            receipt: "/receipts/first.json", jit: true, modelState: "unloaded")
+        let loaded = ServerInfo(path: "/models/a", runtime: "mlx_lm", port: 8766, pid: 42, state: "running",
+            receipt: "/receipts/first.json", jit: true, modelState: "loaded", workerPid: 99, activeRequests: 1)
+        let request = try XCTUnwrap(ClientWiringRequest.forServer(unloaded))
+        XCTAssertEqual(ClientWiringSelection.matchingServers(request: request, servers: [loaded]), [loaded])
+    }
+
     func testHandoffMatchesChosenModelAndPortWithoutCollapsingRevisions() {
         let path = "/cache/models--org--model/snapshots/revision-a"
         let local = ServerInfo(path: path, port: 8766, pid: 1, state: "running")

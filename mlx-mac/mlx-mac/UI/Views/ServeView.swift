@@ -201,6 +201,20 @@ struct ServeView: View {
                 }
             }
             if isSelected { selectedServerDetails(server) }
+            if let request = ClientWiringRequest.forServer(server) {
+                Button("Configure clients…") {
+                    guard modelWorkflow.serversError == nil else { return }
+                    appHost.clientWiringRequest = request
+                    onRouteSelection(.clientSetup)
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(modelWorkflow.serversError != nil)
+                .accessibilityIdentifier("run-configure-clients-\(server.port ?? 0)")
+                .accessibilityLabel("Configure clients for \(name) on port \(server.port ?? 0)")
+                .help(modelWorkflow.serversError == nil
+                      ? "Select this endpoint in Clients. Preview and confirm before changing client configuration."
+                      : "Refresh serving status before configuring clients.")
+            }
         }
         .padding(WorkbenchSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -319,7 +333,10 @@ struct ServeView: View {
                         symbol: "nosign",
                         text: "\(selectedModel?.item.task?.type.title ?? "This kind of") models are not served. Use them from the Library inspector."
                     )
-                    Button("Open Library") { onRouteSelection(.library) }
+                    Button("Open Library") {
+                        if let selectedModel { appHost.libraryRevealRequest = LibraryRevealRequest(modelPath: selectedModel.item.path) }
+                        onRouteSelection(.library)
+                    }
                         .buttonStyle(.bordered)
                 case .notEligible:
                     if presentation.canPrepareSelection {

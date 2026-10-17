@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-enum HomeNextActionKind: Equatable { case configure, scan, activity, prepare(String), run(String), library }
+enum HomeNextActionKind: Equatable { case configure, scan, activity, prepare(String), run(String), openModel(String), library }
 
 struct HomeNextAction: Equatable {
     let kind: HomeNextActionKind
@@ -17,6 +17,7 @@ struct HomeNextAction: Equatable {
         case .activity: return "Open Activity"
         case .prepare: return "Prepare"
         case .run: return "Run"
+        case .openModel: return "Open Library"
         case .library: return route == AppRoute.reclaim.rawValue ? "Open Reclaim" : "Open Library"
         }
     }
@@ -34,7 +35,7 @@ struct HomeNextAction: Equatable {
                 let reason = type == .imageGeneration
                     ? "Conversion completed; generate images from the model's Library inspector."
                     : "Conversion completed; \(type.title.lowercased()) models are used from the Library inspector, not served."
-                return .init(kind: .library, title: "Open the completed model", reason: reason, route: AppRoute.library.rawValue)
+                return .init(kind: .openModel(completed.item.path), title: "Open the completed model", reason: reason, route: AppRoute.library.rawValue)
             }
             guard agentReady && serveRuntimeReady else { return .init(kind: .configure, title: "Repair the Run runtime", reason: "The model is complete, but the agent or serving runtime is unavailable. Health shows which link is broken.", route: AppRoute.health.rawValue) }
             return .init(kind: .run(path), title: "Run completed model", reason: "Conversion completed and the selected MLX output is ready for a serve preview.", route: AppRoute.run.rawValue)
@@ -360,6 +361,8 @@ struct HomeView: View {
             if let model = appHost.librarySnapshot?.models.first(where: { $0.item.path == path }) {
                 modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
             }
+        case .openModel(let path):
+            appHost.libraryRevealRequest = LibraryRevealRequest(modelPath: path)
         case .configure, .scan, .activity, .library:
             break
         }

@@ -944,6 +944,71 @@ final class LMStudioResolutionLoaderTests: XCTestCase {
 
 @MainActor
 final class LMStudioRenderTests: XCTestCase {
+    func testExternalRevealWaitsForLibraryActivationAndLeavesTheSourceView() async throws {
+        let models = [F.mlx("/m/first-8bit"), F.mlx("/m/requested-8bit")]
+        let app = host(snapshot: LibrarySnapshot(models: models, groups: models.map { ModelGroup(variants: [$0]) },
+            hardware: F.hardware, generatedAt: Date()))
+        app.selectedModelPath = models[0].item.path
+        let originalWorkflow = app.modelWorkflow.workflow
+        let originalConfig = app.config
+        let hosting = NSHostingView(rootView: LibraryWorkspace(appHost: app, initialSource: .lmStudio)
+            .environment(\.isRouteActive, false).frame(width: 814, height: 900))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 814, height: 900),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
+        defer { window.close() }
+        func controls(_ view: NSView) -> [NSSegmentedControl] {
+            (view as? NSSegmentedControl).map { [$0] } ?? view.subviews.flatMap(controls)
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        let picker = try XCTUnwrap(controls(hosting).first { $0.segmentCount == 2 && $0.label(forSegment: 0) == "All models" })
+        XCTAssertEqual(picker.selectedSegment, 1)
+        let request = LibraryRevealRequest(modelPath: models[1].item.path)
+        app.libraryRevealRequest = request
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(picker.selectedSegment, 1, "Hidden pages must retain the request until navigation arrives")
+        XCTAssertEqual(app.libraryRevealRequest, request)
+        XCTAssertEqual(app.selectedModelPath, models[0].item.path)
+        hosting.rootView = LibraryWorkspace(appHost: app, initialSource: .lmStudio)
+            .environment(\.isRouteActive, true).frame(width: 814, height: 900)
+        for _ in 0..<100 where app.selectedModelPath != models[1].item.path { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(picker.selectedSegment, 0)
+        XCTAssertEqual(app.selectedModelPath, models[1].item.path)
+        XCTAssertNil(app.libraryRevealRequest)
+        XCTAssertEqual(app.modelWorkflow.workflow, originalWorkflow)
+        XCTAssertEqual(app.config, originalConfig)
+    }
+
+    func testMissingRevealDoesNotSelectAnUnrelatedModel() async throws {
+        try await assertMissingReveal(keepsSelection: true)
+        try await assertMissingReveal(keepsSelection: false)
+    }
+
+    private func assertMissingReveal(keepsSelection: Bool) async throws {
+        let model = F.mlx("/m/retained-8bit")
+        let app = host(snapshot: LibrarySnapshot(models: [model], groups: [ModelGroup(variants: [model])],
+            hardware: F.hardware, generatedAt: Date()))
+        let initialSelection: String? = keepsSelection ? model.item.path : nil
+        app.selectedModelPath = initialSelection
+        let originalWorkflow = app.modelWorkflow.workflow
+        app.libraryRevealRequest = LibraryRevealRequest(modelPath: "/m/missing-8bit")
+        let hosting = NSHostingView(rootView: LibraryWorkspace(appHost: app)
+            .environment(\.isRouteActive, true).frame(width: 814, height: 900))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 814, height: 900),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
+        defer { window.close() }
+        for _ in 0..<100 where app.libraryRevealRequest != nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNil(app.libraryRevealRequest)
+        XCTAssertEqual(app.selectedModelPath, initialSelection)
+        XCTAssertEqual(app.modelWorkflow.workflow, originalWorkflow)
+        hosting.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let attachment = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        attachment.name = "Library-unavailable-reveal-\(keepsSelection)"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
     func testLibrarySourceControlPreservesSelectionAndLegacyRequests() async throws {
         guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_LIBRARY_SOURCE_CAPTURE"] else {
             throw XCTSkip("Set MLX_WORKBENCH_LIBRARY_SOURCE_CAPTURE for native Library source checks.")

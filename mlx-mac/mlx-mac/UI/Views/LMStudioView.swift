@@ -217,7 +217,7 @@ struct LMStudioView: View {
 
     private func showInLibrary(_ path: String) {
         guard appHost.librarySnapshot?.models.contains(where: { $0.item.path == path }) == true else { return }
-        appHost.selectedModelPath = path
+        appHost.libraryRevealRequest = LibraryRevealRequest(modelPath: path)
         onRouteSelection(.library)
     }
 

@@ -489,13 +489,20 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Library scan failed"].exists)
         capture("Library-retry-empty-success")
         let addModel = app.buttons["Add from Hugging Face…"]
-        XCTAssertTrue(addModel.isHittable)
-        XCTAssertTrue(app.buttons["Open Settings"].isHittable)
-        XCTAssertTrue(app.buttons["Scan again"].isHittable)
+        func assertAcquisitionActionsFit() {
+            let window = app.windows.firstMatch.frame
+            for button in [addModel, app.buttons["Open Settings"], app.buttons["Scan again"]] {
+                XCTAssertTrue(button.isHittable, button.label)
+                let frame = button.frame
+                XCTAssertGreaterThanOrEqual(frame.minX, window.minX, button.label)
+                XCTAssertGreaterThanOrEqual(frame.minY, window.minY, button.label)
+                XCTAssertLessThanOrEqual(frame.maxX, window.maxX, button.label)
+                XCTAssertLessThanOrEqual(frame.maxY, window.maxY, button.label)
+            }
+        }
+        assertAcquisitionActionsFit()
         resizeWindow(width: 740, height: 612)
-        XCTAssertTrue(addModel.isHittable)
-        XCTAssertTrue(app.buttons["Open Settings"].isHittable)
-        XCTAssertTrue(app.buttons["Scan again"].isHittable)
+        assertAcquisitionActionsFit()
         capture("Library-empty-compact-actions")
         addModel.click()
         let intake = app.windows["Add from Hugging Face"]
@@ -807,6 +814,47 @@ final class WorkbenchReviewUITests: XCTestCase {
         writer.finishWriting { finished.signal() }
         XCTAssertEqual(finished.wait(timeout: .now() + 10), .success)
         XCTAssertEqual(writer.status, .completed)
+    }
+
+    func testActivityRevealsTheModelThroughRetainedLibraryFilters() throws {
+        let target = root.appendingPathComponent("models/target-image-mlx").path
+        let scan: [String: Any] = ["models": [], "outputs": [["path": target, "name": "Target image model",
+            "model_key": "target-image", "bytes": 1024, "readable": true,
+            "task": ["type": "image_generation", "use_cases": [], "source": "registry", "confidence": "confirmed"]]],
+            "pending": [], "duplicates": [], "totals": ["gguf": 0, "pending": 0, "converted": 1,
+                "unreadable": 0, "bytes": 1024, "reclaimable_bytes": 0]]
+        try JSONSerialization.data(withJSONObject: scan).write(to: root.appendingPathComponent("scan-result.json"))
+        let support = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let workflow: [String: Any] = ["id": UUID().uuidString, "sourcePath": root.appendingPathComponent("source.gguf").path,
+            "outputPath": target, "completedModelPath": target, "state": "completed", "serveState": "idle",
+            "createdAt": Date().timeIntervalSinceReferenceDate, "updatedAt": Date().timeIntervalSinceReferenceDate]
+        try JSONSerialization.data(withJSONObject: [workflow]).write(to: support.appendingPathComponent("model-workflows.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        XCTAssertTrue(text(containing: "Target image model").waitForExistence(timeout: 15))
+        app.popUpButtons["Readiness"].click(); app.menuItems["Needs Conversion"].click()
+        XCTAssertTrue(app.buttons["Clear filters"].waitForExistence(timeout: 10))
+        for attempt in 0..<2 {
+            select("Activity")
+            let open = app.buttons["Open in Library"].firstMatch
+            XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
+            let inspector = app.sheets.firstMatch
+            XCTAssertTrue(inspector.waitForExistence(timeout: 10), "Explicit reveals must open the requested inspector")
+            NSPasteboard.general.clearContents()
+            let more = inspector.descendants(matching: .any)
+                .matching(NSPredicate(format: "label == %@", "More actions for Target image model")).firstMatch
+            XCTAssertTrue(more.waitForExistence(timeout: 10)); more.click()
+            app.menuItems["Copy Path"].click()
+            XCTAssertEqual(NSPasteboard.general.string(forType: .string), target, "The inspector must belong to the exact requested model")
+            capture("Library-explicit-reveal-\(attempt)")
+            inspector.buttons["Done"].click()
+            XCTAssertTrue(inspector.waitForNonExistence(timeout: 10))
+            XCTAssertFalse(app.buttons["Clear filters"].exists)
+        }
+        app.popUpButtons["Readiness"].click(); app.menuItems["Needs Conversion"].click()
+        select("Overview"); select("Library")
+        XCTAssertTrue(app.buttons["Clear filters"].waitForExistence(timeout: 10), "Ordinary navigation must preserve filters after the intent is consumed")
+        XCTAssertFalse(app.sheets.firstMatch.exists)
     }
 
     func testRunningTrainingJobRefreshesToCompletion() throws {
@@ -1266,6 +1314,44 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertEqual(retried["future_feature"] as? String, "preserve-me")
             app.terminate()
         }
+    }
+
+    func testRunChoosesTheExactEndpointForClients() throws {
+        let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = Data(#"{"theme":"dark"}"#.utf8)
+        try original.write(to: config)
+        let servers: [[String: Any]] = [
+            ["repo": "org/Qwen", "runtime": "mlx_lm", "port": 8766, "pid": 123, "state": "running", "receipt": "/fixture/first.json"],
+            ["repo": "org/Qwen", "runtime": "mlx_lm", "port": 8767, "pid": 456, "state": "running", "receipt": "/fixture/second.json",
+             "adapter_path": "/fixture/adapters/tuned", "adapter_identity": ["adapters.safetensors": ["sha256": "fixture", "bytes": 4]]]
+        ]
+        try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Run")
+        let configure = app.buttons["run-configure-clients-8767"]
+        XCTAssertTrue(configure.waitForExistence(timeout: 15)); configure.click()
+        let preview = app.buttons["Preview client wiring"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 15))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: preview)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
+        XCTAssertEqual(try Data(contentsOf: config), original, "Navigation must not write configuration")
+        preview.click()
+        let confirm = app.buttons["Confirm client wiring"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["client-wiring-reviewed-model"].value as? String, "org/Qwen")
+        XCTAssertEqual(app.staticTexts["client-wiring-reviewed-endpoint"].value as? String, "http://127.0.0.1:8767/v1")
+        XCTAssertEqual(try Data(contentsOf: config), original, "Preview must not write configuration")
+        capture("Run-to-Clients-reviewed-endpoint")
+        confirm.click()
+        XCTAssertTrue(text(containing: "Wired 1 client").waitForExistence(timeout: 15))
+        let written = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any])
+        let providers = try XCTUnwrap(written["provider"] as? [String: Any])
+        let provider = try XCTUnwrap(providers["mlx-local"] as? [String: Any])
+        let options = try XCTUnwrap(provider["options"] as? [String: Any])
+        XCTAssertEqual(options["baseURL"] as? String, "http://127.0.0.1:8767/v1")
+        XCTAssertEqual(written["theme"] as? String, "dark")
+        capture("Run-to-Clients-applied-endpoint")
     }
 
     func testClientWiringPreviewAndEndpointSelection() throws {
@@ -1998,10 +2084,18 @@ final class SetupAssistantUITests: XCTestCase {
         let library = app.buttons["Library"].firstMatch
         XCTAssertTrue(library.waitForExistence(timeout: 45))
         library.click()
-        let modelRow = app.staticTexts["Qwen3-4B-4bit"].firstMatch
+        let modelRow = app.outlines.staticTexts["Qwen3-4B-4bit"].firstMatch
         XCTAssertTrue(modelRow.waitForExistence(timeout: 45))
         XCTAssertTrue(app.buttons["Settings"].exists)
         XCTAssertTrue(app.buttons["Discover"].exists)
+        let sourcePicker = app.radioGroups["library-source"]
+        let heading = app.staticTexts["page-heading-models"]
+        XCTAssertTrue(sourcePicker.exists)
+        XCTAssertTrue(heading.exists)
+        XCTAssertTrue(sourcePicker.radioButtons["All models"].isHittable)
+        XCTAssertTrue(heading.isHittable)
+        XCTAssertGreaterThanOrEqual(sourcePicker.frame.minY, app.windows.firstMatch.frame.minY)
+        XCTAssertLessThanOrEqual(sourcePicker.frame.maxY, heading.frame.minY)
         capture("08-library-visible-model-and-sidebar")
         modelRow.click()
         capture("08b-library-inspector-after-selection")
@@ -2034,6 +2128,14 @@ final class SetupAssistantUITests: XCTestCase {
         corner.press(forDuration: 0.1, thenDragTo: target)
         XCTAssertEqual(window.frame.width, 740, accuracy: 2)
         XCTAssertFalse(app.sheets.firstMatch.exists)
+        XCTAssertTrue(app.buttons["Run model"].waitForNonExistence(timeout: 10),
+                      "The wide inspector must close before opening compact model details.")
+        capture("10b-library-compact-content")
+        print("Compact Library bounds: window=\(window.frame), source=\(sourcePicker.frame), heading=\(heading.frame)")
+        XCTAssertTrue(sourcePicker.radioButtons["All models"].isHittable, app.debugDescription)
+        XCTAssertTrue(heading.isHittable)
+        XCTAssertGreaterThanOrEqual(sourcePicker.frame.minY, app.windows.firstMatch.frame.minY)
+        XCTAssertLessThanOrEqual(sourcePicker.frame.maxY, heading.frame.minY)
         app.typeKey("i", modifierFlags: [.command, .option])
         let details = app.sheets.firstMatch
         XCTAssertTrue(details.waitForExistence(timeout: 10))

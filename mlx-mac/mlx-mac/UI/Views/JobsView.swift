@@ -514,7 +514,7 @@ struct JobsView: View {
     private func perform(_ action: ActivityWorkflowAction) {
         switch action {
         case .openInLibrary(let path):
-            appHost.selectedModelPath = path
+            appHost.libraryRevealRequest = LibraryRevealRequest(modelPath: path)
             onRouteSelection(.library)
         case .runModel(let record):
             guard let path = record.completedModelPath else { return }

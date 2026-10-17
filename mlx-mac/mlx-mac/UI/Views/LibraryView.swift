@@ -305,7 +305,7 @@ enum LibrarySource: String, CaseIterable, Identifiable {
 
 /// Source-specific views share Library's inventory and preserve the main table's state.
 struct LibraryWorkspace: View {
-    let appHost: AppHost
+    @ObservedObject var appHost: AppHost
     let lmStudioRequested: Bool
     let sourceHome: URL
     let onRouteSelection: (AppRoute) -> Void
@@ -326,42 +326,36 @@ struct LibraryWorkspace: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                ForEach(LibrarySource.allCases.filter { visitedSources.contains($0) }) { destination in
-                    let active = source == destination
-                    sourceView(destination)
-                        .environment(\.isRouteActive, isRouteActive && active)
-                        .opacity(active ? 1 : 0)
-                        .allowsHitTesting(active)
-                        .accessibilityHidden(!active)
-                        .zIndex(active ? 1 : 0)
-                }
+        ZStack {
+            ForEach(LibrarySource.allCases.filter { visitedSources.contains($0) }) { destination in
+                let active = source == destination
+                sourceView(destination)
+                    .environment(\.isRouteActive, isRouteActive && active)
+                    .opacity(active ? 1 : 0)
+                    .allowsHitTesting(active)
+                    .accessibilityHidden(!active)
+                    .zIndex(active ? 1 : 0)
             }
-            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Picker("Source", selection: $source) {
-                ForEach(LibrarySource.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 350)
-            .padding(.horizontal, WorkbenchSpacing.pageInset)
-            .padding(.top, WorkbenchSpacing.pageInset)
-            .accessibilityIdentifier("library-source")
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
         .onChange(of: source) { _, selected in visitedSources.insert(selected) }
         .onChange(of: lmStudioRequested) { _, requested in
             if requested { source = .lmStudio; visitedSources.insert(.lmStudio) }
         }
+        .onChange(of: appHost.libraryRevealRequest, initial: true) { receiveRevealRequest() }
+        .onChange(of: isRouteActive, initial: true) { receiveRevealRequest() }
     }
 
     @ViewBuilder private func sourceView(_ source: LibrarySource) -> some View {
         switch source {
-        case .allModels: LibraryView(appHost: appHost, revealRequest: revealRequest, onRouteSelection: onRouteSelection)
-        case .lmStudio: LMStudioView(appHost: appHost, home: sourceHome, onRouteSelection: navigateFromSource)
+        case .allModels:
+            LibraryView(appHost: appHost, revealRequest: revealRequest, sourceSelection: $source,
+                        onRouteSelection: onRouteSelection)
+        case .lmStudio:
+            VStack(spacing: 0) {
+                LibrarySourcePicker(selection: $source)
+                LMStudioView(appHost: appHost, home: sourceHome, onRouteSelection: navigateFromSource)
+            }
         }
     }
 
@@ -369,9 +363,32 @@ struct LibraryWorkspace: View {
         if route == .library {
             source = .allModels
             visitedSources.insert(.allModels)
-            if let path = appHost.selectedModelPath { revealRequest = LibraryRevealRequest(modelPath: path) }
+            receiveRevealRequest()
         }
         onRouteSelection(route)
+    }
+
+    private func receiveRevealRequest() {
+        guard isRouteActive, let request = appHost.libraryRevealRequest else { return }
+        source = .allModels
+        visitedSources.insert(.allModels)
+        revealRequest = request
+    }
+}
+
+private struct LibrarySourcePicker: View {
+    @Binding var selection: LibrarySource
+
+    var body: some View {
+        Picker("Source", selection: $selection) {
+            ForEach(LibrarySource.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 350)
+        .padding(.horizontal, WorkbenchSpacing.pageInset)
+        .padding(.top, WorkbenchSpacing.pageInset)
+        .accessibilityIdentifier("library-source")
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -380,6 +397,7 @@ struct LibraryView: View {
     @ObservedObject private var reclaim: ReclaimCoordinator
     private let onRouteSelection: (AppRoute) -> Void
     let revealRequest: LibraryRevealRequest?
+    private let sourceSelection: Binding<LibrarySource>?
 
     @State private var search = ""
     @State private var readinessFilter: ModelReadiness?
@@ -387,6 +405,8 @@ struct LibraryView: View {
     @State private var selection: String?
     @State private var sortOrder = LibraryTablePresentation.defaultSortOrder
     @State private var showInspector = false
+    @State private var revealError: String?
+    @State private var handledRevealID: UUID?
     @State private var columnCustomization = TableColumnCustomization<LibraryRow>()
     @State private var tier = LibraryColumnTier.resolve(width: WorkbenchSize.assumedContentWidth)
     /// The fit context the rows sort by. Follows the monitor's context
@@ -397,9 +417,10 @@ struct LibraryView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.workbenchViewport) private var viewport
 
-    init(appHost: AppHost, revealRequest: LibraryRevealRequest? = nil, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
+    init(appHost: AppHost, revealRequest: LibraryRevealRequest? = nil, sourceSelection: Binding<LibrarySource>? = nil, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
         self.revealRequest = revealRequest
+        self.sourceSelection = sourceSelection
         _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
         self.onRouteSelection = onRouteSelection
     }
@@ -463,8 +484,17 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        content
-            .safeAreaInset(edge: .top, spacing: 0) { WorkbenchPageHeading(route: .library) }
+        VStack(spacing: 0) {
+            if let sourceSelection { LibrarySourcePicker(selection: sourceSelection) }
+            WorkbenchPageHeading(route: .library)
+            if let revealError {
+                InlineMessage(kind: .warning, text: revealError,
+                    action: (title: "Dismiss", perform: { self.revealError = nil }))
+                    .padding([.horizontal, .top], WorkbenchSpacing.pageInset)
+                    .accessibilityIdentifier("library-reveal-error")
+            }
+            content
+        }
             .sheet(isPresented: Binding(get: { reclaim.libraryTrashPlan != nil && isRouteActive }, set: { if !$0 { reclaim.cancelLibraryTrash() } })) {
                 if let plan = reclaim.libraryTrashPlan {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -491,7 +521,7 @@ struct LibraryView: View {
                         .interactiveDismissDisabled(reclaim.isApplying)
                 }
             }
-            .inspector(isPresented: inspectorBinding) {
+            .libraryInspector(isPresented: inspectorBinding) {
                 inspector
                     .inspectorColumnWidth(
                         min: WorkbenchSize.Library.inspectorMinimum,
@@ -544,7 +574,17 @@ struct LibraryView: View {
                 }
             }
             .onChange(of: revealRequest, initial: true) { _, request in
-                guard let path = request?.resolvedPath(in: snapshot) else { return }
+                guard let request else { return }
+                handledRevealID = request.id
+                defer {
+                    if appHost.libraryRevealRequest?.id == request.id { appHost.libraryRevealRequest = nil }
+                }
+                guard let path = request.resolvedPath(in: snapshot) else {
+                    showInspector = false
+                    revealError = "The requested model is not in the current Library scan. Scan again, then retry the action."
+                    return
+                }
+                revealError = nil
                 search = ""
                 readinessFilter = nil
                 quantizationFilter = nil
@@ -881,6 +921,9 @@ struct LibraryView: View {
     }
 
     private func syncSelection() {
+        // Apply explicit navigation before normal table reconciliation.
+        if revealError != nil { return }
+        if let request = appHost.libraryRevealRequest ?? revealRequest, request.id != handledRevealID { return }
         let hadSelection = selection != nil
         let candidate = LibraryPresentation.selectionCandidate(
             in: groups,
@@ -890,6 +933,20 @@ struct LibraryView: View {
         if !hadSelection, candidate != nil, usesInspectorColumn { showInspector = true }
         if selection == nil || LibraryTablePresentation.modelPath(forSelection: selection) != candidate {
             selection = candidate
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func libraryInspector<Inspector: View>(
+        isPresented: Binding<Bool>,
+        @ViewBuilder content: () -> Inspector
+    ) -> some View {
+        if isPresented.wrappedValue {
+            self.inspector(isPresented: isPresented) { content() }
+        } else {
+            self
         }
     }
 }
