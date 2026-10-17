@@ -29,7 +29,7 @@ DOCS_EPOCH   ?= $(shell git show -s --format=%ct $(DOCS_COMMIT))
 DOCS_RELEASE_DIR ?= .release
 
 .PHONY: help mac-only install setup agent-bootstrap venv _pkgs install-convert pip-audit _audit_pkgs deps \
-	start run test test-live-scan test-swift test-native-ui test-swift-live-scan render-clients render-discover render-lmstudio render-settings accept-native-gguf open check check-convert doctor clean clean-venv \
+	start run test test-live-scan test-swift test-native-ui test-swift-live-scan render-clients render-discover render-lmstudio render-settings accept-native-gguf accept-native-mlx open check check-convert doctor clean clean-venv \
 	docs-test docs-build docs-verify docs-release version-bump dmg build-swift-dist build-swift-devid
 
 help:
@@ -57,6 +57,7 @@ help:
 	row "make render-lmstudio" "render the LM Studio states into an xcresult bundle"; \
 	row "make render-settings" "render the Settings states into an xcresult bundle"; \
 	row "make accept-native-gguf" "RUNTIME_MANIFEST=/absolute/path/runtime.json — opt-in native GGUF-to-Run acceptance"; \
+	row "make accept-native-mlx" "RUNTIME_MANIFEST=/absolute/path/runtime.json — opt-in ready-MLX verification and serving acceptance"; \
 	row "make pip-audit" "audit .venv convert/serve deps against the OSV DB"; \
 	row "make dmg" "build the Release .app and package it as a DMG"; \
 	hdr "Docs & release"; \
@@ -96,7 +97,8 @@ agent-bootstrap:
 	fi
 
 venv: mac-only
-	@if [ -x "$(VENV_PY)" ]; then \
+	@set -e; \
+	if [ -x "$(VENV_PY)" ]; then \
 		echo "venv OK: $$($(VENV_PY) -c 'import sys; print(sys.executable + " (" + sys.version.split()[0] + ")")')"; \
 	else \
 		echo "Creating $(VENV) with Python $(VENV_PYTHON) (Apple Silicon)…"; \
@@ -239,12 +241,12 @@ render-settings:
 		-only-testing:mlx-workbenchTests/SettingsRenderTests \
 		-resultBundlePath $(SETTINGS_RENDER_BUNDLE) test
 
-accept-native-gguf:
+accept-native-gguf accept-native-mlx:
 	@case "$(RUNTIME_MANIFEST)" in \
 		/*) ;; \
 		*) echo "RUNTIME_MANIFEST is required and must be an absolute path" >&2; exit 2 ;; \
 	esac
-	@$(PYTHON) scripts/native_gguf_acceptance.py --manifest "$(RUNTIME_MANIFEST)"
+	@$(PYTHON) scripts/native_gguf_acceptance.py --manifest "$(RUNTIME_MANIFEST)" --source-format $(if $(filter accept-native-mlx,$@),mlx,gguf)
 
 docs-test:
 	$(PYTHON) -m unittest tests.test_release_docs -v

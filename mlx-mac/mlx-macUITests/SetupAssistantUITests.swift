@@ -2052,6 +2052,7 @@ final class SetupAssistantUITests: XCTestCase {
     }
 
     func testLibraryModelInspectionAndDeletionReviewDoNotMutateTheModel() throws {
+        let screen = try XCTUnwrap(NSScreen.main).frame
         let root = URL(fileURLWithPath: configPath).deletingLastPathComponent()
         let model = root.appendingPathComponent("models/Qwen3-4B-4bit")
         let script = root.appendingPathComponent("agent/scripts/mlx-agent")
@@ -2086,6 +2087,25 @@ final class SetupAssistantUITests: XCTestCase {
         library.click()
         let modelRow = app.outlines.staticTexts["Qwen3-4B-4bit"].firstMatch
         XCTAssertTrue(modelRow.waitForExistence(timeout: 45))
+        capture("08-library-startup-inspector")
+        assertLibraryNavigationVisible()
+        if screen.width < 1100 {
+            let sidebar = app.outlines["Workbench navigation"]
+            sidebar.scroll(byDeltaX: 0, deltaY: -300)
+            let settings = app.buttons["Settings"]
+            let window = app.windows.firstMatch
+            XCTAssertTrue(window.frame.contains(settings.frame))
+            XCTAssertTrue(settings.isHittable)
+            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: settings.frame.midX - window.frame.minX, dy: settings.frame.midY - window.frame.minY
+            )).click()
+            XCTAssertTrue(app.staticTexts["page-heading-settings"].waitForExistence(timeout: 10))
+            capture("08a-library-small-desktop-settings")
+            sidebar.scroll(byDeltaX: 0, deltaY: 300)
+            library.click()
+            XCTAssertTrue(app.staticTexts["page-heading-models"].waitForExistence(timeout: 10))
+        }
+        library.click()
         XCTAssertTrue(app.buttons["Settings"].exists)
         XCTAssertTrue(app.buttons["Discover"].exists)
         let sourcePicker = app.radioGroups["library-source"]
@@ -2097,8 +2117,29 @@ final class SetupAssistantUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(sourcePicker.frame.minY, app.windows.firstMatch.frame.minY)
         XCTAssertLessThanOrEqual(sourcePicker.frame.maxY, heading.frame.minY)
         capture("08-library-visible-model-and-sidebar")
-        modelRow.click()
+        modelRow.doubleClick()
         capture("08b-library-inspector-after-selection")
+        if screen.width < 1100 {
+            let details = app.sheets.firstMatch
+            XCTAssertTrue(details.waitForExistence(timeout: 10))
+            XCTAssertTrue(details.buttons["Done"].isHittable)
+            details.buttons["Done"].click()
+            XCTAssertTrue(details.waitForNonExistence(timeout: 10))
+        } else {
+            assertLibraryNavigationVisible()
+            app.buttons["Inspector"].click()
+            XCTAssertTrue(app.buttons["Run model"].waitForNonExistence(timeout: 10))
+            let window = app.windows.firstMatch
+            let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
+                .withOffset(CGVector(dx: -2, dy: -2))
+            corner.press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: 1118, dy: 718)))
+            XCTAssertEqual(window.frame.width, 1120, accuracy: 2)
+            modelRow.doubleClick()
+            XCTAssertTrue(app.buttons["Run model"].waitForExistence(timeout: 10))
+            capture("08c-library-inspector-at-1120")
+        }
+        assertLibraryNavigationVisible()
         modelRow.rightClick()
         let delete = app.menuItems["Delete…"]
         XCTAssertTrue(delete.waitForExistence(timeout: 10))
@@ -2115,12 +2156,6 @@ final class SetupAssistantUITests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
 
         let window = app.windows.firstMatch
-        let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
-            .withOffset(CGVector(dx: 0, dy: 20))
-        if let screen = NSScreen.main?.frame, window.frame.maxX > screen.maxX - 4 {
-            titlebar.press(forDuration: 0.1, thenDragTo: titlebar.withOffset(CGVector(
-                dx: screen.maxX - window.frame.maxX - 8, dy: 0)))
-        }
         let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
             .withOffset(CGVector(dx: -2, dy: -2))
         let target = window.coordinate(withNormalizedOffset: .zero)
@@ -2147,5 +2182,19 @@ final class SetupAssistantUITests: XCTestCase {
         XCTAssertTrue(details.waitForNonExistence(timeout: 10))
         XCTAssertTrue(modelRow.isHittable)
         XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
+    }
+
+    private func assertLibraryNavigationVisible(file: StaticString = #filePath, line: UInt = #line) {
+        let window = app.windows.firstMatch
+        guard let screen = NSScreen.main?.frame else { XCTFail("The guest screen is unavailable.", file: file, line: line); return }
+        print("Library inspector bounds: window=\(window.frame), screen=\(screen)")
+        XCTAssertGreaterThanOrEqual(window.frame.minX, screen.minX, file: file, line: line)
+        XCTAssertLessThanOrEqual(window.frame.maxX, screen.maxX, file: file, line: line)
+        for name in ["Library", "Prepare", "Run"] {
+            let button = app.buttons[name].firstMatch
+            XCTAssertTrue(button.exists, name, file: file, line: line)
+            XCTAssertTrue(window.frame.contains(button.frame), "\(name) lies outside the window: \(button.frame)", file: file, line: line)
+            XCTAssertTrue(button.isHittable, name, file: file, line: line)
+        }
     }
 }

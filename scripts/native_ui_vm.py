@@ -94,16 +94,26 @@ def guest(input_dir, output_dir):
     input_dir, output_dir = Path(input_dir), Path(output_dir)
     manifest = json.loads((input_dir / "source-manifest.json").read_text())
     output_dir.mkdir(parents=True, exist_ok=True)
+    desktop = manifest.get("desktop_size", "1440x1000")
+    if desktop not in ("1024x768", "1440x1000"):
+        raise RuntimeError("Unsupported test desktop; no GUI operation was started.")
+    width, height = desktop.split("x")
+    desktop_environment = dict(os.environ, MLX_WORKBENCH_UI_DESKTOP_WIDTH=width, MLX_WORKBENCH_UI_DESKTOP_HEIGHT=height)
     # macOS can retain a scaled desktop mode independently of Tart's virtual
     # display size. Select the intended logical mode before launching windows.
     display = subprocess.check_output(["/usr/bin/swift", "-e", """
 import CoreGraphics
 import Foundation
 let display = CGMainDisplayID()
+let environment = ProcessInfo.processInfo.environment
+guard let width = environment["MLX_WORKBENCH_UI_DESKTOP_WIDTH"].flatMap(Int.init),
+      let height = environment["MLX_WORKBENCH_UI_DESKTOP_HEIGHT"].flatMap(Int.init) else {
+    fatalError("The requested desktop dimensions are missing.")
+}
 guard let before = CGDisplayCopyDisplayMode(display),
       let modes = CGDisplayCopyAllDisplayModes(display, nil) as? [CGDisplayMode],
-      let target = modes.first(where: { $0.width == 1440 && $0.height == 1000 }) else {
-    fatalError("The guest display does not offer the required 1440x1000 desktop mode.")
+      let target = modes.first(where: { $0.width == width && $0.height == height }) else {
+    fatalError("The guest display does not offer the requested desktop mode.")
 }
 var configuration: CGDisplayConfigRef?
 guard CGBeginDisplayConfiguration(&configuration) == .success,
@@ -116,21 +126,24 @@ guard CGConfigureDisplayWithDisplayMode(configuration, display, target, nil) == 
 }
 guard CGCompleteDisplayConfiguration(configuration, .forSession) == .success,
       let after = CGDisplayCopyDisplayMode(display),
-      after.width == 1440 && after.height == 1000 else {
+      after.width == width && after.height == height else {
     fatalError("The guest display did not enter the required desktop mode.")
 }
 let evidence = ["before": ["width": before.width, "height": before.height],
                 "after": ["width": after.width, "height": after.height]]
 let data = try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys])
 print(String(decoding: data, as: UTF8.self))
-"""], text=True, timeout=60)
+"""], text=True, timeout=60, env=desktop_environment)
     (output_dir / "display-preflight.json").write_text(display)
     checked(["/usr/bin/open", "-a", "Calculator"], timeout=10)
     probe = subprocess.check_output(["/usr/bin/osascript", "-l", "JavaScript", "-e", """
 ObjC.import('AppKit');
 const screen = $.NSScreen.mainScreen.frame.size;
-if (screen.width !== 1440 || screen.height !== 1000) {
-    throw new Error('The guest desktop did not retain its required 1440x1000 mode. No tests were started.');
+const environment = $.NSProcessInfo.processInfo.environment;
+const width = Number(ObjC.unwrap(environment.objectForKey('MLX_WORKBENCH_UI_DESKTOP_WIDTH')));
+const height = Number(ObjC.unwrap(environment.objectForKey('MLX_WORKBENCH_UI_DESKTOP_HEIGHT')));
+if (screen.width !== width || screen.height !== height) {
+    throw new Error('The guest desktop did not retain its requested mode. No tests were started.');
 }
 const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;
 const bundle = ObjC.unwrap(app.bundleIdentifier);
@@ -138,7 +151,7 @@ if (bundle !== 'com.apple.calculator') {
     throw new Error('Guest Launch Services did not activate Calculator. No tests were started.');
 }
 JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.width, height: screen.height});
-"""], text=True, timeout=30)
+"""], text=True, timeout=30, env=desktop_environment)
     (output_dir / "gui-preflight.json").write_text(probe)
     checked(["/usr/sbin/screencapture", "-x", str(output_dir / "guest-preflight.png")], timeout=10)
     if manifest.get("preflight_only"):
@@ -274,7 +287,8 @@ def host(args):
     files = snapshot(repo, input_dir / "source")
     manifest = {"run_id": run_id, "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
                 "files": files, "base_vm": args.base_vm, "unit_test": args.unit_test, "ui_test": args.ui_test,
-                "with_unit_tests": args.with_unit_tests, "preflight_only": args.preflight_only}
+                "with_unit_tests": args.with_unit_tests, "preflight_only": args.preflight_only,
+                "desktop_size": args.desktop_size}
     if args.unit_evidence:
         if args.unit_test or args.preflight_only:
             raise RuntimeError("Unit evidence reuse is only available for the complete UI review.")
@@ -297,7 +311,7 @@ def host(args):
     try:
         tart_run("clone", args.base_vm, vm)
         cloned = True
-        tart_run("set", vm, "--cpu", "4", "--memory", "8192", "--display", "1440x1000", "--no-display-refit")
+        tart_run("set", vm, "--cpu", "4", "--memory", "8192", "--display", args.desktop_size, "--no-display-refit")
         log = (run_dir / "vm.log").open("w")
         running = subprocess.Popen([tart, "run", "--no-graphics", "--no-audio", "--no-clipboard", "--no-usb-accessories",
                                     "--net-host", "--dir", f"review-input:{input_dir}:ro",
@@ -324,6 +338,8 @@ def main():
     parser.add_argument("--tart", help="Path to the Tart executable")
     parser.add_argument("--vm-home", default=str(Path(__file__).resolve().parent.parent / ".build/native-ui-vms"))
     parser.add_argument("--baseline-app", help="Optional preserved app for matching before captures")
+    parser.add_argument("--desktop-size", choices=("1024x768", "1440x1000"), default="1440x1000",
+                        help="Configure the guest desktop before launching the UI test runner")
     parser.add_argument("--unit-test", help="Run only this XCTest identifier for failure diagnosis; no full-suite or UI acceptance")
     parser.add_argument("--ui-test", help="Run one UI test for scoped failure diagnosis; no complete UI-suite acceptance")
     parser.add_argument("--with-unit-tests", action="store_true", help="Run the complete native unit gate before the selected UI test")

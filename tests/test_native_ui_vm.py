@@ -14,6 +14,17 @@ spec.loader.exec_module(vm)
 
 
 class NativeUIVMTests(unittest.TestCase):
+    def test_desktop_size_is_selected_before_guest_launch(self):
+        for desktop in ("1024x768", "1440x1000"):
+            with self.subTest(desktop=desktop), \
+                    patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture", "--desktop-size", desktop]), \
+                    patch.object(vm, "host") as launch:
+                try:
+                    vm.main()
+                except SystemExit as error:
+                    self.fail(f"The requested desktop was rejected: {error}")
+                self.assertEqual(launch.call_args.args[0].desktop_size, desktop)
+
     def test_exited_vm_fails_before_guest_probe_or_wait(self):
         process = Mock()
         process.poll.return_value = 1
@@ -104,6 +115,18 @@ class NativeUIVMTests(unittest.TestCase):
             self.assertEqual((root / "output/display-preflight.json").read_text(), display)
             self.assertTrue((root / "output/gui-preflight.json").is_file())
             self.assertEqual(launch.call_args_list[0].args[0], ["/usr/bin/open", "-a", "Calculator"])
+
+    def test_compact_desktop_is_applied_to_both_preflight_probes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source-manifest.json").write_text('{"preflight_only":true,"desktop_size":"1024x768"}')
+            with patch.object(vm.os, "getuid", return_value=501), \
+                    patch.object(vm.subprocess, "check_output", side_effect=["VirtualMac2,1", "501", "Aqua", "{}", "{}"]) as probe, \
+                    patch.object(vm, "checked"):
+                vm.guest(root, root / "output")
+            for call in probe.call_args_list[3:]:
+                self.assertEqual(call.kwargs["env"]["MLX_WORKBENCH_UI_DESKTOP_WIDTH"], "1024")
+                self.assertEqual(call.kwargs["env"]["MLX_WORKBENCH_UI_DESKTOP_HEIGHT"], "768")
 
     def test_zero_tests_and_skipped_ui_tests_cannot_pass(self):
         zero = {"result": "Passed", "totalTestCount": 0, "passedTests": 0, "failedTests": 0}
