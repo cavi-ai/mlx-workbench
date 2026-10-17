@@ -43,6 +43,10 @@ make test-native-ui NATIVE_UI_BASE_VM=mlx-workbench-ui-base
 `.build/native-ui-vms`. Provisioning is explicit; the test command never
 downloads an image implicitly.
 
+Use `--desktop-size 1024x768` to check a smaller desktop; the default is
+`1440x1000`. The runner configures and validates the guest's logical display
+size before launching XCUITest, and records it with the run's evidence.
+
 Each run clones the prepared base, snapshots the current source and records
 file hashes. The VM receives a read-only source share and a separate artifact
 share. It opens no host window, shares no clipboard or audio, and uses host-only
