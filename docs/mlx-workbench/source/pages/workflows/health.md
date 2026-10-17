@@ -20,7 +20,7 @@ It also counts verified models whose verification still matches this environment
 | Wired file missing | A client config the wiring wrote no longer exists |
 | Port claimed by two runtimes | Two servers report the same port |
 
-**Setup Assistant…** reopens the first-launch assistant: a four-step sheet over the same engine, runtime and model-folder checks. Completing it once is remembered.
+**Setup Assistant…** reopens the first-launch assistant: a four-step sheet over the same engine, runtime and model-folder checks. **Review setup** summarizes the current base checks and links back to any engine or runtime step that needs attention. **Scan my library** is offered when those checks pass; otherwise **Finish for now** closes the review without claiming readiness or starting a scan. Finishing either way is remembered. **Skip setup** leaves it unfinished, so it returns on the next launch. Model-specific readiness remains separate from these base checks.
 
 ## Watch alerts
 
