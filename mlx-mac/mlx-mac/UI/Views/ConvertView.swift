@@ -830,7 +830,7 @@ struct ConvertView: View {
             modelWorkflow.prepareServe(model: existingModel)
             onRouteSelection(.run)
         case .openExistingInLibrary(let path):
-            appHost.selectedModelPath = path
+            appHost.libraryRevealRequest = LibraryRevealRequest(modelPath: path)
             onRouteSelection(.library)
         case .openActivity:
             onRouteSelection(.activity)
@@ -845,7 +845,7 @@ struct ConvertView: View {
     private func performOnward(_ action: ActivityWorkflowAction) {
         switch action {
         case .openInLibrary(let path):
-            appHost.selectedModelPath = path
+            appHost.libraryRevealRequest = LibraryRevealRequest(modelPath: path)
             onRouteSelection(.library)
         case .runModel(let record):
             guard let path = record.completedModelPath else { return }

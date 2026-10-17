@@ -18,6 +18,8 @@ class AppHost: ObservableObject {
     @Published var catalog: CatalogState
     @Published var isRefreshingCatalog = false
     @Published var selectedModelPath: String?
+    /// Explicit model navigation, consumed when Library becomes active.
+    @Published var libraryRevealRequest: LibraryRevealRequest?
     /// One-shot navigation intent; client configuration still requires its own preview.
     @Published var clientWiringRequest: ClientWiringRequest?
     @Published var servingProfileComparisonRequest: ServingProfileComparisonSetup?
@@ -359,6 +361,7 @@ class AppHost: ObservableObject {
                                   qBits: config.qBits, snapshot: librarySnapshot)
             return .prepare
         }
+        libraryRevealRequest = LibraryRevealRequest(modelPath: path)
         return .library
     }
 
@@ -371,6 +374,7 @@ class AppHost: ObservableObject {
         case .alreadyMLX:
             await rescan()
             selectedModelPath = downloadedPath
+            if let downloadedPath { libraryRevealRequest = LibraryRevealRequest(modelPath: downloadedPath) }
             return .library
         case .gguf:
             await rescan()
@@ -381,6 +385,7 @@ class AppHost: ObservableObject {
                 modelWorkflow.inspect(source: model.item, snapshot: librarySnapshot)
                 return .prepare
             }
+            libraryRevealRequest = LibraryRevealRequest(modelPath: path)
             return .library
         default:
             return nil

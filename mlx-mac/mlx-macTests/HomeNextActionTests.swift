@@ -42,7 +42,7 @@ final class HomeNextActionTests: XCTestCase {
                                (.classification, "Conversion completed; classification models are used from the Library inspector, not served.")] {
             let model = makeModel(path: "/models/\(type.rawValue)-mlx", readiness: .ready, type: type)
             let action = derive(workflow: workflow(state: .verified, completedModelPath: model.item.path), snapshot: snapshot(with: [model]))
-            XCTAssertEqual(action.kind, .library, type.rawValue)
+            XCTAssertEqual(action.kind, .openModel(model.item.path), type.rawValue)
             XCTAssertEqual(action.route, AppRoute.library.rawValue)
             XCTAssertEqual(action.reason, reason)
         }

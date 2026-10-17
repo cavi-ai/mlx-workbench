@@ -809,6 +809,47 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual(writer.status, .completed)
     }
 
+    func testActivityRevealsTheModelThroughRetainedLibraryFilters() throws {
+        let target = root.appendingPathComponent("models/target-image-mlx").path
+        let scan: [String: Any] = ["models": [], "outputs": [["path": target, "name": "Target image model",
+            "model_key": "target-image", "bytes": 1024, "readable": true,
+            "task": ["type": "image_generation", "use_cases": [], "source": "registry", "confidence": "confirmed"]]],
+            "pending": [], "duplicates": [], "totals": ["gguf": 0, "pending": 0, "converted": 1,
+                "unreadable": 0, "bytes": 1024, "reclaimable_bytes": 0]]
+        try JSONSerialization.data(withJSONObject: scan).write(to: root.appendingPathComponent("scan-result.json"))
+        let support = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let workflow: [String: Any] = ["id": UUID().uuidString, "sourcePath": root.appendingPathComponent("source.gguf").path,
+            "outputPath": target, "completedModelPath": target, "state": "completed", "serveState": "idle",
+            "createdAt": Date().timeIntervalSinceReferenceDate, "updatedAt": Date().timeIntervalSinceReferenceDate]
+        try JSONSerialization.data(withJSONObject: [workflow]).write(to: support.appendingPathComponent("model-workflows.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        XCTAssertTrue(text(containing: "Target image model").waitForExistence(timeout: 15))
+        app.popUpButtons["Readiness"].click(); app.menuItems["Needs Conversion"].click()
+        XCTAssertTrue(app.buttons["Clear filters"].waitForExistence(timeout: 10))
+        for attempt in 0..<2 {
+            select("Activity")
+            let open = app.buttons["Open in Library"].firstMatch
+            XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
+            let inspector = app.sheets.firstMatch
+            XCTAssertTrue(inspector.waitForExistence(timeout: 10), "Explicit reveals must open the requested inspector")
+            NSPasteboard.general.clearContents()
+            let more = inspector.descendants(matching: .any)
+                .matching(NSPredicate(format: "label == %@", "More actions for Target image model")).firstMatch
+            XCTAssertTrue(more.waitForExistence(timeout: 10)); more.click()
+            app.menuItems["Copy Path"].click()
+            XCTAssertEqual(NSPasteboard.general.string(forType: .string), target, "The inspector must belong to the exact requested model")
+            capture("Library-explicit-reveal-\(attempt)")
+            inspector.buttons["Done"].click()
+            XCTAssertTrue(inspector.waitForNonExistence(timeout: 10))
+            XCTAssertFalse(app.buttons["Clear filters"].exists)
+        }
+        app.popUpButtons["Readiness"].click(); app.menuItems["Needs Conversion"].click()
+        select("Overview"); select("Library")
+        XCTAssertTrue(app.buttons["Clear filters"].waitForExistence(timeout: 10), "Ordinary navigation must preserve filters after the intent is consumed")
+        XCTAssertFalse(app.sheets.firstMatch.exists)
+    }
+
     func testRunningTrainingJobRefreshesToCompletion() throws {
         let file = root.appendingPathComponent("training-jobs.json")
         var job: [String: Any] = ["receipt": "fixture-trained-adapter", "repo": "fixture/base",

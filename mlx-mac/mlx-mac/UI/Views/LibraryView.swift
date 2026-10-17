@@ -305,7 +305,7 @@ enum LibrarySource: String, CaseIterable, Identifiable {
 
 /// Source-specific views share Library's inventory and preserve the main table's state.
 struct LibraryWorkspace: View {
-    let appHost: AppHost
+    @ObservedObject var appHost: AppHost
     let lmStudioRequested: Bool
     let sourceHome: URL
     let onRouteSelection: (AppRoute) -> Void
@@ -356,6 +356,8 @@ struct LibraryWorkspace: View {
         .onChange(of: lmStudioRequested) { _, requested in
             if requested { source = .lmStudio; visitedSources.insert(.lmStudio) }
         }
+        .onChange(of: appHost.libraryRevealRequest, initial: true) { receiveRevealRequest() }
+        .onChange(of: isRouteActive, initial: true) { receiveRevealRequest() }
     }
 
     @ViewBuilder private func sourceView(_ source: LibrarySource) -> some View {
@@ -369,9 +371,16 @@ struct LibraryWorkspace: View {
         if route == .library {
             source = .allModels
             visitedSources.insert(.allModels)
-            if let path = appHost.selectedModelPath { revealRequest = LibraryRevealRequest(modelPath: path) }
+            receiveRevealRequest()
         }
         onRouteSelection(route)
+    }
+
+    private func receiveRevealRequest() {
+        guard isRouteActive, let request = appHost.libraryRevealRequest else { return }
+        source = .allModels
+        visitedSources.insert(.allModels)
+        revealRequest = request
     }
 }
 
@@ -387,6 +396,8 @@ struct LibraryView: View {
     @State private var selection: String?
     @State private var sortOrder = LibraryTablePresentation.defaultSortOrder
     @State private var showInspector = false
+    @State private var revealError: String?
+    @State private var handledRevealID: UUID?
     @State private var columnCustomization = TableColumnCustomization<LibraryRow>()
     @State private var tier = LibraryColumnTier.resolve(width: WorkbenchSize.assumedContentWidth)
     /// The fit context the rows sort by. Follows the monitor's context
@@ -463,7 +474,15 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        content
+        VStack(spacing: 0) {
+            if let revealError {
+                InlineMessage(kind: .warning, text: revealError,
+                    action: (title: "Dismiss", perform: { self.revealError = nil }))
+                    .padding([.horizontal, .top], WorkbenchSpacing.pageInset)
+                    .accessibilityIdentifier("library-reveal-error")
+            }
+            content
+        }
             .safeAreaInset(edge: .top, spacing: 0) { WorkbenchPageHeading(route: .library) }
             .sheet(isPresented: Binding(get: { reclaim.libraryTrashPlan != nil && isRouteActive }, set: { if !$0 { reclaim.cancelLibraryTrash() } })) {
                 if let plan = reclaim.libraryTrashPlan {
@@ -544,7 +563,17 @@ struct LibraryView: View {
                 }
             }
             .onChange(of: revealRequest, initial: true) { _, request in
-                guard let path = request?.resolvedPath(in: snapshot) else { return }
+                guard let request else { return }
+                handledRevealID = request.id
+                defer {
+                    if appHost.libraryRevealRequest?.id == request.id { appHost.libraryRevealRequest = nil }
+                }
+                guard let path = request.resolvedPath(in: snapshot) else {
+                    showInspector = false
+                    revealError = "The requested model is not in the current Library scan. Scan again, then retry the action."
+                    return
+                }
+                revealError = nil
                 search = ""
                 readinessFilter = nil
                 quantizationFilter = nil
@@ -881,6 +910,9 @@ struct LibraryView: View {
     }
 
     private func syncSelection() {
+        // Apply explicit navigation before normal table reconciliation.
+        if revealError != nil { return }
+        if let request = appHost.libraryRevealRequest ?? revealRequest, request.id != handledRevealID { return }
         let hadSelection = selection != nil
         let candidate = LibraryPresentation.selectionCandidate(
             in: groups,

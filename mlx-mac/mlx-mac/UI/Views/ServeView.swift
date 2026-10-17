@@ -319,7 +319,10 @@ struct ServeView: View {
                         symbol: "nosign",
                         text: "\(selectedModel?.item.task?.type.title ?? "This kind of") models are not served. Use them from the Library inspector."
                     )
-                    Button("Open Library") { onRouteSelection(.library) }
+                    Button("Open Library") {
+                        if let selectedModel { appHost.libraryRevealRequest = LibraryRevealRequest(modelPath: selectedModel.item.path) }
+                        onRouteSelection(.library)
+                    }
                         .buttonStyle(.bordered)
                 case .notEligible:
                     if presentation.canPrepareSelection {
