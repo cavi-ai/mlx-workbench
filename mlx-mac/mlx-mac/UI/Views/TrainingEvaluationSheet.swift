@@ -3,12 +3,15 @@ import SwiftUI
 struct TrainingEvaluationReviewContext: Identifiable {
     let id: String
     let response: LabResponse
+    var workspace: LabWorkspaceContext? = nil
 }
 
 struct TrainingEvaluationSheet: View {
     let baseTitle: String
     let promptSets: [PromptSet]
     let managePromptSets: (() -> Void)?
+    @ObservedObject private var lab: LabCoordinator
+    @State private var workspace: LabWorkspaceContext
     @StateObject private var session: TrainingEvaluationSession
     @State private var confirmsDiscard = false
     @Environment(\.dismiss) private var dismiss
@@ -16,24 +19,33 @@ struct TrainingEvaluationSheet: View {
     init(lab: LabCoordinator, job: TrainingJob, session: TrainingEvaluationSession? = nil,
          promptSets: [PromptSet] = [], managePromptSets: (() -> Void)? = nil) {
         baseTitle = job.repo; self.promptSets = promptSets; self.managePromptSets = managePromptSets
+        self.lab = lab
+        let workspace = lab.workspaceContext
+        _workspace = State(initialValue: workspace)
         _session = StateObject(wrappedValue: session ?? TrainingEvaluationSession(receipt: job.receipt) {
-            try await lab.request($0)
+            try await lab.request($0, in: workspace)
         })
     }
 
-    init(lab: LabCoordinator, retained: LabResponse) {
+    init(lab: LabCoordinator, retained: LabResponse, workspace: LabWorkspaceContext? = nil) {
         baseTitle = retained.report?.object?["base_repo"]?.text ?? "Recorded base model"
         promptSets = []; managePromptSets = nil
-        _session = StateObject(wrappedValue: TrainingEvaluationSession(receipt: "", retained: retained) { try await lab.request($0) })
+        self.lab = lab
+        let workspace = workspace ?? lab.workspaceContext
+        _workspace = State(initialValue: workspace)
+        _session = StateObject(wrappedValue: TrainingEvaluationSession(receipt: "", retained: retained) {
+            try await lab.request($0, in: workspace)
+        })
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             Text(session.isRetainedOnly ? "Review retained evaluation" : "Evaluate trained adapter").font(WorkbenchTypography.title)
             Text(baseTitle).font(WorkbenchTypography.cardTitle)
+            LabWorkspaceLabel(lab: lab, workspace: workspace)
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                    if !session.isRetainedOnly { setup }
+                    if !session.isRetainedOnly { setup.disabled(!lab.isCurrent(workspace)) }
                     if let error = session.errorMessage { Text(error).foregroundStyle(WorkbenchColor.failure) }
                     if let preview = session.preview {
                         TrainingRawDisclosure(title: "Reviewed evaluation recipe", text: preview.plan.jsonText,
@@ -52,9 +64,9 @@ struct TrainingEvaluationSheet: View {
                 Spacer()
                 if !session.isRetainedOnly {
                     Button(session.operation == .previewing ? "Previewing…" : "Preview") { session.previewEvaluation() }
-                        .disabled(!session.canPreview).buttonStyle(.bordered).controlSize(.small)
+                        .disabled(!lab.isCurrent(workspace) || !session.canPreview).buttonStyle(.bordered).controlSize(.small)
                     Button(session.operation == .evaluating ? "Running comparison…" : "Run comparison") { session.evaluate() }
-                        .disabled(!session.canEvaluate).buttonStyle(.workbenchPrimary).controlSize(.small)
+                        .disabled(!lab.isCurrent(workspace) || !session.canEvaluate).buttonStyle(.workbenchPrimary).controlSize(.small)
                 }
             }
         }
@@ -142,14 +154,14 @@ struct TrainingEvaluationSheet: View {
             })) {
                 Text("Choose a preference").tag("")
                 ForEach(TrainingEvaluationReview.preferences, id: \.self) { Text(TrainingEvaluationReview.title($0)).tag($0) }
-            }.disabled(session.isBusy).accessibilityIdentifier("training-evaluation-preference")
+            }.disabled(session.isBusy || !lab.isCurrent(workspace)).accessibilityIdentifier("training-evaluation-preference")
             TextField("Review notes (optional)", text: Binding(get: { session.draft(sample.id).notes }, set: { value in
                 var draft = session.draft(sample.id); draft.notes = value; session.updateReview(sample.id, draft)
-            }), axis: .vertical).lineLimit(2...4).disabled(session.isBusy).accessibilityIdentifier("training-evaluation-review-notes")
+            }), axis: .vertical).lineLimit(2...4).disabled(session.isBusy || !lab.isCurrent(workspace)).accessibilityIdentifier("training-evaluation-review-notes")
             if let error = session.reviewError { Text(error).foregroundStyle(WorkbenchColor.failure) }
             if let notice = session.reviewNotice { Text(notice).accessibilityIdentifier("training-evaluation-review-saved") }
             Button(session.operation == .savingReview ? "Saving review…" : "Save review") { session.saveReview() }
-                .disabled(!session.canSaveReview).buttonStyle(.bordered).controlSize(.small)
+                .disabled(!lab.isCurrent(workspace) || !session.canSaveReview).buttonStyle(.bordered).controlSize(.small)
                 .accessibilityIdentifier("training-evaluation-save-review")
                 .help(session.reviewValidation ?? "Record this preference for the retained prompt outputs.")
         }

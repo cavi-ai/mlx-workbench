@@ -234,6 +234,8 @@ struct TrainingPreviewGuidance: Equatable {
 struct TrainingView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var trainedAdapters: TrainedAdapterServingCoordinator
+    @ObservedObject private var lab: LabCoordinator
+    private let ownsLoader: Bool
     private let onRouteSelection: (AppRoute) -> Void
     @StateObject private var session: TrainingSession
     @StateObject private var loader: TrainingLoader
@@ -256,13 +258,17 @@ struct TrainingView: View {
     ) {
         self.appHost = appHost
         _trainedAdapters = ObservedObject(wrappedValue: appHost.trainedAdapters)
+        _lab = ObservedObject(wrappedValue: appHost.lab)
+        ownsLoader = loader == nil
+        let workspace = appHost.lab.workspaceContext
         self.onRouteSelection = onRouteSelection
         seededRetained = seedRetained
         _retainedExpanded = State(initialValue: seedRetained != nil)
         _loader = StateObject(wrappedValue: loader ?? TrainingLoader(
             jobs: { try await appHost.api.trainingStatus().jobs },
-            history: { try await appHost.lab.request(LabRequest(operation: "training-history")).evaluations ?? [] },
-            inspect: { try await appHost.lab.request(LabRequest(operation: "training-inspect", evaluationID: $0)) }
+            history: { try await appHost.lab.request(LabRequest(operation: "training-history"), in: workspace).evaluations ?? [] },
+            inspect: { try await appHost.lab.request(LabRequest(operation: "training-inspect", evaluationID: $0), in: workspace) },
+            workspace: workspace
         ))
         _session = StateObject(wrappedValue: session ?? TrainingSession(
             preview: { request in
@@ -302,13 +308,29 @@ struct TrainingView: View {
         }
         .sheet(item: $evaluationReview, onDismiss: {
             if let identity = loader.inspection?.recordID { loader.inspect(identity) }
-        }) { context in TrainingEvaluationSheet(lab: appHost.lab, retained: context.response) }
+        }) { context in TrainingEvaluationSheet(lab: lab, retained: context.response, workspace: context.workspace) }
+        .onChange(of: lab.workspaceContext, initial: true) {
+            bindEvaluationWorkspace()
+        }
         .onChange(of: appHost.librarySnapshot?.generatedAt, initial: true) {
             baseModels = TrainingPresentation.baseModels(appHost.librarySnapshot)
         }
         .task(id: isRouteActive) {
             guard isRouteActive else { return }
+            bindEvaluationWorkspace()
             await loader.refreshIfIdle()
+        }
+    }
+
+    private func bindEvaluationWorkspace() {
+        guard ownsLoader else { return }
+        let lab = lab
+        let workspace = lab.workspaceContext
+        if loader.bindWorkspace(workspace,
+            history: { try await lab.request(LabRequest(operation: "training-history"), in: workspace).evaluations ?? [] },
+            inspect: { try await lab.request(LabRequest(operation: "training-inspect", evaluationID: $0), in: workspace) }) {
+            retainedExpanded = false
+            if isRouteActive { loader.refreshHistory() }
         }
     }
 
@@ -636,8 +658,10 @@ struct TrainingView: View {
             presentation: presentation, retained: retained, inspectingID: loader.inspectingID,
             retainedExpanded: $retainedExpanded, inspect: { identity in
                 guard let task = loader.inspect(identity) else { return }
+                let workspace = loader.workspace
                 Task {
                     await task.value
+                    guard loader.workspace == workspace else { return }
                     if loader.inspectionError == nil, loader.inspection?.recordID == identity { retainedExpanded = true }
                 }
             }, refresh: { loader.refreshHistory() }, inspectionError: loader.inspectionError,
@@ -647,10 +671,11 @@ struct TrainingView: View {
 
     private var reviewContext: TrainingEvaluationReviewContext? {
         guard let inspection = loader.inspection, let report = inspection.response.report,
+              inspection.workspace.map({ lab.isCurrent($0) }) ?? true,
               inspection.response.evaluationID == inspection.recordID,
               inspection.response.artifactSHA256?.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil,
               (try? TrainingEvaluationSample.parse(report)) != nil else { return nil }
-        return TrainingEvaluationReviewContext(id: inspection.recordID, response: inspection.response)
+        return TrainingEvaluationReviewContext(id: inspection.recordID, response: inspection.response, workspace: inspection.workspace)
     }
 
     private func confirmTraining() {

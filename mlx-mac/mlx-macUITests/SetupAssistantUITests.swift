@@ -962,6 +962,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             reveal(compareAdapter); compareAdapter.click()
             let evaluationSheet = app.sheets.firstMatch
             XCTAssertTrue(evaluationSheet.waitForExistence(timeout: 10))
+            XCTAssertTrue(evaluationSheet.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Workspace:' OR value BEGINSWITH 'Workspace:'")).firstMatch.waitForExistence(timeout: 10))
             func revealEvaluation(_ element: XCUIElement) {
                 XCTAssertTrue(element.waitForExistence(timeout: 10))
                 let scroll = evaluationSheet.scrollViews.firstMatch
@@ -998,6 +999,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             let reviewRetained = app.buttons["training-review-retained"]
             reveal(reviewRetained); reviewRetained.click()
             XCTAssertTrue(app.sheets.firstMatch.staticTexts["Review retained evaluation"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.sheets.firstMatch.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Workspace:' OR value BEGINSWITH 'Workspace:'")).firstMatch.exists)
             XCTAssertFalse(app.sheets.firstMatch.buttons["Run comparison"].exists)
             XCTAssertTrue(app.sheets.firstMatch.debugDescription.contains("More actionable."))
             capture("Training-\(appearance)-evaluation-suite-reopened")
