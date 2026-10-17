@@ -170,7 +170,7 @@ class AppHost: ObservableObject {
         self.reclaim = reclaim ?? ReclaimCoordinator()
         self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller(checkRuntime: {
             await Task.detached(priority: .utility) { RuntimeChecker.report() }.value
-        })
+        }, checkPrerequisites: { root in await RuntimeInstaller.inspectPrerequisites(root: root) })
         self.intake = IntakeCoordinator(api: intakeAPI ?? .live(api: api))
         self.imageGeneration = ImageGenerationCoordinator(render: { path, out, request in
             try await api.generate(path: path, out: out.path, request: request)

@@ -24,14 +24,20 @@ final class RuntimeInstaller: ObservableObject {
     @Published private(set) var runtimeReport: RuntimeReport?
     @Published private(set) var stage = ""
     @Published private(set) var recoveryBlocked = false
+    @Published private(set) var prerequisites: RuntimeInstallPrerequisites?
+    @Published private(set) var isCheckingPrerequisites = false
     private let rootProvider: () -> URL?
     private let checkRuntime: (() async -> RuntimeReport)?
+    private let checkPrerequisites: (@Sendable (URL) async -> RuntimeInstallPrerequisites)?
     private var cancellation: CLIInvocationCancellation?
+    private var prerequisiteTask: Task<RuntimeInstallPrerequisites, Never>?
 
     init(repoRoot: @escaping () -> URL? = { WorkbenchPython.repoRoot() },
-         checkRuntime: (() async -> RuntimeReport)? = nil) {
+         checkRuntime: (() async -> RuntimeReport)? = nil,
+         checkPrerequisites: (@Sendable (URL) async -> RuntimeInstallPrerequisites)? = nil) {
         rootProvider = repoRoot
         self.checkRuntime = checkRuntime
+        self.checkPrerequisites = checkPrerequisites
     }
 
     private static let maxTailLines = 200
@@ -39,11 +45,25 @@ final class RuntimeInstaller: ObservableObject {
     /// The repo checkout the installer would operate on, if discoverable.
     var repoRoot: URL? { rootProvider() }
 
-    var isBusy: Bool { state == .running || state == .stopping || state == .checking }
+    var isBusy: Bool { state == .running || state == .stopping || state == .checking || isCheckingPrerequisites }
     var canCancel: Bool { state == .running }
 
     var canInstall: Bool {
         repoRoot != nil && checkRuntime != nil && !isBusy && !recoveryBlocked
+    }
+
+    var canInstallBaseRuntime: Bool {
+        canInstall && (checkPrerequisites == nil || (prerequisites?.root == repoRoot?.path && prerequisites?.canInstall == true))
+    }
+    var hasPrerequisiteCheck: Bool { checkPrerequisites != nil }
+
+    func refreshPrerequisites() async {
+        guard !isBusy, let root = repoRoot, let checkPrerequisites else { return }
+        isCheckingPrerequisites = true
+        defer { isCheckingPrerequisites = false }
+        let report = await checkPrerequisites(root)
+        guard repoRoot?.path == root.path else { prerequisites = nil; return }
+        prerequisites = report
     }
 
     var summary: String {
@@ -81,10 +101,11 @@ final class RuntimeInstaller: ObservableObject {
         guard canCancel else { return }
         state = .stopping
         cancellation?.cancel()
+        prerequisiteTask?.cancel()
     }
 
     func install(labAgentPath: String? = nil, inference: Bool = false) async {
-        guard canInstall, let repoRoot, let checkRuntime else { return }
+        guard (labAgentPath == nil ? canInstallBaseRuntime : canInstall), let repoRoot, let checkRuntime else { return }
         let token = CLIInvocationCancellation()
         cancellation = token
         state = .running
@@ -104,6 +125,21 @@ final class RuntimeInstaller: ObservableObject {
         }
         let outcome: State
         do {
+            var environment: [String: String]?
+            if labAgentPath == nil, let checkPrerequisites {
+                stage = "Checking installation prerequisites…"
+                let task = Task { await checkPrerequisites(repoRoot) }
+                prerequisiteTask = task
+                let report = await task.value
+                prerequisiteTask = nil
+                if token.isRequested { throw CancellationError() }
+                prerequisites = report
+                guard self.repoRoot?.path == repoRoot.path else {
+                    throw InstallError.prerequisitesChanged
+                }
+                guard report.canInstall else { throw InstallError.prerequisitesChanged }
+                environment = report.environment
+            }
             let executable: URL
             let arguments: [String]
             if let labAgentPath {
@@ -124,7 +160,7 @@ final class RuntimeInstaller: ObservableObject {
                 stage = "Installing base tools…"
             }
             try await Self.runInstall(repoRoot: repoRoot, executable: executable, arguments: arguments,
-                cancellation: token, onLine: { delivery.yield($0) })
+                environment: environment, cancellation: token, onLine: { delivery.yield($0) })
             outcome = .succeeded
         } catch is CancellationError {
             outcome = .cancelled
@@ -153,6 +189,7 @@ final class RuntimeInstaller: ObservableObject {
 
     nonisolated static func runInstall(
         repoRoot: URL, executable: URL, arguments: [String],
+        environment: [String: String]? = nil, timeout: TimeInterval? = nil,
         cancellation: CLIInvocationCancellation? = nil,
         registry: CLIProcessRegistry = .shared,
         terminationGrace: TimeInterval = CLIProcess.terminationGrace,
@@ -164,6 +201,7 @@ final class RuntimeInstaller: ObservableObject {
                 DispatchQueue.global(qos: .userInitiated).async {
                     do {
                         try runOwnedInstall(repoRoot: repoRoot, executable: executable, arguments: arguments,
+                            environment: environment, timeout: timeout,
                             cancellation: token, registry: registry, terminationGrace: terminationGrace, onLine: onLine)
                         continuation.resume()
                     } catch {
@@ -180,6 +218,7 @@ final class RuntimeInstaller: ObservableObject {
     /// ownership through app termination, including an incomplete shutdown.
     nonisolated private static func runOwnedInstall(
         repoRoot: URL, executable: URL, arguments: [String],
+        environment: [String: String]?, timeout: TimeInterval?,
         cancellation: CLIInvocationCancellation, registry: CLIProcessRegistry,
         terminationGrace: TimeInterval, onLine: @escaping @Sendable (String) -> Void
     ) throws {
@@ -188,6 +227,7 @@ final class RuntimeInstaller: ObservableObject {
         process.executableURL = executable
         process.arguments = arguments
         process.currentDirectoryURL = repoRoot
+        process.environment = environment
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -216,14 +256,19 @@ final class RuntimeInstaller: ObservableObject {
         }
         var didExit = false
         var didDrain = false
+        let deadline = timeout.map { Date().addingTimeInterval($0) }
         while true {
-            if cancellation.isRequested {
+            let timedOut = deadline.map { Date() >= $0 } == true
+            if cancellation.isRequested || timedOut {
                 AgentProcessGroup.stop([group], grace: terminationGrace)
                 let deadline = Date().addingTimeInterval(5)
                 repeat {
                     if !didExit { didExit = exited.wait(timeout: .now() + 0.02) == .success }
                     if !didDrain { didDrain = drained.wait(timeout: .now() + 0.02) == .success }
-                    if didExit && didDrain && !group.isAlive { throw CancellationError() }
+                    if didExit && didDrain && !group.isAlive {
+                        if timedOut { throw InstallError.timedOut }
+                        throw CancellationError()
+                    }
                     usleep(20_000)
                 } while Date() < deadline
                 throw InstallError.shutdownIncomplete
@@ -239,12 +284,37 @@ final class RuntimeInstaller: ObservableObject {
     }
 
     enum InstallError: LocalizedError {
-        case exited(Int), shutdownIncomplete
+        case exited(Int), shutdownIncomplete, timedOut, prerequisitesChanged
 
         var errorDescription: String? {
             switch self {
             case .exited(let code): return "Runtime installation exited with status \(code)."
             case .shutdownIncomplete: return "Installer shutdown did not finish."
+            case .timedOut: return "The installation prerequisite check timed out."
+            case .prerequisitesChanged: return "Installation prerequisites changed. Review the checks before trying again."
+            }
+        }
+    }
+
+    nonisolated static func inspectPrerequisites(root: URL) async -> RuntimeInstallPrerequisites {
+        await RuntimeInstallPrerequisites.inspect(root: root) { executable, arguments, environment in
+            let output = PrerequisiteOutput()
+            do {
+                try await runInstall(repoRoot: root, executable: executable, arguments: arguments,
+                    environment: environment, timeout: 5, onLine: { output.append($0) })
+                return output.value
+            } catch { return nil }
+        }
+    }
+
+    private final class PrerequisiteOutput: @unchecked Sendable {
+        private let lock = NSLock()
+        private var text = ""
+        var value: String { lock.withLock { text.trimmingCharacters(in: .whitespacesAndNewlines) } }
+        func append(_ line: String) {
+            lock.withLock {
+                let remaining = 16 * 1024 - text.utf8.count
+                if remaining > 0 { text += String(decoding: (line + "\n").utf8.prefix(remaining), as: UTF8.self) }
             }
         }
     }

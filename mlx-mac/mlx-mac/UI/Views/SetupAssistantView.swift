@@ -86,7 +86,7 @@ struct SetupAssistantView: View {
 
     private var runtimeStep: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text("Converting and serving models needs the repo's Python runtime (Python 3.12, mlx-lm, and friends).")
+            Text("Converting and serving models uses the selected engine's Python 3.12 environment. Check the prerequisites below, then confirm installation to download its runtime packages.")
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)

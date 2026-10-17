@@ -39,6 +39,97 @@ final class RuntimeInstallerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("unexpected").path))
     }
 
+    func testPrerequisitesAreRecheckedBeforeMakeAndTheirEnvironmentIsUsed() async throws {
+        let root = try directory()
+        try "install:\n\t@echo \"$$WORKBENCH_PREREQUISITE_TEST\" > result\n"
+            .write(to: root.appendingPathComponent("Makefile"), atomically: true, encoding: .utf8)
+        let ready = report(ready: true)
+        let plan = RuntimeInstallPrerequisites(root: root.path,
+            environment: ["PATH": "/usr/bin:/bin", "WORKBENCH_PREREQUISITE_TEST": "selected-tools"],
+            issues: [], pythonSummary: "Fixture")
+        let installer = RuntimeInstaller(repoRoot: { root }, checkRuntime: { ready }, checkPrerequisites: { _ in plan })
+        XCTAssertFalse(installer.canInstallBaseRuntime)
+        await installer.refreshPrerequisites()
+        XCTAssertTrue(installer.canInstallBaseRuntime)
+        await installer.install()
+        XCTAssertEqual(installer.state, .succeeded)
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("result")).trimmingCharacters(in: .whitespacesAndNewlines), "selected-tools")
+    }
+
+    private actor PrerequisiteSequence {
+        var reports: [RuntimeInstallPrerequisites]
+        let delayMarker: URL?
+        init(_ reports: [RuntimeInstallPrerequisites], delayMarker: URL? = nil) {
+            self.reports = reports
+            self.delayMarker = delayMarker
+        }
+        func next() async -> RuntimeInstallPrerequisites {
+            let result = reports.removeFirst()
+            if reports.isEmpty, let delayMarker {
+                try? Data().write(to: delayMarker)
+                try? await Task.sleep(for: .seconds(30))
+            }
+            return result
+        }
+    }
+
+    func testCancellingTheConfirmationRecheckNeverStartsMake() async throws {
+        let root = try directory()
+        try "install:\n\t@touch unexpected\n".write(to: root.appendingPathComponent("Makefile"), atomically: true, encoding: .utf8)
+        let ready = report(ready: true)
+        let plan = RuntimeInstallPrerequisites(root: root.path, environment: [:], issues: [], pythonSummary: "Ready")
+        let marker = root.appendingPathComponent("checking")
+        let sequence = PrerequisiteSequence([plan, plan], delayMarker: marker)
+        let installer = RuntimeInstaller(repoRoot: { root }, checkRuntime: { ready }, checkPrerequisites: { _ in await sequence.next() })
+        await installer.refreshPrerequisites()
+        let task = Task { await installer.install() }
+        try await waitForFile(marker)
+        installer.cancel()
+        await task.value
+        XCTAssertEqual(installer.state, .cancelled)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("unexpected").path))
+    }
+
+    func testChangedPrerequisitesPreventAnyInstallation() async throws {
+        let root = try directory()
+        try "install:\n\t@touch unexpected\n".write(to: root.appendingPathComponent("Makefile"), atomically: true, encoding: .utf8)
+        let ready = report(ready: true)
+        let sequence = PrerequisiteSequence([
+            RuntimeInstallPrerequisites(root: root.path, environment: [:], issues: [], pythonSummary: "Ready"),
+            RuntimeInstallPrerequisites(root: root.path, environment: [:], issues: [.init(detail: "Python was removed")], pythonSummary: "Missing"),
+        ])
+        let installer = RuntimeInstaller(repoRoot: { root }, checkRuntime: { ready }, checkPrerequisites: { _ in await sequence.next() })
+        await installer.refreshPrerequisites()
+        XCTAssertTrue(installer.canInstallBaseRuntime)
+        await installer.install()
+        guard case .failed = installer.state else { return XCTFail("Expected prerequisite failure") }
+        XCTAssertFalse(installer.canInstallBaseRuntime)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("unexpected").path))
+    }
+
+    func testPrerequisiteTimeoutStopsItsProcessAndChild() async throws {
+        let root = try directory()
+        let script = """
+        import pathlib, signal, subprocess, sys, time
+        child = subprocess.Popen(['/bin/sleep', '30'])
+        def stop(*args):
+            child.terminate()
+            child.wait()
+            sys.exit(0)
+        signal.signal(signal.SIGTERM, stop)
+        pathlib.Path('child').write_text(str(child.pid))
+        time.sleep(30)
+        """
+        do {
+            try await RuntimeInstaller.runInstall(repoRoot: root, executable: URL(fileURLWithPath: "/usr/bin/python3"),
+                arguments: ["-c", script], timeout: 1, terminationGrace: 0.2, onLine: { _ in })
+            XCTFail("Expected a bounded prerequisite check")
+        } catch RuntimeInstaller.InstallError.timedOut {
+            let pid = try XCTUnwrap(Int32(String(contentsOf: root.appendingPathComponent("child"))))
+            XCTAssertNotEqual(kill(pid, 0), 0)
+        }
+    }
+
     func testCancelWaitsForChildrenAndChecksBeforeRetryAndKeepsTheLog() async throws {
         let root = try directory()
         try "install:\n\t/usr/bin/python3 install.py\n".write(to: root.appendingPathComponent("Makefile"), atomically: true, encoding: .utf8)

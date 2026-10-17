@@ -162,6 +162,8 @@
 		7D7100010000000000000001 /* RuntimeInstallerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7100010000000000000002 /* RuntimeInstallerTests.swift */; };
 		7D7200010000000000000001 /* BundledRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7200010000000000000002 /* BundledRuntime.swift */; };
 		7D7200010000000000000004 /* BundledRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7200010000000000000005 /* BundledRuntimeTests.swift */; };
+		7D7300010000000000000001 /* RuntimeInstallPrerequisites.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7300010000000000000002 /* RuntimeInstallPrerequisites.swift */; };
+		7D7300010000000000000003 /* RuntimeInstallPrerequisitesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7300010000000000000004 /* RuntimeInstallPrerequisitesTests.swift */; };
 		24BBLD034 /* RecommendationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF028 /* RecommendationEngine.swift */; };
 		24BBLD035 /* RecommendationEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF029 /* RecommendationEngineTests.swift */; };
 		24BBLD037 /* ModelWorkflowResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF031 /* ModelWorkflowResolverTests.swift */; };
@@ -421,6 +423,8 @@
 		7D7100010000000000000002 /* RuntimeInstallerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeInstallerTests.swift; sourceTree = "<group>"; };
 		7D7200010000000000000002 /* BundledRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BundledRuntime.swift; path = Services/BundledRuntime.swift; sourceTree = "<group>"; };
 		7D7200010000000000000005 /* BundledRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundledRuntimeTests.swift; sourceTree = "<group>"; };
+		7D7300010000000000000002 /* RuntimeInstallPrerequisites.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RuntimeInstallPrerequisites.swift; path = Services/RuntimeInstallPrerequisites.swift; sourceTree = "<group>"; };
+		7D7300010000000000000004 /* RuntimeInstallPrerequisitesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeInstallPrerequisitesTests.swift; sourceTree = "<group>"; };
 		24FREF043 /* VerificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VerificationCoordinator.swift; path = Services/VerificationCoordinator.swift; sourceTree = "<group>"; };
 		24FREF044 /* VerificationModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationModelTests.swift; sourceTree = "<group>"; };
 		24FREF045 /* ServeProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeProbeTests.swift; sourceTree = "<group>"; };
@@ -635,6 +639,7 @@
 				28WSPREF001 /* WorkbenchStatePaths.swift */,
 				24FREF06B /* RuntimeInstaller.swift */,
 				7D7200010000000000000002 /* BundledRuntime.swift */,
+				7D7300010000000000000002 /* RuntimeInstallPrerequisites.swift */,
 				27CFG0002 /* AppConfig.swift */,
 				27STP001 /* SetupCoordinator.swift */,
 				27UPD001 /* UpdateCoordinator.swift */,
@@ -800,6 +805,7 @@
 				27TST008 /* SetupCoordinatorTests.swift */,
 				7D7100010000000000000002 /* RuntimeInstallerTests.swift */,
 				7D7200010000000000000005 /* BundledRuntimeTests.swift */,
+				7D7300010000000000000004 /* RuntimeInstallPrerequisitesTests.swift */,
 				27TST009 /* UpdateCoordinatorTests.swift */,
 				27ABCD100000000000000003 /* AppRouteTests.swift */,
 				27ABCD100000000000000004 /* DesignLintTests.swift */,
@@ -1136,6 +1142,7 @@
 				28WSPBL001 /* WorkbenchStatePaths.swift in Sources */,
 				24BBLD06D /* RuntimeInstaller.swift in Sources */,
 				7D7200010000000000000001 /* BundledRuntime.swift in Sources */,
+				7D7300010000000000000001 /* RuntimeInstallPrerequisites.swift in Sources */,
 				27CFG0001 /* AppConfig.swift in Sources */,
 				27STPB01 /* SetupCoordinator.swift in Sources */,
 				27UPDB01 /* UpdateCoordinator.swift in Sources */,
@@ -1230,6 +1237,7 @@
 				27TSTB08 /* SetupCoordinatorTests.swift in Sources */,
 				7D7100010000000000000001 /* RuntimeInstallerTests.swift in Sources */,
 				7D7200010000000000000004 /* BundledRuntimeTests.swift in Sources */,
+				7D7300010000000000000003 /* RuntimeInstallPrerequisitesTests.swift in Sources */,
 				27TSTB09 /* UpdateCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

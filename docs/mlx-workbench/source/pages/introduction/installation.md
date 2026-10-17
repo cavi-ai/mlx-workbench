@@ -19,6 +19,8 @@ In Setup Assistant, choose **Use bundled engine…** and confirm **Prepare engin
 
 Continue to the runtime step and choose **Install Runtime…**. This separate confirmation runs `make install` in the prepared folder to create its Python environment. Preparing sources alone does not install packages, download models or require a source clone.
 
+Before installation, Workbench checks Command Line Tools, Python and uv without installing anything. Missing prerequisites appear beside a **Recheck prerequisites** action. Tool discovery includes standard Homebrew and user-local locations so launching from Finder does not require shell startup files. The confirmed installer uses that search path, including the new environment's commands. uv may download Python 3.12 as part of the confirmed installation. An incomplete or wrong-version existing environment requires repair or another engine folder; Workbench does not delete it.
+
 ## Or use an engine checkout
 
 ```bash

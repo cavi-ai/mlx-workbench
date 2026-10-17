@@ -2036,6 +2036,24 @@ final class SetupAssistantUITests: XCTestCase {
         capture("Bundled-engine-dependencies-remain-explicit")
     }
 
+    func testRuntimePrerequisitesAreCheckedWithoutStartingInstallation() throws {
+        launch(python: "/usr/bin/false")
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 30))
+        sheet.buttons["Continue"].click()
+        let status = sheet.staticTexts["runtime-prerequisites-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 30))
+        let install = sheet.buttons["runtime-install-start"]
+        XCTAssertTrue(install.exists)
+        XCTAssertEqual(install.isEnabled, status.label == "Prerequisites found")
+        let recheck = sheet.buttons["runtime-prerequisites-recheck"]
+        XCTAssertTrue(recheck.isEnabled)
+        recheck.click()
+        XCTAssertTrue(status.waitForExistence(timeout: 30))
+        XCTAssertFalse(sheet.buttons["runtime-install-cancel"].exists)
+        capture("Runtime-prerequisites-before-confirmation")
+    }
+
     func testFirstLaunchWalksEveryStepAndPersistsCompletion() throws {
         let configURL = URL(fileURLWithPath: configPath)
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
