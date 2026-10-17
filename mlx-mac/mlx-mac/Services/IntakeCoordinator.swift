@@ -189,6 +189,9 @@ final class IntakeCoordinator: ObservableObject {
                 case .failed, .absent:
                     activity = .failed("Installing \(backend) failed. See \(entry.logPath ?? "the install log").")
                     return
+                case .unknown:
+                    activity = .failed("The engine returned an unknown installation state for \(backend). Refresh its status before retrying.")
+                    return
                 }
             }
             activity = .failed("Installing \(backend) did not finish in time.")

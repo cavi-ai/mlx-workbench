@@ -6,6 +6,10 @@
 
 These checks do not establish readiness of isolated optional backends or Strata. **Model-specific runtimes → Open Run** leads to serving preview, which checks the selected model's runtime before confirmation. A successful base check does not prove that every model can run, and a missing base component does not establish that an isolated runtime is unavailable.
 
+**Model-specific runtimes** also lists optional MLX backend installation records, target versions and declared tasks. Health refreshes them when opened; **Refresh backends** checks again after setup. **Installed** does not mean that a model has loaded or passed verification. Other states distinguish an installation in progress, a failed install, an absent installation and an unknown engine state. Base mlx-lm checks remain above this list; Strata is separate.
+
+Each successful check records its time. A failed refresh keeps the last result with an explicit stale label and the error; a successful retry replaces it. Changing the engine checkout clears the previous checkout's result. **Add from Hugging Face…** opens model intake, where missing dependencies keep their existing installation preview and confirmation. Opening Health or refreshing its status starts no installation, model download or generation.
+
 It also counts verified models whose verification still matches this environment, and lists model health findings from the engine's `doctor models` scan:
 
 | Finding | Meaning |

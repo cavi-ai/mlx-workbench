@@ -136,11 +136,11 @@ struct IntakeResolution: Codable, Equatable {
 // MARK: - Backends (schemas/backends.schema.json)
 
 enum BackendState: String, Codable, Equatable {
-    case installed, installing, failed, absent
+    case installed, installing, failed, absent, unknown
 
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
-        self = BackendState(rawValue: raw) ?? .absent
+        self = BackendState(rawValue: raw) ?? .unknown
     }
 }
 
