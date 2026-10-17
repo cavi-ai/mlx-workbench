@@ -75,7 +75,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("models"), withIntermediateDirectories: true)
         let python = """
-        import hashlib, json, pathlib, sys, time
+        import hashlib, json, os, pathlib, sys, time
         root = pathlib.Path(__file__).resolve().parents[2]
         args = sys.argv[1:]
         with (root / 'calls.jsonl').open('a') as f:
@@ -261,6 +261,16 @@ final class WorkbenchReviewUITests: XCTestCase {
                     preview.pop('preview_hash')
                 data = {'preview': preview, 'requires_confirmation': True}
         elif args[:2] in (['adopt', 'start'], ['adopt', 'status']):
+            if args[1] == 'start' and (root / 'hold-adopt-cancellation').exists():
+                state_path = pathlib.Path(args[args.index('--state') + 1])
+                role = args[args.index('--role') + 1]
+                state_path.write_text(json.dumps({'workflow_id': 'stopped-' + state_path.stem,
+                    'request': {'roles': [role]}, 'status': 'running', 'phase': 'verify', 'recommendations': []}))
+                (root / 'adopt-cancellation-pid').write_text(str(os.getpid()))
+                deadline = time.monotonic() + 60
+                while (root / 'hold-adopt-cancellation').exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                sys.exit(2)
             time.sleep(1.5)
             deadline = time.monotonic() + 20
             while (root / 'hold-adopt-request').exists():
@@ -1514,6 +1524,8 @@ final class WorkbenchReviewUITests: XCTestCase {
             recommendations.checkBoxes["Offline metadata"].click()
             var start: XCUIElement { app.buttons["adopt-start"] }
             var refresh: XCUIElement { app.buttons["adopt-refresh"] }
+            XCTAssertEqual(start.label, "Verify and recommend")
+            XCTAssertFalse(recommendations.buttons["Start"].exists)
             let callsBeforeHiddenReturn = try calls()
             selectRadioOption("Browse candidates", in: "discovery-mode")
             app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
@@ -1621,6 +1633,55 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(text(containing: "No recommendation reported").waitForExistence(timeout: 15))
             XCTAssertFalse(text(containing: repository).exists)
             capture("Adopt-\(appearance)-missing-fields")
+
+            try FileManager.default.removeItem(at: root.appendingPathComponent("adopt-unknown"))
+            try FileManager.default.removeItem(at: root.appendingPathComponent("adopt-no-recommendation"))
+            let hold = root.appendingPathComponent("hold-adopt-cancellation")
+            let pidFile = root.appendingPathComponent("adopt-cancellation-pid")
+            try? FileManager.default.removeItem(at: pidFile)
+            try Data().write(to: hold)
+            start.click()
+            let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                FileManager.default.fileExists(atPath: pidFile.path)
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 10), .completed)
+            let cancelledStart = try XCTUnwrap(calls().last { $0.prefix(2) == ["adopt", "start"] })
+            let cancelledPath = cancelledStart[try XCTUnwrap(cancelledStart.firstIndex(of: "--state")) + 1]
+            let savedState = try Data(contentsOf: URL(fileURLWithPath: cancelledPath))
+            let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8)))
+            let stop = app.buttons["adopt-stop"]
+            XCTAssertTrue(stop.waitForExistence(timeout: 5))
+            XCTAssertTrue(stop.isHittable)
+            XCTAssertFalse(start.isEnabled)
+            capture("Adopt-\(appearance)-stop-standard")
+            resizeWindow(width: 740, height: 680)
+            XCTAssertTrue(stop.isHittable)
+            capture("Adopt-\(appearance)-stop-compact")
+            stop.click()
+            let stopped = app.descendants(matching: .any)["adopt-stopped"].firstMatch
+            XCTAssertTrue(stopped.waitForExistence(timeout: 10))
+            XCTAssertTrue(start.isEnabled)
+            XCTAssertFalse(stop.exists)
+            XCTAssertFalse(text(containing: "Waiting for the agent's recommendation").exists)
+            XCTAssertTrue(text(containing: "No recommendation reported").exists)
+            let processStatus = kill(pid, 0), processError = errno
+            XCTAssertEqual(processStatus, -1, "The cancelled recommendation process must have exited")
+            XCTAssertEqual(processError, ESRCH)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: cancelledPath)), savedState)
+            XCTAssertFalse(text(containing: repository).exists)
+            capture("Adopt-\(appearance)-stopped")
+            refresh.click()
+            let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: refresh)
+            XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 10), .completed)
+            XCTAssertTrue(stopped.exists, "Reading partial saved state must retain the stopped notice")
+            try FileManager.default.removeItem(at: hold)
+            resizeWindow(width: 1024, height: 680)
+            start.click()
+            XCTAssertTrue(text(containing: repository).waitForExistence(timeout: 15))
+            XCTAssertFalse(stopped.exists)
+            let restarted = try XCTUnwrap(calls().last { $0.prefix(2) == ["adopt", "start"] })
+            XCTAssertNotEqual(restarted[try XCTUnwrap(restarted.firstIndex(of: "--state")) + 1], cancelledPath)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: cancelledPath)), savedState)
             app.terminate()
         }
     }

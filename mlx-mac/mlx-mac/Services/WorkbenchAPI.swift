@@ -396,7 +396,7 @@ actor WorkbenchAPI {
         argv.append(contentsOf: ["--state", state])
         if fast { argv.append("--fast") }
         if offline { argv.append("--offline") }
-        let data = try await raw(argv, isScout: true)
+        let data = try await raw(argv, isScout: true, cancellable: true)
         return Self.adopt(from: data, statePath: state)
     }
 
