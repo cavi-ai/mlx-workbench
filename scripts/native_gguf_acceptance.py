@@ -14,7 +14,8 @@ import sys
 import secrets
 import threading
 from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
+from socketserver import TCPServer
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -268,11 +269,13 @@ def serving_status_bridge(manifest: RuntimeManifest, environment: dict[str, str]
         def log_message(self, *_args):
             pass
 
-    with HTTPServer(("127.0.0.1", 0), Handler) as server:
+    # HTTPServer resolves a hostname during binding. This numeric loopback
+    # endpoint needs no DNS and uses only the HTTP request handler.
+    with TCPServer(("127.0.0.1", 0), Handler) as server:
         thread = threading.Thread(target=server.serve_forever, name="acceptance-serving-status")
         thread.start()
         try:
-            yield f"http://127.0.0.1:{server.server_port}{route}"
+            yield f"http://127.0.0.1:{server.server_address[1]}{route}"
         finally:
             server.shutdown()
             thread.join()

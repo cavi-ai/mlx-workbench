@@ -5,6 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
@@ -27,7 +28,8 @@ class NativeGGUFAcceptanceContractTests(unittest.TestCase):
                 f"pathlib.Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n"
                 "print(json.dumps({'status':'ok','data':{'servers':[]}}))\n"
             )
-            with acceptance.serving_status_bridge(manifest, dict(os.environ, MLX_WORKBENCH_PYTHON=sys.executable)) as url:
+            with patch("socket.getfqdn", side_effect=AssertionError("Loopback status must not require DNS")), \
+                    acceptance.serving_status_bridge(manifest, dict(os.environ, MLX_WORKBENCH_PYTHON=sys.executable)) as url:
                 with urlopen(url, timeout=5) as response:
                     self.assertEqual(json.load(response)["data"]["servers"], [])
                 arguments = json.loads(recorded.read_text())
