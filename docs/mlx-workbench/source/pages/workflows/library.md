@@ -74,7 +74,8 @@ the inspector or select another model or task.
 
 **Recent tasks** in the inspector shows the selected model's tasks. The Library
 toolbar also opens Recent tasks independently of model selection, so recorded
-results remain accessible when their model is no longer in the Library. The
+results remain accessible when their model is no longer in the Library. At
+narrow widths, find Recent tasks in the toolbar's overflow menu. The
 list contains at most the engine's 100 most recent records. Failed refreshes
 label the last known data and offer Retry.
 
@@ -93,7 +94,8 @@ recorded results remain readable. Result and audio files are checked before
 display, playback or export. Missing or changed outputs show an error and do
 not trigger generation.
 
-**Export** saves verified result JSON or audio to a destination you choose.
+**Result JSON** expands the complete result and its export action. **Export**
+saves verified result JSON or audio to a destination you choose.
 Private input content is not included by default. Workbench does not delete
 engine task artifacts, and Compare's ten-run media retention does not apply
 to these tasks. Use [Compare](compare.md) for matched model runs and listening

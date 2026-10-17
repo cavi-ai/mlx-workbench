@@ -126,6 +126,7 @@ struct RecentTaskList: View {
     var reuseModel: LibraryModel?
     @ObservedObject private var audio: AudioClipPlayer
     @State private var exportError: String?
+    @State private var resultJSONExpanded = false
 
     private var visibleTasks: [TaskRecord] {
         Self.visibleTasks(in: coordinator.recent, for: filterModel)
@@ -199,6 +200,7 @@ struct RecentTaskList: View {
                             Text(URL(fileURLWithPath: task.modelPath).lastPathComponent).font(WorkbenchTypography.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("task-history-row-\(task.id)")
@@ -226,11 +228,6 @@ struct RecentTaskList: View {
                    let raw = coordinator.selectedResult?.result ?? coordinator.verifiedResult?.json {
                     ClassificationTaskAnswerSummary(projection: TaskResultProjection(raw: raw))
                 }
-                if let raw = coordinator.verifiedResult?.json {
-                    Text(raw.prettyJSON).font(WorkbenchTypography.value).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                } else if coordinator.selectedResult != nil {
-                    Text("The verified result is too large for inline preview. Export the JSON to inspect it.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-                }
                 if let output = coordinator.verifiedOutput {
                     HStack {
                         Button(audio.activeURL == output.url && audio.isPlaying ? "Pause" : "Play WAV") { audio.toggle(output.url) }
@@ -253,20 +250,32 @@ struct RecentTaskList: View {
                     }
                     Text("Verified WAV · \(output.reference.bytes) bytes · \(output.reference.sha256)").font(WorkbenchTypography.secondary).textSelection(.enabled)
                 }
-                Button("Export result…") {
-                    let panel = NSSavePanel()
-                    panel.nameFieldStringValue = "task-\(task.id)-result.json"
-                    panel.begin { response in
-                        guard response == .OK, let url = panel.url else { return }
-                        Task {
-                            do { try await coordinator.export(id: task.id, to: url); exportError = nil }
-                            catch { exportError = AppHost.render(error) }
+                DisclosureGroup("Result JSON", isExpanded: $resultJSONExpanded) {
+                    if let raw = coordinator.verifiedResult?.json {
+                        Text(raw.prettyJSON).font(WorkbenchTypography.value).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    } else if coordinator.selectedResult != nil {
+                        Text("The verified result is too large for inline preview to render.")
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    }
+                    Button("Export result…") {
+                        let panel = NSSavePanel()
+                        panel.nameFieldStringValue = "task-\(task.id)-result.json"
+                        panel.begin { response in
+                            guard response == .OK, let url = panel.url else { return }
+                            Task {
+                                do { try await coordinator.export(id: task.id, to: url); exportError = nil }
+                                catch { exportError = AppHost.render(error) }
+                            }
                         }
                     }
                 }
+                .font(WorkbenchTypography.value)
             }
         }
-        .onChange(of: coordinator.selectedTask?.id) { _, _ in audio.stop() }
+        .onChange(of: coordinator.selectedTask?.id) { _, _ in
+            audio.stop()
+            resultJSONExpanded = false
+        }
         .onDisappear { audio.stop() }
     }
 

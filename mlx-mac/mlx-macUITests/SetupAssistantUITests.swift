@@ -478,8 +478,19 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func selectRadioOption(_ label: String, in group: String) {
-        let option = app.radioGroups[group].radioButtons[label]
-        XCTAssertTrue(option.waitForExistence(timeout: 10))
+        let groups = app.radioGroups.matching(identifier: group)
+        let options = groups.descendants(matching: .radioButton)
+            .matching(NSPredicate(format: "label == %@", label))
+        XCTAssertTrue(options.firstMatch.waitForExistence(timeout: 10),
+                      "Missing \(label) in radio group \(group): \(app.debugDescription)")
+        let oneHittable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            options.allElementsBoundByIndex.filter(\.isHittable).count == 1
+        }, object: app)
+        let result = XCTWaiter.wait(for: [oneHittable], timeout: 10)
+        XCTAssertEqual(result, .completed,
+                       "Expected one current hittable \(label) option in \(group): \(app.debugDescription)")
+        guard result == .completed,
+              let option = options.allElementsBoundByIndex.first(where: \.isHittable) else { return }
         XCTAssertTrue(option.isEnabled)
         let window = app.windows.firstMatch
         let frame = option.frame
@@ -498,6 +509,39 @@ final class WorkbenchReviewUITests: XCTestCase {
         field.click()
         field.typeKey("a", modifierFlags: .command)
         field.typeText(value)
+    }
+
+    private func waitForHittability(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"), object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func waitForHistoryTaskState(_ state: String) -> Bool {
+        let status = app.staticTexts["task-status"].firstMatch
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND (label CONTAINS[c] %@ OR value CONTAINS[c] %@)", state, state),
+            object: status
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: 15) == .completed
+    }
+
+    private func attachTaskSelectionFailure(_ name: String) {
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "\(name)-screenshot"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let accessibility = XCTAttachment(string: app.debugDescription)
+        accessibility.name = "\(name)-accessibility"
+        accessibility.lifetime = .keepAlways
+        add(accessibility)
+        let callsURL = root.appendingPathComponent("calls.jsonl")
+        let calls = (try? String(contentsOf: callsURL, encoding: .utf8)) ?? "Fixture CLI call log unavailable."
+        let callsAttachment = XCTAttachment(string: calls)
+        callsAttachment.name = "\(name)-fixture-cli-calls"
+        callsAttachment.lifetime = .keepAlways
+        add(callsAttachment)
     }
 
     private var routes: [String] {
@@ -629,6 +673,20 @@ final class WorkbenchReviewUITests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [[String: Any]])
     }
 
+    private func openRecentTaskHistory() {
+        let history = app.buttons["task-history-open"].firstMatch
+        if history.waitForExistence(timeout: 2), history.isHittable {
+            history.click()
+            return
+        }
+        let overflow = app.popUpButtons["more toolbar items"].firstMatch
+        XCTAssertTrue(overflow.waitForExistence(timeout: 10), app.debugDescription)
+        overflow.click()
+        let historyItem = app.menuItems["Recent tasks"].firstMatch
+        XCTAssertTrue(historyItem.waitForExistence(timeout: 10), app.debugDescription)
+        historyItem.click()
+    }
+
     private func waitForTaskState(_ state: String) {
         let status = app.staticTexts["task-status"].firstMatch
         XCTAssertTrue(status.waitForExistence(timeout: 15))
@@ -644,7 +702,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let state = app.textViews["task-classification-state"]
         replace(state, with: "A customer requests a refund for a duplicate charge.")
         replace(app.textFields["task-question-0-name"], with: "route")
-        replace(app.textViews["task-question-0-instructions"], with: "Choose the team for this request.")
+        replace(app.textFields["task-question-0-instructions"], with: "Choose the team for this request.")
         replace(app.textFields["task-question-0-option-0"], with: "billing")
         replace(app.textFields["task-question-0-option-1"], with: "technical")
         XCTAssertTrue(try taskSubmissions().isEmpty, "Editing must not submit inference")
@@ -663,11 +721,20 @@ final class WorkbenchReviewUITests: XCTestCase {
         try FileManager.default.removeItem(at: root.appendingPathComponent("scan-result.json"))
         launch(appearance: "Dark", route: "models", isolatedHome: true)
         XCTAssertTrue(app.staticTexts["No models found"].waitForExistence(timeout: 15))
-        let history = app.buttons["task-history-open"]
-        XCTAssertTrue(history.waitForExistence(timeout: 10)); history.click()
+        openRecentTaskHistory()
         let recorded = app.buttons["task-history-row-00000000-0000-0000-0000-000000000001"]
-        XCTAssertTrue(recorded.waitForExistence(timeout: 15)); recorded.click()
-        waitForTaskState("succeeded")
+        XCTAssertTrue(recorded.waitForExistence(timeout: 15))
+        guard waitForHittability(recorded, timeout: 5) else {
+            attachTaskSelectionFailure("Classifier-history-row-not-hittable")
+            XCTFail("The recorded classifier row must be hittable")
+            return
+        }
+        recorded.click()
+        guard waitForHistoryTaskState("succeeded") else {
+            attachTaskSelectionFailure("Classifier-history-selection-did-not-render")
+            XCTFail("Selecting the recorded classifier task must show its succeeded details")
+            return
+        }
         XCTAssertTrue(text(containing: "billing").waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["task-reuse"].isEnabled)
         XCTAssertEqual(try taskSubmissions().count, 1)
@@ -679,7 +746,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(otherModel.waitForExistence(timeout: 15)); otherModel.doubleClick()
         XCTAssertTrue(app.staticTexts["Generate music"].waitForExistence(timeout: 10))
         app.sheets.firstMatch.buttons["Done"].click()
-        app.buttons["task-history-open"].click()
+        openRecentTaskHistory()
         let otherModelHistory = app.buttons["task-history-row-00000000-0000-0000-0000-000000000001"]
         XCTAssertTrue(otherModelHistory.waitForExistence(timeout: 15), "Toolbar history must include tasks for other models")
         otherModelHistory.click()
@@ -693,7 +760,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         launch(appearance: "Dark", route: "models", isolatedHome: true)
         let row = app.outlines.staticTexts["Fixture music"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick()
-        replace(app.textViews["task-music-caption"], with: "Quiet instrumental piano")
+        replace(app.textFields["task-music-caption"], with: "Quiet instrumental piano")
         XCTAssertTrue(try taskSubmissions().isEmpty)
         app.buttons["task-start"].click()
         waitForTaskState("running")
@@ -708,8 +775,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertTrue(play.isEnabled); play.click()
         XCTAssertTrue(app.buttons["task-audio-pause"].waitForExistence(timeout: 5))
         capture("Library-music-result-playback")
-        app.sheets.firstMatch.buttons["Done"].click()
-        XCTAssertTrue(app.buttons["task-history-open"].waitForExistence(timeout: 10))
+        let inspector = app.sheets.firstMatch
+        inspector.buttons["Done"].click()
+        XCTAssertTrue(inspector.waitForNonExistence(timeout: 10))
         XCTAssertFalse(app.buttons["task-audio-pause"].exists)
         XCTAssertEqual(try taskSubmissions().count, 2, "Closing the inspector must not submit work")
     }
@@ -1013,7 +1081,19 @@ final class WorkbenchReviewUITests: XCTestCase {
         for attempt in 0..<2 {
             select("Activity")
             let open = app.buttons["Open in Library"].firstMatch
-            XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
+            guard open.waitForExistence(timeout: 15), waitForHittability(open, timeout: 10) else {
+                let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+                screenshot.name = "Activity-open-in-library-not-hittable-\(attempt)"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                let accessibility = XCTAttachment(string: app.debugDescription)
+                accessibility.name = "Activity-open-in-library-accessibility-\(attempt)"
+                accessibility.lifetime = .keepAlways
+                add(accessibility)
+                XCTFail("Open in Library must become hittable after Activity navigation")
+                return
+            }
+            open.click()
             let inspector = app.sheets.firstMatch
             XCTAssertTrue(inspector.waitForExistence(timeout: 10), "Explicit reveals must open the requested inspector")
             NSPasteboard.general.clearContents()
