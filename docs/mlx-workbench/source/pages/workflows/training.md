@@ -77,8 +77,25 @@ elapsed time through the longer clip; a shorter clip stops at its end. Audio sta
 off and can select Left or Right. Closing the sheet releases both players. Saved
 reviews and revealed identities remain readable when their videos are unavailable.
 
+Both videos must load before a new review can be submitted. **Retry videos**
+reloads unavailable clips without clearing draft scores. The timeline follows shared
+elapsed time through the longer clip; a shorter clip stops at its end. Audio starts
+off and can select Left or Right. Closing the sheet releases both players. Saved
+reviews and revealed identities remain readable when their videos are unavailable.
+
 Adaptive studies keep their progression and stopping evidence. **Recover interrupted jobs** reconciles jobs after a crash.
 
 ## Workspaces
 
 Experiments live in `~/Library/Application Support/mlx-agent/lab` by default. **Workspace…** previews adopting the existing experiment database and artifact store into a new destination. Adoption preserves IDs, hashes, reviews and sealed assignments, refuses active work or an occupied destination, and leaves the source untouched. **Import workspace…** brings in an existing workspace.
+
+Changing workspaces clears the previous workspace's records and messages, then
+refreshes the selected workspace. Each refresh reads both lists from one workspace
+and publishes them only if that refresh is still current. A failed refresh keeps
+the last successfully loaded experiment and study lists together and shows the error.
+
+Experiment drafts and blind reviews show the workspace they opened in. If that
+workspace changes, the dialog keeps its draft but disables further workspace
+actions; close it and reopen from the selected workspace. A request already in
+progress may have completed in its original workspace, so refresh that workspace
+before retrying. Returning to the same folder still requires reopening the dialog.
