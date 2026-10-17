@@ -406,7 +406,7 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func selectRadioOption(_ label: String, in group: String) {
-        let option = app.radioGroups[group].radioButtons[label]
+        let option = app.radioGroups[group].firstMatch.radioButtons[label]
         XCTAssertTrue(option.waitForExistence(timeout: 10))
         XCTAssertTrue(option.isEnabled)
         let window = app.windows.firstMatch

@@ -12,6 +12,10 @@
 
 Each candidate shows its license, a fit bar for this Mac and an **In Library** mark when it is already on disk. Actions: **Add from Hugging Face…**, **Open on Hugging Face**, **Copy repo id**.
 
+Memory fit is an estimate, not a runtime check. **Add from Hugging Face…** opens
+a separate review before downloading; use **Recommend for a task** to check
+installed candidates through local runtimes.
+
 The separate **Catalog metadata** section shows cached metadata. **Refresh Metadata** is disabled when no metadata provider is configured; its help explains why. Role-based discovery and cached entries remain available.
 
 ## Recommend for a task

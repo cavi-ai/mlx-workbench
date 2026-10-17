@@ -213,6 +213,10 @@ struct ScoutView: View {
             Text("Discovery")
                 .font(WorkbenchTypography.label)
                 .foregroundStyle(WorkbenchColor.muted)
+            Text("Choose a role to find Hugging Face repositories. Browsing reads metadata without downloading or loading models. Add from Hugging Face… opens a separate review before downloading.")
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             switch layout.headerMode {
             case .oneLine:
                 HStack(alignment: .center, spacing: WorkbenchSpacing.sm) {
