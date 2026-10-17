@@ -106,7 +106,7 @@ final class LibraryRemodelTests: XCTestCase {
         XCTAssertEqual(emptyFit.state, .notEstimated)
         XCTAssertEqual(emptyFit.word, "—")
         XCTAssertEqual(emptyFit.help, "Fit not estimated: model size unavailable")
-        XCTAssertEqual(emptyFit.accessibilityLabel, "Fits now: Fit not estimated: model size unavailable")
+        XCTAssertEqual(emptyFit.accessibilityLabel, "Memory fit: Fit not estimated: model size unavailable")
 
         let beforeProbe = fit(speech, memory: nil, hasProbed: false)
         XCTAssertEqual(beforeProbe.state, .notEstimated)
@@ -122,7 +122,7 @@ final class LibraryRemodelTests: XCTestCase {
         XCTAssertEqual(failed.state, .unavailable)
         XCTAssertEqual(failed.word, "Unavailable")
         XCTAssertNil(failed.fill)
-        XCTAssertEqual(failed.accessibilityLabel, "Fits now: memory reading unavailable")
+        XCTAssertEqual(failed.accessibilityLabel, "Memory fit: memory reading unavailable")
     }
 
     func testFamilyRowShowsItsBestVariantAndBucketRowsShowNone() {
