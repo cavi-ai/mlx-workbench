@@ -402,10 +402,8 @@ struct LabReviewSheet: View {
     @ObservedObject var lab: LabCoordinator
     let context: LabReviewContext
     @Environment(\.dismiss) private var dismiss
-    @State private var leftPlayer = AVPlayer()
-    @State private var rightPlayer = AVPlayer()
-    @State private var duration = 0.0
-    @State private var position = 0.0
+    @StateObject private var transport = VideoComparisonPlayer()
+    @State private var playbackAttempt = 0
     @State private var frameRate = 0.0
     @State private var preference = ""
     @State private var scores = Array(repeating: 0, count: 10)
@@ -417,53 +415,80 @@ struct LabReviewSheet: View {
     private let dimensions = ["prompt_adherence", "visual_quality", "motion_quality", "temporal_consistency", "character_consistency"]
     private let labels = ["Prompt adherence", "Visual quality", "Motion quality", "Temporal consistency", "Character consistency"]
 
+    private var canReview: Bool {
+        !transport.isLoading && transport.failure == nil && transport.players.count == 2 &&
+        transport.players.allSatisfy { $0.status == .readyToPlay && $0.currentItem?.status == .readyToPlay }
+    }
+    private var canSubmit: Bool {
+        !busy && !context.reviewed && receipt == nil && canReview &&
+        ["left", "tie", "right"].contains(preference) &&
+        (context.studyID != nil || (scores.count == 10 && scores.allSatisfy { (1...5).contains($0) }))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             Text("Blind video review").font(WorkbenchTypography.section)
             Text(context.prompt)
             HStack {
-                VStack { Text("Left"); LabVideoSurface(player: leftPlayer) }
-                VStack { Text("Right"); LabVideoSurface(player: rightPlayer) }
-            }.frame(height: WorkbenchSize.Lab.videoHeight)
-            HStack {
-                Button("Play together") {
-                    let start = CMTime(seconds: position, preferredTimescale: 600)
-                    let hostTime = CMClockGetTime(CMClockGetHostTimeClock()) + CMTime(seconds: 0.1, preferredTimescale: 600)
-                    leftPlayer.setRate(1, time: start, atHostTime: hostTime)
-                    rightPlayer.setRate(1, time: start, atHostTime: hostTime)
-                }.disabled(duration == 0)
-                Button("Pause") { leftPlayer.pause(); rightPlayer.pause(); position = max(0, leftPlayer.currentTime().seconds) }
-                Button("Previous frame") { stepFrame(-1) }.disabled(frameRate <= 0)
-                Button("Next frame") { stepFrame(1) }.disabled(frameRate <= 0)
-                Slider(value: $position, in: 0...max(duration, 0.01), onEditingChanged: { editing in
-                    leftPlayer.pause(); rightPlayer.pause()
-                    if !editing {
-                        let time = CMTime(seconds: position, preferredTimescale: 600)
-                        leftPlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-                        rightPlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-                    }
-                })
-            }
-            if receipt == nil {
-                Picker("Preference", selection: $preference) {
-                    Text("Choose…").tag("")
-                    Text("Left").tag("left")
-                    Text("Tie").tag("tie")
-                    Text("Right").tag("right")
-                }.pickerStyle(.segmented)
-                if context.studyID == nil {
-                Grid(alignment: .leading) {
-                    GridRow { Text("Score"); Text("Left"); Text("Right") }
-                    ForEach(0..<5, id: \.self) { row in
-                        GridRow {
-                            Text(labels[row])
-                            scorePicker(row)
-                            scorePicker(row + 5)
+                ForEach(0..<2) { index in
+                    VStack {
+                        Text(index == 0 ? "Left" : "Right")
+                        if transport.players.indices.contains(index) {
+                            LabVideoSurface(player: transport.players[index])
+                        } else {
+                            Rectangle().fill(WorkbenchColor.canvas)
+                                .overlay { Image(systemName: "film").foregroundStyle(WorkbenchColor.muted) }
                         }
+                    }.frame(maxWidth: .infinity)
+                }
+            }.frame(height: WorkbenchSize.Lab.videoHeight)
+            if transport.isLoading { ProgressView("Loading videos…").controlSize(.small) }
+            if let failure = transport.failure {
+                ErrorBanner(text: failure)
+                Button("Retry videos") { playbackAttempt += 1 }.disabled(busy || transport.isLoading)
+            }
+            ReclaimFlowLayout(spacing: WorkbenchSpacing.sm, lineSpacing: WorkbenchSpacing.xs) {
+                Button("Play together") { Task { await transport.toggle() } }.disabled(!canReview || transport.isPlaying)
+                Button("Pause") { transport.pause() }.disabled(!transport.isPlaying)
+                Button("Previous frame") { stepFrame(-1) }.disabled(!canReview || frameRate <= 0)
+                Button("Next frame") { stepFrame(1) }.disabled(!canReview || frameRate <= 0)
+                Picker("Audio", selection: Binding(get: { transport.audibleURL }, set: { transport.setAudio($0) })) {
+                    Text("Off").tag(URL?.none)
+                    Text("Left").tag(Optional(context.left))
+                    Text("Right").tag(Optional(context.right))
+                }.pickerStyle(.menu).fixedSize().disabled(!canReview).accessibilityIdentifier("study-review-audio")
+            }
+            HStack {
+                Slider(value: Binding(get: { transport.position }, set: { value in Task { await transport.seek(to: value) } }),
+                       in: 0...max(transport.duration, 0.01), onEditingChanged: { if $0 { transport.pause() } })
+                    .disabled(!canReview).accessibilityLabel("Review position")
+                Text(String(format: "%.2f / %.2f s", transport.position, transport.duration))
+                    .font(WorkbenchTypography.metadata).monospacedDigit().accessibilityIdentifier("study-review-position")
+            }
+            Text("Shared elapsed time; a shorter clip stops at its end.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            if receipt == nil && !context.reviewed {
+                Group {
+                    Picker("Preference", selection: $preference) {
+                        Text("Choose…").tag("")
+                        Text("Left").tag("left")
+                        Text("Tie").tag("tie")
+                        Text("Right").tag("right")
+                    }.pickerStyle(.segmented)
+                    if context.studyID == nil {
+                        Grid(alignment: .leading) {
+                            GridRow { Text("Score"); Text("Left"); Text("Right") }
+                            ForEach(0..<5, id: \.self) { row in
+                                GridRow {
+                                    Text(labels[row])
+                                    scorePicker(row)
+                                    scorePicker(row + 5)
+                                }
+                            }
+                        }
+                        TextField("Review notes (optional)", text: $notes)
                     }
-                }
-                TextField("Review notes (optional)", text: $notes)
-                }
+                }.disabled(busy)
             } else {
                 Text(receipt ?? "").textSelection(.enabled)
                 if let reveal {
@@ -479,33 +504,37 @@ struct LabReviewSheet: View {
             }
             ErrorBanner(text: error)
             HStack {
-                Button("Close") { dismiss() }
+                Button("Close") { dismiss() }.disabled(busy)
                 Spacer()
-                if receipt == nil {
+                if receipt == nil && !context.reviewed {
                     Button("Submit immutable review") { Task { await submit() } }
                         .buttonStyle(.workbenchPrimary)
-                        .disabled(preference.isEmpty || (context.studyID == nil && scores.contains(0)) || busy)
+                        .disabled(!canSubmit)
+                        .help(canReview ? "Save the scores and preference as an immutable review." : "Load both videos before saving a new review.")
                 }
             }
         }
         .padding(WorkbenchSpacing.pageInset)
         .frame(minWidth: WorkbenchSize.Lab.reviewMinWidth, idealWidth: WorkbenchSize.Lab.reviewIdealWidth)
-        .task {
-            leftPlayer.replaceCurrentItem(with: AVPlayerItem(url: context.left))
-            rightPlayer.replaceCurrentItem(with: AVPlayerItem(url: context.right))
-            if context.reviewed { await showReveal() }
-            do {
-                let left = try await AVURLAsset(url: context.left).load(.duration).seconds
-                let right = try await AVURLAsset(url: context.right).load(.duration).seconds
-                if left.isFinite && right.isFinite { duration = min(left, right) }
-                let tracks = try await AVURLAsset(url: context.left).loadTracks(withMediaType: .video)
-                if let track = tracks.first {
-                    let rate = try await track.load(.nominalFrameRate)
-                    if rate.isFinite && rate > 0 { frameRate = Double(rate) }
-                }
-            } catch { self.error = AppHost.render(error) }
+        .interactiveDismissDisabled(busy)
+        .task(id: playbackAttempt) {
+            await loadVideos()
+            guard !Task.isCancelled else { return }
+            if context.reviewed && receipt == nil { await showReveal() }
         }
-        .onDisappear { leftPlayer.pause(); rightPlayer.pause() }
+        .onDisappear { transport.stop() }
+    }
+    private func loadVideos() async {
+        frameRate = 0
+        await transport.load([context.left, context.right], preservingPosition: false)
+        guard !Task.isCancelled, canReview, let asset = transport.players.first?.currentItem?.asset else { return }
+        do {
+            let tracks = try await asset.loadTracks(withMediaType: .video)
+            if let track = tracks.first {
+                let rate = try await track.load(.nominalFrameRate)
+                if !Task.isCancelled, canReview, rate.isFinite && rate > 0 { frameRate = Double(rate) }
+            }
+        } catch { frameRate = 0 }
     }
     private func manifestText(_ reveal: LabResponse) -> String {
         (reveal.manifests ?? [:]).keys.sorted()
@@ -513,11 +542,10 @@ struct LabReviewSheet: View {
             .joined(separator: "\n\n")
     }
     private func stepFrame(_ direction: Double) {
-        leftPlayer.pause(); rightPlayer.pause()
-        position = min(duration, max(0, leftPlayer.currentTime().seconds + direction / frameRate))
-        let time = CMTime(seconds: position, preferredTimescale: 60_000)
-        leftPlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-        rightPlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        guard canReview, frameRate > 0 else { return }
+        transport.pause()
+        let position = transport.position + direction / frameRate
+        Task { await transport.seek(to: position) }
     }
     private func scorePicker(_ index: Int) -> some View {
         Picker(labels[index % 5], selection: $scores[index]) {
@@ -526,14 +554,18 @@ struct LabReviewSheet: View {
         }.labelsHidden().frame(width: WorkbenchSize.Lab.scoreControlWidth)
     }
     private func showReveal() async {
+        guard !busy else { return }
         busy = true; defer { busy = false }
+        error = nil
         do {
             reveal = try await lab.request(LabRequest(operation: "reveal", sessionID: context.id))
             receipt = "Review saved: " + (reveal?.reviewID ?? "") + " · revision " + String(reveal?.revision ?? 1)
         } catch { self.error = AppHost.render(error) }
     }
     private func submit() async {
+        guard canSubmit else { return }
         busy = true; defer { busy = false }
+        error = nil
         do {
             if let studyID = context.studyID {
                 _ = try await lab.request(LabRequest(operation: "study-submit", sessionID: context.id,
