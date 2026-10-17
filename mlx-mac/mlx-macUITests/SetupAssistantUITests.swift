@@ -651,6 +651,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         let start = app.buttons["task-start"]
         XCTAssertTrue(start.isEnabled); start.click()
         waitForTaskState("succeeded")
+        XCTAssertTrue(text(containing: "00000000-0000-0000-0000-000000000001").waitForExistence(timeout: 10))
         XCTAssertEqual(try taskSubmissions().count, 1)
         XCTAssertTrue(app.buttons["task-reuse"].waitForExistence(timeout: 10))
         app.buttons["task-reuse"].click()
@@ -671,6 +672,20 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(app.buttons["task-reuse"].isEnabled)
         XCTAssertEqual(try taskSubmissions().count, 1)
         capture("Library-history-with-missing-model")
+        app.terminate()
+        _ = try installTaskModel(kind: "music_generation", name: "Fixture music")
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let otherModel = app.outlines.staticTexts["Fixture music"].firstMatch
+        XCTAssertTrue(otherModel.waitForExistence(timeout: 15)); otherModel.doubleClick()
+        XCTAssertTrue(app.staticTexts["Generate music"].waitForExistence(timeout: 10))
+        app.sheets.firstMatch.buttons["Done"].click()
+        app.buttons["task-history-open"].click()
+        let otherModelHistory = app.buttons["task-history-row-00000000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(otherModelHistory.waitForExistence(timeout: 15), "Toolbar history must include tasks for other models")
+        otherModelHistory.click()
+        waitForTaskState("succeeded")
+        XCTAssertEqual(try taskSubmissions().count, 1, "Browsing history must not submit another task")
+        capture("Library-history-with-another-model-selected")
     }
 
     func testLibraryMusicTaskLifecycle() throws {
