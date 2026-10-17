@@ -489,13 +489,20 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Library scan failed"].exists)
         capture("Library-retry-empty-success")
         let addModel = app.buttons["Add from Hugging Face…"]
-        XCTAssertTrue(addModel.isHittable)
-        XCTAssertTrue(app.buttons["Open Settings"].isHittable)
-        XCTAssertTrue(app.buttons["Scan again"].isHittable)
+        func assertAcquisitionActionsFit() {
+            let window = app.windows.firstMatch.frame
+            for button in [addModel, app.buttons["Open Settings"], app.buttons["Scan again"]] {
+                XCTAssertTrue(button.isHittable, button.label)
+                let frame = button.frame
+                XCTAssertGreaterThanOrEqual(frame.minX, window.minX, button.label)
+                XCTAssertGreaterThanOrEqual(frame.minY, window.minY, button.label)
+                XCTAssertLessThanOrEqual(frame.maxX, window.maxX, button.label)
+                XCTAssertLessThanOrEqual(frame.maxY, window.maxY, button.label)
+            }
+        }
+        assertAcquisitionActionsFit()
         resizeWindow(width: 740, height: 612)
-        XCTAssertTrue(addModel.isHittable)
-        XCTAssertTrue(app.buttons["Open Settings"].isHittable)
-        XCTAssertTrue(app.buttons["Scan again"].isHittable)
+        assertAcquisitionActionsFit()
         capture("Library-empty-compact-actions")
         addModel.click()
         let intake = app.windows["Add from Hugging Face"]
