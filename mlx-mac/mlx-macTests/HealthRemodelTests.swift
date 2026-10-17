@@ -688,7 +688,8 @@ final class HealthSpawnSafetyTests: XCTestCase {
 
     func testRuntimeReportIsProducedOnlyByAppHost() throws {
         let host = try Fixture.source("AppHost.swift")
-        XCTAssertEqual(host.components(separatedBy: "RuntimeChecker.report()").count - 1, 4)
+        XCTAssertEqual(host.components(separatedBy: "RuntimeChecker.report()").count - 1, 5)
+        // Guided installation receives its post-exit probe from this owner too.
         // The initializer probes once; a property default would probe again on every construction.
         XCTAssertTrue(host.contains("@Published var runtimeReport: RuntimeReport\n"))
         var others: [String] = []

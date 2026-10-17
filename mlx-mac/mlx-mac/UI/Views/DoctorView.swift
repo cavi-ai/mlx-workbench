@@ -82,7 +82,7 @@ struct DoctorView: View {
                         installCommand: appHost.runtimeReport.install,
                         installer: appHost.runtimeInstaller,
                         verification: appHost.verification,
-                        onRuntimeInstalled: { appHost.refreshRuntimeReport() },
+                        onRuntimeInstalled: { appHost.refreshRuntimeReport(appHost.runtimeInstaller.runtimeReport) },
                         onOpenSettings: { onRouteSelection(.settings) },
                         onReviewOnOverview: { onRouteSelection(.overview) }
                     )
