@@ -288,6 +288,7 @@ struct LibraryColumnTier: Equatable {
 /// `ModelBudgetPresentation` Overview uses, so the verdict, the fill and the
 /// tone have one owner.
 struct LibraryFitPresentation: Equatable {
+    static let title = "Memory fit"
     enum State: String, Equatable {
         case estimated, notEstimated, redacted, unavailable
     }
@@ -339,7 +340,7 @@ struct LibraryFitPresentation: Equatable {
         func plain(_ state: State, word: String, help: String, label: String) -> LibraryFitPresentation {
             LibraryFitPresentation(
                 state: state, tone: .neutral, fill: nil, word: word, help: help,
-                accessibilityLabel: "Fits now: " + label, contextTokens: contextTokens, needBytes: nil
+                accessibilityLabel: Self.title + ": " + label, contextTokens: contextTokens, needBytes: nil
             )
         }
         guard ComparisonInsights.supportsFitEstimate(model), model.item.bytes > 0 else {
@@ -356,7 +357,7 @@ struct LibraryFitPresentation: Equatable {
             }
             return LibraryFitPresentation(
                 state: .estimated, tone: budget.tone, fill: quantized(fill), word: word, help: budget.verdictText,
-                accessibilityLabel: "Fits now: " + budget.verdictText, contextTokens: contextTokens,
+                accessibilityLabel: Self.title + ": " + budget.verdictText, contextTokens: contextTokens,
                 needBytes: budget.neededBytes
             )
         }
