@@ -10,11 +10,16 @@
 
 Run lists every running server with **Stop** or **Unload**. Refreshing Run only reads serving status.
 
+Choose **Configure clients…** on a running endpoint to open Clients with that
+server selected. Clients rechecks its process and adapter identity; a changed or
+stopped server requires a fresh selection from Run. Opening Clients does not
+write configuration. Preview and confirm client wiring before applying it.
+
 Model-only Run and endpoint setup do not reuse a server reported with an adapter
 as its base model. Unknown adapter metadata also prevents adoption. A conflicting
-endpoint names the adapter when its path is available. Model handoffs to Clients
-match servers without adapters; selecting a server directly in Clients keeps
-its adapter identity attached to the confirmation checks.
+endpoint names the adapter when its path is available. Model-only handoffs to
+Clients match servers without adapters. Selecting an endpoint in Run or Clients
+keeps its adapter identity attached to the confirmation checks.
 
 ## Serve a trained adapter
 

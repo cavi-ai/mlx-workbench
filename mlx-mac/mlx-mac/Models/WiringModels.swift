@@ -28,11 +28,22 @@ struct WireEndpoint: Equatable, Sendable {
 struct ClientWiringRequest: Equatable {
     let modelPath: String
     let preferredPort: Int?
+    var expectedServer: ServerInfo? = nil
+
+    static func forServer(_ server: ServerInfo) -> Self? {
+        guard WireEndpoint(server: server) != nil else { return nil }
+        return Self(modelPath: server.modelIdentity, preferredPort: server.port, expectedServer: server)
+    }
 }
 
 enum ClientWiringSelection {
     static func matchingServers(request: ClientWiringRequest, servers: [ServerInfo]) -> [ServerInfo] {
-        servers.filter { WireEndpoint(server: $0) != nil && $0.matchesUnadaptedModel(request.modelPath)
+        if let expected = request.expectedServer {
+            guard WireEndpoint(server: expected) != nil, request.modelPath == expected.modelIdentity,
+                  request.preferredPort == expected.port else { return [] }
+            return servers.filter { sameServer(expected, $0) }
+        }
+        return servers.filter { WireEndpoint(server: $0) != nil && $0.matchesUnadaptedModel(request.modelPath)
             && (request.preferredPort == nil || $0.port == request.preferredPort) }
     }
 
