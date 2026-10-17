@@ -124,6 +124,7 @@
 		LABPRSB1 /* LabPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = LABPRSF1 /* LabPresentation.swift */; };
 		LABRMDB1 /* LabRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LABRMDF1 /* LabRemodelTests.swift */; };
 		TRNVWSB1 /* TrainingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNVWSF1 /* TrainingViews.swift */; };
+		TRNEVALB1 /* TrainingEvaluationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNEVALF1 /* TrainingEvaluationSheet.swift */; };
 		ADPRMDB1 /* AdoptRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADPRMDF1 /* AdoptRemodelTests.swift */; };
 		ADPPRSB1 /* AdoptPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADPPRSF1 /* AdoptPresentation.swift */; };
 		INTPRSB1 /* IntakePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = INTPRSF1 /* IntakePresentation.swift */; };
@@ -253,6 +254,8 @@
 		7BEA4B05396A4387BD5732E1 /* TrainingEvaluationSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22846EFA81924F6E97D1B315; };
 		C33AF97B1AA1B312EB6F02BF /* LabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB6BA6036AACD20164BB94B; };
 26UIBLD201 /* UnifiedWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF201 /* UnifiedWorkflowUITests.swift */; };
+		SRSESB1 /* StudyRecipeSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRSESF1 /* StudyRecipeSession.swift */; };
+		SRFLDB1 /* StudyRecipeFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRFLDF1 /* StudyRecipeFields.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -365,6 +368,7 @@
 		MNUBRTF1 /* MenuBarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MenuBarTests.swift; path = MenuBarTests.swift; sourceTree = "<group>"; };
 		TRNPRSF1 /* TrainingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingPresentation.swift; path = UI/Views/TrainingPresentation.swift; sourceTree = "<group>"; };
 		TRNVWSF1 /* TrainingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingViews.swift; path = UI/Views/TrainingViews.swift; sourceTree = "<group>"; };
+		TRNEVALF1 /* TrainingEvaluationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingEvaluationSheet.swift; path = UI/Views/TrainingEvaluationSheet.swift; sourceTree = "<group>"; };
 		ADPRMDF1 /* AdoptRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdoptRemodelTests.swift; path = AdoptRemodelTests.swift; sourceTree = "<group>"; };
 		ADPPRSF1 /* AdoptPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AdoptPresentation.swift; path = UI/Views/AdoptPresentation.swift; sourceTree = "<group>"; };
 		INTPRSF1 /* IntakePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IntakePresentation.swift; path = UI/Views/IntakePresentation.swift; sourceTree = "<group>"; };
@@ -513,6 +517,8 @@
 		22846EFA81924F6E97D1B315 /* TrainingEvaluationSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingEvaluationSession.swift; path = Services/TrainingEvaluationSession.swift; sourceTree = "<group>"; };
 		4CB6BA6036AACD20164BB94B /* LabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LabView.swift; path = UI/Views/LabView.swift; sourceTree = "<group>"; };
 26UIREF201 /* UnifiedWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedWorkflowUITests.swift; sourceTree = "<group>"; };
+		SRSESF1 /* StudyRecipeSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyRecipeSession.swift; path = Services/StudyRecipeSession.swift; sourceTree = "<group>"; };
+		SRFLDF1 /* StudyRecipeFields.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyRecipeFields.swift; path = UI/Views/StudyRecipeFields.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -685,10 +691,13 @@
 				LMSPRSF1 /* LMStudioShelfPresentation.swift */,
 				LMSVWSF1 /* LMStudioShelfViews.swift */,
 				TRNPRSF1 /* TrainingPresentation.swift */,
+				SRSESF1 /* StudyRecipeSession.swift */,
+				SRFLDF1 /* StudyRecipeFields.swift */,
 				LABPRSF1 /* LabPresentation.swift */,
 				ADPPRSF1 /* AdoptPresentation.swift */,
 				INTPRSF1 /* IntakePresentation.swift */,
 				TRNVWSF1 /* TrainingViews.swift */,
+				TRNEVALF1 /* TrainingEvaluationSheet.swift */,
 				24FREF000013 /* HomeView.swift */,
 				28OVWF01 /* OverviewComponents.swift */,
 				24FREF000014 /* ScoutView.swift */,
@@ -1003,10 +1012,13 @@
 				LMSPRSB1 /* LMStudioShelfPresentation.swift in Sources */,
 				LMSVWSB1 /* LMStudioShelfViews.swift in Sources */,
 				TRNPRSB1 /* TrainingPresentation.swift in Sources */,
+				SRSESB1 /* StudyRecipeSession.swift in Sources */,
+				SRFLDB1 /* StudyRecipeFields.swift in Sources */,
 				LABPRSB1 /* LabPresentation.swift in Sources */,
 				ADPPRSB1 /* AdoptPresentation.swift in Sources */,
 				INTPRSB1 /* IntakePresentation.swift in Sources */,
 				TRNVWSB1 /* TrainingViews.swift in Sources */,
+				TRNEVALB1 /* TrainingEvaluationSheet.swift in Sources */,
 				24BBLD000013 /* x */,
 				28OVWB01 /* OverviewComponents.swift in Sources */,
 				24BBLD000014 /* x */,

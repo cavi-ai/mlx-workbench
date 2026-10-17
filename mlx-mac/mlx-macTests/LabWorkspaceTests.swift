@@ -4,6 +4,76 @@ import SwiftUI
 @testable import mlx_workbench
 
 final class LabWorkspaceTests: XCTestCase {
+    func testRecipeDraftPreservesInputsAndExplainsInvalidRanges() throws {
+        var draft = StudyRecipeDraft()
+        draft.revision = String(repeating: "a", count: 40)
+        draft.prompt = "A boat on a lake"
+        XCTAssertNil(draft.validationError)
+        XCTAssertEqual(draft.settings?.object?["num_frames"], .integer(17))
+        draft.width = "257"
+        XCTAssertTrue(try XCTUnwrap(draft.validationError).contains("16"))
+        XCTAssertNil(draft.settings)
+        draft.width = "256"; draft.frames = "18"
+        XCTAssertTrue(try XCTUnwrap(draft.validationError).contains("16n+1"))
+        draft.frames = "17"; draft.guidance = "nan"
+        XCTAssertNotNil(draft.validationError)
+    }
+
+    @MainActor
+    func testRecipeCaptureInvalidatesAfterEditsAndFailureRetainsDraft() async throws {
+        var fail = false
+        var calls: [String] = []
+        let session = StudyRecipeSession { request in
+            calls.append(request.operation)
+            if request.operation == "recipe-catalog" {
+                return LabResponse(recipes: [StudyRecipeOption(modelID: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+                    displayName: "Wan", revisions: [String(repeating: "a", count: 40)], unavailableReason: nil)])
+            }
+            if fail { throw NSError(domain: "capture", code: 1) }
+            var fields = try XCTUnwrap(request.settings?.object)
+            fields["model_revision"] = fields.removeValue(forKey: "revision")
+            fields["model_id"] = .string("Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
+            fields["adapter_id"] = .string("diffusers.wan2.1-t2v-1.3b.mps.v1")
+            fields["model_checksum"] = .string("sha256:" + String(repeating: "b", count: 64))
+            fields["source_checksums"] = .object(["model_index.json": .string(String(repeating: "c", count: 64))])
+            fields["runtime_versions"] = .object(["python": .string("3.12")])
+            return LabResponse(manifest: .object(fields))
+        }
+        await session.load()
+        session.draft.prompt = "A boat"
+        await session.capture()
+        XCTAssertNotNil(session.manifest)
+        session.draft.seed = "43"
+        XCTAssertNil(session.manifest)
+        fail = true
+        await session.capture()
+        XCTAssertNil(session.manifest)
+        XCTAssertNotNil(session.error)
+        XCTAssertEqual(session.draft.prompt, "A boat")
+        XCTAssertEqual(session.draft.seed, "43")
+        XCTAssertEqual(calls, ["recipe-catalog", "recipe-prepare", "recipe-prepare"])
+    }
+
+    @MainActor
+    func testRecipeCaptureRejectsMismatchedResponseAndUnavailableCatalog() async {
+        var unavailable = true
+        let session = StudyRecipeSession { request in
+            if request.operation == "recipe-catalog" {
+                return LabResponse(recipes: [StudyRecipeOption(modelID: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+                    displayName: "Wan", revisions: unavailable ? [] : [String(repeating: "a", count: 40)],
+                    unavailableReason: unavailable ? "No cached model" : nil)])
+            }
+            return LabResponse(manifest: .object(["model_revision": .string("wrong")]))
+        }
+        await session.load()
+        session.draft.prompt = "A boat"
+        XCTAssertFalse(session.canCapture)
+        unavailable = false
+        await session.load()
+        await session.capture()
+        XCTAssertNil(session.manifest)
+        XCTAssertNotNil(session.error)
+    }
     @MainActor
     func testStudiesViewReadsAnIsolatedRealWorkspaceWhenRequested() async throws {
         let environment = ProcessInfo.processInfo.environment

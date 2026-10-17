@@ -124,6 +124,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         elif args and args[0] == 'lab' and 'workspace' in args:
             request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
             operation = request['operation']
+            with (root / 'workspace-requests.jsonl').open('a') as stream:
+                stream.write(json.dumps(request) + '\\n')
             if operation == 'training-history':
                 deadline = time.monotonic() + 20
                 while (root / 'slow-training-history').exists():
@@ -135,15 +137,85 @@ final class WorkbenchReviewUITests: XCTestCase {
                     print('Fixture training evaluations unavailable: history is unreadable.', file=sys.stderr)
                     sys.exit(2)
                 data = {'evaluations': json.loads((root / 'training-history.json').read_text()) if (root / 'training-history.json').exists() else []}
+            elif operation in ('training-preview', 'training-evaluate'):
+                prompts = request.get('prompt_suite', {}).get('prompts', [dict(id='prompt', text=request.get('prompt', ''), max_tokens=request.get('max_tokens', 128))])
+                plan = dict(schema_version='text-training-evaluation/2' if 'prompt_suite' in request else 'text-training-evaluation/1',
+                            preview_hash='fixture-evaluation-preview', base_repo='fixture/base', seed=42, temperature=0.0)
+                if 'prompt_suite' in request:
+                    plan['prompt_suite'] = request['prompt_suite']
+                else:
+                    plan.update(prompt=request['prompt'], max_tokens=request.get('max_tokens', 128))
+                if operation == 'training-preview':
+                    data = {'plan': plan}
+                else:
+                    assert request['preview_hash'] == plan['preview_hash']
+                    samples = [dict(id=p['id'], prompt=p['text'], max_tokens=p['max_tokens'], outputs=dict(baseline='Base output for ' + p['text'], adapter='Adapter output for ' + p['text'])) for p in prompts]
+                    report = dict(plan, judgment=None)
+                    if 'prompt_suite' in request:
+                        report['samples'] = samples
+                    else:
+                        report['outputs'] = samples[0]['outputs']
+                    data = dict(evaluation_id='text_eval_suite', artifact_sha256='a' * 64, report=report, reviews=[])
+                    (root / 'suite-evaluation.json').write_text(json.dumps(data))
+                    history = json.loads((root / 'training-history.json').read_text())
+                    history.append(dict(id='text_eval_suite', prompt_count=len(prompts), suite_name=request.get('prompt_suite', {}).get('name')))
+                    (root / 'training-history.json').write_text(json.dumps(history))
+            elif operation == 'training-review':
+                if (root / 'fail-training-review').exists():
+                    print('Fixture review save failed.', file=sys.stderr)
+                    sys.exit(2)
+                saved = json.loads((root / 'suite-evaluation.json').read_text())
+                assert request['artifact_sha256'] == saved['artifact_sha256']
+                reviews = [r for r in saved['reviews'] if r['prompt_id'] != request['prompt_id']]
+                review = dict(id='review_' + str(len(reviews)), evaluation_id=saved['evaluation_id'], artifact_sha256=saved['artifact_sha256'],
+                              prompt_id=request['prompt_id'], reviewer_id='fixture-reviewer', preference=request['preference'],
+                              notes=request.get('notes', ''), created_at='2026-10-16T00:00:00Z')
+                saved['reviews'] = reviews + [review]
+                (root / 'suite-evaluation.json').write_text(json.dumps(saved))
+                data = dict(evaluation_id=saved['evaluation_id'], artifact_sha256=saved['artifact_sha256'], review_id=review['id'], reviews=saved['reviews'])
             elif operation == 'training-inspect':
                 time.sleep(0.5)
                 if (root / 'fail-training-inspect').exists():
                     print('Fixture retained evaluation unavailable.', file=sys.stderr)
                     sys.exit(2)
-                data = {'report': {'recipe': 'fixture frozen recipe', 'outputs': {'baseline': 'fixture base output', 'adapter': 'fixture adapter output'}},
-                        'artifact_sha256': 'fixture-evaluation-sha256'}
+                if request['evaluation_id'] == 'text_eval_suite':
+                    data = json.loads((root / 'suite-evaluation.json').read_text())
+                else:
+                    data = {'report': {'recipe': 'fixture frozen recipe', 'outputs': {'baseline': 'fixture base output', 'adapter': 'fixture adapter output'}},
+                            'artifact_sha256': 'fixture-evaluation-sha256'}
+            elif operation == 'recipe-catalog':
+                data = {'recipes': [{'model_id':'Wan-AI/Wan2.1-T2V-1.3B-Diffusers',
+                    'display_name':'Wan 2.1 T2V 1.3B (MPS)', 'revisions':['a'*40],
+                    'unavailable_reason':'Install video runtime in Studies → Runtime setup.' if (root / 'missing-study-runtime').exists() else None}]}
+            elif operation == 'recipe-prepare':
+                time.sleep(0.5)
+                if (root / 'fail-study-capture').exists():
+                    print('Fixture cache changed. Capture again.', file=sys.stderr); sys.exit(2)
+                manifest = dict(request['settings'])
+                manifest.update(model_revision=manifest.pop('revision'), model_id='Wan-AI/Wan2.1-T2V-1.3B-Diffusers',
+                    adapter_id='diffusers.wan2.1-t2v-1.3b.mps.v1', model_checksum='sha256:'+'b'*64,
+                    source_checksums={'model_index.json':'c'*64}, runtime_versions={'python':'3.12'})
+                data = {'manifest': manifest}
+            elif operation == 'preview':
+                data = {'changed_paths':[request['draft']['variable_path']]}
+            elif operation == 'create':
+                (root / 'study-created.json').write_text(json.dumps(request['draft']))
+                data = {'experiment_id':'exp_fixture', 'job_ids':['job_a','job_b']}
             else:
                 data = {}
+        elif args[:2] == ['lora', 'inspect']:
+            time.sleep(0.5)
+            if (root / 'fail-training-setup').exists():
+                print('Fixture setup inspection failed.', file=sys.stderr)
+                sys.exit(2)
+            blocked = (root / 'invalid-training-data').exists()
+            checks = [dict(id=key, status='ready', message='Training executable found.' if key == 'runtime' else 'Cached base found.' if key == 'base' else '8 examples; enough for batch size 4.')
+                      for key in ['runtime', 'base', 'train', 'valid']]
+            if blocked:
+                checks[2].update(status='blocked', code='dataset_invalid', message='train.jsonl line 2 is not valid JSON.', remediation='Correct line 2, then check setup again.')
+            data = dict(schema_version=1, ready=not blocked, checks=checks, batch_size=int(args[args.index('--batch-size') + 1]),
+                        repo=args[args.index('--repo') + 1] if '--repo' in args else None,
+                        data=args[args.index('--data') + 1] if '--data' in args else None)
         elif args[:2] == ['lora', 'start']:
             time.sleep(1)
             confirming = '--confirm' in args
@@ -253,7 +325,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 30))
         resizeWindow(width: 1050, height: 720)
-        let destinations = ["doctor": "Health", "models": "Library", "training-studio": "Training", "settings": "Settings"]
+        let destinations = ["doctor": "Health", "models": "Library", "training-studio": "Training", "settings": "Settings", "studies": "Studies"]
         if let destination = destinations[route] { select(destination) }
     }
 
@@ -448,6 +520,68 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(calls.contains("--confirm"))
     }
 
+    func testStudyRecipeCaptureAndQueue() throws {
+        for appearance in ["Light", "Dark"] {
+            launch(appearance: appearance, route: "studies")
+            XCTAssertTrue(app.buttons["New experiment…"].waitForExistence(timeout: 15))
+            app.buttons["New experiment…"].click()
+            let captureRecipe = app.buttons["Capture recipe"]
+            XCTAssertTrue(captureRecipe.waitForExistence(timeout: 15))
+            XCTAssertFalse(captureRecipe.isEnabled)
+            let prompt = app.textFields["Shared prompt"].exists ? app.textFields["Shared prompt"] : app.textViews["Shared prompt"]
+            replace(prompt, with: "A boat on a quiet lake")
+            XCTAssertTrue(captureRecipe.isEnabled)
+            try Data().write(to: root.appendingPathComponent("fail-study-capture"))
+            captureRecipe.click()
+            XCTAssertTrue(text(containing: "Fixture cache changed").waitForExistence(timeout: 15))
+            XCTAssertFalse(app.buttons["Validate pair"].isEnabled)
+            try FileManager.default.removeItem(at: root.appendingPathComponent("fail-study-capture"))
+            captureRecipe.click()
+            XCTAssertTrue(app.staticTexts["study-recipe-captured"].waitForExistence(timeout: 15))
+            XCTAssertTrue(app.buttons["Validate pair"].isEnabled)
+            XCTAssertTrue(app.textFields["Alternate value"].isHittable)
+            replace(app.textFields["Alternate value"], with: "9")
+            replace(app.textFields["Width"], with: "257")
+            XCTAssertFalse(app.buttons["Validate pair"].isEnabled)
+            XCTAssertFalse(captureRecipe.isEnabled)
+            replace(app.textFields["Width"], with: "256")
+            captureRecipe.click()
+            XCTAssertTrue(app.staticTexts["study-recipe-captured"].waitForExistence(timeout: 15))
+            app.buttons["Validate pair"].click()
+            let create = app.buttons["Create experiment"]
+            let enabled = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: create)
+            wait(for: [enabled], timeout: 15)
+            capture("Studies-recipe-validated-\(appearance)")
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            screen.name = "Studies-recipe-confirmation-screen-\(appearance)"
+            screen.lifetime = .keepAlways
+            add(screen)
+            create.click()
+            let dismissed = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.sheets.firstMatch)
+            wait(for: [dismissed], timeout: 15)
+            let saved = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("study-created.json"))) as? [String: Any])
+            XCTAssertEqual(saved["variable_path"] as? String, "inference_steps")
+            XCTAssertEqual(saved["alternate_value"] as? Int, 9)
+            XCTAssertEqual((saved["baseline"] as? [String: Any])?["prompt"] as? String, "A boat on a quiet lake")
+            try Data().write(to: root.appendingPathComponent("missing-study-runtime"))
+            app.buttons["New experiment…"].click()
+            XCTAssertTrue(text(containing: "Install video runtime").waitForExistence(timeout: 15))
+            XCTAssertFalse(app.buttons["Capture recipe"].isEnabled)
+            let imported = app.radioButtons["Recipe file"]
+            XCTAssertTrue(imported.exists)
+            imported.click()
+            XCTAssertTrue(app.buttons["Choose generation recipe…"].waitForExistence(timeout: 5))
+            capture("Studies-recipe-import-\(appearance)")
+            app.sheets.buttons["Cancel"].click()
+            try FileManager.default.removeItem(at: root.appendingPathComponent("missing-study-runtime"))
+            app.terminate()
+        }
+        let requests = try String(contentsOf: root.appendingPathComponent("workspace-requests.jsonl"), encoding: .utf8)
+            .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        XCTAssertFalse(requests.contains { ["run", "study-run"].contains($0["operation"] as? String ?? "") })
+        XCTAssertEqual(requests.filter { $0["operation"] as? String == "create" }.count, 2)
+    }
+
     func testTrainingWorkflowGuidanceAndResults() throws {
         let before = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
         func flag(_ name: String, _ enabled: Bool) throws {
@@ -460,7 +594,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
         for appearance in ["Light", "Dark"] {
             for name in ["fail-training-status", "fail-training-history", "fail-training-preview", "fail-training-submit",
-                         "slow-training-status", "slow-training-history", "fail-training-inspect"] { try flag(name, false) }
+                         "slow-training-status", "slow-training-history", "fail-training-inspect",
+                         "fail-training-setup", "invalid-training-data", "fail-training-review"] { try flag(name, false) }
             try write("training-jobs.json", [])
             try write("training-history.json", [])
             launch(appearance: appearance, route: "training-studio", isolatedHome: true)
@@ -502,6 +637,28 @@ final class WorkbenchReviewUITests: XCTestCase {
                 reveal(fix); fix.click(); app.typeText(root.path)
                 XCTAssertEqual(dataset.value as? String, root.path)
                 XCTAssertTrue(preview.isEnabled)
+                let check = app.buttons["training-check-setup"]
+                try flag("invalid-training-data", true)
+                reveal(check); check.click()
+                XCTAssertTrue(text(containing: "train.jsonl line 2 is not valid JSON.").waitForExistence(timeout: 10))
+                XCTAssertFalse(app.buttons["training-confirm"].exists, "Inspection cannot authorize training")
+                reveal(app.staticTexts["training-inspection-valid"])
+                XCTAssertTrue(message("training-inspection-valid").contains("8 examples"))
+                capture("Training-\(appearance)-setup-blocked")
+                resizeWindow(width: 740, height: 560)
+                reveal(app.staticTexts["training-inspection-valid"])
+                capture("Training-\(appearance)-setup-blocked-minimum")
+                resizeWindow(width: 1024, height: 680)
+                try flag("invalid-training-data", false)
+                reveal(check); check.click()
+                XCTAssertTrue(text(containing: "Local setup checks passed").waitForExistence(timeout: 10))
+                reveal(app.staticTexts["training-inspection-summary"])
+                capture("Training-\(appearance)-setup-ready")
+                try flag("fail-training-setup", true)
+                reveal(check); check.click()
+                XCTAssertTrue(text(containing: "Fixture setup inspection failed.").waitForExistence(timeout: 10))
+                XCTAssertFalse(app.staticTexts["training-inspection-summary"].exists)
+                try flag("fail-training-setup", false)
                 reveal(iterations); replace(iterations, with: "0")
                 XCTAssertFalse(preview.isEnabled)
                 XCTAssertTrue(message("training-guidance").contains("positive whole number"))
@@ -574,6 +731,51 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Training-\(appearance)-jobs-loading")
             try flag("slow-training-status", false)
             XCTAssertTrue(app.buttons["Compare with base"].waitForExistence(timeout: 15))
+            let compareAdapter = app.buttons["Compare with base"]
+            reveal(compareAdapter); compareAdapter.click()
+            let evaluationSheet = app.sheets.firstMatch
+            XCTAssertTrue(evaluationSheet.waitForExistence(timeout: 10))
+            func revealEvaluation(_ element: XCUIElement) {
+                XCTAssertTrue(element.waitForExistence(timeout: 10))
+                let scroll = evaluationSheet.scrollViews.firstMatch
+                for _ in 0..<10 {
+                    if scroll.frame.contains(element.frame) && element.isHittable { return }
+                    scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 240 : -240)
+                }
+                XCTAssertTrue(element.isHittable)
+            }
+            let sourceMenu = evaluationSheet.descendants(matching: .any)["training-evaluation-source"]
+            sourceMenu.click(); app.menuItems["Coding basics"].click()
+            evaluationSheet.buttons["Preview"].click()
+            let runEvaluation = evaluationSheet.buttons["Run comparison"]
+            waitEnabled(runEvaluation); runEvaluation.click()
+            XCTAssertTrue(evaluationSheet.staticTexts["training-evaluation-retained"].waitForExistence(timeout: 15))
+            let preference = evaluationSheet.descendants(matching: .any)["training-evaluation-preference"]
+            revealEvaluation(preference); preference.click(); app.menuItems["Trained adapter"].click()
+            let notes = evaluationSheet.descendants(matching: .any)["training-evaluation-review-notes"]
+            revealEvaluation(notes); replace(notes, with: "More actionable.")
+            let saveReview = evaluationSheet.buttons["training-evaluation-save-review"]
+            try flag("fail-training-review", true)
+            revealEvaluation(saveReview); saveReview.click()
+            XCTAssertTrue(text(containing: "Fixture review save failed.").waitForExistence(timeout: 10))
+            XCTAssertTrue(evaluationSheet.debugDescription.contains("More actionable."))
+            capture("Training-\(appearance)-evaluation-review-failed")
+            try flag("fail-training-review", false)
+            revealEvaluation(saveReview); saveReview.click()
+            XCTAssertTrue(evaluationSheet.staticTexts["training-evaluation-review-saved"].waitForExistence(timeout: 10))
+            capture("Training-\(appearance)-evaluation-suite-reviewed")
+            evaluationSheet.buttons["Close"].click()
+            XCTAssertTrue(evaluationSheet.waitForNonExistence(timeout: 10))
+            let inspectSuite = app.buttons["training-inspect-text_eval_suite"]
+            reveal(inspectSuite); inspectSuite.click()
+            let reviewRetained = app.buttons["training-review-retained"]
+            reveal(reviewRetained); reviewRetained.click()
+            XCTAssertTrue(app.sheets.firstMatch.staticTexts["Review retained evaluation"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.sheets.firstMatch.buttons["Run comparison"].exists)
+            XCTAssertTrue(app.sheets.firstMatch.debugDescription.contains("More actionable."))
+            capture("Training-\(appearance)-evaluation-suite-reopened")
+            app.sheets.firstMatch.buttons["Close"].click()
+            XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: 10))
             try flag("slow-training-history", true)
             reveal(refreshHistory); refreshHistory.click()
             XCTAssertTrue(app.staticTexts["training-history-loading"].waitForExistence(timeout: 5))

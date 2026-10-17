@@ -1,5 +1,65 @@
 import Foundation
 
+struct TrainingInspection: Decodable, Equatable, Sendable {
+    struct Check: Decodable, Equatable, Sendable, Identifiable {
+        enum ID: String, Decodable, Hashable, Sendable { case runtime, base, train, valid }
+        enum Status: String, Decodable, Sendable { case ready, blocked }
+        let id: ID
+        let status: Status
+        let message: String
+        let remediation: String?
+        let code: String?
+        let examples: Int?
+        let sha256: String?
+        let path: String?
+
+        var title: String {
+            switch id {
+            case .runtime: return "Training runtime"
+            case .base: return "Cached base model"
+            case .train: return "train.jsonl"
+            case .valid: return "valid.jsonl"
+            }
+        }
+
+        var repairField: TrainingField? {
+            guard status == .blocked else { return nil }
+            if id == .base { return .repo }
+            if code == "dataset_too_small" { return .batchSize }
+            return id == .train || id == .valid ? .data : nil
+        }
+    }
+
+    let ready: Bool
+    let repo: String?
+    let data: String?
+    let batchSize: Int
+    let checks: [Check]
+
+    private enum CodingKeys: String, CodingKey { case schemaVersion = "schema_version", ready, repo, data, batchSize = "batch_size", checks }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let schema = try container.decode(Int.self, forKey: .schemaVersion)
+        ready = try container.decode(Bool.self, forKey: .ready)
+        repo = try container.decodeIfPresent(String.self, forKey: .repo)
+        data = try container.decodeIfPresent(String.self, forKey: .data)
+        batchSize = try container.decode(Int.self, forKey: .batchSize)
+        checks = try container.decode([Check].self, forKey: .checks)
+        guard schema == 1, (1...64).contains(batchSize), checks.count == 4,
+              Set(checks.map(\.id)) == Set([Check.ID.runtime, .base, .train, .valid]),
+              ready == checks.allSatisfy({ $0.status == .ready }) else {
+            throw DecodingError.dataCorruptedError(forKey: .checks, in: container, debugDescription: "Incomplete or inconsistent training inspection.")
+        }
+    }
+
+    func matches(_ draft: TrainingDraft) -> Bool {
+        (repo ?? "") == draft.repo.trimmingCharacters(in: .whitespacesAndNewlines)
+            && (data ?? "") == draft.data.trimmingCharacters(in: .whitespacesAndNewlines)
+            && batchSize == Int(draft.batchSize.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
 /// Captured plan fields only; older previews do not acquire inferred defaults.
 struct TrainingPlanSummary: Equatable {
     let outputPath: String?
@@ -73,12 +133,18 @@ struct TrainingEvaluationRow: Equatable, Identifiable {
     let id: String
     let shortID: String
     let dateText: String?
+    let title: String?
+    let promptCount: Int?
 
     init?(value: LabValue, now: Date) {
         guard let record = value.object, let identity = record["id"]?.text else { return nil }
         id = identity
         shortID = String(identity.prefix(TrainingPresentation.shortIDLength))
         dateText = record["created_at"]?.text.map { TrainingPresentation.dateText($0, now: now) }
+        title = record["suite_name"]?.text
+        if let count = record["prompt_count"]?.decimal, count.rounded() == count, count >= 1, count <= 16 {
+            promptCount = Int(count)
+        } else { promptCount = nil }
     }
 }
 

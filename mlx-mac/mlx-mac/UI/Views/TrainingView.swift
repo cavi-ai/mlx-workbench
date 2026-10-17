@@ -77,41 +77,78 @@ struct TrainingPreview {
 
 @MainActor
 final class TrainingSession: ObservableObject {
-    enum Operation: Equatable { case previewing, submitting }
+    enum Operation: Equatable { case inspecting, previewing, submitting }
     @Published var draft = TrainingDraft() {
         didSet {
             guard draft != oldValue else { return }
             revision += 1
             preview = nil
+            inspection = nil
             errorMessage = nil
             notice = nil
         }
     }
     @Published private(set) var preview: TrainingPreview?
+    @Published private(set) var inspection: TrainingInspection?
     @Published private(set) var operation: Operation?
     @Published private(set) var errorMessage: String?
     @Published private(set) var notice: String?
     private var revision = 0
     private let previewOperation: (TrainingRequest) async throws -> [String: Any]
     private let startOperation: (TrainingRequest, String) async throws -> Void
+    private let inspectionOperation: ((TrainingDraft) async throws -> TrainingInspection)?
     private let outputDestination: () -> URL
 
     init(preview: @escaping (TrainingRequest) async throws -> [String: Any],
          start: @escaping (TrainingRequest, String) async throws -> Void,
+         inspect: ((TrainingDraft) async throws -> TrainingInspection)? = nil,
          outputDestination: @escaping () -> URL = {
              WorkbenchStatePaths.applicationSupport().appendingPathComponent("trained-adapters", isDirectory: true)
                  .appendingPathComponent(UUID().uuidString, isDirectory: true)
          }) {
         previewOperation = preview
         startOperation = start
+        inspectionOperation = inspect
         self.outputDestination = outputDestination
     }
 
     var isBusy: Bool { operation != nil }
     var canPreview: Bool { !isBusy && draft.request != nil }
+    var canInspect: Bool { !isBusy && draft.batchSizeError == nil && inspectionOperation != nil }
     var canConfirm: Bool {
         guard !isBusy, let preview, preview.sourceDraft == draft else { return false }
-        return TrainingPlanSummary(payload: preview.payload).blockingReason == nil
+        return confirmationBlocker == nil
+    }
+    var confirmationBlocker: String? {
+        guard let preview else { return nil }
+        return TrainingPlanSummary(payload: preview.payload).blockingReason
+            ?? inspection?.checks.first(where: { $0.status == .blocked })?.message
+    }
+
+    @discardableResult
+    func inspectTraining() -> Task<Void, Never>? {
+        guard canInspect, let inspectionOperation else { return nil }
+        let captured = draft, revision = revision
+        operation = .inspecting
+        inspection = nil
+        preview = nil
+        errorMessage = nil
+        notice = nil
+        return Task {
+            defer { operation = nil }
+            do {
+                let result = try await inspectionOperation(captured)
+                guard self.revision == revision else { return }
+                guard result.matches(captured) else {
+                    errorMessage = "Setup inspection returned different inputs. Check setup again."
+                    return
+                }
+                inspection = result
+            } catch {
+                guard self.revision == revision else { return }
+                errorMessage = AppHost.render(error)
+            }
+        }
     }
 
     @discardableResult
@@ -171,7 +208,13 @@ struct TrainingPreviewGuidance: Equatable {
 
     static func resolve(draft: TrainingDraft, operation: TrainingSession.Operation?) -> Self? {
         if let operation {
-            return Self(message: operation == .previewing ? "Preparing training preview…" : "Submitting training…", field: nil)
+            let message: String
+            switch operation {
+            case .inspecting: message = "Checking training setup…"
+            case .previewing: message = "Preparing training preview…"
+            case .submitting: message = "Submitting training…"
+            }
+            return Self(message: message, field: nil)
         }
         if draft.repo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return Self(message: "Enter a base model repo id to preview training.", field: .repo)
@@ -195,6 +238,7 @@ struct TrainingView: View {
     @StateObject private var session: TrainingSession
     @StateObject private var loader: TrainingLoader
     @State private var evaluationJob: TrainingJob?
+    @State private var evaluationReview: TrainingEvaluationReviewContext?
     @State private var retainedExpanded = false
     private let seededRetained: TrainingRetainedEvidence?
     @State private var cancelError: String?
@@ -226,6 +270,14 @@ struct TrainingView: View {
             },
             start: { request, hash in
                 _ = try await appHost.api.loraStart(repo: request.repo, data: request.data, previewHash: hash, iters: request.iterations, out: request.output, batchSize: request.batchSize)
+            },
+            inspect: { draft in
+                guard let batchSize = Int(draft.batchSize.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                    throw BridgeError.skillOutputUnreadable
+                }
+                return try await appHost.api.trainingInspection(repo: draft.repo.trimmingCharacters(in: .whitespacesAndNewlines),
+                    data: draft.data.trimmingCharacters(in: .whitespacesAndNewlines),
+                    batchSize: batchSize)
             }
         ))
     }
@@ -244,7 +296,13 @@ struct TrainingView: View {
                 .frame(maxWidth: .infinity, alignment: .top)
             }
         }
-        .sheet(item: $evaluationJob) { job in TrainingEvaluationSheet(lab: appHost.lab, job: job) }
+        .sheet(item: $evaluationJob, onDismiss: { Task { await loader.refreshIfIdle() } }) { job in
+            TrainingEvaluationSheet(lab: appHost.lab, job: job, promptSets: appHost.comparison.promptSets,
+                                    managePromptSets: { onRouteSelection(.compare) })
+        }
+        .sheet(item: $evaluationReview, onDismiss: {
+            if let identity = loader.inspection?.recordID { loader.inspect(identity) }
+        }) { context in TrainingEvaluationSheet(lab: appHost.lab, retained: context.response) }
         .onChange(of: appHost.librarySnapshot?.generatedAt, initial: true) {
             baseModels = TrainingPresentation.baseModels(appHost.librarySnapshot)
         }
@@ -314,6 +372,14 @@ struct TrainingView: View {
                 }.id(TrainingField.data)
                 TrainingFieldsLayout { trainingFields }
             }.disabled(session.isBusy)
+            Button(session.operation == .inspecting ? "Checking setup…" : "Check setup") { session.inspectTraining() }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(!session.canInspect)
+                .accessibilityIdentifier("training-check-setup")
+                .help(session.draft.batchSizeError ?? "Check the local runtime, cached base and both dataset splits without starting training.")
+            if let inspection = session.inspection {
+                TrainingInspectionPanel(inspection: inspection, repair: { reveal($0, proxy: proxy) }, openHealth: { onRouteSelection(.health) })
+            }
             previewActions(proxy)
             if session.preview == nil { operationFeedback }
         }.formSection {}
@@ -516,7 +582,7 @@ struct TrainingView: View {
                     .buttonStyle(.workbenchPrimary)
                     .disabled(!session.canConfirm)
                     .accessibilityIdentifier("training-confirm")
-                    .help(summary.blockingReason ?? "Submit the captured training request shown above.")
+                    .help(session.confirmationBlocker ?? "Submit the captured training request shown above.")
                 Divider()
                 RawJSONDisclosure("Raw plan payload", value: preview.payload)
             }
@@ -574,8 +640,17 @@ struct TrainingView: View {
                     await task.value
                     if loader.inspectionError == nil, loader.inspection?.recordID == identity { retainedExpanded = true }
                 }
-            }, refresh: { loader.refreshHistory() }, inspectionError: loader.inspectionError
+            }, refresh: { loader.refreshHistory() }, inspectionError: loader.inspectionError,
+            review: reviewContext.map { context in { evaluationReview = context } }
         )
+    }
+
+    private var reviewContext: TrainingEvaluationReviewContext? {
+        guard let inspection = loader.inspection, let report = inspection.response.report,
+              inspection.response.evaluationID == inspection.recordID,
+              inspection.response.artifactSHA256?.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil,
+              (try? TrainingEvaluationSample.parse(report)) != nil else { return nil }
+        return TrainingEvaluationReviewContext(id: inspection.recordID, response: inspection.response)
     }
 
     private func confirmTraining() {
@@ -606,58 +681,5 @@ struct TrainingView: View {
         let trimmed = session.draft.data.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { panel.directoryURL = URL(fileURLWithPath: trimmed) }
         if panel.runModal() == .OK, let url = panel.url { session.draft.data = url.path }
-    }
-}
-
-struct TrainingEvaluationSheet: View {
-    let job: TrainingJob
-    @StateObject private var session: TrainingEvaluationSession
-    @Environment(\.dismiss) private var dismiss
-
-    init(lab: LabCoordinator, job: TrainingJob, session: TrainingEvaluationSession? = nil) {
-        self.job = job
-        _session = StateObject(wrappedValue: session ?? TrainingEvaluationSession(receipt: job.receipt) {
-            try await lab.request($0)
-        })
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-            Text("Evaluate trained adapter").font(WorkbenchTypography.title)
-            Text("Use the same prompt, seed, token limit, and sampling settings for the cached base model and this adapter.")
-                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            Text(job.repo).font(WorkbenchTypography.cardTitle)
-            TextField("Evaluation prompt", text: $session.prompt, axis: .vertical).lineLimit(3...6)
-                .disabled(session.isBusy)
-            if let error = session.errorMessage { Text(error).foregroundStyle(WorkbenchColor.failure) }
-            if let preview = session.preview {
-                TrainingRawDisclosure(
-                    title: "Reviewed evaluation recipe", text: preview.plan.jsonText, maxHeight: WorkbenchSize.Training.recipeMaxHeight
-                )
-            }
-            if let result = session.result, let report = result.report?.object {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading) {
-                        Text("Base model").font(WorkbenchTypography.cardTitle)
-                        Text(report["outputs"]?.object?["baseline"]?.text ?? "").textSelection(.enabled)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    VStack(alignment: .leading) {
-                        Text("Trained adapter").font(WorkbenchTypography.cardTitle)
-                        Text(report["outputs"]?.object?["adapter"]?.text ?? "").textSelection(.enabled)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }
-                Text("Retained evaluation SHA-256: " + (result.artifactSHA256 ?? "")).accessibilityIdentifier("training-evaluation-evidence").font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                Text("These outputs provide comparison evidence. No quality judgment has been recorded.").font(WorkbenchTypography.metadata)
-            }
-            HStack {
-                Button("Close") { dismiss() }.disabled(session.isBusy)
-                Spacer()
-                Button(session.operation == .previewing ? "Previewing…" : "Preview") { session.previewEvaluation() }
-                    .disabled(!session.canPreview)
-                Button(session.operation == .evaluating ? "Running comparison…" : "Run comparison") { session.evaluate() }
-                    .disabled(!session.canEvaluate)
-            }
-        }.padding(WorkbenchSpacing.pageInset).frame(width: 740)
-            .interactiveDismissDisabled(session.isBusy)
     }
 }
