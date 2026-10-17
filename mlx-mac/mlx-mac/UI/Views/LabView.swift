@@ -69,12 +69,7 @@ struct LabPanel: View {
                         Button("Install study tools") { Task { await installer.install(labAgentPath: agentPath); await lab.refresh() } }
                         Button("Install video runtime") { Task { await installer.install(labAgentPath: agentPath, inference: true); await lab.refresh() } }
                     }.disabled(!installer.canInstall)
-                    if !installer.summary.isEmpty {
-                        Text(installer.summary).font(WorkbenchTypography.metadata)
-                    }
-                    if !installer.logTail.isEmpty {
-                        TrainingRawDisclosure(title: "Installer log", text: installer.logTail.suffix(20).joined(separator: "\n"))
-                    }
+                    RuntimeInstallStatusView(installer: installer)
                 }
             }
             ErrorBanner(text: lab.error)

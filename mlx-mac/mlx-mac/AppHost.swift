@@ -168,7 +168,9 @@ class AppHost: ObservableObject {
         )
         self.workflowEvidence = workflowEvidence ?? WorkflowEvidenceStore(store: JSONStore<WorkflowEvidence>(fileURL: JSONStore<WorkflowEvidence>.defaultFileURL("workflow-evidence.json")))
         self.reclaim = reclaim ?? ReclaimCoordinator()
-        self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller()
+        self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller(checkRuntime: {
+            await Task.detached(priority: .utility) { RuntimeChecker.report() }.value
+        })
         self.intake = IntakeCoordinator(api: intakeAPI ?? .live(api: api))
         self.imageGeneration = ImageGenerationCoordinator(render: { path, out, request in
             try await api.generate(path: path, out: out.path, request: request)
@@ -528,8 +530,8 @@ class AppHost: ObservableObject {
     }
 
     /// Re-probe the convert/serve runtime (e.g. after a guided install).
-    func refreshRuntimeReport() {
-        runtimeReport = RuntimeChecker.report()
+    func refreshRuntimeReport(_ checkedReport: RuntimeReport? = nil) {
+        runtimeReport = checkedReport ?? RuntimeChecker.report()
         // The installed mlx-lm version may have changed; the watch
         // fingerprint must reflect the new runtime.
         WatchCoordinator.invalidateEnvironmentProbe()
