@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import AVFoundation
 import XCTest
 
 @testable import mlx_workbench
@@ -8,45 +9,86 @@ final class InferenceTaskTests: XCTestCase {
     func testOptInRealEngineClassifierOrMusicTaskAcceptance() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let kindValue = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_KIND"],
-              let modelPath = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_MODEL"] else {
-            throw XCTSkip("Set the task acceptance kind and allowlisted model path to run real local inference.")
+              let modelPath = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_MODEL"],
+              let agentPath = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_AGENT"],
+              let evidenceValue = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_EVIDENCE_ROOT"] else {
+            throw XCTSkip("Set task kind, absolute model and engine paths, and an isolated evidence root to run local inference.")
         }
-        let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-        let allowedClassifier = repository.appendingPathComponent("vendor/mlx-agent/.run/phase1-models/laya-multilingual-MLX-8bit").path
-        let allowedMusic = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".models/lmstudio/mlx-community/MiniMax-Music3-8bit").path
+        let evidenceRoot = URL(fileURLWithPath: evidenceValue, isDirectory: true)
+        guard evidenceRoot.path.hasPrefix("/"), modelPath.hasPrefix("/"), agentPath.hasPrefix("/") else {
+            throw XCTSkip("Task acceptance paths must be explicit absolute paths.")
+        }
         let kind: TaskKind
         let request: TaskRequest
         switch kindValue {
         case "classification":
-            guard modelPath == allowedClassifier else { throw XCTSkip("Classifier acceptance only permits the prepared local Laya model.") }
             kind = .classification
             request = TaskRequest(kind: kind, modelPath: modelPath, parameters: [
                 "state": .string("A customer requests a refund for a duplicate monthly charge."),
                 "questions": .object(["route": .object(["type": .string("choice"), "instructions": .string("Route the support request to the correct team."), "criteria": .array([.string("billing"), .string("other")])])]),
             ])
         case "music_generation":
-            guard modelPath == allowedMusic else { throw XCTSkip("Music acceptance only permits the prepared local MiniMax Music 3 model.") }
             kind = .musicGeneration
             request = TaskRequest(kind: kind, modelPath: modelPath, parameters: ["caption": .string("A short quiet piano instrumental")])
         default:
             throw XCTSkip("Only classification and music-generation acceptance are supported.")
         }
-        let agentPath = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_AGENT"] ?? repository.appendingPathComponent("vendor/mlx-agent").path
-        let stateRoot = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/mlx-workbench-tests/real-task-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: stateRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        defer { try? FileManager.default.removeItem(at: stateRoot) }
+        let stateRoot = evidenceRoot.appendingPathComponent("task-state", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createDirectory(at: stateRoot, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
 
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agentPath, taskStateDirectory: stateRoot)
         let started = try await api.taskStart(request)
         XCTAssertEqual(started.kind, kind)
+        var receipt = TaskAcceptanceReceipt(kind: kindValue, modelPath: modelPath, agentPath: agentPath,
+                                            taskID: started.id, state: started.state.wireValue,
+                                            identity: started.identity, requestArtifact: started.request,
+                                            resultArtifact: started.result, resultDigest: nil,
+                                            outputArtifact: nil, outputDigest: nil, terminal: false)
+        try Self.write(receipt, to: evidenceRoot.appendingPathComponent("receipt-\(started.id).json"))
         let deadline = Date().addingTimeInterval(20 * 60)
         var current = started
         while current.state.isActive && Date() < deadline {
             try await Task.sleep(for: .seconds(2))
             current = try await api.taskStatus(id: started.id)
+            receipt.state = current.state.wireValue
+            receipt.identity = current.identity
+            receipt.resultArtifact = current.result
+            try Self.write(receipt, to: evidenceRoot.appendingPathComponent("receipt-\(started.id).json"))
+        }
+        if current.state.isActive {
+            receipt.pendingFailure = "Task exceeded the 20-minute acceptance deadline; cancellation was requested and must settle before state cleanup."
+            do {
+                current = try await api.taskCancel(id: started.id)
+                receipt.state = current.state.wireValue
+                try Self.write(receipt, to: evidenceRoot.appendingPathComponent("receipt-\(started.id).json"))
+            } catch {
+                receipt.pendingFailure = "Task exceeded the deadline and cancellation could not settle: \(error.localizedDescription)"
+                try Self.write(receipt, to: evidenceRoot.appendingPathComponent("receipt-\(started.id).json"))
+                XCTFail(receipt.pendingFailure ?? "Cancellation did not settle")
+                return
+            }
+            let cancelDeadline = Date().addingTimeInterval(60)
+            while current.state.isActive && Date() < cancelDeadline {
+                try await Task.sleep(for: .seconds(2))
+                do { current = try await api.taskStatus(id: started.id) }
+                catch {
+                    receipt.pendingFailure = "Cancellation was requested but terminal status remains unknown: \(error.localizedDescription)"
+                    try Self.write(receipt, to: evidenceRoot.appendingPathComponent("receipt-\(started.id).json"))
+                    XCTFail(receipt.pendingFailure ?? "Cancellation status is unknown")
+                    return
+                }
+                receipt.state = current.state.wireValue
+                receipt.identity = current.identity
+                receipt.resultArtifact = current.result
+                try Self.write(receipt, to: evidenceRoot.appendingPathComponent("receipt-\(started.id).json"))
+            }
+            guard !current.state.isActive else {
+                receipt.pendingFailure = "Cancellation was requested, but the engine still reports an active task. State was retained."
+                try Self.write(receipt, to: evidenceRoot.appendingPathComponent("receipt-\(started.id).json"))
+                XCTFail(receipt.pendingFailure ?? "Task cancellation remains active")
+                return
+            }
         }
         XCTAssertFalse(current.state.isActive, "Task \(started.id) did not reach a terminal state")
         XCTAssertEqual(current.state, .succeeded, current.error?.message ?? "Task failed without an engine error detail")
@@ -55,15 +97,35 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertEqual(verifiedModel.modelPath, modelPath)
 
         let savedResult = try await api.taskResult(id: started.id)
-        let resultRoot = stateRoot
-        let verifiedJSON = try await TaskArtifactVerifier.verify(reference: savedResult.artifact, taskID: started.id, root: resultRoot)
+        let verifiedJSON = try await TaskArtifactVerifier.verify(reference: savedResult.artifact, taskID: started.id, root: stateRoot)
         XCTAssertNotNil(verifiedJSON.json)
+        receipt.resultArtifact = savedResult.artifact
+        receipt.resultDigest = savedResult.artifact.sha256
         if kind == .musicGeneration {
             let output = try XCTUnwrap(savedResult.result?.objectValue?["output_artifact"])
             let reference = try JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(output))
-            let verifiedAudio = try await TaskArtifactVerifier.verify(reference: reference, taskID: started.id, root: resultRoot)
+            let verifiedAudio = try await TaskArtifactVerifier.verify(reference: reference, taskID: started.id, root: stateRoot)
             XCTAssertEqual(verifiedAudio.url.pathExtension.lowercased(), "wav")
+            let audioFile = try AVAudioFile(forReading: verifiedAudio.url)
+            XCTAssertGreaterThan(audioFile.length, 0)
+            XCTAssertGreaterThan(audioFile.processingFormat.sampleRate, 0)
+            XCTAssertGreaterThan(audioFile.processingFormat.channelCount, 0)
+            receipt.outputArtifact = reference
+            receipt.outputDigest = reference.sha256
+        } else {
+            let answer = try XCTUnwrap(savedResult.result?.objectValue?["answers"]?.objectValue?["route"]?.objectValue?["choice"]?.stringValue)
+            XCTAssertEqual(answer, "billing")
         }
+        receipt.state = current.state.wireValue
+        receipt.identity = current.identity
+        receipt.terminal = !current.state.isActive
+        try Self.write(receipt, to: evidenceRoot.appendingPathComponent("receipt-\(started.id).json"))
+    }
+
+    private static func write(_ receipt: TaskAcceptanceReceipt, to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(receipt).write(to: url, options: .atomic)
     }
 
     func testVersionedTaskContractsDecodeAndPreserveUnsupportedValues() throws {
@@ -172,6 +234,10 @@ final class InferenceTaskTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         await assertRejected(TaskArtifactReference(path: directory.path, sha256: String(repeating: "a", count: 64), bytes: 0), taskID: fixture.taskID, root: fixture.root)
 
+        let pipe = fixture.artifactDirectory.appendingPathComponent("pipe")
+        XCTAssertEqual(mkfifo(pipe.path, 0o600), 0)
+        await assertRejected(TaskArtifactReference(path: pipe.path, sha256: String(repeating: "a", count: 64), bytes: 0), taskID: fixture.taskID, root: fixture.root)
+
         let intermediate = fixture.root.appendingPathComponent("artifacts/\(fixture.taskID)-link")
         try FileManager.default.createSymbolicLink(at: intermediate, withDestinationURL: fixture.artifactDirectory)
         let throughDirectoryLink = intermediate.appendingPathComponent("linked.json")
@@ -186,6 +252,41 @@ final class InferenceTaskTests: XCTestCase {
     }
 
     private static let publicSummary = #"{"schema":"task-run/1","id":"11111111-1111-4111-8111-111111111111","kind":"classification","state":"starting","model_path":"/Models/laya","created_at":"2026-10-17T12:00:00+00:00","started_at":null,"completed_at":null,"cancel_requested":false,"identity":{"backend":"mlx-embeddings","backend_version":"1.0.0","engine_version":"0.7.0","python_version":"3.12.0","model_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"request":{"path":"/tasks/artifacts/11111111-1111-4111-8111-111111111111/request.json","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":100},"result":null,"error":null,"supervisor":null,"execution":null,"execution_unresolved":false}"#
+}
+
+private struct TaskAcceptanceReceipt: Codable {
+    let kind: String
+    let modelPath: String
+    let agentPath: String
+    let taskID: String
+    var state: String
+    var identity: TaskIdentitySummary
+    let requestArtifact: TaskArtifactReference
+    var resultArtifact: TaskArtifactReference?
+    var resultDigest: String?
+    var outputArtifact: TaskArtifactReference?
+    var outputDigest: String?
+    var terminal: Bool
+    var pendingFailure: String?
+
+    init(kind: String, modelPath: String, agentPath: String, taskID: String, state: String,
+         identity: TaskIdentitySummary, requestArtifact: TaskArtifactReference,
+         resultArtifact: TaskArtifactReference?, resultDigest: String?, outputArtifact: TaskArtifactReference?,
+         outputDigest: String?, terminal: Bool, pendingFailure: String? = nil) {
+        self.kind = kind
+        self.modelPath = modelPath
+        self.agentPath = agentPath
+        self.taskID = taskID
+        self.state = state
+        self.identity = identity
+        self.requestArtifact = requestArtifact
+        self.resultArtifact = resultArtifact
+        self.resultDigest = resultDigest
+        self.outputArtifact = outputArtifact
+        self.outputDigest = outputDigest
+        self.terminal = terminal
+        self.pendingFailure = pendingFailure
+    }
 }
 
 private struct ArtifactFixture {

@@ -124,7 +124,7 @@ enum TaskArtifactVerifier {
             }
             directory = next
         }
-        let file = filename.withCString { openat(directory, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) }
+        let file = filename.withCString { openat(directory, $0, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC) }
         close(directory)
         guard file >= 0 else {
             if errno == ELOOP { throw TaskArtifactVerificationError.unsafePath }
