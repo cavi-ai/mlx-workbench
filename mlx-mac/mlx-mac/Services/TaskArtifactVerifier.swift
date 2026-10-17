@@ -92,6 +92,10 @@ enum TaskArtifactVerifier {
                 let value = try JSONDecoder().decode(JSONValue.self, from: jsonData)
                 json = value
                 if standardizedFile.lastPathComponent == "request.json" {
+                    guard let members = json?.objectValue,
+                          Set(members.keys) == ["schema", "kind", "model_path", "parameters"] else {
+                        throw TaskArtifactVerificationError.invalidRequest
+                    }
                     let decoded = try JSONDecoder().decode(TaskRequest.self, from: jsonData)
                     try decoded.validate()
                     request = decoded

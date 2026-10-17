@@ -293,6 +293,11 @@ struct ModelDetailsView: View {
                     model: model
                 )
 
+                if model.readiness == .ready, let taskType = model.item.task?.type,
+                   [.classification, .musicGeneration].contains(taskType) {
+                    InferenceTaskPanel(coordinator: appHost.inferenceTasks, model: model)
+                }
+
                 if showsImageGeneration {
                     WorkbenchSurface {
                         ImageGenerationPanel(

@@ -179,6 +179,105 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertEqual(projection.raw.objectValue?["future_top_level"], .array([.string("preserved")]))
     }
 
+    func testClassificationDraftSerializesOrderedChoiceScoreAndNoulQuestions() throws {
+        var draft = ClassificationDraft(state: "Refund request", questions: [])
+        draft.questions = [
+            ClassificationQuestionDraft(name: "route", instructions: "Choose a team", type: .choice, options: ["billing", "support"]),
+            ClassificationQuestionDraft(name: "urgency", instructions: "Rate the urgency", type: .score, options: ["low", "medium", "high"]),
+            ClassificationQuestionDraft(name: "duplicate", instructions: "Is this duplicated?", type: .noul,
+                                        falseDescription: "No duplicate", trueDescription: "Duplicate charge"),
+        ]
+        let request = try draft.request(modelPath: "/Models/laya")
+        XCTAssertEqual(request.parameters["state"], .string("Refund request"))
+        let questions = try XCTUnwrap(request.parameters["questions"]?.objectValue)
+        XCTAssertEqual(questions["route"]?.objectValue?["criteria"], .array([.string("billing"), .string("support")]))
+        XCTAssertEqual(questions["urgency"]?.objectValue?["criteria"], .array([.string("low"), .string("medium"), .string("high")]))
+        XCTAssertEqual(questions["duplicate"]?.objectValue?["criteria"]?.objectValue?["true"], .string("Duplicate charge"))
+    }
+
+    func testReuseRefusesUnsupportedStructuredStateWithoutReplacingDraft() throws {
+        let originalState = "keep this draft"
+        var draft = ClassificationDraft(state: originalState)
+        let request = TaskRequest(kind: .classification, modelPath: "/Models/laya", parameters: [
+            "state": .object(["ticket": .string("refund")]),
+            "questions": .object(["route": .object(["type": .string("choice"), "instructions": .string("Route"), "criteria": .array([.string("billing"), .string("other")])])]),
+        ])
+        XCTAssertThrowsError(try draft.load(request))
+        XCTAssertEqual(draft.state, originalState)
+        let unknownQuestionValue = TaskRequest(kind: .classification, modelPath: "/Models/laya", parameters: [
+            "state": .string("ticket"),
+            "questions": .object(["route": .object(["type": .string("choice"), "instructions": .string("Route"), "criteria": .array([.string("billing"), .string("other")]), "future_semantics": .object(["weight": .number(2)])])]),
+        ])
+        XCTAssertThrowsError(try draft.load(unknownQuestionValue))
+        XCTAssertEqual(draft.state, originalState)
+    }
+
+    func testMusicDraftUsesEngineInstrumentalDefaultsAndValidatesRanges() throws {
+        var draft = MusicTaskDraft(caption: "Quiet piano")
+        let request = try draft.request(modelPath: "/Models/music")
+        XCTAssertNil(request.parameters["lyrics"])
+        XCTAssertEqual(request.parameters["duration"], .number(15))
+        XCTAssertEqual(request.parameters["steps"], .number(30))
+        XCTAssertEqual(request.parameters["seed"], .number(42))
+        draft.duration = 361
+        XCTAssertThrowsError(try draft.request(modelPath: "/Models/music"))
+    }
+
+    @MainActor
+    func testCoordinatorStartsOnlyReadyMatchingModelAndRetainsDraft() async throws {
+        let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+        coordinator.classificationDraft.state = "Refund request"
+        coordinator.classificationDraft.questions[0].instructions = "Choose the correct team"
+        let model = Self.libraryModel(type: .classification)
+        await coordinator.start(kind: .classification, model: model)
+        let evidence = await api.startEvidence()
+        XCTAssertEqual(evidence.count, 1)
+        XCTAssertEqual(evidence.first?.parameters["state"], .string("Refund request"))
+        let selectedID = coordinator.selectedTask?.id
+        let retainedState = coordinator.classificationDraft.state
+        XCTAssertEqual(selectedID, record.id)
+        XCTAssertEqual(retainedState, "Refund request")
+
+        let wrongType = Self.libraryModel(type: .musicGeneration)
+        await coordinator.start(kind: .classification, model: wrongType)
+        let afterWrongType = await api.startEvidence()
+        XCTAssertEqual(afterWrongType.count, 1)
+    }
+
+    @MainActor
+    func testCoordinatorKeepsUnknownStartUnownedUntilExplicitRefresh() async throws {
+        let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, startUnknown: true)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+        coordinator.classificationDraft.state = "Refund request"
+        coordinator.classificationDraft.questions[0].instructions = "Choose the correct team"
+        await coordinator.start(kind: .classification, model: Self.libraryModel(type: .classification))
+        let unknownBeforeRefresh = coordinator.startOutcomeUnknown
+        let selectedBeforeRefresh = coordinator.selectedTask
+        let recentBeforeRefresh = coordinator.recent
+        XCTAssertTrue(unknownBeforeRefresh)
+        XCTAssertNil(selectedBeforeRefresh)
+        XCTAssertTrue(recentBeforeRefresh.isEmpty)
+        await coordinator.refreshRecent()
+        let unknownAfterRefresh = coordinator.startOutcomeUnknown
+        let recentAfterRefresh = coordinator.recent
+        XCTAssertFalse(unknownAfterRefresh)
+        XCTAssertTrue(recentAfterRefresh.isEmpty)
+    }
+
+    private static let taskCapabilities = try! JSONDecoder().decode(TaskCapabilities.self, from: Data(#"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[{"kind":"classification","result_schema":"decide/1","cancellation":true,"requires_local_model":true,"model_verification":true},{"kind":"music_generation","result_schema":"music/1","cancellation":true,"requires_local_model":true,"model_verification":true}]}"#.utf8))
+
+    private static func libraryModel(type: ModelTaskType) -> LibraryModel {
+        let item = ModelItem(path: "/Models/\(type.rawValue)", name: "local-model", bytes: 100, modifiedAt: nil,
+                             shard: nil, modelKey: nil, architecture: nil, quantization: nil, parameters: nil,
+                             structure: nil, signature: nil, companion: nil, readable: true, status: "ready",
+                             outputs: [], tensorCount: nil, error: nil,
+                             task: ModelTask(type: type, useCases: [], source: "test", confidence: "high"))
+        return LibraryModel(item: item, readiness: .ready)
+    }
+
     func testArtifactVerifierAcceptsTaskOwnedJSONAndAudioAndDecodesRequest() async throws {
         let fixture = try ArtifactFixture()
         defer { fixture.remove() }
@@ -216,6 +315,10 @@ final class InferenceTaskTests: XCTestCase {
         try invalidRequest.write(to: path)
         await assertRejected(fixture.reference(path, data: invalidRequest), taskID: fixture.taskID, root: fixture.root)
 
+        let extraMember = Data(#"{"schema":"task-request/1","kind":"music_generation","model_path":"/Models/music","parameters":{"caption":"music"},"future_semantics":{"mode":"x"}}"#.utf8)
+        try extraMember.write(to: path)
+        await assertRejected(fixture.reference(path, data: extraMember), taskID: fixture.taskID, root: fixture.root)
+
         let missing = fixture.root.appendingPathComponent("artifacts/\(fixture.taskID)/missing.json")
         await assertRejected(TaskArtifactReference(path: missing.path, sha256: String(repeating: "a", count: 64), bytes: 0), taskID: fixture.taskID, root: fixture.root)
     }
@@ -252,6 +355,34 @@ final class InferenceTaskTests: XCTestCase {
     }
 
     private static let publicSummary = #"{"schema":"task-run/1","id":"11111111-1111-4111-8111-111111111111","kind":"classification","state":"starting","model_path":"/Models/laya","created_at":"2026-10-17T12:00:00+00:00","started_at":null,"completed_at":null,"cancel_requested":false,"identity":{"backend":"mlx-embeddings","backend_version":"1.0.0","engine_version":"0.7.0","python_version":"3.12.0","model_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"request":{"path":"/tasks/artifacts/11111111-1111-4111-8111-111111111111/request.json","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":100},"result":null,"error":null,"supervisor":null,"execution":null,"execution_unresolved":false}"#
+}
+
+private actor FakeInferenceTaskAPI: InferenceTaskAPI {
+    private let record: TaskRecord
+    private let capabilities: TaskCapabilities
+    private let startUnknown: Bool
+    private var requests: [TaskRequest] = []
+
+    init(record: TaskRecord, capabilities: TaskCapabilities, startUnknown: Bool = false) {
+        self.record = record
+        self.capabilities = capabilities
+        self.startUnknown = startUnknown
+    }
+
+    func taskCapabilities() async throws -> TaskCapabilities { capabilities }
+    func taskStart(_ request: TaskRequest) async throws -> TaskRecord {
+        requests.append(request)
+        if startUnknown { throw TaskStartOutcomeUnknown() }
+        return record
+    }
+    func taskStatus(id: String) async throws -> TaskRecord { record }
+    func taskList(limit: Int) async throws -> TaskPage { TaskPage(tasks: [], hasMore: false) }
+    func taskResult(id: String) async throws -> TaskResultResponse { throw TaskProtocolError.unsupportedCapability }
+    func taskCancel(id: String) async throws -> TaskRecord { record }
+    func taskVerifyModel(id: String) async throws -> TaskModelVerification {
+        TaskModelVerification(id: id, modelPath: record.modelPath, modelFingerprint: "test", matches: true)
+    }
+    func startEvidence() -> [TaskRequest] { requests }
 }
 
 private struct TaskAcceptanceReceipt: Codable {

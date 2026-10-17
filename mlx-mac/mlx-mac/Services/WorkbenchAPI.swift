@@ -17,6 +17,9 @@ actor WorkbenchAPI {
     private var agentPath: String
     private let receiptDirectory: String
     private let taskStateDirectory: URL?
+    nonisolated var taskArtifactsRoot: URL {
+        taskStateDirectory ?? WorkbenchStatePaths.userHome().appendingPathComponent("Library/Application Support/mlx-agent/tasks", isDirectory: true)
+    }
 
     init(
         cli: CLIProcess,
@@ -1031,6 +1034,8 @@ actor WorkbenchAPI {
         )
     }
 }
+
+extension WorkbenchAPI: InferenceTaskAPI {}
 
 private extension Dictionary where Key == String, Value == Any {
     func bool(_ key: String) -> Bool? {
