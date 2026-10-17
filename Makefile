@@ -96,7 +96,8 @@ agent-bootstrap:
 	fi
 
 venv: mac-only
-	@if [ -x "$(VENV_PY)" ]; then \
+	@set -e; \
+	if [ -x "$(VENV_PY)" ]; then \
 		echo "venv OK: $$($(VENV_PY) -c 'import sys; print(sys.executable + " (" + sys.version.split()[0] + ")")')"; \
 	else \
 		echo "Creating $(VENV) with Python $(VENV_PYTHON) (Apple Silicon)…"; \
