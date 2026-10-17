@@ -552,6 +552,7 @@ private final class WorkspaceRefreshFixture: @unchecked Sendable {
                     "queue": [["id": "job_" + suffix, "experiment_id": "exp_" + suffix, "state": "queued"]]]
         }
         if operation == "study-list" { return ["studies": [["study_id": "study_" + suffix]]] }
+
         if operation == "training-history" { return ["evaluations": [["id": "eval_" + suffix]]] }
         if operation == "training-inspect" {
             return ["evaluation_id": request["evaluation_id"] ?? "shared-evaluation",
