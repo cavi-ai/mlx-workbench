@@ -6,6 +6,15 @@ Text LoRA training records local job receipts and adapter outputs. Controlled st
 
 **Training** fine-tunes a LoRA adapter on your own text.
 
+The **base model** supplies the existing weights. A **LoRA adapter** stores learned
+changes separately and is used alongside that base; training leaves the base
+weights unchanged. Start with **Check setup**, then **Preview Training** to review
+the plan. Only **Confirm & Train** starts training.
+
+`train.jsonl` supplies learning examples; `valid.jsonl` supplies separate examples
+for validation. **Batch size** is the number of examples processed together;
+**Iterations** counts training update steps, each processing one batch.
+
 **Check setup** inspects the local training executable, cached base architecture,
 and both dataset splits independently. Each split shows its example count or an
 actionable error, including the file and line for malformed records. A valid
@@ -70,6 +79,12 @@ remain readable and reviewable when their recorded schema and identity support i
 ## Controlled studies
 
 **Studies**, in the Lab sidebar group, runs A/B experiments that change one variable at a time and reviews the outputs blind. **Compare → Open Studies** opens the same workspace. Returning to Studies refreshes its experiment and adaptive-study lists; navigating does not create or run an experiment.
+
+A **recipe** records the baseline prompt, generation settings, model and runtime
+identities. A controlled experiment changes one setting to create two candidates.
+**Blind review** hides which setting produced each clip until the review is saved.
+Adaptive guidance studies use successive blind reviews to choose further guidance
+settings while keeping the prompt and seed fixed.
 
 1. **Install study tools** once. **Install video runtime** adds the optional Torch runtime for video generation.
 2. **New experiment… → Cached model**: choose an existing cached revision of **Wan 2.1 T2V 1.3B (Diffusers/MPS)**, enter a prompt and baseline settings, then **Capture recipe**. The engine checks the cached pipeline, assets and weight shards and records content hashes, installed runtime versions and platform identity. Capture never downloads weights or loads a model. Missing weights or runtime dependencies block capture; **Refresh availability** checks again after setup. MLX video conversions are a different format and cannot substitute for these Diffusers weights.
