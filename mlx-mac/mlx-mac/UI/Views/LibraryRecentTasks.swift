@@ -13,7 +13,7 @@ struct LibraryRecentTasks: View {
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }
-            RecentTaskList(coordinator: coordinator, model: model)
+            RecentTaskList(coordinator: coordinator, filterModel: nil, reuseModel: model)
         }
         .padding(WorkbenchSpacing.lg)
         .frame(minWidth: 560, minHeight: 520)

@@ -14,7 +14,7 @@ struct InferenceTaskPanel: View {
                 } else if model.item.task?.type == .musicGeneration {
                     music
                 }
-                RecentTaskList(coordinator: coordinator, model: model)
+                RecentTaskList(coordinator: coordinator, filterModel: model, reuseModel: model)
             }
         }
         .task { if isRouteActive { await coordinator.refreshRecent() } }
@@ -122,19 +122,34 @@ struct InferenceTaskPanel: View {
 
 struct RecentTaskList: View {
     @ObservedObject var coordinator: InferenceTaskCoordinator
-    var model: LibraryModel?
+    var filterModel: LibraryModel?
+    var reuseModel: LibraryModel?
     @ObservedObject private var audio: AudioClipPlayer
     @State private var exportError: String?
 
     private var visibleTasks: [TaskRecord] {
-        guard let model else { return coordinator.recent }
-        return coordinator.recent.filter { $0.modelPath == model.item.path }
+        Self.visibleTasks(in: coordinator.recent, for: filterModel)
     }
 
-    init(coordinator: InferenceTaskCoordinator, model: LibraryModel? = nil) {
+    private var visibleSelectedTask: TaskRecord? {
+        Self.visibleSelectedTask(coordinator.selectedTask, in: visibleTasks)
+    }
+
+    init(coordinator: InferenceTaskCoordinator, filterModel: LibraryModel? = nil, reuseModel: LibraryModel? = nil) {
         self.coordinator = coordinator
-        self.model = model
+        self.filterModel = filterModel
+        self.reuseModel = reuseModel
         _audio = ObservedObject(wrappedValue: coordinator.audio)
+    }
+
+    static func visibleTasks(in tasks: [TaskRecord], for model: LibraryModel?) -> [TaskRecord] {
+        guard let model else { return tasks }
+        return tasks.filter { $0.modelPath == model.item.path }
+    }
+
+    static func visibleSelectedTask(_ task: TaskRecord?, in visibleTasks: [TaskRecord]) -> TaskRecord? {
+        guard let task, visibleTasks.contains(where: { $0.id == task.id }) else { return nil }
+        return task
     }
 
     var body: some View {
@@ -148,14 +163,14 @@ struct RecentTaskList: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                         Text("Could not refresh task history: \(readError)")
-                        if let known = coordinator.selectedTask {
+                        if let known = visibleSelectedTask {
                             Text("Showing last known status: \(known.state.wireValue.capitalized).")
                                 .font(WorkbenchTypography.secondary)
                         }
                     }
                     Spacer()
                     Button("Retry") {
-                        if let selected = coordinator.selectedTask {
+                        if let selected = visibleSelectedTask {
                             Task {
                                 if selected.state.isActive { await coordinator.refresh(id: selected.id) }
                                 else { await coordinator.inspect(id: selected.id) }
@@ -189,7 +204,7 @@ struct RecentTaskList: View {
                     .accessibilityIdentifier("task-history-row-\(task.id)")
                     if task.kind.modelTaskType != nil {
                         let reason = reuseUnavailableReason(task)
-                        Button("Reuse") { if let model, reason == nil { Task { await coordinator.reuse(id: task.id, for: model) } } }
+                        Button("Reuse") { if let reuseModel, reason == nil { Task { await coordinator.reuse(id: task.id, for: reuseModel) } } }
                             .disabled(reason != nil)
                             .help(reason ?? "Fill the task form from this recorded request")
                             .accessibilityHint(reason ?? "Fills the task form without starting a new task")
@@ -198,10 +213,11 @@ struct RecentTaskList: View {
                 }
             }
             if let error = exportError { Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure) }
-            if let task = coordinator.selectedTask {
+            if let task = visibleSelectedTask {
                 Divider()
                 Text("\(task.kind.title) · \(task.state.wireValue.capitalized)").font(WorkbenchTypography.value)
                     .accessibilityIdentifier("task-status")
+                Text("Task ID: \(task.id)").font(WorkbenchTypography.secondary).textSelection(.enabled)
                 Text("Recorded model: \(task.modelPath)").font(WorkbenchTypography.secondary).textSelection(.enabled)
                 Text("Engine \(task.identity.engineVersion ?? "unknown") · \(task.identity.backend ?? "backend unknown") \(task.identity.backendVersion ?? "") · Python \(task.identity.pythonVersion ?? "unknown")")
                     .font(WorkbenchTypography.secondary).textSelection(.enabled)
@@ -255,7 +271,7 @@ struct RecentTaskList: View {
     }
 
     private func reuseUnavailableReason(_ task: TaskRecord) -> String? {
-        guard let model else { return "Select the matching Ready model in Library to reuse this request." }
+        guard let model = reuseModel else { return "Select the matching Ready model in Library to reuse this request." }
         guard model.readiness == .ready else { return "Reuse requires a Ready model." }
         guard model.item.path == task.modelPath else { return "Select the model recorded for this task." }
         guard model.item.task?.type == task.kind.modelTaskType else { return "The selected model does not support this task type." }

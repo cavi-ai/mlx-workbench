@@ -355,6 +355,25 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertNil(error)
     }
 
+    func testRecentTaskHistoryIsGlobalInToolbarAndScopedInInspector() throws {
+        let decoder = JSONDecoder()
+        let first = try decoder.decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let secondJSON = Self.publicSummary
+            .replacingOccurrences(of: first.id, with: "22222222-2222-4222-8222-222222222222")
+            .replacingOccurrences(of: "/Models/laya", with: "/Models/other")
+        let second = try decoder.decode(TaskRecord.self, from: Data(secondJSON.utf8))
+        let records = [first, second]
+        let selectedModel = Self.libraryModel(type: .classification, path: first.modelPath)
+
+        let toolbarTasks = RecentTaskList.visibleTasks(in: records, for: nil)
+        let inspectorTasks = RecentTaskList.visibleTasks(in: records, for: selectedModel)
+
+        XCTAssertEqual(toolbarTasks.map(\.id), [first.id, second.id])
+        XCTAssertEqual(inspectorTasks.map(\.id), [first.id])
+        XCTAssertNil(RecentTaskList.visibleSelectedTask(second, in: inspectorTasks))
+        XCTAssertEqual(RecentTaskList.visibleSelectedTask(first, in: inspectorTasks)?.id, first.id)
+    }
+
     @MainActor
     func testStatusReadFailureKeepsLastKnownTaskAndShowsReadError() async throws {
         let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
@@ -447,8 +466,8 @@ final class InferenceTaskTests: XCTestCase {
 
     private static let taskCapabilities = try! JSONDecoder().decode(TaskCapabilities.self, from: Data(#"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[{"kind":"classification","result_schema":"decide/1","cancellation":true,"requires_local_model":true,"model_verification":true},{"kind":"music_generation","result_schema":"music/1","cancellation":true,"requires_local_model":true,"model_verification":true}]}"#.utf8))
 
-    private static func libraryModel(type: ModelTaskType) -> LibraryModel {
-        let item = ModelItem(path: "/Models/\(type.rawValue)", name: "local-model", bytes: 100, modifiedAt: nil,
+    private static func libraryModel(type: ModelTaskType, path: String? = nil) -> LibraryModel {
+        let item = ModelItem(path: path ?? "/Models/\(type.rawValue)", name: "local-model", bytes: 100, modifiedAt: nil,
                              shard: nil, modelKey: nil, architecture: nil, quantization: nil, parameters: nil,
                              structure: nil, signature: nil, companion: nil, readable: true, status: "ready",
                              outputs: [], tensorCount: nil, error: nil,
