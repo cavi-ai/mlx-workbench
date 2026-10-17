@@ -483,6 +483,16 @@ final class WorkbenchReviewUITests: XCTestCase {
             .matching(NSPredicate(format: "label == %@", label))
         XCTAssertTrue(options.firstMatch.waitForExistence(timeout: 10),
                       "Missing \(label) in radio group \(group): \(app.debugDescription)")
+        let selectedOptions = options.allElementsBoundByIndex.filter { $0.value as? Int == 1 }
+        if selectedOptions.count == 1, let option = selectedOptions.first {
+            XCTAssertTrue(option.isEnabled)
+            let window = app.windows.firstMatch
+            let frame = option.frame
+            XCTAssertTrue(frame.midX.isFinite && frame.midY.isFinite && frame.width > 0 && frame.height > 0)
+            XCTAssertTrue(window.frame.contains(frame), "\(label) must be visible: \(frame)")
+            XCTAssertEqual(option.value as? Int, 1, app.debugDescription)
+            return
+        }
         let oneHittable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             options.allElementsBoundByIndex.filter(\.isHittable).count == 1
         }, object: app)
