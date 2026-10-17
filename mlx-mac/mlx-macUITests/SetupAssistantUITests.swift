@@ -1882,9 +1882,10 @@ final class SetupAssistantUITests: XCTestCase {
             .path
     }
 
-    private func launch(firstRun: Bool = true) {
+    private func launch(firstRun: Bool = true, python: String? = nil) {
         app = XCUIApplication()
         app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = configPath
+        if let python { app.launchEnvironment["MLX_WORKBENCH_PYTHON"] = python }
         if firstRun {
             app.launchArguments = ["-mlx-workbench.setupCompleted.v1", "NO"]
         }
@@ -1902,7 +1903,11 @@ final class SetupAssistantUITests: XCTestCase {
     }
 
     func testFirstLaunchWalksEveryStepAndPersistsCompletion() throws {
-        launch(firstRun: true)
+        let configURL = URL(fileURLWithPath: configPath)
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["mlx_agent_path": configURL.deletingLastPathComponent().appendingPathComponent("missing-engine").path])
+            .write(to: configURL)
+        launch(firstRun: true, python: "/usr/bin/false")
 
         let sheet = app.sheets.firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 30), "Setup assistant did not appear on first launch")
@@ -1920,17 +1925,26 @@ final class SetupAssistantUITests: XCTestCase {
         XCTAssertTrue(sheet.staticTexts["Choose model roots"].waitForExistence(timeout: 15))
         capture("03-step-roots")
         sheet.buttons["Continue"].click()
-        XCTAssertTrue(sheet.staticTexts["Ready"].waitForExistence(timeout: 15))
+        XCTAssertTrue(sheet.staticTexts["Review setup"].waitForExistence(timeout: 15))
+        XCTAssertTrue(sheet.staticTexts["Setup needs attention"].exists)
+        XCTAssertFalse(sheet.buttons["Scan my library"].exists)
         capture("04-step-done")
 
-        sheet.buttons["Scan my library"].click()
+        sheet.buttons["Review engine"].click()
+        XCTAssertTrue(sheet.staticTexts["Connect mlx-agent"].waitForExistence(timeout: 15))
+        for _ in 0..<3 { sheet.buttons["Continue"].click() }
+        XCTAssertTrue(sheet.staticTexts["Review setup"].waitForExistence(timeout: 15))
+        sheet.buttons["Review runtime"].click()
+        XCTAssertTrue(sheet.staticTexts["Python runtime"].waitForExistence(timeout: 15))
+        for _ in 0..<2 { sheet.buttons["Continue"].click() }
+        sheet.buttons["Finish for now"].click()
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 15), "Assistant did not dismiss after finishing")
         capture("05-after-finish")
 
         // Completion persists: a relaunch without the first-run override
         // must not re-present the assistant.
         app.terminate()
-        launch(firstRun: false)
+        launch(firstRun: false, python: "/usr/bin/false")
         XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: 15),
                       "Assistant re-appeared after completion")
     }

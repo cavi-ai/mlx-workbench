@@ -72,6 +72,40 @@ final class SetupCoordinatorTests: XCTestCase {
         for step in SetupCoordinator.Step.allCases {
             XCTAssertFalse(step.title.isEmpty)
         }
+        XCTAssertEqual(SetupCoordinator.Step.done.title, "Review setup")
+    }
+
+    func testReadinessNeverTreatsOnePassedPrerequisiteAsComplete() {
+        for engine in [false, true] {
+            for convert in [false, true] {
+                for serve in [false, true] {
+                    let readiness = SetupReadiness(agentReady: engine, convertReady: convert, serveReady: serve)
+                    XCTAssertEqual(readiness.isReady, engine && convert && serve)
+                    XCTAssertEqual(readiness.finishTitle, readiness.isReady ? "Scan my library" : "Finish for now")
+                    XCTAssertEqual(readiness.needsEngine, !engine)
+                    XCTAssertEqual(readiness.needsRuntime, !convert || !serve)
+                    if !readiness.isReady { XCTAssertEqual(readiness.title, "Setup needs attention") }
+                }
+            }
+        }
+    }
+
+    func testReadinessReportsConversionAndServingSeparately() {
+        let convert = SetupReadiness(agentReady: true, convertReady: false, serveReady: true)
+        XCTAssertEqual(convert.runtimeMessage, "Conversion tools need setup; base serving tools passed their checks.")
+        let serve = SetupReadiness(agentReady: true, convertReady: true, serveReady: false)
+        XCTAssertEqual(serve.runtimeMessage, "Base serving tools need setup; conversion tools passed their checks.")
+    }
+
+    func testReviewReturnsToAnEarlierStepWithoutCompletingOrJumpingAhead() {
+        let coordinator = SetupCoordinator(defaults: defaults)
+        coordinator.revisit(.roots)
+        XCTAssertEqual(coordinator.step, .agent)
+        for _ in 0..<3 { coordinator.advance() }
+        coordinator.revisit(.runtime)
+        XCTAssertEqual(coordinator.step, .runtime)
+        XCTAssertTrue(coordinator.isPresented)
+        XCTAssertFalse(defaults.bool(forKey: SetupCoordinator.completionKey))
     }
 
     func testProgressLabelCountsFromOne() {
