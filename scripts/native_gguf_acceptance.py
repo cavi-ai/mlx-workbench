@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the opt-in native GGUF-to-Run acceptance harness."""
+"""Run opt-in native acceptance for an allowlisted local model."""
 
 from __future__ import annotations
 
@@ -11,6 +11,10 @@ import platform
 import shutil
 import subprocess
 import sys
+import secrets
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +35,10 @@ REQUIRED_KEYS = {
 ONLY_TEST = (
     "mlx-workbenchUITests/GGUFToRunRealDataUITests/"
     "testRealGGUFToRunningMLXGoldenPath"
+)
+MLX_ONLY_TEST = (
+    "mlx-workbenchUITests/GGUFToRunRealDataUITests/"
+    "testRealMLXToRunningGoldenPath"
 )
 
 
@@ -71,7 +79,7 @@ def _inside(path: Path, roots: list[Path]) -> bool:
     return any(path == root or path.is_relative_to(root) for root in roots)
 
 
-def load_manifest(manifest_path: str) -> RuntimeManifest:
+def load_manifest(manifest_path: str, source_format: str = "gguf") -> RuntimeManifest:
     raw_path = Path(manifest_path)
     if not raw_path.is_absolute():
         raise ManifestError("manifest path must be absolute")
@@ -91,10 +99,13 @@ def load_manifest(manifest_path: str) -> RuntimeManifest:
             raise ManifestError(f"{key} contains an unexpanded placeholder")
 
     source_path = _absolute_path(values["source_path"], "source_path")
-    if source_path.suffix.lower() != ".gguf" or not source_path.is_file():
-        raise ManifestError("source_path must identify an existing regular .gguf file")
-    if source_path.stat().st_size >= MAX_SOURCE_BYTES:
-        raise ManifestError(f"source_path must be smaller than {MAX_SOURCE_BYTES} bytes")
+    if source_format == "gguf":
+        if source_path.suffix.lower() != ".gguf" or not source_path.is_file():
+            raise ManifestError("source_path must identify an existing regular .gguf file")
+        if source_path.stat().st_size >= MAX_SOURCE_BYTES:
+            raise ManifestError(f"source_path must be smaller than {MAX_SOURCE_BYTES} bytes")
+    elif not source_path.is_dir():
+        raise ManifestError("MLX source_path must identify an existing model directory")
 
     agent_home = _absolute_path(values["agent_home"], "agent_home")
     agent_cli = agent_home / "scripts" / "mlx-agent"
@@ -117,18 +128,28 @@ def load_manifest(manifest_path: str) -> RuntimeManifest:
     if not isinstance(host, str) or host.strip() not in LOOPBACK_HOSTS:
         raise ManifestError("config host must be loopback-only (127.0.0.1, localhost, or ::1)")
 
-    raw_roots = config.get("gguf_roots")
+    root_key = "mlx_roots" if source_format == "mlx" else "gguf_roots"
+    raw_roots = config.get(root_key)
     if not isinstance(raw_roots, list) or not raw_roots:
-        raise ManifestError("config gguf_roots must explicitly list the source root")
+        raise ManifestError(f"config {root_key} must explicitly list the source root")
     if not all(isinstance(root, str) and root.strip() for root in raw_roots):
-        raise ManifestError("config gguf_roots must contain non-empty path strings")
-    roots = [_absolute_path(root, "config gguf_roots entry") for root in raw_roots]
+        raise ManifestError(f"config {root_key} must contain non-empty path strings")
+    roots = [_absolute_path(root, f"config {root_key} entry") for root in raw_roots]
     if not _inside(source_path, roots):
-        raise ManifestError("source_path must be inside an explicitly configured gguf_roots entry")
+        raise ManifestError(f"source_path must be inside an explicitly configured {root_key} entry")
+
+    if source_format == "mlx":
+        weights = list(source_path.glob("*.safetensors"))
+        members = [source_path / "config.json", *weights]
+        if not weights or any(not member.is_file() or not _inside(member.resolve(), roots) for member in members):
+            raise ManifestError("MLX source requires config.json and safetensors weights inside configured mlx_roots")
+        _read_object(source_path / "config.json", "MLX source config")
+        if any(member.stat().st_size == 0 for member in members) or sum(member.stat().st_size for member in members) >= MAX_SOURCE_BYTES:
+            raise ManifestError(f"MLX source must be nonempty and smaller than {MAX_SOURCE_BYTES} bytes")
 
     evidence_root = _absolute_path(values["evidence_root"], "evidence_root")
     if _inside(evidence_root, roots):
-        raise ManifestError("evidence_root must be outside configured gguf_roots")
+        raise ManifestError(f"evidence_root must be outside configured {root_key}")
 
     return RuntimeManifest(
         path=path,
@@ -140,7 +161,7 @@ def load_manifest(manifest_path: str) -> RuntimeManifest:
     )
 
 
-def create_evidence_directory(root: Path) -> Path:
+def create_evidence_directory(root: Path, source_format: str = "gguf") -> Path:
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     try:
         root.mkdir(parents=True, exist_ok=True)
@@ -148,7 +169,7 @@ def create_evidence_directory(root: Path) -> Path:
         raise ManifestError(f"cannot create evidence_root {root}: {error}") from error
     for suffix in range(1_000):
         discriminator = f"-{suffix}" if suffix else ""
-        candidate = root / f"native-gguf-{timestamp}-{os.getpid()}{discriminator}"
+        candidate = root / f"native-{source_format}-{timestamp}-{os.getpid()}{discriminator}"
         try:
             candidate.mkdir()
             return candidate
@@ -177,7 +198,7 @@ def write_outcome(
     temporary.replace(destination)
 
 
-def xcodebuild_command(xcodebuild: str, evidence: Path) -> list[str]:
+def xcodebuild_command(xcodebuild: str, evidence: Path, source_format: str = "gguf") -> list[str]:
     return [
         xcodebuild,
         "-project",
@@ -194,7 +215,7 @@ def xcodebuild_command(xcodebuild: str, evidence: Path) -> list[str]:
         str(evidence / "result.xcresult"),
         "-parallel-testing-enabled",
         "NO",
-        f"-only-testing:{ONLY_TEST}",
+        f"-only-testing:{MLX_ONLY_TEST if source_format == 'mlx' else ONLY_TEST}",
         "test",
     ]
 
@@ -216,17 +237,59 @@ def run_xcodebuild(command: list[str], environment: dict[str, str], log_path: Pa
         return process.wait()
 
 
+@contextmanager
+def serving_status_bridge(manifest: RuntimeManifest, environment: dict[str, str]):
+    """Query real process status outside XCTest's sandbox; accept no commands."""
+    route = "/status/" + secrets.token_urlsafe(32)
+    receipts = Path.home() / "Library/Application Support/mlx-workbench"
+    command = [environment.get("MLX_WORKBENCH_PYTHON", sys.executable),
+               str(manifest.agent_home / "scripts/mlx-agent"), "serve", "status",
+               "--receipts-dir", str(receipts), "--json"]
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != route:
+                self.send_error(404)
+                return
+            try:
+                result = subprocess.run(command, env=environment, capture_output=True, timeout=30, check=True)
+                payload = json.loads(result.stdout)
+                if not isinstance(payload, dict) or payload.get("status") != "ok":
+                    raise ValueError("status query did not succeed")
+            except (OSError, subprocess.SubprocessError, ValueError):
+                self.send_error(503, "Serving status unavailable")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(result.stdout)))
+            self.end_headers()
+            self.wfile.write(result.stdout)
+
+        def log_message(self, *_args):
+            pass
+
+    with HTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = threading.Thread(target=server.serve_forever, name="acceptance-serving-status")
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{server.server_port}{route}"
+        finally:
+            server.shutdown()
+            thread.join()
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, help="absolute path to the local runtime manifest")
+    parser.add_argument("--source-format", choices=("gguf", "mlx"), default="gguf")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        manifest = load_manifest(args.manifest)
-        evidence = create_evidence_directory(manifest.evidence_root)
+        manifest = load_manifest(args.manifest, args.source_format)
+        evidence = create_evidence_directory(manifest.evidence_root, args.source_format)
     except ManifestError as error:
         print(f"manifest-invalid: {error}", file=sys.stderr)
         return EXIT_MANIFEST_INVALID
@@ -267,9 +330,17 @@ def main(argv: list[str] | None = None) -> int:
             "TASK6_EVIDENCE_DIR": str(evidence),
         }
     )
-    command = xcodebuild_command(xcodebuild, evidence)
+    # xcodebuild forwards TEST_RUNNER_* variables into its test process.
+    for key in ("TASK6_RUNTIME_MANIFEST", "TASK6_SOURCE_PATH", "TASK6_MODEL_QUERY", "TASK6_AGENT_HOME",
+                "TASK6_CONFIG_PATH", "TASK6_EVIDENCE_DIR", "MLX_WORKBENCH_PYTHON", "HF_HUB_OFFLINE",
+                "TRANSFORMERS_OFFLINE", "HF_HUB_DISABLE_TELEMETRY"):
+        if key in environment:
+            environment[f"TEST_RUNNER_{key}"] = environment[key]
+    command = xcodebuild_command(xcodebuild, evidence, args.source_format)
     try:
-        exit_code = run_xcodebuild(command, environment, evidence / "xcodebuild.log")
+        with serving_status_bridge(manifest, environment) as status_url:
+            environment["TEST_RUNNER_TASK6_STATUS_URL"] = status_url
+            exit_code = run_xcodebuild(command, environment, evidence / "xcodebuild.log")
     except OSError as error:
         detail = f"could not launch xcodebuild: {error}"
         write_outcome(
@@ -289,6 +360,19 @@ def main(argv: list[str] | None = None) -> int:
             detail="inspect xcodebuild.log and result.xcresult to classify the failing assertion or infrastructure error",
         )
         print(f"acceptance-failed: xcodebuild exited {exit_code}; evidence directory: {evidence}", file=sys.stderr)
+        return EXIT_ACCEPTANCE_FAILED
+
+    try:
+        summary = json.loads(subprocess.check_output(
+            ["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(evidence / "result.xcresult")],
+            text=True, stderr=subprocess.PIPE, timeout=30,
+        ))
+        (evidence / "test-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        if summary.get("result") != "Passed" or summary.get("passedTests") != 1 or summary.get("skippedTests", 0) or summary.get("failedTests", 0):
+            raise ValueError("the selected native test must execute and pass without skips")
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        write_outcome(evidence, classification="acceptance-failed", xcodebuild_exit_code=0, detail=str(error))
+        print(f"acceptance-failed: {error}; evidence directory: {evidence}", file=sys.stderr)
         return EXIT_ACCEPTANCE_FAILED
 
     write_outcome(

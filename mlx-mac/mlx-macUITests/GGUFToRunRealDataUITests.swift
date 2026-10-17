@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 
 final class GGUFToRunRealDataUITests: XCTestCase {
     private struct ActivityRecordEvidence {
@@ -158,25 +159,97 @@ final class GGUFToRunRealDataUITests: XCTestCase {
             rescanLibraryAndRouteExactOutput(destinationPath)
         }
 
+        _ = try startSelectedModel(destinationPath)
+        clickVisibleButton(app.buttons["Stop server"])
+        XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 180), "Server stop did not return to Activity.")
+        capture("10-server-stopped", note: "Stop completed and returned to Activity without deleting model data.")
+    }
+
+    /// Uses the existing ready model directly, without conversion or download.
+    @MainActor
+    func testRealMLXToRunningGoldenPath() async throws {
+        let sourcePath = try XCTUnwrap(runtimeValues["TASK6_SOURCE_PATH"])
+        let query = try XCTUnwrap(runtimeValues["TASK6_MODEL_QUERY"])
+        if app.buttons["Verify now"].waitForExistence(timeout: 5) {
+            app.buttons["Inspector"].click()
+            XCTAssertTrue(app.buttons["Verify now"].waitForNonExistence(timeout: 10))
+        }
+        let window = app.windows.firstMatch
+        if window.frame.minX < 0 {
+            // The title is draggable; the toolbar's center contains controls.
+            let title = window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 300, dy: 20))
+            title.press(forDuration: 0.1, thenDragTo: title.withOffset(CGVector(dx: -window.frame.minX, dy: 0)))
+        }
+        capture("00-ready-model-launch", note: "The native model journey started in Library.")
+        XCTAssertTrue(app.buttons["Library"].waitForExistence(timeout: 30))
+        app.buttons["Library"].click()
+        searchLibrary(for: query)
+        let row = app.outlines.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", query, query)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 180), "The allowlisted ready MLX model was not scanned into Library.")
+        row.doubleClick()
+        row.rightClick()
+        XCTAssertTrue(app.menuItems["Copy Path"].waitForExistence(timeout: 10))
+        app.menuItems["Copy Path"].click()
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), sourcePath, "Library did not select the exact allowlisted model path.")
+        capture("01-library-ready-mlx", note: "Library selected the allowlisted ready MLX model.")
+
+        let verify = app.buttons["Verify now"]
+        XCTAssertTrue(verify.waitForExistence(timeout: 30))
+        XCTAssertTrue(verify.isEnabled)
+        verify.click()
+        XCTAssertTrue(waitForVisibleTextContaining("Verified (canary suite v", timeout: 600), "The actual canary suite did not pass for the selected model.")
+        capture("02-model-verified", note: "The real canary suite passed in the native app.")
+        app.buttons["Run model"].click()
+        let server = try startSelectedModel(sourcePath)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: "http://127.0.0.1:\(server.port)/v1/chat/completions")))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": sourcePath, "messages": [["role": "user", "content": "Reply with exactly the word READY."]],
+            "max_tokens": 32, "temperature": 0, "stream": false,
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choices = try XCTUnwrap(payload["choices"] as? [[String: Any]])
+        let message = try XCTUnwrap(choices.first?["message"] as? [String: Any])
+        XCTAssertTrue(try XCTUnwrap(message["content"] as? String).contains("READY"))
+        let completion = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        completion.name = "real-completion.json"
+        completion.lifetime = .keepAlways
+        add(completion)
+        capture("03-real-completion", note: "The native-confirmed server answered an HTTP completion request.")
+
+        clickVisibleButton(app.buttons["Stop server"])
+        XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 180))
+        let stopped = XCTNSPredicateExpectation(predicate: NSPredicate { [weak self] _, _ in
+            guard let servers = try? self?.authoritativeServerReceipts() else { return false }
+            return !servers.contains(where: { $0.receipt == server.receipt })
+        }, object: nil)
+        await fulfillment(of: [stopped], timeout: 30)
+        capture("04-server-stopped", note: "Native Stop removed the test-owned server receipt.")
+    }
+
+    private func startSelectedModel(_ destinationPath: String) throws -> ServerReceiptEvidence {
         XCTAssertTrue(app.staticTexts["Run"].waitForExistence(timeout: 30), "Completed/reused model did not route into Run.")
         XCTAssertTrue(app.buttons["Preview serve"].waitForExistence(timeout: 30))
         capture("07-run-model-selected", note: "Run displayed the exact workflow-selected MLX model.")
 
         let servePreview = app.buttons["Preview serve"]
         XCTAssertTrue(servePreview.isEnabled, "Serve preview was unavailable for the selected completed MLX model.")
-        servePreview.click()
+        clickVisibleButton(servePreview)
         XCTAssertTrue(waitForButtonEnabled("Confirm and run", timeout: 300), "Serve preview did not produce a hash-gated confirmation.")
         capture("08-serve-preview-ready", note: "Serve preview enabled confirmation for the selected MLX model.")
 
         let preexistingServerReceipts = Set(try authoritativeServerReceipts().map(\.receipt))
-        app.buttons["Confirm and run"].click()
+        clickVisibleButton(app.buttons["Confirm and run"])
         XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 180), "Confirmed serve did not route to Activity.")
         app.buttons["Run"].click()
         XCTAssertTrue(app.buttons["Stop server"].waitForExistence(timeout: 180), "Authoritative running server state was not visible in Run.")
-        let visibleServerReceipt = app.staticTexts["active-server-receipt"].exists
-            ? nonPlaceholderReceipt(app.staticTexts["active-server-receipt"].label)
-            : nil
-        let serverReceipt = try XCTUnwrap(visibleServerReceipt, "The running server did not expose a receipt that the test could own.")
+        XCTAssertTrue(app.descendants(matching: .any)["active-server-receipt"].waitForExistence(timeout: 30))
+        let serverReceipt = try XCTUnwrap(displayedServerReceipt(), "The running server did not expose a receipt that the test could own.")
         let observedServer = try XCTUnwrap(
             authoritativeServerReceipts().first(where: { $0.receipt == serverReceipt }),
             "The displayed server receipt was not returned by authoritative serve status."
@@ -189,15 +262,16 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         ownedServer = observedServer
         capture("09-server-running", note: "Run displayed the authoritative running server and stop control.")
 
-        app.buttons["Stop server"].click()
-        XCTAssertTrue(app.staticTexts["Activity"].waitForExistence(timeout: 180), "Server stop did not return to Activity.")
-        capture("10-server-stopped", note: "Stop completed and returned to Activity without deleting model data.")
+        return observedServer
     }
 
     private func launchConfiguredApp() {
         app = XCUIApplication()
         app.launchEnvironment["MLX_AGENT_HOME"] = runtimeValues["TASK6_AGENT_HOME"]
         app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = runtimeValues["TASK6_CONFIG_PATH"]
+        for key in ["MLX_WORKBENCH_PYTHON", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_HUB_DISABLE_TELEMETRY"] {
+            app.launchEnvironment[key] = ProcessInfo.processInfo.environment[key]
+        }
         // The setup assistant overlays the window on first launch; the golden
         // path test is not about onboarding, so bypass it via the argument
         // domain (UserDefaults launch arguments never persist).
@@ -208,6 +282,19 @@ final class GGUFToRunRealDataUITests: XCTestCase {
             app.typeKey("n", modifierFlags: .command)
             _ = app.windows.firstMatch.waitForExistence(timeout: 10)
         }
+    }
+
+    /// Send the event only within the visible window. Native SwiftUI scroll
+    /// views can misroute XCTest's automatic scroll-to-visible calculation.
+    private func clickVisibleButton(_ button: XCUIElement) {
+        let window = app.windows.firstMatch
+        let frame = button.frame
+        XCTAssertTrue(button.isEnabled)
+        XCTAssertTrue(window.frame.contains(frame), "The action must be inside the visible window: \(frame)")
+        XCTAssertGreaterThan(frame.width, 0)
+        XCTAssertGreaterThan(frame.height, 0)
+        window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX - window.frame.minX, dy: frame.midY - window.frame.minY)).click()
     }
 
     private func restartAndReconcile(sourcePath: String, destinationPath: String, receipt: String) {
@@ -269,7 +356,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
     }
 
     private func searchLibrary(for query: String) {
-        let search = app.textFields["Search family, variant, path, key, or evidence"]
+        let search = app.searchFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 30))
         search.click()
         search.typeKey("a", modifierFlags: .command)
@@ -468,6 +555,12 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         return trimmed
     }
 
+    private func displayedServerReceipt() -> String? {
+        let text = app.descendants(matching: .any)["active-server-receipt"]
+        guard text.exists else { return nil }
+        return nonPlaceholderReceipt(text.value as? String) ?? nonPlaceholderReceipt(text.label)
+    }
+
     private func authoritativeServerReceipts() throws -> [ServerReceiptEvidence] {
         guard let agentHome = runtimeValues["TASK6_AGENT_HOME"] else {
             throw HarnessError.missingAgentHome
@@ -482,13 +575,24 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         let output = Pipe()
         let error = Pipe()
         process.executableURL = executable
-        process.arguments = ["serve", "status", "--json"]
+        // The parent runner queries the real agent outside XCTest's sandbox,
+        // where process liveness and argv inspection are available.
+        guard let statusURL = configuredValue("TASK6_STATUS_URL"),
+              let url = URL(string: statusURL), url.host == "127.0.0.1", url.scheme == "http" else {
+            throw HarnessError.statusBridgeUnavailable
+        }
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        process.arguments = ["--fail", "--silent", "--show-error", "--max-time", "30", "--noproxy", "*", statusURL]
         process.standardOutput = output
         process.standardError = error
         try process.run()
         process.waitUntilExit()
 
         let stdout = output.fileHandleForReading.readDataToEndOfFile()
+        let statusAttachment = XCTAttachment(data: stdout, uniformTypeIdentifier: "public.json")
+        statusAttachment.name = "serving-status.json"
+        statusAttachment.lifetime = .keepAlways
+        add(statusAttachment)
         guard process.terminationStatus == 0 else {
             let stderr = String(data: error.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             throw HarnessError.serverStatusFailed(stderr)
@@ -501,7 +605,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
 
         return rawServers.compactMap { raw in
             guard let receipt = raw["receipt"] as? String,
-                  let repo = raw["repo"] as? String,
+                  let repo = (raw["path"] as? String) ?? (raw["repo"] as? String),
                   let runtime = raw["runtime"] as? String,
                   let port = raw["port"] as? Int,
                   let pid = raw["pid"] as? Int,
@@ -528,7 +632,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
               let receipt = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return false
         }
-        return receipt["repo"] as? String == server.repo
+        return ((receipt["path"] as? String) ?? (receipt["repo"] as? String)) == server.repo
             && receipt["runtime"] as? String == server.runtime
             && receipt["port"] as? Int == server.port
             && receipt["pid"] as? Int == server.pid
@@ -586,12 +690,12 @@ final class GGUFToRunRealDataUITests: XCTestCase {
             _ = app.buttons["Stop server"].waitForExistence(timeout: 10)
         }
         guard app.buttons["Stop server"].exists,
-              app.staticTexts["active-server-receipt"].exists,
-              compacted(app.staticTexts["active-server-receipt"].label) == compacted(ownedServer.receipt) else {
+              displayedServerReceipt() != nil,
+              displayedServerReceipt().map(compacted) == compacted(ownedServer.receipt) else {
             record("teardown: visible server receipt did not match the test-owned receipt; no stop attempted")
             return
         }
-        app.buttons["Stop server"].click()
+        clickVisibleButton(app.buttons["Stop server"])
         record("teardown: stopped the test-owned server receipt")
     }
 
@@ -600,6 +704,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         case agentCLIUnavailable(String)
         case serverStatusFailed(String)
         case serverStatusUnreadable
+        case statusBridgeUnavailable
 
         var errorDescription: String? {
             switch self {
@@ -611,6 +716,8 @@ final class GGUFToRunRealDataUITests: XCTestCase {
                 return "mlx-agent serve status failed: \(stderr)"
             case .serverStatusUnreadable:
                 return "mlx-agent serve status did not return a server list."
+            case .statusBridgeUnavailable:
+                return "Run native acceptance through its configured runner to query serving status."
             }
         }
     }

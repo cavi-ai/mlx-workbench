@@ -5,6 +5,10 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from urllib.error import HTTPError
+from urllib.request import urlopen
+
+from scripts import native_gguf_acceptance as acceptance
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +16,28 @@ RUNNER = ROOT / "scripts" / "native_gguf_acceptance.py"
 
 
 class NativeGGUFAcceptanceContractTests(unittest.TestCase):
+    def test_status_bridge_runs_only_the_configured_read_only_query(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._runtime_fixture(root)
+            manifest = acceptance.load_manifest(str(path))
+            recorded = root / "arguments.json"
+            (manifest.agent_home / "scripts/mlx-agent").write_text(
+                "import json,pathlib,sys\n"
+                f"pathlib.Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+                "print(json.dumps({'status':'ok','data':{'servers':[]}}))\n"
+            )
+            with acceptance.serving_status_bridge(manifest, dict(os.environ, MLX_WORKBENCH_PYTHON=sys.executable)) as url:
+                with urlopen(url, timeout=5) as response:
+                    self.assertEqual(json.load(response)["data"]["servers"], [])
+                arguments = json.loads(recorded.read_text())
+                self.assertEqual(arguments, ["serve", "status", "--receipts-dir",
+                    str(Path.home() / "Library/Application Support/mlx-workbench"), "--json"])
+                with self.assertRaises(HTTPError) as error:
+                    urlopen(url + "?command=stop", timeout=5)
+                self.assertEqual(error.exception.code, 404)
+                self.assertEqual(json.loads(recorded.read_text()), arguments)
+
     def _runtime_fixture(self, root: Path, *, host: str = "127.0.0.1") -> Path:
         models = root / "models"
         models.mkdir()
@@ -44,7 +70,7 @@ class NativeGGUFAcceptanceContractTests(unittest.TestCase):
         )
         return manifest_path
 
-    def _fake_xcodebuild(self, root: Path, *, exit_code: int = 0) -> tuple[Path, Path, Path]:
+    def _fake_xcodebuild(self, root: Path, *, exit_code: int = 0, skipped: int = 0) -> tuple[Path, Path, Path]:
         bin_dir = root / "bin"
         bin_dir.mkdir()
         args_path = root / "xcodebuild-args.json"
@@ -63,7 +89,25 @@ class NativeGGUFAcceptanceContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         executable.chmod(0o755)
+        xcrun = bin_dir / "xcrun"
+        summary = {"result": "Passed", "passedTests": 1 - skipped, "skippedTests": skipped, "failedTests": 0}
+        xcrun.write_text(f"#!/usr/bin/env python3\nprint({json.dumps(summary)!r})\n")
+        xcrun.chmod(0o755)
         return bin_dir, args_path, env_path
+
+    def test_skipped_native_test_cannot_report_acceptance(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self._runtime_fixture(root)
+            bin_dir, _, env_path = self._fake_xcodebuild(root, skipped=1)
+            result = subprocess.run(
+                [sys.executable, str(RUNNER), "--manifest", str(manifest)],
+                cwd=ROOT, env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}"),
+                capture_output=True, text=True, timeout=20,
+            )
+            self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+            evidence = Path(json.loads(env_path.read_text())["evidence"])
+            self.assertEqual(json.loads((evidence / "outcome.json").read_text())["classification"], "acceptance-failed")
 
     def test_make_target_requires_an_explicit_manifest(self):
         result = subprocess.run(
@@ -79,6 +123,57 @@ class NativeGGUFAcceptanceContractTests(unittest.TestCase):
             "RUNTIME_MANIFEST is required and must be an absolute path",
             result.stdout + result.stderr,
         )
+
+    def test_mlx_target_selects_only_the_ready_model_journey(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self._runtime_fixture(root)
+            values = json.loads(manifest.read_text())
+            source = root / "models" / "ready-model"
+            source.mkdir()
+            (source / "config.json").write_text('{"model_type":"qwen2"}')
+            (source / "model.safetensors").write_bytes(b"fixture; never loaded")
+            values["source_path"] = str(source)
+            manifest.write_text(json.dumps(values))
+            (root / "config.json").write_text(json.dumps({"mlx_roots": [str(root / "models")]}))
+            bin_dir, args_path, _ = self._fake_xcodebuild(root)
+            environment = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
+            result = subprocess.run(
+                ["make", "accept-native-mlx", f"RUNTIME_MANIFEST={manifest}", f"PYTHON={sys.executable}"],
+                cwd=ROOT, env=environment, capture_output=True, text=True, timeout=20,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            arguments = json.loads(args_path.read_text())
+            self.assertIn(
+                "-only-testing:mlx-workbenchUITests/GGUFToRunRealDataUITests/testRealMLXToRunningGoldenPath",
+                arguments,
+            )
+
+    def test_mlx_manifest_refuses_missing_weights_and_escaped_members(self):
+        for member in ("missing", "outside-root"):
+            with self.subTest(member=member), TemporaryDirectory() as directory:
+                root = Path(directory)
+                manifest = self._runtime_fixture(root)
+                source = root / "models" / "ready-model"
+                source.mkdir()
+                (source / "config.json").write_text('{"model_type":"qwen2"}')
+                if member == "outside-root":
+                    outside = root / "unapproved.safetensors"
+                    outside.write_bytes(b"fixture")
+                    (source / "model.safetensors").symlink_to(outside)
+                values = json.loads(manifest.read_text())
+                values["source_path"] = str(source)
+                manifest.write_text(json.dumps(values))
+                (root / "config.json").write_text(json.dumps({"mlx_roots": [str(root / "models")]}))
+                bin_dir, args_path, _ = self._fake_xcodebuild(root)
+                result = subprocess.run(
+                    [sys.executable, str(RUNNER), "--manifest", str(manifest), "--source-format", "mlx"],
+                    cwd=ROOT, env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}"),
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("MLX source", result.stderr)
+                self.assertFalse(args_path.exists())
 
     def test_make_target_rejects_a_relative_manifest_path(self):
         result = subprocess.run(
