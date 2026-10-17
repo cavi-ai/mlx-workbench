@@ -17,6 +17,81 @@ enum LibraryLoadState: Equatable {
     }
 }
 
+struct LibraryEmptyPresentation: Equatable {
+    let showsAcquisition: Bool
+    let hasSearch: Bool
+    let hasFilters: Bool
+    let title: String
+    let description: String
+    let symbol: String
+
+    init(modelCount: Int, search: String, readiness: ModelReadiness?, quantization: String?) {
+        showsAcquisition = modelCount == 0
+        hasSearch = !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        hasFilters = readiness != nil || quantization != nil
+        if showsAcquisition {
+            title = "No models found"
+            description = "Add a model from Hugging Face, or choose model folders in Settings and scan again."
+            symbol = "books.vertical"
+        } else if hasSearch {
+            title = "No models matched that search"
+            description = "Clear the search to reveal local models, or try a broader family, path, or variant term."
+            symbol = "magnifyingglass"
+        } else if hasFilters {
+            title = "No models matched the current filters"
+            description = "Clear the readiness and quantization filters to reveal models already in this library."
+            symbol = "line.3.horizontal.decrease.circle"
+        } else {
+            title = "No visible models"
+            description = "Scan again to refresh the local inventory."
+            symbol = "books.vertical"
+        }
+    }
+}
+
+/// Intake progress is observed only while the empty state is displayed.
+private struct LibraryEmptyView: View {
+    let presentation: LibraryEmptyPresentation
+    @ObservedObject var intake: IntakeCoordinator
+    let isScanning: Bool
+    let onSettings: () -> Void
+    let onRescan: () -> Void
+    let onClearSearch: () -> Void
+    let onClearFilters: () -> Void
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(presentation.title, systemImage: presentation.symbol)
+        } description: {
+            Text(presentation.description)
+        } actions: {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: WorkbenchSpacing.sm) { actions }
+                VStack(spacing: WorkbenchSpacing.xs) { actions }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder private var actions: some View {
+        if presentation.showsAcquisition {
+            Button("Add from Hugging Face…") {
+                guard !intake.isBusy else { return }
+                intake.open(with: "")
+                openWindow(id: IntakeWindow.id)
+            }
+            .buttonStyle(.workbenchPrimary)
+            .disabled(intake.isBusy)
+            .help(intake.isBusy ? "An intake is in progress" : "Choose a model and review it before downloading")
+            Button("Open Settings", action: onSettings).buttonStyle(.bordered)
+        }
+        if presentation.hasSearch { Button("Clear search", action: onClearSearch).buttonStyle(.bordered) }
+        if presentation.hasFilters { Button("Clear filters", action: onClearFilters).buttonStyle(.bordered) }
+        Button("Scan again", action: onRescan).buttonStyle(.bordered).disabled(isScanning)
+    }
+}
+
 enum LibraryInspectorPresentation {
     static func usesColumn(in viewport: CGSize) -> Bool {
         viewport.width >= WorkbenchSize.Library.inspectorWindowMinimum
@@ -492,8 +567,16 @@ struct LibraryView: View {
                         .padding(.horizontal, WorkbenchSpacing.sm)
                 }
                 if rows.isEmpty {
-                    ContentUnavailableView(noMatchTitle, systemImage: noMatchSymbol, description: Text(noMatchDescription))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    LibraryEmptyView(
+                        presentation: LibraryEmptyPresentation(modelCount: snapshot.models.count, search: search,
+                            readiness: readinessFilter, quantization: quantizationFilter),
+                        intake: appHost.intake,
+                        isScanning: appHost.isScanning,
+                        onSettings: { onRouteSelection(.settings) },
+                        onRescan: { appHost.requestRescan() },
+                        onClearSearch: { search = "" },
+                        onClearFilters: { readinessFilter = nil; quantizationFilter = nil }
+                    )
                 } else {
                     table
                 }
@@ -774,41 +857,6 @@ struct LibraryView: View {
         .padding(.vertical, WorkbenchSpacing.xs)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
-    }
-
-    // MARK: - Empty states
-
-    private var noMatchTitle: String {
-        if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "No models matched that search"
-        }
-        if readinessFilter != nil || quantizationFilter != nil {
-            return "No models matched the current filters"
-        }
-        return "No models found"
-    }
-
-    private var noMatchDescription: String {
-        if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Try a broader family, path, or variant term."
-        }
-        if let readinessFilter {
-            return "The local snapshot has no models with readiness \(readinessFilter.title)."
-        }
-        if let quantizationFilter {
-            return "The local snapshot has no models with quantization \(quantizationFilter)."
-        }
-        return "Configure local roots in Settings, then refresh the library scan."
-    }
-
-    private var noMatchSymbol: String {
-        if readinessFilter != nil || quantizationFilter != nil {
-            return "line.3.horizontal.decrease.circle"
-        }
-        if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "magnifyingglass"
-        }
-        return "books.vertical"
     }
 
     // MARK: - Helpers

@@ -4,6 +4,39 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryViewTests: XCTestCase {
+    func testEmptyInventoryOffersAcquisitionWithoutClaimingFiltersHidModels() {
+        let empty = LibraryEmptyPresentation(modelCount: 0, search: "", readiness: nil, quantization: nil)
+        XCTAssertTrue(empty.showsAcquisition)
+        XCTAssertEqual(empty.title, "No models found")
+        XCTAssertFalse(empty.hasSearch)
+        XCTAssertFalse(empty.hasFilters)
+        let retainedFilters = LibraryEmptyPresentation(modelCount: 0, search: "missing", readiness: .ready, quantization: "4-bit")
+        XCTAssertEqual(retainedFilters.title, "No models found")
+        XCTAssertTrue(retainedFilters.showsAcquisition)
+        XCTAssertTrue(retainedFilters.hasSearch)
+        XCTAssertTrue(retainedFilters.hasFilters)
+    }
+
+    func testFilteredInventoryOffersRecoveryWithoutSuggestingAnotherDownload() {
+        let search = LibraryEmptyPresentation(modelCount: 3, search: "missing", readiness: nil, quantization: nil)
+        XCTAssertEqual(search.title, "No models matched that search")
+        XCTAssertFalse(search.showsAcquisition)
+        XCTAssertTrue(search.hasSearch)
+        XCTAssertFalse(search.hasFilters)
+        let filtered = LibraryEmptyPresentation(modelCount: 3, search: " \n", readiness: .ready, quantization: "8-bit")
+        XCTAssertEqual(filtered.title, "No models matched the current filters")
+        XCTAssertFalse(filtered.showsAcquisition)
+        XCTAssertFalse(filtered.hasSearch)
+        XCTAssertTrue(filtered.hasFilters)
+        XCTAssertTrue(filtered.description.contains("Clear"))
+    }
+
+    func testUnfilteredInvisibleInventoryAsksForRescan() {
+        let state = LibraryEmptyPresentation(modelCount: 3, search: "", readiness: nil, quantization: nil)
+        XCTAssertFalse(state.showsAcquisition)
+        XCTAssertEqual(state.title, "No visible models")
+        XCTAssertTrue(state.description.contains("Scan again"))
+    }
     func testFirstScanFailurePreservesActualErrorAndRetryLoadingState() {
         let detail = "Scan failed: configured checkout is missing.\n/path/to/agent"
         XCTAssertEqual(LibraryLoadState.derive(hasSnapshot: false, isScanning: false, error: detail), .failed(detail))

@@ -86,6 +86,8 @@ final class WorkbenchReviewUITests: XCTestCase {
                 sys.exit(2)
             data = {'models': [], 'outputs': [], 'pending': [], 'duplicates': [],
                     'totals': {'gguf': 0, 'pending': 0, 'converted': 0, 'unreadable': 0, 'bytes': 0, 'reclaimable_bytes': 0}}
+            if (root / 'scan-result.json').exists():
+                data = json.loads((root / 'scan-result.json').read_text())
         elif args[:2] == ['backend', 'list']:
             time.sleep(0.2)
             if (root / 'fail-backends').exists():
@@ -461,6 +463,47 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No models found"].waitForExistence(timeout: 20))
         XCTAssertFalse(app.staticTexts["Library scan failed"].exists)
         capture("Library-retry-empty-success")
+        let addModel = app.buttons["Add from Hugging Face…"]
+        XCTAssertTrue(addModel.isHittable)
+        XCTAssertTrue(app.buttons["Open Settings"].isHittable)
+        XCTAssertTrue(app.buttons["Scan again"].isHittable)
+        resizeWindow(width: 740, height: 612)
+        XCTAssertTrue(addModel.isHittable)
+        XCTAssertTrue(app.buttons["Open Settings"].isHittable)
+        XCTAssertTrue(app.buttons["Scan again"].isHittable)
+        capture("Library-empty-compact-actions")
+        addModel.click()
+        let intake = app.windows["Add from Hugging Face"]
+        XCTAssertTrue(intake.waitForExistence(timeout: 10))
+        let source = intake.textFields["https://huggingface.co/org/name"]
+        XCTAssertTrue(source.exists)
+        XCTAssertEqual(source.value as? String ?? "", "")
+        intake.buttons["Close"].click()
+        XCTAssertTrue(intake.waitForNonExistence(timeout: 10))
+        app.buttons["Open Settings"].click()
+        XCTAssertTrue(app.staticTexts["Engine status"].waitForExistence(timeout: 10))
+        select("Library")
+        resizeWindow(width: 1050, height: 720)
+        let model: [String: Any] = ["path": root.appendingPathComponent("models/existing.gguf").path,
+                                   "name": "Existing model", "bytes": 1024, "status": "ready", "outputs": [],
+                                   "readable": true, "architecture": "llama", "quantization": "Q4_K_M",
+                                   "model_key": "existing"]
+        try JSONSerialization.data(withJSONObject: ["models": [model], "outputs": [], "pending": [],
+            "duplicates": [], "totals": ["gguf": 1, "pending": 0, "converted": 0, "unreadable": 0,
+                                          "bytes": 1024, "reclaimable_bytes": 0]])
+            .write(to: root.appendingPathComponent("scan-result.json"))
+        app.buttons["Scan again"].click()
+        XCTAssertTrue(text(containing: "Existing model").waitForExistence(timeout: 20))
+        app.popUpButtons["Readiness"].click()
+        app.menuItems["Needs Conversion"].click()
+        XCTAssertTrue(app.buttons["Clear filters"].waitForExistence(timeout: 10))
+        XCTAssertFalse(addModel.exists)
+        capture("Library-filtered-recovery")
+        app.buttons["Clear filters"].click()
+        XCTAssertTrue(text(containing: "Existing model").waitForExistence(timeout: 10))
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("\"intake\", \"fetch\""))
+        XCTAssertFalse(calls.contains("\"backend\", \"install\""))
     }
 
     func testHealthAndDiscoveryResultsAndRecovery() throws {
