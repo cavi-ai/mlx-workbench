@@ -560,6 +560,7 @@ struct WorkbenchPageHeading: View {
                 .font(WorkbenchTypography.pageTitle)
                 .foregroundStyle(WorkbenchColor.ink)
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("page-heading-\(route.rawValue)")
             Text(route.pageDescription)
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.muted)

@@ -1,5 +1,31 @@
 import Foundation
 
+/// A summary of existing probes, independent of whether the assistant was reviewed.
+struct SetupReadiness: Equatable {
+    let agentReady: Bool
+    let convertReady: Bool
+    let serveReady: Bool
+
+    var isReady: Bool { agentReady && convertReady && serveReady }
+    var needsEngine: Bool { !agentReady }
+    var needsRuntime: Bool { !convertReady || !serveReady }
+    var title: String { isReady ? "Base checks passed" : "Setup needs attention" }
+    var finishTitle: String { isReady ? "Scan my library" : "Finish for now" }
+    var summary: String {
+        isReady
+            ? "The engine and base tools passed their checks. Scan the library to review model-specific readiness."
+            : "Some base prerequisites still need attention. You can finish this review now and return through Health."
+    }
+    var runtimeMessage: String {
+        switch (convertReady, serveReady) {
+        case (true, true): return "Conversion and base serving tools passed their checks."
+        case (false, true): return "Conversion tools need setup; base serving tools passed their checks."
+        case (true, false): return "Base serving tools need setup; conversion tools passed their checks."
+        case (false, false): return "Conversion and base serving tools need setup."
+        }
+    }
+}
+
 // MARK: - SetupCoordinator
 //
 // First-launch setup assistant state: a short ordered walk through the
@@ -20,7 +46,7 @@ final class SetupCoordinator: ObservableObject {
             case .agent: return "Connect mlx-agent"
             case .runtime: return "Python runtime"
             case .roots: return "Choose model roots"
-            case .done: return "Ready"
+            case .done: return "Review setup"
             }
         }
 
@@ -53,7 +79,7 @@ final class SetupCoordinator: ObservableObject {
         step = previous
     }
 
-    /// Complete the assistant: persist and close.
+    /// Record that the assistant was reviewed; readiness remains owned by live probes.
     func finish() {
         defaults.set(true, forKey: Self.completionKey)
         isPresented = false
@@ -62,6 +88,11 @@ final class SetupCoordinator: ObservableObject {
     /// Dismiss without completing; the assistant returns next launch.
     func dismiss() {
         isPresented = false
+    }
+
+    func revisit(_ earlier: Step) {
+        guard earlier.rawValue < step.rawValue else { return }
+        step = earlier
     }
 
     /// Re-open from Health ("Run setup assistant again").
