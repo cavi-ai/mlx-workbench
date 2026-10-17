@@ -29,7 +29,12 @@ Leave **Output** blank to use a fresh folder under
 the chosen destination, and confirmation uses that path. An explicit output
 path is preserved. Preview does not create the adapter folder or start training.
 
-Each run pins the cached base model, copies the reviewed dataset bytes, records the actual process result and verifies the adapter content. **Open log** and **Inspect** show a job's details; failed jobs can be retried.
+While Training is open and a job is running, job status refreshes every five
+seconds. Updates stop when no job is running, you leave Training, or a status
+read fails. After an error, **Refresh** retries the read. Evaluation history
+keeps its separate refresh control.
+
+Each run pins the cached base model, copies the reviewed dataset bytes, records the actual process result and verifies the adapter content. **Open log** shows a job's execution log. To retry failed training, correct the setup, preview it again, and confirm a new job.
 
 **Use in Run** stages a completed job's recorded base and adapter in
 [Run](run.md#serve-a-trained-adapter). It does not start inference. Preview and
@@ -71,6 +76,12 @@ remain readable and reviewable when their recorded schema and identity support i
 3. Choose the variable to change (inference steps, guidance or seed) and its alternate value. **Validate pair**, then **Create experiment** queues two jobs. Editing a captured baseline requires another capture; editing the pair requires validation again. **Recipe file** preserves importing an existing frozen recipe. Model and runtime identities stay attached to both candidates.
 4. Run the queued generation jobs explicitly. Captured recipes recheck model assets, weights, runtime versions and platform before loading and after generation. Changed identities require a new recipe. Artifacts are stored durably and integrity-checked. Capture and validation alone do not prove that generation will succeed or assess output quality.
 5. **Blind review…** plays both clips with shared play, pause, seeking and frame controls, without showing which candidate is which. Scores and preferences become immutable receipts before the assignment is revealed.
+Both videos must load before a new review can be submitted. **Retry videos**
+reloads unavailable clips without clearing draft scores. The timeline follows shared
+elapsed time through the longer clip; a shorter clip stops at its end. Audio starts
+off and can select Left or Right. Closing the sheet releases both players. Saved
+reviews and revealed identities remain readable when their videos are unavailable.
+
 Both videos must load before a new review can be submitted. **Retry videos**
 reloads unavailable clips without clearing draft scores. The timeline follows shared
 elapsed time through the longer clip; a shorter clip stops at its end. Audio starts

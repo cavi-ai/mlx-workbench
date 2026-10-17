@@ -254,6 +254,7 @@ final class TrainingLoader: ObservableObject {
     struct Inspection {
         let recordID: String
         let response: LabResponse
+        let workspace: LabWorkspaceContext?
     }
 
     @Published private(set) var jobs: [TrainingJob] = []
@@ -267,12 +268,15 @@ final class TrainingLoader: ObservableObject {
     @Published private(set) var inspection: Inspection?
     @Published private(set) var inspectingID: String?
     @Published private(set) var inspectionError: String?
+    @Published private(set) var workspace: LabWorkspaceContext?
     private let loadJobs: () async throws -> [TrainingJob]
-    private let loadHistory: () async throws -> [LabValue]
-    private let loadInspection: ((String) async throws -> LabResponse)?
+    private var loadHistory: () async throws -> [LabValue]
+    private var loadInspection: ((String) async throws -> LabResponse)?
     private let render: @MainActor (Error) -> String
+    private var jobsReading = false
     private var jobsGeneration = 0
     private var historyGeneration = 0
+    private var inspectionGeneration = 0
 
     init(
         jobs: @escaping () async throws -> [TrainingJob],
@@ -280,7 +284,8 @@ final class TrainingLoader: ObservableObject {
         render: @escaping @MainActor (Error) -> String = { AppHost.render($0) },
         seededJobs: [TrainingJob] = [],
         seededEvaluations: [LabValue] = [],
-        inspect: ((String) async throws -> LabResponse)? = nil
+        inspect: ((String) async throws -> LabResponse)? = nil,
+        workspace: LabWorkspaceContext? = nil
     ) {
         loadJobs = jobs
         loadHistory = history
@@ -288,8 +293,30 @@ final class TrainingLoader: ObservableObject {
         self.render = render
         self.jobs = seededJobs
         self.evaluations = seededEvaluations
+        self.workspace = workspace
         hasLoadedJobs = !seededJobs.isEmpty
         hasLoadedHistory = !seededEvaluations.isEmpty
+    }
+
+    /// Evaluations belong to the experiment workspace; training jobs do not.
+    @discardableResult
+    func bindWorkspace(_ context: LabWorkspaceContext,
+                       history: @escaping () async throws -> [LabValue],
+                       inspect: @escaping (String) async throws -> LabResponse) -> Bool {
+        guard workspace != context else { return false }
+        historyGeneration += 1
+        inspectionGeneration += 1
+        loadHistory = history
+        loadInspection = inspect
+        workspace = context
+        evaluations = []
+        historyError = nil
+        isLoadingHistory = false
+        hasLoadedHistory = false
+        inspection = nil
+        inspectingID = nil
+        inspectionError = nil
+        return true
     }
 
     var jobsPhase: TrainingCollectionPhase {
@@ -329,14 +356,28 @@ final class TrainingLoader: ObservableObject {
     @discardableResult
     func refreshHistory() -> Task<Void, Never>? { startHistory(superseding: false) }
 
-    private func startJobs(superseding: Bool) -> Task<Void, Never>? {
-        guard superseding || !isLoadingJobs else { return nil }
+    var needsJobUpdates: Bool { jobsError == nil && jobs.contains { $0.state == "running" } }
+
+    /// The route owns this task. Cancellation stops future reads, never training.
+    func refreshActiveJobs(wait: () async throws -> Void = { try await Task.sleep(for: .seconds(5)) }) async {
+        while needsJobUpdates && !Task.isCancelled {
+            do { try await wait() } catch { return }
+            guard needsJobUpdates, !Task.isCancelled else { return }
+            await startJobs(superseding: false, showProgress: false)?.value
+        }
+    }
+
+    private func startJobs(superseding: Bool, showProgress: Bool = true) -> Task<Void, Never>? {
+        guard superseding || !jobsReading else { return nil }
         jobsGeneration += 1
         let current = jobsGeneration
-        isLoadingJobs = true
+        jobsReading = true
+        isLoadingJobs = showProgress
         jobsError = nil
         return Task {
-            defer { if current == jobsGeneration { isLoadingJobs = false } }
+            defer {
+                if current == jobsGeneration { jobsReading = false; isLoadingJobs = false }
+            }
             do {
                 let loaded = try await loadJobs()
                 guard current == jobsGeneration else { return }
@@ -353,6 +394,7 @@ final class TrainingLoader: ObservableObject {
         guard superseding || !isLoadingHistory else { return nil }
         historyGeneration += 1
         let current = historyGeneration
+        let loadHistory = loadHistory
         isLoadingHistory = true
         historyError = nil
         return Task {
@@ -372,14 +414,21 @@ final class TrainingLoader: ObservableObject {
     @discardableResult
     func inspect(_ recordID: String) -> Task<Void, Never>? {
         guard inspectingID == nil, let loadInspection else { return nil }
+        inspectionGeneration += 1
+        let current = inspectionGeneration
+        let workspace = workspace
         inspectingID = recordID
         inspectionError = nil
         return Task {
-            defer { inspectingID = nil }
+            defer { if current == inspectionGeneration { inspectingID = nil } }
             do {
                 let response = try await loadInspection(recordID)
-                if response.report != nil { inspection = Inspection(recordID: recordID, response: response) }
-            } catch { inspectionError = "Could not inspect \(recordID): \(render(error))" }
+                guard current == inspectionGeneration else { return }
+                if response.report != nil { inspection = Inspection(recordID: recordID, response: response, workspace: workspace) }
+            } catch {
+                guard current == inspectionGeneration else { return }
+                inspectionError = "Could not inspect \(recordID): \(render(error))"
+            }
         }
     }
 }

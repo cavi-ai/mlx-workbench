@@ -5,6 +5,99 @@ import SwiftUI
 
 final class LabWorkspaceTests: XCTestCase {
     @MainActor
+    func testTrainingHistorySwitchPreservesJobsAndRejectsOldSuccessAndFailure() async throws {
+        for fails in [false, true] {
+            let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)
+            defer { fixture.releaseAll(); harness.cleanup() }
+            let job = try JSONDecoder().decode(TrainingJob.self, from: Data(#"{"receipt":"r1","repo":"org/base","out":"/fixture/adapter","pid":42,"state":"done"}"#.utf8))
+            let loader = TrainingLoader(jobs: { [job] }, history: { [] }, seededJobs: [job])
+            XCTAssertTrue(harness.bindTraining(loader))
+            await loader.refreshHistory()?.value
+            XCTAssertEqual(loader.evaluations.first?.object?["id"]?.text, "eval_first_1")
+            await loader.inspect("shared-evaluation")?.value
+            XCTAssertNotNil(loader.inspection)
+            XCTAssertFalse(harness.bindTraining(loader), "Refreshing the same workspace retains evidence")
+            XCTAssertNotNil(loader.inspection)
+            if fails { fixture.fail("first:training-history") }
+            let oldGate = fixture.hold("first:training-history")
+            let old = loader.refreshHistory()
+            await expectWorkspaceCall(fixture, "first:training-history", count: 2)
+            await harness.lab.useStore(harness.second)
+            XCTAssertTrue(harness.bindTraining(loader))
+            XCTAssertTrue(loader.evaluations.isEmpty)
+            XCTAssertNil(loader.inspection)
+            XCTAssertNil(loader.historyError)
+            XCTAssertFalse(loader.hasLoadedHistory)
+            XCTAssertEqual(loader.jobs.map(\.receipt), ["r1"])
+            XCTAssertTrue(loader.hasLoadedJobs)
+            let newGate = fixture.hold("second:training-history")
+            let current = loader.refreshHistory()
+            await expectWorkspaceCall(fixture, "second:training-history")
+            oldGate.signal(); await old?.value
+            XCTAssertTrue(loader.isLoadingHistory)
+            XCTAssertTrue(loader.evaluations.isEmpty)
+            XCTAssertNil(loader.historyError)
+            newGate.signal(); await current?.value
+            XCTAssertEqual(loader.evaluations.first?.object?["id"]?.text, "eval_second_1")
+            XCTAssertFalse(loader.isLoadingHistory)
+        }
+    }
+
+    @MainActor
+    func testTrainingInspectionWithSameIDCannotCrossWorkspaceSwitch() async throws {
+        for fails in [false, true] {
+            let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)
+            defer { fixture.releaseAll(); harness.cleanup() }
+            let loader = TrainingLoader(jobs: { [] }, history: { [] })
+            harness.bindTraining(loader)
+            if fails { fixture.fail("first:training-inspect") }
+            let oldGate = fixture.hold("first:training-inspect")
+            let old = loader.inspect("shared-evaluation")
+            await expectWorkspaceCall(fixture, "first:training-inspect")
+            await harness.lab.useStore(harness.second)
+            harness.bindTraining(loader)
+            XCTAssertNil(loader.inspectingID)
+            let newGate = fixture.hold("second:training-inspect")
+            let current = loader.inspect("shared-evaluation")
+            await expectWorkspaceCall(fixture, "second:training-inspect")
+            oldGate.signal(); await old?.value
+            XCTAssertEqual(loader.inspectingID, "shared-evaluation")
+            XCTAssertNil(loader.inspection)
+            XCTAssertNil(loader.inspectionError)
+            newGate.signal(); await current?.value
+            XCTAssertEqual(loader.inspection?.response.report?.object?["prompt"]?.text, "second_1")
+            XCTAssertEqual(loader.inspection?.workspace, harness.lab.workspaceContext)
+            XCTAssertNil(loader.inspectingID)
+            await harness.lab.useStore(harness.first)
+            harness.bindTraining(loader)
+            XCTAssertNil(loader.inspection, "Returning to a path cannot restore an old visit's evidence")
+        }
+    }
+
+    @MainActor
+    func testTrainingReviewKeepsDraftAndOutputsWhenWorkspaceChanged() async throws {
+        let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)
+        defer { fixture.releaseAll(); harness.cleanup() }
+        let workspace = harness.lab.workspaceContext
+        let retained = try await harness.lab.request(LabRequest(operation: "training-inspect", evaluationID: "shared-evaluation"), in: workspace)
+        let session = TrainingEvaluationSession(receipt: "", retained: retained) { try await harness.lab.request($0, in: workspace) }
+        let sample = try XCTUnwrap(session.samples.first)
+        var draft = session.draft(sample.id)
+        draft.preference = "adapter"; draft.notes = "Keep this review"
+        session.updateReview(sample.id, draft)
+        XCTAssertTrue(session.canSaveReview)
+        await harness.lab.useStore(harness.second)
+        await session.saveReview()?.value
+        XCTAssertEqual(fixture.count("first:training-review"), 0)
+        XCTAssertEqual(fixture.count("second:training-review"), 0)
+        XCTAssertEqual(session.result?.artifactSHA256, retained.artifactSHA256)
+        XCTAssertEqual(session.draft(sample.id), draft)
+        XCTAssertTrue(session.hasUnsavedReviews)
+        XCTAssertNotNil(session.reviewError)
+        XCTAssertNil(session.reviewNotice)
+    }
+
+    @MainActor
     func testScopedDialogRequestsRejectChangedWorkspacesBeforeDispatch() async throws {
         let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)
         defer { fixture.releaseAll(); harness.cleanup() }
@@ -14,7 +107,7 @@ final class LabWorkspaceTests: XCTestCase {
         _ = try await harness.lab.request(LabRequest(operation: "preview"), in: workspace)
         XCTAssertEqual(fixture.count("first:preview"), 1)
         await harness.lab.useStore(harness.second)
-        for operation in ["recipe-catalog", "recipe-prepare", "create", "review-start", "review-media", "review-submit", "reveal", "study-submit", "study-create", "study-run"] {
+        for operation in ["recipe-catalog", "recipe-prepare", "create", "review-start", "review-media", "review-submit", "reveal", "study-submit", "study-create", "study-run", "training-preview", "training-evaluate", "training-review"] {
             do {
                 _ = try await harness.lab.request(LabRequest(operation: operation), in: workspace)
                 XCTFail("A stale dialog must not send " + operation)
@@ -28,7 +121,7 @@ final class LabWorkspaceTests: XCTestCase {
 
     @MainActor
     func testScopedDialogsRejectLateRepliesAndFailuresWithoutRerouting() async throws {
-        for operation in ["create", "review-submit"] {
+        for operation in ["create", "review-submit", "training-evaluate", "training-review"] {
             for fails in [false, true] {
                 let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)
                 defer { fixture.releaseAll(); harness.cleanup() }
@@ -412,6 +505,13 @@ private final class WorkspaceRefreshHarness {
         lab = LabCoordinator(api: api, defaults: defaults)
     }
     func cleanup() { defaults.removePersistentDomain(forName: suite) }
+    @discardableResult
+    func bindTraining(_ loader: TrainingLoader) -> Bool {
+        let context = lab.workspaceContext
+        return loader.bindWorkspace(context,
+            history: { try await self.lab.request(LabRequest(operation: "training-history"), in: context).evaluations ?? [] },
+            inspect: { try await self.lab.request(LabRequest(operation: "training-inspect", evaluationID: $0), in: context) })
+    }
 }
 
 /// Controls callback order while exercising the production coordinator and API actor.
@@ -452,6 +552,15 @@ private final class WorkspaceRefreshFixture: @unchecked Sendable {
                     "queue": [["id": "job_" + suffix, "experiment_id": "exp_" + suffix, "state": "queued"]]]
         }
         if operation == "study-list" { return ["studies": [["study_id": "study_" + suffix]]] }
+
+        if operation == "training-history" { return ["evaluations": [["id": "eval_" + suffix]]] }
+        if operation == "training-inspect" {
+            return ["evaluation_id": request["evaluation_id"] ?? "shared-evaluation",
+                    "artifact_sha256": String(repeating: "a", count: 64),
+                    "report": ["schema_version": "text-training-evaluation/1", "prompt": suffix,
+                               "max_tokens": 128, "preview_hash": "reviewed",
+                               "outputs": ["baseline": "Base", "adapter": "Tuned"]]]
+        }
         if operation == "recipe-catalog" {
             return ["recipes": [["model_id": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "display_name": "Wan",
                                  "revisions": [String(repeating: "a", count: 40)]]]]
