@@ -271,7 +271,7 @@ def run_xcodebuild(command: list[str], environment: dict[str, str], log_path: Pa
 
 
 @contextmanager
-def runtime_status_bridge(manifest: RuntimeManifest, environment: dict[str, str], workflow: str = "serving"):
+def serving_status_bridge(manifest: RuntimeManifest, environment: dict[str, str], workflow: str = "serving"):
     """Query real process status outside XCTest's sandbox; accept no commands."""
     route = "/status/" + secrets.token_urlsafe(32)
     receipts = Path.home() / "Library/Application Support/mlx-workbench"
@@ -291,7 +291,7 @@ def runtime_status_bridge(manifest: RuntimeManifest, environment: dict[str, str]
                 if not isinstance(payload, dict) or payload.get("status") != "ok":
                     raise ValueError("status query did not succeed")
             except (OSError, subprocess.SubprocessError, ValueError):
-                self.send_error(503, "Runtime status unavailable")
+                self.send_error(503, "Serving status unavailable")
                 return
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -305,7 +305,7 @@ def runtime_status_bridge(manifest: RuntimeManifest, environment: dict[str, str]
     # HTTPServer resolves a hostname during binding. This numeric loopback
     # endpoint needs no DNS and uses only the HTTP request handler.
     with TCPServer(("127.0.0.1", 0), Handler) as server:
-        thread = threading.Thread(target=server.serve_forever, name="acceptance-runtime-status")
+        thread = threading.Thread(target=server.serve_forever, name="acceptance-serving-status")
         thread.start()
         try:
             yield f"http://127.0.0.1:{server.server_address[1]}{route}"
@@ -385,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
             environment[f"TEST_RUNNER_{key}"] = environment[key]
     command = xcodebuild_command(xcodebuild, evidence, args.source_format, args.workflow)
     try:
-        with runtime_status_bridge(manifest, environment, args.workflow) as status_url:
+        with serving_status_bridge(manifest, environment, args.workflow) as status_url:
             environment["TEST_RUNNER_TASK6_STATUS_URL"] = status_url
             try:
                 exit_code = run_xcodebuild(command, environment, evidence / "xcodebuild.log")

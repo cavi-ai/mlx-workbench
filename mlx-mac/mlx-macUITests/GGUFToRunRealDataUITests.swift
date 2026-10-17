@@ -674,7 +674,7 @@ final class GGUFToRunRealDataUITests: XCTestCase {
 
         let stdout = output.fileHandleForReading.readDataToEndOfFile()
         let statusAttachment = XCTAttachment(data: stdout, uniformTypeIdentifier: "public.json")
-        statusAttachment.name = "runtime-status.json"
+        statusAttachment.name = "serving-status.json"
         statusAttachment.lifetime = .keepAlways
         add(statusAttachment)
         guard process.terminationStatus == 0 else {

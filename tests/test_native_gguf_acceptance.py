@@ -29,7 +29,7 @@ class NativeGGUFAcceptanceContractTests(unittest.TestCase):
                 "print(json.dumps({'status':'ok','data':{'servers':[]}}))\n"
             )
             with patch("socket.getfqdn", side_effect=AssertionError("Loopback status must not require DNS")), \
-                    acceptance.runtime_status_bridge(manifest, dict(os.environ, MLX_WORKBENCH_PYTHON=sys.executable)) as url:
+                    acceptance.serving_status_bridge(manifest, dict(os.environ, MLX_WORKBENCH_PYTHON=sys.executable)) as url:
                 with urlopen(url, timeout=5) as response:
                     self.assertEqual(json.load(response)["data"]["servers"], [])
                 arguments = json.loads(recorded.read_text())
@@ -72,7 +72,7 @@ class NativeGGUFAcceptanceContractTests(unittest.TestCase):
                 "import json,pathlib,sys\n"
                 f"pathlib.Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n"
                 "print(json.dumps({'status':'ok','data':{'jobs':[]}}))\n")
-            with acceptance.runtime_status_bridge(manifest, dict(os.environ, MLX_WORKBENCH_PYTHON=sys.executable), "training") as url:
+            with acceptance.serving_status_bridge(manifest, dict(os.environ, MLX_WORKBENCH_PYTHON=sys.executable), "training") as url:
                 with urlopen(url, timeout=5) as response:
                     self.assertEqual(json.load(response)["data"]["jobs"], [])
                 self.assertEqual(json.loads(recorded.read_text())[:2], ["lora", "status"])
