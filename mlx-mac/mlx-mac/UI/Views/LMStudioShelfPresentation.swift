@@ -121,7 +121,7 @@ struct LMStudioRow: Equatable, Identifiable {
         var parts = [repo, format.rawValue]
         if !quantText.isEmpty { parts.append(quantText) }
         parts.append(sizeText)
-        parts.append(isUnreadable ? Self.unreadableSentence : fit.accessibilityLabel.replacingOccurrences(of: "Fits now: ", with: "fits now: "))
+        parts.append(isUnreadable ? Self.unreadableSentence : fit.accessibilityLabel)
         parts += tags.map(\.title)
         return parts.joined(separator: ", ")
     }

@@ -2374,6 +2374,8 @@ final class SetupAssistantUITests: XCTestCase {
         XCTAssertLessThanOrEqual(sourcePicker.frame.maxY, heading.frame.minY)
         capture("08-library-visible-model-and-sidebar")
         modelRow.doubleClick()
+        let memoryFit = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "Memory fit: ")).firstMatch
+        XCTAssertTrue(memoryFit.waitForExistence(timeout: 10))
         capture("08b-library-inspector-after-selection")
         if screen.width < 1100 {
             let details = app.sheets.firstMatch

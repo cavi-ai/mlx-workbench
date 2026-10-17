@@ -6,6 +6,20 @@
 
 These checks do not establish readiness of isolated optional backends or Strata. **Model-specific runtimes → Open Run** leads to serving preview, which checks the selected model's runtime before confirmation. A successful base check does not prove that every model can run, and a missing base component does not establish that an isolated runtime is unavailable.
 
+Guided installation shows the installation being run and the final
+base-tool check. **Cancel installation** stops only that installer's process group;
+retry stays disabled until its processes exit and the tool check finishes. The
+same status and cancellation controls appear in Studies for study-tool and video
+runtime installs. Base-tool checks do not certify those optional runtimes.
+
+Cancellation and failures retain the install log. They can leave a partially
+installed environment; Workbench keeps those files and does not automatically
+delete or rebuild the environment. Review **Tool check details** and **Install
+log**, then explicitly retry **Install Runtime…** or the relevant Studies install.
+**Install command finished** reports the command's exit, separately from whether
+conversion and base serving tools passed their checks. These checks do not load
+a model or prove model-specific readiness.
+
 **Model-specific runtimes** also lists optional MLX backend installation records, target versions and declared tasks. Health refreshes them when opened; **Refresh backends** checks again after setup. **Installed** does not mean that a model has loaded or passed verification. Other states distinguish an installation in progress, a failed install, an absent installation and an unknown engine state. Base mlx-lm checks remain above this list; Strata is separate.
 
 Each successful check records its time. A failed refresh keeps the last result with an explicit stale label and the error; a successful retry replaces it. Changing the engine checkout clears the previous checkout's result. **Add from Hugging Face…** opens model intake, where missing dependencies keep their existing installation preview and confirmation. Opening Health or refreshing its status starts no installation, model download or generation.

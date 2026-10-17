@@ -150,6 +150,7 @@ struct TrainingJobRowView: View {
             }
         }
         .padding(.vertical, WorkbenchSpacing.xs)
+        .accessibilityIdentifier("training-job-" + row.id)
     }
 }
 

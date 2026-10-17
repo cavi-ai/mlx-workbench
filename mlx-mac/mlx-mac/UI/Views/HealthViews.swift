@@ -268,6 +268,8 @@ struct HealthHeroView: View {
         }
         if chain.actions.showsInstall {
             RuntimeInstallView(installer: installer, onFinished: onRuntimeInstalled)
+        } else if installer.state != .idle {
+            RuntimeInstallStatusView(installer: installer)
         }
         if chain.actions.showsInstallCommand || chain.actions.showsOpenSettings {
             ReclaimFlowLayout {

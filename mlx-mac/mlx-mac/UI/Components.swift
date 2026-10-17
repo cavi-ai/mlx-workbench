@@ -450,36 +450,8 @@ struct RuntimeInstallView: View {
                     Button("Install Runtime…") { showConfirm = true }
                         .buttonStyle(.workbenchPrimary)
                         .disabled(!installer.canInstall)
-                    if installer.state == .running {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(installer.summary)
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(WorkbenchColor.muted)
-                    }
-                    if installer.state == .succeeded {
-                        Label("Installed", systemImage: "checkmark.circle.fill")
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(WorkbenchColor.success)
-                    }
                 }
-                if case .failed(let reason) = installer.state {
-                    Text(reason)
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.failure)
-                }
-                if !installer.logTail.isEmpty {
-                    DisclosureGroup("Install log") {
-                        ScrollView {
-                            Text(installer.logTail.joined(separator: "\n"))
-                                .font(WorkbenchTypography.value)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                        .frame(maxHeight: 160)
-                        .padding(.top, WorkbenchSpacing.xxs)
-                    }
-                }
+                RuntimeInstallStatusView(installer: installer)
             }
             .confirmationDialog(
                 "Install the convert/serve runtime?",
@@ -489,12 +461,66 @@ struct RuntimeInstallView: View {
                 Button("Run make install") {
                     Task {
                         await installer.install()
-                        onFinished()
+                        if installer.runtimeReport != nil { onFinished() }
                     }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Runs `make install` in the mlx-workbench checkout: creates the .venv (Python 3.12) and downloads the convert/serve packages. This can take several minutes.")
+            }
+        }
+    }
+}
+
+/// Shared by base-runtime and study installers so cancellation remains available
+/// in the surface that started the installation.
+struct RuntimeInstallStatusView: View {
+    @ObservedObject var installer: RuntimeInstaller
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if installer.state != .idle {
+                ReclaimFlowLayout {
+                    if installer.isBusy { ProgressView().controlSize(.small) }
+                    Text(installer.summary)
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .accessibilityIdentifier("runtime-install-status")
+                    if installer.canCancel {
+                        Button("Cancel installation") { installer.cancel() }
+                            .buttonStyle(.bordered).controlSize(.small)
+                            .help("Stop this installer's processes. Installed files are kept; base tools are checked before retrying.")
+                            .accessibilityIdentifier("runtime-install-cancel")
+                    }
+                }
+                if let message = installer.recoveryMessage {
+                    Text(message).font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let summary = installer.readinessSummary, let report = installer.runtimeReport {
+                    Text(summary).font(WorkbenchTypography.secondary)
+                        .foregroundStyle(report.ok ? WorkbenchColor.success : WorkbenchColor.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("runtime-install-readiness")
+                    if !report.ok {
+                        DisclosureGroup("Tool check details") {
+                            Text(report.convert.message + "\n" + report.serve.message)
+                                .font(WorkbenchTypography.metadata).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            if !installer.logTail.isEmpty {
+                DisclosureGroup("Install log") {
+                    ScrollView {
+                        Text(installer.logTail.joined(separator: "\n"))
+                            .font(WorkbenchTypography.value)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }.frame(maxHeight: 160)
+                }
             }
         }
     }

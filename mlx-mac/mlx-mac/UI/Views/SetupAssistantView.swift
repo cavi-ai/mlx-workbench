@@ -90,10 +90,13 @@ struct SetupAssistantView: View {
             if appHost.runtimeReport.ok {
                 StatusBadge(status: .ready)
                 Text("Convert and serve runtimes are ready.").font(WorkbenchTypography.body)
+                if appHost.runtimeInstaller.state != .idle {
+                    RuntimeInstallStatusView(installer: appHost.runtimeInstaller)
+                }
             } else {
                 guidance("The runtime is not installed yet.", detail: appHost.runtimeReport.install, isLiteral: true)
                 RuntimeInstallView(installer: appHost.runtimeInstaller) {
-                    appHost.refreshRuntimeReport()
+                    appHost.refreshRuntimeReport(appHost.runtimeInstaller.runtimeReport)
                 }
             }
         }

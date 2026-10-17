@@ -222,7 +222,7 @@ struct LibraryInspectorFit: View {
         )
         WorkbenchSurface {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                Label("Fits now", systemImage: "memorychip")
+                Label(LibraryFitPresentation.title, systemImage: "memorychip")
                     .font(WorkbenchTypography.label)
                     .foregroundStyle(WorkbenchColor.muted)
                     .symbolRenderingMode(.hierarchical)

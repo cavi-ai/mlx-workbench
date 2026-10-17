@@ -40,8 +40,9 @@ struct LabPanel: View {
 
     var body: some View {
         WorkbenchCard("Controlled studies", systemImage: "square.split.2x1") {
-            Text("Compare one change at a time, then review the clips without seeing candidate identities.")
+            Text("Start with New experiment… to compare two video settings. Run the queued jobs, then use Blind review… to judge the clips before learning which setting produced each one.")
                 .foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             LabHeaderView(
                 storePath: LabPresentation.storePath(lab.store.path),
                 isRefreshing: lab.isRefreshing,
@@ -68,12 +69,7 @@ struct LabPanel: View {
                         Button("Install study tools") { Task { await installer.install(labAgentPath: agentPath); await lab.refresh() } }
                         Button("Install video runtime") { Task { await installer.install(labAgentPath: agentPath, inference: true); await lab.refresh() } }
                     }.disabled(!installer.canInstall)
-                    if !installer.summary.isEmpty {
-                        Text(installer.summary).font(WorkbenchTypography.metadata)
-                    }
-                    if !installer.logTail.isEmpty {
-                        TrainingRawDisclosure(title: "Installer log", text: installer.logTail.suffix(20).joined(separator: "\n"))
-                    }
+                    RuntimeInstallStatusView(installer: installer)
                 }
             }
             ErrorBanner(text: lab.error)
@@ -330,6 +326,9 @@ struct LabAuthorSheet: View {
             LabWorkspaceLabel(lab: lab, workspace: workspace)
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    Text("A recipe records the baseline prompt, generation settings, model and runtime identities. Capture one from a cached model or import a recipe file, then choose one setting to change.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                     Picker("Recipe source", selection: $recipeSource) {
                         Text("Cached model").tag("cache")
                         Text("Recipe file").tag("file")
@@ -788,8 +787,9 @@ private struct AdaptiveStudiesPanel: View {
                 Button("Import frozen recipe…") { importRecipe() }.buttonStyle(.bordered).controlSize(.small).disabled(busy)
                 Button("Refresh studies") { Task { await refresh() } }.buttonStyle(.bordered).controlSize(.small).disabled(busy || lab.isRefreshing)
             }
-            Text("Each study keeps its prompt and seed fixed. Human preferences guide the next pair; the engine retains the search budget and stopping evidence.")
+            Text("Adaptive studies explore guidance strength across successive pairs. Import a frozen recipe to begin; each blind review helps choose the next pair while the prompt and seed stay fixed.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             ForEach(lab.studies) { row in
                 Divider()
                 LabStudyRowView(

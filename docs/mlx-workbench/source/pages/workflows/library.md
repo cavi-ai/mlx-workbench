@@ -16,7 +16,7 @@ The **Source** picker switches between **All models** and **LM Studio**. Switchi
 |---|---|
 | Quantization | Declared bits or quant type |
 | Size | Bytes on disk, with a relative size bar |
-| Fits now | **Fits**, **Tight** or **Won't fit** at the selected context, against current available memory |
+| Memory fit | **Fits**, **Tight** or **Won't fit** at the selected context, against current available memory |
 | Status | Shown for models that are not ready |
 | Modified | Last change on disk |
 
