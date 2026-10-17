@@ -83,3 +83,8 @@ Adaptive studies keep their progression and stopping evidence. **Recover interru
 ## Workspaces
 
 Experiments live in `~/Library/Application Support/mlx-agent/lab` by default. **Workspace…** previews adopting the existing experiment database and artifact store into a new destination. Adoption preserves IDs, hashes, reviews and sealed assignments, refuses active work or an occupied destination, and leaves the source untouched. **Import workspace…** brings in an existing workspace.
+
+Changing workspaces clears the previous workspace's records and messages, then
+refreshes the selected workspace. Each refresh reads both lists from one workspace
+and publishes them only if that refresh is still current. A failed refresh keeps
+the last successfully loaded experiment and study lists together and shows the error.
