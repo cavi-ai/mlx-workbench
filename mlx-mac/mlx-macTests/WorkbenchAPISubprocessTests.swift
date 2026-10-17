@@ -5,6 +5,107 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    private static var taskSummary: [String: Any] {
+        ["schema": "task-run/1", "id": "11111111-1111-4111-8111-111111111111", "kind": "music_generation", "state": "starting",
+         "model_path": "/Models/MiniMax Music", "created_at": "2026-10-17T12:00:00+00:00", "started_at": NSNull(), "completed_at": NSNull(),
+         "cancel_requested": false, "identity": ["backend": "mlx-audio", "backend_version": "1.0.0", "engine_version": "0.7.0", "python_version": "3.12.0", "model_fingerprint": String(repeating: "a", count: 64)],
+         "request": ["path": "/tasks/artifacts/11111111-1111-4111-8111-111111111111/request.json", "sha256": String(repeating: "a", count: 64), "bytes": 20],
+         "result": NSNull(), "error": NSNull(), "supervisor": NSNull(), "execution": NSNull(), "execution_unresolved": false]
+    }
+
+    func testTaskAPIUsesTypedEnvelopesSafeStagingAndReadOnlyModelVerification() async throws {
+        let state = URL(fileURLWithPath: "/isolated task state")
+        let request = TaskRequest(kind: .musicGeneration, modelPath: "/Models/MiniMax Music", parameters: ["caption": .string("soft piano — रात")])
+        let taskJSON = Self.taskSummary
+        let recorder = AgentCallRecorder()
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", taskEnvelopeCommand: { _, argv, _ in
+            recorder.record(path: "/fixture", argv: argv, isScout: false, timeout: 300)
+            XCTAssertTrue(argv.contains("--json"))
+            if argv.contains("start") {
+                let file = URL(fileURLWithPath: argv[argv.firstIndex(of: "--request")! + 1])
+                XCTAssertEqual(try JSONDecoder().decode(TaskRequest.self, from: Data(contentsOf: file)), request)
+                var info = stat(); XCTAssertEqual(stat(file.path, &info), 0)
+                XCTAssertEqual(info.st_mode & 0o777, 0o600)
+                return ["status": "ok", "data": ["task": taskJSON]]
+            }
+            if argv.contains("capabilities") {
+                return ["status": "ok", "data": ["schema": "task-capabilities/1", "request_schema": "task-request/1", "run_schema": "task-run/1", "tasks": [["kind": "music_generation", "result_schema": "music-generation/1", "cancellation": true, "requires_local_model": true, "model_verification": true]]]]
+            }
+            if argv.contains("verify-model") {
+                return ["status": "ok", "data": ["id": "11111111-1111-4111-8111-111111111111", "model_path": "/Models/MiniMax Music", "model_fingerprint": String(repeating: "a", count: 64), "matches": true]]
+            }
+            if argv.contains("list") { return ["status": "ok", "data": ["tasks": [taskJSON], "has_more": true]] }
+            if argv.contains("result") { return ["status": "ok", "data": ["task": taskJSON, "artifact": ["path": "/tasks/artifacts/11111111-1111-4111-8111-111111111111/result.json", "sha256": String(repeating: "a", count: 64), "bytes": 20], "inline": false, "result": NSNull()]] }
+            if argv.contains("cancel") { return ["status": "ok", "data": ["task": taskJSON]] }
+            return ["status": "ok", "data": ["task": taskJSON]]
+        }, taskStateDirectory: state)
+
+        let capabilities = try await api.taskCapabilities()
+        XCTAssertTrue(capabilities.tasks.first?.modelVerification == true)
+        let started = try await api.taskStart(request)
+        XCTAssertEqual(started.id, "11111111-1111-4111-8111-111111111111")
+        let requestPath = recorder.values.first(where: { $0.argv.contains("start") })!.argv[recorder.values.first(where: { $0.argv.contains("start") })!.argv.firstIndex(of: "--request")! + 1]
+        XCTAssertFalse(FileManager.default.fileExists(atPath: requestPath))
+        let status = try await api.taskStatus(id: started.id)
+        let page = try await api.taskList(limit: 40)
+        let result = try await api.taskResult(id: started.id)
+        let cancelled = try await api.taskCancel(id: started.id)
+        let verification = try await api.taskVerifyModel(id: started.id)
+        XCTAssertEqual(status.state, .starting)
+        XCTAssertEqual(page.tasks.count, 1)
+        XCTAssertFalse(result.inline)
+        XCTAssertEqual(cancelled.id, started.id)
+        XCTAssertTrue(verification.matches)
+        XCTAssertTrue(recorder.values.filter { !$0.argv.contains("capabilities") }.allSatisfy { call in
+            guard let index = call.argv.firstIndex(of: "--state-dir") else { return false }
+            return call.argv[index + 1] == state.path
+        })
+        XCTAssertTrue(recorder.values.contains { $0.argv == ["task", "verify-model", "--id", started.id, "--state-dir", state.path, "--json"] })
+    }
+
+    func testTaskStartDistinguishesKnownEngineFailureUnknownResponseAndPrelaunchFailure() async throws {
+        let request = TaskRequest(kind: .classification, modelPath: "/Models/laya", parameters: [
+            "state": .string("refund request"),
+            "questions": .object(["route": .object(["type": .string("choice"), "instructions": .string("Route this"), "criteria": .array([.string("billing"), .string("other")])])]),
+        ])
+        let knownFailure = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", taskEnvelopeCommand: { _, _, _ in
+            ["status": "error", "data": ["task": Self.taskSummary], "error": ["code": "task_failed", "message": "No output", "remediation": "Inspect task status."]]
+        })
+        do { _ = try await knownFailure.taskStart(request); XCTFail("expected engine failure") }
+        catch let error as TaskEngineError { XCTAssertEqual(error.task?.id, "11111111-1111-4111-8111-111111111111") }
+
+        let lost = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", taskEnvelopeCommand: { _, _, _ in ["__mlx_cli_response_unreadable": true, "status": "error"] })
+        do { _ = try await lost.taskStart(request); XCTFail("expected unknown outcome") }
+        catch is TaskStartOutcomeUnknown { }
+
+        let beforeLaunch = WorkbenchAPI(cli: CLIProcess(), agentPath: "/definitely/missing")
+        do { _ = try await beforeLaunch.taskStart(request); XCTFail("expected prelaunch error") }
+        catch is TaskStartOutcomeUnknown { XCTFail("prelaunch failure cannot have an unknown task outcome") }
+        catch { }
+    }
+
+    func testTaskCLIInvocationPreservesEnvelopesAndChildLaunchProvenance() throws {
+        let success = try FixtureAgent(envelope: ["status": "ok", "data": ["value": "spaces ' quotes ☃"]])
+        defer { success.remove() }
+        let cli = CLIProcess()
+        XCTAssertEqual(try cli.run(agentPath: success.root.path, argv: ["task", "capabilities"])["value"] as? String, "spaces ' quotes ☃")
+        var launched = false
+        let envelope = try cli.run(agentPath: success.root.path, argv: ["task", "capabilities"], preserveEnvelope: true, onChildLaunched: { launched = true })
+        XCTAssertTrue(launched)
+        XCTAssertEqual(envelope["status"] as? String, "ok")
+        XCTAssertEqual((envelope["data"] as? [String: Any])?["value"] as? String, "spaces ' quotes ☃")
+
+        let failure = try FixtureAgent(envelope: ["status": "error", "data": ["task": ["id": "known"]], "error": ["code": "task_failed", "message": "failed", "remediation": "inspect"]])
+        defer { failure.remove() }
+        let errorEnvelope = try cli.run(agentPath: failure.root.path, argv: ["task", "start"], preserveEnvelope: true)
+        XCTAssertEqual(errorEnvelope["status"] as? String, "error")
+        XCTAssertNotNil((errorEnvelope["data"] as? [String: Any])?["task"])
+
+        launched = false
+        XCTAssertThrowsError(try cli.run(agentPath: "/missing-task-agent", argv: ["task", "start"], preserveEnvelope: true, onChildLaunched: { launched = true }))
+        XCTAssertFalse(launched)
+    }
+
     func testComparisonRecoveryChecksReceiptIdentityAndNeverStopsAReplacement() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("comparison-receipt-\(UUID().uuidString)")
         let receipt = root.appendingPathComponent(".mlx-agent-receipts/serve/9997.json")
@@ -776,6 +877,15 @@ private final class FixtureAgent {
             handle.write(json.dumps(sys.argv[1:]) + "\\n")
         print(json.dumps({"status": "ok", "data": \(body)}))
         """
+        try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
+    }
+
+    convenience init(envelope: [String: Any]) throws {
+        self.init()
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let body = String(data: try JSONSerialization.data(withJSONObject: envelope), encoding: .utf8) ?? "{}"
+        let script = "import json\nprint(json.dumps(\(body)))\n"
         try Data(script.utf8).write(to: scripts.appendingPathComponent("mlx-agent"))
     }
 
