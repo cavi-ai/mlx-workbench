@@ -34,10 +34,13 @@ The `Makefile` is the supported command surface. Run `make help` for the short l
 | `make render-clients`, `make render-discover`, `make render-lmstudio`, `make render-settings` | Render a screen's states into an xcresult bundle |
 | `make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json` | Opt-in real conversion from an allowlisted local GGUF through to Run; writes per-run evidence |
 | `make accept-native-mlx RUNTIME_MANIFEST=/absolute/path/runtime.json` | Opt-in verification, serving and completion request for an existing local MLX model; writes per-run evidence |
+| `make accept-native-training RUNTIME_MANIFEST=/absolute/path/runtime.json` | Opt-in one-iteration LoRA training and retained base-versus-adapter evaluation through the native app |
 
 The live-scan and acceptance targets are not part of `make test`. Acceptance may perform a real conversion and runs only with an explicit runtime manifest.
 
 Run native acceptance inside a prepared Apple Silicon macOS VM with an active desktop session. The MLX target uses the same manifest fields as GGUF acceptance: `source_path`, `model_query`, `agent_home`, `config_path`, and `evidence_root`. Its source is an existing model directory with `config.json` and safetensors weights under explicitly configured `mlx_roots`; evidence must be outside those roots and the configured host must be loopback. It does not download or convert a model. Set `MLX_WORKBENCH_PYTHON` to the runtime interpreter when needed. A skipped native test fails acceptance.
+
+Training acceptance uses that same manifest and requires a Hugging Face cache snapshot matching its local `refs/main`. It runs offline with separate generated training and validation examples, batch size one and one iteration, then retains a matched evaluation. Outputs stay beneath the run's evidence directory. Failure cleanup stops only a running job matching that run's output and repo. This checks the workflow, not adapter quality.
 
 ## Docs and release
 
