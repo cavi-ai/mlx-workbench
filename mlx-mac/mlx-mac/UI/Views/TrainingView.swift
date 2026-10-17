@@ -351,6 +351,9 @@ struct TrainingView: View {
     private func formSection(_ proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             SectionTitle(text: "LoRA fine-tune")
+            Text("A LoRA adapter stores learned changes separately from the base model. Use the adapter alongside that base; training leaves the base weights unchanged.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             Text("Requires a cached Hugging Face language-model base and the mlx-lm training runtime. Training does not download models.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -371,6 +374,9 @@ struct TrainingView: View {
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Base model repo id")
                             .focused($focusedField, equals: .repo)
+                        Text("Use the Hugging Face organization/model name of a model already in your local cache, not a folder path.")
+                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
                     }.id(TrainingField.repo)
                 }
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
@@ -382,7 +388,7 @@ struct TrainingView: View {
                             .focused($focusedField, equals: .data)
                         Button("Choose…") { chooseDataset() }.buttonStyle(.bordered).controlSize(.small)
                     }
-                    Text("Choose a directory containing train.jsonl and valid.jsonl. Each split needs at least one full batch of examples.")
+                    Text("Choose a directory containing train.jsonl for learning and valid.jsonl for checking separate examples. Each file needs at least Batch size examples; Workbench does not split your data.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     DisclosureGroup("Dataset format") {
@@ -403,6 +409,9 @@ struct TrainingView: View {
                 .disabled(!session.canInspect)
                 .accessibilityIdentifier("training-check-setup")
                 .help(session.draft.batchSizeError ?? "Check the local runtime, cached base and both dataset splits without starting training.")
+            Text("Start with Check setup, then Preview Training to review the plan. Only Confirm & Train starts a training job.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             if let inspection = session.inspection {
                 TrainingInspectionPanel(inspection: inspection, repair: { reveal($0, proxy: proxy) }, openHealth: { onRouteSelection(.health) })
             }
@@ -479,6 +488,7 @@ struct TrainingView: View {
                 .frame(width: WorkbenchSize.Training.iterationsWidth)
                 .accessibilityLabel("Iterations")
                 .focused($focusedField, equals: .iterations)
+                .help("Training update steps. Each step processes one batch of examples.")
             if let error = session.draft.iterationsError {
                 Text(error).font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.failure)
