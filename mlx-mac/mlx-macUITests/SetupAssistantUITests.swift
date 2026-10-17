@@ -1309,6 +1309,44 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
     }
 
+    func testRunChoosesTheExactEndpointForClients() throws {
+        let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = Data(#"{"theme":"dark"}"#.utf8)
+        try original.write(to: config)
+        let servers: [[String: Any]] = [
+            ["repo": "org/Qwen", "runtime": "mlx_lm", "port": 8766, "pid": 123, "state": "running", "receipt": "/fixture/first.json"],
+            ["repo": "org/Qwen", "runtime": "mlx_lm", "port": 8767, "pid": 456, "state": "running", "receipt": "/fixture/second.json",
+             "adapter_path": "/fixture/adapters/tuned", "adapter_identity": ["adapters.safetensors": ["sha256": "fixture", "bytes": 4]]]
+        ]
+        try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Run")
+        let configure = app.buttons["run-configure-clients-8767"]
+        XCTAssertTrue(configure.waitForExistence(timeout: 15)); configure.click()
+        let preview = app.buttons["Preview client wiring"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 15))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: preview)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
+        XCTAssertEqual(try Data(contentsOf: config), original, "Navigation must not write configuration")
+        preview.click()
+        let confirm = app.buttons["Confirm client wiring"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["client-wiring-reviewed-model"].value as? String, "org/Qwen")
+        XCTAssertEqual(app.staticTexts["client-wiring-reviewed-endpoint"].value as? String, "http://127.0.0.1:8767/v1")
+        XCTAssertEqual(try Data(contentsOf: config), original, "Preview must not write configuration")
+        capture("Run-to-Clients-reviewed-endpoint")
+        confirm.click()
+        XCTAssertTrue(text(containing: "Wired 1 client").waitForExistence(timeout: 15))
+        let written = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any])
+        let providers = try XCTUnwrap(written["provider"] as? [String: Any])
+        let provider = try XCTUnwrap(providers["mlx-local"] as? [String: Any])
+        let options = try XCTUnwrap(provider["options"] as? [String: Any])
+        XCTAssertEqual(options["baseURL"] as? String, "http://127.0.0.1:8767/v1")
+        XCTAssertEqual(written["theme"] as? String, "dark")
+        capture("Run-to-Clients-applied-endpoint")
+    }
+
     func testClientWiringPreviewAndEndpointSelection() throws {
         let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
         try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
