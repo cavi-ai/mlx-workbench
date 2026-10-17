@@ -75,7 +75,7 @@ struct InferenceTaskPanel: View {
                     }
                 }
                 .padding(WorkbenchSpacing.sm)
-                .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: 8))
+                .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
             }
             Button("Add question") { coordinator.classificationDraft.questions.append(ClassificationQuestionDraft()) }.buttonStyle(.bordered)
             taskActions(kind: .classification)
@@ -194,7 +194,7 @@ struct RecentTaskList: View {
                     Button {
                         Task { await coordinator.selectTask(id: task.id) }
                     } label: {
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                             Text("\(task.kind.title) · \(task.state.wireValue.capitalized)")
                             Text(URL(fileURLWithPath: task.modelPath).lastPathComponent).font(WorkbenchTypography.secondary)
                         }
@@ -227,7 +227,7 @@ struct RecentTaskList: View {
                     ClassificationTaskAnswerSummary(projection: TaskResultProjection(raw: raw))
                 }
                 if let raw = coordinator.verifiedResult?.json {
-                    Text(raw.prettyJSON).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(raw.prettyJSON).font(WorkbenchTypography.value).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                 } else if coordinator.selectedResult != nil {
                     Text("The verified result is too large for inline preview. Export the JSON to inspect it.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
@@ -302,7 +302,7 @@ private struct ClassificationTaskAnswerSummary: View {
                         .font(WorkbenchTypography.secondary)
                         .textSelection(.enabled)
                         .padding(WorkbenchSpacing.sm)
-                        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: 8))
+                        .background(WorkbenchColor.well, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
                     }
                 }
             }
