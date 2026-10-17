@@ -273,6 +273,7 @@ final class TrainingLoader: ObservableObject {
     private var loadHistory: () async throws -> [LabValue]
     private var loadInspection: ((String) async throws -> LabResponse)?
     private let render: @MainActor (Error) -> String
+    private var jobsReading = false
     private var jobsGeneration = 0
     private var historyGeneration = 0
     private var inspectionGeneration = 0
@@ -355,14 +356,28 @@ final class TrainingLoader: ObservableObject {
     @discardableResult
     func refreshHistory() -> Task<Void, Never>? { startHistory(superseding: false) }
 
-    private func startJobs(superseding: Bool) -> Task<Void, Never>? {
-        guard superseding || !isLoadingJobs else { return nil }
+    var needsJobUpdates: Bool { jobsError == nil && jobs.contains { $0.state == "running" } }
+
+    /// The route owns this task. Cancellation stops future reads, never training.
+    func refreshActiveJobs(wait: () async throws -> Void = { try await Task.sleep(for: .seconds(5)) }) async {
+        while needsJobUpdates && !Task.isCancelled {
+            do { try await wait() } catch { return }
+            guard needsJobUpdates, !Task.isCancelled else { return }
+            await startJobs(superseding: false, showProgress: false)?.value
+        }
+    }
+
+    private func startJobs(superseding: Bool, showProgress: Bool = true) -> Task<Void, Never>? {
+        guard superseding || !jobsReading else { return nil }
         jobsGeneration += 1
         let current = jobsGeneration
-        isLoadingJobs = true
+        jobsReading = true
+        isLoadingJobs = showProgress
         jobsError = nil
         return Task {
-            defer { if current == jobsGeneration { isLoadingJobs = false } }
+            defer {
+                if current == jobsGeneration { jobsReading = false; isLoadingJobs = false }
+            }
             do {
                 let loaded = try await loadJobs()
                 guard current == jobsGeneration else { return }

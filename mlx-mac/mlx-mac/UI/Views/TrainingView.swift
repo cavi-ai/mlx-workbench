@@ -320,6 +320,10 @@ struct TrainingView: View {
             bindEvaluationWorkspace()
             await loader.refreshIfIdle()
         }
+        .task(id: isRouteActive && loader.needsJobUpdates) {
+            guard isRouteActive, loader.needsJobUpdates else { return }
+            await loader.refreshActiveJobs()
+        }
     }
 
     private func bindEvaluationWorkspace() {
@@ -682,7 +686,7 @@ struct TrainingView: View {
         guard let task = session.confirmTraining() else { return }
         Task {
             await task.value
-            if session.notice != nil { await loader.refreshIfIdle() }
+            if session.notice != nil { await loader.refresh() }
         }
     }
 

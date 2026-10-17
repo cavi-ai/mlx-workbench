@@ -1025,6 +1025,98 @@ final class TrainingPresentationTests: XCTestCase {
 
 @MainActor
 final class TrainingLoaderTests: XCTestCase {
+    func testRunningJobUpdatesStopAfterCompletionWithoutReadingEvaluationHistory() async throws {
+        let running = try TF.job("running"), done = try TF.job("done")
+        let evaluation = try TF.evaluation("retained", created: nil)
+        var reads = 0, waits = 0, historyReads = 0
+        let loader = TrainingLoader(jobs: { reads += 1; return [reads == 1 ? running : done] },
+            history: { historyReads += 1; return [] }, seededJobs: [running], seededEvaluations: [evaluation])
+        await loader.refreshActiveJobs(wait: { waits += 1 })
+        XCTAssertEqual(reads, 2)
+        XCTAssertEqual(waits, 2)
+        XCTAssertEqual(loader.jobs.first?.state, "done")
+        XCTAssertEqual(loader.evaluations, [evaluation])
+        XCTAssertEqual(historyReads, 0)
+        XCTAssertFalse(loader.needsJobUpdates)
+    }
+
+    func testInactiveJobStatesNeverStartAutomaticReads() async throws {
+        for state in ["done", "failed", "cancelled", "unknown"] {
+            let loader = TrainingLoader(jobs: { XCTFail("Must not read terminal or unknown jobs"); return [] },
+                history: { [] }, seededJobs: [try TF.job(state)])
+            await loader.refreshActiveJobs(wait: { XCTFail("Must not schedule terminal or unknown jobs") })
+        }
+        let empty = TrainingLoader(jobs: { XCTFail("Must not read an empty history"); return [] }, history: { [] })
+        await empty.refreshActiveJobs(wait: { XCTFail("Must not schedule an empty history") })
+    }
+
+    func testJobReadFailureStopsUpdatesUntilManualRetry() async throws {
+        let running = try TF.job("running"), done = try TF.job("done")
+        var failing = true, reads = 0, waits = 0
+        let loader = TrainingLoader(jobs: {
+            reads += 1
+            if failing { throw Boom() }
+            return [reads == 2 ? running : done]
+        }, history: { [] }, render: { $0.localizedDescription }, seededJobs: [running])
+        await loader.refreshActiveJobs(wait: { waits += 1 })
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(waits, 1)
+        XCTAssertEqual(loader.jobs.first?.state, "running")
+        XCTAssertEqual(loader.jobsError, "boom")
+        XCTAssertFalse(loader.needsJobUpdates)
+        failing = false
+        await loader.refreshJobs()?.value
+        XCTAssertTrue(loader.needsJobUpdates)
+        await loader.refreshActiveJobs(wait: { waits += 1 })
+        XCTAssertEqual(reads, 3)
+        XCTAssertEqual(loader.jobs.first?.state, "done")
+        XCTAssertNil(loader.jobsError)
+    }
+
+    func testCancelledJobUpdatesDoNotReadAfterTheWaitReturns() async throws {
+        var release: CheckedContinuation<Void, Never>?
+        let loader = TrainingLoader(jobs: { XCTFail("Cancellation must prevent the next read"); return [] },
+            history: { [] }, seededJobs: [try TF.job("running")])
+        let updates = Task { await loader.refreshActiveJobs(wait: { await withCheckedContinuation { release = $0 } }) }
+        await yieldUntil { release != nil }
+        XCTAssertNotNil(release)
+        updates.cancel()
+        release?.resume()
+        await updates.value
+        XCTAssertFalse(loader.isLoadingJobs)
+        XCTAssertNil(loader.jobsError)
+    }
+
+    func testCompletionDuringTheWaitPreventsAnotherRead() async throws {
+        let done = try TF.job("done")
+        var release: CheckedContinuation<Void, Never>?, reads = 0
+        let loader = TrainingLoader(jobs: { reads += 1; return [done] }, history: { [] },
+            seededJobs: [try TF.job("running")])
+        let updates = Task { await loader.refreshActiveJobs(wait: { await withCheckedContinuation { release = $0 } }) }
+        await yieldUntil { release != nil }
+        XCTAssertNotNil(release)
+        await loader.refreshJobs()?.value
+        release?.resume()
+        await updates.value
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(loader.jobs.first?.state, "done")
+    }
+
+    func testAutomaticReadUsesTheRequestLockWithoutShowingManualRefreshProgress() async throws {
+        let done = try TF.job("done")
+        var release: CheckedContinuation<[TrainingJob], Never>?
+        let loader = TrainingLoader(jobs: { await withCheckedContinuation { release = $0 } }, history: { [] },
+            seededJobs: [try TF.job("running")])
+        let updates = Task { await loader.refreshActiveJobs(wait: {}) }
+        await yieldUntil { release != nil }
+        XCTAssertNotNil(release)
+        XCTAssertFalse(loader.isLoadingJobs)
+        XCTAssertNil(loader.refreshJobs(), "Manual and automatic reads share one request lock")
+        release?.resume(returning: [done])
+        await updates.value
+        XCTAssertEqual(loader.jobs.first?.state, "done")
+    }
+
     func testJobsSurviveAHistoryFailure() async throws {
         let job = try TF.job("running")
         let loader = TrainingLoader(jobs: { [job] }, history: { throw Boom() }, render: { $0.localizedDescription })
