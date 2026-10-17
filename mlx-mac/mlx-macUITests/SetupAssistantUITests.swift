@@ -809,6 +809,26 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual(writer.status, .completed)
     }
 
+    func testRunningTrainingJobRefreshesToCompletion() throws {
+        let file = root.appendingPathComponent("training-jobs.json")
+        var job: [String: Any] = ["receipt": "fixture-trained-adapter", "repo": "fixture/base",
+                                  "out": root.appendingPathComponent("adapter").path, "pid": 123, "state": "running"]
+        try JSONSerialization.data(withJSONObject: [job]).write(to: file)
+        launch(appearance: "Dark", route: "training-studio", isolatedHome: true)
+        resizeWindow(width: 1024, height: 680)
+        XCTAssertTrue(app.buttons["Cancel training"].waitForExistence(timeout: 15))
+        job["state"] = "done"
+        job["adapter_identity"] = ["sha256": "fixture-adapter-identity"]
+        try JSONSerialization.data(withJSONObject: [job]).write(to: file)
+        let compare = app.buttons["Compare with base"]
+        XCTAssertTrue(compare.waitForExistence(timeout: 15), "A finished job must expose evaluation without a manual refresh")
+        XCTAssertFalse(app.buttons["Cancel training"].exists)
+        let scroll = app.scrollViews.containing(.textField, identifier: "Base model repo id").firstMatch
+        for _ in 0..<8 where !compare.isHittable { scroll.scroll(byDeltaX: 0, deltaY: -280) }
+        XCTAssertTrue(compare.isHittable)
+        capture("Training-completed-without-refresh")
+    }
+
     func testTrainingWorkflowGuidanceAndResults() throws {
         let before = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
         func flag(_ name: String, _ enabled: Bool) throws {
