@@ -81,6 +81,35 @@ GPU performance. Real-model acceptance still requires its explicit runtime
 manifest and a separately provisioned compatible runtime; it is not selected
 by `make test-native-ui`.
 
+## Opt-in packaged runtime installation
+
+This acceptance test allows real Python and package downloads inside the
+disposable VM. Supply an existing Apple Silicon uv executable; the runner
+copies and hashes it without changing the host installation:
+
+```bash
+make prepare-runtime-bundle
+python3 scripts/native_ui_vm.py \
+  --base-vm mlx-workbench-ui-base \
+  --runtime-bundle .run/bundled-runtime \
+  --runtime-install-uv /absolute/path/to/uv \
+  --ui-test mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup \
+  --with-unit-tests
+```
+
+Only this explicit installation option enables shared NAT networking for
+downloads; ordinary native UI runs keep their host-only network. The VM stages
+uv in its user-local tool directory before starting XCUITest.
+
+The UI test uses a distribution-mode Debug build with source-checkout fallback
+disabled. It prepares the packaged engine, checks that cancelling installation
+creates no environment, then confirms installation through Setup Assistant.
+Python storage and package caches start empty in an isolated test home. The
+test checks the installed Python version, pinned packages, engine selection and
+base conversion/serving checks. It rejects an environment created in the build
+checkout. Build hashes, installed-package evidence, logs and screenshots stay
+with the run's output. No model is downloaded, converted or served by this test.
+
 ## Opt-in GGUF-to-Run acceptance
 
 The existing native real-data harness can be launched through one guarded

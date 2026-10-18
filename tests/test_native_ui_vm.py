@@ -14,6 +14,21 @@ spec.loader.exec_module(vm)
 
 
 class NativeUIVMTests(unittest.TestCase):
+    def test_runtime_installation_requires_its_explicit_bundle_and_test(self):
+        for extra in ([], ["--runtime-bundle", "bundle", "--ui-test", "another-test"]):
+            with self.subTest(extra=extra), patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture", "--runtime-install-uv", "/tools/uv", *extra]), \
+                    patch.object(vm, "host") as launch:
+                with self.assertRaises(SystemExit):
+                    vm.main()
+                launch.assert_not_called()
+
+    def test_runtime_installation_option_reaches_the_runner_for_the_selected_test(self):
+        selection = "mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup"
+        with patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture", "--runtime-install-uv", "/tools/uv", "--runtime-bundle", "bundle", "--ui-test", selection]), \
+                patch.object(vm, "host") as launch:
+            vm.main()
+        self.assertEqual(launch.call_args.args[0].runtime_install_uv, "/tools/uv")
+
     def test_desktop_size_is_selected_before_guest_launch(self):
         for desktop in ("1024x768", "1440x1000"):
             with self.subTest(desktop=desktop), \

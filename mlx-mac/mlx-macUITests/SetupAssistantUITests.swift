@@ -1969,8 +1969,9 @@ final class SetupAssistantUITests: XCTestCase {
             .path
     }
 
-    private func launch(firstRun: Bool = true, python: String? = nil, home: URL? = nil) {
+    private func launch(firstRun: Bool = true, python: String? = nil, home: URL? = nil, environment: [String: String] = [:]) {
         app = XCUIApplication()
+        app.launchEnvironment.merge(environment) { _, supplied in supplied }
         app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = configPath
         if let python { app.launchEnvironment["MLX_WORKBENCH_PYTHON"] = python }
         if let home { app.launchEnvironment["CFFIXED_USER_HOME"] = home.path }
@@ -2052,6 +2053,138 @@ final class SetupAssistantUITests: XCTestCase {
         XCTAssertTrue(status.waitForExistence(timeout: 30))
         XCTAssertFalse(sheet.buttons["runtime-install-cancel"].exists)
         capture("Runtime-prerequisites-before-confirmation")
+    }
+
+    func testPackagedRuntimeInstallsFromCleanSetup() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let uvPath = environment["MLX_WORKBENCH_RUNTIME_INSTALL_UV"],
+              let uvDigest = environment["MLX_WORKBENCH_RUNTIME_INSTALL_UV_SHA256"],
+              let payloadPath = environment["MLX_WORKBENCH_RUNTIME_PAYLOAD"] else {
+            throw XCTSkip("Requires the explicit packaged-runtime installation runner option.")
+        }
+        executionTimeAllowance = 2400
+        let configURL = URL(fileURLWithPath: configPath)
+        let home = configURL.deletingLastPathComponent().appendingPathComponent("home")
+        let fm = FileManager.default
+        let tool = URL(fileURLWithPath: uvPath)
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        let uvData = try Data(contentsOf: URL(fileURLWithPath: uvPath))
+        XCTAssertEqual(SHA256.hash(data: uvData).map { String(format: "%02x", $0) }.joined(), uvDigest)
+        let metadata = try Data(contentsOf: URL(fileURLWithPath: payloadPath).appendingPathComponent("manifest.json"))
+        let identity = SHA256.hash(data: metadata).map { String(format: "%02x", $0) }.joined()
+        let root = home.appendingPathComponent("Library/Application Support/mlx-workbench/runtimes/" + identity)
+        let cache = home.appendingPathComponent("cache/uv")
+        let pythonInstall = home.appendingPathComponent("python")
+        XCTAssertFalse(fm.fileExists(atPath: root.path))
+        XCTAssertFalse(fm.fileExists(atPath: cache.path))
+        XCTAssertFalse(fm.fileExists(atPath: pythonInstall.path))
+        try JSONSerialization.data(withJSONObject: ["mlx_agent_path": "", "gguf_roots": [], "mlx_roots": [],
+            "output_dir": home.appendingPathComponent("outputs").path,
+            "quarantine_dir": home.appendingPathComponent("quarantine").path]).write(to: configURL)
+        launch(home: home, environment: [
+            "PATH": tool.deletingLastPathComponent().path + ":/usr/bin:/bin:/usr/sbin:/sbin", "UV_CACHE_DIR": cache.path,
+            "UV_PYTHON_INSTALL_DIR": pythonInstall.path, "UV_NO_CONFIG": "1",
+            "PIP_CONFIG_FILE": "/dev/null", "PIP_CACHE_DIR": home.appendingPathComponent("cache/pip").path,
+            "HF_HOME": home.appendingPathComponent("cache/huggingface").path, "HF_HUB_OFFLINE": "1",
+        ])
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 30))
+        XCTAssertTrue(sheet.buttons["setup-bundled-runtime"].waitForExistence(timeout: 30))
+        sheet.buttons["setup-bundled-runtime"].click()
+        app.sheets.buttons["Prepare engine"].firstMatch.click()
+        XCTAssertTrue(sheet.staticTexts["setup-bundled-runtime-prepared"].waitForExistence(timeout: 60))
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("manifest.json")), metadata)
+        XCTAssertFalse(fm.fileExists(atPath: root.appendingPathComponent(".venv").path))
+        sheet.buttons["Continue"].click()
+        XCTAssertTrue(sheet.staticTexts["runtime-prerequisites-status"].waitForExistence(timeout: 60))
+        capture("Packaged-runtime-prerequisites")
+        let prerequisiteDetails = XCTAttachment(string: sheet.debugDescription)
+        prerequisiteDetails.name = "Packaged-runtime-prerequisites.txt"
+        prerequisiteDetails.lifetime = .keepAlways
+        add(prerequisiteDetails)
+        let install = sheet.buttons["runtime-install-start"]
+        XCTAssertTrue(install.waitForExistence(timeout: 15))
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: install)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 15), .completed,
+                       "The reused uv tool and system Python must satisfy setup prerequisites")
+        install.click()
+        app.sheets.buttons["Cancel"].firstMatch.click()
+        XCTAssertFalse(fm.fileExists(atPath: root.appendingPathComponent(".venv").path))
+        install.click()
+        app.sheets.buttons["Run make install"].firstMatch.click()
+        let terminal = NSPredicate { _, _ in
+            let status = sheet.staticTexts["runtime-install-status"]
+            let text = (status.value as? String) ?? status.label
+            return status.exists && (text == "Install command finished" || text.hasPrefix("Install failed:"))
+        }
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: terminal, object: nil)], timeout: 1800)
+        capture("Packaged-runtime-install-result")
+        if sheet.staticTexts["Install log"].firstMatch.exists { sheet.staticTexts["Install log"].firstMatch.click() }
+        let log = sheet.staticTexts.allElementsBoundByIndex.map { ($0.value as? String) ?? $0.label }.joined(separator: "\n")
+        let logAttachment = XCTAttachment(string: log)
+        logAttachment.name = "Packaged-runtime-install-log"
+        logAttachment.lifetime = .keepAlways
+        add(logAttachment)
+        XCTAssertEqual(result, .completed, "Runtime installation did not reach a terminal state")
+        let python = root.appendingPathComponent(".venv/bin/python")
+        XCTAssertTrue(fm.isExecutableFile(atPath: python.path))
+        let installed = try inspectInstalledRuntime(python: python, root: root)
+        let evidence = try JSONSerialization.data(withJSONObject: installed, options: [.prettyPrinted, .sortedKeys])
+        let attachment = XCTAttachment(data: evidence, uniformTypeIdentifier: "public.json")
+        attachment.name = "Packaged-runtime-install.json"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let completedStatus = sheet.staticTexts["runtime-install-status"]
+        XCTAssertEqual((completedStatus.value as? String) ?? completedStatus.label, "Install command finished", log)
+        XCTAssertEqual(installed["python"] as? String, "3.12")
+        XCTAssertEqual(installed["pins_match"] as? Bool, true)
+        let checks = try XCTUnwrap(installed["runtime"] as? [String: Any])
+        XCTAssertEqual(checks["ok"] as? Bool, true)
+        XCTAssertTrue(sheet.staticTexts["Convert and serve runtimes are ready."].waitForExistence(timeout: 60))
+        let saved = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
+        XCTAssertEqual(saved["mlx_agent_path"] as? String, root.appendingPathComponent("vendor/mlx-agent").path)
+        XCTAssertFalse(fm.fileExists(atPath: home.appendingPathComponent("outputs").path))
+        capture("Packaged-runtime-ready")
+    }
+
+    private func inspectInstalledRuntime(python: URL, root: URL) throws -> [String: Any] {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = python
+        process.currentDirectoryURL = root
+        process.arguments = ["-I", "-c", """
+        import importlib.metadata, json, pathlib, re, sys
+        root = pathlib.Path(sys.argv[1])
+        sys.path.insert(0, str(root))
+        from mlx_workbench import deps
+        pins = {}
+        for file in [root / 'requirements.txt', root / 'vendor/mlx-agent/requirements-lab.txt']:
+            for name, version in re.findall(r'^([a-zA-Z0-9_.-]+)==([^\\s#]+)', file.read_text(), re.M):
+                pins[name] = version
+        actual = {}
+        for name in pins:
+            try: actual[name] = importlib.metadata.version(name)
+            except importlib.metadata.PackageNotFoundError: actual[name] = None
+        print(json.dumps({'python': f'{sys.version_info.major}.{sys.version_info.minor}',
+                          'pins': pins, 'installed': actual, 'pins_match': pins == actual,
+                          'runtime': deps.runtime_report()}))
+        """, root.path]
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = python.deletingLastPathComponent().path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        process.environment = environment
+        process.standardOutput = output
+        process.standardError = output
+        let exit = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exit.signal() }
+        try process.run()
+        if exit.wait(timeout: .now() + 60) == .timedOut {
+            process.terminate()
+            if exit.wait(timeout: .now() + 5) == .timedOut { kill(process.processIdentifier, SIGKILL); process.waitUntilExit() }
+            XCTFail("Installed-runtime inspection timed out")
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        XCTAssertEqual(process.terminationStatus, 0, String(decoding: data, as: UTF8.self))
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
     func testFirstLaunchWalksEveryStepAndPersistsCompletion() throws {
