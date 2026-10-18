@@ -189,7 +189,8 @@ struct CLIProcess {
 
     /// Run one mlx-agent subcommand and return its unwrapped `data` payload.
     func run(agentPath: String, argv: [String], isScout: Bool = false,
-             timeout: TimeInterval? = nil, cancellation: CLIInvocationCancellation? = nil) throws -> [String: Any] {
+             timeout: TimeInterval? = nil, cancellation: CLIInvocationCancellation? = nil,
+             preserveEnvelope: Bool = false, onChildLaunched: (() -> Void)? = nil) throws -> [String: Any] {
         if cancellation?.isRequested == true { throw CancellationError() }
         let script = try cliScript(agentPath: agentPath)
         let time = timeout ?? (isScout ? scoutTimeout : defaultTimeout)
@@ -241,6 +242,7 @@ struct CLIProcess {
 
         do {
             try process.run()
+            onChildLaunched?()
         } catch {
             // No child was spawned; the pipes never reach EOF, so close the
             // read handles to unblock the drain threads before waiting.
@@ -292,6 +294,7 @@ struct CLIProcess {
 
         let stderrText = String(decoding: stderrData, as: UTF8.self)
         let envelope = parseEnvelope(stdoutData, stderr: stderrText)
+        if preserveEnvelope { return envelope }
         return try unwrap(envelope)
     }
 
@@ -316,7 +319,7 @@ struct CLIProcess {
         guard !data.isEmpty,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            return ["status": "error", "error": [
+            return ["__mlx_cli_response_unreadable": true, "status": "error", "error": [
                 "code": "skill_output_unreadable",
                 "message": detail.isEmpty ? "The agent did not return JSON." : String(detail.prefix(400)),
                 "remediation": "Run the same command by hand in the mlx-agent checkout to see the failure.",

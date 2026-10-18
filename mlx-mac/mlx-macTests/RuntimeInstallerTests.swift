@@ -359,4 +359,3 @@ final class RuntimeInstallerTests: XCTestCase {
         }
     }
 }
-

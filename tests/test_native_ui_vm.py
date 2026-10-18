@@ -29,6 +29,15 @@ class NativeUIVMTests(unittest.TestCase):
             vm.main()
         self.assertEqual(launch.call_args.args[0].runtime_install_uv, "/tools/uv")
 
+    def test_focused_run_preserves_multiple_requested_cases(self):
+        cases = ["mlx-workbenchUITests/WorkbenchReviewUITests/testLibraryClassifierTaskAndMissingModelHistory",
+                 "mlx-workbenchUITests/WorkbenchReviewUITests/testLibraryMusicTaskLifecycle"]
+        with patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture",
+                                         "--ui-test", cases[0], "--ui-test", cases[1]]), \
+                patch.object(vm, "host") as launch:
+            vm.main()
+        self.assertEqual(launch.call_args.args[0].ui_test, cases)
+
     def test_desktop_size_is_selected_before_guest_launch(self):
         for desktop in ("1024x768", "1440x1000"):
             with self.subTest(desktop=desktop), \

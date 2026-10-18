@@ -64,8 +64,9 @@ preserves logs, result bundles, source hashes and screenshots under
 
 `--preflight-only` checks the guest without running tests. `--unit-test` runs
 one named XCTest for diagnosis; its result is not full-suite acceptance.
-`--ui-test` builds and runs one named UI test without the complete unit gate,
-so a specific interaction or layout failure can be diagnosed first. A focused
+`--ui-test` builds and runs named UI tests without the complete unit gate;
+repeat the option for each exact test identifier. This lets specific interaction
+or layout failures be diagnosed first. A focused
 result does not replace the default command's complete gates.
 
 Add `--with-unit-tests` to run the complete unit gate before a selected UI

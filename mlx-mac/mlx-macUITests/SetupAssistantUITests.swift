@@ -71,18 +71,90 @@ final class WorkbenchReviewUITests: XCTestCase {
             allow.click()
             return true
         }
-        root = URL(fileURLWithPath: NSTemporaryDirectory())
+        root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
             .appendingPathComponent("workbench-review-\(UUID().uuidString)")
+            .resolvingSymlinksInPath()
         let script = root.appendingPathComponent("agent/scripts/mlx-agent")
         try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("models"), withIntermediateDirectories: true)
         let python = """
-        import hashlib, json, os, pathlib, sys, time
+        import hashlib, json, math, os, pathlib, struct, sys, time, uuid, wave
         root = pathlib.Path(__file__).resolve().parents[2]
         args = sys.argv[1:]
         with (root / 'calls.jsonl').open('a') as f:
             f.write(json.dumps(args) + '\\n')
-        if args[:2] == ['convert', 'scan']:
+        if args and args[0] == 'task':
+            task_root = pathlib.Path(args[args.index('--state-dir') + 1]) if '--state-dir' in args else root / 'Library/Application Support/mlx-agent/tasks'
+            records_path = task_root / 'fixture-tasks.json'
+            records = json.loads(records_path.read_text()) if records_path.exists() else []
+            def reference(path):
+                content = path.read_bytes()
+                return dict(path=str(path), sha256=hashlib.sha256(content).hexdigest(), bytes=len(content))
+            def artifact(identifier, name, value):
+                folder = task_root / 'artifacts' / identifier
+                folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+                path = folder / name
+                path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True))
+                path.chmod(0o600)
+                return reference(path)
+            def finish(record):
+                folder = task_root / 'artifacts' / record['id']
+                request = json.loads(pathlib.Path(record['request']['path']).read_text())
+                if record['kind'] == 'classification':
+                    result = dict(schema='decide/1', model=record['model_path'], backend='mlx-embeddings', seconds=0.1,
+                        answers={name:dict(type='choice', choice='billing', probabilities=dict(billing=0.9, technical=0.1))
+                                 for name in request['parameters']['questions']})
+                else:
+                    path = folder / 'output.wav'
+                    with wave.open(str(path), 'wb') as output:
+                        output.setnchannels(1); output.setsampwidth(2); output.setframerate(16000)
+                        output.writeframes(b''.join(struct.pack('<h', int(2000 * math.sin(2 * math.pi * 220 * i / 16000))) for i in range(240000)))
+                    path.chmod(0o600)
+                    result = dict(schema='music/1', model=record['model_path'], backend='mlx-audio', path=str(path),
+                        output_artifact=reference(path), audio_seconds=15, sample_rate=16000, seconds=0.1,
+                        duration=15, steps=30, seed=42)
+                record.update(state='succeeded', completed_at='2026-01-01T00:00:01Z', result=artifact(record['id'], 'result.json', result))
+            action = args[1]
+            if action == 'capabilities':
+                data = dict(schema='task-capabilities/1', request_schema='task-request/1', run_schema='task-run/1', tasks=[
+                    dict(kind=kind, result_schema=result, cancellation=True, requires_local_model=True, model_verification=True)
+                    for kind, result in [('classification', 'decide/1'), ('music_generation', 'music/1')]])
+            elif action == 'start':
+                request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
+                identifier = str(uuid.UUID(int=len(records) + 1))
+                record = dict(schema='task-run/1', id=identifier, kind=request['kind'], state='running', model_path=request['model_path'],
+                    created_at='2026-01-01T00:00:00Z', started_at='2026-01-01T00:00:00Z', completed_at=None,
+                    cancel_requested=False, execution_unresolved=False, supervisor=dict(pid=101), execution=dict(pid=102),
+                    request=artifact(identifier, 'request.json', request), result=None, error=None,
+                    identity=dict(backend='mlx-embeddings' if request['kind'] == 'classification' else 'mlx-audio',
+                        backend_version='1.0', engine_version='0.7.0', python_version='3.12', model_fingerprint='a' * 64))
+                if request['kind'] == 'classification': finish(record)
+                records.insert(0, record)
+                data = dict(task=record)
+            elif action == 'list':
+                limit = int(args[args.index('--limit') + 1]) if '--limit' in args else 20
+                data = dict(tasks=records[:limit], has_more=len(records) > limit)
+            else:
+                identifier = args[args.index('--id') + 1]
+                record = next(item for item in records if item['id'] == identifier)
+                if action == 'cancel' and record['state'] == 'running':
+                    record.update(state='cancelled', cancel_requested=True, completed_at='2026-01-01T00:00:01Z')
+                elif action == 'status' and record['state'] == 'running' and (root / 'finish-music-task').exists():
+                    finish(record)
+                if action == 'verify-model':
+                    assert pathlib.Path(record['model_path']).is_dir()
+                    data = dict(id=record['id'], model_path=record['model_path'],
+                                model_fingerprint=record['identity']['model_fingerprint'], matches=True)
+                elif action == 'result':
+                    assert record['state'] == 'succeeded'
+                    data = dict(task=record, artifact=record['result'], inline=True,
+                                result=json.loads(pathlib.Path(record['result']['path']).read_text()))
+                else:
+                    data = dict(task=record)
+            if action in ('start', 'status', 'cancel'):
+                records_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                records_path.write_text(json.dumps(records)); records_path.chmod(0o600)
+        elif args[:2] == ['convert', 'scan']:
             if (root / 'fail-scan').exists():
                 print('Fixture scan failed: choose a readable model root.', file=sys.stderr)
                 sys.exit(2)
@@ -429,6 +501,39 @@ final class WorkbenchReviewUITests: XCTestCase {
         field.typeText(value)
     }
 
+    private func waitForHittability(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"), object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func waitForHistoryTaskState(_ state: String) -> Bool {
+        let status = app.staticTexts["task-status"].firstMatch
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND (label CONTAINS[c] %@ OR value CONTAINS[c] %@)", state, state),
+            object: status
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: 15) == .completed
+    }
+
+    private func attachTaskSelectionFailure(_ name: String) {
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "\(name)-screenshot"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let accessibility = XCTAttachment(string: app.debugDescription)
+        accessibility.name = "\(name)-accessibility"
+        accessibility.lifetime = .keepAlways
+        add(accessibility)
+        let callsURL = root.appendingPathComponent("calls.jsonl")
+        let calls = (try? String(contentsOf: callsURL, encoding: .utf8)) ?? "Fixture CLI call log unavailable."
+        let callsAttachment = XCTAttachment(string: calls)
+        callsAttachment.name = "\(name)-fixture-cli-calls"
+        callsAttachment.lifetime = .keepAlways
+        add(callsAttachment)
+    }
+
     private var routes: [String] {
         ["Overview", "Library", "Prepare", "Compare", "Run", "Activity", "Reclaim", "Clients",
          "Health", "Discover", "Studies", "Training", "Settings"]
@@ -539,6 +644,134 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(calls.contains("\"backend\", \"install\""))
     }
 
+    private func installTaskModel(kind: String, name: String) throws -> URL {
+        let model = root.appendingPathComponent("models/" + kind)
+        try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+        try Data("{\"model_type\":\"fixture\"}".utf8).write(to: model.appendingPathComponent("config.json"))
+        let scan: [String: Any] = ["models": [], "outputs": [["path": model.path, "name": name,
+            "model_key": kind, "bytes": 1024, "readable": true,
+            "task": ["type": kind, "use_cases": [], "source": "registry", "confidence": "confirmed"]]],
+            "pending": [], "duplicates": [], "totals": ["gguf": 0, "pending": 0, "converted": 1,
+                "unreadable": 0, "bytes": 1024, "reclaimable_bytes": 0]]
+        try JSONSerialization.data(withJSONObject: scan).write(to: root.appendingPathComponent("scan-result.json"))
+        return model
+    }
+
+    private func taskSubmissions() throws -> [[String: Any]] {
+        let path = root.appendingPathComponent("Library/Application Support/mlx-agent/tasks/fixture-tasks.json")
+        guard FileManager.default.fileExists(atPath: path.path) else { return [] }
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [[String: Any]])
+    }
+
+    private func openRecentTaskHistory() {
+        let history = app.buttons["task-history-open"].firstMatch
+        if history.waitForExistence(timeout: 2), history.isHittable {
+            history.click()
+            return
+        }
+        let overflow = app.popUpButtons["more toolbar items"].firstMatch
+        XCTAssertTrue(overflow.waitForExistence(timeout: 10), app.debugDescription)
+        overflow.click()
+        let historyItem = app.menuItems["Recent tasks"].firstMatch
+        XCTAssertTrue(historyItem.waitForExistence(timeout: 10), app.debugDescription)
+        historyItem.click()
+    }
+
+    private func waitForTaskState(_ state: String) {
+        let status = app.staticTexts["task-status"].firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 15))
+        let settled = expectation(for: NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", state, state), evaluatedWith: status)
+        wait(for: [settled], timeout: 20)
+    }
+
+    func testLibraryClassifierTaskAndMissingModelHistory() throws {
+        let model = try installTaskModel(kind: "classification", name: "Fixture classifier")
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let row = app.outlines.staticTexts["Fixture classifier"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick()
+        let state = app.textViews["task-classification-state"]
+        replace(state, with: "A customer requests a refund for a duplicate charge.")
+        replace(app.textFields["task-question-0-name"], with: "route")
+        replace(app.textFields["task-question-0-instructions"], with: "Choose the team for this request.")
+        replace(app.textFields["task-question-0-option-0"], with: "billing")
+        replace(app.textFields["task-question-0-option-1"], with: "technical")
+        XCTAssertTrue(try taskSubmissions().isEmpty, "Editing must not submit inference")
+        let start = app.buttons["task-start"]
+        XCTAssertTrue(start.isEnabled); start.click()
+        waitForTaskState("succeeded")
+        XCTAssertTrue(text(containing: "00000000-0000-0000-0000-000000000001").waitForExistence(timeout: 10))
+        XCTAssertEqual(try taskSubmissions().count, 1)
+        XCTAssertTrue(app.buttons["task-reuse"].waitForExistence(timeout: 10))
+        app.buttons["task-reuse"].click()
+        XCTAssertEqual(state.value as? String, "A customer requests a refund for a duplicate charge.")
+        XCTAssertEqual(try taskSubmissions().count, 1, "Reuse must only fill the draft")
+        capture("Library-classifier-result-and-reuse")
+        app.terminate()
+        try FileManager.default.removeItem(at: model)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("scan-result.json"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        XCTAssertTrue(app.staticTexts["No models found"].waitForExistence(timeout: 15))
+        openRecentTaskHistory()
+        let recorded = app.buttons["task-history-row-00000000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(recorded.waitForExistence(timeout: 15))
+        guard waitForHittability(recorded, timeout: 5) else {
+            attachTaskSelectionFailure("Classifier-history-row-not-hittable")
+            XCTFail("The recorded classifier row must be hittable")
+            return
+        }
+        recorded.click()
+        guard waitForHistoryTaskState("succeeded") else {
+            attachTaskSelectionFailure("Classifier-history-selection-did-not-render")
+            XCTFail("Selecting the recorded classifier task must show its succeeded details")
+            return
+        }
+        XCTAssertTrue(text(containing: "billing").waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["task-reuse"].isEnabled)
+        XCTAssertEqual(try taskSubmissions().count, 1)
+        capture("Library-history-with-missing-model")
+        app.terminate()
+        _ = try installTaskModel(kind: "music_generation", name: "Fixture music")
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let otherModel = app.outlines.staticTexts["Fixture music"].firstMatch
+        XCTAssertTrue(otherModel.waitForExistence(timeout: 15)); otherModel.doubleClick()
+        XCTAssertTrue(app.staticTexts["Generate music"].waitForExistence(timeout: 10))
+        app.sheets.firstMatch.buttons["Done"].click()
+        openRecentTaskHistory()
+        let otherModelHistory = app.buttons["task-history-row-00000000-0000-0000-0000-000000000001"]
+        XCTAssertTrue(otherModelHistory.waitForExistence(timeout: 15), "Toolbar history must include tasks for other models")
+        otherModelHistory.click()
+        waitForTaskState("succeeded")
+        XCTAssertEqual(try taskSubmissions().count, 1, "Browsing history must not submit another task")
+        capture("Library-history-with-another-model-selected")
+    }
+
+    func testLibraryMusicTaskLifecycle() throws {
+        _ = try installTaskModel(kind: "music_generation", name: "Fixture music")
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let row = app.outlines.staticTexts["Fixture music"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.doubleClick()
+        replace(app.textFields["task-music-caption"], with: "Quiet instrumental piano")
+        XCTAssertTrue(try taskSubmissions().isEmpty)
+        app.buttons["task-start"].click()
+        waitForTaskState("running")
+        app.buttons["task-cancel"].click()
+        waitForTaskState("cancelled")
+        XCTAssertEqual(try taskSubmissions().count, 1)
+        try Data().write(to: root.appendingPathComponent("finish-music-task"))
+        app.buttons["task-start"].click()
+        waitForTaskState("succeeded")
+        XCTAssertEqual(try taskSubmissions().count, 2)
+        let play = app.buttons["task-audio-play"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertTrue(play.isEnabled); play.click()
+        XCTAssertTrue(app.buttons["task-audio-pause"].waitForExistence(timeout: 5))
+        capture("Library-music-result-playback")
+        let inspector = app.sheets.firstMatch
+        inspector.buttons["Done"].click()
+        XCTAssertTrue(inspector.waitForNonExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["task-audio-pause"].exists)
+        XCTAssertEqual(try taskSubmissions().count, 2, "Closing the inspector must not submit work")
+    }
+
     func testHealthAndDiscoveryResultsAndRecovery() throws {
         func statusText(_ element: XCUIElement) -> String { element.value as? String ?? element.label }
         func entries(_ audioState: String) -> [[String: Any]] {
@@ -553,8 +786,10 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
         func reveal(_ element: XCUIElement) {
             let scroll = app.scrollViews.containing(.button, identifier: "Refresh backends").firstMatch
+            let scrollAnchor = app.buttons["Install Runtime…"]
+            XCTAssertTrue(scrollAnchor.waitForExistence(timeout: 10))
             for _ in 0..<8 where !element.isHittable {
-                scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 300 : -300)
+                scrollAnchor.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 300 : -300)
             }
             XCTAssertTrue(element.isHittable)
         }
@@ -838,7 +1073,19 @@ final class WorkbenchReviewUITests: XCTestCase {
         for attempt in 0..<2 {
             select("Activity")
             let open = app.buttons["Open in Library"].firstMatch
-            XCTAssertTrue(open.waitForExistence(timeout: 15)); open.click()
+            guard open.waitForExistence(timeout: 15), waitForHittability(open, timeout: 10) else {
+                let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+                screenshot.name = "Activity-open-in-library-not-hittable-\(attempt)"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                let accessibility = XCTAttachment(string: app.debugDescription)
+                accessibility.name = "Activity-open-in-library-accessibility-\(attempt)"
+                accessibility.lifetime = .keepAlways
+                add(accessibility)
+                XCTFail("Open in Library must become hittable after Activity navigation")
+                return
+            }
+            open.click()
             let inspector = app.sheets.firstMatch
             XCTAssertTrue(inspector.waitForExistence(timeout: 10), "Explicit reveals must open the requested inspector")
             NSPasteboard.general.clearContents()

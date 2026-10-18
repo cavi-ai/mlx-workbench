@@ -405,6 +405,7 @@ struct LibraryView: View {
     @State private var selection: String?
     @State private var sortOrder = LibraryTablePresentation.defaultSortOrder
     @State private var showInspector = false
+    @State private var showRecentTasks = false
     @State private var revealError: String?
     @State private var handledRevealID: UUID?
     @State private var columnCustomization = TableColumnCustomization<LibraryRow>()
@@ -543,6 +544,9 @@ struct LibraryView: View {
                     inspector
                 }
                 .frame(width: size.width, height: size.height)
+            }
+            .sheet(isPresented: $showRecentTasks) {
+                LibraryRecentTasks(coordinator: appHost.inferenceTasks, model: selectedModel)
             }
             .onChange(of: usesInspectorColumn) { _, isWide in
                 if !isWide { showInspector = false }
@@ -855,6 +859,13 @@ struct LibraryView: View {
                 }
                 .pickerStyle(.menu)
                 .help("Filter by quantization")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button { showRecentTasks = true } label: {
+                    Label("Recent tasks", systemImage: "clock.arrow.circlepath")
+                }
+                .accessibilityIdentifier("task-history-open")
+                .help("Review recent classification and music tasks")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {

@@ -9,22 +9,32 @@ import Darwin
 actor WorkbenchAPI {
     /// One blocking mlx-agent invocation returning the unwrapped `data` payload.
     typealias AgentCommand = @Sendable (_ agentPath: String, _ argv: [String], _ isScout: Bool, _ timeout: TimeInterval?) throws -> [String: Any]
+    typealias TaskEnvelopeCommand = @Sendable (_ agentPath: String, _ argv: [String], _ timeout: TimeInterval?) throws -> [String: Any]
 
     private let cli: CLIProcess
     private let command: AgentCommand?
+    private let taskEnvelopeCommand: TaskEnvelopeCommand?
     private var agentPath: String
     private let receiptDirectory: String
+    private let taskStateDirectory: URL?
+    nonisolated var taskArtifactsRoot: URL {
+        taskStateDirectory ?? WorkbenchStatePaths.userHome().appendingPathComponent("Library/Application Support/mlx-agent/tasks", isDirectory: true)
+    }
 
     init(
         cli: CLIProcess,
         agentPath: String,
         receiptDirectory: String = WorkbenchStatePaths.applicationSupport().path,
-        command: AgentCommand? = nil
+        command: AgentCommand? = nil,
+        taskEnvelopeCommand: TaskEnvelopeCommand? = nil,
+        taskStateDirectory: URL? = nil
     ) {
         self.cli = cli
         self.command = command
+        self.taskEnvelopeCommand = taskEnvelopeCommand
         self.agentPath = agentPath
         self.receiptDirectory = receiptDirectory
+        self.taskStateDirectory = taskStateDirectory
     }
 
     func setAgentPath(_ path: String) {
@@ -61,6 +71,125 @@ actor WorkbenchAPI {
 
     private func runOffActor<T: Decodable & Sendable>(_ type: T.Type, _ argv: [String], timeout: TimeInterval) async throws -> T {
         try Self.decode(type, from: await raw(argv, timeout: timeout, cancellable: true))
+    }
+
+    // MARK: - Durable inference tasks
+
+    func taskCapabilities() async throws -> TaskCapabilities {
+        try Self.decodeTask(TaskCapabilities.self, envelope: await taskEnvelope(["task", "capabilities"]))
+    }
+
+    func taskStart(_ request: TaskRequest) async throws -> TaskRecord {
+        try request.validate()
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("mlx-task-request-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let file = staging.appendingPathComponent("request.json")
+        guard FileManager.default.createFile(atPath: file.path, contents: try JSONEncoder().encode(request), attributes: [.posixPermissions: 0o600]) else {
+            throw BridgeError.skillUnavailable
+        }
+        let envelope: [String: Any]
+        do { envelope = try await taskEnvelope(taskArguments(["task", "start", "--request", file.path])) }
+        catch let failure as TaskInvocationFailure {
+            if failure.launched { throw TaskStartOutcomeUnknown() }
+            throw failure.underlying
+        }
+        if envelope["__mlx_cli_response_unreadable"] as? Bool == true { throw TaskStartOutcomeUnknown() }
+        if let error = Self.taskError(envelope) { throw error }
+        do { return try Self.decodeTaskRecord(envelope) }
+        catch { throw TaskStartOutcomeUnknown() }
+    }
+
+    func taskStatus(id: String) async throws -> TaskRecord {
+        try Self.decodeTaskRecord(await taskEnvelope(taskArguments(["task", "status", "--id", try Self.taskUUID(id)])))
+    }
+
+    func taskList(limit: Int = 20) async throws -> TaskPage {
+        guard (1...100).contains(limit) else { throw TaskProtocolError.invalidRequest }
+        return try Self.decodeTask(TaskPage.self, envelope: await taskEnvelope(taskArguments(["task", "list", "--limit", String(limit)])))
+    }
+
+    func taskResult(id: String) async throws -> TaskResultResponse {
+        try Self.decodeTask(TaskResultResponse.self, envelope: await taskEnvelope(taskArguments(["task", "result", "--id", try Self.taskUUID(id)])))
+    }
+
+    func taskCancel(id: String) async throws -> TaskRecord {
+        try Self.decodeTaskRecord(await taskEnvelope(taskArguments(["task", "cancel", "--id", try Self.taskUUID(id)])))
+    }
+
+    func taskVerifyModel(id: String) async throws -> TaskModelVerification {
+        try Self.decodeTask(TaskModelVerification.self, envelope: await taskEnvelope(taskArguments(["task", "verify-model", "--id", try Self.taskUUID(id)])))
+    }
+
+    private func taskArguments(_ argv: [String]) -> [String] {
+        guard let taskStateDirectory else { return argv }
+        return argv + ["--state-dir", taskStateDirectory.path]
+    }
+
+    private static func taskUUID(_ value: String) throws -> String {
+        guard let uuid = UUID(uuidString: value), uuid.uuidString.lowercased() == value else { throw TaskProtocolError.invalidIdentifier }
+        return uuid.uuidString.lowercased()
+    }
+
+    private func taskEnvelope(_ argv: [String]) async throws -> [String: Any] {
+        let cli = self.cli, agentPath = self.agentPath
+        let injected = self.taskEnvelopeCommand, legacyInjected = self.command
+        let launched = ChildLaunchState()
+        do {
+            return try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        let envelope: [String: Any]
+                        if let injected { envelope = try injected(agentPath, argv + ["--json"], 300) }
+                        else if let legacyInjected {
+                            envelope = ["status": "ok", "data": try legacyInjected(agentPath, argv + ["--json"], false, 300)]
+                        } else {
+                            envelope = try cli.run(agentPath: agentPath, argv: argv, timeout: 300, preserveEnvelope: true, onChildLaunched: launched.mark)
+                        }
+                        continuation.resume(returning: envelope)
+                    } catch { continuation.resume(throwing: TaskInvocationFailure(launched: launched.value, underlying: error)) }
+                }
+            }
+        } catch { throw error }
+    }
+
+    private static func decodeTask<T: Decodable>(_ type: T.Type, envelope: [String: Any]) throws -> T {
+        if let error = taskError(envelope) { throw error }
+        guard envelope["__mlx_cli_response_unreadable"] as? Bool != true,
+              envelope["status"] as? String == "ok",
+              let data = envelope["data"] as? [String: Any] else { throw BridgeError.skillOutputUnreadable }
+        return try decode(type, from: data)
+    }
+
+    private static func decodeTaskRecord(_ envelope: [String: Any]) throws -> TaskRecord {
+        if let error = taskError(envelope) { throw error }
+        guard envelope["status"] as? String == "ok",
+              let data = envelope["data"] as? [String: Any],
+              let record = data["task"] as? [String: Any] else { throw BridgeError.skillOutputUnreadable }
+        return try decode(TaskRecord.self, from: record)
+    }
+
+    private static func taskError(_ envelope: [String: Any]) -> TaskEngineError? {
+        guard envelope["__mlx_cli_response_unreadable"] as? Bool != true,
+              envelope["status"] as? String == "error",
+              let raw = envelope["error"] as? [String: Any],
+              let detail = try? decode(TaskErrorDetail.self, from: raw) else { return nil }
+        let rawTask = (envelope["data"] as? [String: Any])?["task"] as? [String: Any]
+        let task = rawTask.flatMap { try? decode(TaskRecord.self, from: $0) }
+        return TaskEngineError(detail: detail, task: task)
+    }
+
+    private final class ChildLaunchState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var launched = false
+        var value: Bool { lock.withLock { launched } }
+        func mark() { lock.withLock { launched = true } }
+    }
+
+    private struct TaskInvocationFailure: Error, LocalizedError {
+        let launched: Bool
+        let underlying: Error
+        var errorDescription: String? { underlying.localizedDescription }
     }
 
     func health() -> (ok: Bool, path: String, cli: String, message: String) {
@@ -905,6 +1034,8 @@ actor WorkbenchAPI {
         )
     }
 }
+
+extension WorkbenchAPI: InferenceTaskAPI {}
 
 private extension Dictionary where Key == String, Value == Any {
     func bool(_ key: String) -> Bool? {
