@@ -294,7 +294,7 @@ struct ModelDetailsView: View {
                 )
 
                 if model.readiness == .ready, let taskType = model.item.task?.type,
-                   [.classification, .musicGeneration].contains(taskType) {
+                   [.classification, .musicGeneration, .speechToText, .textToSpeech].contains(taskType) {
                     InferenceTaskPanel(coordinator: appHost.inferenceTasks, model: model)
                 }
 
