@@ -478,29 +478,8 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func selectRadioOption(_ label: String, in group: String) {
-        let groups = app.radioGroups.matching(identifier: group)
-        let options = groups.descendants(matching: .radioButton)
-            .matching(NSPredicate(format: "label == %@", label))
-        XCTAssertTrue(options.firstMatch.waitForExistence(timeout: 10),
-                      "Missing \(label) in radio group \(group): \(app.debugDescription)")
-        let selectedOptions = options.allElementsBoundByIndex.filter { $0.value as? Int == 1 }
-        if selectedOptions.count == 1, let option = selectedOptions.first {
-            XCTAssertTrue(option.isEnabled)
-            let window = app.windows.firstMatch
-            let frame = option.frame
-            XCTAssertTrue(frame.midX.isFinite && frame.midY.isFinite && frame.width > 0 && frame.height > 0)
-            XCTAssertTrue(window.frame.contains(frame), "\(label) must be visible: \(frame)")
-            XCTAssertEqual(option.value as? Int, 1, app.debugDescription)
-            return
-        }
-        let oneHittable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            options.allElementsBoundByIndex.filter(\.isHittable).count == 1
-        }, object: app)
-        let result = XCTWaiter.wait(for: [oneHittable], timeout: 10)
-        XCTAssertEqual(result, .completed,
-                       "Expected one current hittable \(label) option in \(group): \(app.debugDescription)")
-        guard result == .completed,
-              let option = options.allElementsBoundByIndex.first(where: \.isHittable) else { return }
+        let option = app.radioGroups[group].firstMatch.radioButtons[label]
+        XCTAssertTrue(option.waitForExistence(timeout: 10))
         XCTAssertTrue(option.isEnabled)
         let window = app.windows.firstMatch
         let frame = option.frame
@@ -806,8 +785,10 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
         func reveal(_ element: XCUIElement) {
             let scroll = app.scrollViews.containing(.button, identifier: "Refresh backends").firstMatch
+            let scrollAnchor = app.buttons["Install Runtime…"]
+            XCTAssertTrue(scrollAnchor.waitForExistence(timeout: 10))
             for _ in 0..<8 where !element.isHittable {
-                scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 300 : -300)
+                scrollAnchor.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 300 : -300)
             }
             XCTAssertTrue(element.isHittable)
         }
