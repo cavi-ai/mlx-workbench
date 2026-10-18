@@ -210,6 +210,8 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
         raise RuntimeError("Expected exactly one native UI test runner.")
     template = plistlib.loads(runfiles[0].read_bytes())
     if manifest.get("ui_test"):
+        requested = manifest["ui_test"]
+        selected_tests = list(dict.fromkeys(requested if isinstance(requested, list) else [requested]))
         for stage in (["before", "after"] if (input_dir / "baseline.app").exists() else ["after"]):
             data = plistlib.loads(plistlib.dumps(template))
             for configuration in data["TestConfigurations"]:
@@ -225,7 +227,8 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
             name = f"ui-focused-{stage}"
             run(name, ["xcodebuild", "-xctestrun", str(runfile),
                        "-destination", "platform=macOS,arch=arm64", "-resultBundlePath", str(output_dir / f"{name}.xcresult"),
-                       f"-only-testing:{manifest['ui_test']}", "test-without-building"], expected_ui_tests=1)
+                       *[f"-only-testing:{test}" for test in selected_tests], "test-without-building"],
+                expected_ui_tests=len(selected_tests))
         return
     stages = ["after"]
     if (input_dir / "baseline.app").exists():
@@ -249,7 +252,7 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
                 selection += "/testRouteCaptures"
             run(name, ["xcodebuild", "-xctestrun", str(runfile), "-destination", "platform=macOS,arch=arm64",
                        "-resultBundlePath", str(output_dir / f"{name}.xcresult"), f"-only-testing:{selection}",
-                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 16)
+                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 21)
 
 
 def wait_for_guest(tart, vm, running, env, timeout=300):
@@ -341,7 +344,7 @@ def main():
     parser.add_argument("--desktop-size", choices=("1024x768", "1440x1000"), default="1440x1000",
                         help="Configure the guest desktop before launching the UI test runner")
     parser.add_argument("--unit-test", help="Run only this XCTest identifier for failure diagnosis; no full-suite or UI acceptance")
-    parser.add_argument("--ui-test", help="Run one UI test for scoped failure diagnosis; no complete UI-suite acceptance")
+    parser.add_argument("--ui-test", action="append", help="Run an exact UI test for scoped failure diagnosis; repeat for multiple cases. No complete UI-suite acceptance")
     parser.add_argument("--with-unit-tests", action="store_true", help="Run the complete native unit gate before the selected UI test")
     parser.add_argument("--preflight-only", action="store_true", help="Check the guest GUI session without building or running tests")
     parser.add_argument("--unit-evidence", help="Reuse a complete passed native unit run only when its source inputs match")

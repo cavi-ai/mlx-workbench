@@ -64,6 +64,7 @@ class AppHost: ObservableObject {
     let updater: UpdateCoordinator
 
     let api: WorkbenchAPI
+    let inferenceTasks: InferenceTaskCoordinator
 
     private let configModule: ConfigModule
     private let cli: CLIProcess
@@ -103,7 +104,8 @@ class AppHost: ObservableObject {
         setup: SetupCoordinator? = nil,
         updater: UpdateCoordinator? = nil,
         preferencesStore: JSONStore<RecommendationPreferences>? = nil,
-        intakeAPI: IntakeAPI? = nil
+        intakeAPI: IntakeAPI? = nil,
+        inferenceTasks: InferenceTaskCoordinator? = nil
     ) {
         self.configModule = configModule
         self.cli = cli
@@ -120,6 +122,7 @@ class AppHost: ObservableObject {
         self.config = loadedConfig
         let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
         self.api = api
+        self.inferenceTasks = inferenceTasks ?? InferenceTaskCoordinator(api: api, artifactRoot: api.taskArtifactsRoot)
         self.lab = LabCoordinator(api: api)
         self.resources = SystemResourceMonitor(statusProvider: { try await api.serveStatus() })
         let profiles = ServingProfileCoordinator(store: JSONStore(fileURL: JSONStore<ServingProfile>.defaultFileURL("serving-profiles.json")),
