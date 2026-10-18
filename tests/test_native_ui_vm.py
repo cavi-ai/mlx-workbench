@@ -14,6 +14,29 @@ spec.loader.exec_module(vm)
 
 
 class NativeUIVMTests(unittest.TestCase):
+    def test_release_installation_requires_the_explicit_installation_route(self):
+        selection = "mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup"
+        routes = [[], ["--runtime-bundle", "bundle", "--ui-test", selection],
+                  ["--runtime-bundle", "bundle", "--runtime-install-uv", "/tools/uv", "--ui-test", selection,
+                   "--baseline-app", "baseline.app"]]
+        for route in routes:
+            with self.subTest(route=route), patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture",
+                    "--runtime-install-dmg", "/packages/workbench.dmg", *route]), patch.object(vm, "host") as launch:
+                with self.assertRaises(SystemExit):
+                    vm.main()
+                launch.assert_not_called()
+
+    def test_release_installation_accepts_an_existing_disk_image_for_the_installation_case(self):
+        with patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture", "--runtime-bundle", "bundle",
+                "--runtime-install-uv", "/tools/uv", "--runtime-install-dmg", "/packages/workbench.dmg",
+                "--ui-test", "mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup"]), \
+                patch.object(vm, "host") as launch:
+            try:
+                vm.main()
+            except SystemExit as error:
+                self.fail(f"The explicit Release installation route was rejected: {error}")
+        self.assertEqual(launch.call_args.args[0].runtime_install_dmg, "/packages/workbench.dmg")
+
     def test_runtime_installation_requires_its_explicit_bundle_and_test(self):
         for extra in ([], ["--runtime-bundle", "bundle", "--ui-test", "another-test"]):
             with self.subTest(extra=extra), patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture", "--runtime-install-uv", "/tools/uv", *extra]), \

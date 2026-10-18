@@ -111,6 +111,16 @@ base conversion/serving checks. It rejects an environment created in the build
 checkout. Build hashes, installed-package evidence, logs and screenshots stay
 with the run's output. No model is downloaded, converted or served by this test.
 
+To exercise the app copied from a Release disk image, first run `make dmg`, then
+add `--runtime-install-dmg .release/mlx-workbench-<version>.dmg` to the command
+above. The image must be built from the current revision and contain the same
+runtime payload. The VM mounts it read-only, copies **MLX Workbench.app** into
+its Applications folder and runs the installation case against that app. The
+test records the running executable's identity; the runner verifies the app's
+signature and unchanged contents before and after setup. This also supports
+an existing Developer ID image, but an ad-hoc image does not prove notarization
+or Gatekeeper acceptance. The prepared base must not contain Workbench.
+
 ## Opt-in GGUF-to-Run acceptance
 
 The existing native real-data harness can be launched through one guarded
