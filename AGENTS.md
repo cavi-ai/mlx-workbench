@@ -70,8 +70,8 @@ server.
   `mlx-agent intake resolve|fetch|status|port-analysis|port-plan` and
   `backend list|install|remove`. Repo conversions run through
   `ModelWorkflowCoordinator.inspect(intake:…)` with `ConversionWorkflow.sourceRepo/backend/modelType/subfolder/allowedBits` (`modelType` → `convert start --model-type`, which runs a port's own converter; `subfolder` → `--subfolder` and an `org/name/folder` fetch, for checkpoints below the repo root such as Laya's `multilingual`; `allowedBits` from intake's `q_bits` limits Prepare's bit picker, e.g. Laya is 8-bit only);
-  the Quality Gate canary runs only for `ModelTaskType.hasCanary` types (chat models: served canary prompts; speech-to-text: a `say`-synthesized sentence transcribed through `mlx-agent convert transcribe`, passing at ≤25% word error; classification: `DecisionCanary`, a billing ticket answered through `mlx-agent convert decide` that must route to billing and read as a refund request; image generation: `ImageCanary`, a fixed prompt rendered at 512² through `mlx-agent convert generate` that must write a non-blank image). Run, endpoints and Prepare/Activity Run actions require
-  servable types. Library offers Compare for ready supported chat and media models; the selected task and model travel through a one-shot request, revalidated by Compare without starting work. Compare filters by task and runtime; Strata is chat-only. `config.outputDir` is scanned as an MLX root unless a root's scan already reaches it (`AppHost.isPath`: its symlink-resolved location lies under the root by file identity, below no hidden or skipped folder).
+  the Quality Gate canary runs only for `ModelTaskType.hasCanary` types (chat models: served canary prompts through `ServeLifecycle.live(thinkingOff: true)` → `serve start --thinking off`, scored on the answer after any inline `<think>` block, `InlineReasoning`, suite 3; verify errors surface per model through `VerificationCoordinator.runError(for:)`; speech-to-text: a `say`-synthesized sentence transcribed through `mlx-agent convert transcribe`, passing at ≤25% word error; classification: `DecisionCanary`, a billing ticket answered through `mlx-agent convert decide` that must route to billing and read as a refund request; image generation: `ImageCanary`, a fixed prompt rendered at 512² through `mlx-agent convert generate` that must write a non-blank image). Run, endpoints and Prepare/Activity Run actions require
+  servable types. Scan outputs carry `backend` {id, installed}; an output whose backend is not installed is `.needsRuntime`, so Verify, task panels and Compare skip it. The Library Status column (`LibraryRowStatus`) shows the canary verdict for ready models and readiness otherwise; MLX outputs take Modified from their newest file (`ModelLibraryBuilder.directoryFootprint`). Library offers Compare for ready supported chat and media models; the selected task and model travel through a one-shot request, revalidated by Compare without starting work. Compare filters by task and runtime; Strata is chat-only. `config.outputDir` is scanned as an MLX root unless a root's scan already reaches it (`AppHost.isPath`: its symlink-resolved location lies under the root by file identity, below no hidden or skipped folder).
   Prepare refreshes conversion status while a job is in flight and shows a progress ring (bytes
   written against the intake estimate; indeterminate while the converter loads) with the job log in a
   collapsible section; its bit picker re-targets repo
@@ -101,9 +101,12 @@ server.
   `--path`; status comparisons normalize through
   `ServerInfo.modelIdentity` (repo id or path, whichever the agent reports).
   Intake checks current ready inventory and matching conversion history before
-  fetching. Downloaded conversion directories are passed through `--source-path`
+  fetching; a reused match keeps its recorded download while it is still the
+  cached snapshot of the resolved revision (`IntakeCoordinator.reusableSource`). Downloaded conversion directories are passed through `--source-path`
   and persisted as `ConversionWorkflow.localSourcePath`; converter workers run
-  offline. Confirm conversion captures the visible source-cleanup choice.
+  offline. Confirm conversion captures the visible source-cleanup choice; a source
+  outside the configured roots (`PrepareWorkflowPresentation.sourceCleanupIsPossible`)
+  disables the choice and the post-verification cleanup preview.
   After verification, `ConvertedSourceCleanup` reclaims receipt-owned GGUF files
   or single-revision cache repositories to macOS Trash. It protects changed
   outputs, active/preferred paths, other revisions and surviving shared-blob
@@ -174,6 +177,10 @@ server.
   largest numerals and a relative bar: tok/s, real-time factor, seconds per
   step, seconds per frame. Below the lanes is one row per prompt, one column per
   lane (text, image thumbnail with larger sheet, audio play/stop, video player).
+  In chat, Fastest (`ComparisonRun.leaders`) counts only lanes with no prompt cut
+  off at the token limit before any answer; `ServeProbe` splits inline `<think>`
+  blocks into `reasoningText`; `ProbeSample.decodeTokensPerSecond` is nil when
+  streamed deltas arrived in one burst (under 0.5 ms average spacing).
   Completed text-output runs (chat, vision, video understanding, speech to text) offer
   `TextComparisonPanel` below the charts: two model outputs for one recorded prompt,
   selectable reading or bounded line differences, with existing task-quality ratings.

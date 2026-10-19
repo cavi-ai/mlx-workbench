@@ -44,7 +44,7 @@ Prompts can carry an expected-words check (all must appear, case-insensitive; `a
 
 Results lead with one lettered lane per model, A to D in run order, carrying the mode's metric as the largest number and a bar relative to the best lane. Below the lanes is one row per prompt and one column per lane: text, an image thumbnail, an audio player or a video player.
 
-Chat results show answer text separately from a collapsible **Reasoning** section, with the finish reason, generated token count, total duration and time until answer text begins. **Token limit reached** labels incomplete output. Prompt tokens give a prefill estimate, always labeled as an estimate. The builtin tool-calling set counts streamed tool calls and checks their arguments against the schema.
+Chat results show answer text separately from a collapsible **Reasoning** section, with the finish reason, generated token count, total duration and time until answer text begins. Reasoning a server streams inline as `<think>…</think>` is separated the same way. **Token limit reached** labels incomplete output; **Fastest** goes only to lanes that answered every prompt. Decode speed is left out for a prompt whose tokens arrived in one burst, since their arrival times do not reflect generation. Prompt tokens give a prefill estimate, always labeled as an estimate. The builtin tool-calling set counts streamed tool calls and checks their arguments against the schema.
 
 ## Inspect outputs side by side
 

@@ -632,12 +632,14 @@ actor WorkbenchAPI {
     }
 
     func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
-                      strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil) async throws -> [String: Any] {
+                      strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil,
+                      thinkingOff: Bool = false) async throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + ["--runtime", runtime, "--receipts-dir", receiptDirectory]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
+        if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
             argv += strataOptions.arguments
@@ -647,7 +649,8 @@ actor WorkbenchAPI {
 
     func serveStart(repo: String, runtime: String, port: Int?,
                     previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
-                    timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil) async throws -> [String: Any] {
+                    timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil,
+                    thinkingOff: Bool = false) async throws -> [String: Any] {
         var argv = ["serve", "start"]
             + Self.serveModelArguments(for: repo)
             + [
@@ -657,6 +660,7 @@ actor WorkbenchAPI {
             ]
         if let port { argv.append(contentsOf: ["--port", String(port)]) }
         if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
+        if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
             argv += strataOptions.arguments
@@ -983,6 +987,10 @@ actor WorkbenchAPI {
                     modelType: value.string("model_type")
                 )
             }
+            let backend = (raw["backend"] as? [String: Any]).flatMap { value -> OutputBackend? in
+                guard let id = value.string("id"), let installed = value.bool("installed") else { return nil }
+                return OutputBackend(id: id, installed: installed)
+            }
             return MLXOutput(
                 path: path,
                 name: raw.string("name") ?? path,
@@ -990,7 +998,8 @@ actor WorkbenchAPI {
                 quantization: info,
                 provenance: raw.string("provenance"),
                 task: ModelTask(dictionary: raw["task"] as? [String: Any]),
-                runtime: raw.string("runtime")
+                runtime: raw.string("runtime"),
+                backend: backend
             )
         }
         guard let totalsDict = data["totals"] as? [String: Any] else {

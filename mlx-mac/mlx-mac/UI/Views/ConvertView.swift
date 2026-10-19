@@ -60,6 +60,22 @@ struct PrepareWorkflowPresentation: Equatable {
         sourceRepo ?? (sourcePath.hasPrefix(Self.repoScheme) ? String(sourcePath.dropFirst(Self.repoScheme.count)) : nil)
     }
 
+    /// The cleanup choice also stays while the preview is prepared, so the actions and track below do not jump.
+    var showsSourceCleanupChoice: Bool { canPreview || canConfirm || state == .previewingConversion }
+
+    /// False when the source's location is known and lies under none of `roots`; an unknown location stays eligible.
+    static func sourceCleanupIsPossible(sourceLocation: String?, roots: [String],
+                                        fileIdentity: (String) -> NSObject? = AppHost.fileIdentity) -> Bool {
+        guard let sourceLocation, !sourceLocation.isEmpty else { return true }
+        return roots.contains { AppHost.isPath(sourceLocation, within: $0, fileIdentity: fileIdentity) }
+    }
+
+    /// The task intake labelled for this workflow's repository, when the resolution is for it.
+    static func intakeTask(_ resolution: IntakeResolution?, repoID: String?) -> ModelTaskType? {
+        guard let resolution, let repoID, resolution.source.repo == repoID else { return nil }
+        return resolution.task?.type
+    }
+
     /// The source's name: its repo id, else the GGUF file name; empty without a source.
     var displayName: String {
         guard !sourcePath.isEmpty else { return "" }
@@ -493,6 +509,15 @@ struct ConvertView: View {
 
     private var sourceModel: LibraryModel? { presentation.sourceModel(in: appHost.librarySnapshot) }
 
+    /// Cleanup only reaches sources inside the configured model folders.
+    private var sourceCleanupIsPossible: Bool {
+        let workflow = modelWorkflow.workflow
+        return PrepareWorkflowPresentation.sourceCleanupIsPossible(
+            sourceLocation: workflow.localSourcePath ?? (presentation.isRepoSource ? nil : workflow.sourcePath),
+            roots: appHost.config.ggufRoots + appHost.config.mlxRoots
+        )
+    }
+
     private var outputModel: LibraryModel? { presentation.outputModel(in: appHost.librarySnapshot) }
 
     private var existingModel: LibraryModel? {
@@ -634,15 +659,21 @@ struct ConvertView: View {
                     .font(WorkbenchTypography.label)
                     .foregroundStyle(WorkbenchColor.muted)
                 tiles
-                if presentation.canPreview || presentation.canConfirm {
+                let previewing = presentation.state == .previewingConversion
+                if presentation.showsSourceCleanupChoice {
+                    let note = sourceCleanupIsPossible
+                        ? "Keeps failed or unverified sources, active models, other cache revisions and shared weights."
+                        : "The original stays: it is outside the model folders in Settings."
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
-                        Toggle("Move original source to Trash after verification", isOn: $reclaimSource)
-                        Text("Keeps failed or unverified sources, active models, other cache revisions and shared weights.")
+                        Toggle("Move original source to Trash after verification",
+                               isOn: sourceCleanupIsPossible ? $reclaimSource : .constant(false))
+                            .disabled(!sourceCleanupIsPossible || previewing)
+                        Text(note)
                             .font(WorkbenchTypography.secondary)
                             .foregroundStyle(WorkbenchColor.muted)
                             .lineLimit(1)
                             .truncationMode(.tail)
-                            .help("Keeps failed or unverified sources, active models, other cache revisions and shared weights.")
+                            .help(note)
                     }
                 }
             }
@@ -752,6 +783,8 @@ struct ConvertView: View {
         let actual = presentation.actualBytes(outputModel: outputModel)
         let highlighted = presentation.highlightedBits(selected: qBits)
         let taskModel = outputModel ?? sourceModel
+        // A Hugging Face source is not in Library before it converts; intake labelled its task.
+        let intakeTask = PrepareWorkflowPresentation.intakeTask(appHost.intake.resolution, repoID: presentation.repoID)
         return LazyVGrid(
             columns: [GridItem(.adaptive(minimum: WorkbenchSize.Prepare.tileMinimum, maximum: WorkbenchSize.Prepare.tileMaximum), spacing: WorkbenchSpacing.sm, alignment: .top)],
             alignment: .leading,
@@ -762,8 +795,8 @@ struct ConvertView: View {
                     resources: appHost.resources,
                     tile: tile,
                     parameters: taskModel?.item.parameters,
-                    task: taskModel?.item.task?.type,
-                    taskIsLabelled: taskModel != nil,
+                    task: taskModel?.item.task?.type ?? intakeTask,
+                    taskIsLabelled: taskModel != nil || intakeTask != nil,
                     reserveGB: appHost.config.fitReserveGB,
                     hardware: appHost.hardwareProfile,
                     isHighlighted: highlighted == tile.bits,
@@ -823,7 +856,7 @@ struct ConvertView: View {
         case .preview:
             Task { await modelWorkflow.preview(qBits: qBits, out: nil) }
         case .confirm:
-            Task { await modelWorkflow.confirm(qBits: qBits, reclaimSourceAfterVerification: reclaimSource) }
+            Task { await modelWorkflow.confirm(qBits: qBits, reclaimSourceAfterVerification: reclaimSource && sourceCleanupIsPossible) }
         case .runExisting:
             guard let existingModel else { return }
             modelWorkflow.useExisting(existingModel)
@@ -937,6 +970,10 @@ struct ConvertView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(reclaim.isApplying)
+            } else if !sourceCleanupIsPossible {
+                Text("The original stays: it is outside the model folders in Settings.")
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
             } else {
                 Button("Preview source cleanup") { Task { await reclaim.previewSource(modelWorkflow.workflow) } }
                     .buttonStyle(.bordered)

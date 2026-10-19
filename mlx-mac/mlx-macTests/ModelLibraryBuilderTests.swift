@@ -252,6 +252,65 @@ final class ModelLibraryBuilderTests: XCTestCase {
         XCTAssertEqual(snapshot.totalBytes, 2_048)
     }
 
+    func testOutputsCarryModifiedTimeAndNeedRuntimeWhenTheirBackendIsMissing() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mlx-workbench-outputs-\(UUID().uuidString)", isDirectory: true)
+        let speech = root.appendingPathComponent("whisper-base-MLX-4bit", isDirectory: true)
+        let chat = root.appendingPathComponent("Qwen3-4B-4bit", isDirectory: true)
+        for folder in [speech, chat] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data(repeating: 1, count: 16).write(to: folder.appendingPathComponent("model.safetensors"))
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        let modified = Date(timeIntervalSince1970: 1_790_000_000)
+        try FileManager.default.setAttributes([.modificationDate: modified],
+                                              ofItemAtPath: chat.appendingPathComponent("model.safetensors").path)
+
+        func output(_ folder: URL, backend: OutputBackend) -> MLXOutput {
+            MLXOutput(path: folder.path, name: folder.lastPathComponent, modelKey: nil,
+                      quantization: QuantInfo(bits: 4, groupSize: 64, modelType: nil), provenance: nil,
+                      backend: backend)
+        }
+        let scan = ScanResult(
+            roots: nil, models: [],
+            outputs: [output(speech, backend: OutputBackend(id: "mlx-audio", installed: false)),
+                      output(chat, backend: OutputBackend(id: "mlx-lm", installed: true))],
+            pending: [], duplicates: [],
+            totals: ScanTotals(gguf: 0, pending: 0, converted: 0, unreadable: 0, bytes: 0, reclaimableBytes: 0)
+        )
+
+        let models = Dictionary(uniqueKeysWithValues: ModelLibraryBuilder.build(scan: scan, hardware: fixtureHardware, now: fixtureDate)
+            .models.map { ($0.item.name, $0) })
+
+        XCTAssertEqual(models["whisper-base-MLX-4bit"]?.readiness, .needsRuntime)
+        XCTAssertEqual(models["Qwen3-4B-4bit"]?.readiness, .ready)
+        XCTAssertEqual(models["Qwen3-4B-4bit"]?.item.modifiedAt, 1_790_000_000)
+        XCTAssertNotNil(models["whisper-base-MLX-4bit"]?.item.modifiedAt)
+        XCTAssertTrue(ModelDetailsPresentation.readinessExplanation(for: models["whisper-base-MLX-4bit"]!)
+            .contains("mlx-audio backend"))
+    }
+
+    func testStatusColumnShowsTheVerdictForReadyModelsAndReadinessOtherwise() {
+        let verified = LibraryRowStatus.resolve(readiness: .ready, verification: .verified(report(outcome: .passed)))
+        let failed = LibraryRowStatus.resolve(readiness: .ready, verification: .failed(report(outcome: .failed(canaryIDs: ["code-fib"]))))
+        XCTAssertEqual(verified.title, "Verified")
+        XCTAssertEqual(verified.tone, .success)
+        XCTAssertEqual(failed.title, "Failed checks")
+        XCTAssertEqual(failed.tone, .failure)
+        XCTAssertEqual(LibraryRowStatus.resolve(readiness: .ready, verification: .unverified).title, "Ready")
+        XCTAssertEqual(LibraryRowStatus.resolve(readiness: .ready, verification: .inProgress).title, "Verifying…")
+        let runtime = LibraryRowStatus.resolve(readiness: .needsRuntime, verification: .verified(report(outcome: .passed)))
+        XCTAssertEqual(runtime.title, ModelReadiness.needsRuntime.title)
+        XCTAssertEqual(runtime.symbol, ModelReadiness.needsRuntime.statusSymbol)
+    }
+
+    private func report(outcome: VerificationOutcome) -> VerificationReport {
+        VerificationReport(id: UUID(), modelPath: "/Models/qwen", modelSignature: nil, workflowRecordID: nil,
+                           suiteVersion: CanarySuite.version, canaries: [], tokensPerSecond: nil,
+                           timeToFirstTokenSeconds: nil, metricsEstimated: false, startedAt: fixtureDate,
+                           finishedAt: fixtureDate, outcome: outcome, environmentFingerprint: nil)
+    }
+
     @MainActor
     func testAppHostPreservesLastSuccessfulLibrarySnapshotOnFailedScan() async throws {
         let scan = makeFixtureScan()

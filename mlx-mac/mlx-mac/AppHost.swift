@@ -137,7 +137,8 @@ class AppHost: ObservableObject {
         )
         self.verification = verification ?? VerificationCoordinator(
             probe: ServeProbe(
-                lifecycle: .live(api: api),
+                // Canaries judge the answer path; reasoning is switched off where the template allows.
+                lifecycle: .live(api: api, thinkingOff: true),
                 prober: OpenAIEndpointProber()
             ),
             store: VerificationStore(fileURL: VerificationStore.defaultFileURL())
@@ -266,6 +267,12 @@ class AppHost: ObservableObject {
             guard record.state == .verified, record.reclaimSourceAfterVerification == true else { return }
             Task { [weak self] in
                 guard let self else { return }
+                // A source outside the configured roots stays where it is; cleanup would only be refused.
+                let isRepoSource = PrepareWorkflowPresentation(workflow: record).isRepoSource
+                guard PrepareWorkflowPresentation.sourceCleanupIsPossible(
+                    sourceLocation: record.localSourcePath ?? (isRepoSource ? nil : record.sourcePath),
+                    roots: self.config.ggufRoots + self.config.mlxRoots
+                ) else { return }
                 await self.reclaim.previewSource(record)
                 guard let current = self.modelWorkflow.history.first(where: { $0.id == record.id }), current == record else { return }
                 await self.reclaim.confirmSource(current)
@@ -357,8 +364,10 @@ class AppHost: ObservableObject {
         guard let path = IntakeCoordinator.existingModelPath(resolution, qBits: config.qBits, history: modelWorkflow.history, readyPaths: ready) else { return nil }
         selectedModelPath = path
         if resolution.verdict == .convertible {
+            let conversion = IntakeCoordinator.existingConversion(resolution, qBits: config.qBits, history: modelWorkflow.history, readyPaths: ready)
             modelWorkflow.inspect(intake: resolution, outputDirectory: URL(fileURLWithPath: path).deletingLastPathComponent().path,
-                                  qBits: config.qBits, snapshot: librarySnapshot)
+                                  qBits: config.qBits, snapshot: librarySnapshot,
+                                  downloadedPath: IntakeCoordinator.reusableSource(conversion?.localSourcePath, for: resolution))
             return .prepare
         }
         libraryRevealRequest = LibraryRevealRequest(modelPath: path)

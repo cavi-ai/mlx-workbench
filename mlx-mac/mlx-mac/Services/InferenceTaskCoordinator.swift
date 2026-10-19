@@ -180,6 +180,8 @@ struct SpeakTaskDraft: Equatable, Sendable {
     var languageCode = ""
 
     var validationError: String? { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Enter text to speak." : nil }
+    /// Any field was filled in; an untouched form shows no validation message.
+    var hasInput: Bool { !(text.isEmpty && voice.isEmpty && speed.isEmpty && languageCode.isEmpty) }
 
     func request(modelPath: String) throws -> TaskRequest {
         guard validationError == nil else { throw TaskProtocolError.invalidRequest }

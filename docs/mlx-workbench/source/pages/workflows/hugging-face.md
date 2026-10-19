@@ -19,7 +19,7 @@ The **Add from Hugging Face** window resolves a Hugging Face Hub repository befo
 
 The window shows the verdict once, with key figures: estimated output size from the repository's headers, fit on this Mac for that output or for the selected GGUF file, and an **In Library** mark when a matching model is already on disk. Model type and use cases come from the engine's task labels. When intake allows only some quantization widths, Prepare offers only those.
 
-Before fetching, intake checks your current ready models and matching conversion history, so a model you already have is not downloaded again.
+Before fetching, intake checks your current ready models and matching conversion history, so a model you already have is not downloaded again. When the Hugging Face cache already holds every file the download would fetch, the verdict says it is already downloaded and the download size reads **Already cached**.
 
 ## Downloads and conversion
 

@@ -35,10 +35,11 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
     let task: ModelTask?
     let draft: ModelDraft?
     var servingRuntime: String? = nil
+    var backend: OutputBackend? = nil
 
     enum CodingKeys: String, CodingKey {
         case path, name, bytes, shard, architecture, quantization, parameters
-        case structure, signature, companion, readable, status, outputs, error, task, draft
+        case structure, signature, companion, readable, status, outputs, error, task, draft, backend
         case modifiedAt = "modified_at"
         case modelKey = "model_key"
         case tensorCount = "tensor_count"
@@ -51,7 +52,9 @@ struct ModelItem: Codable, Equatable, Identifiable, Hashable {
          modelKey: String?, architecture: String?, quantization: String?, parameters: String?,
          structure: String?, signature: String?, companion: Bool?, readable: Bool?,
          status: String, outputs: [String], tensorCount: Int?, error: String?,
-         task: ModelTask? = nil, draft: ModelDraft? = nil, servingRuntime: String? = nil) {
+         task: ModelTask? = nil, draft: ModelDraft? = nil, servingRuntime: String? = nil,
+         backend: OutputBackend? = nil) {
+        self.backend = backend
         self.path = path
         self.name = name
         self.bytes = bytes
@@ -115,13 +118,20 @@ struct MLXOutput: Codable, Equatable, Identifiable, Hashable {
     let provenance: String?
     var task: ModelTask? = nil
     var runtime: String? = nil
+    /// The backend that runs this output for its task, as the scan reports it.
+    var backend: OutputBackend? = nil
 
     enum CodingKeys: String, CodingKey {
-        case path, name, quantization, provenance, task, runtime
+        case path, name, quantization, provenance, task, runtime, backend
         case modelKey = "model_key"
     }
 
     var id: String { path }
+}
+
+struct OutputBackend: Codable, Equatable, Hashable {
+    let id: String
+    let installed: Bool
 }
 
 struct QuantInfo: Codable, Equatable, Hashable {

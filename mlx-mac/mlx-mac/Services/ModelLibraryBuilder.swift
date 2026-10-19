@@ -51,11 +51,13 @@ enum ModelLibraryBuilder {
         }
         let outputModels = scan.outputs.map { output in
             let config = configObject(at: output.path)
+            let footprint = directoryFootprint(at: output.path)
+            let readiness: ModelReadiness = output.backend?.installed == false ? .needsRuntime : .ready
             let item = ModelItem(
                 path: output.path,
                 name: output.name,
-                bytes: directoryBytes(at: output.path),
-                modifiedAt: nil,
+                bytes: footprint.bytes,
+                modifiedAt: footprint.modifiedAt,
                 shard: nil,
                 modelKey: output.modelKey,
                 architecture: configModelType(config),
@@ -65,13 +67,14 @@ enum ModelLibraryBuilder {
                 signature: output.provenance,
                 companion: nil,
                 readable: true,
-                status: "ready",
+                status: readiness == .ready ? "ready" : "needs_runtime",
                 outputs: [output.path],
                 tensorCount: nil,
                 error: nil,
                 task: output.task,
                 draft: configDraft(config),
-                servingRuntime: output.runtime
+                servingRuntime: output.runtime,
+                backend: output.backend
             )
             return LibraryModel(
                 item: item,
@@ -81,7 +84,7 @@ enum ModelLibraryBuilder {
                     fallbackName: output.name
                 ),
                 displayName: displayName(path: output.path, fallbackName: output.name),
-                readiness: .ready,
+                readiness: readiness,
                 sourcePaths: [output.path],
                 outputPaths: [output.path],
                 evidence: outputEvidence(for: output)
@@ -105,10 +108,13 @@ enum ModelLibraryBuilder {
     private static func outputEvidence(for output: MLXOutput) -> [String] {
         var evidence = [
             "path=\(output.path)",
-            "status=ready",
+            output.backend?.installed == false ? "status=needs_runtime" : "status=ready",
             output.runtime == "strata" ? "origin=strata_profile" : "origin=mlx_output",
         ]
         if let runtime = output.runtime { evidence.append("runtime=\(runtime)") }
+        if let backend = output.backend {
+            evidence.append("backend=\(backend.id)\(backend.installed ? "" : " (not installed)")")
+        }
         if let modelKey = output.modelKey?.trimmingCharacters(in: .whitespacesAndNewlines), !modelKey.isEmpty {
             evidence.append("model_key=\(modelKey)")
         }
@@ -252,34 +258,39 @@ enum ModelLibraryBuilder {
     /// Byte size of a model directory. HF-cache snapshots symlink into a
     /// shared blobs dir and the links themselves report zero, so symlink
     /// destinations are resolved; broken links contribute nothing.
-    private static func directoryBytes(at path: String, fileManager: FileManager = .default) -> Int64 {
+    /// Total file bytes and the newest file modification time (Unix seconds)
+    /// beneath an output folder; cache symlinks count their resolved blob.
+    static func directoryFootprint(at path: String, fileManager: FileManager = .default) -> (bytes: Int64, modifiedAt: Int?) {
         let url = URL(fileURLWithPath: path)
+        let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey]
         var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return 0 }
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return (0, nil) }
         guard isDirectory.boolValue else {
-            let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
-            return Int64(size ?? 0)
+            let values = try? url.resourceValues(forKeys: keys)
+            return (Int64(values?.fileSize ?? 0), values?.contentModificationDate.map { Int($0.timeIntervalSince1970) })
         }
         guard let enumerator = fileManager.enumerator(
             at: url,
-            includingPropertiesForKeys: [.fileSizeKey, .isSymbolicLinkKey],
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { return 0 }
+        ) else { return (0, nil) }
         var total: Int64 = 0
+        var newest: Date?
         for case let item as URL in enumerator {
-            let values = try? item.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey])
+            var values = try? item.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isSymbolicLinkKey])
             if values?.isSymbolicLink == true {
                 guard let destination = try? fileManager.destinationOfSymbolicLink(atPath: item.path) else { continue }
                 let resolved = URL(fileURLWithPath: destination, relativeTo: item.deletingLastPathComponent())
                     .standardizedFileURL
-                if let size = try? resolved.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                    total += Int64(size)
-                }
-            } else if let size = values?.fileSize {
-                total += Int64(size)
+                values = try? resolved.resourceValues(forKeys: keys)
+            }
+            guard let size = values?.fileSize else { continue }
+            total += Int64(size)
+            if let date = values?.contentModificationDate, newest.map({ date > $0 }) ?? true {
+                newest = date
             }
         }
-        return total
+        return (total, newest.map { Int($0.timeIntervalSince1970) })
     }
 
     /// The output's config.json, read once at build time; absence is fine.

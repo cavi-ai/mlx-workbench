@@ -115,9 +115,11 @@ struct IntakeResolution: Codable, Equatable {
     let recipe: IntakeRecipe?
     let files: IntakeFiles
     let warnings: [String]
+    /// The local cache already holds every file a fetch would download; nil from older agents.
+    var cached: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case schema, source, verdict, reasons, backend, components, task, gated, bytes, files, warnings
+        case schema, source, verdict, reasons, backend, components, task, gated, bytes, files, warnings, cached
         case estimatedOutputBytes = "estimated_output_bytes"
         case downloadBytes = "download_bytes"
         case qBits = "q_bits"

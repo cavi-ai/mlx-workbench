@@ -481,6 +481,13 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertEqual(reused.language, "en")
     }
 
+    func testUntouchedSpeechFormsHaveNoInputToValidate() {
+        XCTAssertFalse(SpeakTaskDraft().hasInput)
+        XCTAssertNotNil(SpeakTaskDraft().validationError)
+        XCTAssertTrue(SpeakTaskDraft(voice: "af_heart").hasInput)
+        XCTAssertTrue(TranscribeTaskDraft().audioPath.isEmpty)
+    }
+
     func testTaskRunV2DecodesCanonicalNullableInputArtifactAndKeepsV1Support() throws {
         let recordV2 = Self.publicSummary
             .replacingOccurrences(of: "task-run/1", with: "task-run/2")

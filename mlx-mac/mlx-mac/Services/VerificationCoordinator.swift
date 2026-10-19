@@ -20,6 +20,8 @@ final class VerificationCoordinator: ObservableObject {
     @Published private(set) var activeModelPath: String?
     @Published private(set) var progressMessage: String?
     @Published private(set) var lastError: String?
+    /// The canonical model path whose verification produced `lastError`.
+    @Published private(set) var lastErrorModelPath: String?
     @Published private(set) var persistenceError: String?
 
     private let probe: ServeProbe
@@ -76,6 +78,7 @@ final class VerificationCoordinator: ObservableObject {
     func verifyNow(modelPath: String, signature: String?) {
         guard activeModelPath == nil else {
             lastError = "Another verification is already in progress."
+            lastErrorModelPath = canonical(modelPath)
             return
         }
         run(modelPath: modelPath, signature: signature, recordID: nil)
@@ -107,6 +110,11 @@ final class VerificationCoordinator: ObservableObject {
             lastError = nil
             onResolution?(recordID, .keptAnyway)
         } catch { lastError = AppHost.render(error) }
+    }
+
+    /// Why the latest verification of this model could not produce a verdict, if it could not.
+    func runError(for path: String) -> String? {
+        lastErrorModelPath == canonical(path) ? lastError : nil
     }
 
     private func latestReport(for path: String) -> VerificationReport? {
@@ -161,6 +169,7 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
         default: progressMessage = "Starting verification server."
         }
         lastError = nil
+        lastErrorModelPath = nil
 
         Task { [probe, now] in
             let startedAt = now()
@@ -232,6 +241,7 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                 progressMessage = nil
                 let rendered = AppHost.render(error)
                 lastError = rendered
+                lastErrorModelPath = target
                 if let recordID {
                     onResolution?(recordID, .unavailable(reason: rendered))
                 }

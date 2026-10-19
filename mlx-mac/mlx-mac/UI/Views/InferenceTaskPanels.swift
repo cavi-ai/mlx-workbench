@@ -131,7 +131,8 @@ struct InferenceTaskPanel: View {
                 .accessibilityIdentifier("task-transcribe-language")
             Text("The engine keeps a verified copy of the selected audio with the task.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
-            if let error = coordinator.transcribeDraft.validationError {
+            // An untouched form only disables Start; the message appears once a path is entered.
+            if !coordinator.transcribeDraft.audioPath.isEmpty, let error = coordinator.transcribeDraft.validationError {
                 Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
             taskActions(kind: .transcribe)
@@ -149,7 +150,7 @@ struct InferenceTaskPanel: View {
                 TextField("Speed (optional)", text: $coordinator.speakDraft.speed)
                 TextField("Language code (optional)", text: $coordinator.speakDraft.languageCode)
             }
-            if let error = coordinator.speakDraft.validationError {
+            if coordinator.speakDraft.hasInput, let error = coordinator.speakDraft.validationError {
                 Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
             taskActions(kind: .speak)
