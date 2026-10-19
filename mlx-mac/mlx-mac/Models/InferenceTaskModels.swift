@@ -376,7 +376,8 @@ struct TaskRecord: Codable, Equatable, Sendable {
         switch (schema, kind) {
         case ("task-run/1", .classification), ("task-run/1", .musicGeneration),
              ("task-run/2", .transcribe), ("task-run/2", .speak),
-             ("task-run/2", .imageGeneration), ("task-run/2", .imageUnderstanding): state.isSupported
+             ("task-run/2", .imageGeneration), ("task-run/2", .imageUnderstanding),
+             ("task-run/2", .videoGeneration), ("task-run/2", .videoUnderstanding): state.isSupported
         default: false
         }
     }

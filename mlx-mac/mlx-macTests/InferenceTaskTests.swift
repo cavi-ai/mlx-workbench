@@ -379,6 +379,19 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertEqual(capabilities.runSchema(for: .classification), "task-run/1")
         XCTAssertEqual(capabilities.requestSchema(for: .videoUnderstanding), "task-request/2")
         XCTAssertEqual(capabilities.runSchema(for: .videoGeneration), "task-run/2")
+        let requestArtifact = TaskArtifactReference(path: "/tasks/artifacts/11111111-1111-4111-8111-111111111111/request.json",
+                                                   sha256: String(repeating: "a", count: 64), bytes: 100)
+        for kind in ["video_understanding", "video_generation"] {
+            let record = try Self.taskRecordV2(id: "11111111-1111-4111-8111-111111111111", kind: kind,
+                                               modelPath: "/Models/video", request: requestArtifact, input: nil)
+            XCTAssertTrue(record.isSupported, "A valid task-run/2 \(kind) record must be supported by the native client.")
+        }
+        let v1VideoRecord = try Self.taskRecord(id: "11111111-1111-4111-8111-111111111112", kind: "video_generation",
+                                                state: "succeeded", modelPath: "/Models/video", request: requestArtifact)
+        XCTAssertFalse(v1VideoRecord.isSupported, "Video task kinds require task-run/2.")
+        let unknownVideoRecord = try Self.taskRecordV2(id: "11111111-1111-4111-8111-111111111113", kind: "future_task",
+                                                       modelPath: "/Models/video", request: requestArtifact, input: nil)
+        XCTAssertFalse(unknownVideoRecord.isSupported, "Unknown kinds remain unsupported under task-run/2.")
 
         let understanding = VideoUnderstandingTaskDraft(videoPath: "/tmp/input.mp4", prompt: "Summarize the action.")
         let understandingRequest = try understanding.request(modelPath: "/Models/vlm")
@@ -408,6 +421,34 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertEqual(customizedRequest.parameters["fps"], .number(16))
         XCTAssertEqual(customizedRequest.parameters["steps"], .number(30))
         XCTAssertEqual(customizedRequest.parameters["seed"], .number(42))
+    }
+
+    @MainActor
+    func testCoordinatorAcceptsV2VideoTaskRecords() async throws {
+        let requestArtifact = TaskArtifactReference(path: "/tasks/artifacts/11111111-1111-4111-8111-111111111111/request.json",
+                                                   sha256: String(repeating: "a", count: 64), bytes: 100)
+        let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: Data(#"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[{"kind":"video_generation","result_schema":"video/1","cancellation":true,"requires_local_model":true,"request_schema":"task-request/2","run_schema":"task-run/2"},{"kind":"video_understanding","result_schema":"describe/1","cancellation":true,"requires_local_model":true,"request_schema":"task-request/2","run_schema":"task-run/2"}]}"#.utf8))
+        for (index, kind, recordKind, modelType) in [("1", TaskKind.videoGeneration, "video_generation", ModelTaskType.videoGeneration),
+                                                     ("2", TaskKind.videoUnderstanding, "video_understanding", ModelTaskType.visionLanguage)] {
+            let id = "11111111-1111-4111-8111-11111111111\(index)"
+            let modelPath = "/Models/video-\(index)"
+            let record = try Self.taskRecordV2(id: id, kind: recordKind, modelPath: modelPath,
+                                               request: requestArtifact, input: nil)
+            let api = FakeInferenceTaskAPI(record: record, capabilities: capabilities)
+            let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+            if kind == .videoGeneration {
+                coordinator.videoGenerationDraft.prompt = "A short moving scene"
+            } else {
+                coordinator.videoUnderstandingDraft.videoPath = "/tmp/input.mp4"
+                coordinator.videoUnderstandingDraft.prompt = "Describe the scene"
+            }
+
+            await coordinator.start(kind: kind, model: Self.libraryModel(type: modelType, path: modelPath))
+
+            XCTAssertEqual(coordinator.selectedTask?.id, id)
+            let inspectedIDs = await api.resultRequestIDs()
+            XCTAssertEqual(inspectedIDs, [id], "The coordinator must pass record validation and inspect the accepted video task.")
+        }
     }
 
     func testVideoTaskDraftsRejectMalformedValuesWithoutInventingPlannerRanges() throws {
@@ -1243,6 +1284,7 @@ private actor FakeInferenceTaskAPI: InferenceTaskAPI {
     private var listFails = false
     private let resultResponse: TaskResultResponse?
     private var requests: [TaskRequest] = []
+    private var resultIDs: [String] = []
     private var capabilityCalls = 0
     private var firstCapabilitiesReached = false
     private var firstCapabilitiesWaiter: CheckedContinuation<Void, Never>?
@@ -1299,6 +1341,7 @@ private actor FakeInferenceTaskAPI: InferenceTaskAPI {
         return TaskPage(tasks: listedRecords, hasMore: false)
     }
     func taskResult(id: String) async throws -> TaskResultResponse {
+        resultIDs.append(id)
         guard let resultResponse else { throw TaskProtocolError.unsupportedCapability }
         return resultResponse
     }
@@ -1307,6 +1350,7 @@ private actor FakeInferenceTaskAPI: InferenceTaskAPI {
         TaskModelVerification(id: id, modelPath: record.modelPath, modelFingerprint: "test", matches: true)
     }
     func startEvidence() -> [TaskRequest] { requests }
+    func resultRequestIDs() -> [String] { resultIDs }
     func cancelledIDs() -> [String] { cancelled }
     func waitForFirstCapabilities() async {
         if firstCapabilitiesReached { return }

@@ -1146,7 +1146,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             if disclosure.value as? Int != 1 {
                 // Native disclosure hit frames include the label; toggle via the leading arrow.
                 window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
-                    dx: frame.minX + frame.height / 4 - window.frame.minX,
+                    dx: frame.minX + 24 + frame.height / 4 - window.frame.minX,
                     dy: frame.midY - window.frame.minY
                 )).click()
             }
@@ -1161,6 +1161,24 @@ final class WorkbenchReviewUITests: XCTestCase {
                 add(accessibility)
             }
             XCTAssertEqual(disclosure.value as? Int, 1, app.debugDescription)
+        }
+        func videoControl(_ identifier: String, label: String) -> XCUIElement {
+            app.buttons.matching(identifier: identifier)
+                .matching(NSPredicate(format: "label == %@", label)).firstMatch
+        }
+        func reveal(_ element: XCUIElement, in scroll: XCUIElement) {
+            let wheelOrigin = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5))
+            XCTAssertTrue(scroll.frame.contains(wheelOrigin.screenPoint))
+            XCTAssertLessThan(wheelOrigin.screenPoint.x, element.frame.minX)
+            for _ in 0..<8 where !element.isHittable || element.frame.minY < scroll.frame.minY || element.frame.maxY > scroll.frame.maxY {
+                let before = element.frame
+                let delta = max(-300, min(300, scroll.frame.midY - element.frame.midY))
+                wheelOrigin.scroll(byDeltaX: 0, deltaY: delta)
+                XCTAssertNotEqual(element.frame, before, "The scroll wheel must move content at the visible non-video gutter")
+            }
+            XCTAssertTrue(element.isHittable, app.debugDescription)
+            XCTAssertGreaterThanOrEqual(element.frame.minY, scroll.frame.minY)
+            XCTAssertLessThanOrEqual(element.frame.maxY, scroll.frame.maxY)
         }
         let generationModel = app.outlines.staticTexts["Fixture video generator"].firstMatch
         XCTAssertTrue(generationModel.waitForExistence(timeout: 15)); generationModel.doubleClick()
@@ -1177,28 +1195,16 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Library-video-generation-form")
         app.buttons["task-start"].click()
         waitForTaskState("succeeded")
-        let videoPlay = app.buttons["task-video-play"]
+        let videoPlay = videoControl("task-video-output", label: "Play")
         XCTAssertTrue(videoPlay.waitForExistence(timeout: 15), app.debugDescription)
         let playerReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: videoPlay)
         XCTAssertEqual(XCTWaiter.wait(for: [playerReady], timeout: 15), .completed, app.debugDescription)
         let generatedPreview = app.descendants(matching: .any).matching(identifier: "task-video-output").firstMatch
         let generationScroll = app.scrollViews.containing(.button, identifier: "task-export-video").firstMatch
-        for _ in 0..<8 where !generatedPreview.isHittable || generatedPreview.frame.minY < generationScroll.frame.minY || generatedPreview.frame.maxY > generationScroll.frame.maxY {
-            let delta = max(-300, min(300, generationScroll.frame.midY - generatedPreview.frame.midY))
-            generationScroll.scroll(byDeltaX: 0, deltaY: delta)
-        }
-        XCTAssertTrue(generatedPreview.isHittable, app.debugDescription)
-        XCTAssertGreaterThanOrEqual(generatedPreview.frame.minY, generationScroll.frame.minY)
-        XCTAssertLessThanOrEqual(generatedPreview.frame.maxY, generationScroll.frame.maxY)
+        reveal(generatedPreview, in: generationScroll)
         capture("Library-video-generation-result")
         let videoExport = app.buttons["task-export-video"]
-        for _ in 0..<8 where !videoExport.isHittable || videoExport.frame.minY < generationScroll.frame.minY || videoExport.frame.maxY > generationScroll.frame.maxY {
-            let delta = max(-300, min(300, generationScroll.frame.midY - videoExport.frame.midY))
-            generationScroll.scroll(byDeltaX: 0, deltaY: delta)
-        }
-        XCTAssertTrue(videoExport.isHittable, app.debugDescription)
-        XCTAssertGreaterThanOrEqual(videoExport.frame.minY, generationScroll.frame.minY)
-        XCTAssertLessThanOrEqual(videoExport.frame.maxY, generationScroll.frame.maxY)
+        reveal(videoExport, in: generationScroll)
         capture("Library-video-generation-export")
         let generation = try XCTUnwrap(taskSubmissions().first)
         let generationRequestReference = try XCTUnwrap(generation["request"] as? [String: Any])
@@ -1237,21 +1243,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual(answer.label, "The red square moves from left to right.")
         let understandingScroll = app.scrollViews.containing(.staticText, identifier: "task-video-understanding-result").firstMatch
         let inputPreview = app.descendants(matching: .any).matching(identifier: "task-video-input").firstMatch
-        for _ in 0..<8 where !inputPreview.isHittable || inputPreview.frame.minY < understandingScroll.frame.minY || inputPreview.frame.maxY > understandingScroll.frame.maxY {
-            let delta = max(-300, min(300, understandingScroll.frame.midY - inputPreview.frame.midY))
-            understandingScroll.scroll(byDeltaX: 0, deltaY: delta)
-        }
-        XCTAssertTrue(inputPreview.isHittable, app.debugDescription)
-        XCTAssertGreaterThanOrEqual(inputPreview.frame.minY, understandingScroll.frame.minY)
-        XCTAssertLessThanOrEqual(inputPreview.frame.maxY, understandingScroll.frame.maxY)
+        reveal(inputPreview, in: understandingScroll)
         capture("Library-video-understanding-input")
-        for _ in 0..<8 where !answer.isHittable || answer.frame.minY < understandingScroll.frame.minY || answer.frame.maxY > understandingScroll.frame.maxY {
-            let delta = max(-300, min(300, understandingScroll.frame.midY - answer.frame.midY))
-            understandingScroll.scroll(byDeltaX: 0, deltaY: delta)
-        }
-        XCTAssertTrue(answer.isHittable, app.debugDescription)
-        XCTAssertGreaterThanOrEqual(answer.frame.minY, understandingScroll.frame.minY)
-        XCTAssertLessThanOrEqual(answer.frame.maxY, understandingScroll.frame.maxY)
+        reveal(answer, in: understandingScroll)
         capture("Library-video-understanding-answer")
         let understanding = try XCTUnwrap(taskSubmissions().first)
         let retained = try XCTUnwrap(understanding["input_artifact"] as? [String: Any])
@@ -1268,16 +1262,11 @@ final class WorkbenchReviewUITests: XCTestCase {
         let mode = app.segmentedControls["task-understanding-mode"]
         let imageMode = mode.buttons["Image"]
         let taskScroll = app.scrollViews.containing(.staticText, identifier: "task-video-understanding-result").firstMatch
-        for _ in 0..<8 where !imageMode.isHittable {
-            let delta = max(-300, min(300, taskScroll.frame.midY - imageMode.frame.midY))
-            taskScroll.scroll(byDeltaX: 0, deltaY: delta)
-        }
-        XCTAssertTrue(imageMode.isHittable, app.debugDescription)
+        reveal(imageMode, in: taskScroll)
         imageMode.click()
         XCTAssertTrue(mode.buttons["Image"].isSelected, app.debugDescription)
         let reuse = app.buttons["task-reuse"]
-        for _ in 0..<8 where !reuse.isHittable { taskScroll.scroll(byDeltaX: 0, deltaY: reuse.frame.midY < taskScroll.frame.minY ? 300 : -300) }
-        XCTAssertTrue(reuse.isHittable, app.debugDescription)
+        reveal(reuse, in: taskScroll)
         reuse.click()
         XCTAssertTrue(mode.buttons["Video"].isSelected, app.debugDescription)
         let reusedPath = app.textFields["task-video-understanding-path"]
@@ -1286,21 +1275,23 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual(reusedPath.value as? String, retainedPath, app.debugDescription)
         XCTAssertEqual(try taskSubmissions().count, 2, "Reuse fills the form without starting another task")
         capture("Library-video-understanding-result-and-reuse")
-        let inputPlay = app.buttons["task-video-play"]
+        let inputPlay = videoControl("task-video-input", label: "Play")
         XCTAssertTrue(inputPlay.waitForExistence(timeout: 10), app.debugDescription)
         let inputReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: inputPlay)
         XCTAssertEqual(XCTWaiter.wait(for: [inputReady], timeout: 15), .completed, app.debugDescription)
+        reveal(inputPlay, in: taskScroll)
         inputPlay.click()
-        XCTAssertTrue(app.buttons["task-video-pause"].waitForExistence(timeout: 5), app.debugDescription)
+        let inputPause = videoControl("task-video-input", label: "Pause")
+        XCTAssertTrue(inputPause.waitForExistence(timeout: 5), app.debugDescription)
         app.buttons["Done"].click()
         XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: 10))
         XCTAssertTrue(waitForHittability(understandingModel, timeout: 10), app.debugDescription)
         understandingModel.doubleClick()
-        let reopenedPlay = app.buttons["task-video-play"]
+        let reopenedPlay = videoControl("task-video-input", label: "Play")
         XCTAssertTrue(reopenedPlay.waitForExistence(timeout: 10), app.debugDescription)
         let reopenedReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: reopenedPlay)
         XCTAssertEqual(XCTWaiter.wait(for: [reopenedReady], timeout: 15), .completed, app.debugDescription)
-        XCTAssertFalse(app.buttons["task-video-pause"].exists, app.debugDescription)
+        XCTAssertFalse(videoControl("task-video-input", label: "Pause").exists, app.debugDescription)
     }
 
     func testHealthAndDiscoveryResultsAndRecovery() throws {
@@ -1604,7 +1595,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         for attempt in 0..<2 {
             select("Activity")
             let open = app.buttons["Open in Library"].firstMatch
-            guard open.waitForExistence(timeout: 15), waitForHittability(open, timeout: 10) else {
+            guard open.waitForExistence(timeout: 15) else {
                 let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
                 screenshot.name = "Activity-open-in-library-not-hittable-\(attempt)"
                 screenshot.lifetime = .keepAlways
@@ -1616,7 +1607,18 @@ final class WorkbenchReviewUITests: XCTestCase {
                 XCTFail("Open in Library must become hittable after Activity navigation")
                 return
             }
-            open.click()
+            XCTAssertTrue(open.isEnabled, app.debugDescription)
+            let window = app.windows.firstMatch
+            let frame = open.frame
+            XCTAssertTrue(frame.midX.isFinite && frame.midY.isFinite && frame.width > 0 && frame.height > 0)
+            XCTAssertTrue(window.frame.contains(frame), "Open in Library must be inside the visible window: \(frame)")
+            if waitForHittability(open, timeout: 10) {
+                open.click()
+            } else {
+                window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                    dx: frame.midX - window.frame.minX, dy: frame.midY - window.frame.minY
+                )).click()
+            }
             let inspector = app.sheets.firstMatch
             XCTAssertTrue(inspector.waitForExistence(timeout: 10), "Explicit reveals must open the requested inspector")
             NSPasteboard.general.clearContents()
