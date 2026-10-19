@@ -10,7 +10,9 @@
 |---|---|
 | Stale | No recorded use for the **Stale after** period (default 60 days, **Settings → Advisors**) |
 | Superseded | A replacement with comparable reviewed task quality and no worse speed, latency, estimated memory or disk use |
-| Duplicate | The same file in more than one root |
+| Duplicate | The same GGUF file, or an MLX model folder with identical weights, in more than one place |
+
+**Duplicate groups** at the end of the page list every group from the latest scan, including one model kept at several quantizations (GGUF quantizations or MLX bit widths). Those groups are informational: choosing which copy to keep is yours. When one identical MLX copy is in the Hugging Face cache, that copy is kept and the other is reviewed with **Review model folder…**. Models in an Ollama store under your scan roots are included; an Ollama copy is always the one kept, since only Ollama removes its files.
 
 Quantization bits alone never establish that one model supersedes another. Replacement chains pick a keeper within one reviewed comparison or matched conversion cohort; suggestions stay advisory and keepers are protected from stale-file advice. Intentional serving counts as use; verification and benchmark runs do not.
 
