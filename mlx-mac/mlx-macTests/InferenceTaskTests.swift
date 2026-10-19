@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import AVFoundation
+import AppKit
 import XCTest
 
 @testable import mlx_workbench
@@ -52,6 +53,33 @@ final class InferenceTaskTests: XCTestCase {
         case "speak":
             kind = .speak
             request = TaskRequest(kind: kind, modelPath: modelPath, parameters: ["text": .string("This is a short speech acceptance check.")])
+        case "image_generation":
+            kind = .imageGeneration
+            request = TaskRequest(kind: kind, modelPath: modelPath, parameters: [
+                "prompt": .string("A red ceramic cup on a plain white table"),
+                "width": .number(512), "height": .number(512), "steps": .number(20), "seed": .number(42),
+            ])
+        case "image_understanding":
+            kind = .imageUnderstanding
+            guard let inputValue = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_INPUT"] else {
+                throw XCTSkip("Image understanding acceptance requires an explicit absolute PNG input path.")
+            }
+            let source = URL(fileURLWithPath: inputValue)
+            let sourceValues = try source.resourceValues(forKeys: [.isRegularFileKey])
+            guard source.path.hasPrefix("/"), source.pathExtension.lowercased() == "png", sourceValues.isRegularFile == true,
+                  CGImageSourceCreateWithURL(source as CFURL, nil) != nil else {
+                throw XCTSkip("Image understanding input must be an explicit absolute regular PNG file.")
+            }
+            try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let data = try Data(contentsOf: source)
+            suppliedInputDigest = Self.sha256(data)
+            let owned = evidenceRoot.appendingPathComponent("submitted-input.png")
+            try data.write(to: owned, options: .atomic)
+            ownedInput = owned
+            request = TaskRequest(kind: kind, modelPath: modelPath, parameters: [
+                "image_path": .string(owned.path),
+                "prompt": .string("Describe the main subject and its visible colors."),
+            ])
         default:
             throw XCTSkip("Unsupported media task acceptance kind.")
         }
@@ -157,6 +185,29 @@ final class InferenceTaskTests: XCTestCase {
             receipt.outputArtifact = reference
             receipt.outputDigest = reference.sha256
             receipt.audioMetadata = ["frames": Int(audioFile.length), "sample_rate": Int(audioFile.processingFormat.sampleRate), "channels": Int(audioFile.processingFormat.channelCount)]
+        } else if kind == .imageUnderstanding {
+            let text = try XCTUnwrap(savedResult.result?.objectValue?["text"]?.stringValue)
+            XCTAssertFalse(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            let returned = try XCTUnwrap(savedResult.result?.objectValue?["input_artifact"])
+            let returnedReference = try JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(returned))
+            XCTAssertEqual(returnedReference, started.inputArtifact)
+            let retained = try XCTUnwrap(started.inputArtifact)
+            let verifiedInput = try await TaskArtifactVerifier.verifyPNG(reference: retained, taskID: started.id, root: stateRoot)
+            XCTAssertEqual(verifiedInput.reference.sha256, suppliedInputDigest)
+            receipt.inputArtifact = retained
+            receipt.inputDigest = retained.sha256
+            receipt.transcript = text
+        } else if kind == .imageGeneration {
+            let output = try XCTUnwrap(savedResult.result?.objectValue?["output_artifact"])
+            let reference = try JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(output))
+            let verifiedImage = try await TaskArtifactVerifier.verifyPNG(reference: reference, taskID: started.id, root: stateRoot)
+            let source = try XCTUnwrap(CGImageSourceCreateWithURL(verifiedImage.url as CFURL, nil))
+            let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+            XCTAssertEqual(image.width, 512)
+            XCTAssertEqual(image.height, 512)
+            receipt.outputArtifact = reference
+            receipt.outputDigest = reference.sha256
+            receipt.imageMetadata = ["width": image.width, "height": image.height]
         } else if kind == .classification {
             let answer = try XCTUnwrap(savedResult.result?.objectValue?["answers"]?.objectValue?["route"]?.objectValue?["choice"]?.stringValue)
             XCTAssertEqual(answer, "billing")
@@ -234,6 +285,185 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertNil(speakParameters["voice"])
         XCTAssertNil(speakParameters["speed"])
         XCTAssertNil(speakParameters["lang_code"])
+    }
+
+    func testImageTaskCapabilitiesAndRequestsUsePerKindV2Schemas() throws {
+        let json = #"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[{"kind":"classification","result_schema":"decide/1","cancellation":true,"requires_local_model":true},{"kind":"image_generation","result_schema":"generate/1","cancellation":true,"requires_local_model":true,"request_schema":"task-request/2","run_schema":"task-run/2"},{"kind":"image_understanding","result_schema":"describe/1","cancellation":true,"requires_local_model":true,"request_schema":"task-request/2","run_schema":"task-run/2"}]}"#
+        let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: Data(json.utf8))
+        let generation = TaskKind.imageGeneration
+        let understanding = TaskKind.imageUnderstanding
+        XCTAssertEqual(capabilities.requestSchema(for: generation), "task-request/2")
+        XCTAssertEqual(capabilities.runSchema(for: generation), "task-run/2")
+        XCTAssertEqual(capabilities.requestSchema(for: understanding), "task-request/2")
+        XCTAssertEqual(capabilities.runSchema(for: understanding), "task-run/2")
+
+        let generate = try JSONDecoder().decode(TaskRequest.self, from: Data(#"{"schema":"task-request/2","kind":"image_generation","model_path":"/Models/qwen-image","parameters":{"prompt":"A red kite above a green field"}}"#.utf8))
+        XCTAssertTrue(generate.isSupported)
+        XCTAssertNoThrow(try generate.validate())
+        XCTAssertEqual(generate.parameters, ["prompt": .string("A red kite above a green field")])
+
+        let understand = try JSONDecoder().decode(TaskRequest.self, from: Data(#"{"schema":"task-request/2","kind":"image_understanding","model_path":"/Models/qwen-vl","parameters":{"image_path":"/Images/chart.png","prompt":"Read the chart title and values."}}"#.utf8))
+        XCTAssertTrue(understand.isSupported)
+        XCTAssertNoThrow(try understand.validate())
+        XCTAssertEqual(Set(understand.parameters.keys), ["image_path", "prompt"])
+
+        let invalid = try JSONDecoder().decode(TaskRequest.self, from: Data(#"{"schema":"task-request/2","kind":"image_understanding","model_path":"/Models/qwen-vl","parameters":{"image_path":"relative.png","prompt":"Describe it.","fps":1}}"#.utf8))
+        XCTAssertThrowsError(try invalid.validate())
+    }
+
+    func testImageTaskDraftsOmitUnsetPlannerSettingsAndReuseRetainedInput() throws {
+        let generation = try ImageGenerationTaskDraft(prompt: "A red kite above a green field").request(modelPath: "/Models/qwen-image")
+        XCTAssertEqual(generation.parameters, ["prompt": .string("A red kite above a green field")])
+        let configuredGeneration = try ImageGenerationTaskDraft(prompt: "A landscape", width: "512", height: "768", steps: "20", seed: "42")
+            .request(modelPath: "/Models/qwen-image")
+        XCTAssertEqual(configuredGeneration.parameters, [
+            "prompt": .string("A landscape"), "width": .number(512), "height": .number(768),
+            "steps": .number(20), "seed": .number(42),
+        ])
+
+        let imagePath = "/private/retained/input.png"
+        let understanding = try ImageUnderstandingTaskDraft(imagePath: "/private/source/chart.png", prompt: "Read the chart.")
+            .request(modelPath: "/Models/qwen-vl")
+        XCTAssertEqual(understanding.parameters, [
+            "image_path": .string("/private/source/chart.png"), "prompt": .string("Read the chart."),
+        ])
+        var reused = ImageUnderstandingTaskDraft()
+        try reused.load(understanding, retainedImagePath: imagePath)
+        XCTAssertEqual(reused.imagePath, imagePath)
+        XCTAssertEqual(try reused.request(modelPath: "/Models/qwen-vl").parameters, [
+            "image_path": .string(imagePath), "prompt": .string("Read the chart."),
+        ])
+    }
+
+    @MainActor
+    func testActiveTaskModelPathsRemainOccupiedUntilTerminal() async throws {
+        let active = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let terminalJSON = Self.publicSummary
+            .replacingOccurrences(of: "\"state\":\"starting\"", with: "\"state\":\"succeeded\"")
+            .replacingOccurrences(of: "\"completed_at\":null", with: "\"completed_at\":\"2026-10-17T12:01:00+00:00\"")
+        let terminal = try JSONDecoder().decode(TaskRecord.self, from: Data(terminalJSON.utf8))
+        let api = FakeInferenceTaskAPI(record: active, capabilities: Self.taskCapabilities, listedRecords: [active])
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tmp/task-occupancy"))
+        await coordinator.refreshRecent()
+        XCTAssertEqual(coordinator.activeModelPaths, [active.modelPath])
+
+        let completedAPI = FakeInferenceTaskAPI(record: terminal, capabilities: Self.taskCapabilities, listedRecords: [terminal])
+        let completed = InferenceTaskCoordinator(api: completedAPI, artifactRoot: URL(fileURLWithPath: "/tmp/task-occupancy"))
+        await completed.refreshRecent()
+        XCTAssertTrue(completed.activeModelPaths.isEmpty)
+    }
+
+    func testArtifactVerifierDecodesOnlyTaskOwnedPNG() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let validData = try Self.pngData()
+        let validURL = try fixture.write("output.png", data: validData)
+        let valid = try await TaskArtifactVerifier.verifyPNG(reference: fixture.reference(validURL, data: validData), taskID: fixture.taskID, root: fixture.root)
+        XCTAssertEqual(valid.url, validURL)
+
+        let invalidData = Data("not a PNG".utf8)
+        let invalidURL = try fixture.write("input.png", data: invalidData)
+        await assertRejectedPNG(fixture.reference(invalidURL, data: invalidData), taskID: fixture.taskID, root: fixture.root)
+
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: validData))
+        let jpeg = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [:]))
+        let jpegURL = try fixture.write("input.jpg", data: jpeg)
+        let verifiedJPEG = try await TaskArtifactVerifier.verifyImage(reference: fixture.reference(jpegURL, data: jpeg), taskID: fixture.taskID, root: fixture.root)
+        XCTAssertEqual(verifiedJPEG.url, jpegURL)
+        let mislabeledURL = try fixture.write("mislabeled.png", data: jpeg)
+        await assertRejectedPNG(fixture.reference(mislabeledURL, data: jpeg), taskID: fixture.taskID, root: fixture.root)
+    }
+
+    @MainActor
+    func testTaskImageArtifactRefusalAndExportProjection() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let request = TaskRequest(kind: .imageGeneration, modelPath: "/Models/qwen-image", parameters: ["prompt": .string("A lighthouse")])
+        let requestData = try JSONEncoder().encode(request)
+        let requestURL = try fixture.write("request.json", data: requestData)
+        let requestRef = fixture.reference(requestURL, data: requestData)
+        let record = try Self.taskRecordV2(id: fixture.taskID, kind: "image_generation", modelPath: request.modelPath, request: requestRef, input: nil)
+
+        let png = try Self.pngData()
+        let outputURL = try fixture.write("output.png", data: png)
+        let outputRef = fixture.reference(outputURL, data: png)
+        let outputValue = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(outputRef))
+        let payload = JSONValue.object([
+            "schema": .string("generate/1"), "width": .number(1), "height": .number(1),
+            "prompt": .string("A lighthouse"), "output_artifact": outputValue,
+        ])
+        let resultData = try JSONEncoder().encode(payload)
+        let resultURL = try fixture.write("result.json", data: resultData)
+        let response = TaskResultResponse(task: record, artifact: fixture.reference(resultURL, data: resultData), inline: true, result: payload)
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, resultResponse: response)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+
+        await coordinator.inspect(id: record.id)
+        let verifiedOutputURL = coordinator.verifiedOutput?.url
+        XCTAssertEqual(verifiedOutputURL, outputURL)
+
+        let exportedURL = fixture.root.appendingPathComponent("exports/image.png")
+        try await coordinator.exportImage(id: record.id, to: exportedURL)
+        XCTAssertEqual(try Data(contentsOf: exportedURL), png)
+        let jsonURL = fixture.root.appendingPathComponent("exports/result.json")
+        try await coordinator.export(id: record.id, to: jsonURL)
+        let exported = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: jsonURL))
+        XCTAssertEqual(exported.objectValue?["width"], .number(1))
+        XCTAssertNil(exported.objectValue?["prompt"])
+        XCTAssertNil(exported.objectValue?["output_artifact"])
+
+        let forgedInput = fixture.reference(fixture.artifactDirectory.appendingPathComponent("input.png"), data: png)
+        let forgedValue = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(forgedInput))
+        let wrongPayload = JSONValue.object(["output_artifact": forgedValue])
+        let wrongData = try JSONEncoder().encode(wrongPayload)
+        let wrongURL = try fixture.write("wrong-result.json", data: wrongData)
+        let wrongResponse = TaskResultResponse(task: record, artifact: fixture.reference(wrongURL, data: wrongData), inline: true, result: wrongPayload)
+        let wrongCoordinator = InferenceTaskCoordinator(api: FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, resultResponse: wrongResponse), artifactRoot: fixture.root)
+        do {
+            try await wrongCoordinator.exportImage(id: record.id, to: fixture.root.appendingPathComponent("exports/forged.png"))
+            XCTFail("An image-generation task cannot export its input as generated output")
+        } catch { }
+    }
+
+    @MainActor
+    func testImageUnderstandingRequiresMatchingRetainedPNGAndKeepsFullAnswer() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let request = TaskRequest(kind: .imageUnderstanding, modelPath: "/Models/qwen-vl", parameters: [
+            "image_path": .string("/incoming/chart.png"), "prompt": .string("Read every visible chart label."),
+        ])
+        let requestData = try JSONEncoder().encode(request)
+        let requestRef = fixture.reference(try fixture.write("request.json", data: requestData), data: requestData)
+        let imageData = try Self.pngData()
+        let inputRef = fixture.reference(try fixture.write("input.png", data: imageData), data: imageData)
+        let record = try Self.taskRecordV2(id: fixture.taskID, kind: "image_understanding", modelPath: request.modelPath,
+                                           request: requestRef, input: inputRef)
+        let inputValue = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(inputRef))
+        let answer = "The chart title is Revenue. Values rise from 12 to 18 across the two visible quarters."
+        let payload = JSONValue.object(["schema": .string("describe/1"), "text": .string(answer), "input_artifact": inputValue])
+        let resultData = try JSONEncoder().encode(payload)
+        let resultRef = fixture.reference(try fixture.write("result.json", data: resultData), data: resultData)
+        let response = TaskResultResponse(task: record, artifact: resultRef, inline: true, result: payload)
+        let coordinator = InferenceTaskCoordinator(api: FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities,
+                                                                               resultResponse: response), artifactRoot: fixture.root)
+
+        await coordinator.inspect(id: record.id)
+
+        XCTAssertNil(coordinator.readError)
+        XCTAssertEqual(coordinator.verifiedInput?.url, URL(fileURLWithPath: inputRef.path))
+        XCTAssertEqual(coordinator.verifiedResult?.json?.objectValue?["text"]?.stringValue, answer)
+
+        let mismatchedPayload = JSONValue.object(["schema": .string("describe/1"), "text": .string("unverified"),
+                                                   "input_artifact": .object(["path": .string("/outside/input.png")])])
+        let mismatchedData = try JSONEncoder().encode(mismatchedPayload)
+        let mismatchedRef = fixture.reference(try fixture.write("mismatched-result.json", data: mismatchedData), data: mismatchedData)
+        let mismatchedResponse = TaskResultResponse(task: record, artifact: mismatchedRef, inline: true, result: mismatchedPayload)
+        let mismatch = InferenceTaskCoordinator(api: FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities,
+                                                                            resultResponse: mismatchedResponse), artifactRoot: fixture.root)
+        await mismatch.inspect(id: record.id)
+        XCTAssertNil(mismatch.selectedResult)
+        XCTAssertNil(mismatch.verifiedResult)
+        XCTAssertNotNil(mismatch.readError)
     }
 
     func testSpeechDraftsOmitUnsetSettingsAndTranscribeReuseUsesRetainedInput() throws {
@@ -686,6 +916,32 @@ final class InferenceTaskTests: XCTestCase {
         return try JSONDecoder().decode(TaskRecord.self, from: Data(summary.utf8))
     }
 
+    private static func taskRecordV2(id: String, kind: String, modelPath: String, request: TaskArtifactReference,
+                                     input: TaskArtifactReference?) throws -> TaskRecord {
+        let base = try taskRecord(id: id, kind: kind, state: "succeeded", modelPath: modelPath, request: request)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as? [String: Any])
+        object["schema"] = "task-run/2"
+        object["input_artifact"] = input.map { ["path": $0.path, "sha256": $0.sha256, "bytes": $0.bytes] as [String: Any] } ?? NSNull()
+        return try JSONDecoder().decode(TaskRecord.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+
+    private static func pngData() throws -> Data {
+        let image = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: 1,
+                                                  bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                  isPlanar: false, colorSpaceName: .deviceRGB,
+                                                  bytesPerRow: 4, bitsPerPixel: 32))
+        image.setColor(.systemRed, atX: 0, y: 0)
+        return try XCTUnwrap(image.representation(using: .png, properties: [:]))
+    }
+
+    private func assertRejectedPNG(_ reference: TaskArtifactReference, taskID: String, root: URL,
+                                   file: StaticString = #filePath, line: UInt = #line) async {
+        do {
+            _ = try await TaskArtifactVerifier.verifyPNG(reference: reference, taskID: taskID, root: root)
+            XCTFail("Expected a corrupt PNG to be rejected", file: file, line: line)
+        } catch { }
+    }
+
     func testArtifactVerifierAcceptsTaskOwnedJSONAndAudioAndDecodesRequest() async throws {
         let fixture = try ArtifactFixture()
         defer { fixture.remove() }
@@ -878,6 +1134,7 @@ private struct TaskAcceptanceReceipt: Codable {
     let submittedInputPath: String?
     var transcript: String?
     var audioMetadata: [String: Int]?
+    var imageMetadata: [String: Int]?
     var terminal: Bool
     var pendingFailure: String?
 
@@ -885,7 +1142,7 @@ private struct TaskAcceptanceReceipt: Codable {
          identity: TaskIdentitySummary, requestArtifact: TaskArtifactReference,
          resultArtifact: TaskArtifactReference?, resultDigest: String?, outputArtifact: TaskArtifactReference?,
          outputDigest: String?, inputArtifact: TaskArtifactReference?, inputDigest: String?,
-         suppliedInputDigest: String?, submittedInputPath: String?, transcript: String?, audioMetadata: [String: Int]?,
+         suppliedInputDigest: String?, submittedInputPath: String?, transcript: String?, audioMetadata: [String: Int]?, imageMetadata: [String: Int]? = nil,
          terminal: Bool, pendingFailure: String? = nil) {
         self.kind = kind
         self.modelPath = modelPath
@@ -904,6 +1161,7 @@ private struct TaskAcceptanceReceipt: Codable {
         self.submittedInputPath = submittedInputPath
         self.transcript = transcript
         self.audioMetadata = audioMetadata
+        self.imageMetadata = imageMetadata
         self.terminal = terminal
         self.pendingFailure = pendingFailure
     }

@@ -205,12 +205,109 @@ struct SpeakTaskDraft: Equatable, Sendable {
     }
 }
 
+struct ImageGenerationTaskDraft: Equatable, Sendable {
+    var prompt = ""
+    var width = ""
+    var height = ""
+    var steps = ""
+    var seed = ""
+
+    var validationError: String? {
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Describe the image to generate." }
+        guard optionalInteger(width) != nil || width.isEmpty,
+              optionalInteger(height) != nil || height.isEmpty,
+              optionalInteger(steps) != nil || steps.isEmpty,
+              optionalInteger(seed) != nil || seed.isEmpty else { return "Image settings must be whole numbers." }
+        return nil
+    }
+
+    func request(modelPath: String) throws -> TaskRequest {
+        guard validationError == nil else { throw TaskProtocolError.invalidRequest }
+        var parameters: [String: JSONValue] = ["prompt": .string(prompt)]
+        if let width = optionalInteger(width) { parameters["width"] = .number(Double(width)) }
+        if let height = optionalInteger(height) { parameters["height"] = .number(Double(height)) }
+        if let steps = optionalInteger(steps) { parameters["steps"] = .number(Double(steps)) }
+        if let seed = optionalInteger(seed) { parameters["seed"] = .number(Double(seed)) }
+        let request = TaskRequest(kind: .imageGeneration, modelPath: modelPath, parameters: parameters)
+        try request.validate()
+        return request
+    }
+
+    mutating func load(_ request: TaskRequest) throws {
+        guard request.kind == .imageGeneration else { throw TaskProtocolError.invalidRequest }
+        try request.validate()
+        prompt = request.parameters["prompt"]?.stringValue ?? ""
+        width = request.parameters["width"]?.integerValue.map(String.init) ?? ""
+        height = request.parameters["height"]?.integerValue.map(String.init) ?? ""
+        steps = request.parameters["steps"]?.integerValue.map(String.init) ?? ""
+        seed = request.parameters["seed"]?.integerValue.map(String.init) ?? ""
+    }
+
+    private func optionalInteger(_ value: String) -> Int? {
+        value.isEmpty ? nil : Int(value)
+    }
+}
+
+struct ImageUnderstandingTaskDraft: Equatable, Sendable {
+    var imagePath = ""
+    var prompt = ""
+    var maxTokens = ""
+    var temperature = ""
+    var maxPixels = ""
+
+    var validationError: String? {
+        guard imagePath.hasPrefix("/"), !imagePath.unicodeScalars.contains(where: { $0.value < 0x20 }) else {
+            return "Choose a local image file."
+        }
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Ask a question about the image." }
+        guard optionalInteger(maxTokens) != nil || maxTokens.isEmpty,
+              optionalNumber(temperature) != nil || temperature.isEmpty,
+              optionalInteger(maxPixels) != nil || maxPixels.isEmpty else { return "Image analysis settings must be numbers." }
+        return nil
+    }
+
+    func request(modelPath: String) throws -> TaskRequest {
+        guard validationError == nil else { throw TaskProtocolError.invalidRequest }
+        var parameters: [String: JSONValue] = ["image_path": .string(imagePath), "prompt": .string(prompt)]
+        if let value = optionalInteger(maxTokens) { parameters["max_tokens"] = .number(Double(value)) }
+        if let value = optionalNumber(temperature) { parameters["temperature"] = .number(value) }
+        if let value = optionalInteger(maxPixels) { parameters["max_pixels"] = .number(Double(value)) }
+        let request = TaskRequest(kind: .imageUnderstanding, modelPath: modelPath, parameters: parameters)
+        try request.validate()
+        return request
+    }
+
+    mutating func load(_ request: TaskRequest, retainedImagePath: String) throws {
+        guard request.kind == .imageUnderstanding else { throw TaskProtocolError.invalidRequest }
+        var parameters = request.parameters
+        parameters["image_path"] = .string(retainedImagePath)
+        let reused = TaskRequest(kind: .imageUnderstanding, modelPath: request.modelPath, parameters: parameters)
+        try reused.validate()
+        imagePath = retainedImagePath
+        prompt = request.parameters["prompt"]?.stringValue ?? ""
+        maxTokens = request.parameters["max_tokens"]?.integerValue.map(String.init) ?? ""
+        temperature = request.parameters["temperature"]?.numberValue.map { String($0) } ?? ""
+        maxPixels = request.parameters["max_pixels"]?.integerValue.map(String.init) ?? ""
+    }
+
+    private func optionalInteger(_ value: String) -> Int? {
+        value.isEmpty ? nil : Int(value)
+    }
+
+    private func optionalNumber(_ value: String) -> Double? {
+        guard !value.isEmpty, let number = Double(value), number.isFinite else { return nil }
+        return number
+    }
+}
+
 @MainActor
 final class InferenceTaskCoordinator: ObservableObject {
     @Published var classificationDraft = ClassificationDraft()
     @Published var musicDraft = MusicTaskDraft()
     @Published var transcribeDraft = TranscribeTaskDraft()
     @Published var speakDraft = SpeakTaskDraft()
+    @Published var imageGenerationDraft = ImageGenerationTaskDraft()
+    @Published var imageUnderstandingDraft = ImageUnderstandingTaskDraft()
     @Published private(set) var recent: [TaskRecord] = []
     @Published private(set) var hasMoreRecent = false
     @Published private(set) var selectedTask: TaskRecord?
@@ -244,6 +341,10 @@ final class InferenceTaskCoordinator: ObservableObject {
     deinit { pollingTask?.cancel() }
 
     var canStart: Bool { !busy && !startOutcomeUnknown }
+    var activeModelPaths: Set<String> {
+        Set(recent.filter { $0.state.isActive }.map(\.modelPath))
+            .union(selectedTask.flatMap { $0.state.isActive ? [$0.modelPath] : nil } ?? [])
+    }
 
     func refreshRecent() async {
         do {
@@ -279,6 +380,8 @@ final class InferenceTaskCoordinator: ObservableObject {
             case .musicGeneration: request = try musicDraft.request(modelPath: model.item.path)
             case .transcribe: request = try transcribeDraft.request(modelPath: model.item.path)
             case .speak: request = try speakDraft.request(modelPath: model.item.path)
+            case .imageGeneration: request = try imageGenerationDraft.request(modelPath: model.item.path)
+            case .imageUnderstanding: request = try imageUnderstandingDraft.request(modelPath: model.item.path)
             case .unsupported: throw TaskProtocolError.invalidRequest
             }
         }
@@ -293,7 +396,7 @@ final class InferenceTaskCoordinator: ObservableObject {
             guard capabilities.isSupported,
                   capabilities.tasks.contains(where: { $0.kind == kind && $0.requiresLocalModel }),
                   capabilities.requestSchema(for: kind) == request.schema,
-                  capabilities.runSchema(for: kind) == (kind == .transcribe || kind == .speak ? "task-run/2" : "task-run/1") else {
+                  capabilities.runSchema(for: kind) == ([.transcribe, .speak, .imageGeneration, .imageUnderstanding].contains(kind) ? "task-run/2" : "task-run/1") else {
                 cancellationPending = false
                 error = "The installed mlx-agent does not advertise this local task type."
                 return
@@ -373,12 +476,22 @@ final class InferenceTaskCoordinator: ObservableObject {
                     output = try await TaskArtifactVerifier.verify(reference: reference, taskID: id, root: artifactRoot)
                 }
             }
-            if response.task.kind == .transcribe {
+            if response.task.kind == .imageGeneration,
+               let raw = payload?.objectValue?["output_artifact"],
+               let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(raw)) {
+                guard URL(fileURLWithPath: reference.path).lastPathComponent == "output.png" else {
+                    throw TaskArtifactVerificationError.invalidReference
+                }
+                output = try await TaskArtifactVerifier.verifyPNG(reference: reference, taskID: id, root: artifactRoot)
+            }
+            if response.task.kind == .transcribe || response.task.kind == .imageUnderstanding {
                 guard let recorded = response.task.inputArtifact,
                       let returned = payload?.objectValue?["input_artifact"],
                       let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(returned)),
                       reference == recorded else { throw TaskArtifactVerificationError.invalidReference }
-                input = try await TaskArtifactVerifier.verify(reference: recorded, taskID: id, root: artifactRoot)
+                input = response.task.kind == .imageUnderstanding
+                    ? try await TaskArtifactVerifier.verifyImage(reference: recorded, taskID: id, root: artifactRoot)
+                    : try await TaskArtifactVerifier.verify(reference: recorded, taskID: id, root: artifactRoot)
             }
             selectedTask = response.task
             selectedResult = response
@@ -416,6 +529,11 @@ final class InferenceTaskCoordinator: ObservableObject {
                 _ = try await TaskArtifactVerifier.verify(reference: input, taskID: id, root: artifactRoot)
                 try transcribeDraft.load(request, retainedAudioPath: input.path)
             case .speak: try speakDraft.load(request)
+            case .imageGeneration: try imageGenerationDraft.load(request)
+            case .imageUnderstanding:
+                guard let input = record.inputArtifact else { throw TaskArtifactVerificationError.unavailable }
+                _ = try await TaskArtifactVerifier.verifyImage(reference: input, taskID: id, root: artifactRoot)
+                try imageUnderstandingDraft.load(request, retainedImagePath: input.path)
             case .unsupported: throw TaskProtocolError.invalidRequest
             }
             error = nil
@@ -453,6 +571,22 @@ final class InferenceTaskCoordinator: ObservableObject {
         }
         let output = try await TaskArtifactVerifier.verify(reference: reference, taskID: id, root: artifactRoot)
         guard output.url.pathExtension.lowercased() == "wav" else { throw TaskArtifactVerificationError.invalidReference }
+        try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.copyItem(at: output.url, to: destination)
+    }
+
+    func exportImage(id: String, to destination: URL) async throws {
+        let response = try await api.taskResult(id: id)
+        guard response.task.kind == .imageGeneration else { throw TaskArtifactVerificationError.unavailable }
+        let result = try await TaskArtifactVerifier.verify(reference: response.artifact, taskID: id, root: artifactRoot)
+        guard let raw = try verifiedResultPayload(response, artifact: result)?.objectValue?["output_artifact"],
+              let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(raw)) else {
+            throw TaskArtifactVerificationError.unavailable
+        }
+        guard URL(fileURLWithPath: reference.path).lastPathComponent == "output.png" else {
+            throw TaskArtifactVerificationError.invalidReference
+        }
+        let output = try await TaskArtifactVerifier.verifyPNG(reference: reference, taskID: id, root: artifactRoot)
         try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fileManager.copyItem(at: output.url, to: destination)
     }
@@ -514,6 +648,8 @@ final class InferenceTaskCoordinator: ObservableObject {
         case .musicGeneration: musicDraft.validationError == nil
         case .transcribe: transcribeDraft.validationError == nil
         case .speak: speakDraft.validationError == nil
+        case .imageGeneration: imageGenerationDraft.validationError == nil
+        case .imageUnderstanding: imageUnderstandingDraft.validationError == nil
         case .unsupported: false
         }
     }
@@ -532,6 +668,8 @@ extension TaskKind {
         case .musicGeneration: .musicGeneration
         case .transcribe: .speechToText
         case .speak: .textToSpeech
+        case .imageGeneration: .imageGeneration
+        case .imageUnderstanding: .visionLanguage
         case .unsupported: nil
         }
     }

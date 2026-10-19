@@ -34,7 +34,6 @@ The app keeps its records as JSON files in `~/Library/Application Support/mlx-wo
 | `~/.config/mlx-workbench/config.json` | Configuration; see [Configuration](configuration.md) | App |
 | `<quarantine_dir>/quarantine-ledger.jsonl` | Quarantine and Trash history | App |
 | `~/Library/Application Support/mlx-agent/lab` | Experiment database and artifacts | Engine |
-| `~/Pictures/MLX Workbench` | Images from the Library Generate panel | App |
 | `~/Library/LaunchAgents/ai.cavi.mlxworkbench.endpoint.plist` | Optional endpoint login item | App |
 | `~/.cache/mlx-agent/strata` | Optional Strata runtime | Engine |
 

@@ -1,6 +1,8 @@
 import CryptoKit
+import ImageIO
 import Darwin
 import Foundation
+import UniformTypeIdentifiers
 
 struct VerifiedTaskArtifact: Sendable {
     let reference: TaskArtifactReference
@@ -20,6 +22,7 @@ enum TaskArtifactVerificationError: Error, LocalizedError {
     case changed
     case invalidRequest
     case invalidJSON
+    case invalidImage
 
     var errorDescription: String? {
         switch self {
@@ -32,6 +35,7 @@ enum TaskArtifactVerificationError: Error, LocalizedError {
         case .changed: "The task artifact no longer matches its recorded size and digest."
         case .invalidRequest: "The saved task request does not match a supported task schema."
         case .invalidJSON: "The task result artifact is not valid JSON."
+        case .invalidImage: "The task image artifact is not a decodable PNG."
         }
     }
 }
@@ -43,6 +47,35 @@ enum TaskArtifactVerifier {
         try await Task.detached(priority: .userInitiated) {
             try verifySynchronously(reference: reference, taskID: taskID, root: root)
         }.value
+    }
+
+    static func verifyPNG(reference: TaskArtifactReference, taskID: String, root: URL) async throws -> VerifiedTaskArtifact {
+        let artifact = try await verify(reference: reference, taskID: taskID, root: root)
+        guard artifact.url.pathExtension.lowercased() == "png",
+              let source = CGImageSourceCreateWithURL(artifact.url as CFURL, nil),
+              CGImageSourceGetType(source) as String? == "public.png",
+              Self.hasDecodableImage(source) else {
+            throw TaskArtifactVerificationError.invalidImage
+        }
+        return artifact
+    }
+
+    static func verifyImage(reference: TaskArtifactReference, taskID: String, root: URL) async throws -> VerifiedTaskArtifact {
+        let artifact = try await verify(reference: reference, taskID: taskID, root: root)
+        let extensionName = artifact.url.pathExtension.lowercased()
+        guard ["png", "jpg", "jpeg", "webp"].contains(extensionName),
+              let source = CGImageSourceCreateWithURL(artifact.url as CFURL, nil),
+              let identifier = CGImageSourceGetType(source) as String?,
+              UTType(identifier)?.conforms(to: .image) == true,
+              Self.hasDecodableImage(source) else {
+            throw TaskArtifactVerificationError.invalidImage
+        }
+        return artifact
+    }
+
+    private static func hasDecodableImage(_ source: CGImageSource) -> Bool {
+        CGImageSourceGetCount(source) > 0
+            && CGImageSourceCreateImageAtIndex(source, 0, nil).map { $0.width > 0 && $0.height > 0 } == true
     }
 
     private static func verifySynchronously(reference: TaskArtifactReference, taskID: String, root: URL) throws -> VerifiedTaskArtifact {
