@@ -1377,11 +1377,11 @@ final class ComparisonCoordinatorTests: XCTestCase {
 
     private nonisolated static func sample(tps: Double, ttft: Double = 0.1) -> ComparisonSample {
         ComparisonSample(
-            promptID: UUID().uuidString,
+            promptID: "p",
             outputExcerpt: "output",
             tokensPerSecond: tps,
             timeToFirstTokenSeconds: ttft,
-            error: nil
+            error: nil, finishReason: "stop"
         )
     }
 
@@ -1395,7 +1395,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
             results: results,
             startedAt: Date(timeIntervalSinceReferenceDate: 10),
             finishedAt: state == .completed ? Date(timeIntervalSinceReferenceDate: 20) : nil,
-            state: state
+            state: state, promptEntries: [PromptEntry(id: "p", text: "Answer", maxTokens: 128)]
         )
     }
 
@@ -1506,7 +1506,7 @@ private struct StubComparisonProber: EndpointProbing {
             completionTokens: 50,
             timeToFirstTokenSeconds: 0.1,
             durationSeconds: 1.1,
-            metricsEstimated: false
+            metricsEstimated: false, finishReason: "stop"
         )
     }
 }

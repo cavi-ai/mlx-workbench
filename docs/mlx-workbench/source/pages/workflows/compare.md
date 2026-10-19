@@ -42,15 +42,22 @@ Prompts can carry an expected-words check (all must appear, case-insensitive; `a
 
 ## Results
 
-Results lead with one lettered lane per model, A to D in run order, carrying the mode's metric as the largest number and a bar relative to the best lane. Below the lanes is one row per prompt and one column per lane: text, an image thumbnail, an audio player or a video player.
+Chat results lead with compact model rows in recorded A–D order. Each row shows finished-prompt coverage before median decode speed. Blocked models, incomplete generations and unknown historical outcomes remain explicit. Speed includes recorded incomplete outputs; completion does not establish answer quality. Open a model’s information button for runtime, startup, prefill estimates, the fastest recorded first-token latency and available model actions.
 
-Chat results show answer text separately from a collapsible **Reasoning** section, with the finish reason, generated token count, total duration and time until answer text begins. Reasoning a server streams inline as `<think>…</think>` is separated the same way. **Token limit reached** labels incomplete output; **Fastest** goes only to lanes that answered every prompt. Decode speed is left out for a prompt whose tokens arrived in one burst, since their arrival times do not reflect generation. Prompt tokens give a prefill estimate, always labeled as an estimate. The builtin tool-calling set counts streamed tool calls and checks their arguments against the schema.
+The visible reader offers prompt navigation, left/right model selectors and **Read A/B** or **Differences**. It initially selects models with recorded text ahead of blocked models and retains each model’s recorded lane letter. Wide windows show two complete responses; narrow windows offer **Read left** / **Read right** to switch a single readable pane. Fenced code uses monospaced formatting. Reasoning, including recorded inline `<think>` sections, is collapsible. **Copy recorded output** copies the original text, and differences compare that original text. Display formatting never rewrites a run.
+
+**Measurement details** retains per-prompt speed, first token, answer-start timing, duration, tokens and tool-call counts when recorded. First token may include reasoning. Answer-start timing is unavailable when inline reasoning makes that boundary ambiguous. Missing completion and timing evidence stays unknown. Tool-only prompts require a recorded tool-call finish and valid arguments for every emitted call to count as finished.
+
+Media results retain one lettered lane per model, with the mode’s primary metric and a relative bar, followed by one row per prompt and one column per lane for text, images, audio or video.
+
+New streamed inline reasoning is separated before recording. Decode speed is omitted when tokens arrive in a single burst, since arrival timing cannot establish generation speed.
 
 ## Inspect outputs side by side
 
 | Completed run | Inspector |
 |---|---|
-| Chat, vision, video understanding, speech to text | **Compare text · A/B**: read two models' recorded responses for one prompt, or highlight line differences |
+| Chat | Visible A/B reader with prompt navigation, full recorded responses and line differences |
+| Vision, video understanding, speech to text | **Compare text · A/B**: read two models' recorded responses for one prompt, or highlight line differences |
 | Music, text to speech | A/B listening: one player, pause and scrub; switching models keeps the elapsed time |
 | Image generation | **Inspect images**: two outputs with linked zoom and pan; arrow keys pan the focused image |
 | Video generation | **Inspect videos**: two clips on one elapsed-time control; audio off by default, one clip at a time when on |
@@ -88,7 +95,7 @@ winner; use Compare to judge models against matching prompts.
 
 ## Act on the result
 
-- **Promote winner**, on a completed chat run, saves the winner as the preferred model for its use case and can enable or swap the always-on endpoint, keeping verified gating. Wiring and reclaim keep their own previews.
+- **Use fastest…** requires a completed chat run, a positive finite speed and a finished outcome for every recorded prompt in the selected model’s cohort. Legacy runs without recorded prompt coverage cannot qualify. The action saves the winner as the preferred model for its use case and can enable or swap the always-on endpoint, keeping verified gating. Wiring and reclaim keep their own previews.
 - Measured chat speed feeds the recommendation engine as local benchmark evidence. Media runs do not.
 - Measurements count as current only when the selected prompt set still matches the recorded prompts exactly.
 

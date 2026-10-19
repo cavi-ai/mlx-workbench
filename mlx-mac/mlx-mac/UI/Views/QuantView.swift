@@ -506,9 +506,11 @@ struct QuantView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                HStack {
-                    Spacer()
-                    StudiesNavigationButton(onRouteSelection: onRouteSelection)
+                if shownRun == nil {
+                    HStack {
+                        Spacer()
+                        StudiesNavigationButton(onRouteSelection: onRouteSelection)
+                    }
                 }
                 if shownRun == nil { setupBar }
                 resultsArea
@@ -550,6 +552,7 @@ struct QuantView: View {
             .frame(maxWidth: .infinity)
             .padding(WorkbenchSpacing.pageInset)
         }
+        .accessibilityIdentifier("comparison-scroll")
         .sheet(isPresented: $showingSettingsSearch) {
             StrataSettingsSearchSheet(models: readyModels.filter { $0.item.servingRuntime == "strata" }) { model, setup in
                 guard comparison.activeRunID == nil, !comparison.savingPromptSet,
@@ -1222,6 +1225,10 @@ struct QuantView: View {
                           : "Edit the recorded prompts and settings for a new comparison.")
             }
             Spacer()
+            if shownRun != nil {
+                StudiesNavigationButton(onRouteSelection: onRouteSelection)
+                    .labelStyle(.iconOnly).buttonStyle(.borderless)
+            }
             championsMenu
                 .disabled(comparison.activeRunID != nil)
         }
@@ -1321,24 +1328,34 @@ struct QuantView: View {
                     }
                 }
 
-                MediaRunResultsView(
-                    run: run,
-                    store: comparison.outputStore ?? ComparisonOutputStore(),
-                    contentWidth: compareContentWidth,
-                    isRouteActive: isRouteActive,
-                    name: { shortName($0) },
-                    onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
-                    reviewError: comparison.persistenceError,
-                    laneActions: { lane in laneActions(lane, run: run, winnerPath: winnerPath) }
-                )
-                .id(run.id)
-
-                if ComparisonDiff.isAvailable(run) {
-                    TextComparisonPanel(run: run, store: comparison.outputStore ?? ComparisonOutputStore(),
+                if run.effectiveMode == .chat {
+                    ChatComparisonResultsView(run: run,
+                        store: comparison.outputStore ?? ComparisonOutputStore(), contentWidth: compareContentWidth,
                         name: { shortName($0) },
                         onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
-                        reviewError: comparison.persistenceError)
+                        reviewError: comparison.persistenceError,
+                        laneActions: { lane in laneActions(lane, run: run, winnerPath: winnerPath) })
                         .id(run.id)
+                } else {
+                    MediaRunResultsView(
+                        run: run,
+                        store: comparison.outputStore ?? ComparisonOutputStore(),
+                        contentWidth: compareContentWidth,
+                        isRouteActive: isRouteActive,
+                        name: { shortName($0) },
+                        onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
+                        reviewError: comparison.persistenceError,
+                        laneActions: { lane in laneActions(lane, run: run, winnerPath: winnerPath) }
+                    )
+                    .id(run.id)
+
+                    if ComparisonDiff.isAvailable(run) {
+                        TextComparisonPanel(run: run, store: comparison.outputStore ?? ComparisonOutputStore(),
+                            name: { shortName($0) },
+                            onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
+                            reviewError: comparison.persistenceError)
+                            .id(run.id)
+                    }
                 }
             }
             .background(GeometryReader { proxy in
