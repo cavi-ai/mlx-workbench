@@ -302,6 +302,112 @@ struct ImageUnderstandingTaskDraft: Equatable, Sendable {
     }
 }
 
+struct VideoUnderstandingTaskDraft: Equatable, Sendable {
+    var videoPath = ""
+    var prompt = ""
+    var fps = ""
+    var temperature = ""
+    var maxTokens = ""
+    var maxPixels = ""
+
+    var validationError: String? {
+        guard videoPath.hasPrefix("/"), !videoPath.unicodeScalars.contains(where: { $0.value < 0x20 }) else {
+            return "Choose a local video file."
+        }
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Ask a question about the video." }
+        guard optionalNumber(fps) != nil || fps.isEmpty,
+              optionalNumber(temperature) != nil || temperature.isEmpty,
+              optionalInteger(maxTokens) != nil || maxTokens.isEmpty,
+              optionalInteger(maxPixels) != nil || maxPixels.isEmpty else { return "Video analysis settings must be numbers." }
+        return nil
+    }
+
+    func request(modelPath: String) throws -> TaskRequest {
+        guard validationError == nil else { throw TaskProtocolError.invalidRequest }
+        var parameters: [String: JSONValue] = ["video_path": .string(videoPath), "prompt": .string(prompt)]
+        if let value = optionalNumber(fps) { parameters["fps"] = .number(value) }
+        if let value = optionalNumber(temperature) { parameters["temperature"] = .number(value) }
+        if let value = optionalInteger(maxTokens) { parameters["max_tokens"] = .number(Double(value)) }
+        if let value = optionalInteger(maxPixels) { parameters["max_pixels"] = .number(Double(value)) }
+        let request = TaskRequest(kind: .videoUnderstanding, modelPath: modelPath, parameters: parameters)
+        try request.validate()
+        return request
+    }
+
+    mutating func load(_ request: TaskRequest, retainedVideoPath: String) throws {
+        guard request.kind == .videoUnderstanding else { throw TaskProtocolError.invalidRequest }
+        var parameters = request.parameters
+        parameters["video_path"] = .string(retainedVideoPath)
+        let reused = TaskRequest(kind: .videoUnderstanding, modelPath: request.modelPath, parameters: parameters)
+        try reused.validate()
+        videoPath = retainedVideoPath
+        prompt = request.parameters["prompt"]?.stringValue ?? ""
+        fps = request.parameters["fps"]?.numberValue.map { String($0) } ?? ""
+        temperature = request.parameters["temperature"]?.numberValue.map { String($0) } ?? ""
+        maxTokens = request.parameters["max_tokens"]?.integerValue.map(String.init) ?? ""
+        maxPixels = request.parameters["max_pixels"]?.integerValue.map(String.init) ?? ""
+    }
+
+    private func optionalInteger(_ value: String) -> Int? { value.isEmpty ? nil : Int(value) }
+    private func optionalNumber(_ value: String) -> Double? {
+        guard !value.isEmpty, let number = Double(value), number.isFinite else { return nil }
+        return number
+    }
+}
+
+struct VideoGenerationTaskDraft: Equatable, Sendable {
+    var prompt = ""
+    var width = ""
+    var height = ""
+    var frames = ""
+    var fps = ""
+    var steps = ""
+    var seed = ""
+
+    var validationError: String? {
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Describe the video to generate." }
+        guard optionalInteger(width) != nil || width.isEmpty,
+              optionalInteger(height) != nil || height.isEmpty,
+              optionalInteger(frames) != nil || frames.isEmpty,
+              optionalNumber(fps) != nil || fps.isEmpty,
+              optionalInteger(steps) != nil || steps.isEmpty,
+              optionalInteger(seed) != nil || seed.isEmpty else { return "Video generation settings must be numbers." }
+        return nil
+    }
+
+    func request(modelPath: String) throws -> TaskRequest {
+        guard validationError == nil else { throw TaskProtocolError.invalidRequest }
+        var parameters: [String: JSONValue] = ["prompt": .string(prompt)]
+        if let value = optionalInteger(width) { parameters["width"] = .number(Double(value)) }
+        if let value = optionalInteger(height) { parameters["height"] = .number(Double(value)) }
+        if let value = optionalInteger(frames) { parameters["frames"] = .number(Double(value)) }
+        if let value = optionalNumber(fps) { parameters["fps"] = .number(value) }
+        if let value = optionalInteger(steps) { parameters["steps"] = .number(Double(value)) }
+        if let value = optionalInteger(seed) { parameters["seed"] = .number(Double(value)) }
+        let request = TaskRequest(kind: .videoGeneration, modelPath: modelPath, parameters: parameters)
+        try request.validate()
+        return request
+    }
+
+    mutating func load(_ request: TaskRequest) throws {
+        guard request.kind == .videoGeneration else { throw TaskProtocolError.invalidRequest }
+        try request.validate()
+        prompt = request.parameters["prompt"]?.stringValue ?? ""
+        width = request.parameters["width"]?.integerValue.map(String.init) ?? ""
+        height = request.parameters["height"]?.integerValue.map(String.init) ?? ""
+        frames = request.parameters["frames"]?.integerValue.map(String.init) ?? ""
+        fps = request.parameters["fps"]?.numberValue.map { String($0) } ?? ""
+        steps = request.parameters["steps"]?.integerValue.map(String.init) ?? ""
+        seed = request.parameters["seed"]?.integerValue.map(String.init) ?? ""
+    }
+
+    private func optionalInteger(_ value: String) -> Int? { value.isEmpty ? nil : Int(value) }
+    private func optionalNumber(_ value: String) -> Double? {
+        guard !value.isEmpty, let number = Double(value), number.isFinite else { return nil }
+        return number
+    }
+}
+
 @MainActor
 final class InferenceTaskCoordinator: ObservableObject {
     @Published var classificationDraft = ClassificationDraft()
@@ -310,6 +416,8 @@ final class InferenceTaskCoordinator: ObservableObject {
     @Published var speakDraft = SpeakTaskDraft()
     @Published var imageGenerationDraft = ImageGenerationTaskDraft()
     @Published var imageUnderstandingDraft = ImageUnderstandingTaskDraft()
+    @Published var videoUnderstandingDraft = VideoUnderstandingTaskDraft()
+    @Published var videoGenerationDraft = VideoGenerationTaskDraft()
     @Published private(set) var recent: [TaskRecord] = []
     @Published private(set) var hasMoreRecent = false
     @Published private(set) var selectedTask: TaskRecord?
@@ -322,7 +430,10 @@ final class InferenceTaskCoordinator: ObservableObject {
     @Published private(set) var error: String?
     @Published private(set) var readError: String?
     @Published private(set) var cancellationPending = false
+    @Published private(set) var lastReusedTaskKind: TaskKind?
+    @Published private(set) var reuseRevision = UUID()
     let audio = AudioClipPlayer()
+    let video = VideoComparisonPlayer()
 
     private let api: any InferenceTaskAPI
     private let artifactRoot: URL
@@ -360,6 +471,7 @@ final class InferenceTaskCoordinator: ObservableObject {
 
     func selectTask(id: String) async {
         guard let record = recent.first(where: { $0.id == id }) else { return }
+        stopPlayback()
         selectedTask = record
         selectedResult = nil
         verifiedResult = nil
@@ -384,10 +496,13 @@ final class InferenceTaskCoordinator: ObservableObject {
             case .speak: request = try speakDraft.request(modelPath: model.item.path)
             case .imageGeneration: request = try imageGenerationDraft.request(modelPath: model.item.path)
             case .imageUnderstanding: request = try imageUnderstandingDraft.request(modelPath: model.item.path)
+            case .videoUnderstanding: request = try videoUnderstandingDraft.request(modelPath: model.item.path)
+            case .videoGeneration: request = try videoGenerationDraft.request(modelPath: model.item.path)
             case .unsupported: throw TaskProtocolError.invalidRequest
             }
         }
         catch { self.error = AppHost.render(error); return }
+        stopPlayback()
         busy = true
         cancellationPending = false
         error = nil
@@ -398,7 +513,7 @@ final class InferenceTaskCoordinator: ObservableObject {
             guard capabilities.isSupported,
                   capabilities.tasks.contains(where: { $0.kind == kind && $0.requiresLocalModel }),
                   capabilities.requestSchema(for: kind) == request.schema,
-                  capabilities.runSchema(for: kind) == ([.transcribe, .speak, .imageGeneration, .imageUnderstanding].contains(kind) ? "task-run/2" : "task-run/1") else {
+                  capabilities.runSchema(for: kind) == ([.transcribe, .speak, .imageGeneration, .imageUnderstanding, .videoUnderstanding, .videoGeneration].contains(kind) ? "task-run/2" : "task-run/1") else {
                 cancellationPending = false
                 error = "The installed mlx-agent does not advertise this local task type."
                 return
@@ -486,6 +601,14 @@ final class InferenceTaskCoordinator: ObservableObject {
                 }
                 output = try await TaskArtifactVerifier.verifyPNG(reference: reference, taskID: id, root: artifactRoot)
             }
+            if response.task.kind == .videoGeneration,
+               let raw = payload?.objectValue?["output_artifact"],
+               let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(raw)) {
+                guard URL(fileURLWithPath: reference.path).lastPathComponent == "output.mp4" else {
+                    throw TaskArtifactVerificationError.invalidReference
+                }
+                output = try await TaskArtifactVerifier.verifyVideo(reference: reference, taskID: id, root: artifactRoot)
+            }
             if response.task.kind == .transcribe || response.task.kind == .imageUnderstanding {
                 guard let recorded = response.task.inputArtifact,
                       let returned = payload?.objectValue?["input_artifact"],
@@ -494,6 +617,13 @@ final class InferenceTaskCoordinator: ObservableObject {
                 input = response.task.kind == .imageUnderstanding
                     ? try await TaskArtifactVerifier.verifyImage(reference: recorded, taskID: id, root: artifactRoot)
                     : try await TaskArtifactVerifier.verify(reference: recorded, taskID: id, root: artifactRoot)
+            }
+            if response.task.kind == .videoUnderstanding {
+                guard let recorded = response.task.inputArtifact,
+                      let returned = payload?.objectValue?["input_artifact"],
+                      let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(returned)),
+                      reference == recorded else { throw TaskArtifactVerificationError.invalidReference }
+                input = try await TaskArtifactVerifier.verifyVideo(reference: recorded, taskID: id, root: artifactRoot)
             }
             selectedTask = response.task
             selectedResult = response
@@ -536,8 +666,15 @@ final class InferenceTaskCoordinator: ObservableObject {
                 guard let input = record.inputArtifact else { throw TaskArtifactVerificationError.unavailable }
                 _ = try await TaskArtifactVerifier.verifyImage(reference: input, taskID: id, root: artifactRoot)
                 try imageUnderstandingDraft.load(request, retainedImagePath: input.path)
+            case .videoGeneration: try videoGenerationDraft.load(request)
+            case .videoUnderstanding:
+                guard let input = record.inputArtifact else { throw TaskArtifactVerificationError.unavailable }
+                _ = try await TaskArtifactVerifier.verifyVideo(reference: input, taskID: id, root: artifactRoot)
+                try videoUnderstandingDraft.load(request, retainedVideoPath: input.path)
             case .unsupported: throw TaskProtocolError.invalidRequest
             }
+            lastReusedTaskKind = request.kind
+            reuseRevision = UUID()
             error = nil
         } catch { self.error = "This task request cannot be safely reused: \(AppHost.render(error))" }
     }
@@ -593,6 +730,22 @@ final class InferenceTaskCoordinator: ObservableObject {
         try fileManager.copyItem(at: output.url, to: destination)
     }
 
+    func exportVideo(id: String, to destination: URL) async throws {
+        let response = try await api.taskResult(id: id)
+        guard response.task.kind == .videoGeneration else { throw TaskArtifactVerificationError.unavailable }
+        let result = try await TaskArtifactVerifier.verify(reference: response.artifact, taskID: id, root: artifactRoot)
+        guard let raw = try verifiedResultPayload(response, artifact: result)?.objectValue?["output_artifact"],
+              let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(raw)) else {
+            throw TaskArtifactVerificationError.unavailable
+        }
+        guard URL(fileURLWithPath: reference.path).lastPathComponent == "output.mp4" else {
+            throw TaskArtifactVerificationError.invalidReference
+        }
+        let output = try await TaskArtifactVerifier.verifyVideo(reference: reference, taskID: id, root: artifactRoot)
+        try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.copyItem(at: output.url, to: destination)
+    }
+
     func startPolling(id: String, owner: String = "default") {
         guard selectedTask?.id == id, selectedTask?.state.isActive == true else {
             stopPolling(owner: owner)
@@ -633,7 +786,7 @@ final class InferenceTaskCoordinator: ObservableObject {
         pollingTaskID = nil
     }
 
-    func stopPlayback() { audio.stop() }
+    func stopPlayback() { audio.stop(); video.stop() }
 
     private func verifiedResultPayload(_ response: TaskResultResponse, artifact: VerifiedTaskArtifact) throws -> JSONValue? {
         guard let verified = artifact.json else {
@@ -652,6 +805,8 @@ final class InferenceTaskCoordinator: ObservableObject {
         case .speak: speakDraft.validationError == nil
         case .imageGeneration: imageGenerationDraft.validationError == nil
         case .imageUnderstanding: imageUnderstandingDraft.validationError == nil
+        case .videoUnderstanding: videoUnderstandingDraft.validationError == nil
+        case .videoGeneration: videoGenerationDraft.validationError == nil
         case .unsupported: false
         }
     }
@@ -672,6 +827,8 @@ extension TaskKind {
         case .speak: .textToSpeech
         case .imageGeneration: .imageGeneration
         case .imageUnderstanding: .visionLanguage
+        case .videoUnderstanding: .visionLanguage
+        case .videoGeneration: .videoGeneration
         case .unsupported: nil
         }
     }

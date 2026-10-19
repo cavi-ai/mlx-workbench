@@ -1,4 +1,5 @@
 import CryptoKit
+import AVFoundation
 import ImageIO
 import Darwin
 import Foundation
@@ -23,6 +24,7 @@ enum TaskArtifactVerificationError: Error, LocalizedError {
     case invalidRequest
     case invalidJSON
     case invalidImage
+    case invalidVideo
 
     var errorDescription: String? {
         switch self {
@@ -36,6 +38,7 @@ enum TaskArtifactVerificationError: Error, LocalizedError {
         case .invalidRequest: "The saved task request does not match a supported task schema."
         case .invalidJSON: "The task result artifact is not valid JSON."
         case .invalidImage: "The task image artifact is not a decodable PNG."
+        case .invalidVideo: "The task video artifact is not a playable MP4 with a video stream and positive duration."
         }
     }
 }
@@ -70,6 +73,18 @@ enum TaskArtifactVerifier {
               Self.hasDecodableImage(source) else {
             throw TaskArtifactVerificationError.invalidImage
         }
+        return artifact
+    }
+
+    static func verifyVideo(reference: TaskArtifactReference, taskID: String, root: URL) async throws -> VerifiedTaskArtifact {
+        let artifact = try await verify(reference: reference, taskID: taskID, root: root)
+        guard ["mp4", "mov", "m4v"].contains(artifact.url.pathExtension.lowercased()) else {
+            throw TaskArtifactVerificationError.invalidVideo
+        }
+        let asset = AVURLAsset(url: artifact.url)
+        let duration = try await asset.load(.duration).seconds
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        guard duration.isFinite, duration > 0, !tracks.isEmpty else { throw TaskArtifactVerificationError.invalidVideo }
         return artifact
     }
 

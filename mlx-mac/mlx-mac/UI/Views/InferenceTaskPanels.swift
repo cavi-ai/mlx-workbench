@@ -1,4 +1,5 @@
 import AppKit
+import AVKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -6,6 +7,14 @@ struct InferenceTaskPanel: View {
     @ObservedObject var coordinator: InferenceTaskCoordinator
     let model: LibraryModel
     @Environment(\.isRouteActive) private var isRouteActive
+    @State private var understandingMode: UnderstandingMode = .image
+    @State private var videoPreviewLoadRevision = UUID()
+
+    private enum UnderstandingMode: String, CaseIterable, Identifiable {
+        case image = "Image"
+        case video = "Video"
+        var id: String { rawValue }
+    }
 
     var body: some View {
         WorkbenchSurface {
@@ -21,12 +30,19 @@ struct InferenceTaskPanel: View {
                 } else if model.item.task?.type == .imageGeneration {
                     imageGeneration
                 } else if model.item.task?.type == .visionLanguage {
-                    imageUnderstanding
+                    understanding
+                } else if model.item.task?.type == .videoGeneration {
+                    videoGeneration
                 }
-                RecentTaskList(coordinator: coordinator, filterModel: model, reuseModel: model)
+                RecentTaskList(coordinator: coordinator, filterModel: model, reuseModel: model,
+                               videoPreviewReloadRevision: videoPreviewLoadRevision,
+                               videoPreviewEnabled: understandingMode == .video)
             }
         }
         .task { if isRouteActive { await coordinator.refreshRecent() } }
+        .onAppear { synchronizeUnderstandingMode(coordinator.selectedTask?.kind) }
+        .onChange(of: coordinator.selectedTask?.kind) { _, kind in synchronizeUnderstandingMode(kind) }
+        .onChange(of: coordinator.reuseRevision) { _, _ in synchronizeUnderstandingMode(coordinator.lastReusedTaskKind) }
         .task(id: "\(isRouteActive):\(coordinator.selectedTask?.id ?? ""):\(coordinator.selectedTask?.state.wireValue ?? "")") {
             guard isRouteActive, let task = coordinator.selectedTask, task.state.isActive else {
                 coordinator.stopPolling(owner: "model-inspector")
@@ -39,6 +55,14 @@ struct InferenceTaskPanel: View {
         }
         .onChange(of: model.item.path) { _, _ in coordinator.stopPlayback() }
         .onDisappear { coordinator.stopPolling(owner: "model-inspector"); coordinator.stopPlayback() }
+    }
+
+    private func synchronizeUnderstandingMode(_ kind: TaskKind?) {
+        switch kind {
+        case .imageUnderstanding: understandingMode = .image
+        case .videoUnderstanding: understandingMode = .video
+        default: break
+        }
     }
 
     private var classifier: some View {
@@ -216,6 +240,92 @@ struct InferenceTaskPanel: View {
         }
     }
 
+    private var understanding: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Picker("Understand", selection: $understandingMode) {
+                ForEach(UnderstandingMode.allCases) { mode in Text(mode.rawValue).tag(mode) }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("task-understanding-mode")
+            .onChange(of: understandingMode) { _, mode in
+                coordinator.stopPlayback()
+                if mode == .video { videoPreviewLoadRevision = UUID() }
+            }
+            if understandingMode == .image { imageUnderstanding }
+            else { videoUnderstanding }
+        }
+    }
+
+    private var videoUnderstanding: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SectionTitle(text: "Understand video")
+            HStack {
+                TextField("Choose a video file", text: $coordinator.videoUnderstandingDraft.videoPath)
+                    .textSelection(.enabled).accessibilityIdentifier("task-video-understanding-path")
+                Button("Choose…") {
+                    let panel = NSOpenPanel()
+                    panel.allowedContentTypes = [.mpeg4Movie, .movie]
+                    panel.allowsMultipleSelection = false
+                    panel.canChooseDirectories = false
+                    panel.begin { response in
+                        if response == .OK, let url = panel.url { coordinator.videoUnderstandingDraft.videoPath = url.path }
+                    }
+                }
+                .accessibilityIdentifier("task-video-understanding-choose")
+            }
+            TextField("Ask a question about the video", text: $coordinator.videoUnderstandingDraft.prompt, axis: .vertical)
+                .lineLimit(2...4).accessibilityIdentifier("task-video-understanding-prompt")
+            DisclosureGroup("Advanced options") {
+                HStack {
+                    TextField("FPS · planner default", text: $coordinator.videoUnderstandingDraft.fps)
+                        .accessibilityIdentifier("task-video-understanding-fps")
+                    TextField("Temperature · planner default", text: $coordinator.videoUnderstandingDraft.temperature)
+                        .accessibilityIdentifier("task-video-understanding-temperature")
+                    TextField("Max tokens · planner default", text: $coordinator.videoUnderstandingDraft.maxTokens)
+                        .accessibilityIdentifier("task-video-understanding-max-tokens")
+                    TextField("Max pixels · planner default", text: $coordinator.videoUnderstandingDraft.maxPixels)
+                        .accessibilityIdentifier("task-video-understanding-max-pixels")
+                }
+            }
+            if let error = coordinator.videoUnderstandingDraft.validationError {
+                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+            Text("The engine keeps a verified copy of the selected video with the task.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            taskActions(kind: .videoUnderstanding)
+        }
+    }
+
+    private var videoGeneration: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SectionTitle(text: "Generate video")
+            TextField("Describe the video", text: $coordinator.videoGenerationDraft.prompt, axis: .vertical)
+                .lineLimit(2...5).accessibilityIdentifier("task-video-generation-prompt")
+            DisclosureGroup("Video settings") {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    TextField("Width · planner default", text: $coordinator.videoGenerationDraft.width)
+                        .accessibilityIdentifier("task-video-generation-width")
+                    TextField("Height · planner default", text: $coordinator.videoGenerationDraft.height)
+                        .accessibilityIdentifier("task-video-generation-height")
+                    TextField("Frames · planner default", text: $coordinator.videoGenerationDraft.frames)
+                        .accessibilityIdentifier("task-video-generation-frames")
+                }
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    TextField("FPS · planner default", text: $coordinator.videoGenerationDraft.fps)
+                        .accessibilityIdentifier("task-video-generation-fps")
+                    TextField("Steps · planner default", text: $coordinator.videoGenerationDraft.steps)
+                        .accessibilityIdentifier("task-video-generation-steps")
+                    TextField("Seed · planner default", text: $coordinator.videoGenerationDraft.seed)
+                        .accessibilityIdentifier("task-video-generation-seed")
+                }
+            }
+            if let error = coordinator.videoGenerationDraft.validationError {
+                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+            taskActions(kind: .videoGeneration)
+        }
+    }
+
     private func taskActions(kind: TaskKind) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             if let error = coordinator.error { InlineMessage(kind: .warning, text: error) }
@@ -240,6 +350,8 @@ struct RecentTaskList: View {
     @ObservedObject var coordinator: InferenceTaskCoordinator
     var filterModel: LibraryModel?
     var reuseModel: LibraryModel?
+    var videoPreviewReloadRevision: UUID?
+    var videoPreviewEnabled: Bool
     @ObservedObject private var audio: AudioClipPlayer
     @State private var exportError: String?
     @State private var resultJSONExpanded = false
@@ -252,10 +364,13 @@ struct RecentTaskList: View {
         Self.visibleSelectedTask(coordinator.selectedTask, in: visibleTasks)
     }
 
-    init(coordinator: InferenceTaskCoordinator, filterModel: LibraryModel? = nil, reuseModel: LibraryModel? = nil) {
+    init(coordinator: InferenceTaskCoordinator, filterModel: LibraryModel? = nil, reuseModel: LibraryModel? = nil,
+         videoPreviewReloadRevision: UUID? = nil, videoPreviewEnabled: Bool = true) {
         self.coordinator = coordinator
         self.filterModel = filterModel
         self.reuseModel = reuseModel
+        self.videoPreviewReloadRevision = videoPreviewReloadRevision
+        self.videoPreviewEnabled = videoPreviewEnabled
         _audio = ObservedObject(wrappedValue: coordinator.audio)
     }
 
@@ -390,6 +505,37 @@ struct RecentTaskList: View {
                     }
                     .accessibilityIdentifier("task-export-image")
                 }
+                if task.kind == .videoUnderstanding {
+                    if let input = coordinator.verifiedInput {
+                        TaskVideoPreview(artifact: input, player: coordinator.video,
+                                         reloadRevision: videoPreviewReloadRevision, isEnabled: videoPreviewEnabled)
+                            .accessibilityIdentifier("task-video-input")
+                    }
+                    if let answer = coordinator.verifiedResult?.json?.objectValue?["text"]?.stringValue {
+                        SectionTitle(text: "Video response")
+                        Text(answer).font(WorkbenchTypography.value).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("task-video-understanding-result")
+                    }
+                }
+                if task.kind == .videoGeneration, let output = coordinator.verifiedOutput {
+                    SectionTitle(text: "Generated video")
+                    TaskVideoPreview(artifact: output, player: coordinator.video)
+                        .accessibilityIdentifier("task-video-output")
+                    Button("Export MP4…") {
+                        let panel = NSSavePanel()
+                        panel.nameFieldStringValue = "task-\(task.id)-output.mp4"
+                        panel.allowedContentTypes = [.mpeg4Movie]
+                        panel.begin { response in
+                            guard response == .OK, let url = panel.url else { return }
+                            Task {
+                                do { try await coordinator.exportVideo(id: task.id, to: url); exportError = nil }
+                                catch { exportError = AppHost.render(error) }
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("task-export-video")
+                }
                 if let output = coordinator.verifiedOutput, task.kind == .speak || task.kind == .musicGeneration {
                     HStack {
                         Button(audio.activeURL == output.url && audio.isPlaying ? "Pause" : "Play WAV") { audio.toggle(output.url) }
@@ -436,9 +582,10 @@ struct RecentTaskList: View {
         }
         .onChange(of: coordinator.selectedTask?.id) { _, _ in
             audio.stop()
+            coordinator.video.stop()
             resultJSONExpanded = false
         }
-        .onDisappear { audio.stop() }
+        .onDisappear { audio.stop(); coordinator.video.stop() }
     }
 
     private func reuseUnavailableReason(_ task: TaskRecord) -> String? {
@@ -447,6 +594,48 @@ struct RecentTaskList: View {
         guard model.item.path == task.modelPath else { return "Select the model recorded for this task." }
         guard model.item.task?.type == task.kind.modelTaskType else { return "The selected model does not support this task type." }
         return nil
+    }
+}
+
+private struct TaskVideoPreview: View {
+    let artifact: VerifiedTaskArtifact
+    @ObservedObject var player: VideoComparisonPlayer
+    var reloadRevision: UUID? = nil
+    var isEnabled = true
+    @Environment(\.isRouteActive) private var isRouteActive
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if let avPlayer = player.players.first {
+                SharedVideoPane(player: avPlayer)
+                    .frame(minHeight: 180, idealHeight: 280, maxHeight: 360)
+                    .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+                    .accessibilityLabel("Verified task video")
+            } else if player.isLoading {
+                ProgressView("Loading video…").frame(maxWidth: .infinity, minHeight: 160)
+            } else if let failure = player.failure {
+                InlineMessage(kind: .warning, text: failure)
+            }
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Button(player.isPlaying ? "Pause" : "Play") { Task { await player.toggle() } }
+                    .disabled(player.players.isEmpty || player.isLoading || player.failure != nil)
+                    .accessibilityIdentifier(player.isPlaying ? "task-video-pause" : "task-video-play")
+                Slider(value: Binding(get: { player.position }, set: { value in Task { await player.seek(to: value) } }),
+                       in: 0...max(player.duration, 0.001))
+                    .disabled(player.players.isEmpty || player.isLoading)
+                    .accessibilityLabel("Task video position")
+                Text(String(format: "%.1f / %.1f s", player.position, player.duration))
+                    .font(WorkbenchTypography.secondaryTabular)
+            }
+            Text("Verified MP4 · \(artifact.reference.bytes) bytes · \(artifact.reference.sha256)")
+                .font(WorkbenchTypography.secondary).textSelection(.enabled)
+        }
+        .task(id: "\(artifact.url.absoluteString):\(reloadRevision?.uuidString ?? ""):\(isEnabled)") {
+            guard isEnabled else { return }
+            await player.load([artifact.url], preservingPosition: false)
+        }
+        .onChange(of: isRouteActive) { _, active in if !active { player.stop() } }
+        .onDisappear { player.stop() }
     }
 }
 
@@ -575,6 +764,8 @@ private extension TaskKind {
         case .speak: "Speech"
         case .imageGeneration: "Image generation"
         case .imageUnderstanding: "Image understanding"
+        case .videoUnderstanding: "Video understanding"
+        case .videoGeneration: "Video generation"
         case .unsupported(let name): name
         }
     }

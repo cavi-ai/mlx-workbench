@@ -115,12 +115,21 @@ final class WorkbenchReviewUITests: XCTestCase {
                 elif record['kind'] == 'image_understanding':
                     result = dict(schema='describe/1', model=record['model_path'], backend='mlx-vlm',
                         text='The image shows a red object against a light background.', input_artifact=record['input_artifact'])
+                elif record['kind'] == 'video_understanding':
+                    result = dict(schema='describe/1', model=record['model_path'], backend='mlx-vlm',
+                        text='The red square moves from left to right.', input_artifact=record['input_artifact'])
                 elif record['kind'] == 'image_generation':
                     path = folder / 'output.png'
                     path.write_bytes(png())
                     path.chmod(0o600)
                     result = dict(schema='generate/1', model=record['model_path'], backend='mflux',
                         output_artifact=reference(path), width=4, height=3, steps=20, seed=42, seconds=0.1)
+                elif record['kind'] == 'video_generation':
+                    path = folder / 'output.mp4'
+                    shutil.copyfile(root / 'fixture-video.mp4', path)
+                    path.chmod(0o600)
+                    result = dict(schema='video/1', model=record['model_path'], backend='mlx-video',
+                        output_artifact=reference(path), width=256, height=256, frames=30, fps=10, seconds=3.0)
                 else:
                     path = folder / 'output.wav'
                     with wave.open(str(path), 'wb') as output:
@@ -146,26 +155,31 @@ final class WorkbenchReviewUITests: XCTestCase {
                          model_verification=True, request_schema='task-request/2', run_schema='task-run/2'),
                     dict(kind='image_understanding', result_schema='describe/1', cancellation=True, requires_local_model=True,
                          model_verification=True, request_schema='task-request/2', run_schema='task-run/2')])
+                data['tasks'].extend([
+                    dict(kind='video_generation', result_schema='video/1', cancellation=True, requires_local_model=True,
+                         model_verification=True, request_schema='task-request/2', run_schema='task-run/2'),
+                    dict(kind='video_understanding', result_schema='describe/1', cancellation=True, requires_local_model=True,
+                         model_verification=True, request_schema='task-request/2', run_schema='task-run/2')])
             elif action == 'start':
                 request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
                 identifier = str(uuid.UUID(int=len(records) + 1))
                 input_artifact = None
-                if request['kind'] in ('transcribe', 'image_understanding'):
-                    source_key, filename = ('audio_path', 'input.wav') if request['kind'] == 'transcribe' else ('image_path', 'input.png')
+                if request['kind'] in ('transcribe', 'image_understanding', 'video_understanding'):
+                    source_key, filename = ('audio_path', 'input.wav') if request['kind'] == 'transcribe' else (('image_path', 'input.png') if request['kind'] == 'image_understanding' else ('video_path', 'input.mp4'))
                     source = pathlib.Path(request['parameters'][source_key])
                     destination = task_root / 'artifacts' / identifier / filename
                     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                     shutil.copyfile(source, destination)
                     destination.chmod(0o600)
                     input_artifact = reference(destination)
-                record = dict(schema='task-run/2' if request['kind'] in ('transcribe', 'speak', 'image_generation', 'image_understanding') else 'task-run/1', id=identifier, kind=request['kind'], state='running', model_path=request['model_path'],
+                record = dict(schema='task-run/2' if request['kind'] in ('transcribe', 'speak', 'image_generation', 'image_understanding', 'video_generation', 'video_understanding') else 'task-run/1', id=identifier, kind=request['kind'], state='running', model_path=request['model_path'],
                     created_at='2026-01-01T00:00:00Z', started_at='2026-01-01T00:00:00Z', completed_at=None,
                     cancel_requested=False, execution_unresolved=False, supervisor=dict(pid=101), execution=dict(pid=102),
                     request=artifact(identifier, 'request.json', request), result=None, error=None,
                     identity=dict(backend='mlx-embeddings' if request['kind'] == 'classification' else 'mlx-audio',
                         backend_version='1.0', engine_version='0.7.0', python_version='3.12', model_fingerprint='a' * 64),
                     input_artifact=input_artifact)
-                if request['kind'] in ('classification', 'transcribe', 'speak', 'image_generation', 'image_understanding'): finish(record)
+                if request['kind'] in ('classification', 'transcribe', 'speak', 'image_generation', 'image_understanding', 'video_generation', 'video_understanding'): finish(record)
                 records.insert(0, record)
                 data = dict(task=record)
             elif action == 'list':
@@ -1095,6 +1109,174 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Library-image-understanding-result-and-reuse")
     }
 
+    @MainActor
+    func testLibraryVideoTasksUseDurableHistoryAndRetainedInputs() async throws {
+        let generator = root.appendingPathComponent("models/video_generation")
+        let vision = root.appendingPathComponent("models/vision_language")
+        for model in [generator, vision] {
+            try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+            try Data("{\"model_type\":\"fixture\"}".utf8).write(to: model.appendingPathComponent("config.json"))
+        }
+        let outputs: [[String: Any]] = [
+            ["path": generator.path, "name": "Fixture video generator", "model_key": "video-generator", "bytes": 1024, "readable": true,
+             "task": ["type": "video_generation", "use_cases": [], "source": "registry", "confidence": "confirmed"]],
+            ["path": vision.path, "name": "Fixture video understanding", "model_key": "vision-language", "bytes": 1024, "readable": true,
+             "task": ["type": "vision_language", "use_cases": [], "source": "registry", "confidence": "confirmed"]],
+        ]
+        try JSONSerialization.data(withJSONObject: ["models": [], "outputs": outputs, "pending": [], "duplicates": [],
+            "totals": ["gguf": 0, "pending": 0, "converted": 2, "unreadable": 0, "bytes": 2048, "reclaimable_bytes": 0]])
+            .write(to: root.appendingPathComponent("scan-result.json"))
+        let source = root.appendingPathComponent("input.mp4")
+        try writeStudyReviewClip(to: source, frames: 30)
+        let sourceAsset = AVURLAsset(url: source)
+        let sourceDuration = try await sourceAsset.load(.duration).seconds
+        let sourceTracks = try await sourceAsset.loadTracks(withMediaType: .video)
+        XCTAssertGreaterThan(sourceDuration, 0)
+        XCTAssertFalse(sourceTracks.isEmpty)
+        try FileManager.default.copyItem(at: source, to: root.appendingPathComponent("fixture-video.mp4"))
+
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let generationModel = app.outlines.staticTexts["Fixture video generator"].firstMatch
+        XCTAssertTrue(generationModel.waitForExistence(timeout: 15)); generationModel.doubleClick()
+        XCTAssertTrue(app.staticTexts["Generate video"].waitForExistence(timeout: 10))
+        replace(app.textFields["task-video-generation-prompt"], with: "A red square moves across a white background")
+        app.disclosureTriangles["Video settings"].click()
+        replace(app.textFields["task-video-generation-width"], with: "256")
+        replace(app.textFields["task-video-generation-height"], with: "256")
+        replace(app.textFields["task-video-generation-frames"], with: "17")
+        replace(app.textFields["task-video-generation-fps"], with: "8")
+        replace(app.textFields["task-video-generation-steps"], with: "8")
+        replace(app.textFields["task-video-generation-seed"], with: "42")
+        XCTAssertTrue(try taskSubmissions().isEmpty, "Editing the form must not submit inference")
+        capture("Library-video-generation-form")
+        app.buttons["task-start"].click()
+        waitForTaskState("succeeded")
+        let videoPlay = app.buttons["task-video-play"]
+        XCTAssertTrue(videoPlay.waitForExistence(timeout: 15), app.debugDescription)
+        let playerReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: videoPlay)
+        XCTAssertEqual(XCTWaiter.wait(for: [playerReady], timeout: 15), .completed, app.debugDescription)
+        let generatedPreview = app.descendants(matching: .any).matching(identifier: "task-video-output").firstMatch
+        let generationScroll = app.scrollViews.containing(.button, identifier: "task-export-video").firstMatch
+        for _ in 0..<8 where !generatedPreview.isHittable || generatedPreview.frame.minY < generationScroll.frame.minY || generatedPreview.frame.maxY > generationScroll.frame.maxY {
+            let delta = max(-300, min(300, generationScroll.frame.midY - generatedPreview.frame.midY))
+            generationScroll.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(generatedPreview.isHittable, app.debugDescription)
+        XCTAssertGreaterThanOrEqual(generatedPreview.frame.minY, generationScroll.frame.minY)
+        XCTAssertLessThanOrEqual(generatedPreview.frame.maxY, generationScroll.frame.maxY)
+        capture("Library-video-generation-result")
+        let videoExport = app.buttons["task-export-video"]
+        for _ in 0..<8 where !videoExport.isHittable || videoExport.frame.minY < generationScroll.frame.minY || videoExport.frame.maxY > generationScroll.frame.maxY {
+            let delta = max(-300, min(300, generationScroll.frame.midY - videoExport.frame.midY))
+            generationScroll.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(videoExport.isHittable, app.debugDescription)
+        XCTAssertGreaterThanOrEqual(videoExport.frame.minY, generationScroll.frame.minY)
+        XCTAssertLessThanOrEqual(videoExport.frame.maxY, generationScroll.frame.maxY)
+        capture("Library-video-generation-export")
+        let generation = try XCTUnwrap(taskSubmissions().first)
+        let generationRequestReference = try XCTUnwrap(generation["request"] as? [String: Any])
+        let generationRequestPath = try XCTUnwrap(generationRequestReference["path"] as? String)
+        let generationRequest = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: generationRequestPath))) as? [String: Any])
+        let generationParameters = try XCTUnwrap(generationRequest["parameters"] as? [String: Any])
+        XCTAssertEqual(generationRequest["schema"] as? String, "task-request/2")
+        XCTAssertEqual(generationParameters["prompt"] as? String, "A red square moves across a white background")
+        XCTAssertEqual(generationParameters["width"] as? Int, 256)
+        XCTAssertEqual(generationParameters["height"] as? Int, 256)
+        XCTAssertEqual(generationParameters["frames"] as? Int, 17)
+        XCTAssertEqual(generationParameters["fps"] as? Int, 8)
+        XCTAssertEqual(generationParameters["steps"] as? Int, 8)
+        XCTAssertEqual(generationParameters["seed"] as? Int, 42)
+
+        app.buttons["Done"].click()
+        let understandingModel = app.outlines.staticTexts["Fixture video understanding"].firstMatch
+        XCTAssertTrue(waitForHittability(understandingModel, timeout: 10), app.debugDescription)
+        understandingModel.doubleClick()
+        XCTAssertTrue(app.segmentedControls["task-understanding-mode"].buttons["Video"].waitForExistence(timeout: 10))
+        app.segmentedControls["task-understanding-mode"].buttons["Video"].click()
+        XCTAssertTrue(app.staticTexts["Understand video"].waitForExistence(timeout: 10))
+        replace(app.textFields["task-video-understanding-path"], with: source.path)
+        replace(app.textFields["task-video-understanding-prompt"], with: "Which direction does the red square move?")
+        app.disclosureTriangles["Advanced options"].click()
+        replace(app.textFields["task-video-understanding-fps"], with: "1")
+        replace(app.textFields["task-video-understanding-temperature"], with: "0")
+        replace(app.textFields["task-video-understanding-max-tokens"], with: "128")
+        replace(app.textFields["task-video-understanding-max-pixels"], with: "65536")
+        XCTAssertEqual(try taskSubmissions().count, 1, "Editing the form must not submit inference")
+        capture("Library-video-understanding-form")
+        app.buttons["task-start"].click()
+        waitForTaskState("succeeded")
+        let answer = app.staticTexts["task-video-understanding-result"]
+        XCTAssertTrue(answer.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(answer.label, "The red square moves from left to right.")
+        let understandingScroll = app.scrollViews.containing(.staticText, identifier: "task-video-understanding-result").firstMatch
+        let inputPreview = app.descendants(matching: .any).matching(identifier: "task-video-input").firstMatch
+        for _ in 0..<8 where !inputPreview.isHittable || inputPreview.frame.minY < understandingScroll.frame.minY || inputPreview.frame.maxY > understandingScroll.frame.maxY {
+            let delta = max(-300, min(300, understandingScroll.frame.midY - inputPreview.frame.midY))
+            understandingScroll.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(inputPreview.isHittable, app.debugDescription)
+        XCTAssertGreaterThanOrEqual(inputPreview.frame.minY, understandingScroll.frame.minY)
+        XCTAssertLessThanOrEqual(inputPreview.frame.maxY, understandingScroll.frame.maxY)
+        capture("Library-video-understanding-input")
+        for _ in 0..<8 where !answer.isHittable || answer.frame.minY < understandingScroll.frame.minY || answer.frame.maxY > understandingScroll.frame.maxY {
+            let delta = max(-300, min(300, understandingScroll.frame.midY - answer.frame.midY))
+            understandingScroll.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(answer.isHittable, app.debugDescription)
+        XCTAssertGreaterThanOrEqual(answer.frame.minY, understandingScroll.frame.minY)
+        XCTAssertLessThanOrEqual(answer.frame.maxY, understandingScroll.frame.maxY)
+        capture("Library-video-understanding-answer")
+        let understanding = try XCTUnwrap(taskSubmissions().first)
+        let retained = try XCTUnwrap(understanding["input_artifact"] as? [String: Any])
+        let retainedPath = try XCTUnwrap(retained["path"] as? String)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: retainedPath))
+        let requestReference = try XCTUnwrap(understanding["request"] as? [String: Any])
+        let requestPath = try XCTUnwrap(requestReference["path"] as? String)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: requestPath))) as? [String: Any])
+        let parameters = try XCTUnwrap(request["parameters"] as? [String: Any])
+        XCTAssertEqual(request["schema"] as? String, "task-request/2")
+        XCTAssertEqual(Set(parameters.keys), ["video_path", "prompt", "fps", "temperature", "max_tokens", "max_pixels"])
+        XCTAssertEqual(parameters["video_path"] as? String, source.path)
+        try FileManager.default.removeItem(at: source)
+        let mode = app.segmentedControls["task-understanding-mode"]
+        let imageMode = mode.buttons["Image"]
+        let taskScroll = app.scrollViews.containing(.staticText, identifier: "task-video-understanding-result").firstMatch
+        for _ in 0..<8 where !imageMode.isHittable {
+            let delta = max(-300, min(300, taskScroll.frame.midY - imageMode.frame.midY))
+            taskScroll.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(imageMode.isHittable, app.debugDescription)
+        imageMode.click()
+        XCTAssertTrue(mode.buttons["Image"].isSelected, app.debugDescription)
+        let reuse = app.buttons["task-reuse"]
+        for _ in 0..<8 where !reuse.isHittable { taskScroll.scroll(byDeltaX: 0, deltaY: reuse.frame.midY < taskScroll.frame.minY ? 300 : -300) }
+        XCTAssertTrue(reuse.isHittable, app.debugDescription)
+        reuse.click()
+        XCTAssertTrue(mode.buttons["Video"].isSelected, app.debugDescription)
+        let reusedPath = app.textFields["task-video-understanding-path"]
+        let retainedValue = expectation(for: NSPredicate(format: "value == %@", retainedPath), evaluatedWith: reusedPath)
+        XCTAssertEqual(XCTWaiter.wait(for: [retainedValue], timeout: 15), .completed, app.debugDescription)
+        XCTAssertEqual(reusedPath.value as? String, retainedPath, app.debugDescription)
+        XCTAssertEqual(try taskSubmissions().count, 2, "Reuse fills the form without starting another task")
+        capture("Library-video-understanding-result-and-reuse")
+        let inputPlay = app.buttons["task-video-play"]
+        XCTAssertTrue(inputPlay.waitForExistence(timeout: 10), app.debugDescription)
+        let inputReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: inputPlay)
+        XCTAssertEqual(XCTWaiter.wait(for: [inputReady], timeout: 15), .completed, app.debugDescription)
+        inputPlay.click()
+        XCTAssertTrue(app.buttons["task-video-pause"].waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["Done"].click()
+        XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(waitForHittability(understandingModel, timeout: 10), app.debugDescription)
+        understandingModel.doubleClick()
+        let reopenedPlay = app.buttons["task-video-play"]
+        XCTAssertTrue(reopenedPlay.waitForExistence(timeout: 10), app.debugDescription)
+        let reopenedReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: reopenedPlay)
+        XCTAssertEqual(XCTWaiter.wait(for: [reopenedReady], timeout: 15), .completed, app.debugDescription)
+        XCTAssertFalse(app.buttons["task-video-pause"].exists, app.debugDescription)
+    }
+
     func testHealthAndDiscoveryResultsAndRecovery() throws {
         func statusText(_ element: XCUIElement) -> String { element.value as? String ?? element.label }
         func entries(_ audioState: String) -> [[String: Any]] {
@@ -1341,7 +1523,7 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func writeStudyReviewClip(to url: URL, frames: Int) throws {
-        try FileManager.default.removeItem(at: url)
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 128, AVVideoHeightKey: 128])
