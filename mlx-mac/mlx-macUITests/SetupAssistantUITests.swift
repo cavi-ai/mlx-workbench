@@ -2689,6 +2689,78 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
     }
 
+    func testChatResultsWorkspace() throws {
+        let folder = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("comparison-runs.json")
+        let prompts: [[String: Any]] = [
+            ["id": "p1", "text": "Write a Python function that returns the nth Fibonacci number. Code only.", "maxTokens": 256],
+            ["id": "p2", "text": "Explain a Python context manager in two sentences.", "maxTokens": 256]
+        ]
+        func sample(_ prompt: String, _ text: String, _ finish: String?) -> [String: Any] {
+            var value: [String: Any] = ["promptID": prompt, "outputExcerpt": text, "fullOutput": text,
+                "tokensPerSecond": 98.0, "timeToFirstTokenSeconds": 0.21,
+                "timeToFirstAnswerSeconds": 0.21, "durationSeconds": 1.2, "completionTokens": 75]
+            value["finishReason"] = finish
+            return value
+        }
+        let results: [[String: Any]] = [
+            ["modelPath": "/models/Qwen2.5-7B-Instruct-4bit", "samples": [
+                sample("p1", "```python\ndef fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n```", "stop"),
+                sample("p2", "A context manager wraps setup and cleanup around a block. The with statement ensures cleanup runs when the block exits.", "stop")],
+             "aggregateTokensPerSecond": 97.9, "aggregateTTFTSeconds": 0.21],
+            ["modelPath": "/models/Qwen2.5-VL-3B-Instruct-4bit", "samples": [], "error": "The declared mlx-vlm backend is not installed."],
+            ["modelPath": "/models/Qwen3-4B-4bit", "samples": [sample("p1", "<think>Check the Fibonacci recurrence before writing the function.", "length"),
+                sample("p2", "<think>Consider setup and cleanup.</think>A context manager controls a resource lifetime.", "stop")],
+             "aggregateTokensPerSecond": 205.2, "aggregateTTFTSeconds": 0.16],
+            ["modelPath": "/models/Legacy-4bit", "samples": [sample("p1", "Saved answer with no finish reason.", nil)],
+             "aggregateTokensPerSecond": 74.2]
+        ]
+        for appearance in ["Dark", "Light"] {
+            for legacy in [false, true] {
+                var run: [String: Any] = ["id": UUID().uuidString, "promptSetID": "results-fixture", "promptSetName": "Coding basics",
+                    "variants": results.map { $0["modelPath"]! }, "results": results,
+                    "startedAt": 800000000.0, "finishedAt": 800000020.0, "state": "completed"]
+                if !legacy { run["promptEntries"] = prompts }
+                let recorded = try JSONSerialization.data(withJSONObject: [run], options: [.sortedKeys])
+                try recorded.write(to: file)
+                launch(appearance: appearance, isolatedHome: true)
+                resizeWindow(width: 1440, height: 900)
+                select("Compare")
+                XCTAssertTrue(app.staticTexts["Model results"].waitForExistence(timeout: 15))
+                XCTAssertTrue(app.staticTexts[legacy ? "Completion unknown" : "2/2 finished"].firstMatch.exists)
+                XCTAssertTrue(app.staticTexts["Blocked"].firstMatch.exists)
+                capture("Chat-results-\(appearance)-\(legacy ? "legacy" : "mixed")-wide")
+                if !legacy {
+                    let details = app.buttons["Details for model A"]
+                    details.click()
+                    XCTAssertTrue(app.buttons["Use fastest…"].waitForExistence(timeout: 5))
+                    app.typeKey(.escape, modifierFlags: [])
+                    app.scrollViews["comparison-scroll"].firstMatch.scroll(byDeltaX: 0, deltaY: -420)
+                    let prompt = app.buttons["Read prompt 2"]
+                    XCTAssertTrue(prompt.waitForExistence(timeout: 5)); prompt.click()
+                    XCTAssertTrue(app.staticTexts["A context manager wraps setup and cleanup around a block. The with statement ensures cleanup runs when the block exits."].exists)
+                    app.buttons["Read prompt 1"].click()
+                    let differences = app.radioButtons["Differences"].firstMatch
+                    XCTAssertTrue(differences.exists); differences.click()
+                    XCTAssertTrue(app.staticTexts["− Left model · + Right model · unchanged lines have no sign"].exists)
+                    app.radioButtons["Read A/B"].firstMatch.click()
+                    capture("Chat-reader-\(appearance)-wide")
+                }
+                resizeWindow(width: 740, height: 560)
+                app.scrollViews["comparison-scroll"].firstMatch.scroll(byDeltaX: 0, deltaY: 1200)
+                capture("Chat-results-\(appearance)-\(legacy ? "legacy" : "mixed")-minimum")
+                app.scrollViews["comparison-scroll"].firstMatch.scroll(byDeltaX: 0, deltaY: -420)
+                XCTAssertTrue(app.radioButtons["Read left"].firstMatch.waitForExistence(timeout: 5))
+                app.radioButtons["Read right"].firstMatch.click()
+                XCTAssertEqual(app.radioButtons["Read right"].firstMatch.value as? Int, 1)
+                capture("Chat-reader-\(appearance)-\(legacy ? "legacy" : "mixed")-minimum")
+                app.terminate()
+                XCTAssertEqual(try Data(contentsOf: file), recorded, "Reading must not rewrite historical runs")
+            }
+        }
+    }
+
     func testRouteCaptures() throws {
         // XCUIDevice changes only the disposable VM's appearance.
         for appearance in [ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_APPEARANCE"] ?? "System"] {

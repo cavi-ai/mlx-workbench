@@ -36,6 +36,54 @@ private struct ComparisonRunFixtureView: View {
 }
 
 final class CompareRemodelTests: XCTestCase {
+    func testChatCompletionRequiresTheRecordedCohortAndValidTaskOutcomes() throws {
+        let prompts = [PromptEntry(id: "p", text: "Answer", maxTokens: 128)]
+        func sample(_ reason: String?, output: String = "Answer", calls: Int? = nil, valid: Int? = nil) -> ComparisonSample {
+            ComparisonSample(promptID: "p", outputExcerpt: output, tokensPerSecond: 100,
+                timeToFirstTokenSeconds: 0.1, error: nil, toolCalls: calls, toolCallsValid: valid,
+                fullOutput: output, finishReason: reason)
+        }
+        func result(_ samples: [ComparisonSample], speed: Double = 100) -> VariantResult {
+            VariantResult(modelPath: "/a", modelSignature: nil, samples: samples,
+                aggregateTokensPerSecond: speed, aggregateTTFTSeconds: 0.1, error: nil)
+        }
+        var run = ComparisonRun(id: UUID(), promptSetID: "test", promptSetName: "Test", useCase: .coding,
+            variants: ["/a"], results: [result([sample("stop")])], startedAt: Date(), state: .completed,
+            promptEntries: prompts)
+        XCTAssertTrue(ChatComparisonPresentation.completion(run.results[0], in: run).isComplete)
+        XCTAssertNotNil(run.winner)
+        for samples in [[sample("length")], [sample(nil)], [], [sample("stop"), sample("stop")],
+                        [sample("stop", output: "")], [sample("stop", output: "<think>Still thinking")]] {
+            run.results = [result(samples, speed: 200)]
+            XCTAssertFalse(ChatComparisonPresentation.completion(run.results[0], in: run).isComplete)
+            XCTAssertNil(run.winner)
+            XCTAssertEqual(run.results[0].aggregateTokensPerSecond, 200, "Raw measurements remain available")
+        }
+        run.results = [result([sample("stop")])]; run.promptEntries = nil
+        XCTAssertNil(run.winner, "Legacy evidence cannot prove prompt coverage")
+        run.promptEntries = prompts; run.state = .cancelled
+        XCTAssertNil(run.winner)
+        run.state = .completed
+        run.promptEntries?[0].tool = PromptToolSpec(name: "lookup", description: "Look up a value", parametersJSON: "{}")
+        run.results = [result([sample("tool_calls", output: "", calls: 1, valid: 1)])]
+        XCTAssertNotNil(run.winner, "Valid tool-only outcomes can complete a tool prompt")
+        run.results = [result([sample("tool_calls", output: "", calls: 2, valid: 1)])]
+        XCTAssertNil(run.winner)
+    }
+
+    func testChatReadingSeparatesInlineReasoningWithoutChangingRecordedText() {
+        let raw = "<think>Check the recurrence.</think>\n```python\ndef fib(n):\n    return n\n```"
+        let output = ChatRecordedText(raw)
+        XCTAssertEqual(output.reasoning, "Check the recurrence.")
+        XCTAssertTrue(output.answer.hasPrefix("```python"))
+        XCTAssertTrue(output.hasInlineReasoning)
+        XCTAssertEqual(ChatRecordedText("<think>Still thinking").answer, "")
+        XCTAssertEqual(ChatRecordedText("Plain answer").answer, "Plain answer")
+        XCTAssertEqual(ChatRecordedText("Literal </think> text").answer, "Literal </think> text")
+        XCTAssertEqual(ChatRecordedText("Before <think>reason</think> after").answer, "Before  after")
+        XCTAssertTrue(raw.hasPrefix("<think>"), "Presentation must not mutate persisted output")
+    }
+
     @MainActor
     func testOpenStudiesRequiresAnExplicitClickAndUsesTheStudyRoute() async throws {
         var destinations: [AppRoute] = []
@@ -404,14 +452,21 @@ final class CompareRemodelTests: XCTestCase {
     // MARK: Leader owner
 
     func testWinnerIsAmongLeadersAndTiesShareTheLead() {
-        let tied = run(.chat, variants: ["/a", "/b", "/c"], results: [
-            result("/a", tps: 40, ttft: 0.5), result("/b", tps: 40, ttft: 0.2), result("/c", tps: 12),
+        let finished = ComparisonSample(promptID: "p", outputExcerpt: "Answer", tokensPerSecond: 40,
+            timeToFirstTokenSeconds: 0.2, error: nil, fullOutput: "Answer", finishReason: "stop")
+        let prompts = [PromptEntry(id: "p", text: "Answer", maxTokens: 128)]
+        var tied = run(.chat, variants: ["/a", "/b", "/c"], results: [
+            result("/a", tps: 40, ttft: 0.5, samples: [finished]), result("/b", tps: 40, ttft: 0.2, samples: [finished]),
+            result("/c", tps: 12, samples: [finished]),
         ])
+        tied.promptEntries = prompts
         XCTAssertEqual(Set(tied.leaders.map(\.modelPath)), ["/a", "/b"])
         XCTAssertTrue(tied.leaders.contains { $0.modelPath == tied.winner?.modelPath })
         XCTAssertEqual(ComparePresentation.lanes(for: tied).map(\.isLeader), [true, true, false])
 
-        let single = run(.chat, variants: ["/a", "/b"], results: [result("/a", tps: 30), result("/b", tps: 20)])
+        var single = run(.chat, variants: ["/a", "/b"], results: [
+            result("/a", tps: 30, samples: [finished]), result("/b", tps: 20, samples: [finished])])
+        single.promptEntries = prompts
         XCTAssertEqual(single.leaders.map(\.modelPath), ["/a"])
         XCTAssertEqual(single.winner?.modelPath, "/a")
     }

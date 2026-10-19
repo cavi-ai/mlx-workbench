@@ -27,23 +27,71 @@ struct TextComparisonEditor: View {
     let name: (String) -> String
     let onReview: (String, Int?) -> Void
     let reviewError: String?
+    let workspaceWidth: CGFloat?
     @State private var promptID: String
     @State private var leftPath: String?
     @State private var rightPath: String?
     @State private var showChanges = false
 
     init(run: ComparisonRun, store: ComparisonOutputStore, name: @escaping (String) -> String,
-         onReview: @escaping (String, Int?) -> Void, reviewError: String? = nil) {
+         onReview: @escaping (String, Int?) -> Void, reviewError: String? = nil, workspaceWidth: CGFloat? = nil) {
+        self.workspaceWidth = workspaceWidth
         self.run = run; self.store = store; self.name = name; self.onReview = onReview; self.reviewError = reviewError
         _promptID = State(initialValue: ComparisonViewLogic.rows(for: run).first?.id ?? "")
-        let first = run.results.first?.id
+        let readable = ChatComparisonPresentation.readingResults(in: run)
+        let first = readable.first?.id
         _leftPath = State(initialValue: first)
-        _rightPath = State(initialValue: run.results.first(where: { $0.id != first })?.id)
+        _rightPath = State(initialValue: readable.first(where: { $0.id != first })?.id)
     }
 
     var body: some View {
+        Group {
+            if let workspaceWidth, workspaceWidth >= 1050 {
+                HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
+                    promptNavigation.frame(width: 180)
+                    reader
+                }
+            } else {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                    if workspaceWidth != nil { promptNavigation }
+                    reader
+                }
+            }
+        }
+        .onChange(of: run.results.map(\.id)) { _, _ in
+            let available = ChatComparisonPresentation.readingResults(in: run)
+            if leftPath == nil { leftPath = available.first?.id }
+            if rightPath == nil { rightPath = available.first { $0.id != leftPath }?.id }
+        }
+    }
+
+    private var promptNavigation: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Text("Prompts").font(WorkbenchTypography.section)
+            if let workspaceWidth, workspaceWidth >= 1050 {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { promptButtons }
+            } else {
+                ScrollView(.horizontal) { HStack(spacing: WorkbenchSpacing.xs) { promptButtons } }
+            }
+        }
+    }
+
+    private var promptButtons: some View {
+        ForEach(Array(ComparisonViewLogic.rows(for: run).enumerated()), id: \.element.id) { index, entry in
+            Button { promptID = entry.id } label: {
+                Text("\(index + 1). \(entry.text)").lineLimit(2)
+                    .frame(width: 160, alignment: .leading).padding(WorkbenchSpacing.xs)
+                    .background(promptID == entry.id ? WorkbenchColor.accent.opacity(.fill) : WorkbenchColor.canvas,
+                        in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+            }
+            .buttonStyle(.plain).accessibilityLabel("Read prompt \(index + 1)")
+            .accessibilityAddTraits(promptID == entry.id ? .isSelected : [])
+        }
+    }
+
+    private var reader: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            if ComparisonViewLogic.rows(for: run).count > 1 {
+            if workspaceWidth == nil, ComparisonViewLogic.rows(for: run).count > 1 {
                 Picker("Prompt", selection: $promptID) {
                     ForEach(ComparisonViewLogic.rows(for: run)) { entry in
                         Text(entry.text).lineLimit(1).tag(entry.id)
@@ -83,12 +131,26 @@ struct TextComparisonEditor: View {
                         .help("All listed checks must match. A | separates alternatives; matching ignores case and checks for text presence, not task quality.")
                 }
             }
-            ViewThatFits(in: .horizontal) {
-                HStack { controls }
-                VStack(alignment: .leading) { controls }
+            if let workspaceWidth {
+                if workspaceWidth >= 700 {
+                    HStack {
+                        modelPicker("A", path: $leftPath, excluding: rightPath).labelsHidden()
+                        modelPicker("B", path: $rightPath, excluding: leftPath).labelsHidden()
+                    }
+                } else {
+                    modelPicker("A", path: $leftPath, excluding: rightPath)
+                    modelPicker("B", path: $rightPath, excluding: leftPath)
+                }
+                readingModePicker
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack { controls }
+                    VStack(alignment: .leading) { controls }
+                }
             }
             TextComparisonContent(run: run, promptID: promptID, leftPath: leftPath, rightPath: rightPath,
-                showChanges: showChanges, store: store, name: name, onReview: onReview)
+                showChanges: showChanges, store: store, name: name, onReview: onReview,
+                paired: workspaceWidth.map { ($0 >= 1050 ? $0 - 204 : $0) >= 700 } ?? true)
             if let reviewError { ErrorBanner(text: reviewError) }
         }
     }
@@ -96,6 +158,10 @@ struct TextComparisonEditor: View {
     @ViewBuilder private var controls: some View {
         modelPicker("A", path: $leftPath, excluding: rightPath)
         modelPicker("B", path: $rightPath, excluding: leftPath)
+        readingModePicker
+    }
+
+    private var readingModePicker: some View {
         Picker("View", selection: $showChanges) {
             Text("Read A/B").tag(false)
             Text("Differences").tag(true)
@@ -104,7 +170,10 @@ struct TextComparisonEditor: View {
     }
 
     private func modelPicker(_ letter: String, path: Binding<String?>, excluding: String?) -> some View {
-        Picker("Model \(letter)", selection: path) {
+        Picker(letter == "A" ? "Left model" : "Right model", selection: path) {
+            if !run.results.contains(where: { $0.id != excluding }) {
+                Text("No model available").tag(String?.none)
+            }
             ForEach(run.results.filter { $0.id != excluding }) { result in
                 Text(ComparisonViewLogic.laneLabel(result, run: run, name: name)).tag(String?.some(result.id))
             }
@@ -123,6 +192,8 @@ struct TextComparisonContent: View {
     let store: ComparisonOutputStore
     let name: (String) -> String
     let onReview: (String, Int?) -> Void
+    var paired = true
+    @State private var rightVisible = false
 
     private var left: VariantResult? { run.results.first { $0.id == leftPath } }
     private var right: VariantResult? { run.results.first { $0.id == rightPath } }
@@ -137,7 +208,7 @@ struct TextComparisonContent: View {
                             .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
                     }
                     if let lines = ComparisonDiff.differences(pair) {
-                        Text("− Model A · + Model B · unchanged lines have no sign")
+                        Text("− Left model · + Right model · unchanged lines have no sign")
                             .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
@@ -161,9 +232,17 @@ struct TextComparisonContent: View {
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
             } else {
-                HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
-                    pane("A", result: left)
-                    pane("B", result: right)
+                if paired {
+                    HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
+                        pane("A", result: left)
+                        pane("B", result: right)
+                    }
+                } else {
+                    Picker("Visible output", selection: $rightVisible) {
+                        Text("Read left").tag(false)
+                        Text("Read right").tag(true)
+                    }.pickerStyle(.segmented).accessibilityIdentifier("chat-reader-side")
+                    pane(rightVisible ? "B" : "A", result: rightVisible ? right : left)
                 }
             }
         }
@@ -172,7 +251,8 @@ struct TextComparisonContent: View {
     private func pane(_ letter: String, result: VariantResult?) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             HStack {
-                LetterChip(letter: letter)
+                LetterChip(letter: result.flatMap { run.variantIdentities.firstIndex(of: $0.id) }
+                    .map { ComparePresentation.letter($0) } ?? letter)
                 Text(result.map { ComparisonViewLogic.laneLabel($0, run: run, name: name) } ?? "No model selected")
                     .font(WorkbenchTypography.label).lineLimit(1).help(result?.modelPath ?? "")
                 Spacer(minLength: 0)
@@ -181,9 +261,12 @@ struct TextComparisonContent: View {
                 TaskQualityRating(run: run, modelPath: result.id, modelName: name(result.modelPath),
                     store: store, onReview: onReview)
                 if let sample = result.samples.first(where: { $0.promptID == promptID }) {
-                    if let status = sample.completionDescription {
+                    let inline = ChatRecordedText(sample.fullOutput ?? sample.outputExcerpt)
+                    let status = inline.hasInlineReasoning && inline.answer.isEmpty && sample.finishReason == "stop"
+                        ? "Generation stopped · no answer text" : sample.completionDescription ?? "Finish reason not reported"
+                    if !status.isEmpty {
                         Text(status).font(WorkbenchTypography.metadata)
-                            .foregroundStyle(sample.hasCompletedAnswer ? WorkbenchColor.muted : WorkbenchColor.warning)
+                            .foregroundStyle(sample.hasCompletedAnswer && !inline.answer.isEmpty ? WorkbenchColor.muted : WorkbenchColor.warning)
                     }
                     if run.effectiveMode == .chat, result.servingEvidence?.runtime == "strata" || sample.draftTokens != nil {
                         ComparisonDraftTokenEvidenceView(evidence: sample.draftTokens)
@@ -191,7 +274,24 @@ struct TextComparisonContent: View {
                     if run.effectiveMode == .chat, result.servingEvidence?.runtime == "strata" || sample.promptProcessing != nil {
                         ComparisonPromptProcessingEvidenceView(evidence: sample.promptProcessing)
                     }
-                    if let reasoning = sample.reasoningText, !reasoning.isEmpty {
+                    let reasoning = [sample.reasoningText, inline.reasoning].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+                    DisclosureGroup("Measurement details") {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
+                            if let speed = sample.tokensPerSecond {
+                                Text(String(format: "Decode %.1f tok/s", speed) + (sample.metricsEstimated == true ? " (estimated)" : ""))
+                            }
+                            if let first = sample.timeToFirstTokenSeconds { Text(String(format: "First token %.2f s · may include reasoning", first)) }
+                            if inline.hasInlineReasoning { Text("Answer-start timing unavailable for inline reasoning.") }
+                            else if let answer = sample.timeToFirstAnswerSeconds { Text(String(format: "Answer begins %.2f s", answer)) }
+                            if let duration = sample.durationSeconds { Text(String(format: "Total %.2f s", duration)) }
+                            if let tokens = sample.completionTokens { Text("Generated tokens: \(tokens)") }
+                            if let calls = sample.toolCalls {
+                                Text("Tool calls: \(calls)")
+                                Text(sample.toolCallsValid.map { "Valid arguments: \($0)/\(calls)" } ?? "Argument validation not recorded")
+                            }
+                        }.font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    }
+                    if !reasoning.isEmpty {
                         DisclosureGroup("Reasoning") {
                             ScrollView {
                                 Text(reasoning).font(WorkbenchTypography.secondary).textSelection(.enabled)
@@ -204,12 +304,18 @@ struct TextComparisonContent: View {
                     Text(output.isExcerpt ? "Saved excerpt · full text not recorded" : "Full recorded output")
                         .font(WorkbenchTypography.metadata)
                         .foregroundStyle(output.isExcerpt ? WorkbenchColor.warning : WorkbenchColor.muted)
-                    ScrollView {
-                        Text(output.text.isEmpty ? "Empty response" : output.text)
-                            .font(WorkbenchTypography.body).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    let display = ChatRecordedText(output.text)
+                    HStack {
+                        Button("Copy recorded output") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(output.text, forType: .string)
+                        }.buttonStyle(.borderless).font(WorkbenchTypography.metadata)
+                        Spacer()
                     }
-                    .frame(height: 280).accessibilityLabel("Model \(letter) recorded output")
+                    ScrollView {
+                        RecordedAnswerView(text: display.answer.isEmpty ? "No answer text recorded." : display.answer)
+                    }
+                    .frame(height: 340).accessibilityLabel("Model \(letter) recorded output")
                 } else {
                     Text(result.error ?? result.samples.first(where: { $0.promptID == promptID })?.error
                         ?? "No recorded output for this prompt.")

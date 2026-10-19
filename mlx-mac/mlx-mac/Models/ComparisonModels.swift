@@ -1316,10 +1316,11 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
 
     var effectiveMode: ComparisonMode { mode ?? .chat }
 
-    /// Fastest measured variant, for the "promote winner" affordance.
+    /// Fastest eligible chat variant; raw speed alone cannot establish completion.
     var winner: VariantResult? {
-        results
-            .filter { $0.error == nil && $0.aggregateTokensPerSecond != nil }
+        guard effectiveMode == .chat, state == .completed else { return nil }
+        return results
+            .filter { metricValue(of: $0) != nil && ChatComparisonPresentation.completion($0, in: self).isComplete }
             .sorted {
                 ($0.aggregateTokensPerSecond ?? 0, -($0.aggregateTTFTSeconds ?? .infinity)) >
                 ($1.aggregateTokensPerSecond ?? 0, -($1.aggregateTTFTSeconds ?? .infinity))
@@ -1341,6 +1342,75 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
         let values = measured.map(\.1)
         guard let best = effectiveMode.primaryMetric.higherIsBetter ? values.max() : values.min() else { return [] }
         return measured.filter { $0.1 == best }.map(\.0)
+    }
+}
+
+/// Display-only separation. The persisted output and line differences retain the
+/// original text. An unclosed reasoning tag must never become an answer.
+struct ChatRecordedText: Equatable {
+    let answer: String
+    let reasoning: String?
+    let hasInlineReasoning: Bool
+
+    init(_ raw: String) {
+        var remaining = raw[...], answer = "", thoughts: [String] = []
+        while let opening = remaining.range(of: "<think>") {
+            answer += remaining[..<opening.lowerBound]
+            remaining = remaining[opening.upperBound...]
+            if let closing = remaining.range(of: "</think>") {
+                thoughts.append(String(remaining[..<closing.lowerBound]))
+                remaining = remaining[closing.upperBound...]
+            } else {
+                thoughts.append(String(remaining)); remaining = ""; break
+            }
+        }
+        answer += remaining
+        hasInlineReasoning = !thoughts.isEmpty
+        self.answer = hasInlineReasoning ? answer.trimmingCharacters(in: .whitespacesAndNewlines) : raw
+        reasoning = thoughts.isEmpty ? nil : thoughts.joined(separator: "\n\n")
+    }
+}
+
+enum ChatComparisonPresentation {
+    struct Completion: Equatable {
+        let finished: Int
+        let total: Int?
+        let label: String
+        let isComplete: Bool
+    }
+
+    static func completion(_ result: VariantResult, in run: ComparisonRun) -> Completion {
+        guard let prompts = run.promptEntries, !prompts.isEmpty,
+              Set(prompts.map(\.id)).count == prompts.count else {
+            return Completion(finished: 0, total: nil, label: result.error == nil ? "Completion unknown" : "Blocked", isComplete: false)
+        }
+        let finished = prompts.filter { prompt in
+            let samples = result.samples.filter { $0.promptID == prompt.id }
+            guard samples.count == 1, let sample = samples.first, sample.error == nil else { return false }
+            if prompt.tool != nil {
+                return sample.finishReason == "tool_calls" && (sample.toolCalls ?? 0) > 0
+                    && sample.toolCallsValid == sample.toolCalls
+            }
+            return sample.hasCompletedAnswer && !ChatRecordedText(sample.fullOutput ?? sample.outputExcerpt).answer
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.count
+        let complete = result.error == nil && finished == prompts.count && result.samples.count == prompts.count
+        let label: String
+        if result.error != nil { label = "Blocked" }
+        else if complete { label = "\(finished)/\(prompts.count) finished" }
+        else if result.samples.isEmpty { label = run.state == .running ? "Waiting" : "Not measured" }
+        else if result.samples.contains(where: { $0.finishReason == nil && $0.error == nil }) {
+            label = "\(finished)/\(prompts.count) finished · unknown outcomes"
+        } else { label = "\(finished)/\(prompts.count) finished · incomplete" }
+        return Completion(finished: finished, total: prompts.count, label: label, isComplete: complete)
+    }
+
+    static func readingResults(in run: ComparisonRun) -> [VariantResult] {
+        run.results.filter { result in
+            result.error == nil && result.samples.contains { $0.error == nil && !($0.fullOutput ?? $0.outputExcerpt).isEmpty }
+        } + run.results.filter { result in
+            result.error != nil || !result.samples.contains { $0.error == nil && !($0.fullOutput ?? $0.outputExcerpt).isEmpty }
+        }
     }
 }
 
