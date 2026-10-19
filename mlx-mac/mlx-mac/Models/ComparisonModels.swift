@@ -1097,6 +1097,11 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
 
     var id: String { laneID ?? modelPath }
 
+    /// No recorded prompt ended at the token limit before any answer text.
+    var answeredEveryPrompt: Bool {
+        !samples.contains { $0.finishReason == "length" && ($0.fullOutput ?? $0.outputExcerpt).isEmpty }
+    }
+
     /// Median prompt-processing speed across samples, when any sample
     /// reported prompt tokens.
     var aggregatePrefillTokensPerSecond: Double? {
@@ -1328,8 +1333,11 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     }
 
     /// Every measured result that equals the best value, so ties share the lead.
+    /// Fastest lanes. In chat, only lanes that answered every prompt compete:
+    /// a lane cut off at the token limit before answering is not a usable winner.
     var leaders: [VariantResult] {
-        let measured = results.compactMap { result in metricValue(of: result).map { (result, $0) } }
+        let eligible = effectiveMode == .chat ? results.filter(\.answeredEveryPrompt) : results
+        let measured = eligible.compactMap { result in metricValue(of: result).map { (result, $0) } }
         let values = measured.map(\.1)
         guard let best = effectiveMode.primaryMetric.higherIsBetter ? values.max() : values.min() else { return [] }
         return measured.filter { $0.1 == best }.map(\.0)
@@ -1531,9 +1539,6 @@ enum ComparisonAggregation {    static func medianTokensPerSecond(_ samples: [Co
     /// suite's metric so recommendation evidence is comparable across
     /// verification and comparison runs.
     private static func decodeTokensPerSecond(_ sample: ProbeSample) -> Double? {
-        guard let tokens = sample.completionTokens, tokens > 0 else { return nil }
-        let decodeSeconds = sample.durationSeconds - (sample.timeToFirstTokenSeconds ?? 0)
-        guard decodeSeconds > 0 else { return nil }
-        return Double(tokens) / decodeSeconds
+        sample.decodeTokensPerSecond
     }
 }

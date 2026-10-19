@@ -524,6 +524,8 @@ struct LibraryView: View {
             }
             .libraryInspector(isPresented: inspectorBinding) {
                 inspector
+                    // Long values wrap; their single-line width never widens the column.
+                    .frame(minWidth: 0, idealWidth: WorkbenchSize.Library.inspectorIdeal, maxWidth: .infinity)
                     .inspectorColumnWidth(
                         min: WorkbenchSize.Library.inspectorMinimum,
                         ideal: WorkbenchSize.Library.inspectorIdeal,
@@ -698,7 +700,7 @@ struct LibraryView: View {
             .customizationID("size")
 
             TableColumn("Status", value: \.readinessSortKey) { row in
-                LibraryReadinessCell(row: row)
+                LibraryReadinessCell(row: row, verification: appHost.verification)
             }
             .width(min: WorkbenchSize.Library.statusMinimum, ideal: WorkbenchSize.Library.statusIdeal, max: WorkbenchSize.Library.statusMaximum)
             .customizationID("status")

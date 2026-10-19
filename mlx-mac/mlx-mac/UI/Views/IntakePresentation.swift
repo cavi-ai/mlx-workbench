@@ -24,7 +24,7 @@ struct IntakeVerdictLine: Equatable {
         case .alreadyMLX:
             if let backend = resolution.backend, !resolution.backendInstalled {
                 (symbol, tone, detail) = ("checkmark.circle", .positive, "It runs without conversion once \(backend) is installed.")
-            } else if inLibrary {
+            } else if inLibrary || resolution.cached == true {
                 (symbol, tone, detail) = ("checkmark.circle", .positive, "It is already downloaded and runs without conversion.")
             } else {
                 (symbol, tone, detail) = ("checkmark.circle", .positive, "It downloads and runs without conversion.")
@@ -32,7 +32,9 @@ struct IntakeVerdictLine: Equatable {
         case .gguf:
             (symbol, tone, detail) = ("shippingbox", .neutral, "Pick a file; it downloads and converts to MLX.")
         case .convertible:
-            (symbol, tone, detail) = ("arrow.triangle.2.circlepath", .positive, "It downloads, then converts to MLX.")
+            (symbol, tone, detail) = ("arrow.triangle.2.circlepath", .positive, resolution.cached == true
+                ? "It is already downloaded and converts to MLX."
+                : "It downloads, then converts to MLX.")
         case .convertibleAfterInstall:
             (symbol, tone, detail) = (
                 "wrench.and.screwdriver", .neutral,
@@ -239,7 +241,9 @@ enum IntakePresentation {
     /// `qBits` is the configured width; a source that converts only at other widths shows the one Prepare will use.
     static func summaryRows(_ resolution: IntakeResolution, qBits configured: Int) -> [DetailRow] {
         let qBits = ModelWorkflowCoordinator.allowedBits(configured, allowed: resolution.qBits)
-        var rows = [DetailRow("Download", LibraryTablePresentation.byteCount(resolution.downloadBytes ?? resolution.bytes))]
+        var rows = [DetailRow("Download", resolution.cached == true
+            ? "Already cached"
+            : LibraryTablePresentation.byteCount(resolution.downloadBytes ?? resolution.bytes))]
         if let estimate = resolution.estimatedOutputBytes?[String(qBits)] {
             rows.append(DetailRow("Estimated \(qBits)-bit output", LibraryTablePresentation.byteCount(estimate)))
         }
@@ -265,7 +269,7 @@ enum IntakePresentation {
             IntakeItem(
                 figure: row.value,
                 label: row.label == "Download" ? "Download size" : row.label,
-                isNumeric: row.label == "Download" || row.label.hasPrefix("Estimated")
+                isNumeric: (row.label == "Download" && resolution.cached != true) || row.label.hasPrefix("Estimated")
             )
         }
     }

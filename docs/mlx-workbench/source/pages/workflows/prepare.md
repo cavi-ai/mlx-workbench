@@ -5,9 +5,9 @@
 ## Preview a conversion
 
 1. Choose a source: from Library (**Prepare to run**), LM Studio, the Add from Hugging Face window, or **Choose in Library**.
-2. Pick a quantization width. Each tile shows the output size and fit on this Mac above a Source-to-Ready pipeline track. The default width comes from **Settings → Conversion defaults**.
+2. Pick a quantization width. Each tile shows the output size and fit on this Mac above a Source-to-Ready pipeline track; a Hugging Face source uses the task the intake window labelled. The default width comes from **Settings → Conversion defaults**.
 3. **Preview conversion** asks the engine for a plan: the exact command, output path and a preview hash. Choosing a different width re-targets the destination.
-4. Choose whether to move the original source to the Trash after verification. The choice you see is the one recorded.
+4. Choose whether to move the original source to the Trash after verification. The choice you see is the one recorded. A source outside the model folders in **Settings** cannot be moved, so the choice is off and says the original stays.
 5. **Confirm conversion** runs exactly the reviewed plan.
 
 Prepare follows the job while it runs: a progress ring tracks bytes written against the intake estimate (indeterminate while the converter loads), and the job log sits in a collapsible section. Only one conversion runs at a time.
@@ -18,7 +18,7 @@ After a fresh scan confirms the output, the conversion quality gate runs the can
 
 | Task type | Canary |
 |---|---|
-| Text LLM, vision-language | Served on a temporary loopback port; answers canary prompts |
+| Text LLM, vision-language | Served on a temporary loopback port with reasoning switched off where the chat template allows; answers canary prompts, scored on the answer after any `<think>` block |
 | Speech-to-text | Transcribes a sentence synthesized with `say`; passes at 25% word error or less |
 | Classification | Answers a billing ticket that must route to billing and read as a refund request |
 | Image generation | Renders a fixed prompt at 512×512 and must write a non-blank image |

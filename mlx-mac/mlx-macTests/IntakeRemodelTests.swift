@@ -32,6 +32,7 @@ private enum IntakeFixtures {
         var reasons = "[]"
         var warnings = "[]"
         var gguf = "[]"
+        var cached: Bool?
     }
 
     static func resolution(_ spec: Spec = Spec()) throws -> IntakeResolution {
@@ -48,7 +49,7 @@ private enum IntakeFixtures {
          "pipeline_tag":null,"transformers_version":null,"bytes":\(spec.bytes),
          "download_bytes":\(spec.downloadBytes.map(String.init) ?? "null"),"estimated_output_bytes":\(spec.estimates),
          "q_bits":\(spec.qBits),"recipe":\(recipe),
-         "files":{"safetensors":4,"gguf":\(spec.gguf),"python":[]},"warnings":\(spec.warnings)}
+         "files":{"safetensors":4,"gguf":\(spec.gguf),"python":[]},"warnings":\(spec.warnings)\(spec.cached.map { #","cached":\#($0)"# } ?? "")}
         """
         return try JSONDecoder().decode(IntakeResolution.self, from: Data(json.utf8))
     }
@@ -117,6 +118,63 @@ final class IntakeRemodelTests: XCTestCase {
         let bare = try F.resolution(F.Spec(backend: nil, modelType: nil, task: nil, estimates: "null"))
         XCTAssertEqual(IntakePresentation.items(bare, qBits: 4).map(\.label), ["Download size", "Architecture"])
         XCTAssertEqual(IntakePresentation.items(bare, qBits: 4)[1].figure, "Unknown")
+    }
+
+    func testACachedSnapshotSaysItIsAlreadyDownloaded() throws {
+        let cached = try F.resolution(F.Spec(downloadBytes: 3_100_000_000, cached: true))
+        XCTAssertTrue(IntakeVerdictLine.make(cached).sentence.contains("already downloaded"))
+        let download = try XCTUnwrap(IntakePresentation.items(cached, qBits: 4).first)
+        XCTAssertEqual(download.figure, "Already cached")
+        XCTAssertFalse(download.isNumeric)
+        let fresh = try F.resolution(F.Spec(downloadBytes: 3_100_000_000, cached: false))
+        XCTAssertTrue(IntakeVerdictLine.make(fresh).sentence.contains("It downloads, then converts"))
+        XCTAssertEqual(IntakePresentation.items(fresh, qBits: 4).first?.figure, LibraryTablePresentation.byteCount(3_100_000_000))
+    }
+
+    func testPrepareTilesUseTheIntakeTaskOfTheSameRepository() throws {
+        let resolution = try F.resolution()
+        XCTAssertNotNil(resolution.task?.type)
+        XCTAssertEqual(PrepareWorkflowPresentation.intakeTask(resolution, repoID: F.repo), resolution.task?.type)
+        XCTAssertNil(PrepareWorkflowPresentation.intakeTask(resolution, repoID: "other/repo"))
+        XCTAssertNil(PrepareWorkflowPresentation.intakeTask(nil, repoID: F.repo))
+    }
+
+    func testSourceCleanupChoiceStaysWhileThePreviewIsPrepared() {
+        let previewing = ConversionWorkflow(
+            id: UUID(), sourcePath: "/Models/source.gguf", sourceModelKey: nil, sourceSignature: nil,
+            outputPath: "/Models/source-MLX-8bit", previewHash: nil, jobReceipt: nil, completedModelPath: nil,
+            state: .previewingConversion, serveState: .idle, message: nil, errorMessage: nil,
+            createdAt: Date(timeIntervalSinceReferenceDate: 10), updatedAt: Date(timeIntervalSinceReferenceDate: 20),
+            lastKnownAgentState: nil
+        )
+        XCTAssertTrue(PrepareWorkflowPresentation(workflow: previewing).showsSourceCleanupChoice)
+    }
+
+    func testSourceCleanupNeedsTheSourceInsideAConfiguredRoot() {
+        let identity: (String) -> NSObject? = { _ in nil }
+        XCTAssertTrue(PrepareWorkflowPresentation.sourceCleanupIsPossible(
+            sourceLocation: "/Models/hub/models--a--b/snapshots/c", roots: ["/Models/hub"], fileIdentity: identity))
+        XCTAssertFalse(PrepareWorkflowPresentation.sourceCleanupIsPossible(
+            sourceLocation: "/Users/x/.cache/huggingface/hub/models--a--b/snapshots/c", roots: ["/Models/mlx"], fileIdentity: identity))
+        XCTAssertTrue(PrepareWorkflowPresentation.sourceCleanupIsPossible(sourceLocation: nil, roots: [], fileIdentity: identity))
+    }
+
+    func testReusedConversionKeepsItsDownloadWhileItIsTheResolvedRevision() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("intake-reuse-\(UUID().uuidString)/models--a--b")
+        defer { try? FileManager.default.removeItem(at: repo.deletingLastPathComponent()) }
+        let snapshot = repo.appendingPathComponent("snapshots/abc123")
+        try FileManager.default.createDirectory(at: snapshot.appendingPathComponent("multilingual"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("refs"), withIntermediateDirectories: true)
+        try "abc123".write(to: repo.appendingPathComponent("refs/main"), atomically: true, encoding: .utf8)
+        let main = try F.resolution(F.Spec())
+        XCTAssertEqual(IntakeCoordinator.reusableSource(snapshot.path, for: main), snapshot.path)
+        XCTAssertEqual(IntakeCoordinator.reusableSource(snapshot.path, for: try F.resolution(F.Spec(revision: "abc123"))), snapshot.path)
+        let nested = snapshot.appendingPathComponent("multilingual").path
+        XCTAssertEqual(IntakeCoordinator.reusableSource(nested, for: try F.resolution(F.Spec(subfolder: "multilingual"))), nested)
+        try "def456".write(to: repo.appendingPathComponent("refs/main"), atomically: true, encoding: .utf8)
+        XCTAssertNil(IntakeCoordinator.reusableSource(snapshot.path, for: main))
+        XCTAssertNil(IntakeCoordinator.reusableSource(repo.appendingPathComponent("snapshots/gone").path, for: try F.resolution(F.Spec(revision: "gone"))))
+        XCTAssertNil(IntakeCoordinator.reusableSource(nil, for: main))
     }
 
     func testBackendItemSaysWhenItIsNotInstalled() throws {

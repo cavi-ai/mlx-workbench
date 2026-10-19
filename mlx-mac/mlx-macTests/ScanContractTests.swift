@@ -5,6 +5,21 @@ import XCTest
 @testable import mlx_workbench
 
 final class ScanContractTests: XCTestCase {
+    func testOutputBackendDecodesAndAMissingBackendNeedsRuntime() throws {
+        var payload = fixture(named: "convert-scan-valid")
+        payload["outputs"] = [[
+            "path": "/Models/whisper-base-MLX-4bit", "name": "whisper-base-MLX-4bit",
+            "quantization": ["bits": 4, "group_size": 64], "provenance": NSNull(),
+            "task": ["type": "speech_to_text", "use_cases": ["transcription"], "source": "registry", "confidence": "confirmed"],
+            "backend": ["id": "mlx-audio", "installed": false],
+        ]]
+        let result = try WorkbenchAPI.decodeScan(payload)
+        XCTAssertEqual(result.outputs.first?.backend, OutputBackend(id: "mlx-audio", installed: false))
+        let snapshot = ModelLibraryBuilder.build(scan: result,
+            hardware: HardwareProfile(chip: "Apple Silicon", model: "Mac", memoryBytes: 128 * 1_024 * 1_024 * 1_024, macOSVersion: "26"), now: Date())
+        XCTAssertEqual(snapshot.models.first { $0.item.path == "/Models/whisper-base-MLX-4bit" }?.readiness, .needsRuntime)
+    }
+
     @MainActor
     func testStrataOutputKeepsItsRuntimeAndTextOnlyTask() throws {
         var payload = fixture(named: "convert-scan-valid")

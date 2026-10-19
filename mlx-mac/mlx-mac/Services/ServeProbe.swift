@@ -74,6 +74,26 @@ struct ProbeSample: Equatable, Sendable {
     let timeToFirstAnswerSeconds: Double?
     let draftTokens: DraftTokenEvidence?
     let promptProcessing: PromptProcessingEvidence?
+    /// Streamed content deltas and the seconds between the first and last one.
+    var streamedDeltas: Int? = nil
+    var deltaWindowSeconds: Double? = nil
+
+    /// Average spacing below which deltas were delivered in one burst, so their
+    /// arrival times say nothing about generation speed.
+    static let burstDeltaSpacingSeconds = 0.0005
+
+    /// Completion tokens over decode time (duration after the first token);
+    /// nil without usable counts or when the stream arrived in a burst.
+    var decodeTokensPerSecond: Double? {
+        guard let tokens = completionTokens, tokens > 0 else { return nil }
+        if let deltas = streamedDeltas, deltas >= 4, let window = deltaWindowSeconds,
+           window / Double(deltas - 1) < Self.burstDeltaSpacingSeconds {
+            return nil
+        }
+        let decodeSeconds = durationSeconds - (timeToFirstTokenSeconds ?? 0)
+        guard decodeSeconds > 0 else { return nil }
+        return Double(tokens) / decodeSeconds
+    }
 
     init(
         text: String,
@@ -114,6 +134,29 @@ struct ProbeSample: Equatable, Sendable {
         guard let count, count > 0,
               let ttft = timeToFirstTokenSeconds, ttft > 0 else { return nil }
         return Double(count) / ttft
+    }
+}
+
+/// Reasoning a server streams inline as `<think>…</think>` content (no reasoning
+/// parser), separated from the answer the model gives after it.
+enum InlineReasoning {
+    private static let open = "<think>"
+    private static let close = "</think>"
+
+    /// Splits text that starts with an inline reasoning block; nil when it has none.
+    /// Reasoning cut off before its closing tag leaves an empty answer.
+    static func split(_ text: String) -> (reasoning: String, answer: String)? {
+        let body = text.drop(while: \.isWhitespace)
+        guard body.hasPrefix(open) else { return nil }
+        let inner = body.dropFirst(open.count)
+        guard let end = inner.range(of: close) else { return (String(inner), "") }
+        return (String(inner[..<end.lowerBound]), String(inner[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// True while streamed content is still inside an opening reasoning block.
+    static func isInside(_ text: String) -> Bool {
+        guard let parts = split(text) else { return false }
+        return parts.answer.isEmpty
     }
 }
 
@@ -302,15 +345,19 @@ struct ServeLifecycle: Sendable {
 
 extension ServeLifecycle {
     /// Production lifecycle: the agent selects the declared loader from local model metadata.
-    static func live(api: WorkbenchAPI, runtime: String = "auto", strataOptions: StrataComparisonOptions? = nil) -> ServeLifecycle {
+    /// `thinkingOff` serves with the chat template's reasoning switched off (canary verification).
+    static func live(api: WorkbenchAPI, runtime: String = "auto", strataOptions: StrataComparisonOptions? = nil,
+                     thinkingOff: Bool = false) -> ServeLifecycle {
         ServeLifecycle(
             preview: { modelPath, port in
-                let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions)
+                let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions,
+                    thinkingOff: thinkingOff)
                 return response.string("preview_hash") ?? ""
             },
             start: { modelPath, port, previewHash in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: previewHash,
-                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions)
+                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions,
+                    thinkingOff: thinkingOff)
             },
             stop: { port in
                 _ = try await api.serveStop(port: port)
@@ -329,12 +376,14 @@ extension ServeLifecycle {
                 _ = try await api.serveMemoryPolicy(port: port, expectedPID: pid, policy: policy)
             },
             reviewedPreview: { modelPath, port in
-                let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions)
+                let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions,
+                    thinkingOff: thinkingOff)
                 return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
             },
             startWithReceipt: { path, port, hash in
                 let response = try await api.serveStart(repo: path, runtime: runtime, port: port, previewHash: hash,
-                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions)
+                    timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions,
+                    thinkingOff: thinkingOff)
                 return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
             }
         )
@@ -644,6 +693,8 @@ struct OpenAIEndpointProber: EndpointProbing {
         var promptProcessing: PromptProcessingEvidence?
         var promptProcessingConflict = false
         var firstTokenAt: Date?
+        var lastTokenAt: Date?
+        var streamedDeltas = 0
         // Streamed tool calls arrive as deltas keyed by index; collect the
         // names and accumulate argument fragments per call.
         var toolCallNamesByIndex: [Int: String] = [:]
@@ -683,7 +734,9 @@ struct OpenAIEndpointProber: EndpointProbing {
                 if !thought.isEmpty || !answer.isEmpty {
                     let now = Date()
                     if firstTokenAt == nil { firstTokenAt = now }
-                    if !answer.isEmpty, firstAnswerAt == nil { firstAnswerAt = now }
+                    lastTokenAt = now
+                    streamedDeltas += 1
+                    if !answer.isEmpty, firstAnswerAt == nil, !InlineReasoning.isInside(text + answer) { firstAnswerAt = now }
                     reasoning += thought
                     text += answer
                 }
@@ -704,6 +757,10 @@ struct OpenAIEndpointProber: EndpointProbing {
         }
 
         let finishedAt = Date()
+        if reasoning.isEmpty, let inline = InlineReasoning.split(text) {
+            reasoning = inline.reasoning
+            text = inline.answer
+        }
         if promptProcessing?.promptTokens != promptTokens { promptProcessing = nil }
         let estimated: Bool
         let tokens: Int?
@@ -727,7 +784,7 @@ struct OpenAIEndpointProber: EndpointProbing {
                 spec.argumentsAreValid(toolCallArgumentsByIndex[index] ?? "")
             }.count
         }
-        return ProbeSample(
+        var sample = ProbeSample(
             text: text,
             completionTokens: tokens,
             promptTokens: promptTokens,
@@ -743,5 +800,8 @@ struct OpenAIEndpointProber: EndpointProbing {
             draftTokens: draftTokens,
             promptProcessing: promptProcessing
         )
+        sample.streamedDeltas = streamedDeltas
+        if let firstTokenAt, let lastTokenAt { sample.deltaWindowSeconds = lastTokenAt.timeIntervalSince(firstTokenAt) }
+        return sample
     }
 }

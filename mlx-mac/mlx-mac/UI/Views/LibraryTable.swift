@@ -468,13 +468,60 @@ struct LibraryStatusLabel: View {
     }
 }
 
+/// What the Status column shows: the readiness of a model that is not ready,
+/// else the canary verdict for its current file, or Ready when it has none.
+struct LibraryRowStatus: Equatable {
+    let title: String
+    let symbol: String
+    let tone: WorkbenchStatus.Tone
+
+    var color: Color {
+        switch tone {
+        case .success: return WorkbenchStatus.verified.color
+        case .failure: return WorkbenchStatus.failure.color
+        case .warning: return WorkbenchStatus.warning.color
+        case .information: return WorkbenchStatus.ready.color
+        case .neutral: return WorkbenchStatus.idle.color
+        }
+    }
+
+    static func resolve(readiness: ModelReadiness, verification: VerificationStatus) -> LibraryRowStatus {
+        guard readiness == .ready else {
+            return LibraryRowStatus(title: readiness.title, symbol: readiness.statusSymbol,
+                                    tone: WorkbenchStatus(rawValue: readiness.rawValue).tone)
+        }
+        switch verification {
+        case .verified: return LibraryRowStatus(title: "Verified", symbol: "checkmark.seal.fill", tone: .success)
+        case .failed: return LibraryRowStatus(title: "Failed checks", symbol: "xmark.seal", tone: .failure)
+        case .keptAnyway: return LibraryRowStatus(title: "Kept anyway", symbol: "exclamationmark.triangle", tone: .warning)
+        case .stale: return LibraryRowStatus(title: "Verify again", symbol: "clock.arrow.circlepath", tone: .warning)
+        case .inProgress: return LibraryRowStatus(title: "Verifying…", symbol: "hourglass", tone: .information)
+        case .unverified: return LibraryRowStatus(title: ModelReadiness.ready.title, symbol: ModelReadiness.ready.statusSymbol, tone: .neutral)
+        }
+    }
+}
+
 struct LibraryReadinessCell: View {
     let row: LibraryRow
+    @ObservedObject var verification: VerificationCoordinator
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
-        if let readiness = row.readiness, readiness != .ready {
-            LibraryStatusLabel(readiness: readiness)
-                .font(WorkbenchTypography.body)
+        if let readiness = row.readiness, let model = row.model {
+            let status = LibraryRowStatus.resolve(
+                readiness: readiness,
+                verification: verification.status(for: model.item.path, signature: model.item.signature)
+            )
+            HStack(spacing: WorkbenchSpacing.xxs) {
+                Image(systemName: status.symbol)
+                    .symbolRenderingMode(.hierarchical)
+                Text(status.title)
+                    .lineLimit(1)
+            }
+            .font(WorkbenchTypography.body)
+            .foregroundStyle(prominence == .increased ? WorkbenchColor.onAccent : status.color)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(status.title)
         }
     }
 }

@@ -260,6 +260,17 @@ final class CompareRemodelTests: XCTestCase {
         return LibraryModel(item: item, displayName: nil, readiness: .ready)
     }
 
+    func testFastestNeedsAnAnswerToEveryChatPrompt() {
+        let cut = ComparisonSample(promptID: "p", outputExcerpt: "", tokensPerSecond: 300, timeToFirstTokenSeconds: 0.1,
+                                   error: nil, finishReason: "length")
+        let answered = ComparisonSample(promptID: "p", outputExcerpt: "def fib(n):", tokensPerSecond: 90,
+                                        timeToFirstTokenSeconds: 0.2, error: nil, finishReason: "stop")
+        let chat = run(nil, variants: ["/fast", "/slow"],
+                       results: [result("/fast", tps: 300, samples: [cut]), result("/slow", tps: 90, samples: [answered])])
+        XCTAssertEqual(chat.leaders.map(\.modelPath), ["/slow"])
+        XCTAssertEqual(ComparePresentation.lanes(for: chat).map(\.isLeader), [false, true])
+    }
+
     // MARK: Lane states
 
     func testUnavailableReusedModelsBlockRunningUntilExplicitlyReplacedOrRemoved() {
