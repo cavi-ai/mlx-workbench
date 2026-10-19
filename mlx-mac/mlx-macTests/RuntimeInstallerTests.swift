@@ -132,18 +132,19 @@ final class RuntimeInstallerTests: XCTestCase {
 
     func testCancelWaitsForChildrenAndChecksBeforeRetryAndKeepsTheLog() async throws {
         let root = try directory()
-        try "install:\n\t/usr/bin/python3 install.py\n".write(to: root.appendingPathComponent("Makefile"), atomically: true, encoding: .utf8)
+        try "install:\n\t/bin/sh install.sh\n".write(to: root.appendingPathComponent("Makefile"), atomically: true, encoding: .utf8)
+        // Exercise make's process tree with system tools; Python startup is
+        // independent of the cancellation boundary and can delay its handshake.
         try """
-        import os, pathlib, subprocess, time
-        child = subprocess.Popen(['/bin/sleep', '30'])
-        print('Installing test tools', flush=True)
-        pathlib.Path('started').write_text(str(child.pid))
-        try:
-            time.sleep(15)
-        finally:
-            child.terminate()
-            child.wait()
-        """.write(to: root.appendingPathComponent("install.py"), atomically: true, encoding: .utf8)
+        /bin/sleep 30 &
+        child=$!
+        trap 'kill "$child" 2>/dev/null; wait "$child" 2>/dev/null; exit 0' TERM INT
+        printf '%s' "$child" > started
+        printf 'Installing test tools\\n'
+        /bin/sleep 15
+        kill "$child" 2>/dev/null
+        wait "$child" 2>/dev/null
+        """.write(to: root.appendingPathComponent("install.sh"), atomically: true, encoding: .utf8)
         let unrelated = Process()
         unrelated.executableURL = URL(fileURLWithPath: "/bin/sleep")
         unrelated.arguments = ["30"]
