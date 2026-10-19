@@ -11,6 +11,7 @@ import SwiftUI
 struct SetupAssistantView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject var coordinator: SetupCoordinator
+    @StateObject private var runtimePreparation = BundledRuntimePreparation()
 
     private var readiness: SetupReadiness {
         let connected: Bool
@@ -30,6 +31,7 @@ struct SetupAssistantView: View {
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: 560)
         .frame(minHeight: 380)
+        .interactiveDismissDisabled(runtimePreparation.isPreparing)
     }
 
     private var header: some View {
@@ -61,7 +63,7 @@ struct SetupAssistantView: View {
 
     private var agentStep: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text("MLX Workbench drives conversions and serving through the mlx-agent CLI in an mlx-workbench checkout (vendor/mlx-agent). The checkout's .venv runs conversions and serving.")
+            Text("MLX Workbench uses the mlx-agent engine for model operations. Prepare the bundled engine or keep a configured checkout; runtime packages are installed in its separate Python environment.")
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -72,18 +74,19 @@ struct SetupAssistantView: View {
                     .foregroundStyle(WorkbenchColor.muted)
                     .textSelection(.enabled)
             case .notConfigured:
-                guidance("No agent path is configured.", detail: "The vendored checkout is picked up automatically when the app runs from the repository. Otherwise clone mlx-workbench, run make install, and set the path in Settings to the checkout's vendor/mlx-agent.")
+                guidance("No agent path is configured.", detail: "Use the bundled engine below, or choose an existing checkout in Settings. Source builds also discover their vendored engine.")
             case .notFound(let path, _):
                 guidance("The configured agent path does not exist.", detail: path, isLiteral: true)
             case .notUsable(_, _, let reason):
                 guidance("The agent at the configured path is not usable.", detail: reason)
             }
+            BundledRuntimeSetupView(appHost: appHost, session: runtimePreparation)
         }
     }
 
     private var runtimeStep: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-            Text("Converting and serving models needs the repo's Python runtime (Python 3.12, mlx-lm, and friends).")
+            Text("Converting and serving models uses the selected engine's Python 3.12 environment. Check the prerequisites below, then confirm installation to download its runtime packages.")
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -185,6 +188,7 @@ struct SetupAssistantView: View {
             }
         }
         .buttonStyle(.bordered)
+        .disabled(runtimePreparation.isPreparing)
     }
 
     /// `isLiteral` details are paths or commands and stay monospaced; prose reads in the secondary face.
@@ -196,6 +200,68 @@ struct SetupAssistantView: View {
                 .foregroundStyle(WorkbenchColor.muted)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct BundledRuntimeSetupView: View {
+    @ObservedObject var appHost: AppHost
+    @ObservedObject var session: BundledRuntimePreparation
+    @State private var plan: BundledRuntime?
+    @State private var loadError: String?
+    @State private var confirming = false
+    @State private var capturedEnginePath = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if let plan {
+                Button("Use bundled engine…") {
+                    capturedEnginePath = appHost.config.mlxAgentPath
+                    confirming = true
+                }
+                .buttonStyle(.workbenchPrimary)
+                .disabled(session.isPreparing)
+                .accessibilityIdentifier("setup-bundled-runtime")
+                Text("Workbench \(plan.manifest.workbenchVersion) · engine \(plan.manifest.engineRevision.prefix(12))")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                if session.isPreparing {
+                    ProgressView("Preparing engine…").controlSize(.small)
+                }
+                if let path = session.preparedPath {
+                    Text("Bundled engine prepared. Continue to Python runtime for dependency setup.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("setup-bundled-runtime-prepared")
+                    Text(path).font(WorkbenchTypography.metadata).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("setup-bundled-runtime-path")
+                }
+            }
+            ErrorBanner(text: loadError ?? session.errorMessage)
+        }
+        .task {
+            do { plan = try await Task.detached(priority: .utility) { try BundledRuntime.included() }.value }
+            catch { loadError = AppHost.render(error) }
+        }
+        .confirmationDialog("Use the bundled engine?", isPresented: $confirming, titleVisibility: .visible) {
+            Button("Prepare engine") {
+                guard let plan else { return }
+                session.prepare(plan) { path in
+                    guard appHost.config.mlxAgentPath == capturedEnginePath else {
+                        throw BundledRuntime.Failure("The selected engine changed. Review setup again before switching engines.")
+                    }
+                    var next = appHost.config
+                    next.mlxAgentPath = path
+                    guard await appHost.saveSettingsConfig(next) else {
+                        throw BundledRuntime.Failure(appHost.lastError ?? "The engine setting could not be saved.")
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let plan {
+                Text("Copy the packaged engine and setup files to \(plan.destination.path), then select that engine for Workbench. Continue to Python runtime to install dependencies.")
+            }
         }
     }
 }

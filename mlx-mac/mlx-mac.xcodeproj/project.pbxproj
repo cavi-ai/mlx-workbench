@@ -167,6 +167,10 @@
 		27STPB02 /* SetupAssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27STP002 /* SetupAssistantView.swift */; };
 		27TSTB08 /* SetupCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27TST008 /* SetupCoordinatorTests.swift */; };
 		7D7100010000000000000001 /* RuntimeInstallerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7100010000000000000002 /* RuntimeInstallerTests.swift */; };
+		7D7200010000000000000001 /* BundledRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7200010000000000000002 /* BundledRuntime.swift */; };
+		7D7200010000000000000004 /* BundledRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7200010000000000000005 /* BundledRuntimeTests.swift */; };
+		7D7300010000000000000001 /* RuntimeInstallPrerequisites.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7300010000000000000002 /* RuntimeInstallPrerequisites.swift */; };
+		7D7300010000000000000003 /* RuntimeInstallPrerequisitesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7300010000000000000004 /* RuntimeInstallPrerequisitesTests.swift */; };
 		24BBLD034 /* RecommendationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF028 /* RecommendationEngine.swift */; };
 		24BBLD035 /* RecommendationEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF029 /* RecommendationEngineTests.swift */; };
 		24BBLD037 /* ModelWorkflowResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF031 /* ModelWorkflowResolverTests.swift */; };
@@ -431,6 +435,10 @@
 		27STP002 /* SetupAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SetupAssistantView.swift; path = UI/Views/SetupAssistantView.swift; sourceTree = "<group>"; };
 		27TST008 /* SetupCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SetupCoordinatorTests.swift; path = SetupCoordinatorTests.swift; sourceTree = "<group>"; };
 		7D7100010000000000000002 /* RuntimeInstallerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeInstallerTests.swift; sourceTree = "<group>"; };
+		7D7200010000000000000002 /* BundledRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BundledRuntime.swift; path = Services/BundledRuntime.swift; sourceTree = "<group>"; };
+		7D7200010000000000000005 /* BundledRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundledRuntimeTests.swift; sourceTree = "<group>"; };
+		7D7300010000000000000002 /* RuntimeInstallPrerequisites.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RuntimeInstallPrerequisites.swift; path = Services/RuntimeInstallPrerequisites.swift; sourceTree = "<group>"; };
+		7D7300010000000000000004 /* RuntimeInstallPrerequisitesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeInstallPrerequisitesTests.swift; sourceTree = "<group>"; };
 		24FREF043 /* VerificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VerificationCoordinator.swift; path = Services/VerificationCoordinator.swift; sourceTree = "<group>"; };
 		24FREF044 /* VerificationModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationModelTests.swift; sourceTree = "<group>"; };
 		24FREF045 /* ServeProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeProbeTests.swift; sourceTree = "<group>"; };
@@ -650,6 +658,8 @@
 				24FREF06A /* WorkbenchPython.swift */,
 				28WSPREF001 /* WorkbenchStatePaths.swift */,
 				24FREF06B /* RuntimeInstaller.swift */,
+				7D7200010000000000000002 /* BundledRuntime.swift */,
+				7D7300010000000000000002 /* RuntimeInstallPrerequisites.swift */,
 				27CFG0002 /* AppConfig.swift */,
 				27STP001 /* SetupCoordinator.swift */,
 				27UPD001 /* UpdateCoordinator.swift */,
@@ -815,6 +825,8 @@
 				28OVWF02 /* OverviewPresentationTests.swift */,
 				27TST008 /* SetupCoordinatorTests.swift */,
 				7D7100010000000000000002 /* RuntimeInstallerTests.swift */,
+				7D7200010000000000000005 /* BundledRuntimeTests.swift */,
+				7D7300010000000000000004 /* RuntimeInstallPrerequisitesTests.swift */,
 				27TST009 /* UpdateCoordinatorTests.swift */,
 				27ABCD100000000000000003 /* AppRouteTests.swift */,
 				27ABCD100000000000000004 /* DesignLintTests.swift */,
@@ -852,6 +864,7 @@
 				24PHSRC1 /* Sources */,
 				24PHRM1 /* Frameworks */,
 				24PHRES1 /* Resources */,
+				7D7200010000000000000003 /* Bundled runtime sources */,
 			);
 			buildRules = (
 			);
@@ -979,6 +992,22 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		7D7200010000000000000003 /* Bundled runtime sources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputFileListPaths = ("$(MLX_WORKBENCH_RUNTIME_INPUTS)");
+			inputPaths = ("$(SRCROOT)/../scripts/runtime_bundle.py");
+			name = "Bundled runtime sources";
+			outputPaths = ("$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Runtime");
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e\nif [ -n \"${MLX_WORKBENCH_RUNTIME_BUNDLE_ROOT:-}\" ]; then\n  /usr/bin/python3 \"$SRCROOT/../scripts/runtime_bundle.py\" copy --source \"$MLX_WORKBENCH_RUNTIME_BUNDLE_ROOT\" --output \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Runtime\"\nelif [[ \"${OTHER_SWIFT_FLAGS:-}\" == *MLX_WORKBENCH_DISTRIBUTION* ]]; then\n  echo \"Distribution builds require a prepared runtime source bundle.\" >&2\n  exit 1\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		26UIPHSRC1 /* Sources */ = {
@@ -1139,6 +1168,8 @@
 				24BBLD06C /* WorkbenchPython.swift in Sources */,
 				28WSPBL001 /* WorkbenchStatePaths.swift in Sources */,
 				24BBLD06D /* RuntimeInstaller.swift in Sources */,
+				7D7200010000000000000001 /* BundledRuntime.swift in Sources */,
+				7D7300010000000000000001 /* RuntimeInstallPrerequisites.swift in Sources */,
 				27CFG0001 /* AppConfig.swift in Sources */,
 				27STPB01 /* SetupCoordinator.swift in Sources */,
 				27UPDB01 /* UpdateCoordinator.swift in Sources */,
@@ -1233,6 +1264,8 @@
 				28OVWB02 /* OverviewPresentationTests.swift in Sources */,
 				27TSTB08 /* SetupCoordinatorTests.swift in Sources */,
 				7D7100010000000000000001 /* RuntimeInstallerTests.swift in Sources */,
+				7D7200010000000000000004 /* BundledRuntimeTests.swift in Sources */,
+				7D7300010000000000000003 /* RuntimeInstallPrerequisitesTests.swift in Sources */,
 				27TSTB09 /* UpdateCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1287,6 +1320,7 @@
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
 				MARKETING_VERSION = 0.5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cavi.mlxworkbench;
+				MLX_WORKBENCH_RUNTIME_INPUTS = "$(SRCROOT)/RuntimeBundleInputs.xcfilelist";
 				PRODUCT_NAME = "mlx-workbench";
 				PRODUCT_MODULE_NAME = mlx_workbench;
 				SDKROOT = macosx;
@@ -1313,6 +1347,7 @@
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
 				MARKETING_VERSION = 0.5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cavi.mlxworkbench;
+				MLX_WORKBENCH_RUNTIME_INPUTS = "$(SRCROOT)/RuntimeBundleInputs.xcfilelist";
 				PRODUCT_NAME = "mlx-workbench";
 				PRODUCT_MODULE_NAME = mlx_workbench;
 				SDKROOT = macosx;

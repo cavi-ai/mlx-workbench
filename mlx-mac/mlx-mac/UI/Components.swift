@@ -449,10 +449,13 @@ struct RuntimeInstallView: View {
                 HStack(spacing: WorkbenchSpacing.sm) {
                     Button("Install Runtime…") { showConfirm = true }
                         .buttonStyle(.workbenchPrimary)
-                        .disabled(!installer.canInstall)
+                        .disabled(!installer.canInstallBaseRuntime)
+                        .accessibilityIdentifier("runtime-install-start")
                 }
+                RuntimePrerequisitesView(installer: installer)
                 RuntimeInstallStatusView(installer: installer)
             }
+            .task(id: installer.repoRoot?.path) { await installer.refreshPrerequisites() }
             .confirmationDialog(
                 "Install the convert/serve runtime?",
                 isPresented: $showConfirm,
@@ -466,7 +469,40 @@ struct RuntimeInstallView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Runs `make install` in the mlx-workbench checkout: creates the .venv (Python 3.12) and downloads the convert/serve packages. This can take several minutes.")
+                Text("Runs `make install` in the selected engine's Workbench folder: prepares the Python 3.12 environment and downloads runtime packages. uv may also download Python 3.12. No models are downloaded. This can take several minutes.")
+            }
+        }
+    }
+}
+
+private struct RuntimePrerequisitesView: View {
+    @ObservedObject var installer: RuntimeInstaller
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if installer.isCheckingPrerequisites {
+                ProgressView("Checking installation prerequisites…").controlSize(.small)
+            } else if let report = installer.prerequisites, report.root == installer.repoRoot?.path {
+                Text(report.canInstall ? "Prerequisites found" : "Before installation")
+                    .font(WorkbenchTypography.label)
+                    .accessibilityIdentifier("runtime-prerequisites-status")
+                Text(report.pythonSummary).font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(report.issues, id: \.detail) { issue in
+                    Text(issue.detail).font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let command = issue.command {
+                        Text(command).font(WorkbenchTypography.metadata).textSelection(.enabled)
+                    }
+                }
+            }
+            if installer.hasPrerequisiteCheck {
+                Button("Recheck prerequisites") { Task { await installer.refreshPrerequisites() } }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .disabled(installer.isBusy)
+                    .accessibilityIdentifier("runtime-prerequisites-recheck")
             }
         }
     }

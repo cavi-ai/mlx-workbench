@@ -6,6 +6,8 @@
 
 These checks do not establish readiness of isolated optional backends or Strata. **Model-specific runtimes → Open Run** leads to serving preview, which checks the selected model's runtime before confirmation. A successful base check does not prove that every model can run, and a missing base component does not establish that an isolated runtime is unavailable.
 
+Before a base installation, read-only prerequisite checks identify missing Command Line Tools, Python or uv. **Recheck prerequisites** refreshes them after setup. Install stays disabled until those checks pass, and confirmation rechecks them before starting `make`. Existing environment files are kept when repair is needed.
+
 Guided installation shows the installation being run and the final
 base-tool check. **Cancel installation** stops only that installer's process group;
 retry stays disabled until its processes exit and the tool check finishes. The

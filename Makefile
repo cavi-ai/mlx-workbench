@@ -299,11 +299,18 @@ DIST_COMMIT   ?= $(shell git rev-parse --short=12 HEAD)
 DMG_CHANNEL   ?= release
 DIST_IDENTITY  = MLX_WORKBENCH_COMMIT=$(DIST_COMMIT) MLX_WORKBENCH_CHANNEL=$(DMG_CHANNEL)
 
-build-swift-dist:
+RUNTIME_BUNDLE_ROOT ?= $(abspath $(RUN_DIR)/bundled-runtime)
+RUNTIME_BUNDLE_SETTINGS = MLX_WORKBENCH_RUNTIME_BUNDLE_ROOT="$(RUNTIME_BUNDLE_ROOT)" MLX_WORKBENCH_RUNTIME_INPUTS="$(RUNTIME_BUNDLE_ROOT)/inputs.xcfilelist"
+
+.PHONY: prepare-runtime-bundle
+prepare-runtime-bundle:
+	@$(PYTHON) scripts/runtime_bundle.py create --repo . --output "$(RUNTIME_BUNDLE_ROOT)"
+
+build-swift-dist: prepare-runtime-bundle
 	@echo "Building mlx-workbench (Swift, distribution)..."
 	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Release -arch arm64 \
-		-derivedDataPath $(MLX_DIST_DD) $(DIST_IDENTITY) \
+		-derivedDataPath $(MLX_DIST_DD) $(DIST_IDENTITY) $(RUNTIME_BUNDLE_SETTINGS) \
 		OTHER_SWIFT_FLAGS='$$(inherited) -DMLX_WORKBENCH_DISTRIBUTION' build
 
 # Developer ID build for the DMG: Xcode archives the distribution build,
@@ -320,7 +327,7 @@ ASC_KEY_ID    ?=
 ASC_ISSUER_ID ?=
 XCODE_AUTH = $(if $(ASC_KEY_PATH),-authenticationKeyPath "$(ASC_KEY_PATH)" -authenticationKeyID "$(ASC_KEY_ID)" -authenticationKeyIssuerID "$(ASC_ISSUER_ID)")
 
-build-swift-devid:
+build-swift-devid: prepare-runtime-bundle
 	@if [ -z "$(DEVELOPER_TEAM)" ]; then echo "DEVELOPER_TEAM is required" >&2; exit 2; fi
 	@case "$(DMG_CHANNEL)" in release|nightly) ;; *) echo "DMG_CHANNEL must be release or nightly" >&2; exit 2 ;; esac
 	@rm -rf "$(MLX_DIST_ARCHIVE)" "$(MLX_DIST_DD)/upload" "$(MLX_DIST_DD)/notarized"
@@ -334,7 +341,7 @@ build-swift-devid:
 	@xcodebuild archive -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \
 		-configuration Release -destination 'generic/platform=macOS' ARCHS=arm64 \
 		-archivePath "$(MLX_DIST_ARCHIVE)" -derivedDataPath $(MLX_DIST_DD) \
-		DEVELOPMENT_TEAM=$(DEVELOPER_TEAM) CODE_SIGN_STYLE=Automatic $(DIST_IDENTITY) \
+		DEVELOPMENT_TEAM=$(DEVELOPER_TEAM) CODE_SIGN_STYLE=Automatic $(DIST_IDENTITY) $(RUNTIME_BUNDLE_SETTINGS) \
 		OTHER_SWIFT_FLAGS='$$(inherited) -DMLX_WORKBENCH_DISTRIBUTION' \
 		-allowProvisioningUpdates $(XCODE_AUTH)
 	@xcodebuild -exportArchive -archivePath "$(MLX_DIST_ARCHIVE)" \

@@ -11,12 +11,53 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
+
+RUNTIME_INSTALL_TEST = "mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup"
 
 
 def checked(command, **kwargs):
     return subprocess.run(command, check=True, **kwargs)
+
+
+def runtime_app_identity(app, metadata, commit):
+    from runtime_bundle import verify_bundle
+    checked(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)])
+    payload = app / "Contents/Resources/Runtime"
+    verify_bundle(payload)
+    if (payload / "manifest.json").read_bytes() != metadata:
+        raise RuntimeError("The application contains a different runtime payload.")
+    info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    if info.get("CFBundleIdentifier") != "com.cavi.mlxworkbench" or info.get("MLXWorkbenchCommit") != commit[:12]:
+        raise RuntimeError("The application does not match the requested source revision.")
+    if info.get("CFBundleShortVersionString") != json.loads(metadata)["workbench_version"]:
+        raise RuntimeError("The application version does not match its runtime payload.")
+    return {"binary_sha256": hashlib.sha256((app / "Contents/MacOS/mlx-workbench").read_bytes()).hexdigest(),
+            "runtime_manifest_sha256": hashlib.sha256(metadata).hexdigest(), "commit": info["MLXWorkbenchCommit"],
+            "version": info["CFBundleShortVersionString"]}
+
+
+def install_runtime_dmg(input_dir, manifest):
+    image = input_dir / "runtime-install.dmg"
+    if hashlib.sha256(image.read_bytes()).hexdigest() != manifest["runtime_install_dmg_sha256"]:
+        raise RuntimeError("The disk image does not match its recorded digest.")
+    app = Path("/Applications/MLX Workbench.app")
+    if app.exists() or app.is_symlink():
+        raise RuntimeError("Release acceptance requires a base VM without an existing MLX Workbench app.")
+    metadata = (input_dir / "runtime-bundle/manifest.json").read_bytes()
+    with tempfile.TemporaryDirectory(prefix="workbench-dmg-") as directory:
+        mount = Path(directory)
+        checked(["/usr/bin/hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mount), str(image)])
+        try:
+            original = runtime_app_identity(mount / "MLX Workbench.app", metadata, manifest["head"])
+            checked(["/usr/bin/ditto", str(mount / "MLX Workbench.app"), str(app)])
+        finally:
+            checked(["/usr/bin/hdiutil", "detach", str(mount)])
+    if runtime_app_identity(app, metadata, manifest["head"]) != original:
+        raise RuntimeError("The installed app differs from the disk image.")
+    return app, original
 
 
 def validate_test_summary(summary, expected_ui_tests=None):
@@ -165,12 +206,34 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
             raise RuntimeError(f"Source snapshot link changed: {record['path']}")
     checkout = Path.home() / "native-ui" / manifest["run_id"]
     checked(["ditto", str(source), str(checkout)])
+    install_uv = None
+    if manifest.get("runtime_install_uv_sha256"):
+        install_uv = Path.home() / ".local/bin/uv"
+        if install_uv.exists() or install_uv.is_symlink():
+            raise RuntimeError("Runtime acceptance requires a base VM without an existing user-local uv installation.")
+        install_uv.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(input_dir / "runtime-install-uv", install_uv)
+        install_uv.chmod(0o755)
+        if hashlib.sha256(install_uv.read_bytes()).hexdigest() != manifest["runtime_install_uv_sha256"]:
+            raise RuntimeError("The staged uv executable does not match its recorded digest.")
+        tool = subprocess.run([str(install_uv), "--version"], capture_output=True, text=True, timeout=15)
+        (output_dir / "runtime-install-tool.json").write_text(json.dumps({
+            "sha256": manifest["runtime_install_uv_sha256"], "status": tool.returncode,
+            "stdout": tool.stdout, "stderr": tool.stderr,
+        }, indent=2) + "\n")
+        tool.check_returncode()
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "source-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     os.chdir(checkout)
     dd = checkout / ".build/native-ui"
     common = ["xcodebuild", "-project", "mlx-mac/mlx-mac.xcodeproj", "-configuration", "Debug",
               "-destination", "platform=macOS,arch=arm64", "-derivedDataPath", str(dd)]
+    if manifest.get("runtime_bundle"):
+        payload = input_dir / "runtime-bundle"
+        inputs = output_dir / "runtime-inputs.xcfilelist"
+        inputs.write_text(str(payload) + "\n")
+        common += ["MLX_WORKBENCH_RUNTIME_BUNDLE_ROOT=" + str(payload),
+                   "MLX_WORKBENCH_RUNTIME_INPUTS=" + str(inputs)]
 
     def run(name, command, expected_ui_tests=None):
         print(f"Running {name} inside {model}", flush=True)
@@ -203,12 +266,48 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
             + unit_selection + ["test"], expected_ui_tests=1 if unit_selection else None)
     if unit_selection:
         return
-    run("ui-build", common + ["-scheme", "mlx-workbench-real-data-e2e", "build-for-testing"])
+    ui_common = common
+    if manifest.get("runtime_install_uv_sha256"):
+        ui_common = common + ["OTHER_SWIFT_FLAGS=$(inherited) -DMLX_WORKBENCH_DISTRIBUTION"]
+    run("ui-build", ui_common + ["-scheme", "mlx-workbench-real-data-e2e", "build-for-testing"])
     products = dd / "Build/Products"
+    installed_app = None
+    installed_identity = None
+    if manifest.get("runtime_install_uv_sha256"):
+        from runtime_bundle import verify_bundle
+        app = products / "Debug/mlx-workbench.app"
+        checked(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)])
+        payload = app / "Contents/Resources/Runtime"
+        verify_bundle(payload)
+        metadata = (payload / "manifest.json").read_bytes()
+        if metadata != (input_dir / "runtime-bundle/manifest.json").read_bytes():
+            raise RuntimeError("The built application contains a different runtime payload.")
+        (output_dir / "runtime-install-build.json").write_text(json.dumps({
+            "distribution": True, "binary_sha256": hashlib.sha256((app / "Contents/MacOS/mlx-workbench").read_bytes()).hexdigest(),
+            "runtime_manifest_sha256": hashlib.sha256(metadata).hexdigest(),
+            "uv_sha256": manifest["runtime_install_uv_sha256"],
+        }, indent=2) + "\n")
+        if manifest.get("runtime_install_dmg_sha256"):
+            installed_app, installed_identity = install_runtime_dmg(input_dir, manifest)
+            (output_dir / "runtime-install-artifact.json").write_text(json.dumps({
+                **installed_identity, "dmg_sha256": manifest["runtime_install_dmg_sha256"],
+                "app_path": str(installed_app), "signature_verified": True,
+            }, indent=2) + "\n")
     runfiles = list(products.glob("mlx-workbench-real-data-e2e_*.xctestrun"))
     if len(runfiles) != 1:
         raise RuntimeError("Expected exactly one native UI test runner.")
     template = plistlib.loads(runfiles[0].read_bytes())
+    if manifest.get("runtime_bundle"):
+        for configuration in template["TestConfigurations"]:
+            for target in configuration["TestTargets"]:
+                target.setdefault("EnvironmentVariables", {})["MLX_WORKBENCH_RUNTIME_PAYLOAD"] = str(input_dir / "runtime-bundle")
+                if manifest.get("runtime_install_uv_sha256"):
+                    target["EnvironmentVariables"]["MLX_WORKBENCH_RUNTIME_INSTALL_UV"] = str(install_uv)
+                    target["EnvironmentVariables"]["MLX_WORKBENCH_RUNTIME_INSTALL_UV_SHA256"] = manifest["runtime_install_uv_sha256"]
+                    if installed_app:
+                        target["UITargetAppPath"] = str(installed_app)
+                        target["EnvironmentVariables"]["MLX_WORKBENCH_RUNTIME_INSTALL_APP"] = str(installed_app)
+                        target["EnvironmentVariables"]["MLX_WORKBENCH_RUNTIME_INSTALL_APP_SHA256"] = installed_identity["binary_sha256"]
     if manifest.get("ui_test"):
         requested = manifest["ui_test"]
         selected_tests = list(dict.fromkeys(requested if isinstance(requested, list) else [requested]))
@@ -229,6 +328,14 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
                        "-destination", "platform=macOS,arch=arm64", "-resultBundlePath", str(output_dir / f"{name}.xcresult"),
                        *[f"-only-testing:{test}" for test in selected_tests], "test-without-building"],
                 expected_ui_tests=len(selected_tests))
+            if manifest.get("runtime_install_uv_sha256") and (checkout / ".venv").exists():
+                raise RuntimeError("The packaged install unexpectedly created an environment in the build checkout.")
+            if installed_app:
+                if runtime_app_identity(installed_app, metadata, manifest["head"]) != installed_identity:
+                    raise RuntimeError("The Release app changed during runtime installation.")
+                (output_dir / "runtime-install-artifact-after.json").write_text(json.dumps({
+                    **installed_identity, "signature_verified": True, "unchanged": True,
+                }, indent=2) + "\n")
         return
     stages = ["after"]
     if (input_dir / "baseline.app").exists():
@@ -291,7 +398,8 @@ def host(args):
     manifest = {"run_id": run_id, "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
                 "files": files, "base_vm": args.base_vm, "unit_test": args.unit_test, "ui_test": args.ui_test,
                 "with_unit_tests": args.with_unit_tests, "preflight_only": args.preflight_only,
-                "desktop_size": args.desktop_size}
+                "desktop_size": args.desktop_size,
+                "network": "shared" if args.runtime_install_uv else "host-only"}
     if args.unit_evidence:
         if args.unit_test or args.preflight_only:
             raise RuntimeError("Unit evidence reuse is only available for the complete UI review.")
@@ -301,6 +409,26 @@ def host(args):
         checked(["ditto", str(baseline), str(input_dir / "baseline.app")])
         binary = baseline / "Contents/MacOS/mlx-workbench"
         manifest["baseline_binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
+    if args.runtime_bundle:
+        from runtime_bundle import resolve_bundle, verify_bundle
+        payload = resolve_bundle(Path(args.runtime_bundle))
+        shutil.copytree(payload, input_dir / "runtime-bundle")
+        verify_bundle(input_dir / "runtime-bundle")
+        manifest["runtime_bundle"] = True
+    if args.runtime_install_uv:
+        uv = Path(args.runtime_install_uv).resolve(strict=True)
+        if not uv.is_file() or not os.access(uv, os.X_OK) or uv.stat().st_size > 128 * 1024 * 1024:
+            raise RuntimeError("Supply an existing executable uv binary for isolated runtime acceptance.")
+        copied = input_dir / "runtime-install-uv"
+        shutil.copy2(uv, copied)
+        manifest["runtime_install_uv_sha256"] = hashlib.sha256(copied.read_bytes()).hexdigest()
+    if args.runtime_install_dmg:
+        disk_image = Path(args.runtime_install_dmg).resolve(strict=True)
+        if not disk_image.is_file() or disk_image.suffix != ".dmg" or disk_image.stat().st_size > 512 * 1024 * 1024:
+            raise RuntimeError("Supply an existing DMG no larger than 512 MiB for Release installation acceptance.")
+        copied = input_dir / "runtime-install.dmg"
+        shutil.copyfile(disk_image, copied)
+        manifest["runtime_install_dmg_sha256"] = hashlib.sha256(copied.read_bytes()).hexdigest()
     (input_dir / "source-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     output_dir.mkdir(parents=True)
     vm = run_id
@@ -316,8 +444,9 @@ def host(args):
         cloned = True
         tart_run("set", vm, "--cpu", "4", "--memory", "8192", "--display", args.desktop_size, "--no-display-refit")
         log = (run_dir / "vm.log").open("w")
+        network = [] if args.runtime_install_uv else ["--net-host"]
         running = subprocess.Popen([tart, "run", "--no-graphics", "--no-audio", "--no-clipboard", "--no-usb-accessories",
-                                    "--net-host", "--dir", f"review-input:{input_dir}:ro",
+                                    *network, "--dir", f"review-input:{input_dir}:ro",
                                     "--dir", f"review-output:{output_dir}", vm], env=env, stdout=log, stderr=subprocess.STDOUT)
         wait_for_guest(tart, vm, running, env)
         print(f"Artifacts: {output_dir}", flush=True)
@@ -341,6 +470,9 @@ def main():
     parser.add_argument("--tart", help="Path to the Tart executable")
     parser.add_argument("--vm-home", default=str(Path(__file__).resolve().parent.parent / ".build/native-ui-vms"))
     parser.add_argument("--baseline-app", help="Optional preserved app for matching before captures")
+    parser.add_argument("--runtime-bundle", help="Verified source payload to include before normal app code signing")
+    parser.add_argument("--runtime-install-uv", help="Existing uv binary for opt-in packaged installation; downloads Python and runtime packages only inside the VM")
+    parser.add_argument("--runtime-install-dmg", help="Existing DMG built from this revision; copy its app into the VM and run the packaged installation test against that artifact")
     parser.add_argument("--desktop-size", choices=("1024x768", "1440x1000"), default="1440x1000",
                         help="Configure the guest desktop before launching the UI test runner")
     parser.add_argument("--unit-test", help="Run only this XCTest identifier for failure diagnosis; no full-suite or UI acceptance")
@@ -350,6 +482,10 @@ def main():
     parser.add_argument("--unit-evidence", help="Reuse a complete passed native unit run only when its source inputs match")
     parser.add_argument("--guest", nargs=2, metavar=("INPUT", "OUTPUT"), help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.runtime_install_dmg and (not args.runtime_install_uv or args.baseline_app):
+        parser.error("--runtime-install-dmg requires the explicit runtime installation route without --baseline-app")
+    if args.runtime_install_uv and (not args.runtime_bundle or args.ui_test != [RUNTIME_INSTALL_TEST] or args.unit_test or args.preflight_only):
+        parser.error("--runtime-install-uv requires --runtime-bundle and the packaged-runtime installation UI test")
     if args.with_unit_tests and (not args.ui_test or args.unit_test or args.preflight_only):
         parser.error("--with-unit-tests requires --ui-test without --unit-test or --preflight-only")
     if args.ui_test and args.unit_test:

@@ -14,6 +14,44 @@ spec.loader.exec_module(vm)
 
 
 class NativeUIVMTests(unittest.TestCase):
+    def test_release_installation_requires_the_explicit_installation_route(self):
+        selection = "mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup"
+        routes = [[], ["--runtime-bundle", "bundle", "--ui-test", selection],
+                  ["--runtime-bundle", "bundle", "--runtime-install-uv", "/tools/uv", "--ui-test", selection,
+                   "--baseline-app", "baseline.app"]]
+        for route in routes:
+            with self.subTest(route=route), patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture",
+                    "--runtime-install-dmg", "/packages/workbench.dmg", *route]), patch.object(vm, "host") as launch:
+                with self.assertRaises(SystemExit):
+                    vm.main()
+                launch.assert_not_called()
+
+    def test_release_installation_accepts_an_existing_disk_image_for_the_installation_case(self):
+        with patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture", "--runtime-bundle", "bundle",
+                "--runtime-install-uv", "/tools/uv", "--runtime-install-dmg", "/packages/workbench.dmg",
+                "--ui-test", "mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup"]), \
+                patch.object(vm, "host") as launch:
+            try:
+                vm.main()
+            except SystemExit as error:
+                self.fail(f"The explicit Release installation route was rejected: {error}")
+        self.assertEqual(launch.call_args.args[0].runtime_install_dmg, "/packages/workbench.dmg")
+
+    def test_runtime_installation_requires_its_explicit_bundle_and_test(self):
+        for extra in ([], ["--runtime-bundle", "bundle", "--ui-test", "another-test"]):
+            with self.subTest(extra=extra), patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture", "--runtime-install-uv", "/tools/uv", *extra]), \
+                    patch.object(vm, "host") as launch:
+                with self.assertRaises(SystemExit):
+                    vm.main()
+                launch.assert_not_called()
+
+    def test_runtime_installation_option_reaches_the_runner_for_the_selected_test(self):
+        selection = "mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup"
+        with patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture", "--runtime-install-uv", "/tools/uv", "--runtime-bundle", "bundle", "--ui-test", selection]), \
+                patch.object(vm, "host") as launch:
+            vm.main()
+        self.assertEqual(launch.call_args.args[0].runtime_install_uv, "/tools/uv")
+
     def test_focused_run_preserves_multiple_requested_cases(self):
         cases = ["mlx-workbenchUITests/WorkbenchReviewUITests/testLibraryClassifierTaskAndMissingModelHistory",
                  "mlx-workbenchUITests/WorkbenchReviewUITests/testLibraryMusicTaskLifecycle"]
@@ -145,6 +183,27 @@ class NativeUIVMTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             vm.validate_test_summary(skipped, expected_ui_tests=6)
         vm.validate_test_summary(dict(skipped, passedTests=6, skippedTests=0), expected_ui_tests=6)
+
+    def test_runtime_input_list_is_written_outside_the_read_only_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs, output = root / "input", root / "output"
+            inputs.mkdir()
+            output.mkdir()
+            (inputs / "source-manifest.json").write_text(json.dumps({
+                "run_id": "fixture", "files": [], "runtime_bundle": True,
+            }))
+            with patch.object(vm.os, "getuid", return_value=501), \
+                    patch.object(vm.os, "chdir"), \
+                    patch.object(vm.subprocess, "check_output", side_effect=["VirtualMac2,1", "501", "Aqua", "{}", "{}"]), \
+                    patch.object(vm, "checked"), \
+                    patch.object(vm.subprocess, "run", side_effect=RuntimeError("build boundary")) as build:
+                with self.assertRaisesRegex(RuntimeError, "build boundary"):
+                    vm.guest(inputs, output)
+            listing = output / "runtime-inputs.xcfilelist"
+            self.assertEqual(listing.read_text(), str(inputs / "runtime-bundle") + "\n")
+            self.assertFalse((inputs / listing.name).exists())
+            self.assertIn("MLX_WORKBENCH_RUNTIME_INPUTS=" + str(listing), build.call_args.args[0])
 
 
 if __name__ == "__main__":

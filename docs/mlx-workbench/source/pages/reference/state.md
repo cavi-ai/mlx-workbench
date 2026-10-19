@@ -23,6 +23,7 @@ The app keeps its records as JSON files in `~/Library/Application Support/mlx-wo
 |---|---|
 | `comparison-outputs/<run-id>/` | Comparison inputs and outputs; the 10 newest media runs keep their files |
 | `prompt-set-inputs/<uuid>/` | Input files owned by saved prompt sets |
+| `runtimes/<manifest-sha256>/` | Prepared bundled engine sources and their explicitly installed Python environment; existing versions are retained |
 
 `endpoint-config.json` from earlier releases is migrated once into `endpoint-fleet.json` and then only read.
 

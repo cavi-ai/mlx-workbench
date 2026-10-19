@@ -19,9 +19,11 @@ The native Library keeps model readiness and memory fit beside the selected mode
 
 ## Install
 
-Requires an Apple Silicon Mac, Git and Python 3.12 ([uv](https://github.com/astral-sh/uv) recommended).
+Requires an Apple Silicon Mac, Python 3.12 ([uv](https://github.com/astral-sh/uv) recommended) and Apple's Command Line Tools (`xcode-select --install`). Git is needed when using a source checkout.
 
-Download `mlx-workbench-<version>.dmg` from the [latest release](https://github.com/cavi-ai/mlx-workbench/releases/latest) and drag **MLX Workbench** into **Applications**. The app runs the engine from a local checkout:
+Download `mlx-workbench-<version>.dmg` from the [latest release](https://github.com/cavi-ai/mlx-workbench/releases/latest) and drag **MLX Workbench** into **Applications**. In Setup Assistant, choose **Use bundled engine…**, confirm **Prepare engine**, then use **Install Runtime…** to install its Python dependencies. Preparing the engine copies the packaged sources; it does not install packages or download models.
+
+You can also use a source checkout:
 
 ```bash
 git clone --recurse-submodules https://github.com/cavi-ai/mlx-workbench.git
