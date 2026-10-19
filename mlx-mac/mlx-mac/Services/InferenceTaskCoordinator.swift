@@ -142,16 +142,82 @@ struct MusicTaskDraft: Equatable, Sendable {
     }
 }
 
+struct TranscribeTaskDraft: Equatable, Sendable {
+    var audioPath = ""
+    var language = ""
+
+    var validationError: String? {
+        guard audioPath.hasPrefix("/"), !audioPath.unicodeScalars.contains(where: { $0.value < 0x20 }) else {
+            return "Choose a readable local audio file."
+        }
+        return nil
+    }
+
+    func request(modelPath: String) throws -> TaskRequest {
+        guard validationError == nil else { throw TaskProtocolError.invalidRequest }
+        var parameters: [String: JSONValue] = ["audio_path": .string(audioPath)]
+        if !language.isEmpty { parameters["language"] = .string(language) }
+        let request = TaskRequest(kind: .transcribe, modelPath: modelPath, parameters: parameters)
+        try request.validate()
+        return request
+    }
+
+    mutating func load(_ request: TaskRequest, retainedAudioPath: String) throws {
+        guard request.kind == .transcribe else { throw TaskProtocolError.invalidRequest }
+        var parameters = request.parameters
+        parameters["audio_path"] = .string(retainedAudioPath)
+        let reused = TaskRequest(kind: .transcribe, modelPath: request.modelPath, parameters: parameters)
+        try reused.validate()
+        audioPath = retainedAudioPath
+        language = parameters["language"]?.stringValue ?? ""
+    }
+}
+
+struct SpeakTaskDraft: Equatable, Sendable {
+    var text = ""
+    var voice = ""
+    var speed = ""
+    var languageCode = ""
+
+    var validationError: String? { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Enter text to speak." : nil }
+
+    func request(modelPath: String) throws -> TaskRequest {
+        guard validationError == nil else { throw TaskProtocolError.invalidRequest }
+        var parameters: [String: JSONValue] = ["text": .string(text)]
+        if !voice.isEmpty { parameters["voice"] = .string(voice) }
+        if !speed.isEmpty {
+            guard let value = Double(speed), value.isFinite else { throw TaskProtocolError.invalidRequest }
+            parameters["speed"] = .number(value)
+        }
+        if !languageCode.isEmpty { parameters["lang_code"] = .string(languageCode) }
+        let request = TaskRequest(kind: .speak, modelPath: modelPath, parameters: parameters)
+        try request.validate()
+        return request
+    }
+
+    mutating func load(_ request: TaskRequest) throws {
+        guard request.kind == .speak else { throw TaskProtocolError.invalidRequest }
+        try request.validate()
+        text = request.parameters["text"]?.stringValue ?? ""
+        voice = request.parameters["voice"]?.stringValue ?? ""
+        speed = request.parameters["speed"]?.numberValue.map { String($0) } ?? ""
+        languageCode = request.parameters["lang_code"]?.stringValue ?? ""
+    }
+}
+
 @MainActor
 final class InferenceTaskCoordinator: ObservableObject {
     @Published var classificationDraft = ClassificationDraft()
     @Published var musicDraft = MusicTaskDraft()
+    @Published var transcribeDraft = TranscribeTaskDraft()
+    @Published var speakDraft = SpeakTaskDraft()
     @Published private(set) var recent: [TaskRecord] = []
     @Published private(set) var hasMoreRecent = false
     @Published private(set) var selectedTask: TaskRecord?
     @Published private(set) var selectedResult: TaskResultResponse?
     @Published private(set) var verifiedResult: VerifiedTaskArtifact?
     @Published private(set) var verifiedOutput: VerifiedTaskArtifact?
+    @Published private(set) var verifiedInput: VerifiedTaskArtifact?
     @Published private(set) var busy = false
     @Published private(set) var startOutcomeUnknown = false
     @Published private(set) var error: String?
@@ -195,18 +261,27 @@ final class InferenceTaskCoordinator: ObservableObject {
         selectedResult = nil
         verifiedResult = nil
         verifiedOutput = nil
+        verifiedInput = nil
         if record.state.isActive { await refresh(id: id) }
         else { await inspect(id: id) }
     }
 
     func start(kind: TaskKind, model: LibraryModel) async {
         guard canStart else { return }
-        guard model.readiness == .ready, model.item.task?.type.rawValue == kind.wireValue else {
+        guard model.readiness == .ready, kind.modelTaskType != nil, model.item.task?.type == kind.modelTaskType else {
             error = "Choose a Ready model with the matching task type."
             return
         }
         let request: TaskRequest
-        do { request = try kind == .classification ? classificationDraft.request(modelPath: model.item.path) : musicDraft.request(modelPath: model.item.path) }
+        do {
+            switch kind {
+            case .classification: request = try classificationDraft.request(modelPath: model.item.path)
+            case .musicGeneration: request = try musicDraft.request(modelPath: model.item.path)
+            case .transcribe: request = try transcribeDraft.request(modelPath: model.item.path)
+            case .speak: request = try speakDraft.request(modelPath: model.item.path)
+            case .unsupported: throw TaskProtocolError.invalidRequest
+            }
+        }
         catch { self.error = AppHost.render(error); return }
         busy = true
         cancellationPending = false
@@ -216,7 +291,9 @@ final class InferenceTaskCoordinator: ObservableObject {
         do {
             let capabilities = try await api.taskCapabilities()
             guard capabilities.isSupported,
-                  capabilities.tasks.contains(where: { $0.kind == kind && $0.requiresLocalModel }) else {
+                  capabilities.tasks.contains(where: { $0.kind == kind && $0.requiresLocalModel }),
+                  capabilities.requestSchema(for: kind) == request.schema,
+                  capabilities.runSchema(for: kind) == (kind == .transcribe || kind == .speak ? "task-run/2" : "task-run/1") else {
                 cancellationPending = false
                 error = "The installed mlx-agent does not advertise this local task type."
                 return
@@ -286,15 +363,28 @@ final class InferenceTaskCoordinator: ObservableObject {
         do {
             let response = try await api.taskResult(id: id)
             let json = try await TaskArtifactVerifier.verify(reference: response.artifact, taskID: id, root: artifactRoot)
+            let payload = try verifiedResultPayload(response, artifact: json)
             var output: VerifiedTaskArtifact?
-            if let raw = (response.result ?? json.json)?.objectValue?["output_artifact"],
+            var input: VerifiedTaskArtifact?
+            if response.task.kind == .speak || response.task.kind == .musicGeneration,
+               let raw = payload?.objectValue?["output_artifact"],
                let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(raw)) {
-                output = try await TaskArtifactVerifier.verify(reference: reference, taskID: id, root: artifactRoot)
+                if URL(fileURLWithPath: reference.path).lastPathComponent == "output.wav" {
+                    output = try await TaskArtifactVerifier.verify(reference: reference, taskID: id, root: artifactRoot)
+                }
+            }
+            if response.task.kind == .transcribe {
+                guard let recorded = response.task.inputArtifact,
+                      let returned = payload?.objectValue?["input_artifact"],
+                      let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(returned)),
+                      reference == recorded else { throw TaskArtifactVerificationError.invalidReference }
+                input = try await TaskArtifactVerifier.verify(reference: recorded, taskID: id, root: artifactRoot)
             }
             selectedTask = response.task
             selectedResult = response
             verifiedResult = json
             verifiedOutput = output
+            verifiedInput = input
             replaceSelectedInRecent()
             readError = nil
         } catch { readError = AppHost.render(error) }
@@ -318,8 +408,16 @@ final class InferenceTaskCoordinator: ObservableObject {
             }
             let artifact = try await TaskArtifactVerifier.verify(reference: record.request, taskID: id, root: artifactRoot)
             guard let request = artifact.request, request.kind == record.kind, request.modelPath == model.item.path else { throw TaskProtocolError.invalidRequest }
-            if request.kind == .classification { try classificationDraft.load(request) }
-            else if request.kind == .musicGeneration { try musicDraft.load(request) }
+            switch request.kind {
+            case .classification: try classificationDraft.load(request)
+            case .musicGeneration: try musicDraft.load(request)
+            case .transcribe:
+                guard let input = record.inputArtifact else { throw TaskArtifactVerificationError.unavailable }
+                _ = try await TaskArtifactVerifier.verify(reference: input, taskID: id, root: artifactRoot)
+                try transcribeDraft.load(request, retainedAudioPath: input.path)
+            case .speak: try speakDraft.load(request)
+            case .unsupported: throw TaskProtocolError.invalidRequest
+            }
             error = nil
         } catch { self.error = "This task request cannot be safely reused: \(AppHost.render(error))" }
     }
@@ -327,16 +425,31 @@ final class InferenceTaskCoordinator: ObservableObject {
     func export(id: String, to destination: URL) async throws {
         let response = try await api.taskResult(id: id)
         let result = try await TaskArtifactVerifier.verify(reference: response.artifact, taskID: id, root: artifactRoot)
+        guard let raw = try verifiedResultPayload(response, artifact: result), case .object(let fields) = raw else { throw TaskArtifactVerificationError.invalidJSON }
+        let safeFields = fields.filter { key, _ in
+            let normalized = key.lowercased()
+            return !normalized.contains("path") && !normalized.contains("artifact")
+                && !["audio", "model", "request", "input", "prompt", "command", "argv"].contains(normalized)
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(JSONValue.object(safeFields))
         try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try fileManager.copyItem(at: result.url, to: destination)
+        try data.write(to: destination, options: .atomic)
     }
 
     func exportAudio(id: String, to destination: URL) async throws {
         let response = try await api.taskResult(id: id)
+        guard response.task.kind == .speak || response.task.kind == .musicGeneration else {
+            throw TaskArtifactVerificationError.unavailable
+        }
         let result = try await TaskArtifactVerifier.verify(reference: response.artifact, taskID: id, root: artifactRoot)
-        guard let raw = (response.result ?? result.json)?.objectValue?["output_artifact"],
+        guard let raw = try verifiedResultPayload(response, artifact: result)?.objectValue?["output_artifact"],
               let reference = try? JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(raw)) else {
             throw TaskArtifactVerificationError.unavailable
+        }
+        guard URL(fileURLWithPath: reference.path).lastPathComponent == "output.wav" else {
+            throw TaskArtifactVerificationError.invalidReference
         }
         let output = try await TaskArtifactVerifier.verify(reference: reference, taskID: id, root: artifactRoot)
         guard output.url.pathExtension.lowercased() == "wav" else { throw TaskArtifactVerificationError.invalidReference }
@@ -386,10 +499,21 @@ final class InferenceTaskCoordinator: ObservableObject {
 
     func stopPlayback() { audio.stop() }
 
+    private func verifiedResultPayload(_ response: TaskResultResponse, artifact: VerifiedTaskArtifact) throws -> JSONValue? {
+        guard let verified = artifact.json else {
+            guard response.result == nil else { throw TaskArtifactVerificationError.invalidJSON }
+            return nil
+        }
+        if let inline = response.result, inline != verified { throw TaskArtifactVerificationError.invalidJSON }
+        return verified
+    }
+
     func isDraftValid(for kind: TaskKind) -> Bool {
         switch kind {
         case .classification: classificationDraft.validationError == nil
         case .musicGeneration: musicDraft.validationError == nil
+        case .transcribe: transcribeDraft.validationError == nil
+        case .speak: speakDraft.validationError == nil
         case .unsupported: false
         }
     }
@@ -406,6 +530,8 @@ extension TaskKind {
         switch self {
         case .classification: .classification
         case .musicGeneration: .musicGeneration
+        case .transcribe: .speechToText
+        case .speak: .textToSpeech
         case .unsupported: nil
         }
     }

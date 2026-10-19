@@ -40,6 +40,7 @@ including a speculative-decoding drafter's target. The inspector also holds:
 - **Generate**, for image-generation models: prompt, size, steps and seed. Each run writes a new PNG to `~/Pictures/MLX Workbench`.
 - **Classify**, for ready classification models: a state description and questions with choice, score or probability answers.
 - **Generate music**, for ready music models: caption, optional lyrics, duration, steps and seed, with playback of completed audio.
+- **Transcribe audio** and **Speak text**, for ready speech models: transcription from a selected local audio file, or text-to-speech with optional voice, speed and language settings.
 
 During rendering, **Cancel generation** stops that model's owned worker. The panel stays busy until the worker returns, and another model's panel cannot cancel it. Cancellation keeps any files already written and does not publish a late image as a completed result. After cleanup, Generate accepts a new request with a distinct output filename, including retries within the same second.
 
@@ -49,7 +50,7 @@ to run**. **Reveal in Finder** and **Copy Path** are in the model's action menu.
 
 **Select for Compare** is available for ready chat, speech, music, image and video models. It opens the matching comparison mode and selects the model without starting a run. Run remains a chat-serving action. Runtime restrictions take precedence over task labels: Strata supports Chat only.
 
-### Classification and music tasks
+### Local inference tasks
 
 Choose a ready model and fill its task form in the inspector. **Start** submits
 one task to the engine and shows its ID and state. Editing inputs does not run
@@ -71,6 +72,16 @@ zero through 360 seconds, 1–30 steps and seeds from 0 through 4,294,967,295.
 Completed tasks offer WAV playback and recorded generation settings. A valid
 audio file does not establish musical quality. Playback stops when you leave
 the inspector or select another model or task.
+
+For **Transcribe audio**, choose a local WAV, FLAC or MP3 file and optionally
+enter a language code. The engine records a verified copy with the task before
+accepting it; later reuse reads that retained copy. Completed results show the
+full transcript and the input's recorded digest.
+
+For **Speak text**, enter text and optionally set a voice, speed or language
+code. Leave those controls blank to let the engine apply its defaults. A
+completed result exposes a verified WAV for playback and export. Workbench
+does not assign an automatic quality score to speech output.
 
 **Recent tasks** in the inspector shows the selected model's tasks. The Library
 toolbar also opens Recent tasks independently of model selection, so recorded
@@ -94,8 +105,9 @@ recorded results remain readable. Result and audio files are checked before
 display, playback or export. Missing or changed outputs show an error and do
 not trigger generation.
 
-**Result JSON** expands the complete result and its export action. **Export**
-saves verified result JSON or audio to a destination you choose.
+**Result JSON** expands the complete recorded payload. **Export result** saves
+verified result data and metrics while omitting request, source-path and artifact
+references; **Export WAV** saves a separately verified audio output.
 Private input content is not included by default. Workbench does not delete
 engine task artifacts, and Compare's ten-run media retention does not apply
 to these tasks. Use [Compare](compare.md) for matched model runs and listening

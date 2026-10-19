@@ -6,7 +6,7 @@ import XCTest
 @testable import mlx_workbench
 
 final class InferenceTaskTests: XCTestCase {
-    func testOptInRealEngineClassifierOrMusicTaskAcceptance() async throws {
+    func testOptInRealEngineMediaTaskAcceptance() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let kindValue = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_KIND"],
               let modelPath = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_MODEL"],
@@ -20,6 +20,8 @@ final class InferenceTaskTests: XCTestCase {
         }
         let kind: TaskKind
         let request: TaskRequest
+        var ownedInput: URL?
+        var suppliedInputDigest: String?
         switch kindValue {
         case "classification":
             kind = .classification
@@ -30,8 +32,28 @@ final class InferenceTaskTests: XCTestCase {
         case "music_generation":
             kind = .musicGeneration
             request = TaskRequest(kind: kind, modelPath: modelPath, parameters: ["caption": .string("A short quiet piano instrumental")])
+        case "transcribe":
+            kind = .transcribe
+            guard let inputValue = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_INPUT"] else {
+                throw XCTSkip("Transcription acceptance requires an explicit absolute audio input path.")
+            }
+            let source = URL(fileURLWithPath: inputValue)
+            let sourceValues = try source.resourceValues(forKeys: [.isRegularFileKey])
+            guard source.path.hasPrefix("/"), sourceValues.isRegularFile == true else {
+                throw XCTSkip("Transcription input must be an explicit absolute regular file.")
+            }
+            try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let data = try Data(contentsOf: source)
+            suppliedInputDigest = Self.sha256(data)
+            let owned = evidenceRoot.appendingPathComponent("submitted-input.wav")
+            try data.write(to: owned, options: .atomic)
+            ownedInput = owned
+            request = TaskRequest(kind: kind, modelPath: modelPath, parameters: ["audio_path": .string(owned.path)])
+        case "speak":
+            kind = .speak
+            request = TaskRequest(kind: kind, modelPath: modelPath, parameters: ["text": .string("This is a short speech acceptance check.")])
         default:
-            throw XCTSkip("Only classification and music-generation acceptance are supported.")
+            throw XCTSkip("Unsupported media task acceptance kind.")
         }
         let stateRoot = evidenceRoot.appendingPathComponent("task-state", isDirectory: true)
         try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -40,11 +62,21 @@ final class InferenceTaskTests: XCTestCase {
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agentPath, taskStateDirectory: stateRoot)
         let started = try await api.taskStart(request)
         XCTAssertEqual(started.kind, kind)
+        let submittedInputPath = ownedInput?.path
+        if let ownedInput {
+            XCTAssertEqual(started.inputArtifact?.sha256, suppliedInputDigest,
+                           "The task must retain the explicitly copied source before returning its ID.")
+            XCTAssertNotEqual(started.inputArtifact?.path, ownedInput.path)
+            try FileManager.default.removeItem(at: ownedInput)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: ownedInput.path), "The engine must retain its accepted input before Start returns.")
+        }
         var receipt = TaskAcceptanceReceipt(kind: kindValue, modelPath: modelPath, agentPath: agentPath,
                                             taskID: started.id, state: started.state.wireValue,
                                             identity: started.identity, requestArtifact: started.request,
                                             resultArtifact: started.result, resultDigest: nil,
-                                            outputArtifact: nil, outputDigest: nil, terminal: false)
+                                            outputArtifact: nil, outputDigest: nil, inputArtifact: started.inputArtifact,
+                                            inputDigest: started.inputArtifact?.sha256, suppliedInputDigest: suppliedInputDigest,
+                                            submittedInputPath: submittedInputPath, transcript: nil, audioMetadata: nil, terminal: false)
         try Self.write(receipt, to: evidenceRoot.appendingPathComponent("receipt-\(started.id).json"))
         let deadline = Date().addingTimeInterval(20 * 60)
         var current = started
@@ -101,7 +133,19 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertNotNil(verifiedJSON.json)
         receipt.resultArtifact = savedResult.artifact
         receipt.resultDigest = savedResult.artifact.sha256
-        if kind == .musicGeneration {
+        if kind == .transcribe {
+            let text = try XCTUnwrap(savedResult.result?.objectValue?["text"]?.stringValue)
+            XCTAssertFalse(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            let returned = try XCTUnwrap(savedResult.result?.objectValue?["input_artifact"])
+            let returnedReference = try JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(returned))
+            XCTAssertEqual(returnedReference, started.inputArtifact)
+            let retained = try XCTUnwrap(started.inputArtifact)
+            let verifiedInput = try await TaskArtifactVerifier.verify(reference: retained, taskID: started.id, root: stateRoot)
+            XCTAssertEqual(verifiedInput.reference.sha256, retained.sha256)
+            receipt.inputArtifact = retained
+            receipt.inputDigest = retained.sha256
+            receipt.transcript = text
+        } else if kind == .musicGeneration || kind == .speak {
             let output = try XCTUnwrap(savedResult.result?.objectValue?["output_artifact"])
             let reference = try JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(output))
             let verifiedAudio = try await TaskArtifactVerifier.verify(reference: reference, taskID: started.id, root: stateRoot)
@@ -112,7 +156,8 @@ final class InferenceTaskTests: XCTestCase {
             XCTAssertGreaterThan(audioFile.processingFormat.channelCount, 0)
             receipt.outputArtifact = reference
             receipt.outputDigest = reference.sha256
-        } else {
+            receipt.audioMetadata = ["frames": Int(audioFile.length), "sample_rate": Int(audioFile.processingFormat.sampleRate), "channels": Int(audioFile.processingFormat.channelCount)]
+        } else if kind == .classification {
             let answer = try XCTUnwrap(savedResult.result?.objectValue?["answers"]?.objectValue?["route"]?.objectValue?["choice"]?.stringValue)
             XCTAssertEqual(answer, "billing")
         }
@@ -127,6 +172,8 @@ final class InferenceTaskTests: XCTestCase {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(receipt).write(to: url, options: .atomic)
     }
+
+    private static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
     func testVersionedTaskContractsDecodeAndPreserveUnsupportedValues() throws {
         let decoder = JSONDecoder()
@@ -159,6 +206,61 @@ final class InferenceTaskTests: XCTestCase {
         let result = try decoder.decode(TaskResultResponse.self, from: Data(#"{"task":\#(Self.publicSummary),"artifact":{"path":"/tasks/artifacts/11111111-1111-4111-8111-111111111111/result.json","sha256":"\#(String(repeating: "a", count: 64))","bytes":9},"inline":true,"result":{"answers":{"future":{"type":"new","future_metric":2}}}}"#.utf8))
         XCTAssertTrue(result.inline)
         XCTAssertEqual(result.result?.objectValue?["answers"]?.objectValue?["future"]?.objectValue?["future_metric"], .number(2))
+    }
+
+    func testSpeechTaskCapabilitiesAndRequestsUsePerKindV2Schemas() throws {
+        let json = #"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[{"kind":"classification","result_schema":"decide/1","cancellation":true,"requires_local_model":true},{"kind":"transcribe","result_schema":"transcribe/1","cancellation":true,"requires_local_model":true,"request_schema":"task-request/2","run_schema":"task-run/2"},{"kind":"speak","result_schema":"speak/1","cancellation":true,"requires_local_model":true,"request_schema":"task-request/2","run_schema":"task-run/2"}]}"#
+        let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: Data(json.utf8))
+        XCTAssertTrue(capabilities.isSupported)
+        XCTAssertEqual(capabilities.requestSchema(for: .classification), "task-request/1")
+        XCTAssertEqual(capabilities.runSchema(for: .classification), "task-run/1")
+        XCTAssertEqual(capabilities.requestSchema(for: .transcribe), "task-request/2")
+        XCTAssertEqual(capabilities.runSchema(for: .speak), "task-run/2")
+
+        let transcribe = TaskRequest(kind: .transcribe, modelPath: "/Models/whisper", parameters: ["audio_path": .string("/tmp/input.wav")])
+        XCTAssertEqual(transcribe.schema, "task-request/2")
+        XCTAssertNoThrow(try transcribe.validate())
+        let encodedTranscribe = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(transcribe)) as? [String: Any])
+        let transcribeParameters = try XCTUnwrap(encodedTranscribe["parameters"] as? [String: Any])
+        XCTAssertEqual(transcribeParameters["audio_path"] as? String, "/tmp/input.wav")
+        XCTAssertNil(transcribeParameters["language"])
+
+        let speak = TaskRequest(kind: .speak, modelPath: "/Models/tts", parameters: ["text": .string("A short test.")])
+        XCTAssertEqual(speak.schema, "task-request/2")
+        XCTAssertNoThrow(try speak.validate())
+        let encodedSpeak = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(speak)) as? [String: Any])
+        let speakParameters = try XCTUnwrap(encodedSpeak["parameters"] as? [String: Any])
+        XCTAssertEqual(speakParameters["text"] as? String, "A short test.")
+        XCTAssertNil(speakParameters["voice"])
+        XCTAssertNil(speakParameters["speed"])
+        XCTAssertNil(speakParameters["lang_code"])
+    }
+
+    func testSpeechDraftsOmitUnsetSettingsAndTranscribeReuseUsesRetainedInput() throws {
+        let transcribe = try TranscribeTaskDraft(audioPath: "/private/source.wav").request(modelPath: "/Models/whisper")
+        XCTAssertEqual(transcribe.parameters, ["audio_path": .string("/private/source.wav")])
+        let speak = try SpeakTaskDraft(text: "Read this.").request(modelPath: "/Models/tts")
+        XCTAssertEqual(speak.parameters, ["text": .string("Read this.")])
+
+        let recorded = TaskRequest(kind: .transcribe, modelPath: "/Models/whisper", parameters: [
+            "audio_path": .string("/private/source.wav"), "language": .string("en"),
+        ])
+        var reused = TranscribeTaskDraft(audioPath: "/other.wav")
+        try reused.load(recorded, retainedAudioPath: "/state/artifacts/11111111-1111-4111-8111-111111111111/input.wav")
+        XCTAssertEqual(reused.audioPath, "/state/artifacts/11111111-1111-4111-8111-111111111111/input.wav")
+        XCTAssertEqual(reused.language, "en")
+    }
+
+    func testTaskRunV2DecodesCanonicalNullableInputArtifactAndKeepsV1Support() throws {
+        let recordV2 = Self.publicSummary
+            .replacingOccurrences(of: "task-run/1", with: "task-run/2")
+            .replacingOccurrences(of: "classification", with: "transcribe")
+            .replacingOccurrences(of: "\"execution_unresolved\":false", with: "\"execution_unresolved\":false,\"input_artifact\":{\"path\":\"/tasks/artifacts/11111111-1111-4111-8111-111111111111/input.wav\",\"sha256\":\"\(String(repeating: "b", count: 64))\",\"bytes\":32}")
+        let decoded = try JSONDecoder().decode(TaskRecord.self, from: Data(recordV2.utf8))
+        XCTAssertTrue(decoded.isSupported)
+        XCTAssertEqual(decoded.schema, "task-run/2")
+        XCTAssertEqual(decoded.inputArtifact?.bytes, 32)
+        XCTAssertTrue(try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8)).isSupported)
     }
 
     func testResultProjectionKeepsUnknownFieldsAndMissingMetricsUnknown() throws {
@@ -464,6 +566,109 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: destination), audioData)
     }
 
+    @MainActor
+    func testTaskResultExportOmitsSourcePathsAndArtifactReferences() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let requestData = Data(#"{"schema":"task-request/1","kind":"music_generation","model_path":"/Models/music","parameters":{"caption":"quiet piano"}}"#.utf8)
+        let requestURL = try fixture.write("request.json", data: requestData)
+        let requestReference = fixture.reference(requestURL, data: requestData)
+        let record = try Self.taskRecord(id: fixture.taskID, kind: "music_generation", state: "succeeded", modelPath: "/Models/music", request: requestReference)
+        let payload = JSONValue.object([
+            "schema": .string("speak/1"), "text": .string("hello"), "seconds": .number(1.2),
+            "audio": .string("/private/tasks/artifacts/\(fixture.taskID)/input.wav"),
+            "model": .string("/private/model"), "path": .string("/private/output.wav"),
+            "prompt": .string("private input"), "request": .object(["text": .string("private input")]),
+            "input_artifact": .object(["path": .string("/private/input.wav")]),
+            "output_artifact": .object(["path": .string("/private/output.wav")]),
+        ])
+        let resultData = try JSONEncoder().encode(payload)
+        let resultURL = try fixture.write("result.json", data: resultData)
+        let reference = fixture.reference(resultURL, data: resultData)
+        let response = TaskResultResponse(task: record, artifact: reference, inline: true, result: payload)
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, resultResponse: response)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+        let destination = fixture.root.appendingPathComponent("exports/result.json")
+
+        try await coordinator.export(id: record.id, to: destination)
+
+        let exported = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: destination))
+        XCTAssertEqual(exported.objectValue?["text"], .string("hello"))
+        XCTAssertEqual(exported.objectValue?["seconds"], .number(1.2))
+        XCTAssertNil(exported.objectValue?["path"])
+        XCTAssertNil(exported.objectValue?["model"])
+        XCTAssertNil(exported.objectValue?["input_artifact"])
+        XCTAssertNil(exported.objectValue?["output_artifact"])
+        XCTAssertNil(exported.objectValue?["prompt"])
+        XCTAssertNil(exported.objectValue?["request"])
+        XCTAssertNil(exported.objectValue?["audio"])
+    }
+
+    @MainActor
+    func testInspectRejectsInlineResultThatDiffersFromVerifiedArtifact() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let requestData = Data(#"{"schema":"task-request/1","kind":"music_generation","model_path":"/Models/music","parameters":{"caption":"quiet piano"}}"#.utf8)
+        let requestURL = try fixture.write("request.json", data: requestData)
+        let requestReference = fixture.reference(requestURL, data: requestData)
+        let record = try Self.taskRecord(id: fixture.taskID, kind: "music_generation", state: "succeeded",
+                                         modelPath: "/Models/music", request: requestReference)
+        let verifiedPayload = JSONValue.object(["text": .string("Verified transcript")])
+        let resultData = try JSONEncoder().encode(verifiedPayload)
+        let resultURL = try fixture.write("result.json", data: resultData)
+        let resultReference = fixture.reference(resultURL, data: resultData)
+        let response = TaskResultResponse(task: record, artifact: resultReference, inline: true,
+                                          result: .object(["text": .string("Forged transcript")]))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, resultResponse: response)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+
+        await coordinator.inspect(id: record.id)
+
+        XCTAssertNil(coordinator.selectedResult)
+        XCTAssertNil(coordinator.verifiedResult)
+        XCTAssertNotNil(coordinator.readError)
+    }
+
+    @MainActor
+    func testTranscribeInputArtifactCannotBePresentedOrExportedAsGeneratedOutput() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let request = TaskRequest(kind: .transcribe, modelPath: "/Models/whisper", parameters: ["audio_path": .string("/incoming/input.wav")])
+        let requestData = try JSONEncoder().encode(request)
+        let requestURL = try fixture.write("request.json", data: requestData)
+        let requestReference = fixture.reference(requestURL, data: requestData)
+        let inputData = Data([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45])
+        let inputURL = try fixture.write("input.wav", data: inputData)
+        let inputReference = fixture.reference(inputURL, data: inputData)
+        let v1Record = try Self.taskRecord(id: fixture.taskID, kind: "transcribe", state: "succeeded",
+                                           modelPath: request.modelPath, request: requestReference)
+        var recordObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(v1Record)) as? [String: Any])
+        recordObject["schema"] = "task-run/2"
+        recordObject["input_artifact"] = ["path": inputReference.path, "sha256": inputReference.sha256, "bytes": inputReference.bytes]
+        let record = try JSONDecoder().decode(TaskRecord.self, from: JSONSerialization.data(withJSONObject: recordObject))
+        let inputValue = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(inputReference))
+        let resultPayload = JSONValue.object([
+            "text": .string("A retained transcript"),
+            "input_artifact": inputValue,
+            "output_artifact": inputValue,
+        ])
+        let resultData = try JSONEncoder().encode(resultPayload)
+        let resultURL = try fixture.write("result.json", data: resultData)
+        let resultReference = fixture.reference(resultURL, data: resultData)
+        let response = TaskResultResponse(task: record, artifact: resultReference, inline: true, result: resultPayload)
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, resultResponse: response)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+
+        await coordinator.inspect(id: record.id)
+
+        XCTAssertNotNil(coordinator.verifiedInput)
+        XCTAssertNil(coordinator.verifiedOutput)
+        do {
+            try await coordinator.exportAudio(id: record.id, to: fixture.root.appendingPathComponent("exports/output.wav"))
+            XCTFail("Transcription input audio must not be exported as generated audio")
+        } catch { }
+    }
+
     private static let taskCapabilities = try! JSONDecoder().decode(TaskCapabilities.self, from: Data(#"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[{"kind":"classification","result_schema":"decide/1","cancellation":true,"requires_local_model":true,"model_verification":true},{"kind":"music_generation","result_schema":"music/1","cancellation":true,"requires_local_model":true,"model_verification":true}]}"#.utf8))
 
     private static func libraryModel(type: ModelTaskType, path: String? = nil) -> LibraryModel {
@@ -667,13 +872,21 @@ private struct TaskAcceptanceReceipt: Codable {
     var resultDigest: String?
     var outputArtifact: TaskArtifactReference?
     var outputDigest: String?
+    var inputArtifact: TaskArtifactReference?
+    var inputDigest: String?
+    let suppliedInputDigest: String?
+    let submittedInputPath: String?
+    var transcript: String?
+    var audioMetadata: [String: Int]?
     var terminal: Bool
     var pendingFailure: String?
 
     init(kind: String, modelPath: String, agentPath: String, taskID: String, state: String,
          identity: TaskIdentitySummary, requestArtifact: TaskArtifactReference,
          resultArtifact: TaskArtifactReference?, resultDigest: String?, outputArtifact: TaskArtifactReference?,
-         outputDigest: String?, terminal: Bool, pendingFailure: String? = nil) {
+         outputDigest: String?, inputArtifact: TaskArtifactReference?, inputDigest: String?,
+         suppliedInputDigest: String?, submittedInputPath: String?, transcript: String?, audioMetadata: [String: Int]?,
+         terminal: Bool, pendingFailure: String? = nil) {
         self.kind = kind
         self.modelPath = modelPath
         self.agentPath = agentPath
@@ -685,6 +898,12 @@ private struct TaskAcceptanceReceipt: Codable {
         self.resultDigest = resultDigest
         self.outputArtifact = outputArtifact
         self.outputDigest = outputDigest
+        self.inputArtifact = inputArtifact
+        self.inputDigest = inputDigest
+        self.suppliedInputDigest = suppliedInputDigest
+        self.submittedInputPath = submittedInputPath
+        self.transcript = transcript
+        self.audioMetadata = audioMetadata
         self.terminal = terminal
         self.pendingFailure = pendingFailure
     }

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct InferenceTaskPanel: View {
     @ObservedObject var coordinator: InferenceTaskCoordinator
@@ -13,6 +14,10 @@ struct InferenceTaskPanel: View {
                     classifier
                 } else if model.item.task?.type == .musicGeneration {
                     music
+                } else if model.item.task?.type == .speechToText {
+                    transcribe
+                } else if model.item.task?.type == .textToSpeech {
+                    speak
                 }
                 RecentTaskList(coordinator: coordinator, filterModel: model, reuseModel: model)
             }
@@ -97,6 +102,53 @@ struct InferenceTaskPanel: View {
                 Text(validationError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
             taskActions(kind: .musicGeneration)
+        }
+    }
+
+    private var transcribe: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SectionTitle(text: "Transcribe audio")
+            HStack {
+                TextField("Choose an audio file", text: $coordinator.transcribeDraft.audioPath)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("task-transcribe-audio-path")
+                Button("Choose…") {
+                    let panel = NSOpenPanel()
+                    panel.allowedContentTypes = [.wav, .mp3] + [UTType(filenameExtension: "flac")].compactMap { $0 }
+                    panel.allowsMultipleSelection = false
+                    panel.canChooseDirectories = false
+                    panel.begin { response in
+                        if response == .OK, let url = panel.url { coordinator.transcribeDraft.audioPath = url.path }
+                    }
+                }
+                .accessibilityIdentifier("task-transcribe-choose-audio")
+            }
+            TextField("Language code (optional)", text: $coordinator.transcribeDraft.language)
+                .accessibilityIdentifier("task-transcribe-language")
+            Text("The engine keeps a verified copy of the selected audio with the task.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            if let error = coordinator.transcribeDraft.validationError {
+                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+            taskActions(kind: .transcribe)
+        }
+    }
+
+    private var speak: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SectionTitle(text: "Speak text")
+            TextEditor(text: $coordinator.speakDraft.text)
+                .frame(minHeight: 72, maxHeight: 160)
+                .accessibilityIdentifier("task-speak-text")
+            HStack {
+                TextField("Voice (optional)", text: $coordinator.speakDraft.voice)
+                TextField("Speed (optional)", text: $coordinator.speakDraft.speed)
+                TextField("Language code (optional)", text: $coordinator.speakDraft.languageCode)
+            }
+            if let error = coordinator.speakDraft.validationError {
+                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+            taskActions(kind: .speak)
         }
     }
 
@@ -225,8 +277,20 @@ struct RecentTaskList: View {
                     .font(WorkbenchTypography.secondary).textSelection(.enabled)
                 if let taskError = task.error { InlineMessage(kind: .warning, text: "\(taskError.message) · \(taskError.remediation)") }
                 if task.kind == .classification,
-                   let raw = coordinator.selectedResult?.result ?? coordinator.verifiedResult?.json {
+                   let raw = coordinator.verifiedResult?.json {
                     ClassificationTaskAnswerSummary(projection: TaskResultProjection(raw: raw))
+                }
+                if task.kind == .transcribe {
+                    if let input = coordinator.verifiedInput {
+                        Text("Verified input audio · \(input.reference.bytes) bytes · \(input.reference.sha256)")
+                            .font(WorkbenchTypography.secondary).textSelection(.enabled)
+                    }
+                    if let transcript = coordinator.verifiedResult?.json?.objectValue?["text"]?.stringValue {
+                        SectionTitle(text: "Transcript")
+                        Text(transcript).font(WorkbenchTypography.value).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("task-transcript")
+                    }
                 }
                 if let output = coordinator.verifiedOutput {
                     HStack {
@@ -334,6 +398,8 @@ private extension TaskKind {
         switch self {
         case .classification: "Classification"
         case .musicGeneration: "Music generation"
+        case .transcribe: "Transcription"
+        case .speak: "Speech"
         case .unsupported(let name): name
         }
     }
