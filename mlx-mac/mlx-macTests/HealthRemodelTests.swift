@@ -974,7 +974,98 @@ final class HealthConnectorPlanTests: XCTestCase {
 
 // MARK: - Source contracts
 
+final class RuntimeCheckerTests: XCTestCase {
+    private func directory() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-check-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return root
+    }
+
+    private func executable(_ url: URL, script: String) throws {
+        try Data(script.utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    func testOneProbeUsesTheSelectedInterpretersSiblingTools() throws {
+        let root = try directory()
+        let python = root.appendingPathComponent("python")
+        try executable(python, script: """
+        #!/usr/bin/python3
+        import os, pathlib, sys
+        root = pathlib.Path(__file__).parent
+        with (root / 'calls').open('a') as stream: stream.write('probe\\n')
+        os.environ['PYTHONPATH'] = str(root)
+        os.execv('/usr/bin/python3', ['/usr/bin/python3'] + sys.argv[1:])
+        """)
+        for name in ["torch", "transformers", "gguf", "accelerate"] {
+            try Data().write(to: root.appendingPathComponent(name + ".py"))
+        }
+        for name in ["mlx_lm.convert", "mlx_lm.server"] {
+            try executable(root.appendingPathComponent(name), script: "#!/bin/sh\nexit 0\n")
+        }
+        let report = RuntimeChecker.report(python: python, environment: ["PATH": "/usr/bin:/bin"])
+        XCTAssertTrue(report.ok, report.convert.message + report.serve.message)
+        XCTAssertEqual(report.python, python.path)
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("calls")), "probe\n")
+    }
+
+    func testStalledInterpreterStopsItsChildAndReturnsAnUnavailableReport() throws {
+        let root = try directory()
+        let python = root.appendingPathComponent("python")
+        try executable(python, script: """
+        #!/usr/bin/python3
+        import pathlib, signal, subprocess, sys, time
+        child = subprocess.Popen(['/bin/sleep', '30'])
+        def stop(*args):
+            child.terminate()
+            child.wait()
+            sys.exit(0)
+        signal.signal(signal.SIGTERM, stop)
+        pathlib.Path(__file__).with_name('child').write_text(str(child.pid))
+        time.sleep(30)
+        """)
+        let started = Date()
+        let report = RuntimeChecker.report(python: python, timeout: 1)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 4)
+        XCTAssertFalse(report.ok)
+        XCTAssertFalse(report.serve.ok)
+        XCTAssertTrue(report.convert.message.contains("timed out"), report.convert.message)
+        let pid = try XCTUnwrap(Int32(String(contentsOf: root.appendingPathComponent("child"))))
+        XCTAssertNotEqual(kill(pid, 0), 0)
+    }
+
+    func testExcessiveOutputAndMalformedRepliesCannotBecomeReady() throws {
+        let root = try directory()
+        let python = root.appendingPathComponent("python")
+        for (body, reason) in [("print('not a runtime report')", "could not complete"),
+                               ("import sys, time; sys.stdout.write('x' * 100000); sys.stdout.flush(); time.sleep(30)", "too much output")] {
+            try executable(python, script: "#!/usr/bin/python3\n" + body + "\n")
+            let started = Date()
+            let report = RuntimeChecker.report(python: python, timeout: 1)
+            XCTAssertLessThan(Date().timeIntervalSince(started), 4)
+            XCTAssertFalse(report.ok)
+            XCTAssertFalse(report.convert.ok)
+            XCTAssertFalse(report.serve.ok)
+            XCTAssertTrue(report.convert.message.contains(reason), report.convert.message)
+        }
+    }
+}
+
 final class HealthSourceContractTests: XCTestCase {
+    func testMissingInterpreterCannotReportServingReadyFromForeignPathTools() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tool = root.appendingPathComponent("mlx_lm.server")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: tool)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+        let report = RuntimeChecker.report(python: URL(fileURLWithPath: "/nonexistent/mlx-health-python"),
+                                           environment: ["PATH": root.path])
+        XCTAssertFalse(report.serve.ok, "An unusable interpreter cannot launch the engine, even when PATH has a serving tool")
+        XCTAssertFalse(report.ok)
+    }
+
     func testRuntimeReportRunsEveryProbeUnderOneResolvedInterpreter() throws {
         let missing = URL(fileURLWithPath: "/nonexistent/mlx-health-python")
         let report = RuntimeChecker.report(python: missing)

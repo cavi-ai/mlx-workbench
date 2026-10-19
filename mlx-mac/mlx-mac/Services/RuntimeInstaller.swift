@@ -220,7 +220,8 @@ final class RuntimeInstaller: ObservableObject {
         repoRoot: URL, executable: URL, arguments: [String],
         environment: [String: String]?, timeout: TimeInterval?,
         cancellation: CLIInvocationCancellation, registry: CLIProcessRegistry,
-        terminationGrace: TimeInterval, onLine: @escaping @Sendable (String) -> Void
+        terminationGrace: TimeInterval, includeStandardError: Bool = true,
+        onLine: @escaping @Sendable (String) -> Void
     ) throws {
         if cancellation.isRequested { throw CancellationError() }
         let process = Process()
@@ -230,7 +231,8 @@ final class RuntimeInstaller: ObservableObject {
         process.environment = environment
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = pipe
+        if includeStandardError { process.standardError = pipe }
+        else { process.standardError = FileHandle.nullDevice }
         let exited = DispatchSemaphore(value: 0)
         let drained = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
@@ -284,10 +286,11 @@ final class RuntimeInstaller: ObservableObject {
     }
 
     enum InstallError: LocalizedError {
-        case exited(Int), shutdownIncomplete, timedOut, prerequisitesChanged
+        case exited(Int), shutdownIncomplete, timedOut, prerequisitesChanged, outputTooLarge
 
         var errorDescription: String? {
             switch self {
+            case .outputTooLarge: return "The runtime check returned too much output."
             case .exited(let code): return "Runtime installation exited with status \(code)."
             case .shutdownIncomplete: return "Installer shutdown did not finish."
             case .timedOut: return "The installation prerequisite check timed out."
@@ -307,13 +310,38 @@ final class RuntimeInstaller: ObservableObject {
         }
     }
 
+    /// A synchronous runtime probe shares the installer's bounded process-group
+    /// ownership. Callers already run Health checks off the main actor.
+    nonisolated static func probe(executable: URL, arguments: [String], environment: [String: String],
+                                  timeout: TimeInterval) throws -> String {
+        let output = PrerequisiteOutput()
+        let cancellation = CLIInvocationCancellation()
+        do {
+            try runOwnedInstall(repoRoot: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+                executable: executable, arguments: arguments, environment: environment, timeout: timeout,
+                cancellation: cancellation, registry: .shared, terminationGrace: 0.2, includeStandardError: false,
+                onLine: { line in
+                    output.append(line)
+                    if output.exceededLimit { cancellation.cancel() }
+                })
+        } catch {
+            if output.exceededLimit { throw InstallError.outputTooLarge }
+            throw error
+        }
+        if output.exceededLimit { throw InstallError.outputTooLarge }
+        return output.value
+    }
+
     private final class PrerequisiteOutput: @unchecked Sendable {
         private let lock = NSLock()
         private var text = ""
+        private var overflow = false
+        var exceededLimit: Bool { lock.withLock { overflow } }
         var value: String { lock.withLock { text.trimmingCharacters(in: .whitespacesAndNewlines) } }
         func append(_ line: String) {
             lock.withLock {
                 let remaining = 16 * 1024 - text.utf8.count
+                if (line + "\n").utf8.count > remaining { overflow = true }
                 if remaining > 0 { text += String(decoding: (line + "\n").utf8.prefix(remaining), as: UTF8.self) }
             }
         }
