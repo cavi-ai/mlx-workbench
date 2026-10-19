@@ -369,8 +369,10 @@ class AppHost: ObservableObject {
         guard let path = IntakeCoordinator.existingModelPath(resolution, qBits: config.qBits, history: modelWorkflow.history, readyPaths: ready) else { return nil }
         selectedModelPath = path
         if resolution.verdict == .convertible {
+            let conversion = IntakeCoordinator.existingConversion(resolution, qBits: config.qBits, history: modelWorkflow.history, readyPaths: ready)
             modelWorkflow.inspect(intake: resolution, outputDirectory: URL(fileURLWithPath: path).deletingLastPathComponent().path,
-                                  qBits: config.qBits, snapshot: librarySnapshot)
+                                  qBits: config.qBits, snapshot: librarySnapshot,
+                                  downloadedPath: IntakeCoordinator.reusableSource(conversion?.localSourcePath, for: resolution))
             return .prepare
         }
         libraryRevealRequest = LibraryRevealRequest(modelPath: path)

@@ -101,7 +101,8 @@ server.
   `--path`; status comparisons normalize through
   `ServerInfo.modelIdentity` (repo id or path, whichever the agent reports).
   Intake checks current ready inventory and matching conversion history before
-  fetching. Downloaded conversion directories are passed through `--source-path`
+  fetching; a reused match keeps its recorded download while it is still the
+  cached snapshot of the resolved revision (`IntakeCoordinator.reusableSource`). Downloaded conversion directories are passed through `--source-path`
   and persisted as `ConversionWorkflow.localSourcePath`; converter workers run
   offline. Confirm conversion captures the visible source-cleanup choice; a source
   outside the configured roots (`PrepareWorkflowPresentation.sourceCleanupIsPossible`)

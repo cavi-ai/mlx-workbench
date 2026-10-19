@@ -159,6 +159,24 @@ final class IntakeRemodelTests: XCTestCase {
         XCTAssertTrue(PrepareWorkflowPresentation.sourceCleanupIsPossible(sourceLocation: nil, roots: [], fileIdentity: identity))
     }
 
+    func testReusedConversionKeepsItsDownloadWhileItIsTheResolvedRevision() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("intake-reuse-\(UUID().uuidString)/models--a--b")
+        defer { try? FileManager.default.removeItem(at: repo.deletingLastPathComponent()) }
+        let snapshot = repo.appendingPathComponent("snapshots/abc123")
+        try FileManager.default.createDirectory(at: snapshot.appendingPathComponent("multilingual"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("refs"), withIntermediateDirectories: true)
+        try "abc123".write(to: repo.appendingPathComponent("refs/main"), atomically: true, encoding: .utf8)
+        let main = try F.resolution(F.Spec())
+        XCTAssertEqual(IntakeCoordinator.reusableSource(snapshot.path, for: main), snapshot.path)
+        XCTAssertEqual(IntakeCoordinator.reusableSource(snapshot.path, for: try F.resolution(F.Spec(revision: "abc123"))), snapshot.path)
+        let nested = snapshot.appendingPathComponent("multilingual").path
+        XCTAssertEqual(IntakeCoordinator.reusableSource(nested, for: try F.resolution(F.Spec(subfolder: "multilingual"))), nested)
+        try "def456".write(to: repo.appendingPathComponent("refs/main"), atomically: true, encoding: .utf8)
+        XCTAssertNil(IntakeCoordinator.reusableSource(snapshot.path, for: main))
+        XCTAssertNil(IntakeCoordinator.reusableSource(repo.appendingPathComponent("snapshots/gone").path, for: try F.resolution(F.Spec(revision: "gone"))))
+        XCTAssertNil(IntakeCoordinator.reusableSource(nil, for: main))
+    }
+
     func testBackendItemSaysWhenItIsNotInstalled() throws {
         let missing = try F.resolution(F.Spec(backend: "mlx-audio", backendInstalled: false))
         XCTAssertEqual(IntakePresentation.items(missing, qBits: 4).first { $0.label == "Backend" }?.figure, "mlx-audio (not installed)")

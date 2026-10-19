@@ -109,13 +109,41 @@ final class IntakeCoordinator: ObservableObject {
         if resolution.verdict == .alreadyMLX {
             return readyCachePath(repo: resolution.source.repo, revision: resolution.source.revision, readyPaths: readyPaths)
         }
+        return existingConversion(resolution, qBits: qBits, history: history, readyPaths: readyPaths)
+            .map { $0.completedModelPath ?? $0.outputPath }
+    }
+
+    /// The newest finished conversion of this repo at the resolved width whose output is still ready.
+    static func existingConversion(_ resolution: IntakeResolution, qBits: Int, history: [ConversionWorkflow], readyPaths: Set<String>) -> ConversionWorkflow? {
         guard resolution.verdict == .convertible else { return nil }
         let bits = ModelWorkflowCoordinator.allowedBits(qBits, allowed: resolution.qBits)
         return history.sorted { $0.updatedAt > $1.updatedAt }.first { record in
             record.sourcePath == "hf://\(resolution.source.reference)" && record.destinationBits == bits &&
             (record.state == .verified || record.state == .completed || record.state == .existingModelFound) &&
             readyPaths.contains(record.completedModelPath ?? record.outputPath)
-        }.map { $0.completedModelPath ?? $0.outputPath }
+        }
+    }
+
+    /// A recorded download of `resolution`'s source while it is still the cached snapshot of the resolved revision.
+    nonisolated static func reusableSource(_ path: String?, for resolution: IntakeResolution, fileManager: FileManager = .default) -> String? {
+        guard let path, !path.isEmpty else { return nil }
+        var snapshotPath = path
+        if let subfolder = resolution.source.subfolder, !subfolder.isEmpty {
+            guard path.hasSuffix("/" + subfolder) else { return nil }
+            snapshotPath = String(path.dropLast(subfolder.count + 1))
+        }
+        let snapshot = URL(fileURLWithPath: snapshotPath)
+        let snapshots = snapshot.deletingLastPathComponent()
+        guard snapshots.lastPathComponent == "snapshots" else { return nil }
+        let revision = resolution.source.revision
+        let ref = snapshots.deletingLastPathComponent().appendingPathComponent("refs").appendingPathComponent(revision)
+        let current = revision == snapshot.lastPathComponent
+            ? revision
+            : (try? String(contentsOf: ref, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var isDirectory: ObjCBool = false
+        guard current == snapshot.lastPathComponent,
+              fileManager.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else { return nil }
+        return path
     }
 
     static func looksLikeHFLink(_ text: String?) -> Bool {
