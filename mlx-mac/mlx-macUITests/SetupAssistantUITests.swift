@@ -1174,7 +1174,9 @@ final class WorkbenchReviewUITests: XCTestCase {
                 let before = element.frame
                 let delta = max(-300, min(300, scroll.frame.midY - element.frame.midY))
                 wheelOrigin.scroll(byDeltaX: 0, deltaY: delta)
-                XCTAssertNotEqual(element.frame, before, "The scroll wheel must move content at the visible non-video gutter")
+                let moved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in element.frame != before }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 5), .completed,
+                               "The scroll wheel must move content at the visible non-video gutter. Before: \(before), after: \(element.frame)")
             }
             XCTAssertTrue(element.isHittable, app.debugDescription)
             XCTAssertGreaterThanOrEqual(element.frame.minY, scroll.frame.minY)
