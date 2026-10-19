@@ -37,12 +37,11 @@ including a speculative-decoding drafter's target. The inspector also holds:
 
 - **Model lineage**: a provenance timeline of source, converted, verified, benchmarked, served, wired and quarantined events, built from the records the app already keeps. Events whose model signature no longer matches are dimmed. Export it as Markdown or JSON.
 - **Measured performance**: throughput and first-token latency aggregated from past comparisons.
-- **Generate**, for image-generation models: prompt, size, steps and seed. Each run writes a new PNG to `~/Pictures/MLX Workbench`.
+- **Generate image**, for ready image-generation models: prompt, optional width, height, steps and seed. Completed output is retained with its task and can be inspected or exported as a verified PNG.
+- **Understand image**, for ready vision-language models: choose a local image and ask a question. The engine retains a verified input copy with the task; the result shows the full answer and input image.
 - **Classify**, for ready classification models: a state description and questions with choice, score or probability answers.
 - **Generate music**, for ready music models: caption, optional lyrics, duration, steps and seed, with playback of completed audio.
 - **Transcribe audio** and **Speak text**, for ready speech models: transcription from a selected local audio file, or text-to-speech with optional voice, speed and language settings.
-
-During rendering, **Cancel generation** stops that model's owned worker. The panel stays busy until the worker returns, and another model's panel cannot cancel it. Cancellation keeps any files already written and does not publish a late image as a completed result. After cleanup, Generate accepts a new request with a distinct output filename, including retries within the same second.
 
 Actions: **Run model** opens the existing server preview flow; **Compare**
 selects the model for comparison. Models needing conversion offer **Prepare
@@ -83,6 +82,16 @@ For **Speak text**, enter text and optionally set a voice, speed or language
 code. Leave those controls blank to let the engine apply its defaults. A
 completed result exposes a verified WAV for playback and export. Workbench
 does not assign an automatic quality score to speech output.
+
+For **Generate image**, enter a prompt and optionally set width, height, steps
+or seed. Blank settings are left to the engine planner. The completed task
+shows the verified PNG and supports PNG export. For **Understand image**, choose
+a local image and ask a question. **Advanced options** sets max tokens,
+temperature and max pixels; blank values leave these to the engine planner.
+The engine records a retained image copy before accepting the
+task. The completed view shows that verified image and the full returned
+answer. Both task kinds appear in Recent tasks and can reuse their recorded
+request when the matching Ready model is available.
 
 **Recent tasks** in the inspector shows the selected model's tasks. The Library
 toolbar also opens Recent tasks independently of model selection, so recorded

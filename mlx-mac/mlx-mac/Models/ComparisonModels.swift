@@ -1,5 +1,33 @@
 import Foundation
 
+/// Result returned by `mlx-agent convert generate` for measured image comparisons.
+struct GenerationResult: Codable, Equatable, Sendable {
+    let path: String
+    let width: Int
+    let height: Int
+    let steps: Int
+    let seed: Int
+    let seconds: Double?
+    let loadSeconds: Double?
+    let pixelStd: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case path, width, height, steps, seed, seconds
+        case loadSeconds = "load_seconds"
+        case pixelStd = "pixel_std"
+    }
+}
+
+/// Settings for the existing comparison-run image generation entry point.
+struct ImageRequest: Equatable, Sendable {
+    var prompt: String
+    var size: Int = 1024
+    var steps: Int = 40
+    var seed: Int = 42
+
+    static let sizes = [512, 768, 1024]
+}
+
 // MARK: - Comparison models
 //
 // Measured Comparisons (premium spec 03): replay a prompt set against a set

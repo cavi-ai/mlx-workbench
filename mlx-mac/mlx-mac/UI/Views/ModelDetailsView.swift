@@ -297,18 +297,8 @@ struct ModelDetailsView: View {
                 )
 
                 if model.readiness == .ready, let taskType = model.item.task?.type,
-                   [.classification, .musicGeneration, .speechToText, .textToSpeech].contains(taskType) {
+                   [.classification, .musicGeneration, .speechToText, .textToSpeech, .imageGeneration, .visionLanguage].contains(taskType) {
                     InferenceTaskPanel(coordinator: appHost.inferenceTasks, model: model)
-                }
-
-                if showsImageGeneration {
-                    WorkbenchSurface {
-                        ImageGenerationPanel(
-                            coordinator: appHost.imageGeneration,
-                            modelPath: model.item.path,
-                            isPrimary: !actions.canPrepare
-                        )
-                    }
                 }
 
                 Divider()

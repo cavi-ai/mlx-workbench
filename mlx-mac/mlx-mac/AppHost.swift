@@ -55,8 +55,6 @@ class AppHost: ObservableObject {
     let runtimeInstaller: RuntimeInstaller
     /// Hugging Face intake sheet state (verdict, backend install, downloads).
     let intake: IntakeCoordinator
-    /// Prompt → PNG for converted image-generation models.
-    let imageGeneration: ImageGenerationCoordinator
     let trainedAdapters: TrainedAdapterServingCoordinator
     /// First-launch setup assistant state (persisted once completed).
     let setup: SetupCoordinator
@@ -176,9 +174,6 @@ class AppHost: ObservableObject {
             await Task.detached(priority: .utility) { RuntimeChecker.report() }.value
         }, checkPrerequisites: { root in await RuntimeInstaller.inspectPrerequisites(root: root) })
         self.intake = IntakeCoordinator(api: intakeAPI ?? .live(api: api))
-        self.imageGeneration = ImageGenerationCoordinator(render: { path, out, request in
-            try await api.generate(path: path, out: out.path, request: request)
-        })
         self.trainedAdapters = TrainedAdapterServingCoordinator(api: .live(api))
         self.setup = setup ?? SetupCoordinator()
         self.updater = updater ?? UpdateCoordinator(installed: .running())
@@ -867,7 +862,7 @@ class AppHost: ObservableObject {
         occupied.formUnion(endpoint.fleet.slots.filter(\.enabled).map(\.modelPath))
         occupied.formUnion(recommendationPreferences.preferredModelIDs.values)
         if let path = verification.activeModelPath { occupied.insert(path) }
-        if case .generating(let path, _) = imageGeneration.state { occupied.insert(path) }
+        occupied.formUnion(inferenceTasks.activeModelPaths)
         if let id = comparison.activeRunID, let run = comparison.runs.first(where: { $0.id == id }) {
             occupied.formUnion(run.variants)
         }

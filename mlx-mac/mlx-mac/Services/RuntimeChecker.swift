@@ -1,10 +1,7 @@
 import Foundation
 
-// MARK: - RuntimeChecker
-//
-// Mirrors mlx_workbench/deps.py: probes the Python interpreter that would run
-// conversions/serving for the presence of modules and executables.
-
+// Probes the Python interpreter and PATH used by the bridge. Presence checks
+// remain separate from model loading and model-specific runtime verification.
 struct RuntimeChecker {
     private static let convertModules = ["torch", "transformers", "gguf", "accelerate"]
     private static let convertExecutables = ["mlx_lm.convert"]
@@ -15,22 +12,57 @@ struct RuntimeChecker {
         report(python: pythonPath())
     }
 
-    /// Every probe runs under `python`, and the report records the same interpreter.
-    static func report(python: URL?) -> RuntimeReport {
-        let convert = checkConvert(python: python)
-        let serve = checkServe(python: python)
-        return RuntimeReport(
-            convert: convert,
-            serve: serve,
-            install: installHint,
-            ok: convert.ok && serve.ok,
-            python: python?.path
-        )
+    static func report(python: URL?, environment: [String: String] = ProcessInfo.processInfo.environment,
+                       timeout: TimeInterval = 5) -> RuntimeReport {
+        var modules: [String: Bool] = [:]
+        var executables: [String: Bool] = [:]
+        var failure: String?
+        if let python {
+            var environment = environment
+            environment["PATH"] = python.deletingLastPathComponent().path + ":" +
+                (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+            let script = """
+            import importlib.util, json, shutil, sys
+            def present(name):
+                try: return importlib.util.find_spec(name) is not None
+                except Exception: return False
+            modules, tools = map(json.loads, sys.argv[1:])
+            print(json.dumps({'modules': {n: present(n) for n in modules},
+                              'executables': {n: bool(shutil.which(n)) or present(n) for n in tools}}))
+            """
+            do {
+                let inputs = try [convertModules, convertExecutables + serveExecutables].map {
+                    String(decoding: try JSONEncoder().encode($0), as: UTF8.self)
+                }
+                let output = try RuntimeInstaller.probe(executable: python, arguments: ["-c", script] + inputs,
+                    environment: environment, timeout: timeout)
+                let snapshot = try JSONDecoder().decode(Snapshot.self, from: Data(output.utf8))
+                guard Set(snapshot.modules.keys) == Set(convertModules),
+                      Set(snapshot.executables.keys) == Set(convertExecutables + serveExecutables) else {
+                    throw ProbeError.invalidReply
+                }
+                modules = snapshot.modules
+                executables = snapshot.executables
+            } catch RuntimeInstaller.InstallError.timedOut {
+                failure = "Runtime check timed out. Check the selected Python interpreter before retrying."
+            } catch RuntimeInstaller.InstallError.outputTooLarge {
+                failure = "Runtime check returned too much output. Check the selected Python interpreter before retrying."
+            } catch {
+                failure = "The selected Python could not complete runtime checks. Review its path and installed packages."
+            }
+        } else {
+            failure = "No Python interpreter was found. Configure the runtime before retrying."
+        }
+        let convert = checkConvert(modules: modules, executables: executables, failure: failure)
+        let serve = checkServe(executables: executables, failure: failure)
+        return RuntimeReport(convert: convert, serve: serve, install: installHint,
+                             ok: convert.ok && serve.ok, python: python?.path)
     }
 
-    private static func checkConvert(python: URL?) -> ConvertStatus {
-        let modules = modulePresence(convertModules, python: python)
-        let executables = executablePresence(convertExecutables, python: python)
+    private static func checkConvert(modules foundModules: [String: Bool], executables foundExecutables: [String: Bool],
+                                     failure: String?) -> ConvertStatus {
+        let modules = Dictionary(uniqueKeysWithValues: convertModules.map { ($0, foundModules[$0] == true) })
+        let executables = Dictionary(uniqueKeysWithValues: convertExecutables.map { ($0, foundExecutables[$0] == true) })
         let missingModules = convertModules.filter { modules[$0] != true }
         let missingExecutables = convertExecutables.filter { executables[$0] != true }
         let ok = missingModules.isEmpty && missingExecutables.isEmpty
@@ -41,115 +73,30 @@ struct RuntimeChecker {
         if !missingExecutables.isEmpty {
             parts.append("missing on PATH: \(missingExecutables.joined(separator: ", "))")
         }
-        let message = ok
-            ? "Convert dependencies ready."
-            : "\(parts.joined(separator: "; ")). On this Mac run `\(installHint)`."
-
-        return ConvertStatus(
-            ok: ok,
-            modules: modules,
-            executables: executables,
-            missingModules: missingModules,
-            missingExecutables: missingExecutables,
-            install: installHint,
-            message: message
-        )
+        let message = ok ? "Convert dependencies ready."
+            : failure ?? "\(parts.joined(separator: "; ")). On this Mac run `\(installHint)`."
+        return ConvertStatus(ok: ok, modules: modules, executables: executables, missingModules: missingModules,
+                             missingExecutables: missingExecutables, install: installHint, message: message)
     }
 
-    private static func checkServe(python: URL?) -> ServeStatus {
-        let executables = executablePresence(serveExecutables, python: python)
+    private static func checkServe(executables found: [String: Bool], failure: String?) -> ServeStatus {
+        let executables = Dictionary(uniqueKeysWithValues: serveExecutables.map { ($0, found[$0] == true) })
         let missing = serveExecutables.filter { executables[$0] != true }
         let ok = missing.isEmpty
-        let message = ok
-            ? "Serve runtime ready."
-            : "missing on PATH: \(missing.joined(separator: ", ")). On this Mac run `\(installHint)`."
-
-        return ServeStatus(
-            ok: ok,
-            executables: executables,
-            missingExecutables: missing,
-            install: installHint,
-            message: message
-        )
+        let message = ok ? "Serve runtime ready."
+            : failure ?? "missing on PATH: \(missing.joined(separator: ", ")). On this Mac run `\(installHint)`."
+        return ServeStatus(ok: ok, executables: executables, missingExecutables: missing,
+                           install: installHint, message: message)
     }
 
-    // MARK: - Probes
-
-    private static func modulePresence(_ names: [String], python: URL?) -> [String: Bool] {
-        guard !names.isEmpty else { return [:] }
-        var result: [String: Bool] = [:]
-        for name in names {
-            result[name] = pythonModulePresent(name, python: python)
-        }
-        return result
+    private struct Snapshot: Decodable {
+        let modules: [String: Bool]
+        let executables: [String: Bool]
     }
 
-    private static func pythonModulePresent(_ name: String, python: URL?) -> Bool {
-        let script = """
-        import importlib.util
-        print(importlib.util.find_spec("\(name)") is not None)
-        """
-        guard let output = pythonOutput(script, python: python) else { return false }
-        return output.trimmingCharacters(in: .whitespacesAndNewlines) == "True"
-    }
+    private enum ProbeError: Error { case invalidReply }
 
-    private static func executablePresence(_ names: [String], python: URL?) -> [String: Bool] {
-        var result: [String: Bool] = [:]
-        for name in names {
-            result[name] = isExecutableOnPath(name) || isPythonModuleExecutable(name, python: python)
-        }
-        return result
-    }
-
-    /// Look for a `python -m ...` style entry point the way mlx_lm ships it.
-    private static func isPythonModuleExecutable(_ name: String, python: URL?) -> Bool {
-        let parts = name.split(separator: ".")
-        guard parts.count == 2 else { return false }
-        let module = "\(parts[0]).\(parts[1])"
-        let script = """
-        import importlib.util
-        try:
-            spec = importlib.util.find_spec("\(module)")
-            print(bool(spec))
-        except Exception:
-            print(False)
-        """
-        guard let output = pythonOutput(script, python: python) else { return false }
-        return output.trimmingCharacters(in: .whitespacesAndNewlines) == "True"
-    }
-
-    private static func isExecutableOnPath(_ name: String) -> Bool {
-        guard let pathValue = ProcessInfo.processInfo.environment["PATH"] else { return false }
-        return pathValue.split(separator: ":").contains { dir in
-            FileManager.default.isExecutableFile(atPath: "\(dir)/\(name)")
-        }
-    }
-
-    private static func pythonOutput(_ script: String, python: URL?) -> String? {
-        guard let python else { return nil }
-        let process = Process()
-        process.executableURL = python
-        process.arguments = ["-c", script]
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = stdout.fileHandleForReading.readDataToEndOfFile()
-            guard process.terminationStatus == 0, !data.isEmpty else { return nil }
-            return String(decoding: data, as: UTF8.self)
-        } catch {
-            return nil
-        }
-    }
-
-    /// Absolute URL to the Python that would run conversions/serving.
-    /// Shares WorkbenchPython's resolution order (env → repo .venv → PATH)
-    /// so the health report reflects what the bridge actually launches.
+    /// The same resolution order used by CLIProcess: override, repo venv, PATH.
     private static func pythonPath() -> URL? {
         WorkbenchPython.preferredExecutable()
     }
