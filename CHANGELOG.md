@@ -20,7 +20,7 @@ and is versioned independently; submodule bumps are recorded here.
 
 ### Fixed
 
-- Reclaim: duplicate MLX model folders appear in Duplicate groups, identical copies as reclaimable duplicates and other bit widths of one model as informational groups.
+- Reclaim: duplicate MLX model folders and Ollama store models appear in Duplicate groups, identical copies as reclaimable duplicates and other bit widths of one model as informational groups.
 
 ## [0.5.0] - 2026-10-12
 ### Added
