@@ -93,6 +93,17 @@ task. The completed view shows that verified image and the full returned
 answer. Both task kinds appear in Recent tasks and can reuse their recorded
 request when the matching Ready model is available.
 
+For **Generate video**, enter a prompt and optionally set width, height, frame
+count, frames per second, steps or seed. Blank settings are left to the engine
+planner. The completed task offers verified MP4 playback and export. For
+**Understand video**, choose a local MP4, MOV or M4V file and ask about its contents. Advanced
+options set frames per second, temperature, maximum tokens and maximum pixels;
+blank values leave these to the engine planner. The engine retains a verified
+copy of the input with the task, and completed results show that video and the
+full returned answer. Video tasks appear in Recent tasks and can reuse their
+recorded request when the matching Ready model is available. Video playback
+stops when you leave the inspector or select another model or task.
+
 **Recent tasks** in the inspector shows the selected model's tasks. The Library
 toolbar also opens Recent tasks independently of model selection, so recorded
 results remain accessible when their model is no longer in the Library. At

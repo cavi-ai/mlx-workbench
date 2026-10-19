@@ -7,6 +7,8 @@ enum TaskKind: Equatable, Sendable {
     case speak
     case imageGeneration
     case imageUnderstanding
+    case videoUnderstanding
+    case videoGeneration
     case unsupported(String)
 
     var wireValue: String {
@@ -17,13 +19,15 @@ enum TaskKind: Equatable, Sendable {
         case .speak: "speak"
         case .imageGeneration: "image_generation"
         case .imageUnderstanding: "image_understanding"
+        case .videoUnderstanding: "video_understanding"
+        case .videoGeneration: "video_generation"
         case .unsupported(let value): value
         }
     }
 
     var isSupported: Bool {
         switch self {
-        case .classification, .musicGeneration, .transcribe, .speak, .imageGeneration, .imageUnderstanding: true
+        case .classification, .musicGeneration, .transcribe, .speak, .imageGeneration, .imageUnderstanding, .videoUnderstanding, .videoGeneration: true
         case .unsupported: false
         }
     }
@@ -65,6 +69,8 @@ extension TaskKind: Codable {
         case "speak": self = .speak
         case "image_generation": self = .imageGeneration
         case "image_understanding": self = .imageUnderstanding
+        case "video_understanding": self = .videoUnderstanding
+        case "video_generation": self = .videoGeneration
         default: self = .unsupported(value)
         }
     }
@@ -196,7 +202,7 @@ struct TaskRequest: Codable, Equatable, Sendable {
     let parameters: [String: JSONValue]
 
     init(kind: TaskKind, modelPath: String, parameters: [String: JSONValue]) {
-        self.schema = [.transcribe, .speak, .imageGeneration, .imageUnderstanding].contains(kind) ? "task-request/2" : "task-request/1"
+        self.schema = [.transcribe, .speak, .imageGeneration, .imageUnderstanding, .videoUnderstanding, .videoGeneration].contains(kind) ? "task-request/2" : "task-request/1"
         self.kind = kind
         self.modelPath = modelPath
         self.parameters = parameters
@@ -207,6 +213,7 @@ struct TaskRequest: Codable, Equatable, Sendable {
         case ("task-request/1", .classification), ("task-request/1", .musicGeneration),
              ("task-request/2", .transcribe), ("task-request/2", .speak),
              ("task-request/2", .imageGeneration), ("task-request/2", .imageUnderstanding): true
+        case ("task-request/2", .videoUnderstanding), ("task-request/2", .videoGeneration): true
         default: false
         }
     }
@@ -275,6 +282,22 @@ struct TaskRequest: Codable, Equatable, Sendable {
                   parameters["prompt"]?.stringValue != nil,
                   ["max_tokens", "max_pixels"].allSatisfy({ parameters[$0] == nil || parameters[$0]?.integerValue != nil }),
                   parameters["temperature"] == nil || parameters["temperature"]?.numberValue?.isFinite == true else {
+                throw TaskProtocolError.invalidRequest
+            }
+        case .videoUnderstanding:
+            guard Set(parameters.keys).isSubset(of: ["video_path", "prompt", "fps", "temperature", "max_tokens", "max_pixels"]),
+                  let videoPath = parameters["video_path"]?.stringValue, Self.absolutePath(videoPath),
+                  parameters["prompt"]?.stringValue != nil,
+                  ["max_tokens", "max_pixels"].allSatisfy({ parameters[$0] == nil || parameters[$0]?.integerValue != nil }),
+                  parameters["fps"] == nil || parameters["fps"]?.numberValue?.isFinite == true,
+                  parameters["temperature"] == nil || parameters["temperature"]?.numberValue?.isFinite == true else {
+                throw TaskProtocolError.invalidRequest
+            }
+        case .videoGeneration:
+            guard Set(parameters.keys).isSubset(of: ["prompt", "width", "height", "frames", "fps", "steps", "seed"]),
+                  parameters["prompt"]?.stringValue != nil,
+                  ["width", "height", "frames", "steps", "seed"].allSatisfy({ parameters[$0] == nil || parameters[$0]?.integerValue != nil }),
+                  parameters["fps"] == nil || parameters["fps"]?.numberValue?.isFinite == true else {
                 throw TaskProtocolError.invalidRequest
             }
         case .unsupported:
@@ -353,7 +376,8 @@ struct TaskRecord: Codable, Equatable, Sendable {
         switch (schema, kind) {
         case ("task-run/1", .classification), ("task-run/1", .musicGeneration),
              ("task-run/2", .transcribe), ("task-run/2", .speak),
-             ("task-run/2", .imageGeneration), ("task-run/2", .imageUnderstanding): state.isSupported
+             ("task-run/2", .imageGeneration), ("task-run/2", .imageUnderstanding),
+             ("task-run/2", .videoGeneration), ("task-run/2", .videoUnderstanding): state.isSupported
         default: false
         }
     }

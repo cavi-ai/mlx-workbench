@@ -295,7 +295,7 @@ struct VideoComparisonSheet: View {
     }
 }
 
-private struct SharedVideoPane: NSViewRepresentable {
+struct SharedVideoPane: NSViewRepresentable {
     let player: AVPlayer
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView(); view.controlsStyle = .none; view.player = player

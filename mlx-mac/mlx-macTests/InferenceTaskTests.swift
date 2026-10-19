@@ -80,6 +80,39 @@ final class InferenceTaskTests: XCTestCase {
                 "image_path": .string(owned.path),
                 "prompt": .string("Describe the main subject and its visible colors."),
             ])
+        case "video_understanding":
+            kind = .videoUnderstanding
+            guard let inputValue = environment["MLX_WORKBENCH_TASK_ACCEPTANCE_INPUT"] else {
+                throw XCTSkip("Video understanding acceptance requires an explicit absolute MP4 input path.")
+            }
+            let source = URL(fileURLWithPath: inputValue)
+            let sourceValues = try source.resourceValues(forKeys: [.isRegularFileKey])
+            guard source.path.hasPrefix("/"), source.pathExtension.lowercased() == "mp4", sourceValues.isRegularFile == true else {
+                throw XCTSkip("Video understanding input must be an explicit absolute regular MP4 file.")
+            }
+            let sourceAsset = AVURLAsset(url: source)
+            let sourceDuration = try await sourceAsset.load(.duration).seconds
+            let sourceTracks = try await sourceAsset.loadTracks(withMediaType: .video)
+            guard sourceDuration.isFinite, sourceDuration > 0, !sourceTracks.isEmpty else {
+                throw XCTSkip("Video understanding input must contain a playable video track.")
+            }
+            try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let data = try Data(contentsOf: source)
+            suppliedInputDigest = Self.sha256(data)
+            let owned = evidenceRoot.appendingPathComponent("submitted-input.mp4")
+            try data.write(to: owned, options: .atomic)
+            ownedInput = owned
+            request = TaskRequest(kind: kind, modelPath: modelPath, parameters: [
+                "video_path": .string(owned.path), "prompt": .string("Describe the visible motion."),
+                "fps": .number(1), "temperature": .number(0), "max_tokens": .number(128), "max_pixels": .number(65_536),
+            ])
+        case "video_generation":
+            kind = .videoGeneration
+            request = TaskRequest(kind: kind, modelPath: modelPath, parameters: [
+                "prompt": .string("A red balloon drifts slowly over a green field"),
+                "width": .number(256), "height": .number(256), "frames": .number(17),
+                "fps": .number(8), "steps": .number(8), "seed": .number(42),
+            ])
         default:
             throw XCTSkip("Unsupported media task acceptance kind.")
         }
@@ -208,6 +241,33 @@ final class InferenceTaskTests: XCTestCase {
             receipt.outputArtifact = reference
             receipt.outputDigest = reference.sha256
             receipt.imageMetadata = ["width": image.width, "height": image.height]
+        } else if kind == .videoUnderstanding {
+            let text = try XCTUnwrap(savedResult.result?.objectValue?["text"]?.stringValue)
+            XCTAssertFalse(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            let returned = try XCTUnwrap(savedResult.result?.objectValue?["input_artifact"])
+            let returnedReference = try JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(returned))
+            XCTAssertEqual(returnedReference, started.inputArtifact)
+            let retained = try XCTUnwrap(started.inputArtifact)
+            let verifiedInput = try await TaskArtifactVerifier.verifyVideo(reference: retained, taskID: started.id, root: stateRoot)
+            XCTAssertEqual(verifiedInput.reference.sha256, suppliedInputDigest)
+            receipt.inputArtifact = retained
+            receipt.inputDigest = retained.sha256
+            receipt.transcript = text
+        } else if kind == .videoGeneration {
+            let output = try XCTUnwrap(savedResult.result?.objectValue?["output_artifact"])
+            let reference = try JSONDecoder().decode(TaskArtifactReference.self, from: JSONEncoder().encode(output))
+            let verifiedVideo = try await TaskArtifactVerifier.verifyVideo(reference: reference, taskID: started.id, root: stateRoot)
+            let asset = AVURLAsset(url: verifiedVideo.url)
+            let duration = try await asset.load(.duration).seconds
+            let tracks = try await asset.loadTracks(withMediaType: .video)
+            let track = try XCTUnwrap(tracks.first)
+            let size = try await track.load(.naturalSize)
+            XCTAssertGreaterThan(duration, 0)
+            XCTAssertGreaterThan(size.width, 0)
+            XCTAssertGreaterThan(size.height, 0)
+            receipt.outputArtifact = reference
+            receipt.outputDigest = reference.sha256
+            receipt.videoMetadata = ["duration_seconds": duration, "width": Double(size.width), "height": Double(size.height)]
         } else if kind == .classification {
             let answer = try XCTUnwrap(savedResult.result?.objectValue?["answers"]?.objectValue?["route"]?.objectValue?["choice"]?.stringValue)
             XCTAssertEqual(answer, "billing")
@@ -237,9 +297,9 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertEqual(request.kind, .musicGeneration)
         XCTAssertEqual(request.parameters["future_setting"], .object(["x": .number(1)]))
 
-        let unsupported = try decoder.decode(TaskRequest.self, from: Data(#"{"schema":"task-request/9","kind":"video_generation","model_path":"/Models/video","parameters":{}}"#.utf8))
+        let unsupported = try decoder.decode(TaskRequest.self, from: Data(#"{"schema":"task-request/9","kind":"future_task","model_path":"/Models/future","parameters":{}}"#.utf8))
         XCTAssertFalse(unsupported.isSupported)
-        XCTAssertEqual(unsupported.kind, .unsupported("video_generation"))
+        XCTAssertEqual(unsupported.kind, .unsupported("future_task"))
 
         let record = try decoder.decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
         XCTAssertTrue(record.isSupported)
@@ -248,11 +308,11 @@ final class InferenceTaskTests: XCTestCase {
 
         let unknownRecord = Self.publicSummary
             .replacingOccurrences(of: "\"state\":\"starting\"", with: "\"state\":\"paused\"")
-            .replacingOccurrences(of: "\"kind\":\"classification\"", with: "\"kind\":\"video_generation\"")
+            .replacingOccurrences(of: "\"kind\":\"classification\"", with: "\"kind\":\"future_task\"")
         let decodedUnknown = try decoder.decode(TaskRecord.self, from: Data(unknownRecord.utf8))
         XCTAssertFalse(decodedUnknown.isSupported)
         XCTAssertEqual(decodedUnknown.state, .unsupported("paused"))
-        XCTAssertEqual(decodedUnknown.kind, .unsupported("video_generation"))
+        XCTAssertEqual(decodedUnknown.kind, .unsupported("future_task"))
 
         let result = try decoder.decode(TaskResultResponse.self, from: Data(#"{"task":\#(Self.publicSummary),"artifact":{"path":"/tasks/artifacts/11111111-1111-4111-8111-111111111111/result.json","sha256":"\#(String(repeating: "a", count: 64))","bytes":9},"inline":true,"result":{"answers":{"future":{"type":"new","future_metric":2}}}}"#.utf8))
         XCTAssertTrue(result.inline)
@@ -309,6 +369,180 @@ final class InferenceTaskTests: XCTestCase {
 
         let invalid = try JSONDecoder().decode(TaskRequest.self, from: Data(#"{"schema":"task-request/2","kind":"image_understanding","model_path":"/Models/qwen-vl","parameters":{"image_path":"relative.png","prompt":"Describe it.","fps":1}}"#.utf8))
         XCTAssertThrowsError(try invalid.validate())
+    }
+
+    func testVideoTaskCapabilitiesAndRequestsUsePerKindV2Schemas() throws {
+        let json = #"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[{"kind":"classification","result_schema":"decide/1","cancellation":true,"requires_local_model":true},{"kind":"video_understanding","result_schema":"describe/1","cancellation":true,"requires_local_model":true,"request_schema":"task-request/2","run_schema":"task-run/2"},{"kind":"video_generation","result_schema":"video/1","cancellation":true,"requires_local_model":true,"request_schema":"task-request/2","run_schema":"task-run/2"}]}"#
+        let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: Data(json.utf8))
+        XCTAssertTrue(capabilities.isSupported)
+        XCTAssertEqual(capabilities.requestSchema(for: .classification), "task-request/1")
+        XCTAssertEqual(capabilities.runSchema(for: .classification), "task-run/1")
+        XCTAssertEqual(capabilities.requestSchema(for: .videoUnderstanding), "task-request/2")
+        XCTAssertEqual(capabilities.runSchema(for: .videoGeneration), "task-run/2")
+        let requestArtifact = TaskArtifactReference(path: "/tasks/artifacts/11111111-1111-4111-8111-111111111111/request.json",
+                                                   sha256: String(repeating: "a", count: 64), bytes: 100)
+        for kind in ["video_understanding", "video_generation"] {
+            let record = try Self.taskRecordV2(id: "11111111-1111-4111-8111-111111111111", kind: kind,
+                                               modelPath: "/Models/video", request: requestArtifact, input: nil)
+            XCTAssertTrue(record.isSupported, "A valid task-run/2 \(kind) record must be supported by the native client.")
+        }
+        let v1VideoRecord = try Self.taskRecord(id: "11111111-1111-4111-8111-111111111112", kind: "video_generation",
+                                                state: "succeeded", modelPath: "/Models/video", request: requestArtifact)
+        XCTAssertFalse(v1VideoRecord.isSupported, "Video task kinds require task-run/2.")
+        let unknownVideoRecord = try Self.taskRecordV2(id: "11111111-1111-4111-8111-111111111113", kind: "future_task",
+                                                       modelPath: "/Models/video", request: requestArtifact, input: nil)
+        XCTAssertFalse(unknownVideoRecord.isSupported, "Unknown kinds remain unsupported under task-run/2.")
+
+        let understanding = VideoUnderstandingTaskDraft(videoPath: "/tmp/input.mp4", prompt: "Summarize the action.")
+        let understandingRequest = try understanding.request(modelPath: "/Models/vlm")
+        XCTAssertEqual(understandingRequest.schema, "task-request/2")
+        XCTAssertNoThrow(try understandingRequest.validate())
+        XCTAssertEqual(understandingRequest.parameters, ["video_path": .string("/tmp/input.mp4"), "prompt": .string("Summarize the action.")])
+        var advanced = VideoUnderstandingTaskDraft(videoPath: "/tmp/input.mp4", prompt: "Summarize the action.", fps: "2.5", temperature: "0.25", maxTokens: "384", maxPixels: "640000")
+        let advancedRequest = try advanced.request(modelPath: "/Models/vlm")
+        XCTAssertEqual(advancedRequest.parameters["fps"], .number(2.5))
+        XCTAssertEqual(advancedRequest.parameters["temperature"], .number(0.25))
+        XCTAssertEqual(advancedRequest.parameters["max_tokens"], .number(384))
+        XCTAssertEqual(advancedRequest.parameters["max_pixels"], .number(640000))
+        try advanced.load(advancedRequest, retainedVideoPath: "/tasks/artifacts/11111111-1111-4111-8111-111111111111/input.mp4")
+        XCTAssertEqual(advanced.videoPath, "/tasks/artifacts/11111111-1111-4111-8111-111111111111/input.mp4")
+        XCTAssertEqual(advanced.prompt, "Summarize the action.")
+
+        let generation = VideoGenerationTaskDraft(prompt: "A red kite flying over a beach")
+        let generationRequest = try generation.request(modelPath: "/Models/video")
+        XCTAssertEqual(generationRequest.schema, "task-request/2")
+        XCTAssertNoThrow(try generationRequest.validate())
+        XCTAssertEqual(generationRequest.parameters, ["prompt": .string("A red kite flying over a beach")])
+        let customized = VideoGenerationTaskDraft(prompt: "A red kite flying over a beach", width: "416", height: "240", frames: "17", fps: "16", steps: "30", seed: "42")
+        let customizedRequest = try customized.request(modelPath: "/Models/video")
+        XCTAssertEqual(customizedRequest.parameters["width"], .number(416))
+        XCTAssertEqual(customizedRequest.parameters["height"], .number(240))
+        XCTAssertEqual(customizedRequest.parameters["frames"], .number(17))
+        XCTAssertEqual(customizedRequest.parameters["fps"], .number(16))
+        XCTAssertEqual(customizedRequest.parameters["steps"], .number(30))
+        XCTAssertEqual(customizedRequest.parameters["seed"], .number(42))
+    }
+
+    @MainActor
+    func testCoordinatorAcceptsV2VideoTaskRecords() async throws {
+        let requestArtifact = TaskArtifactReference(path: "/tasks/artifacts/11111111-1111-4111-8111-111111111111/request.json",
+                                                   sha256: String(repeating: "a", count: 64), bytes: 100)
+        let capabilities = try JSONDecoder().decode(TaskCapabilities.self, from: Data(#"{"schema":"task-capabilities/1","request_schema":"task-request/1","run_schema":"task-run/1","tasks":[{"kind":"video_generation","result_schema":"video/1","cancellation":true,"requires_local_model":true,"request_schema":"task-request/2","run_schema":"task-run/2"},{"kind":"video_understanding","result_schema":"describe/1","cancellation":true,"requires_local_model":true,"request_schema":"task-request/2","run_schema":"task-run/2"}]}"#.utf8))
+        for (index, kind, recordKind, modelType) in [("1", TaskKind.videoGeneration, "video_generation", ModelTaskType.videoGeneration),
+                                                     ("2", TaskKind.videoUnderstanding, "video_understanding", ModelTaskType.visionLanguage)] {
+            let id = "11111111-1111-4111-8111-11111111111\(index)"
+            let modelPath = "/Models/video-\(index)"
+            let record = try Self.taskRecordV2(id: id, kind: recordKind, modelPath: modelPath,
+                                               request: requestArtifact, input: nil)
+            let api = FakeInferenceTaskAPI(record: record, capabilities: capabilities)
+            let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+            if kind == .videoGeneration {
+                coordinator.videoGenerationDraft.prompt = "A short moving scene"
+            } else {
+                coordinator.videoUnderstandingDraft.videoPath = "/tmp/input.mp4"
+                coordinator.videoUnderstandingDraft.prompt = "Describe the scene"
+            }
+
+            await coordinator.start(kind: kind, model: Self.libraryModel(type: modelType, path: modelPath))
+
+            XCTAssertEqual(coordinator.selectedTask?.id, id)
+            let inspectedIDs = await api.resultRequestIDs()
+            XCTAssertEqual(inspectedIDs, [id], "The coordinator must pass record validation and inspect the accepted video task.")
+        }
+    }
+
+    func testVideoTaskDraftsRejectMalformedValuesWithoutInventingPlannerRanges() throws {
+        XCTAssertThrowsError(try VideoUnderstandingTaskDraft(videoPath: "relative.mp4", prompt: "Summarize").request(modelPath: "/Models/vlm"))
+        XCTAssertThrowsError(try VideoUnderstandingTaskDraft(videoPath: "/tmp/input.mp4", prompt: " ").request(modelPath: "/Models/vlm"))
+        XCTAssertThrowsError(try VideoUnderstandingTaskDraft(videoPath: "/tmp/input.mp4", prompt: "Summarize", fps: "not-a-number").request(modelPath: "/Models/vlm"))
+        XCTAssertThrowsError(try VideoGenerationTaskDraft(prompt: "A kite", frames: "1.5").request(modelPath: "/Models/video"))
+        XCTAssertThrowsError(try VideoGenerationTaskDraft(prompt: " ").request(modelPath: "/Models/video"))
+        let unusualButStructurallyValid = try VideoGenerationTaskDraft(prompt: "A kite", frames: "2").request(modelPath: "/Models/video")
+        XCTAssertNoThrow(try unusualButStructurallyValid.validate(), "The native form forwards numeric settings; planner-specific frame alignment remains engine-owned.")
+    }
+
+    @MainActor
+    func testVideoUnderstandingVerifiesRetainedInputAndPreservesCompleteAnswerOnReuse() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let generated = try await ComparisonMediaFixtures.generateInput(
+            for: PromptEntry(id: "moving-square", text: "A red square moving across a white background", builtinInput: "red-square-right"),
+            into: fixture.root)
+        let bytes = try Data(contentsOf: generated)
+        let inputURL = try fixture.write("input.mp4", data: bytes)
+        let input = fixture.reference(inputURL, data: bytes)
+        _ = try await TaskArtifactVerifier.verifyVideo(reference: input, taskID: fixture.taskID, root: fixture.root)
+        for extensionName in ["mov", "m4v"] {
+            let alternateURL = try fixture.write("input.\(extensionName)", data: bytes)
+            let alternate = fixture.reference(alternateURL, data: bytes)
+            let verifiedAlternate = try await TaskArtifactVerifier.verifyVideo(reference: alternate, taskID: fixture.taskID, root: fixture.root)
+            XCTAssertEqual(verifiedAlternate.reference, alternate)
+        }
+
+        let request = TaskRequest(kind: .videoUnderstanding, modelPath: "/Models/vlm", parameters: [
+            "video_path": .string("/private/source/clip.mp4"), "prompt": .string("Describe the motion.")
+        ])
+        let requestData = try JSONEncoder().encode(request)
+        let requestURL = try fixture.write("request.json", data: requestData)
+        let requestReference = fixture.reference(requestURL, data: requestData)
+        let record = try Self.taskRecordV2(id: fixture.taskID, kind: "video_understanding", modelPath: request.modelPath,
+                                           request: requestReference, input: input)
+        let answer = String(repeating: "The red square moves steadily from left to right. ", count: 50)
+        let payload = JSONValue.object(["schema": .string("describe/1"), "text": .string(answer),
+                                        "input_artifact": try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(input))])
+        let resultData = try JSONEncoder().encode(payload)
+        let resultURL = try fixture.write("result.json", data: resultData)
+        let response = TaskResultResponse(task: record, artifact: fixture.reference(resultURL, data: resultData), inline: true, result: payload)
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, listedRecords: [record], resultResponse: response)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+
+        await coordinator.refreshRecent()
+        await coordinator.inspect(id: record.id)
+        XCTAssertEqual(coordinator.verifiedInput?.reference, input)
+        XCTAssertEqual(coordinator.verifiedResult?.json?.objectValue?["text"], .string(answer))
+        await coordinator.reuse(id: record.id, for: Self.libraryModel(type: .visionLanguage, path: record.modelPath))
+        XCTAssertEqual(coordinator.videoUnderstandingDraft.videoPath, input.path)
+        XCTAssertEqual(coordinator.videoUnderstandingDraft.prompt, "Describe the motion.")
+        XCTAssertEqual(coordinator.lastReusedTaskKind, .videoUnderstanding)
+    }
+
+    @MainActor
+    func testVideoGenerationInspectsAndExportsOnlyVerifiedTaskOwnedMP4() async throws {
+        let fixture = try ArtifactFixture()
+        defer { fixture.remove() }
+        let generated = try await ComparisonMediaFixtures.generateInput(
+            for: PromptEntry(id: "moving-square", text: "A red square moving across a white background", builtinInput: "red-square-right"),
+            into: fixture.root)
+        let bytes = try Data(contentsOf: generated)
+        let outputURL = try fixture.write("output.mp4", data: bytes)
+        let output = fixture.reference(outputURL, data: bytes)
+        let request = TaskRequest(kind: .videoGeneration, modelPath: "/Models/video", parameters: ["prompt": .string("A red square moves right.")])
+        let requestData = try JSONEncoder().encode(request)
+        let requestURL = try fixture.write("request.json", data: requestData)
+        let requestReference = fixture.reference(requestURL, data: requestData)
+        let record = try Self.taskRecordV2(id: fixture.taskID, kind: "video_generation", modelPath: request.modelPath,
+                                           request: requestReference, input: nil)
+        let payload = JSONValue.object(["schema": .string("video/1"), "frames": .number(16),
+                                        "output_artifact": try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(output))])
+        let resultData = try JSONEncoder().encode(payload)
+        let resultURL = try fixture.write("result.json", data: resultData)
+        let response = TaskResultResponse(task: record, artifact: fixture.reference(resultURL, data: resultData), inline: true, result: payload)
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities, resultResponse: response)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: fixture.root)
+
+        await coordinator.inspect(id: record.id)
+
+        XCTAssertEqual(coordinator.verifiedOutput?.reference, output)
+        let destination = fixture.root.appendingPathComponent("exports/verified.mp4")
+        try await coordinator.exportVideo(id: record.id, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination), bytes)
+        do {
+            try await coordinator.exportImage(id: record.id, to: fixture.root.appendingPathComponent("exports/wrong.png"))
+            XCTFail("An MP4 task must not be exported as an image.")
+        } catch { }
+
+        let corrupt = try fixture.write("corrupt.mp4", data: Data("not a video".utf8))
+        await assertRejectedVideo(fixture.reference(corrupt, data: Data("not a video".utf8)), taskID: fixture.taskID, root: fixture.root)
     }
 
     func testImageTaskDraftsOmitUnsetPlannerSettingsAndReuseRetainedInput() throws {
@@ -949,6 +1183,14 @@ final class InferenceTaskTests: XCTestCase {
         } catch { }
     }
 
+    private func assertRejectedVideo(_ reference: TaskArtifactReference, taskID: String, root: URL,
+                                     file: StaticString = #filePath, line: UInt = #line) async {
+        do {
+            _ = try await TaskArtifactVerifier.verifyVideo(reference: reference, taskID: taskID, root: root)
+            XCTFail("Expected an invalid or non-video artifact to be rejected", file: file, line: line)
+        } catch { }
+    }
+
     func testArtifactVerifierAcceptsTaskOwnedJSONAndAudioAndDecodesRequest() async throws {
         let fixture = try ArtifactFixture()
         defer { fixture.remove() }
@@ -1042,6 +1284,7 @@ private actor FakeInferenceTaskAPI: InferenceTaskAPI {
     private var listFails = false
     private let resultResponse: TaskResultResponse?
     private var requests: [TaskRequest] = []
+    private var resultIDs: [String] = []
     private var capabilityCalls = 0
     private var firstCapabilitiesReached = false
     private var firstCapabilitiesWaiter: CheckedContinuation<Void, Never>?
@@ -1098,6 +1341,7 @@ private actor FakeInferenceTaskAPI: InferenceTaskAPI {
         return TaskPage(tasks: listedRecords, hasMore: false)
     }
     func taskResult(id: String) async throws -> TaskResultResponse {
+        resultIDs.append(id)
         guard let resultResponse else { throw TaskProtocolError.unsupportedCapability }
         return resultResponse
     }
@@ -1106,6 +1350,7 @@ private actor FakeInferenceTaskAPI: InferenceTaskAPI {
         TaskModelVerification(id: id, modelPath: record.modelPath, modelFingerprint: "test", matches: true)
     }
     func startEvidence() -> [TaskRequest] { requests }
+    func resultRequestIDs() -> [String] { resultIDs }
     func cancelledIDs() -> [String] { cancelled }
     func waitForFirstCapabilities() async {
         if firstCapabilitiesReached { return }
@@ -1142,6 +1387,7 @@ private struct TaskAcceptanceReceipt: Codable {
     var transcript: String?
     var audioMetadata: [String: Int]?
     var imageMetadata: [String: Int]?
+    var videoMetadata: [String: Double]?
     var terminal: Bool
     var pendingFailure: String?
 
@@ -1149,7 +1395,7 @@ private struct TaskAcceptanceReceipt: Codable {
          identity: TaskIdentitySummary, requestArtifact: TaskArtifactReference,
          resultArtifact: TaskArtifactReference?, resultDigest: String?, outputArtifact: TaskArtifactReference?,
          outputDigest: String?, inputArtifact: TaskArtifactReference?, inputDigest: String?,
-         suppliedInputDigest: String?, submittedInputPath: String?, transcript: String?, audioMetadata: [String: Int]?, imageMetadata: [String: Int]? = nil,
+         suppliedInputDigest: String?, submittedInputPath: String?, transcript: String?, audioMetadata: [String: Int]?, imageMetadata: [String: Int]? = nil, videoMetadata: [String: Double]? = nil,
          terminal: Bool, pendingFailure: String? = nil) {
         self.kind = kind
         self.modelPath = modelPath
@@ -1169,6 +1415,7 @@ private struct TaskAcceptanceReceipt: Codable {
         self.transcript = transcript
         self.audioMetadata = audioMetadata
         self.imageMetadata = imageMetadata
+        self.videoMetadata = videoMetadata
         self.terminal = terminal
         self.pendingFailure = pendingFailure
     }
