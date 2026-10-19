@@ -77,7 +77,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("models"), withIntermediateDirectories: true)
         let python = """
-        import hashlib, json, math, os, pathlib, shutil, struct, sys, time, uuid, wave
+        import hashlib, json, math, os, pathlib, shutil, struct, sys, time, uuid, wave, zlib
         root = pathlib.Path(__file__).resolve().parents[2]
         args = sys.argv[1:]
         with (root / 'calls.jsonl').open('a') as f:
@@ -89,6 +89,11 @@ final class WorkbenchReviewUITests: XCTestCase {
             def reference(path):
                 content = path.read_bytes()
                 return dict(path=str(path), sha256=hashlib.sha256(content).hexdigest(), bytes=len(content))
+            def png(width=4, height=3):
+                def chunk(kind, data):
+                    return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
+                pixels = b''.join(bytes((0,)) + bytes((220, 70, 40, 255)) * width for _ in range(height))
+                return bytes((137, 80, 78, 71, 13, 10, 26, 10)) + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(pixels)) + chunk(b'IEND', b'')
             def artifact(identifier, name, value):
                 folder = task_root / 'artifacts' / identifier
                 folder.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -106,6 +111,15 @@ final class WorkbenchReviewUITests: XCTestCase {
                 elif record['kind'] == 'transcribe':
                     result = dict(schema='transcribe/1', model=record['model_path'], backend='mlx-audio',
                         text='Fixture transcript retained from the accepted audio.', input_artifact=record['input_artifact'])
+                elif record['kind'] == 'image_understanding':
+                    result = dict(schema='describe/1', model=record['model_path'], backend='mlx-vlm',
+                        text='The image shows a red object against a light background.', input_artifact=record['input_artifact'])
+                elif record['kind'] == 'image_generation':
+                    path = folder / 'output.png'
+                    path.write_bytes(png())
+                    path.chmod(0o600)
+                    result = dict(schema='generate/1', model=record['model_path'], backend='mflux',
+                        output_artifact=reference(path), width=4, height=3, steps=20, seed=42, seconds=0.1)
                 else:
                     path = folder / 'output.wav'
                     with wave.open(str(path), 'wb') as output:
@@ -126,25 +140,31 @@ final class WorkbenchReviewUITests: XCTestCase {
                          model_verification=True, request_schema='task-request/2', run_schema='task-run/2'),
                     dict(kind='speak', result_schema='speak/1', cancellation=True, requires_local_model=True,
                          model_verification=True, request_schema='task-request/2', run_schema='task-run/2')])
+                data['tasks'].extend([
+                    dict(kind='image_generation', result_schema='generate/1', cancellation=True, requires_local_model=True,
+                         model_verification=True, request_schema='task-request/2', run_schema='task-run/2'),
+                    dict(kind='image_understanding', result_schema='describe/1', cancellation=True, requires_local_model=True,
+                         model_verification=True, request_schema='task-request/2', run_schema='task-run/2')])
             elif action == 'start':
                 request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
                 identifier = str(uuid.UUID(int=len(records) + 1))
                 input_artifact = None
-                if request['kind'] == 'transcribe':
-                    source = pathlib.Path(request['parameters']['audio_path'])
-                    destination = task_root / 'artifacts' / identifier / 'input.wav'
+                if request['kind'] in ('transcribe', 'image_understanding'):
+                    source_key, filename = ('audio_path', 'input.wav') if request['kind'] == 'transcribe' else ('image_path', 'input.png')
+                    source = pathlib.Path(request['parameters'][source_key])
+                    destination = task_root / 'artifacts' / identifier / filename
                     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                     shutil.copyfile(source, destination)
                     destination.chmod(0o600)
                     input_artifact = reference(destination)
-                record = dict(schema='task-run/2' if request['kind'] in ('transcribe', 'speak') else 'task-run/1', id=identifier, kind=request['kind'], state='running', model_path=request['model_path'],
+                record = dict(schema='task-run/2' if request['kind'] in ('transcribe', 'speak', 'image_generation', 'image_understanding') else 'task-run/1', id=identifier, kind=request['kind'], state='running', model_path=request['model_path'],
                     created_at='2026-01-01T00:00:00Z', started_at='2026-01-01T00:00:00Z', completed_at=None,
                     cancel_requested=False, execution_unresolved=False, supervisor=dict(pid=101), execution=dict(pid=102),
                     request=artifact(identifier, 'request.json', request), result=None, error=None,
                     identity=dict(backend='mlx-embeddings' if request['kind'] == 'classification' else 'mlx-audio',
                         backend_version='1.0', engine_version='0.7.0', python_version='3.12', model_fingerprint='a' * 64),
                     input_artifact=input_artifact)
-                if request['kind'] in ('classification', 'transcribe', 'speak'): finish(record)
+                if request['kind'] in ('classification', 'transcribe', 'speak', 'image_generation', 'image_understanding'): finish(record)
                 records.insert(0, record)
                 data = dict(task=record)
             elif action == 'list':
@@ -906,6 +926,172 @@ final class WorkbenchReviewUITests: XCTestCase {
             predicate: NSPredicate(format: "exists == false"), object: app.buttons["task-audio-pause"]
         )
         XCTAssertEqual(XCTWaiter.wait(for: [playbackStoppedForRouteChange], timeout: 5), .completed, app.debugDescription)
+    }
+
+    func testLibraryImageTasksUseDurableHistoryAndRetainedInputs() throws {
+        var outputs: [[String: Any]] = []
+        for (kind, name) in [("image_generation", "Fixture image generator"), ("vision_language", "Fixture vision model")] {
+            let model = root.appendingPathComponent("models/" + kind)
+            try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+            try Data("{\"model_type\":\"fixture\"}".utf8).write(to: model.appendingPathComponent("config.json"))
+            outputs.append(["path": model.path, "name": name, "model_key": kind, "bytes": 1024, "readable": true,
+                            "task": ["type": kind, "use_cases": [], "source": "registry", "confidence": "confirmed"]])
+        }
+        try JSONSerialization.data(withJSONObject: ["models": [], "outputs": outputs, "pending": [], "duplicates": [],
+            "totals": ["gguf": 0, "pending": 0, "converted": 2, "unreadable": 0, "bytes": 2048, "reclaimable_bytes": 0]])
+            .write(to: root.appendingPathComponent("scan-result.json"))
+        let source = root.appendingPathComponent("input.png")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let opaqueRed = NSColor(calibratedRed: 1, green: 0, blue: 0, alpha: 1)
+        for y in 0..<2 {
+            for x in 0..<2 { bitmap.setColor(opaqueRed, atX: x, y: y) }
+        }
+        let sourcePNG = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let decodedSource = try XCTUnwrap(NSBitmapImageRep(data: sourcePNG))
+        XCTAssertEqual(decodedSource.pixelsWide, 2)
+        XCTAssertEqual(decodedSource.pixelsHigh, 2)
+        for y in 0..<2 {
+            for x in 0..<2 {
+                let pixel = try XCTUnwrap(decodedSource.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                XCTAssertEqual(pixel.alphaComponent, 1, accuracy: 0.001)
+                XCTAssertGreaterThan(pixel.redComponent, pixel.greenComponent)
+                XCTAssertGreaterThan(pixel.redComponent, pixel.blueComponent)
+            }
+        }
+        try sourcePNG.write(to: source)
+
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let generator = app.outlines.staticTexts["Fixture image generator"].firstMatch
+        XCTAssertTrue(generator.waitForExistence(timeout: 15)); generator.doubleClick()
+        XCTAssertTrue(app.staticTexts["Generate image"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["task-image-generation-prompt"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["task-image-generation-width"].exists)
+        XCTAssertTrue(app.textFields["task-image-generation-height"].exists)
+        XCTAssertFalse(app.buttons["Generate"].exists, "Image generation must use the durable task panel")
+        replace(app.textFields["task-image-generation-prompt"], with: "A red cup on a white table")
+        capture("Library-image-generation-form")
+        app.buttons["task-start"].click()
+        waitForTaskState("succeeded")
+        XCTAssertTrue(app.buttons["task-export-image"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.images["task-image-output"].exists || app.otherElements["task-image-output"].exists)
+        XCTAssertFalse(app.buttons["task-audio-play"].exists, "PNG results must not offer WAV playback")
+        let generationScroll = app.scrollViews.containing(.button, identifier: "task-export-image").firstMatch
+        let generatedImage = app.images["task-image-output"]
+        for _ in 0..<8 where !generatedImage.isHittable || generatedImage.frame.minY < generationScroll.frame.minY || generatedImage.frame.maxY > generationScroll.frame.maxY {
+            let delta = max(-300, min(300, generationScroll.frame.midY - generatedImage.frame.midY))
+            generationScroll.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(generatedImage.isHittable)
+        XCTAssertGreaterThanOrEqual(generatedImage.frame.minY, generationScroll.frame.minY)
+        XCTAssertLessThanOrEqual(generatedImage.frame.maxY, generationScroll.frame.maxY)
+        capture("Library-image-generation-result")
+        let imageExport = app.buttons["task-export-image"]
+        for _ in 0..<8 where !imageExport.isHittable || imageExport.frame.minY < generationScroll.frame.minY || imageExport.frame.maxY > generationScroll.frame.maxY {
+            let delta = max(-300, min(300, generationScroll.frame.midY - imageExport.frame.midY))
+            generationScroll.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(imageExport.isHittable)
+        XCTAssertGreaterThanOrEqual(imageExport.frame.minY, generationScroll.frame.minY)
+        XCTAssertLessThanOrEqual(imageExport.frame.maxY, generationScroll.frame.maxY)
+        capture("Library-image-generation-export")
+        let generated = try XCTUnwrap(taskSubmissions().first)
+        let generatedRequest = try XCTUnwrap(generated["request"] as? [String: Any])
+        let generatedRequestPath = try XCTUnwrap(generatedRequest["path"] as? String)
+        let generatedRequestJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: generatedRequestPath))) as? [String: Any])
+        let generatedParameters = try XCTUnwrap(generatedRequestJSON["parameters"] as? [String: Any])
+        XCTAssertEqual(generatedRequestJSON["schema"] as? String, "task-request/2")
+        XCTAssertEqual(Set(generatedParameters.keys), ["prompt"], "Unset planner settings must be omitted")
+
+        app.buttons["Done"].click()
+        let vision = app.outlines.staticTexts["Fixture vision model"].firstMatch
+        XCTAssertTrue(waitForHittability(vision, timeout: 10), app.debugDescription); vision.doubleClick()
+        XCTAssertTrue(app.staticTexts["Understand image"].waitForExistence(timeout: 10))
+        replace(app.textFields["task-image-understanding-path"], with: source.path)
+        replace(app.textFields["task-image-understanding-prompt"], with: "What color is the main object?")
+        XCTAssertTrue(try taskSubmissions().count == 1, "Editing the form must not start inference")
+        capture("Library-image-understanding-form")
+        app.buttons["task-start"].click()
+        waitForTaskState("succeeded")
+        XCTAssertTrue(text(containing: "The image shows a red object against a light background.").waitForExistence(timeout: 10))
+        let understanding = try XCTUnwrap(taskSubmissions().first)
+        let retained = try XCTUnwrap(understanding["input_artifact"] as? [String: Any])
+        let retainedPath = try XCTUnwrap(retained["path"] as? String)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: retainedPath))
+        try FileManager.default.removeItem(at: source)
+        let understandingRequest = try XCTUnwrap(understanding["request"] as? [String: Any])
+        let understandingRequestPath = try XCTUnwrap(understandingRequest["path"] as? String)
+        let understandingRequestJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: understandingRequestPath))) as? [String: Any])
+        let understandingParameters = try XCTUnwrap(understandingRequestJSON["parameters"] as? [String: Any])
+        XCTAssertEqual(understandingRequestJSON["schema"] as? String, "task-request/2")
+        XCTAssertEqual(Set(understandingParameters.keys), ["image_path", "prompt"])
+        XCTAssertEqual(understandingParameters["image_path"] as? String, source.path)
+        XCTAssertNil(understandingParameters["fps"])
+        let answer = app.staticTexts["task-image-understanding-result"]
+        let understandingScroll = app.scrollViews.containing(.staticText, identifier: "task-image-understanding-result").firstMatch
+        let inputPreview = app.images["task-image-input"]
+        for _ in 0..<8 where !inputPreview.isHittable || inputPreview.frame.minY < understandingScroll.frame.minY || inputPreview.frame.maxY > understandingScroll.frame.maxY {
+            let delta = max(-300, min(300, understandingScroll.frame.midY - inputPreview.frame.midY))
+            understandingScroll.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(inputPreview.isHittable)
+        XCTAssertGreaterThanOrEqual(inputPreview.frame.minY, understandingScroll.frame.minY)
+        XCTAssertLessThanOrEqual(inputPreview.frame.maxY, understandingScroll.frame.maxY)
+        capture("Library-image-understanding-input")
+        for _ in 0..<8 where !answer.isHittable || answer.frame.minY < understandingScroll.frame.minY || answer.frame.maxY > understandingScroll.frame.maxY {
+            let delta = max(-300, min(300, understandingScroll.frame.midY - answer.frame.midY))
+            understandingScroll.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(answer.isHittable)
+        XCTAssertGreaterThanOrEqual(answer.frame.minY, understandingScroll.frame.minY)
+        XCTAssertLessThanOrEqual(answer.frame.maxY, understandingScroll.frame.maxY)
+        capture("Library-image-understanding-answer")
+        let reuse = app.buttons["task-reuse"]
+        XCTAssertTrue(reuse.waitForExistence(timeout: 10))
+        for _ in 0..<8 where !reuse.isHittable {
+            understandingScroll.scroll(byDeltaX: 0, deltaY: reuse.frame.midY < understandingScroll.frame.minY ? 300 : -300)
+        }
+        XCTAssertTrue(reuse.isHittable, app.debugDescription)
+        reuse.click()
+        let reusedImage = app.textFields["task-image-understanding-path"]
+        let reuseScroll = app.scrollViews.containing(.textField, identifier: "task-image-understanding-path").firstMatch
+        XCTAssertTrue(reusedImage.waitForExistence(timeout: 10), app.debugDescription)
+        for _ in 0..<8 where !reusedImage.isHittable {
+            reuseScroll.scroll(byDeltaX: 0, deltaY: reusedImage.frame.midY < reuseScroll.frame.minY ? 300 : -300)
+        }
+        let retainedImage = expectation(for: NSPredicate(format: "value == %@", retainedPath), evaluatedWith: reusedImage)
+        let reuseWait = XCTWaiter.wait(for: [retainedImage], timeout: 15)
+        if reuseWait != .completed || reusedImage.value as? String != retainedPath {
+            let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            screenshot.name = "Image-reuse-failure-screenshot"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            let accessibility = XCTAttachment(string: app.debugDescription)
+            accessibility.name = "Image-reuse-failure-accessibility"
+            accessibility.lifetime = .keepAlways
+            add(accessibility)
+            let reuseState = "value=\(String(describing: reusedImage.value))\nhittable=\(reusedImage.isHittable)\nframe=\(reusedImage.frame)\nscrollFrame=\(reuseScroll.frame)\n"
+            let stateAttachment = XCTAttachment(string: reuseState)
+            stateAttachment.name = "Image-reuse-failure-field-state"
+            stateAttachment.lifetime = .keepAlways
+            add(stateAttachment)
+            let calls = (try? String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)) ?? "Fixture CLI call log unavailable."
+            let callsAttachment = XCTAttachment(string: calls)
+            callsAttachment.name = "Image-reuse-failure-fixture-calls"
+            callsAttachment.lifetime = .keepAlways
+            add(callsAttachment)
+            let taskPath = root.appendingPathComponent("Library/Application Support/mlx-agent/tasks/fixture-tasks.json")
+            let tasks = (try? String(contentsOf: taskPath, encoding: .utf8)) ?? "Fixture task state unavailable."
+            let tasksAttachment = XCTAttachment(string: tasks)
+            tasksAttachment.name = "Image-reuse-failure-fixture-tasks"
+            tasksAttachment.lifetime = .keepAlways
+            add(tasksAttachment)
+        }
+        XCTAssertEqual(reuseWait, .completed, app.debugDescription)
+        XCTAssertEqual(reusedImage.value as? String, retainedPath, app.debugDescription)
+        XCTAssertEqual(try taskSubmissions().count, 2, "Reusing the owned image only fills the form")
+        capture("Library-image-understanding-result-and-reuse")
     }
 
     func testHealthAndDiscoveryResultsAndRecovery() throws {
