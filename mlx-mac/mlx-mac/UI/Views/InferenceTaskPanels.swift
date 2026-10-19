@@ -18,6 +18,10 @@ struct InferenceTaskPanel: View {
                     transcribe
                 } else if model.item.task?.type == .textToSpeech {
                     speak
+                } else if model.item.task?.type == .imageGeneration {
+                    imageGeneration
+                } else if model.item.task?.type == .visionLanguage {
+                    imageUnderstanding
                 }
                 RecentTaskList(coordinator: coordinator, filterModel: model, reuseModel: model)
             }
@@ -149,6 +153,65 @@ struct InferenceTaskPanel: View {
                 Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
             taskActions(kind: .speak)
+        }
+    }
+
+    private var imageGeneration: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SectionTitle(text: "Generate image")
+            TextField("Describe the image", text: $coordinator.imageGenerationDraft.prompt, axis: .vertical)
+                .lineLimit(2...5).accessibilityIdentifier("task-image-generation-prompt")
+            HStack(spacing: WorkbenchSpacing.sm) {
+                Text("Size").font(WorkbenchTypography.secondary)
+                TextField("Width · default 1024", text: $coordinator.imageGenerationDraft.width)
+                    .frame(maxWidth: 130).accessibilityIdentifier("task-image-generation-width")
+                Text("×").foregroundStyle(WorkbenchColor.muted)
+                TextField("Height · default 1024", text: $coordinator.imageGenerationDraft.height)
+                    .frame(maxWidth: 130).accessibilityIdentifier("task-image-generation-height")
+                TextField("Steps · planner default", text: $coordinator.imageGenerationDraft.steps)
+                    .frame(maxWidth: 145).accessibilityIdentifier("task-image-generation-steps")
+                TextField("Seed · planner default", text: $coordinator.imageGenerationDraft.seed)
+                    .frame(maxWidth: 145).accessibilityIdentifier("task-image-generation-seed")
+            }
+            if let validationError = coordinator.imageGenerationDraft.validationError {
+                Text(validationError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+            taskActions(kind: .imageGeneration)
+        }
+    }
+
+    private var imageUnderstanding: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            SectionTitle(text: "Understand image")
+            HStack {
+                TextField("Choose an image file", text: $coordinator.imageUnderstandingDraft.imagePath)
+                    .textSelection(.enabled).accessibilityIdentifier("task-image-understanding-path")
+                Button("Choose…") {
+                    let panel = NSOpenPanel()
+                    panel.allowedContentTypes = [.png, .jpeg] + [UTType(filenameExtension: "webp")].compactMap { $0 }
+                    panel.allowsMultipleSelection = false
+                    panel.canChooseDirectories = false
+                    panel.begin { response in
+                        if response == .OK, let url = panel.url { coordinator.imageUnderstandingDraft.imagePath = url.path }
+                    }
+                }
+                .accessibilityIdentifier("task-image-understanding-choose")
+            }
+            TextField("Ask a question about the image", text: $coordinator.imageUnderstandingDraft.prompt, axis: .vertical)
+                .lineLimit(2...4).accessibilityIdentifier("task-image-understanding-prompt")
+            DisclosureGroup("Advanced options") {
+                HStack {
+                    TextField("Max tokens · planner default", text: $coordinator.imageUnderstandingDraft.maxTokens)
+                    TextField("Temperature · planner default", text: $coordinator.imageUnderstandingDraft.temperature)
+                    TextField("Max pixels · planner default", text: $coordinator.imageUnderstandingDraft.maxPixels)
+                }
+            }
+            if let validationError = coordinator.imageUnderstandingDraft.validationError {
+                Text(validationError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
+            }
+            Text("The engine keeps a verified copy of the selected image with the task.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            taskActions(kind: .imageUnderstanding)
         }
     }
 
@@ -292,7 +355,41 @@ struct RecentTaskList: View {
                             .accessibilityIdentifier("task-transcript")
                     }
                 }
-                if let output = coordinator.verifiedOutput {
+                if task.kind == .imageUnderstanding {
+                    if let input = coordinator.verifiedInput {
+                        Text("Verified input image · \(input.reference.bytes) bytes · \(input.reference.sha256)")
+                            .font(WorkbenchTypography.secondary).textSelection(.enabled)
+                        TaskImagePreview(artifact: input, label: "Verified input image")
+                            .accessibilityIdentifier("task-image-input")
+                    }
+                    if let answer = coordinator.verifiedResult?.json?.objectValue?["text"]?.stringValue {
+                        SectionTitle(text: "Image response")
+                        Text(answer).font(WorkbenchTypography.value).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("task-image-understanding-result")
+                    }
+                }
+                if task.kind == .imageGeneration, let output = coordinator.verifiedOutput {
+                    SectionTitle(text: "Generated image")
+                    TaskImagePreview(artifact: output, label: "Generated image")
+                        .accessibilityIdentifier("task-image-output")
+                    Text("Verified PNG · \(output.reference.bytes) bytes · \(output.reference.sha256)")
+                        .font(WorkbenchTypography.secondary).textSelection(.enabled)
+                    Button("Export PNG…") {
+                        let panel = NSSavePanel()
+                        panel.nameFieldStringValue = "task-\(task.id)-output.png"
+                        panel.allowedContentTypes = [.png]
+                        panel.begin { response in
+                            guard response == .OK, let url = panel.url else { return }
+                            Task {
+                                do { try await coordinator.exportImage(id: task.id, to: url); exportError = nil }
+                                catch { exportError = AppHost.render(error) }
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("task-export-image")
+                }
+                if let output = coordinator.verifiedOutput, task.kind == .speak || task.kind == .musicGeneration {
                     HStack {
                         Button(audio.activeURL == output.url && audio.isPlaying ? "Pause" : "Play WAV") { audio.toggle(output.url) }
                             .accessibilityIdentifier(audio.isPlaying ? "task-audio-pause" : "task-audio-play")
@@ -383,6 +480,81 @@ private struct ClassificationTaskAnswerSummary: View {
     }
 }
 
+private struct TaskImagePreview: View {
+    let artifact: VerifiedTaskArtifact
+    let label: String
+    @State private var image: NSImage?
+    @State private var loaded = false
+    @State private var viewport = ImageInspectionViewport()
+    @State private var dragOrigin: ImageInspectionViewport?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            HStack(spacing: WorkbenchSpacing.xs) {
+                Button { viewport.setZoom(viewport.zoom - 0.5) } label: { Image(systemName: "minus.magnifyingglass") }
+                    .disabled(viewport.zoom == 1).accessibilityLabel("Zoom out")
+                Slider(value: Binding(get: { viewport.zoom }, set: { viewport.setZoom($0) }), in: 1...8)
+                    .frame(maxWidth: 200).accessibilityLabel("Image zoom")
+                Button { viewport.setZoom(viewport.zoom + 0.5) } label: { Image(systemName: "plus.magnifyingglass") }
+                    .disabled(viewport.zoom == 8).accessibilityLabel("Zoom in")
+                Text(String(format: "%.0f%%", viewport.zoom * 100)).font(WorkbenchTypography.secondaryTabular)
+                Button("Reset") { viewport.reset() }
+                Spacer()
+                Text("Drag or use arrow keys to pan").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            .controlSize(.small)
+            GeometryReader { geometry in
+                ZStack {
+                    WorkbenchColor.surface
+                    if let image {
+                        let fit = viewport.fittedSize(image: image.size, canvas: geometry.size)
+                        let offset = viewport.offset(image: image.size, canvas: geometry.size)
+                        Image(nsImage: image).resizable()
+                            .frame(width: fit.width * viewport.zoom, height: fit.height * viewport.zoom)
+                            .offset(offset)
+                    } else if loaded {
+                        Text("Image unavailable").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    } else { ProgressView() }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .clipped().contentShape(Rectangle())
+                .gesture(DragGesture().onChanged { value in
+                    guard let image else { return }
+                    if dragOrigin == nil { dragOrigin = viewport }
+                    var next = dragOrigin ?? viewport
+                    next.pan(by: value.translation, image: image.size, canvas: geometry.size)
+                    viewport = next
+                }.onEnded { _ in dragOrigin = nil })
+                .focusable()
+                .onMoveCommand { direction in
+                    guard let image else { return }
+                    let step: CGFloat = 40
+                    let translation: CGSize
+                    switch direction {
+                    case .left: translation = CGSize(width: step, height: 0)
+                    case .right: translation = CGSize(width: -step, height: 0)
+                    case .up: translation = CGSize(width: 0, height: step)
+                    case .down: translation = CGSize(width: 0, height: -step)
+                    @unknown default: return
+                    }
+                    viewport.pan(by: translation, image: image.size, canvas: geometry.size)
+                }
+                .accessibilityLabel(label)
+                .accessibilityValue(String(format: "%.0f percent zoom", viewport.zoom * 100))
+            }
+            .frame(minHeight: 180, idealHeight: 320, maxHeight: 420)
+            .clipShape(RoundedRectangle(cornerRadius: WorkbenchRadius.control, style: .continuous))
+        }
+        .task(id: artifact.url) {
+            image = nil
+            loaded = false
+            viewport.reset()
+            image = await MediaImageLoader.load(artifact.url)
+            loaded = true
+        }
+    }
+}
+
 private extension JSONValue {
     var prettyJSON: String {
         guard let data = try? JSONEncoder().encode(self),
@@ -400,6 +572,8 @@ private extension TaskKind {
         case .musicGeneration: "Music generation"
         case .transcribe: "Transcription"
         case .speak: "Speech"
+        case .imageGeneration: "Image generation"
+        case .imageUnderstanding: "Image understanding"
         case .unsupported(let name): name
         }
     }

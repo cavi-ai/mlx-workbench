@@ -5,6 +5,8 @@ enum TaskKind: Equatable, Sendable {
     case musicGeneration
     case transcribe
     case speak
+    case imageGeneration
+    case imageUnderstanding
     case unsupported(String)
 
     var wireValue: String {
@@ -13,13 +15,15 @@ enum TaskKind: Equatable, Sendable {
         case .musicGeneration: "music_generation"
         case .transcribe: "transcribe"
         case .speak: "speak"
+        case .imageGeneration: "image_generation"
+        case .imageUnderstanding: "image_understanding"
         case .unsupported(let value): value
         }
     }
 
     var isSupported: Bool {
         switch self {
-        case .classification, .musicGeneration, .transcribe, .speak: true
+        case .classification, .musicGeneration, .transcribe, .speak, .imageGeneration, .imageUnderstanding: true
         case .unsupported: false
         }
     }
@@ -59,6 +63,8 @@ extension TaskKind: Codable {
         case "music_generation": self = .musicGeneration
         case "transcribe": self = .transcribe
         case "speak": self = .speak
+        case "image_generation": self = .imageGeneration
+        case "image_understanding": self = .imageUnderstanding
         default: self = .unsupported(value)
         }
     }
@@ -190,7 +196,7 @@ struct TaskRequest: Codable, Equatable, Sendable {
     let parameters: [String: JSONValue]
 
     init(kind: TaskKind, modelPath: String, parameters: [String: JSONValue]) {
-        self.schema = kind == .transcribe || kind == .speak ? "task-request/2" : "task-request/1"
+        self.schema = [.transcribe, .speak, .imageGeneration, .imageUnderstanding].contains(kind) ? "task-request/2" : "task-request/1"
         self.kind = kind
         self.modelPath = modelPath
         self.parameters = parameters
@@ -199,7 +205,8 @@ struct TaskRequest: Codable, Equatable, Sendable {
     var isSupported: Bool {
         switch (schema, kind) {
         case ("task-request/1", .classification), ("task-request/1", .musicGeneration),
-             ("task-request/2", .transcribe), ("task-request/2", .speak): true
+             ("task-request/2", .transcribe), ("task-request/2", .speak),
+             ("task-request/2", .imageGeneration), ("task-request/2", .imageUnderstanding): true
         default: false
         }
     }
@@ -256,6 +263,20 @@ struct TaskRequest: Codable, Equatable, Sendable {
                 throw TaskProtocolError.invalidRequest
             }
             _ = text
+        case .imageGeneration:
+            guard Set(parameters.keys).isSubset(of: ["prompt", "width", "height", "steps", "seed"]),
+                  parameters["prompt"]?.stringValue != nil,
+                  ["width", "height", "steps", "seed"].allSatisfy({ parameters[$0] == nil || parameters[$0]?.integerValue != nil }) else {
+                throw TaskProtocolError.invalidRequest
+            }
+        case .imageUnderstanding:
+            guard Set(parameters.keys).isSubset(of: ["image_path", "prompt", "max_tokens", "temperature", "max_pixels"]),
+                  let imagePath = parameters["image_path"]?.stringValue, Self.absolutePath(imagePath),
+                  parameters["prompt"]?.stringValue != nil,
+                  ["max_tokens", "max_pixels"].allSatisfy({ parameters[$0] == nil || parameters[$0]?.integerValue != nil }),
+                  parameters["temperature"] == nil || parameters["temperature"]?.numberValue?.isFinite == true else {
+                throw TaskProtocolError.invalidRequest
+            }
         case .unsupported:
             throw TaskProtocolError.invalidRequest
         }
@@ -331,7 +352,8 @@ struct TaskRecord: Codable, Equatable, Sendable {
     var isSupported: Bool {
         switch (schema, kind) {
         case ("task-run/1", .classification), ("task-run/1", .musicGeneration),
-             ("task-run/2", .transcribe), ("task-run/2", .speak): state.isSupported
+             ("task-run/2", .transcribe), ("task-run/2", .speak),
+             ("task-run/2", .imageGeneration), ("task-run/2", .imageUnderstanding): state.isSupported
         default: false
         }
     }
