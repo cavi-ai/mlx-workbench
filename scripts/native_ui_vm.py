@@ -252,7 +252,7 @@ JSON.stringify({bundle_id: bundle, pid: app.processIdentifier, width: screen.wid
                 selection += "/testRouteCaptures"
             run(name, ["xcodebuild", "-xctestrun", str(runfile), "-destination", "platform=macOS,arch=arm64",
                        "-resultBundlePath", str(output_dir / f"{name}.xcresult"), f"-only-testing:{selection}",
-                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 21)
+                       "test-without-building"], expected_ui_tests=1 if stage == "before" or appearance == "Light" else 22)
 
 
 def wait_for_guest(tart, vm, running, env, timeout=300):

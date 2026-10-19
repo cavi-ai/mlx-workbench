@@ -3,19 +3,23 @@ import Foundation
 enum TaskKind: Equatable, Sendable {
     case classification
     case musicGeneration
+    case transcribe
+    case speak
     case unsupported(String)
 
     var wireValue: String {
         switch self {
         case .classification: "classification"
         case .musicGeneration: "music_generation"
+        case .transcribe: "transcribe"
+        case .speak: "speak"
         case .unsupported(let value): value
         }
     }
 
     var isSupported: Bool {
         switch self {
-        case .classification, .musicGeneration: true
+        case .classification, .musicGeneration, .transcribe, .speak: true
         case .unsupported: false
         }
     }
@@ -53,6 +57,8 @@ extension TaskKind: Codable {
         switch value {
         case "classification": self = .classification
         case "music_generation": self = .musicGeneration
+        case "transcribe": self = .transcribe
+        case "speak": self = .speak
         default: self = .unsupported(value)
         }
     }
@@ -184,13 +190,19 @@ struct TaskRequest: Codable, Equatable, Sendable {
     let parameters: [String: JSONValue]
 
     init(kind: TaskKind, modelPath: String, parameters: [String: JSONValue]) {
-        self.schema = "task-request/1"
+        self.schema = kind == .transcribe || kind == .speak ? "task-request/2" : "task-request/1"
         self.kind = kind
         self.modelPath = modelPath
         self.parameters = parameters
     }
 
-    var isSupported: Bool { schema == "task-request/1" && kind.isSupported }
+    var isSupported: Bool {
+        switch (schema, kind) {
+        case ("task-request/1", .classification), ("task-request/1", .musicGeneration),
+             ("task-request/2", .transcribe), ("task-request/2", .speak): true
+        default: false
+        }
+    }
 
     func validate() throws {
         guard isSupported, Self.absolutePath(modelPath) else { throw TaskProtocolError.invalidRequest }
@@ -228,6 +240,22 @@ struct TaskRequest: Codable, Equatable, Sendable {
                   parameters["seed"] == nil || parameters["seed"]?.integerValue.map({ (0...4_294_967_295).contains($0) }) == true else {
                 throw TaskProtocolError.invalidRequest
             }
+        case .transcribe:
+            guard Set(parameters.keys).isSubset(of: ["audio_path", "language"]),
+                  let audioPath = parameters["audio_path"]?.stringValue,
+                  Self.absolutePath(audioPath),
+                  parameters["language"] == nil || parameters["language"]?.stringValue != nil else {
+                throw TaskProtocolError.invalidRequest
+            }
+        case .speak:
+            guard Set(parameters.keys).isSubset(of: ["text", "voice", "speed", "lang_code"]),
+                  let text = parameters["text"]?.stringValue,
+                  parameters["voice"] == nil || parameters["voice"]?.stringValue != nil,
+                  parameters["speed"] == nil || parameters["speed"]?.numberValue != nil,
+                  parameters["lang_code"] == nil || parameters["lang_code"]?.stringValue != nil else {
+                throw TaskProtocolError.invalidRequest
+            }
+            _ = text
         case .unsupported:
             throw TaskProtocolError.invalidRequest
         }
@@ -298,11 +326,19 @@ struct TaskRecord: Codable, Equatable, Sendable {
     let supervisor: TaskProcessReference?
     let execution: TaskProcessReference?
     let executionUnresolved: Bool
+    let inputArtifact: TaskArtifactReference?
 
-    var isSupported: Bool { schema == "task-run/1" && kind.isSupported && state.isSupported }
+    var isSupported: Bool {
+        switch (schema, kind) {
+        case ("task-run/1", .classification), ("task-run/1", .musicGeneration),
+             ("task-run/2", .transcribe), ("task-run/2", .speak): state.isSupported
+        default: false
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case schema, id, kind, state, identity, request, result, error, supervisor, execution
+        case inputArtifact = "input_artifact"
         case modelPath = "model_path"
         case createdAt = "created_at"
         case startedAt = "started_at"
@@ -331,11 +367,15 @@ struct TaskCapability: Codable, Equatable, Sendable {
     let cancellation: Bool
     let requiresLocalModel: Bool
     let modelVerification: Bool?
+    let requestSchema: String?
+    let runSchema: String?
     enum CodingKeys: String, CodingKey {
         case kind, cancellation
         case resultSchema = "result_schema"
         case requiresLocalModel = "requires_local_model"
         case modelVerification = "model_verification"
+        case requestSchema = "request_schema"
+        case runSchema = "run_schema"
     }
 }
 
@@ -348,6 +388,8 @@ struct TaskCapabilities: Codable, Equatable, Sendable {
         schema == "task-capabilities/1" && requestSchema == "task-request/1" && runSchema == "task-run/1"
             && tasks.allSatisfy { $0.kind.isSupported }
     }
+    func requestSchema(for kind: TaskKind) -> String? { tasks.first(where: { $0.kind == kind })?.requestSchema ?? requestSchema }
+    func runSchema(for kind: TaskKind) -> String? { tasks.first(where: { $0.kind == kind })?.runSchema ?? runSchema }
     enum CodingKeys: String, CodingKey {
         case schema, tasks
         case requestSchema = "request_schema"

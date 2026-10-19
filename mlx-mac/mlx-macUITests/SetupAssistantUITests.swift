@@ -77,7 +77,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("models"), withIntermediateDirectories: true)
         let python = """
-        import hashlib, json, math, os, pathlib, struct, sys, time, uuid, wave
+        import hashlib, json, math, os, pathlib, shutil, struct, sys, time, uuid, wave
         root = pathlib.Path(__file__).resolve().parents[2]
         args = sys.argv[1:]
         with (root / 'calls.jsonl').open('a') as f:
@@ -103,13 +103,16 @@ final class WorkbenchReviewUITests: XCTestCase {
                     result = dict(schema='decide/1', model=record['model_path'], backend='mlx-embeddings', seconds=0.1,
                         answers={name:dict(type='choice', choice='billing', probabilities=dict(billing=0.9, technical=0.1))
                                  for name in request['parameters']['questions']})
+                elif record['kind'] == 'transcribe':
+                    result = dict(schema='transcribe/1', model=record['model_path'], backend='mlx-audio',
+                        text='Fixture transcript retained from the accepted audio.', input_artifact=record['input_artifact'])
                 else:
                     path = folder / 'output.wav'
                     with wave.open(str(path), 'wb') as output:
                         output.setnchannels(1); output.setsampwidth(2); output.setframerate(16000)
                         output.writeframes(b''.join(struct.pack('<h', int(2000 * math.sin(2 * math.pi * 220 * i / 16000))) for i in range(240000)))
                     path.chmod(0o600)
-                    result = dict(schema='music/1', model=record['model_path'], backend='mlx-audio', path=str(path),
+                    result = dict(schema='speak/1' if record['kind'] == 'speak' else 'music/1', model=record['model_path'], backend='mlx-audio', path=str(path),
                         output_artifact=reference(path), audio_seconds=15, sample_rate=16000, seconds=0.1,
                         duration=15, steps=30, seed=42)
                 record.update(state='succeeded', completed_at='2026-01-01T00:00:01Z', result=artifact(record['id'], 'result.json', result))
@@ -118,16 +121,30 @@ final class WorkbenchReviewUITests: XCTestCase {
                 data = dict(schema='task-capabilities/1', request_schema='task-request/1', run_schema='task-run/1', tasks=[
                     dict(kind=kind, result_schema=result, cancellation=True, requires_local_model=True, model_verification=True)
                     for kind, result in [('classification', 'decide/1'), ('music_generation', 'music/1')]])
+                data['tasks'].extend([
+                    dict(kind='transcribe', result_schema='transcribe/1', cancellation=True, requires_local_model=True,
+                         model_verification=True, request_schema='task-request/2', run_schema='task-run/2'),
+                    dict(kind='speak', result_schema='speak/1', cancellation=True, requires_local_model=True,
+                         model_verification=True, request_schema='task-request/2', run_schema='task-run/2')])
             elif action == 'start':
                 request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
                 identifier = str(uuid.UUID(int=len(records) + 1))
-                record = dict(schema='task-run/1', id=identifier, kind=request['kind'], state='running', model_path=request['model_path'],
+                input_artifact = None
+                if request['kind'] == 'transcribe':
+                    source = pathlib.Path(request['parameters']['audio_path'])
+                    destination = task_root / 'artifacts' / identifier / 'input.wav'
+                    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    shutil.copyfile(source, destination)
+                    destination.chmod(0o600)
+                    input_artifact = reference(destination)
+                record = dict(schema='task-run/2' if request['kind'] in ('transcribe', 'speak') else 'task-run/1', id=identifier, kind=request['kind'], state='running', model_path=request['model_path'],
                     created_at='2026-01-01T00:00:00Z', started_at='2026-01-01T00:00:00Z', completed_at=None,
                     cancel_requested=False, execution_unresolved=False, supervisor=dict(pid=101), execution=dict(pid=102),
                     request=artifact(identifier, 'request.json', request), result=None, error=None,
                     identity=dict(backend='mlx-embeddings' if request['kind'] == 'classification' else 'mlx-audio',
-                        backend_version='1.0', engine_version='0.7.0', python_version='3.12', model_fingerprint='a' * 64))
-                if request['kind'] == 'classification': finish(record)
+                        backend_version='1.0', engine_version='0.7.0', python_version='3.12', model_fingerprint='a' * 64),
+                    input_artifact=input_artifact)
+                if request['kind'] in ('classification', 'transcribe', 'speak'): finish(record)
                 records.insert(0, record)
                 data = dict(task=record)
             elif action == 'list':
@@ -334,6 +351,14 @@ final class WorkbenchReviewUITests: XCTestCase {
             digest = hashlib.sha256(json.dumps([model, str(config_path), target, original]).encode()).hexdigest()
             preview = {'preview_hash': digest, 'diff': 'Configure ' + model + ' for ' + target}
             confirming = '--confirm' in args
+            hold_preview = root / 'hold-wire-preview'
+            deadline = time.monotonic() + 10
+            while not confirming and hold_preview.exists():
+                if time.monotonic() >= deadline:
+                    (root / 'wire-preview-hold-expired').write_text('preview hold expired')
+                    print('Fixture manual wiring preview hold timed out.', file=sys.stderr)
+                    sys.exit(2)
+                time.sleep(0.05)
             if (root / ('fail-wire-apply' if confirming else 'fail-wire-preview')).exists():
                 print('Fixture manual wiring failed: inspect the config file and preview again.', file=sys.stderr)
                 sys.exit(2)
@@ -769,6 +794,118 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(inspector.waitForNonExistence(timeout: 10))
         XCTAssertFalse(app.buttons["task-audio-pause"].exists)
         XCTAssertEqual(try taskSubmissions().count, 2, "Closing the inspector must not submit work")
+    }
+
+    func testLibrarySpeechTaskLifecycle() throws {
+        var outputs: [[String: Any]] = []
+        for (kind, name) in [("speech_to_text", "Fixture transcription"), ("text_to_speech", "Fixture speech")] {
+            let model = root.appendingPathComponent("models/" + kind)
+            try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+            try Data("{\"model_type\":\"fixture\"}".utf8).write(to: model.appendingPathComponent("config.json"))
+            outputs.append(["path": model.path, "name": name, "model_key": kind, "bytes": 1024, "readable": true,
+                            "task": ["type": kind, "use_cases": [], "source": "registry", "confidence": "confirmed"]])
+        }
+        try JSONSerialization.data(withJSONObject: ["models": [], "outputs": outputs, "pending": [], "duplicates": [],
+            "totals": ["gguf": 0, "pending": 0, "converted": 2, "unreadable": 0, "bytes": 2048, "reclaimable_bytes": 0]])
+            .write(to: root.appendingPathComponent("scan-result.json"))
+        let source = root.appendingPathComponent("input.wav")
+        try Data("RIFFfixtureWAVE".utf8).write(to: source)
+
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let transcribeModel = app.outlines.staticTexts["Fixture transcription"].firstMatch
+        XCTAssertTrue(transcribeModel.waitForExistence(timeout: 15)); transcribeModel.doubleClick()
+        replace(app.textFields["task-transcribe-audio-path"], with: source.path)
+        XCTAssertTrue(app.buttons["task-start"].isEnabled)
+        XCTAssertTrue(try taskSubmissions().isEmpty, "Editing the speech form must not submit inference")
+        app.buttons["task-start"].click()
+        waitForTaskState("succeeded")
+        let transcript = app.staticTexts["task-transcript"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 10))
+        XCTAssertTrue(text(containing: "Fixture transcript retained from the accepted audio.").exists)
+        let taskScroll = app.scrollViews.containing(.staticText, identifier: "task-transcript").firstMatch
+        for _ in 0..<8 where !transcript.isHittable {
+            taskScroll.scroll(byDeltaX: 0, deltaY: transcript.frame.midY < taskScroll.frame.minY ? 300 : -300)
+        }
+        XCTAssertTrue(transcript.isHittable, app.debugDescription)
+        capture("Library-transcription-result")
+
+        let transcription = try XCTUnwrap(taskSubmissions().first)
+        let input = try XCTUnwrap(transcription["input_artifact"] as? [String: Any])
+        let retainedPath = try XCTUnwrap(input["path"] as? String)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: retainedPath))
+        let requestRef = try XCTUnwrap(transcription["request"] as? [String: Any])
+        let requestPath = try XCTUnwrap(requestRef["path"] as? String)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: requestPath))) as? [String: Any])
+        let parameters = try XCTUnwrap(request["parameters"] as? [String: Any])
+        XCTAssertEqual(request["schema"] as? String, "task-request/2")
+        XCTAssertEqual(parameters["audio_path"] as? String, source.path)
+        XCTAssertNil(parameters["language"])
+        try FileManager.default.removeItem(at: source)
+
+        let reuse = app.buttons["task-reuse"]
+        XCTAssertTrue(reuse.waitForExistence(timeout: 10))
+        for _ in 0..<8 where !reuse.isHittable {
+            taskScroll.scroll(byDeltaX: 0, deltaY: reuse.frame.midY < taskScroll.frame.minY ? 300 : -300)
+        }
+        XCTAssertTrue(reuse.isHittable, app.debugDescription)
+        reuse.click()
+        let reusedAudio = app.textFields["task-transcribe-audio-path"]
+        let reused = expectation(
+            for: NSPredicate(format: "value == %@", retainedPath),
+            evaluatedWith: reusedAudio
+        )
+        wait(for: [reused], timeout: 15)
+        XCTAssertEqual(reusedAudio.value as? String, retainedPath, app.debugDescription)
+        XCTAssertEqual(try taskSubmissions().count, 1, "Reuse fills the form without starting another task")
+        capture("Library-transcription-result-and-reuse")
+
+        app.buttons["Done"].click()
+        let speakModel = app.outlines.staticTexts["Fixture speech"].firstMatch
+        XCTAssertTrue(waitForHittability(speakModel, timeout: 10), app.debugDescription)
+        speakModel.doubleClick()
+        replace(app.textViews["task-speak-text"], with: "A short spoken result.")
+        capture("Library-speech-form")
+        let speakStart = app.buttons["task-start"]
+        XCTAssertTrue(speakStart.isEnabled); speakStart.click()
+        waitForTaskState("succeeded")
+        let play = app.buttons["task-audio-play"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertTrue(play.isEnabled); play.click()
+        XCTAssertTrue(app.buttons["task-audio-pause"].waitForExistence(timeout: 5))
+        let speech = try XCTUnwrap(taskSubmissions().last)
+        let speechRequestReference = try XCTUnwrap(speech["request"] as? [String: Any])
+        let speechRequestPath = try XCTUnwrap(speechRequestReference["path"] as? String)
+        let speechRequest = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: speechRequestPath))) as? [String: Any])
+        let speechParameters = try XCTUnwrap(speechRequest["parameters"] as? [String: Any])
+        XCTAssertEqual(speechRequest["schema"] as? String, "task-request/2")
+        XCTAssertNil(speechParameters["voice"])
+        XCTAssertNil(speechParameters["speed"])
+        XCTAssertNil(speechParameters["lang_code"])
+        capture("Library-speech-result-playback")
+        XCTAssertEqual(try taskSubmissions().count, 2)
+
+        app.buttons["Done"].click()
+        XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: 10))
+        let speechModel = app.outlines.staticTexts["Fixture speech"].firstMatch
+        XCTAssertTrue(waitForHittability(speechModel, timeout: 10), app.debugDescription)
+        speechModel.doubleClick()
+        XCTAssertTrue(app.buttons["task-audio-play"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.buttons["task-audio-pause"].exists, app.debugDescription)
+        XCTAssertEqual(try taskSubmissions().count, 2, "Reopening history must not submit another task")
+        app.buttons["Done"].click()
+        XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: 10))
+        let transcriptionModel = app.outlines.staticTexts["Fixture transcription"].firstMatch
+        XCTAssertTrue(waitForHittability(transcriptionModel, timeout: 10), app.debugDescription)
+        transcriptionModel.doubleClick()
+        XCTAssertTrue(app.staticTexts["Transcribe audio"].waitForExistence(timeout: 10))
+        app.buttons["Done"].click()
+        XCTAssertTrue(app.sheets.firstMatch.waitForNonExistence(timeout: 10))
+        app.buttons["Compare"].firstMatch.click()
+        let routeChanged = app.staticTexts["Compare"].firstMatch
+        XCTAssertTrue(routeChanged.waitForExistence(timeout: 10))
+        let playbackStoppedForRouteChange = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.buttons["task-audio-pause"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [playbackStoppedForRouteChange], timeout: 5), .completed, app.debugDescription)
     }
 
     func testHealthAndDiscoveryResultsAndRecovery() throws {
@@ -1852,11 +1989,17 @@ final class WorkbenchReviewUITests: XCTestCase {
             var preview: XCUIElement { before ? app.buttons["Preview Wire"] : app.buttons["manual-wire-preview"] }
             var confirm: XCUIElement { before ? app.buttons["Apply Wiring"] : app.buttons["manual-wire-confirm"] }
             reveal(preview)
+            let holdPreview = root.appendingPathComponent("hold-wire-preview")
+            let expiredPreviewHold = root.appendingPathComponent("wire-preview-hold-expired")
+            if !before { try Data().write(to: holdPreview) }
             preview.click()
             if !before {
                 XCTAssertTrue(app.descendants(matching: .any)["manual-wire-progress"].waitForExistence(timeout: 5))
                 XCTAssertFalse(preview.isEnabled)
                 capture("ManualWire-\(appearance)-previewing")
+                XCTAssertTrue(FileManager.default.fileExists(atPath: holdPreview.path), "The preview fixture must remain blocked until released")
+                try FileManager.default.removeItem(at: holdPreview)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: expiredPreviewHold.path), "The bounded preview hold must not expire")
             }
             reveal(confirm)
             XCTAssertTrue(confirm.isEnabled)
