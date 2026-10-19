@@ -1136,11 +1136,37 @@ final class WorkbenchReviewUITests: XCTestCase {
         try FileManager.default.copyItem(at: source, to: root.appendingPathComponent("fixture-video.mp4"))
 
         launch(appearance: "Dark", route: "models", isolatedHome: true)
+        func expand(_ title: String) {
+            let disclosure = app.disclosureTriangles[title]
+            XCTAssertTrue(disclosure.waitForExistence(timeout: 10), app.debugDescription)
+            XCTAssertTrue(disclosure.isHittable, app.debugDescription)
+            let window = app.windows.firstMatch
+            let frame = disclosure.frame.intersection(window.frame)
+            XCTAssertFalse(frame.isNull)
+            if disclosure.value as? Int != 1 {
+                // Native disclosure hit frames include the label; toggle via the leading arrow.
+                window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                    dx: frame.minX + frame.height / 4 - window.frame.minX,
+                    dy: frame.midY - window.frame.minY
+                )).click()
+            }
+            if disclosure.value as? Int != 1 {
+                let screenshot = XCTAttachment(screenshot: window.screenshot())
+                screenshot.name = "Video-disclosure-\(title)-not-expanded"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                let accessibility = XCTAttachment(string: app.debugDescription)
+                accessibility.name = "Video-disclosure-\(title)-accessibility"
+                accessibility.lifetime = .keepAlways
+                add(accessibility)
+            }
+            XCTAssertEqual(disclosure.value as? Int, 1, app.debugDescription)
+        }
         let generationModel = app.outlines.staticTexts["Fixture video generator"].firstMatch
         XCTAssertTrue(generationModel.waitForExistence(timeout: 15)); generationModel.doubleClick()
         XCTAssertTrue(app.staticTexts["Generate video"].waitForExistence(timeout: 10))
         replace(app.textFields["task-video-generation-prompt"], with: "A red square moves across a white background")
-        app.disclosureTriangles["Video settings"].click()
+        expand("Video settings")
         replace(app.textFields["task-video-generation-width"], with: "256")
         replace(app.textFields["task-video-generation-height"], with: "256")
         replace(app.textFields["task-video-generation-frames"], with: "17")
@@ -1197,7 +1223,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Understand video"].waitForExistence(timeout: 10))
         replace(app.textFields["task-video-understanding-path"], with: source.path)
         replace(app.textFields["task-video-understanding-prompt"], with: "Which direction does the red square move?")
-        app.disclosureTriangles["Advanced options"].click()
+        expand("Advanced options")
         replace(app.textFields["task-video-understanding-fps"], with: "1")
         replace(app.textFields["task-video-understanding-temperature"], with: "0")
         replace(app.textFields["task-video-understanding-max-tokens"], with: "128")
