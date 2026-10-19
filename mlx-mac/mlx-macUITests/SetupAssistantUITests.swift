@@ -2334,6 +2334,22 @@ final class SetupAssistantUITests: XCTestCase {
             "PIP_CONFIG_FILE": "/dev/null", "PIP_CACHE_DIR": home.appendingPathComponent("cache/pip").path,
             "HF_HOME": home.appendingPathComponent("cache/huggingface").path, "HF_HUB_OFFLINE": "1",
         ])
+        if let expectedApp = environment["MLX_WORKBENCH_RUNTIME_INSTALL_APP"] {
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.cavi.mlxworkbench")
+            XCTAssertEqual(running.count, 1, "Release acceptance must run only the installed candidate")
+            let candidate = try XCTUnwrap(running.first)
+            XCTAssertEqual(candidate.bundleURL?.resolvingSymlinksInPath().path,
+                           URL(fileURLWithPath: expectedApp).resolvingSymlinksInPath().path)
+            let executable = try XCTUnwrap(candidate.executableURL)
+            let digest = SHA256.hash(data: try Data(contentsOf: executable)).map { String(format: "%02x", $0) }.joined()
+            XCTAssertEqual(digest, environment["MLX_WORKBENCH_RUNTIME_INSTALL_APP_SHA256"])
+            let receipt = try JSONSerialization.data(withJSONObject: ["app_path": expectedApp,
+                "pid": candidate.processIdentifier, "binary_sha256": digest], options: [.prettyPrinted, .sortedKeys])
+            let attachment = XCTAttachment(data: receipt, uniformTypeIdentifier: "public.json")
+            attachment.name = "Packaged-runtime-running-app.json"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
         let sheet = app.sheets.firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 30))
         XCTAssertTrue(sheet.buttons["setup-bundled-runtime"].waitForExistence(timeout: 30))
