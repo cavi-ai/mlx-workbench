@@ -36,6 +36,30 @@ private struct ComparisonRunFixtureView: View {
 }
 
 final class CompareRemodelTests: XCTestCase {
+    func testPromptOutcomeMatrixDistinguishesMissingUnknownAndIncompleteEvidence() {
+        let prompt = PromptEntry(id: "p", text: "Answer", maxTokens: 128)
+        var run = ComparisonRun(id: UUID(), promptSetID: "test", promptSetName: "Test", useCase: .coding,
+            variants: ["/a"], results: [], startedAt: Date(), state: .completed, promptEntries: [prompt])
+        func result(_ finish: String?, text: String = "Answer", error: String? = nil, duplicate: Bool = false) -> VariantResult {
+            let sample = ComparisonSample(promptID: "p", outputExcerpt: text, tokensPerSecond: 200,
+                timeToFirstTokenSeconds: 0.1, error: error, fullOutput: text, finishReason: finish)
+            return VariantResult(modelPath: "/a", modelSignature: nil, samples: duplicate ? [sample, sample] : [sample],
+                aggregateTokensPerSecond: 200, aggregateTTFTSeconds: 0.1, error: nil)
+        }
+        XCTAssertEqual(ChatComparisonPresentation.outcome(result("stop"), prompt: prompt, in: run), .finished)
+        XCTAssertEqual(ChatComparisonPresentation.outcome(result("length"), prompt: prompt, in: run), .tokenLimit)
+        XCTAssertEqual(ChatComparisonPresentation.outcome(result("stop", text: "<think>Still thinking"), prompt: prompt, in: run), .incomplete)
+        XCTAssertEqual(ChatComparisonPresentation.outcome(result(nil), prompt: prompt, in: run), .unknown)
+        XCTAssertEqual(ChatComparisonPresentation.outcome(result("stop", duplicate: true), prompt: prompt, in: run), .unknown)
+        XCTAssertEqual(ChatComparisonPresentation.outcome(result("stop", error: "Request failed"), prompt: prompt, in: run), .blocked)
+        XCTAssertEqual(ChatComparisonPresentation.outcome(nil, prompt: prompt, in: run), .notRecorded)
+        run.state = .running
+        XCTAssertEqual(ChatComparisonPresentation.outcome(nil, prompt: prompt, in: run), .waiting)
+        let blocked = VariantResult(modelPath: "/a", modelSignature: nil, samples: [],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: "Runtime missing")
+        XCTAssertEqual(ChatComparisonPresentation.outcome(blocked, prompt: prompt, in: run), .blocked)
+    }
+
     func testChatCompletionRequiresTheRecordedCohortAndValidTaskOutcomes() throws {
         let prompts = [PromptEntry(id: "p", text: "Answer", maxTokens: 128)]
         func sample(_ reason: String?, output: String = "Answer", calls: Int? = nil, valid: Int? = nil) -> ComparisonSample {

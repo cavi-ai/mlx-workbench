@@ -72,6 +72,7 @@ enum WorkbenchTypography {
     static let cardTitle = Font.headline
     static let emphasis = Font.body.weight(.semibold)
     static let body = Font.system(size: 14)
+    static let reading = Font.system(size: 16)
     static let secondary = Font.system(size: 13)
     static let label = Font.subheadline.weight(.medium)
     /// Paths, hashes, receipts: monospaced at body size.
@@ -208,6 +209,12 @@ extension WorkbenchSize {
     /// Compare route dimensions: lettered lanes, the prompt-by-lane grid and
     /// the setup tiles. Widths are content widths inside the results surface.
     enum Compare {
+        static let boardBreakpoint: CGFloat = 1000
+        static let boardMatrixMaximum: CGFloat = 506
+        static let boardModelColumn: CGFloat = 168
+        static let boardPromptColumn: CGFloat = 92
+        static let boardMetricColumn: CGFloat = 80
+        static let boardRowHeight: CGFloat = 72
         static let promptColumn: CGFloat = 184
         static let promptColumnCompact: CGFloat = 140
         /// Content width below which the prompt column uses its compact width.

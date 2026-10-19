@@ -117,7 +117,7 @@ struct ContentView: View {
                 ForEach(Self.mountedRoutes(for: visitedRoutes), id: \.self) { route in
                     let isActive = route == selectedRoute
                     VStack(spacing: 0) {
-                        if route != .library { WorkbenchPageHeading(route: route) }
+                        if route != .library && route != .compare { WorkbenchPageHeading(route: route) }
                         routeDestination(route)
                     }
                         .environment(\.isRouteActive, isActive)
