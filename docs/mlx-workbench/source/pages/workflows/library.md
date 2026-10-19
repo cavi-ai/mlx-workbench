@@ -17,8 +17,8 @@ The **Source** picker switches between **All models** and **LM Studio**. Switchi
 | Quantization | Declared bits or quant type |
 | Size | Bytes on disk, with a relative size bar |
 | Memory fit | **Fits**, **Tight** or **Won't fit** at the selected context, against current available memory |
-| Status | Shown for models that are not ready |
-| Modified | Last change on disk |
+| Status | For ready models, the canary verdict for the current files: **Verified**, **Failed checks**, **Verify again** after the files changed, **Verifying…**, or **Ready** when never verified. Otherwise the readiness, such as **Needs Conversion** or **Needs Runtime** when the backend that runs the model (mlx-audio, mlx-vlm, …) is not installed |
+| Modified | Newest file change on disk, including MLX folders and Hugging Face cache snapshots |
 
 Columns collapse as the window narrows. Filters narrow the list by quantization and readiness. **Refresh** rescans; a failed scan offers **Retry scan**.
 
@@ -46,7 +46,8 @@ During rendering, **Cancel generation** stops that model's owned worker. The pan
 
 Actions: **Run model** opens the existing server preview flow; **Compare**
 selects the model for comparison. Models needing conversion offer **Prepare
-to run**. **Reveal in Finder** and **Copy Path** are in the model's action menu.
+to run**. **Verify now** runs the canary suite for a ready model; when a run
+cannot reach a verdict, the Verification section says why. **Reveal in Finder** and **Copy Path** are in the model's action menu.
 
 **Select for Compare** is available for ready chat, speech, music, image and video models. It opens the matching comparison mode and selects the model without starting a run. Run remains a chat-serving action. Runtime restrictions take precedence over task labels: Strata supports Chat only.
 

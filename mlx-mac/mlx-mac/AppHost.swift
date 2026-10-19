@@ -139,7 +139,8 @@ class AppHost: ObservableObject {
         )
         self.verification = verification ?? VerificationCoordinator(
             probe: ServeProbe(
-                lifecycle: .live(api: api),
+                // Canaries judge the answer path; reasoning is switched off where the template allows.
+                lifecycle: .live(api: api, thinkingOff: true),
                 prober: OpenAIEndpointProber()
             ),
             store: VerificationStore(fileURL: VerificationStore.defaultFileURL())
@@ -271,6 +272,12 @@ class AppHost: ObservableObject {
             guard record.state == .verified, record.reclaimSourceAfterVerification == true else { return }
             Task { [weak self] in
                 guard let self else { return }
+                // A source outside the configured roots stays where it is; cleanup would only be refused.
+                let isRepoSource = PrepareWorkflowPresentation(workflow: record).isRepoSource
+                guard PrepareWorkflowPresentation.sourceCleanupIsPossible(
+                    sourceLocation: record.localSourcePath ?? (isRepoSource ? nil : record.sourcePath),
+                    roots: self.config.ggufRoots + self.config.mlxRoots
+                ) else { return }
                 await self.reclaim.previewSource(record)
                 guard let current = self.modelWorkflow.history.first(where: { $0.id == record.id }), current == record else { return }
                 await self.reclaim.confirmSource(current)

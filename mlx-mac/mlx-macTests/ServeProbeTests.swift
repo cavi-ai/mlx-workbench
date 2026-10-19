@@ -4,6 +4,37 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServeProbeTests: XCTestCase {
+    func testInlineReasoningIsSplitFromTheAnswer() {
+        XCTAssertNil(InlineReasoning.split("def fib(n): ..."))
+        let finished = InlineReasoning.split("<think>\nplan the recursion\n</think>\n\ndef fib(n): ...")
+        XCTAssertEqual(finished?.reasoning, "\nplan the recursion\n")
+        XCTAssertEqual(finished?.answer, "def fib(n): ...")
+        XCTAssertEqual(InlineReasoning.split("<think>\nOkay, I need to write")?.answer, "")
+        XCTAssertTrue(InlineReasoning.isInside("<think>still planning"))
+        XCTAssertTrue(InlineReasoning.isInside("<think>plan</think>\n"))
+        XCTAssertFalse(InlineReasoning.isInside("<think>plan</think>def"))
+        XCTAssertFalse(InlineReasoning.isInside("def"))
+    }
+
+    func testDecodeRateIsWithheldWhenDeltasArriveInABurst() {
+        var burst = ProbeSample(text: "x", completionTokens: 87, timeToFirstTokenSeconds: 3.094,
+                                durationSeconds: 3.103, metricsEstimated: false)
+        burst.streamedDeltas = 87
+        burst.deltaWindowSeconds = 0.009
+        XCTAssertNil(burst.decodeTokensPerSecond)
+        XCTAssertNil(CanarySuite.tokensPerSecond(burst))
+
+        var steady = ProbeSample(text: "x", completionTokens: 75, timeToFirstTokenSeconds: 0.214,
+                                 durationSeconds: 0.980, metricsEstimated: false)
+        steady.streamedDeltas = 75
+        steady.deltaWindowSeconds = 0.76
+        XCTAssertEqual(steady.decodeTokensPerSecond ?? 0, 97.9, accuracy: 0.1)
+
+        let recorded = ProbeSample(text: "x", completionTokens: 10, timeToFirstTokenSeconds: 0.1,
+                                   durationSeconds: 1.1, metricsEstimated: false)
+        XCTAssertEqual(recorded.decodeTokensPerSecond ?? 0, 10, accuracy: 0.001)
+    }
+
     func testLocalPerPromptWarmupWhenRequested() async throws {
         guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_PROMPT_WARMUP_MANIFEST"] else {
             throw XCTSkip("Set MLX_WORKBENCH_PROMPT_WARMUP_MANIFEST for local per-prompt warm-up acceptance.")

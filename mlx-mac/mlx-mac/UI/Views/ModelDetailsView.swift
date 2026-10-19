@@ -120,6 +120,9 @@ enum ModelDetailsPresentation {
         case .needsConversion:
             return "No local MLX output was detected, so this model still needs Prepare work."
         case .needsRuntime:
+            if let backend = model.item.backend, !backend.installed {
+                return "The \(backend.id) backend that runs this model is not installed. Health lists optional backends; Add from Hugging Face installs one with a model."
+            }
             return "The scan marked the runtime as missing for this model."
         case .incompleteCache:
             return model.item.error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "The scan reported incomplete local metadata for this model."
@@ -488,6 +491,9 @@ struct ModelDetailsView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             SectionTitle(text: "Verification")
             DetailGrid(rows: verificationRows)
+            if let error = appHost.verification.runError(for: model.item.path) {
+                InlineMessage(kind: .warning, text: "Verification could not finish: \(error)")
+            }
             if model.readiness == .ready {
                 if verifyIsPrimary {
                     Button("Verify now") { verifyNow() }

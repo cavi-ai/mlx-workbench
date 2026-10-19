@@ -18,7 +18,8 @@ struct CanaryCase: Equatable, Sendable {
 }
 
 enum CanarySuite {
-    static let version = 2
+    /// 3: served with reasoning off where the template allows, and scored on the answer after any `<think>` block.
+    static let version = 3
 
     static let longContextFact = "The crimson okapi hid forty-two brass keys under the old lighthouse."
 
@@ -82,10 +83,7 @@ enum CanarySuite {
     /// Per-canary decode speed. Prefers measured completion tokens; when the
     /// server reports no usage the prober supplies an estimate instead.
     static func tokensPerSecond(_ sample: ProbeSample) -> Double? {
-        guard let tokens = sample.completionTokens, tokens > 0 else { return nil }
-        let decodeSeconds = sample.durationSeconds - (sample.timeToFirstTokenSeconds ?? 0)
-        guard decodeSeconds > 0 else { return nil }
-        return Double(tokens) / decodeSeconds
+        sample.decodeTokensPerSecond
     }
 
     static func evaluate(_ kase: CanaryCase, sample: ProbeSample) -> CanaryResult {

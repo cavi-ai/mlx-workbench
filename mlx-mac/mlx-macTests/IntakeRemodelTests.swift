@@ -32,6 +32,7 @@ private enum IntakeFixtures {
         var reasons = "[]"
         var warnings = "[]"
         var gguf = "[]"
+        var cached: Bool?
     }
 
     static func resolution(_ spec: Spec = Spec()) throws -> IntakeResolution {
@@ -48,7 +49,7 @@ private enum IntakeFixtures {
          "pipeline_tag":null,"transformers_version":null,"bytes":\(spec.bytes),
          "download_bytes":\(spec.downloadBytes.map(String.init) ?? "null"),"estimated_output_bytes":\(spec.estimates),
          "q_bits":\(spec.qBits),"recipe":\(recipe),
-         "files":{"safetensors":4,"gguf":\(spec.gguf),"python":[]},"warnings":\(spec.warnings)}
+         "files":{"safetensors":4,"gguf":\(spec.gguf),"python":[]},"warnings":\(spec.warnings)\(spec.cached.map { #","cached":\#($0)"# } ?? "")}
         """
         return try JSONDecoder().decode(IntakeResolution.self, from: Data(json.utf8))
     }
@@ -117,6 +118,45 @@ final class IntakeRemodelTests: XCTestCase {
         let bare = try F.resolution(F.Spec(backend: nil, modelType: nil, task: nil, estimates: "null"))
         XCTAssertEqual(IntakePresentation.items(bare, qBits: 4).map(\.label), ["Download size", "Architecture"])
         XCTAssertEqual(IntakePresentation.items(bare, qBits: 4)[1].figure, "Unknown")
+    }
+
+    func testACachedSnapshotSaysItIsAlreadyDownloaded() throws {
+        let cached = try F.resolution(F.Spec(downloadBytes: 3_100_000_000, cached: true))
+        XCTAssertTrue(IntakeVerdictLine.make(cached).sentence.contains("already downloaded"))
+        let download = try XCTUnwrap(IntakePresentation.items(cached, qBits: 4).first)
+        XCTAssertEqual(download.figure, "Already cached")
+        XCTAssertFalse(download.isNumeric)
+        let fresh = try F.resolution(F.Spec(downloadBytes: 3_100_000_000, cached: false))
+        XCTAssertTrue(IntakeVerdictLine.make(fresh).sentence.contains("It downloads, then converts"))
+        XCTAssertEqual(IntakePresentation.items(fresh, qBits: 4).first?.figure, LibraryTablePresentation.byteCount(3_100_000_000))
+    }
+
+    func testPrepareTilesUseTheIntakeTaskOfTheSameRepository() throws {
+        let resolution = try F.resolution()
+        XCTAssertNotNil(resolution.task?.type)
+        XCTAssertEqual(PrepareWorkflowPresentation.intakeTask(resolution, repoID: F.repo), resolution.task?.type)
+        XCTAssertNil(PrepareWorkflowPresentation.intakeTask(resolution, repoID: "other/repo"))
+        XCTAssertNil(PrepareWorkflowPresentation.intakeTask(nil, repoID: F.repo))
+    }
+
+    func testSourceCleanupChoiceStaysWhileThePreviewIsPrepared() {
+        let previewing = ConversionWorkflow(
+            id: UUID(), sourcePath: "/Models/source.gguf", sourceModelKey: nil, sourceSignature: nil,
+            outputPath: "/Models/source-MLX-8bit", previewHash: nil, jobReceipt: nil, completedModelPath: nil,
+            state: .previewingConversion, serveState: .idle, message: nil, errorMessage: nil,
+            createdAt: Date(timeIntervalSinceReferenceDate: 10), updatedAt: Date(timeIntervalSinceReferenceDate: 20),
+            lastKnownAgentState: nil
+        )
+        XCTAssertTrue(PrepareWorkflowPresentation(workflow: previewing).showsSourceCleanupChoice)
+    }
+
+    func testSourceCleanupNeedsTheSourceInsideAConfiguredRoot() {
+        let identity: (String) -> NSObject? = { _ in nil }
+        XCTAssertTrue(PrepareWorkflowPresentation.sourceCleanupIsPossible(
+            sourceLocation: "/Models/hub/models--a--b/snapshots/c", roots: ["/Models/hub"], fileIdentity: identity))
+        XCTAssertFalse(PrepareWorkflowPresentation.sourceCleanupIsPossible(
+            sourceLocation: "/Users/x/.cache/huggingface/hub/models--a--b/snapshots/c", roots: ["/Models/mlx"], fileIdentity: identity))
+        XCTAssertTrue(PrepareWorkflowPresentation.sourceCleanupIsPossible(sourceLocation: nil, roots: [], fileIdentity: identity))
     }
 
     func testBackendItemSaysWhenItIsNotInstalled() throws {

@@ -16,7 +16,18 @@ and is versioned independently; submodule bumps are recorded here.
 
 - Clients: refresh installed-client detection and show supported clients in the empty board.
 - Training: expose batch size, choose fresh adapter output folders, and keep unavailable base selections editable.
-- Engine: validate training dataset splits and cached MLX-LM architectures during preview, and use the selected Hugging Face cache for the recorded base identity.
+- Engine: validate training dataset splits and cached MLX-LM architectures during preview, and use the selected Hugging Face cache for the recorded base identity; update to mlx-agent 0.8.0 with scan backend readiness, `serve start --thinking off` and cached intake sources.
+- Library: the Status column shows Verified, Failed checks, Verifying… or Ready for ready models, Modified shows each MLX model's newest file time, and models whose backend is not installed show Needs Runtime and stay out of Compare.
+- Verification: canaries serve with reasoning switched off where the chat template allows and score the answer after any `<think>` block (canary suite 3); a run that cannot finish says why in the inspector.
+- Compare: inline `<think>` reasoning is kept apart from the answer, Fastest goes only to lanes that answered every prompt, and decode speed is withheld when streamed tokens arrive in one burst.
+- Add from Hugging Face: a repository already in the cache says so instead of a download size, and Prepare's quantization tiles estimate fit from its task.
+- Prepare: moving the original source to the Trash is offered, and runs after verification, only when the source is inside the model folders in Settings.
+
+### Fixed
+
+- Library: a long verification failure no longer widens the inspector and hides table columns.
+- Library: speech task forms show validation only after input.
+- Prepare: the source cleanup choice stays in place while a preview is prepared, so the actions and pipeline track no longer jump.
 
 ## [0.5.0] - 2026-10-12
 ### Added

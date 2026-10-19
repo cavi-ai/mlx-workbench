@@ -1147,6 +1147,25 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(unverified)
     }
 
+    /// A Verify now run that cannot produce a verdict keeps its error for that model only.
+    func testVerifyNowErrorIsReportedForTheModelThatFailed() async {
+        struct BackendMissing: LocalizedError { var errorDescription: String? { "The mlx-audio backend is not installed." } }
+        let verification = makeVerification(responder: passingResponder)
+        verification.taskType = { _ in .speechToText }
+        verification.speech = SpeechCanaryRunner(
+            synthesize: { _ in FileManager.default.temporaryDirectory.appendingPathComponent("canary.wav") },
+            transcribe: { _, _, _ in throw BackendMissing() }
+        )
+
+        verification.verifyNow(modelPath: "/Models/asr", signature: nil)
+
+        let finished = await waitFor { verification.activeModelPath == nil && verification.lastError != nil }
+        XCTAssertTrue(finished)
+        XCTAssertEqual(verification.status(for: "/Models/asr", signature: nil), .unverified)
+        XCTAssertTrue(verification.runError(for: "/Models/asr")?.contains("mlx-audio backend is not installed") == true)
+        XCTAssertNil(verification.runError(for: "/Models/other"))
+    }
+
     /// Classification models skip the server and route a canary support ticket.
     func testClassificationModelPassesTheDecisionCanary() async throws {
         let workflow = makeWorkflowCoordinator()
