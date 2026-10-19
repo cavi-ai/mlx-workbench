@@ -18,6 +18,10 @@ and is versioned independently; submodule bumps are recorded here.
 - Training: expose batch size, choose fresh adapter output folders, and keep unavailable base selections editable.
 - Engine: validate training dataset splits and cached MLX-LM architectures during preview, and use the selected Hugging Face cache for the recorded base identity.
 
+### Fixed
+
+- Reclaim: duplicate MLX model folders appear in Duplicate groups, identical copies as reclaimable duplicates and other bit widths of one model as informational groups.
+
 ## [0.5.0] - 2026-10-12
 ### Added
 
