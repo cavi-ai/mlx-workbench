@@ -38,7 +38,7 @@ final class HostedModelsUITests: XCTestCase {
         let source = app.radioGroups["library-source"].radioButtons["Hosted models"]
         XCTAssertTrue(source.waitForExistence(timeout: 15)); source.click()
         app.buttons["Add host…"].firstMatch.click()
-        let provider = app.popUpButtons["Provider"]
+        let provider = app.sheets.popUpButtons.matching(NSPredicate(format: "value == %@", "Ollama")).firstMatch
         XCTAssertTrue(provider.waitForExistence(timeout: 5)); provider.click()
         app.menuItems["ComfyUI"].click()
         let url = app.textFields["model-host-url"]
