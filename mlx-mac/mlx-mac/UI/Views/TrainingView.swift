@@ -243,6 +243,7 @@ struct TrainingView: View {
     @State private var evaluationReview: TrainingEvaluationReviewContext?
     @State private var retainedExpanded = false
     private let seededRetained: TrainingRetainedEvidence?
+    @State private var creatingDataset = false
     @State private var cancelError: String?
     @State private var cancelingPIDs: Set<Int> = []
     @State private var baseChoice = TrainingBaseModelChoice()
@@ -314,6 +315,11 @@ struct TrainingView: View {
         }
         .onChange(of: appHost.librarySnapshot?.generatedAt, initial: true) {
             baseModels = TrainingPresentation.baseModels(appHost.librarySnapshot)
+        }
+        .sheet(isPresented: $creatingDataset) {
+            TrainingDatasetSheet(batchSize: Int(session.draft.batchSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 4) {
+                session.draft.data = $0.path
+            }
         }
         .task(id: isRouteActive) {
             guard isRouteActive else { return }
@@ -388,7 +394,12 @@ struct TrainingView: View {
                             .focused($focusedField, equals: .data)
                         Button("Choose…") { chooseDataset() }.buttonStyle(.bordered).controlSize(.small)
                     }
-                    Text("Choose a directory containing train.jsonl for learning and valid.jsonl for checking separate examples. Each file needs at least Batch size examples; Workbench does not split your data.")
+                    Button("Create dataset…", systemImage: "square.and.pencil") { creatingDataset = true }
+                        .buttonStyle(.borderless)
+                        .disabled(session.draft.batchSizeError != nil)
+                        .accessibilityIdentifier("training-create-dataset")
+                        .help("Write chat examples and save separate training and validation files in a new folder")
+                    Text("Choose a directory containing train.jsonl for learning and valid.jsonl for checking separate examples, or create a chat dataset here. Each file needs at least Batch size examples; splits are chosen explicitly.")
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     DisclosureGroup("Dataset format") {

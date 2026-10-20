@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		TRNDSSB1 /* TrainingDatasetSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNDSSF1 /* TrainingDatasetSheet.swift */; };
+		TRNDSDB1 /* TrainingDatasetDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNDSDF1 /* TrainingDatasetDraft.swift */; };
 		PRMEMB1 /* ProcessMemorySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRMEMF1 /* ProcessMemorySnapshot.swift */; };
 		344ACD737165AB685172C35B /* HostedModelsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */; };
 		1E7408BAF5C49A83A83446B7 /* HostedModelsRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */; };
@@ -290,6 +292,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		TRNDSSF1 /* TrainingDatasetSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingDatasetSheet.swift; path = UI/Views/TrainingDatasetSheet.swift; sourceTree = "<group>"; };
+		TRNDSDF1 /* TrainingDatasetDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingDatasetDraft.swift; path = Services/TrainingDatasetDraft.swift; sourceTree = "<group>"; };
 		PRMEMF1 /* ProcessMemorySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProcessMemorySnapshot.swift; path = Services/ProcessMemorySnapshot.swift; sourceTree = "<group>"; };
 		74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedModelsUITests.swift; sourceTree = "<group>"; };
 		B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedModelsRenderTests.swift; sourceTree = "<group>"; };
@@ -774,6 +778,8 @@
 				LMSPRSF1 /* LMStudioShelfPresentation.swift */,
 				LMSVWSF1 /* LMStudioShelfViews.swift */,
 				TRNPRSF1 /* TrainingPresentation.swift */,
+				TRNDSSF1 /* TrainingDatasetSheet.swift */,
+				TRNDSDF1 /* TrainingDatasetDraft.swift */,
 				BKLOGF1 /* BackendInstallLog.swift */,
 				HLTBKDF1 /* HealthBackendSession.swift */,
 				SRSESF1 /* StudyRecipeSession.swift */,
@@ -1143,6 +1149,8 @@
 				LMSPRSB1 /* LMStudioShelfPresentation.swift in Sources */,
 				LMSVWSB1 /* LMStudioShelfViews.swift in Sources */,
 				TRNPRSB1 /* TrainingPresentation.swift in Sources */,
+				TRNDSSB1 /* TrainingDatasetSheet.swift in Sources */,
+				TRNDSDB1 /* TrainingDatasetDraft.swift in Sources */,
 				BKLOGB1 /* BackendInstallLog.swift in Sources */,
 				HLTBKDB1 /* HealthBackendSession.swift in Sources */,
 				SRSESB1 /* StudyRecipeSession.swift in Sources */,

@@ -1495,3 +1495,67 @@ final class TrainingRenderTests: XCTestCase {
         }
     }
 }
+
+final class TrainingDatasetTests: XCTestCase {
+    private func draft(batch: Int = 1) -> TrainingDatasetDraft {
+        var value = TrainingDatasetDraft(batchSize: batch)
+        value.train = (0..<batch).map { .init(prompt: "Learning request \($0)", reply: "Learning reply \($0)") }
+        value.valid = (0..<batch).map { .init(prompt: "Held-out request \($0)", reply: "Held-out reply \($0)") }
+        return value
+    }
+
+    func testBatchCountsBlankFieldsAndCrossSplitOverlapBlockExport() throws {
+        var value = draft(batch: 4)
+        XCTAssertNil(value.validationMessage)
+        value.valid.removeLast()
+        XCTAssertNotNil(value.validationMessage)
+        value = draft()
+        value.train[0].reply = " \n"
+        XCTAssertNotNil(value.validationMessage)
+        XCTAssertThrowsError(try value.encodedSplits())
+        value = draft()
+        value.valid = [.init(prompt: " \(value.train[0].prompt) ", reply: value.train[0].reply)]
+        XCTAssertTrue(value.validationMessage?.contains("both splits") == true)
+    }
+
+    func testEncodingPreservesUnicodeAndEmbeddedNewlinesInOneRecord() throws {
+        var value = draft()
+        value.train[0] = .init(prompt: "Café\nWhat does it mean?", reply: "  A café serves coffee.\n☕  ")
+        let data = try XCTUnwrap(value.encodedSplits()["train.jsonl"])
+        XCTAssertEqual(String(decoding: data, as: UTF8.self).split(separator: "\n").count, 1)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: [[String: String]]])
+        XCTAssertEqual(object["messages"]?.map { $0["role"] }, ["user", "assistant"])
+        XCTAssertEqual(object["messages"]?[0]["content"], value.train[0].prompt)
+        XCTAssertEqual(object["messages"]?[1]["content"], value.train[0].reply)
+        value.train[0].reply = String(repeating: "x", count: 1024 * 1024)
+        XCTAssertThrowsError(try value.encodedSplits())
+    }
+
+    func testExportPublishesBothFilesAndNeverReplacesExistingDirectoryOrLink() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let target = root.appendingPathComponent("dataset")
+        try TrainingDatasetExporter.save(draft(), to: target)
+        let train = try Data(contentsOf: target.appendingPathComponent("train.jsonl"))
+        XCTAssertEqual(Set(try fm.contentsOfDirectory(atPath: target.path)), ["train.jsonl", "valid.jsonl"])
+        XCTAssertThrowsError(try TrainingDatasetExporter.save(draft(batch: 2), to: target))
+        XCTAssertEqual(try Data(contentsOf: target.appendingPathComponent("train.jsonl")), train)
+        let link = root.appendingPathComponent("linked")
+        try fm.createSymbolicLink(at: link, withDestinationURL: target)
+        XCTAssertThrowsError(try TrainingDatasetExporter.save(draft(), to: link))
+        XCTAssertEqual(try Data(contentsOf: target.appendingPathComponent("train.jsonl")), train)
+        XCTAssertEqual(Set(try fm.contentsOfDirectory(atPath: root.path)), ["dataset", "linked"], "Failed saves must remove only their own staging folders")
+    }
+
+    func testInvalidDraftCreatesNothingAndDuplicateIdentitiesAreRefused() throws {
+        let target = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        XCTAssertThrowsError(try TrainingDatasetExporter.save(TrainingDatasetDraft(batchSize: 1), to: target))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+        var value = draft(batch: 2)
+        value.train[1].id = value.train[0].id
+        XCTAssertNotNil(value.validationMessage)
+        XCTAssertThrowsError(try value.encodedSplits())
+    }
+}
