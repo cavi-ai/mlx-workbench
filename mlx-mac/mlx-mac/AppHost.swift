@@ -239,9 +239,13 @@ class AppHost: ObservableObject {
                 limit: limit
             )
         }
+        hosts.resourceUseBlocked = { [weak self] in
+            guard let self else { return true }
+            return self.hostedComparison.activeRunID != nil || self.comparison.activeRunID != nil
+        }
         self.hostedComparison.validateTarget = { [weak self] target in
-            guard let self, self.comparison.activeRunID == nil else {
-                throw HostedIntegrationError.invalid("Finish the local comparison before starting hosted lanes.")
+            guard let self, self.comparison.activeRunID == nil, !self.modelHosts.resourceBusy else {
+                throw HostedIntegrationError.invalid("Finish the active comparison or host memory operation before starting hosted lanes.")
             }
             if let host = target.host {
                 guard self.modelHosts.hosts.contains(host) else {

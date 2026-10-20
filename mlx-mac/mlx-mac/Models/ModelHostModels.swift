@@ -85,6 +85,7 @@ struct HostedModel: Codable, Equatable, Identifiable, Sendable {
     var memoryBytes: Int64? = nil
     var capabilities: [String]? = nil
     var category: String? = nil
+    var loadedInstanceIDs: [String]? = nil
     var id: String { hostID.uuidString + "/" + modelID }
 }
 
@@ -95,4 +96,69 @@ struct HostInventory: Codable, Equatable, Sendable {
     var runtimeVersion: String? = nil
     var deviceSummary: String? = nil
     var warnings: [String] = []
+    var activity: HostActivity? = nil
+}
+
+enum HostActivityState: String, Codable, Sendable {
+    case idle, busy, queued, unknown
+    var title: String {
+        switch self {
+        case .idle: "Idle"
+        case .busy: "Busy"
+        case .queued: "Queued"
+        case .unknown: "Activity unknown"
+        }
+    }
+}
+
+struct HostActivity: Codable, Equatable, Sendable {
+    let state: HostActivityState
+    var checkedAt: Date = Date()
+    var runningCount: Int? = nil
+    var pendingCount: Int? = nil
+    let detail: String
+    func matches(_ other: HostActivity) -> Bool {
+        state == other.state && runningCount == other.runningCount && pendingCount == other.pendingCount && detail == other.detail
+    }
+}
+
+struct HostResourceSelection: Equatable, Sendable {
+    var modelID: String? = nil
+    var instanceID: String? = nil
+}
+
+struct HostResourcePreview: Identifiable, Equatable, Sendable {
+    var id: UUID = UUID()
+    let host: ModelHost
+    let selection: HostResourceSelection
+    let model: HostedModel?
+    let activity: HostActivity
+    var actionTitle: String {
+        switch host.provider {
+        case .comfyUI: "Free host memory"
+        case .lmStudio: "Unload instance"
+        default: "Unload model"
+        }
+    }
+    var scope: String {
+        switch host.provider {
+        case .comfyUI: "All cached models on \(host.name). This can affect other workflows using the host. Running and queued jobs are not stopped."
+        case .lmStudio: "Instance \(selection.instanceID ?? "Unknown") of \(model?.name ?? "Unknown") on \(host.name)."
+        default: "\(model?.name ?? "Unknown") on \(host.name)."
+        }
+    }
+    var warning: String {
+        switch activity.state {
+        case .unknown: "Other clients may be using this host. Unloading can interrupt their requests."
+        case .busy, .queued: "This host has running or queued work. Memory cleanup may be deferred and models may need to load again."
+        case .idle: "No queued or running work was reported at the check time. Another client can start work after this check."
+        }
+    }
+    func matches(_ other: HostResourcePreview) -> Bool {
+        host == other.host && selection == other.selection
+            && model?.modelID == other.model?.modelID && model?.name == other.model?.name
+            && model?.digest == other.model?.digest && model?.isLoaded == other.model?.isLoaded
+            && model?.contextLength == other.model?.contextLength && model?.quantization == other.model?.quantization
+            && activity.matches(other.activity)
+    }
 }

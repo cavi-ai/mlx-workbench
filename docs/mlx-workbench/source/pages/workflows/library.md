@@ -186,3 +186,15 @@ The table shows model identifiers, available or loaded state, parameter size, qu
 - llama.cpp and compatible servers expose their advertised models. Additional metadata is shown only when reported; names never establish capabilities or identical weights.
 
 **Compare…** sends the selected model to the **Hosted & mixed** comparison setup without starting a run. Text models can be compared with ready native models. ComfyUI image comparisons require checkpoint models and an explicitly imported API workflow. Host inventories remain separate from local scan, conversion, verification and reclaim state.
+
+### Release host memory
+
+Select a model reported as loaded, then **Unload model…** for Ollama or **Unload instance…** for LM Studio. LM Studio requires its native loaded-instance identities; when several instances are loaded, choose the exact instance first. Legacy inventory without those identities cannot authorize unloading. ComfyUI offers **Free host memory…**, which requests cleanup of all cached models on that host, independently of the selected checkpoint. llama.cpp and generic OpenAI-compatible connections do not offer a supported unload action.
+
+The review shows the target, host address, activity and check time. ComfyUI reports running and queued jobs. Ollama and LM Studio remain **Activity unknown** because their public inventory APIs do not report other clients' active requests. Missing or failed activity checks never imply idle. Busy, queued and unknown activity carry a warning; **Cancel** or Escape sends no memory-release request.
+
+Explicit confirmation checks the target and activity again. Changed activity or model details require renewed confirmation. Activity is a snapshot; another client can start work after any check. Workbench blocks memory operations during its active comparisons and blocks host edits while an operation is in flight.
+
+The action uses the host's memory-management API. It never deletes model files, quits the application, clears queues or interrupts shared jobs. ComfyUI cleanup may be deferred until work finishes, and later jobs can reload models. Ollama and LM Studio unload requests may affect other clients using the selected model or instance.
+
+Workbench refreshes inventory after a request and distinguishes acceptance from observed unloaded state. ComfyUI does not expose cleanup completion, so acceptance does not establish released memory. Failed readback retains the dated inventory and reports that the effect could not be verified. A connection failure after submission can leave the outcome unknown; requests are never automatically retried.

@@ -246,10 +246,150 @@ final class HostedIntegrationTests: XCTestCase {
     private func testPrompts() -> PromptSet {
         PromptSet(id: "p", name: "Test", useCase: nil, prompts: [PromptEntry(id: "p", text: "Hello", maxTokens: 32)], origin: .userCreated)
     }
+
+    func testResourcePreviewAndCancelNeverReleaseModels() async throws {
+        let (coordinator, peer, host) = try resourceFixture()
+        await coordinator.prepareResource(hostID: host.id, selection: HostResourceSelection(modelID: "model"))
+        XCTAssertNotNil(coordinator.resourcePreview)
+        XCTAssertEqual(coordinator.resourcePreview?.activity.state, .unknown)
+        coordinator.cancelResourcePreview()
+        XCTAssertNil(coordinator.resourcePreview)
+        let count = await peer.releases
+        XCTAssertEqual(count, 0)
+    }
+
+    func testChangedActivityRequiresAnotherConfirmationBeforeRelease() async throws {
+        let (coordinator, peer, host) = try resourceFixture(provider: .comfyUI)
+        await peer.setState(.idle)
+        await coordinator.prepareResource(hostID: host.id, selection: HostResourceSelection())
+        await peer.setState(.busy)
+        await coordinator.confirmResource()
+        var count = await peer.releases
+        XCTAssertEqual(count, 0)
+        XCTAssertEqual(coordinator.resourcePreview?.activity.state, .busy)
+        await coordinator.confirmResource()
+        count = await peer.releases
+        XCTAssertEqual(count, 1)
+        XCTAssertNil(coordinator.resourcePreview)
+        XCTAssertTrue(coordinator.resourceMessage?.contains("accepted") == true)
+        await coordinator.confirmResource()
+        count = await peer.releases
+        XCTAssertEqual(count, 1, "A consumed confirmation cannot be replayed")
+    }
+
+    func testChangedInstanceMetadataRequiresRenewedConfirmation() async throws {
+        let (coordinator, peer, host) = try resourceFixture()
+        await coordinator.prepareResource(hostID: host.id, selection: HostResourceSelection(modelID: "model"))
+        await peer.setDigest("changed")
+        await coordinator.confirmResource()
+        let count = await peer.releases
+        XCTAssertEqual(count, 0)
+        XCTAssertEqual(coordinator.resourcePreview?.model?.digest, "changed")
+    }
+
+    func testConcurrentResourceConfirmationsIssueOneRelease() async throws {
+        let (coordinator, peer, host) = try resourceFixture()
+        await coordinator.prepareResource(hostID: host.id, selection: HostResourceSelection(modelID: "model"))
+        async let first: Void = coordinator.confirmResource()
+        async let second: Void = coordinator.confirmResource()
+        _ = await (first, second)
+        let count = await peer.releases
+        XCTAssertEqual(count, 1)
+        XCTAssertFalse(coordinator.resourceBusy)
+    }
+
+    func testHostEditInvalidatesResourcePreviewAndActiveWorkBlocksMutation() async throws {
+        let (coordinator, peer, host) = try resourceFixture()
+        await coordinator.prepareResource(hostID: host.id, selection: HostResourceSelection(modelID: "model"))
+        var changed = host; changed.baseURL = "http://127.0.0.1:12345"
+        try coordinator.save(changed, token: nil, replaceToken: false)
+        await coordinator.confirmResource()
+        XCTAssertNil(coordinator.resourcePreview)
+        await coordinator.prepareResource(hostID: changed.id, selection: HostResourceSelection(modelID: "model"))
+        coordinator.resourceUseBlocked = { true }
+        await coordinator.confirmResource()
+        let count = await peer.releases
+        XCTAssertEqual(count, 0)
+        XCTAssertNotNil(coordinator.resourceMessage)
+    }
+
+    func testUnloadReadbackMustShowModelAbsentBeforeReportingUnloaded() async throws {
+        let (coordinator, peer, host) = try resourceFixture()
+        await coordinator.prepareResource(hostID: host.id, selection: HostResourceSelection(modelID: "model"))
+        await coordinator.confirmResource()
+        XCTAssertTrue(coordinator.resourceMessage?.contains("still reported loaded") == true)
+        await coordinator.prepareResource(hostID: host.id, selection: HostResourceSelection(modelID: "model"))
+        await peer.setLoaded(false)
+        await coordinator.confirmResource()
+        XCTAssertTrue(coordinator.resourceMessage?.contains("no longer loaded") == true)
+    }
+
+    func testUncertainReleaseIsNotRetriedAndFailedRefreshRetainsInventory() async throws {
+        let (coordinator, peer, host) = try resourceFixture()
+        await coordinator.refresh(host.id)
+        let captured = coordinator.inventories[host.id]
+        await coordinator.prepareResource(hostID: host.id, selection: HostResourceSelection(modelID: "model"))
+        await peer.failReleaseAndRefresh()
+        await coordinator.confirmResource()
+        let count = await peer.releases
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(coordinator.inventories[host.id], captured)
+        XCTAssertNotNil(coordinator.errors[host.id])
+        XCTAssertNil(coordinator.resourcePreview)
+        XCTAssertTrue(coordinator.resourceMessage?.contains("unknown") == true)
+    }
+
+    func testOllamaReadbackWithChangedDigestCannotEstablishUnloadedState() async throws {
+        let (coordinator, peer, host) = try resourceFixture()
+        await coordinator.prepareResource(hostID: host.id, selection: HostResourceSelection(modelID: "model"))
+        await peer.setLoaded(false)
+        await peer.setReadbackDigest("different-weights")
+        await coordinator.confirmResource()
+        XCTAssertFalse(coordinator.resourceMessage?.contains("no longer loaded") == true)
+        XCTAssertTrue(coordinator.resourceMessage?.contains("identity changed") == true)
+    }
+
+    private func resourceFixture(provider: ModelHostProvider = .ollama) throws -> (ModelHostsCoordinator, ResourceTestPeer, ModelHost) {
+        let peer = ResourceTestPeer()
+        let host = ModelHost(name: "Fixture", provider: provider, baseURL: "http://127.0.0.1:11434")
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+            readToken: { _ in nil }, writeToken: { _, _ in }, fetch: { host, _ in try await peer.inventory(host) },
+            inspectResource: { host, selection, _ in await peer.preview(host, selection) },
+            releaseResource: { preview, _ in try await peer.release(preview) })
+        try coordinator.save(host, token: nil, replaceToken: false)
+        return (coordinator, peer, host)
+    }
     private func nativeModel() -> LibraryModel {
         LibraryModel(item: ModelItem(path: "/Models/native", name: "Native", bytes: 100, modifiedAt: nil, shard: nil,
             modelKey: "native", architecture: nil, quantization: "q4", parameters: nil, structure: nil, signature: "native-sha",
             companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil, task: nil), readiness: .ready)
+    }
+}
+
+private actor ResourceTestPeer {
+    var releases = 0
+    private var state = HostActivityState.unknown
+    private var digest = "original"
+    private var loaded = true
+    private var fail = false
+    private var readbackDigest: String?
+    func setState(_ value: HostActivityState) { state = value }
+    func setDigest(_ value: String) { digest = value }
+    func setLoaded(_ value: Bool) { loaded = value }
+    func setReadbackDigest(_ value: String) { readbackDigest = value }
+    func failReleaseAndRefresh() { fail = true }
+    func preview(_ host: ModelHost, _ selection: HostResourceSelection) -> HostResourcePreview {
+        HostResourcePreview(host: host, selection: selection,
+            model: host.provider == .comfyUI ? nil : HostedModel(hostID: host.id, modelID: "model", name: "Model", digest: digest, isLoaded: true),
+            activity: HostActivity(state: state, detail: "Fixture activity"))
+    }
+    func inventory(_ host: ModelHost) throws -> HostInventory {
+        if fail { throw URLError(.cannotConnectToHost) }
+        return HostInventory(host: host, models: [HostedModel(hostID: host.id, modelID: "model", name: "Model", digest: readbackDigest ?? digest, isLoaded: loaded)], capturedAt: Date())
+    }
+    func release(_ preview: HostResourcePreview) throws {
+        releases += 1
+        if fail { throw URLError(.timedOut) }
     }
 }
 
