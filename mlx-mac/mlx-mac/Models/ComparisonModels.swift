@@ -1372,6 +1372,39 @@ struct ChatRecordedText: Equatable {
 }
 
 enum ChatComparisonPresentation {
+    enum PromptOutcome: Equatable {
+        case finished, tokenLimit, incomplete, blocked, unknown, notRecorded, waiting
+
+        var label: String {
+            switch self {
+            case .finished: "Finished"
+            case .tokenLimit: "Token limit"
+            case .incomplete: "Incomplete"
+            case .blocked: "Blocked"
+            case .unknown: "Unknown"
+            case .notRecorded: "Not recorded"
+            case .waiting: "Waiting"
+            }
+        }
+    }
+
+    static func outcome(_ result: VariantResult?, prompt: PromptEntry, in run: ComparisonRun) -> PromptOutcome {
+        guard let result else { return run.state == .running ? .waiting : .notRecorded }
+        guard result.error == nil else { return .blocked }
+        let samples = result.samples.filter { $0.promptID == prompt.id }
+        guard !samples.isEmpty else { return run.state == .running ? .waiting : .notRecorded }
+        guard samples.count == 1, let sample = samples.first else { return .unknown }
+        guard sample.error == nil else { return .blocked }
+        guard let finish = sample.finishReason else { return .unknown }
+        if finish == "length" { return .tokenLimit }
+        if prompt.tool != nil {
+            return finish == "tool_calls" && (sample.toolCalls ?? 0) > 0 && sample.toolCallsValid == sample.toolCalls
+                ? .finished : .incomplete
+        }
+        return sample.hasCompletedAnswer && !ChatRecordedText(sample.fullOutput ?? sample.outputExcerpt).answer
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .finished : .incomplete
+    }
+
     struct Completion: Equatable {
         let finished: Int
         let total: Int?
@@ -1384,16 +1417,7 @@ enum ChatComparisonPresentation {
               Set(prompts.map(\.id)).count == prompts.count else {
             return Completion(finished: 0, total: nil, label: result.error == nil ? "Completion unknown" : "Blocked", isComplete: false)
         }
-        let finished = prompts.filter { prompt in
-            let samples = result.samples.filter { $0.promptID == prompt.id }
-            guard samples.count == 1, let sample = samples.first, sample.error == nil else { return false }
-            if prompt.tool != nil {
-                return sample.finishReason == "tool_calls" && (sample.toolCalls ?? 0) > 0
-                    && sample.toolCallsValid == sample.toolCalls
-            }
-            return sample.hasCompletedAnswer && !ChatRecordedText(sample.fullOutput ?? sample.outputExcerpt).answer
-                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }.count
+        let finished = prompts.filter { outcome(result, prompt: $0, in: run) == .finished }.count
         let complete = result.error == nil && finished == prompts.count && result.samples.count == prompts.count
         let label: String
         if result.error != nil { label = "Blocked" }

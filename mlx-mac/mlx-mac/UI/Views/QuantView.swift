@@ -504,55 +504,58 @@ struct QuantView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                if shownRun == nil {
-                    HStack {
-                        Spacer()
-                        StudiesNavigationButton(onRouteSelection: onRouteSelection)
+        VStack(spacing: 0) {
+            if shownRun?.effectiveMode != .chat { WorkbenchPageHeading(route: .compare) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                    if shownRun == nil {
+                        HStack {
+                            Spacer()
+                            StudiesNavigationButton(onRouteSelection: onRouteSelection)
+                        }
                     }
-                }
-                if shownRun == nil { setupBar }
-                resultsArea
-                WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
-                    environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile,
-                    mode: mode, activeRunID: comparison.activeRunID, onCompare: loadWorkflowComparison,
-                    onReview: reviewWorkflowModel,
-                    onApply: { review, role, endpoint in try await appHost.applyModelGuidance(review, role: role, enableEndpoint: endpoint) },
-                    metric: $workflowChartMetric, inspectedModelPath: $inspectedWorkflowModelPath)
-                if let importMessage { Text(importMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
-                ErrorBanner(text: importError)
-                if shownRun != nil { setupBar }
-                DisclosureGroup("Model fit and workflow evidence") {
-                    VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
-                        Text(selectionReason)
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(WorkbenchColor.muted)
-                        Button("Reset suggested models") { initializedSuggestions = false; manuallySelectedModels = false; applySuggestions() }
-                            .disabled(comparison.activeRunID != nil || readyModels.isEmpty)
-                        ComparisonInsightsView(appHost: appHost, comparison: comparison, workflow: appHost.workflowEvidence,
-                            models: ComparePresentation.variantPaths(variantSlots).compactMap { path in
-                                readyModels.first { $0.item.path == path }
-                            },
-                            promptSetID: selectedPromptSet?.id ?? "", promptEntries: selectedPromptSet?.prompts ?? [],
-                            mode: mode, onReclaim: { onRouteSelection(.reclaim) },
-                            onWire: { path in
-                                let endpoint = appHost.endpoint.config
-                                let port = endpoint.enabled && HFRepoID.matches(endpoint.modelPath, path) ? endpoint.port : nil
-                                appHost.clientWiringRequest = ClientWiringRequest(modelPath: path, preferredPort: port)
-                                onRouteSelection(.clientSetup)
-                            }, onImport: importReport, isReadingReport: isReadingReport || isChoosingReport)
+                    if shownRun == nil { setupBar }
+                    resultsArea
+                    WorkflowChartsView(workflow: appHost.workflowEvidence, models: appHost.librarySnapshot?.models ?? [],
+                        environment: appHost.watch.currentFingerprintDescription, hardware: appHost.hardwareProfile,
+                        mode: mode, activeRunID: comparison.activeRunID, onCompare: loadWorkflowComparison,
+                        onReview: reviewWorkflowModel,
+                        onApply: { review, role, endpoint in try await appHost.applyModelGuidance(review, role: role, enableEndpoint: endpoint) },
+                        metric: $workflowChartMetric, inspectedModelPath: $inspectedWorkflowModelPath)
+                    if let importMessage { Text(importMessage).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.success) }
+                    ErrorBanner(text: importError)
+                    if shownRun != nil { setupBar }
+                    DisclosureGroup("Model fit and workflow evidence") {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                            Text(selectionReason)
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.muted)
+                            Button("Reset suggested models") { initializedSuggestions = false; manuallySelectedModels = false; applySuggestions() }
+                                .disabled(comparison.activeRunID != nil || readyModels.isEmpty)
+                            ComparisonInsightsView(appHost: appHost, comparison: comparison, workflow: appHost.workflowEvidence,
+                                models: ComparePresentation.variantPaths(variantSlots).compactMap { path in
+                                    readyModels.first { $0.item.path == path }
+                                },
+                                promptSetID: selectedPromptSet?.id ?? "", promptEntries: selectedPromptSet?.prompts ?? [],
+                                mode: mode, onReclaim: { onRouteSelection(.reclaim) },
+                                onWire: { path in
+                                    let endpoint = appHost.endpoint.config
+                                    let port = endpoint.enabled && HFRepoID.matches(endpoint.modelPath, path) ? endpoint.port : nil
+                                    appHost.clientWiringRequest = ClientWiringRequest(modelPath: path, preferredPort: port)
+                                    onRouteSelection(.clientSetup)
+                                }, onImport: importReport, isReadingReport: isReadingReport || isChoosingReport)
+                        }
+                        .padding(.top, WorkbenchSpacing.sm)
                     }
-                    .padding(.top, WorkbenchSpacing.sm)
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
                 }
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.muted)
+                .frame(maxWidth: shownRun?.effectiveMode == .chat ? .infinity : 1100, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(WorkbenchSpacing.pageInset)
             }
-            .frame(maxWidth: 1100, alignment: .leading)
-            .frame(maxWidth: .infinity)
-            .padding(WorkbenchSpacing.pageInset)
+            .accessibilityIdentifier("comparison-scroll")
         }
-        .accessibilityIdentifier("comparison-scroll")
         .sheet(isPresented: $showingSettingsSearch) {
             StrataSettingsSearchSheet(models: readyModels.filter { $0.item.servingRuntime == "strata" }) { model, setup in
                 guard comparison.activeRunID == nil, !comparison.savingPromptSet,
@@ -1302,68 +1305,9 @@ struct QuantView: View {
 
     private func runDetail(_ run: ComparisonRun) -> some View {
         let winnerPath = run.effectiveMode == .chat && run.state == .completed && !run.hasCustomServingConfiguration ? run.winner?.modelPath : nil
-        return WorkbenchSurface {
-            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
-                runHeader
-
-                if run.effectiveMode == .chat, run.variants.count > 1,
-                   run.results.contains(where: { $0.servingEvidence?.runtime == "strata" }) {
-                    Text(Set(run.variants).count < run.variants.count
-                        ? "These lanes compare serving settings for the same weights. Speed does not establish answer quality."
-                        : "These results compare the selected model variants. A speed difference does not isolate the runtime or establish equivalent response quality.")
-                        .font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if let promotedWinner, promotedWinner.runID == run.id {
-                    HStack(spacing: WorkbenchSpacing.sm) {
-                        Label("Fastest model selected.", systemImage: "checkmark.circle.fill")
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(WorkbenchColor.success)
-                        Button("Wire into clients…") { onRouteSelection(.clientSetup) }
-                            .controlSize(.small)
-                        Button("Review reclaim…") { onRouteSelection(.reclaim) }
-                            .controlSize(.small)
-                    }
-                }
-
-                if run.effectiveMode == .chat {
-                    ChatComparisonResultsView(run: run,
-                        store: comparison.outputStore ?? ComparisonOutputStore(), contentWidth: compareContentWidth,
-                        name: { shortName($0) },
-                        onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
-                        reviewError: comparison.persistenceError,
-                        laneActions: { lane in laneActions(lane, run: run, winnerPath: winnerPath) })
-                        .id(run.id)
-                } else {
-                    MediaRunResultsView(
-                        run: run,
-                        store: comparison.outputStore ?? ComparisonOutputStore(),
-                        contentWidth: compareContentWidth,
-                        isRouteActive: isRouteActive,
-                        name: { shortName($0) },
-                        onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
-                        reviewError: comparison.persistenceError,
-                        laneActions: { lane in laneActions(lane, run: run, winnerPath: winnerPath) }
-                    )
-                    .id(run.id)
-
-                    if ComparisonDiff.isAvailable(run) {
-                        TextComparisonPanel(run: run, store: comparison.outputStore ?? ComparisonOutputStore(),
-                            name: { shortName($0) },
-                            onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
-                            reviewError: comparison.persistenceError)
-                            .id(run.id)
-                    }
-                }
-            }
-            .background(GeometryReader { proxy in
-                Color.clear.preference(key: CompareContentWidthKey.self, value: proxy.size.width)
-            })
-            .onPreferenceChange(CompareContentWidthKey.self) { width in
-                if width > 0 { compareContentWidth = width }
-            }
+        return Group {
+            if run.effectiveMode == .chat { runDetailBody(run, winnerPath: winnerPath) }
+            else { WorkbenchSurface { runDetailBody(run, winnerPath: winnerPath) } }
         }
         .sheet(item: $profileSaveRequest) { request in
             if case .save = request.action { SaveServingProfileSheet(profiles: servingProfiles, request: request) }
@@ -1389,6 +1333,71 @@ struct QuantView: View {
                 context: context,
                 onPromoted: { path in promotedWinner = PromotedWinner(runID: context.run.id, path: path) }
             )
+        }
+    }
+
+    private func runDetailBody(_ run: ComparisonRun, winnerPath: String?) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            runHeader
+
+            if run.effectiveMode == .chat, run.variants.count > 1,
+               run.results.contains(where: { $0.servingEvidence?.runtime == "strata" }) {
+                Text(Set(run.variants).count < run.variants.count
+                    ? "These lanes compare serving settings for the same weights. Speed does not establish answer quality."
+                    : "These results compare the selected model variants. A speed difference does not isolate the runtime or establish equivalent response quality.")
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let promotedWinner, promotedWinner.runID == run.id {
+                HStack(spacing: WorkbenchSpacing.sm) {
+                    Label("Fastest model selected.", systemImage: "checkmark.circle.fill")
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.success)
+                    Button("Wire into clients…") { onRouteSelection(.clientSetup) }
+                        .controlSize(.small)
+                    Button("Review reclaim…") { onRouteSelection(.reclaim) }
+                        .controlSize(.small)
+                }
+            }
+
+            if run.effectiveMode == .chat {
+                ChatComparisonResultsView(run: run,
+                    store: comparison.outputStore ?? ComparisonOutputStore(), contentWidth: compareContentWidth,
+                    name: { shortName($0) },
+                    onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
+                    reviewError: comparison.persistenceError,
+                    onPromote: { winner in promoteContext = PromoteContext(run: run, winner: winner) },
+                    laneActions: { lane in laneActions(lane, run: run, winnerPath: nil) })
+                    .id(run.id)
+            } else {
+                MediaRunResultsView(
+                    run: run,
+                    store: comparison.outputStore ?? ComparisonOutputStore(),
+                    contentWidth: compareContentWidth,
+                    isRouteActive: isRouteActive,
+                    name: { shortName($0) },
+                    onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
+                    reviewError: comparison.persistenceError,
+                    laneActions: { lane in laneActions(lane, run: run, winnerPath: winnerPath) }
+                )
+                .id(run.id)
+
+                if ComparisonDiff.isAvailable(run) {
+                    TextComparisonPanel(run: run, store: comparison.outputStore ?? ComparisonOutputStore(),
+                        name: { shortName($0) },
+                        onReview: { path, score in comparison.reviewQuality(runID: run.id, modelPath: path, score: score) },
+                        reviewError: comparison.persistenceError)
+                        .id(run.id)
+                }
+            }
+        }
+        .background(GeometryReader { proxy in
+            Color.clear.preference(key: CompareContentWidthKey.self, value: proxy.size.width)
+        })
+        .onPreferenceChange(CompareContentWidthKey.self) { width in
+            if width > 0 { compareContentWidth = width }
         }
     }
 

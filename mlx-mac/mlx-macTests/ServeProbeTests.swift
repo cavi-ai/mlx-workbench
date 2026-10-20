@@ -189,7 +189,13 @@ final class ServeProbeTests: XCTestCase {
         for invalidSecond in [false, true] {
             let readings = MemoryReadCounter(invalidSecond: invalidSecond)
             var probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" },
-                start: { _, _, _ in try await Task.sleep(for: .milliseconds(650)) }, stop: { _ in }),
+                start: { _, _, _ in
+                    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                    while readings.count < 2 && ContinuousClock.now < deadline {
+                        try await Task.sleep(for: .milliseconds(10))
+                    }
+                    XCTAssertGreaterThanOrEqual(readings.count, 2, "A loading sample must precede server readiness")
+                }, stop: { _ in }),
                 prober: StubProber(ready: true, responder: { _ in self.sample() }), pickPort: { 9999 })
             probe.memoryProbe = { readings.read() }
             let outcome = try await probe.run(modelPath: "/Models/model", prompts: [])

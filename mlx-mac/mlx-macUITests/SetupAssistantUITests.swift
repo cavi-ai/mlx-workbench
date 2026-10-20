@@ -2731,34 +2731,41 @@ final class WorkbenchReviewUITests: XCTestCase {
                 launch(appearance: appearance, isolatedHome: true)
                 resizeWindow(width: 1440, height: 900)
                 select("Compare")
-                XCTAssertTrue(app.staticTexts["Model results"].waitForExistence(timeout: 15))
-                XCTAssertTrue(app.staticTexts[legacy ? "Completion unknown" : "2/2 finished"].firstMatch.exists)
-                XCTAssertTrue(app.staticTexts["Blocked"].firstMatch.exists)
-                capture("Chat-results-\(appearance)-\(legacy ? "legacy" : "mixed")-wide")
+                XCTAssertTrue(app.staticTexts["Models in this run"].firstMatch.waitForExistence(timeout: 15))
+                XCTAssertTrue(app.staticTexts[legacy ? "Completion unknown · entire run" : "2/2 finished · entire run"].firstMatch.exists)
+                XCTAssertTrue(app.buttons["comparison-cell-1-0"].label.contains("Blocked"))
                 if !legacy {
-                    let details = app.buttons["Details for model A"]
-                    details.click()
-                    XCTAssertTrue(app.buttons["Use fastest…"].waitForExistence(timeout: 5))
-                    app.typeKey(.escape, modifierFlags: [])
-                    app.scrollViews["comparison-scroll"].firstMatch.scroll(byDeltaX: 0, deltaY: -420)
-                    let prompt = app.buttons["Read prompt 2"]
-                    XCTAssertTrue(prompt.waitForExistence(timeout: 5)); prompt.click()
+                    XCTAssertTrue(app.buttons["Use model A…"].exists)
+                    XCTAssertFalse(app.buttons["Use model C…"].exists)
+                    app.buttons["comparison-cell-2-1"].click()
+                    XCTAssertTrue(app.staticTexts["Prompt 2 of 2"].exists)
                     XCTAssertTrue(app.staticTexts["A context manager wraps setup and cleanup around a block. The with statement ensures cleanup runs when the block exits."].exists)
-                    app.buttons["Read prompt 1"].click()
-                    let differences = app.radioButtons["Differences"].firstMatch
-                    XCTAssertTrue(differences.exists); differences.click()
+                    XCTAssertTrue(app.staticTexts["A context manager controls a resource lifetime."].exists)
+                    capture("Compare-board-\(appearance)-wide")
+                    app.buttons["Previous prompt"].click()
+                    XCTAssertTrue(app.staticTexts["Prompt 1 of 2"].exists)
+                    app.buttons["Next prompt"].click()
+                    app.radioButtons["Differences"].firstMatch.click()
                     XCTAssertTrue(app.staticTexts["− Left model · + Right model · unchanged lines have no sign"].exists)
-                    app.radioButtons["Read A/B"].firstMatch.click()
-                    capture("Chat-reader-\(appearance)-wide")
-                }
+                    capture("Compare-board-\(appearance)-differences")
+                    app.radioButtons["Read"].firstMatch.click()
+                    app.buttons["comparison-cell-1-1"].click()
+                    XCTAssertTrue(app.staticTexts["The declared mlx-vlm backend is not installed."].exists)
+                    app.buttons["comparison-cell-0-1"].click()
+                } else { capture("Compare-board-\(appearance)-legacy-wide") }
                 resizeWindow(width: 740, height: 560)
                 app.scrollViews["comparison-scroll"].firstMatch.scroll(byDeltaX: 0, deltaY: 1200)
-                capture("Chat-results-\(appearance)-\(legacy ? "legacy" : "mixed")-minimum")
-                app.scrollViews["comparison-scroll"].firstMatch.scroll(byDeltaX: 0, deltaY: -420)
-                XCTAssertTrue(app.radioButtons["Read left"].firstMatch.waitForExistence(timeout: 5))
+                XCTAssertTrue(app.radioButtons["Read right"].firstMatch.waitForExistence(timeout: 5))
                 app.radioButtons["Read right"].firstMatch.click()
                 XCTAssertEqual(app.radioButtons["Read right"].firstMatch.value as? Int, 1)
-                capture("Chat-reader-\(appearance)-\(legacy ? "legacy" : "mixed")-minimum")
+                let window = app.windows.firstMatch.frame
+                for control in [app.radioButtons["Read left"].firstMatch,
+                                app.radioButtons["Read right"].firstMatch,
+                                app.buttons["Next prompt"].firstMatch] {
+                    XCTAssertGreaterThanOrEqual(control.frame.minX, window.minX)
+                    XCTAssertLessThanOrEqual(control.frame.maxX, window.maxX)
+                }
+                capture("Compare-board-\(appearance)-\(legacy ? "legacy" : "mixed")-minimum")
                 app.terminate()
                 XCTAssertEqual(try Data(contentsOf: file), recorded, "Reading must not rewrite historical runs")
             }
