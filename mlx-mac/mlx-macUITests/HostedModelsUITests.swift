@@ -44,13 +44,13 @@ final class HostedModelsUITests: XCTestCase {
         let url = app.textFields["model-host-url"]
         url.click(); url.typeKey("a", modifierFlags: .command); url.typeText("http://127.0.0.1:\(port)")
         app.buttons["Save host"].click()
-        let refresh = app.buttons["refresh-model-host"]
+        let refresh = app.buttons["refresh-model-host"].firstMatch
         XCTAssertTrue(refresh.waitForExistence(timeout: 5)); refresh.click()
         XCTAssertTrue(app.outlines["hosted-model-table"].staticTexts["fixture.safetensors"].waitForExistence(timeout: 10))
         let requestsBefore = try String(contentsOf: root.appendingPathComponent("requests"), encoding: .utf8)
         XCTAssertEqual(requestsBefore.split(separator: "\n").count, 4)
         XCTAssertTrue(requestsBefore.split(separator: "\n").allSatisfy { $0.hasPrefix("GET ") })
-        let details = app.disclosureTriangles["Reported device memory"]
+        let details = app.disclosureTriangles["Reported device memory"].firstMatch
         XCTAssertTrue(details.waitForExistence(timeout: 5)); clickRunningDisclosure(details)
         let free = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Reported free: 0 bytes", "Reported free: 0 bytes")).firstMatch
         XCTAssertTrue(free.waitForExistence(timeout: 5))
@@ -61,7 +61,7 @@ final class HostedModelsUITests: XCTestCase {
         app.buttons["Overview"].firstMatch.click()
         let memory = app.buttons["system-memory-header"]
         XCTAssertTrue(memory.waitForExistence(timeout: 5)); memory.click()
-        let memoryDetails = app.disclosureTriangles["Reported device memory"]
+        let memoryDetails = app.disclosureTriangles["Reported device memory"].firstMatch
         XCTAssertTrue(memoryDetails.waitForExistence(timeout: 5))
         memoryDetails.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             .withOffset(CGVector(dx: 26, dy: 8)).scroll(byDeltaX: 0, deltaY: -260)
