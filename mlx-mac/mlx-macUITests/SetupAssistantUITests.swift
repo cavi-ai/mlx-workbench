@@ -1174,7 +1174,9 @@ final class WorkbenchReviewUITests: XCTestCase {
                 let before = element.frame
                 let delta = max(-300, min(300, scroll.frame.midY - element.frame.midY))
                 wheelOrigin.scroll(byDeltaX: 0, deltaY: delta)
-                XCTAssertNotEqual(element.frame, before, "The scroll wheel must move content at the visible non-video gutter")
+                let moved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in element.frame != before }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 5), .completed,
+                               "The scroll wheel must move content at the visible non-video gutter. Before: \(before), after: \(element.frame)")
             }
             XCTAssertTrue(element.isHittable, app.debugDescription)
             XCTAssertGreaterThanOrEqual(element.frame.minY, scroll.frame.minY)
@@ -1224,8 +1226,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         let understandingModel = app.outlines.staticTexts["Fixture video understanding"].firstMatch
         XCTAssertTrue(waitForHittability(understandingModel, timeout: 10), app.debugDescription)
         understandingModel.doubleClick()
-        XCTAssertTrue(app.segmentedControls["task-understanding-mode"].buttons["Video"].waitForExistence(timeout: 10))
-        app.segmentedControls["task-understanding-mode"].buttons["Video"].click()
+        let mode = app.radioGroups["task-understanding-mode"]
+        let videoMode = mode.radioButtons["Video"]
+        selectRadioOption("Video", in: "task-understanding-mode")
         XCTAssertTrue(app.staticTexts["Understand video"].waitForExistence(timeout: 10))
         replace(app.textFields["task-video-understanding-path"], with: source.path)
         replace(app.textFields["task-video-understanding-prompt"], with: "Which direction does the red square move?")
@@ -1240,7 +1243,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         waitForTaskState("succeeded")
         let answer = app.staticTexts["task-video-understanding-result"]
         XCTAssertTrue(answer.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertEqual(answer.label, "The red square moves from left to right.")
+        XCTAssertEqual(answer.value as? String, "The red square moves from left to right.")
         let understandingScroll = app.scrollViews.containing(.staticText, identifier: "task-video-understanding-result").firstMatch
         let inputPreview = app.descendants(matching: .any).matching(identifier: "task-video-input").firstMatch
         reveal(inputPreview, in: understandingScroll)
@@ -1259,16 +1262,17 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertEqual(Set(parameters.keys), ["video_path", "prompt", "fps", "temperature", "max_tokens", "max_pixels"])
         XCTAssertEqual(parameters["video_path"] as? String, source.path)
         try FileManager.default.removeItem(at: source)
-        let mode = app.segmentedControls["task-understanding-mode"]
-        let imageMode = mode.buttons["Image"]
+        let imageMode = mode.radioButtons["Image"]
         let taskScroll = app.scrollViews.containing(.staticText, identifier: "task-video-understanding-result").firstMatch
         reveal(imageMode, in: taskScroll)
-        imageMode.click()
-        XCTAssertTrue(mode.buttons["Image"].isSelected, app.debugDescription)
+        selectRadioOption("Image", in: "task-understanding-mode")
         let reuse = app.buttons["task-reuse"]
         reveal(reuse, in: taskScroll)
         reuse.click()
-        XCTAssertTrue(mode.buttons["Video"].isSelected, app.debugDescription)
+        let reusedVideoMode = app.radioGroups["task-understanding-mode"].radioButtons["Video"]
+        let videoModeRestored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 1"), object: reusedVideoMode)
+        XCTAssertEqual(XCTWaiter.wait(for: [videoModeRestored], timeout: 15), .completed, app.debugDescription)
+        XCTAssertEqual(reusedVideoMode.value as? Int, 1, app.debugDescription)
         let reusedPath = app.textFields["task-video-understanding-path"]
         let retainedValue = expectation(for: NSPredicate(format: "value == %@", retainedPath), evaluatedWith: reusedPath)
         XCTAssertEqual(XCTWaiter.wait(for: [retainedValue], timeout: 15), .completed, app.debugDescription)
