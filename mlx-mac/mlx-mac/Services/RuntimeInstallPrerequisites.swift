@@ -3,9 +3,20 @@ import Foundation
 /// Read-only checks for the tools used by `make install`, with the same PATH
 /// carried into the confirmed installer. No shell startup files are executed.
 struct RuntimeInstallPrerequisites: Equatable, Sendable {
+    enum Guide: String, Sendable {
+        case uv, python
+        var title: String { self == .uv ? "uv installation guide" : "Python setup guide" }
+        var url: URL {
+            URL(string: self == .uv
+                ? "https://docs.astral.sh/uv/getting-started/installation/"
+                : "https://docs.astral.sh/uv/guides/install-python/")!
+        }
+    }
+
     struct Issue: Equatable, Sendable {
         let detail: String
         var command: String? = nil
+        var guide: Guide? = nil
     }
 
     let root: String
@@ -36,6 +47,8 @@ struct RuntimeInstallPrerequisites: Equatable, Sendable {
             directories.map { URL(fileURLWithPath: $0).appendingPathComponent(name) }
                 .filter { fm.isExecutableFile(atPath: $0.path) }
         }
+        let hasHomebrew = !candidates("brew").isEmpty
+        let pythonInstallCommand = hasHomebrew ? "brew install python@3.12" : nil
         let versionArguments = ["-I", "-S", "-c", "import sys; print(str(sys.version_info.major) + '.' + str(sys.version_info.minor))"]
         var issues: [Issue] = []
         let developer = await probe(URL(fileURLWithPath: "/usr/bin/xcode-select"), ["-p"], environment)
@@ -62,7 +75,7 @@ struct RuntimeInstallPrerequisites: Equatable, Sendable {
             if await probe(candidate, ["--version"], environment)?.hasPrefix("uv ") == true { uv = candidate; break }
         }
         if !uvCandidates.isEmpty && uv == nil {
-            issues.append(Issue(detail: "The installed uv command did not respond correctly. Repair it before installing; make would otherwise select that command."))
+            issues.append(Issue(detail: "The installed uv command did not respond correctly. Repair it before installing; make would otherwise select that command.", guide: .uv))
         }
         var python312: URL?
         for candidate in candidates("python3.12") {
@@ -87,8 +100,10 @@ struct RuntimeInstallPrerequisites: Equatable, Sendable {
         } else if let python312 {
             pythonSummary = "Python 3.12 found: " + python312.path
         } else {
-            issues.append(Issue(detail: "Install Python 3.12 or uv, then recheck. Python 3.12 is required for the runtime packages.",
-                command: "brew install python@3.12"))
+            let detail = hasHomebrew
+                ? "Install Python 3.12 or uv, then recheck. Python 3.12 is required for the runtime packages."
+                : "Install uv using its setup guide, then recheck. Homebrew was not found. uv can prepare Python 3.12 during the confirmed runtime installation."
+            issues.append(Issue(detail: detail, command: pythonInstallCommand, guide: .uv))
         }
         // Include the new environment before it exists, so the checks at the end
         // of make install find its entry points rather than unrelated tools.
@@ -107,7 +122,7 @@ struct RuntimeInstallPrerequisites: Equatable, Sendable {
             if developerAvailable && (uv != nil || python312 != nil)
                 && (parts?.count != 2 || parts?[0] != 3 || (parts?[1] ?? 0) < 9) {
                 issues.append(Issue(detail: "Python 3.9 or newer must also be available as python3 to start setup. Install Python 3.12, then recheck.",
-                    command: "brew install python@3.12"))
+                    command: pythonInstallCommand, guide: .python))
             }
         }
         return Self(root: root.path, environment: resolvedEnvironment, issues: issues, pythonSummary: pythonSummary)

@@ -101,6 +101,11 @@ enum WorkbenchSpacing {
 /// Fixed dimensions that are not spacing: instrument parts, window and
 /// layout thresholds. Views take every such number from here.
 enum WorkbenchSize {
+    enum SetupAssistant {
+        static let sheetWidth: CGFloat = 560
+        static let sheetHeight: CGFloat = 540
+    }
+
     static let heroNumeral: CGFloat = 40
     static let barHeight: CGFloat = 22
     static let barGap: CGFloat = 2

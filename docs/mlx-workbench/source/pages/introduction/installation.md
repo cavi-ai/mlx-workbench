@@ -7,7 +7,7 @@ MLX Workbench uses the native app, local MLX Agent sources and a Python environm
 - macOS on Apple Silicon
 - Apple's Command Line Tools (`xcode-select --install`) for the runtime installer
 - Git with submodule support, when using a source checkout
-- Python 3.12; [uv](https://github.com/astral-sh/uv) is recommended, otherwise `brew install python@3.12`
+- Python 3.12; [uv](https://docs.astral.sh/uv/getting-started/installation/) is recommended. If Homebrew is already installed, `brew install python@3.12` is another option.
 - Xcode, for source builds only
 - Disk space for source weights, converted outputs, comparison outputs and quarantine
 
@@ -20,6 +20,17 @@ In Setup Assistant, choose **Use bundled engine…** and confirm **Prepare engin
 Continue to the runtime step and choose **Install Runtime…**. This separate confirmation runs `make install` in the prepared folder to create its Python environment. Preparing sources alone does not install packages, download models or require a source clone.
 
 Before installation, Workbench checks Command Line Tools, Python and uv without installing anything. Missing prerequisites appear beside a **Recheck prerequisites** action. Tool discovery includes standard Homebrew and user-local locations so launching from Finder does not require shell startup files. The confirmed installer uses that search path, including the new environment's commands. uv may download Python 3.12 as part of the confirmed installation. An incomplete or wrong-version existing environment requires repair or another engine folder; Workbench does not delete it.
+
+When a prerequisite is missing, **Copy command** copies the displayed command
+for you to run in Terminal; **Copied** confirms the clipboard write. Workbench
+shows the Homebrew Python command only when a Homebrew executable is found.
+Without Homebrew, the Python prerequisite links to the official **uv installation
+guide**. A missing bootstrap `python3` links to the **Python setup guide**.
+Opening a guide or copying a command installs nothing. After completing the
+external setup, return to **Recheck prerequisites**, then review **Install Runtime…**.
+The same guidance is available in Setup Assistant and Health. Setup Assistant
+keeps its step content scrollable and its navigation buttons visible in smaller
+windows.
 
 ## Or use an engine checkout
 
