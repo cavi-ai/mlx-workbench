@@ -24,13 +24,14 @@ struct SetupAssistantView: View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
             header
             Divider().overlay(WorkbenchColor.hairline)
-            stepContent
+            ScrollView {
+                stepContent.frame(maxWidth: .infinity, alignment: .leading)
+            }
             Divider().overlay(WorkbenchColor.hairline)
             footer
         }
         .padding(WorkbenchSpacing.pageInset)
-        .frame(width: 560)
-        .frame(minHeight: 380)
+        .frame(width: WorkbenchSize.SetupAssistant.sheetWidth, height: WorkbenchSize.SetupAssistant.sheetHeight)
         .interactiveDismissDisabled(runtimePreparation.isPreparing)
     }
 

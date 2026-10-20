@@ -489,13 +489,13 @@ private struct RuntimePrerequisitesView: View {
                 Text(report.pythonSummary).font(WorkbenchTypography.secondary)
                     .foregroundStyle(WorkbenchColor.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                ForEach(report.issues, id: \.detail) { issue in
-                    Text(issue.detail).font(WorkbenchTypography.secondary)
-                        .foregroundStyle(WorkbenchColor.warning)
+                if !report.canInstall {
+                    Text("Complete the steps below, then recheck. Copy commands to run in Terminal; copying a command or opening a guide does not install anything.")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let command = issue.command {
-                        Text(command).font(WorkbenchTypography.metadata).textSelection(.enabled)
-                    }
+                }
+                ForEach(report.issues, id: \.detail) { issue in
+                    RuntimePrerequisiteIssueView(issue: issue)
                 }
             }
             if installer.hasPrerequisiteCheck {
@@ -503,6 +503,39 @@ private struct RuntimePrerequisitesView: View {
                     .buttonStyle(.bordered).controlSize(.small)
                     .disabled(installer.isBusy)
                     .accessibilityIdentifier("runtime-prerequisites-recheck")
+            }
+        }
+    }
+}
+
+private struct RuntimePrerequisiteIssueView: View {
+    let issue: RuntimeInstallPrerequisites.Issue
+    @State private var copiedCommand: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Text(issue.detail).font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.warning)
+                .fixedSize(horizontal: false, vertical: true)
+            if let command = issue.command {
+                Text(command).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(copiedCommand == command ? "Copied" : "Copy command") {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    if pasteboard.setString(command, forType: .string) { copiedCommand = command }
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .accessibilityIdentifier("runtime-prerequisite-copy-\(command)")
+                .help("Copy this command to the clipboard to run yourself in Terminal")
+            }
+            if let guide = issue.guide {
+                Link(destination: guide.url) {
+                    Label(guide.title, systemImage: "arrow.up.right.square")
+                }
+                .font(WorkbenchTypography.secondary)
+                .accessibilityIdentifier("runtime-prerequisite-guide-\(guide.rawValue)")
+                .help("Open the official setup instructions in your browser")
             }
         }
     }

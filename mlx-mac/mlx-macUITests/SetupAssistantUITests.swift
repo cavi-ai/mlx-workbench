@@ -3193,21 +3193,58 @@ final class SetupAssistantUITests: XCTestCase {
     }
 
     func testRuntimePrerequisitesAreCheckedWithoutStartingInstallation() throws {
-        launch(python: "/usr/bin/false")
+        // An unavailable developer directory exercises recovery without changing macOS tools.
+        launch(python: "/usr/bin/false", environment: ["DEVELOPER_DIR": "/nonexistent/workbench-ui-check"])
         let sheet = app.sheets.firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 30))
         sheet.buttons["Continue"].click()
         let status = sheet.staticTexts["runtime-prerequisites-status"]
         XCTAssertTrue(status.waitForExistence(timeout: 30))
+        let scroll = sheet.scrollViews.firstMatch
+        func reveal(_ element: XCUIElement) {
+            XCTAssertTrue(element.waitForExistence(timeout: 10), app.debugDescription)
+            for _ in 0..<10 where !element.isHittable {
+                scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 180 : -180)
+            }
+            XCTAssertTrue(element.isHittable, app.debugDescription)
+        }
         let install = sheet.buttons["runtime-install-start"]
         XCTAssertTrue(install.exists)
         XCTAssertEqual(install.isEnabled, status.label == "Prerequisites found")
         let recheck = sheet.buttons["runtime-prerequisites-recheck"]
         XCTAssertTrue(recheck.isEnabled)
+        reveal(recheck)
         recheck.click()
         XCTAssertTrue(status.waitForExistence(timeout: 30))
         XCTAssertFalse(sheet.buttons["runtime-install-cancel"].exists)
-        capture("Runtime-prerequisites-before-confirmation")
+        let copy = sheet.buttons["runtime-prerequisite-copy-xcode-select --install"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 10), app.debugDescription)
+        reveal(copy)
+        let previousClipboard = NSPasteboard.general.string(forType: .string)
+        copy.click()
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "xcode-select --install")
+        let copied = expectation(for: NSPredicate(format: "label == %@", "Copied"), evaluatedWith: copy)
+        wait(for: [copied], timeout: 5)
+        let guide = sheet.descendants(matching: .any)["runtime-prerequisite-guide-uv"].firstMatch
+        XCTAssertTrue(guide.exists, app.debugDescription)
+        XCTAssertFalse(install.isEnabled)
+        XCTAssertFalse(sheet.buttons["runtime-install-cancel"].exists)
+        capture("Runtime-prerequisite-copy-and-guide")
+        let window = app.windows.firstMatch
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -2, dy: -2))
+        corner.press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 738, dy: 610)))
+        reveal(copy)
+        reveal(guide)
+        reveal(recheck)
+        let bounds = sheet.frame
+        XCTAssertGreaterThanOrEqual(bounds.minX, window.frame.minX)
+        XCTAssertGreaterThanOrEqual(bounds.minY, window.frame.minY)
+        XCTAssertLessThanOrEqual(bounds.maxX, window.frame.maxX)
+        XCTAssertLessThanOrEqual(bounds.maxY, window.frame.maxY)
+        XCTAssertTrue(sheet.buttons["Continue"].isHittable)
+        capture("Runtime-prerequisite-guide-minimum")
+        NSPasteboard.general.clearContents()
+        if let previousClipboard { NSPasteboard.general.setString(previousClipboard, forType: .string) }
     }
 
     func testPackagedRuntimeInstallsFromCleanSetup() throws {
