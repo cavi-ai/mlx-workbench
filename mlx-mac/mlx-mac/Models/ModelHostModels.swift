@@ -94,6 +94,7 @@ struct HostedModel: Codable, Equatable, Identifiable, Sendable {
     var capabilities: [String]? = nil
     var category: String? = nil
     var loadedInstanceIDs: [String]? = nil
+    var detailsCapturedAt: Date? = nil
     var id: String { hostID.uuidString + "/" + modelID }
 }
 

@@ -116,6 +116,25 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(error.waitForExistence(timeout: 10)); XCTAssertTrue(model.exists)
         try FileManager.default.removeItem(at: root.appendingPathComponent("fail")); app.buttons["retry-model-host-refresh"].click()
         XCTAssertTrue(model.waitForExistence(timeout: 10)); model.click()
+        let selectedDetails = app.disclosureTriangles["host-selected-model-details"]
+        XCTAssertTrue(selectedDetails.waitForExistence(timeout: 5))
+        clickRunningDisclosure(selectedDetails)
+        let readDetails = app.buttons["read-host-model-details"]
+        XCTAssertTrue(readDetails.waitForExistence(timeout: 5)); clickVisibleControl(readDetails, in: app)
+        let context = app.staticTexts["host-model-context"]
+        let inspected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            context.label.contains("Maximum context: 32768") || (context.value as? String)?.contains("Maximum context: 32768") == true
+        }, object: nil)
+        wait(for: [inspected], timeout: 10)
+        let capabilities = app.staticTexts["host-model-capabilities"]
+        XCTAssertTrue(capabilities.label.contains("vision") || (capabilities.value as? String)?.contains("vision") == true)
+        XCTAssertTrue(app.staticTexts["host-model-details-read-at"].exists)
+        let detailRequests = try String(contentsOf: root.appendingPathComponent("requests"), encoding: .utf8)
+            .split(separator: "\n").filter { $0.hasPrefix("POST ") }
+        XCTAssertEqual(detailRequests.count, 1)
+        XCTAssertTrue(detailRequests.first?.hasPrefix("POST /api/show ") == true)
+        let detailsImage = XCTAttachment(screenshot: app.screenshot()); detailsImage.name = "ollama-model-details-read"; detailsImage.lifetime = .keepAlways; add(detailsImage)
+        clickRunningDisclosure(selectedDetails)
         let compare = app.buttons["Compare…"].firstMatch
         let canCompare = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in compare.isEnabled }, object: nil)
         wait(for: [canCompare], timeout: 10); compare.click()
@@ -256,6 +275,12 @@ private final class HostedUIFixture: @unchecked Sendable {
                 return
             }
             if request.hasPrefix("POST ") {
+                if request.hasPrefix("POST /api/show ") {
+                    let body = #"{"capabilities":["completion","vision","tools"],"model_info":{"general.architecture":"fixture","fixture.context_length":32768}}"#
+                    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body
+                    connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+                    return
+                }
                 if request.hasPrefix("POST /api/generate ") {
                     do {
                         let file = root.appendingPathComponent("released")

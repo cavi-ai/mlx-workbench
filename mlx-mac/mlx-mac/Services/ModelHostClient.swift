@@ -9,6 +9,51 @@ struct ModelHostClient: Sendable {
 
     init(http: HostHTTPClient = HostHTTPClient()) { self.http = http }
 
+    func inventoryInspecting(_ model: HostedModel, host: ModelHost, token: String? = nil) async throws -> HostInventory {
+        guard host.provider == .ollama, model.hostID == host.id,
+              let digest = Self.text(model.digest) else {
+            throw HostedIntegrationError.invalid("Select an installed Ollama model with a reported digest before reading details.")
+        }
+        _ = try Self.identifier(model.modelID)
+        let before = try await inventory(host: host, token: token)
+        guard before.models.contains(where: { $0.modelID == model.modelID && $0.digest == digest }) else {
+            throw HostedIntegrationError.invalid("The installed model changed. Refresh and select it again before reading details.")
+        }
+        try Task.checkCancellation()
+        let body = try JSONSerialization.data(withJSONObject: ["model": model.modelID, "verbose": false])
+        let data = try await http.request(host: host, path: "api/show", method: "POST", body: body, token: token)
+        guard let response = try Self.json(data) as? [String: Any] else { throw HostHTTPError.invalidResponse }
+        let capturedAt = Date()
+        var capabilities: [String]?
+        if let value = response["capabilities"], !(value is NSNull) {
+            guard let reported = value as? [String], reported.count <= 64,
+                  reported.allSatisfy({ Self.text($0) != nil && $0.utf8.count <= 128 }),
+                  Set(reported).count == reported.count else { throw HostHTTPError.invalidResponse }
+            capabilities = reported
+        }
+        var maximumContext: Int?
+        if let value = response["model_info"], !(value is NSNull) {
+            guard let info = value as? [String: Any] else { throw HostHTTPError.invalidResponse }
+            if let architecture = Self.text(info["general.architecture"]),
+               let context = Self.int(info[architecture + ".context_length"]), context > 0 {
+                maximumContext = context
+            }
+        }
+        try Task.checkCancellation()
+        let after = try await inventory(host: host, token: token)
+        guard let index = after.models.firstIndex(where: { $0.modelID == model.modelID && $0.digest == digest }) else {
+            throw HostedIntegrationError.invalid("The installed model changed while reading details. Refresh and select it again.")
+        }
+        try Task.checkCancellation()
+        var models = after.models
+        models[index].maximumContextLength = maximumContext
+        models[index].capabilities = capabilities
+        models[index].detailsCapturedAt = capturedAt
+        return HostInventory(host: after.host, models: models, capturedAt: after.capturedAt,
+            runtimeVersion: after.runtimeVersion, deviceSummary: after.deviceSummary, warnings: after.warnings,
+            activity: after.activity, runningModels: after.runningModels)
+    }
+
     func inventory(host: ModelHost, token: String? = nil) async throws -> HostInventory {
         _ = try host.validatedURL()
         var result: HostInventory
@@ -64,7 +109,7 @@ struct ModelHostClient: Sendable {
             )
         }
         try Self.validateIDs(models)
-        var warnings = ["Maximum context and capabilities are unavailable in this inventory."]
+        var warnings = ["Read model details for maximum context and capabilities; missing metadata remains unknown."]
         var runningModels: [HostedModel]?
         do {
             let running = try Self.records(try await object(host, path: "api/ps", token: token)["models"])

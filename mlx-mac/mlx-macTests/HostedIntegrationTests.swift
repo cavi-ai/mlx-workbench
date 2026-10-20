@@ -6,6 +6,96 @@ import Network
 
 @MainActor
 final class HostedIntegrationTests: XCTestCase {
+    func testExplicitModelDetailsPublishFreshInventoryAndFailureRetainsIt() async throws {
+        let host = ModelHost(name: "Ollama", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+        let model = HostedModel(hostID: host.id, modelID: "alpha", name: "Alpha", digest: "a")
+        let initial = HostInventory(host: host, models: [model], capturedAt: Date(timeIntervalSince1970: 100))
+        var enriched = model
+        enriched.maximumContextLength = 32768; enriched.capabilities = ["completion"]
+        enriched.detailsCapturedAt = Date(timeIntervalSince1970: 150)
+        let fresh = HostInventory(host: host, models: [enriched], capturedAt: Date(timeIntervalSince1970: 200), runningModels: [])
+        let reads = DetailReadSequence(result: fresh)
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+            readToken: { _ in "selected-token" }, writeToken: { _, _ in }, fetch: { _, _ in initial },
+            inspectModel: { receivedHost, receivedModel, token in
+                XCTAssertEqual(receivedHost, host); XCTAssertEqual(receivedModel.modelID, "alpha")
+                XCTAssertEqual(token, "selected-token")
+                return try await reads.read()
+            })
+        try coordinator.save(host, token: nil, replaceToken: false)
+        await coordinator.refresh(host.id)
+        let readsBefore = await reads.count
+        XCTAssertEqual(readsBefore, 0)
+        let succeeded = await coordinator.readModelDetails(host.id, modelID: model.modelID)
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(coordinator.inventories[host.id], fresh)
+        await reads.fail()
+        let failed = await coordinator.readModelDetails(host.id, modelID: model.modelID)
+        XCTAssertFalse(failed)
+        XCTAssertEqual(coordinator.inventories[host.id], fresh)
+        XCTAssertTrue(coordinator.errors[host.id]?.contains("Previous inventory retained") == true)
+        XCTAssertTrue(coordinator.errors[host.id]?.contains("Authentication was refused") == true)
+        XCTAssertFalse(coordinator.refreshing.contains(host.id))
+        await coordinator.refresh(host.id)
+        XCTAssertNil(coordinator.inventories[host.id]?.models.first?.detailsCapturedAt)
+        let readsAfter = await reads.count
+        XCTAssertEqual(readsAfter, 2, "Ordinary refresh never inspects models")
+    }
+
+    func testModelDetailsFenceLateResultsAndExcludeConcurrentRefreshes() async throws {
+        for mutation in ["edit", "remove", "cancel", "supersede"] {
+            let host = ModelHost(name: "Ollama", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+            let model = HostedModel(hostID: host.id, modelID: "alpha", name: "Alpha", digest: "a")
+            let initial = HostInventory(host: host, models: [model], capturedAt: Date(timeIntervalSince1970: 100))
+            var enriched = model; enriched.detailsCapturedAt = Date(timeIntervalSince1970: 150)
+            let fresh = HostInventory(host: host, models: [enriched], capturedAt: Date(timeIntervalSince1970: 200))
+            let started = expectation(description: "Detail read started: " + mutation)
+            let gate = DetailReadGate(started: started)
+            let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+                readToken: { _ in nil }, writeToken: { _, _ in }, fetch: { _, _ in initial },
+                inspectModel: { _, _, _ in await gate.read() })
+            try coordinator.save(host, token: nil, replaceToken: false)
+            await coordinator.refresh(host.id)
+            let task = Task { await coordinator.readModelDetails(host.id, modelID: model.modelID) }
+            await fulfillment(of: [started], timeout: 5)
+            XCTAssertTrue(coordinator.refreshing.contains(host.id))
+            let concurrentRefresh = await coordinator.refresh(host.id)
+            let concurrentRead = await coordinator.readModelDetails(host.id, modelID: model.modelID)
+            XCTAssertFalse(concurrentRefresh); XCTAssertFalse(concurrentRead)
+            switch mutation {
+            case "edit":
+                var edited = host; edited.name = "Edited"
+                try coordinator.save(edited, token: nil, replaceToken: false)
+            case "remove": try coordinator.remove(host.id)
+            case "cancel": task.cancel()
+            default:
+                try coordinator.save(host, token: nil, replaceToken: false)
+                await coordinator.refresh(host.id)
+            }
+            await gate.release(fresh)
+            let published = await task.value
+            XCTAssertFalse(published, mutation)
+            XCTAssertNotEqual(coordinator.inventories[host.id], fresh)
+            XCTAssertFalse(coordinator.refreshing.contains(host.id))
+        }
+    }
+
+    func testModelDetailsRequireCurrentSavedSelection() async throws {
+        let host = ModelHost(name: "Ollama", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+        let model = HostedModel(hostID: host.id, modelID: "alpha", name: "Alpha")
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+            readToken: { _ in nil }, writeToken: { _, _ in },
+            fetch: { _, _ in HostInventory(host: host, models: [model], capturedAt: Date()) },
+            inspectModel: { _, _, _ in XCTFail("An unavailable selection must not inspect"); throw CancellationError() })
+        try coordinator.save(host, token: nil, replaceToken: false)
+        let withoutInventory = await coordinator.readModelDetails(host.id, modelID: model.modelID)
+        XCTAssertFalse(withoutInventory)
+        await coordinator.refresh(host.id)
+        let withoutDigest = await coordinator.readModelDetails(host.id, modelID: model.modelID)
+        let missingModel = await coordinator.readModelDetails(host.id, modelID: "absent")
+        XCTAssertFalse(withoutDigest); XCTAssertFalse(missingModel)
+    }
+
     func testConditionsPersistBeforeHostedInference() async throws {
         let store = JSONStore<HostedComparisonRecord>(fileURL: try directory().appendingPathComponent("hosted.json"))
         let host = ModelHost(name: "Host", provider: .ollama, baseURL: "http://localhost:11434")
@@ -258,6 +348,7 @@ final class HostedIntegrationTests: XCTestCase {
         json.removeValue(forKey: "runningModels")
         let decoded = try JSONDecoder().decode(HostInventory.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertNil(decoded.runningModels)
+        XCTAssertNil(decoded.models.first?.detailsCapturedAt)
         XCTAssertEqual(decoded.reportedLoadedModels, [loaded])
         XCTAssertEqual(decoded.loadedStateSummary, "1 model reported loaded")
         XCTAssertEqual(decoded.capturedAt, Date(timeIntervalSince1970: 100))
@@ -670,6 +761,31 @@ private actor InventorySequence {
         count += 1
         if count > 1 { throw URLError(.cannotConnectToHost) }
         return HostInventory(host: host, models: [HostedModel(hostID: host.id, modelID: "model:latest", name: "Model")], capturedAt: Date())
+    }
+}
+
+private actor DetailReadGate {
+    let started: XCTestExpectation
+    private var continuation: CheckedContinuation<HostInventory, Never>?
+    init(started: XCTestExpectation) { self.started = started }
+    func read() async -> HostInventory {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation; started.fulfill()
+        }
+    }
+    func release(_ result: HostInventory) { continuation?.resume(returning: result); continuation = nil }
+}
+
+private actor DetailReadSequence {
+    let result: HostInventory
+    var count = 0
+    private var failing = false
+    init(result: HostInventory) { self.result = result }
+    func fail() { failing = true }
+    func read() throws -> HostInventory {
+        count += 1
+        if failing { throw HostHTTPError.httpStatus(401) }
+        return result
     }
 }
 
