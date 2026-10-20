@@ -49,19 +49,18 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(model.waitForExistence(timeout: 10))
         let runningDisclosure = app.disclosureTriangles["host-running-models"]
         XCTAssertTrue(runningDisclosure.waitForExistence(timeout: 5))
-        // macOS exposes the label in this AX frame, but only its leading chevron toggles it.
-        let runningChevron = runningDisclosure.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
-            .withOffset(CGVector(dx: 8, dy: 0))
-        runningChevron.click()
+        clickRunningDisclosure(runningDisclosure)
         let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             (runningDisclosure.value as? String) == "1" || (runningDisclosure.value as? NSNumber)?.intValue == 1
         }, object: nil)
         wait(for: [expanded], timeout: 5)
+        runningDisclosure.scroll(byDeltaX: 0, deltaY: -240)
         let runningOnly = app.staticTexts["orphan-running:latest"].firstMatch
         XCTAssertTrue(runningOnly.waitForExistence(timeout: 5))
         XCTAssertFalse(app.tables["hosted-model-table"].staticTexts["orphan-running:latest"].exists)
         let runningImage = XCTAttachment(screenshot: app.screenshot()); runningImage.name = "ollama-running-separate-from-tags"; runningImage.lifetime = .keepAlways; add(runningImage)
-        runningChevron.click()
+        clickRunningDisclosure(runningDisclosure)
+        runningDisclosure.scroll(byDeltaX: 0, deltaY: 240)
         try Data().write(to: root.appendingPathComponent("fail")); refresh.click()
         let error = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Refresh failed", "Refresh failed")).firstMatch
         XCTAssertTrue(error.waitForExistence(timeout: 10)); XCTAssertTrue(model.exists)
@@ -126,6 +125,12 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("released"), encoding: .utf8), "1")
         let resultImage = XCTAttachment(screenshot: app.screenshot()); resultImage.name = "unload-readback"; resultImage.lifetime = .keepAlways; add(resultImage)
         clickVisibleControl(app.buttons["Close"].firstMatch, in: app)
+    }
+
+    private func clickRunningDisclosure(_ control: XCUIElement) {
+        // The macOS AX frame includes 22 points before the painted chevron and the full label.
+        control.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+            .withOffset(CGVector(dx: 26, dy: 0)).click()
     }
 
     private func clickVisibleControl(_ control: XCUIElement, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
