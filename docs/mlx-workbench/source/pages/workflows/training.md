@@ -21,6 +21,20 @@ actionable error, including the file and line for malformed records. A valid
 split keeps its count when another check fails. **Fix field** returns to the
 relevant input; a missing runtime offers **Open Health**.
 
+**Create dataset…** beside Dataset path opens a chat-example editor. Write user
+requests and desired assistant replies, choosing **Training** or **Validation**
+explicitly. Each split needs at least the selected batch size; the editor rejects
+blank fields and exact examples shared across both splits (ignoring surrounding
+whitespace). Other overlap still needs human review. The editor supports up to
+500 examples per split; existing dataset folders remain available through Choose.
+
+**Save dataset…** writes `train.jsonl` and `valid.jsonl` together into a new folder
+and selects that path in Training. It preserves multiline and Unicode text and
+refuses existing destinations. Save failures keep the draft open. Cancel protects
+edited drafts; opening the editor writes nothing. Saving never checks setup,
+loads a model or starts training. Use Check setup and Preview Training afterwards;
+format validity alone does not establish dataset quality or training success.
+
 Checking setup never downloads a model, splits data, creates an adapter or starts
 training. It checks executable availability without loading the model; it does
 not measure memory fit or guarantee that training will succeed. Editing the
