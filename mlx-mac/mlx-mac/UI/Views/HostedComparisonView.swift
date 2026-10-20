@@ -234,6 +234,10 @@ struct HostedComparisonView: View {
                 }
             }
             Text("Recorded host comparisons · \(record.run.state.rawValue)").font(WorkbenchTypography.section)
+            if let notice = record.conditionsNotice {
+                Text(notice).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                    .accessibilityIdentifier("hosted-conditions-notice")
+            }
             if record.run.effectiveMode == .chat {
                 ChatComparisonResultsView(run: record.run, store: comparison.outputStore, contentWidth: width,
                     name: { name($0, in: record) }, onReview: { comparison.review(runID: record.id, targetID: $0, score: $1) },
@@ -259,6 +263,7 @@ struct HostedComparisonView: View {
                     ForEach(record.observedTargets ?? []) { target in
                         Text("Before inference: \(target.displayName) · \(target.capturedAt.formatted()) · Runtime \(target.runtimeVersion ?? "unknown") · \(target.deviceSummary ?? "Device unknown")")
                     }
+                    HostedRunConditionsView(record: record)
                     ForEach(record.submissions) { submission in
                         DisclosureGroup("ComfyUI prompt \(submission.remotePromptID)") {
                             Text(submission.graphJSON).font(WorkbenchTypography.compactValue).textSelection(.enabled)
@@ -299,6 +304,95 @@ struct HostedComparisonView: View {
                 checkpointNode = ""; promptNode = ""; outputNode = ""; error = nil
             } catch { self.error = AppHost.render(error) }
             readingWorkflow = false
+        }
+    }
+}
+
+/// Historical values only; rendering never probes memory or contacts a host.
+struct HostedRunConditionsView: View {
+    let record: HostedComparisonRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Conditions before each lane").font(WorkbenchTypography.label)
+            Text("Memory, inventory and activity are separate snapshots. They do not establish conditions throughout the run or explain the cause of a timing difference.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            if record.conditions == nil {
+                Text("Not recorded for this comparison.").foregroundStyle(WorkbenchColor.muted)
+            } else {
+                ForEach(record.targets) { target in
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        Text(target.displayName).font(WorkbenchTypography.label)
+                        if let conditions = record.conditions?.first(where: { $0.targetID == target.id }) {
+                            conditionDetails(conditions, hosted: target.host != nil)
+                        } else {
+                            Text("Not recorded for this lane.").foregroundStyle(WorkbenchColor.muted)
+                        }
+                    }
+                }
+            }
+        }
+        .font(WorkbenchTypography.secondary)
+        .textSelection(.enabled)
+    }
+
+    private func conditionDetails(_ conditions: HostedLaneConditions, hosted: Bool) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Text("Memory checked " + conditions.memoryCapturedAt.formatted(date: .abbreviated, time: .standard))
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            if let memory = conditions.validMemory {
+                Text(String(format: "System headroom: ~%.1f GB of %.1f GB unified memory", Double(memory.availableBytes) / 1e9, Double(memory.totalBytes) / 1e9))
+                Text(String(format: "Recorded reserve for model fit: %.1f GB. System-wide estimate, including reclaimable pages; model and GPU allocations are unavailable.", Double(conditions.reserveBytes) / 1e9))
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            } else { Text("System headroom unknown").foregroundStyle(WorkbenchColor.muted) }
+            if hosted {
+                hostDetails(conditions)
+            }
+            ForEach(conditions.timingCaveats, id: \.self) { caveat in
+                Text(caveat).foregroundStyle(WorkbenchColor.warning)
+            }
+        }
+    }
+
+    private func hostDetails(_ conditions: HostedLaneConditions) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if let capturedAt = conditions.inventoryCapturedAt {
+                Text("Host inventory read " + capturedAt.formatted(date: .abbreviated, time: .standard))
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+            if let activity = conditions.activity {
+                Text("Host activity: " + activity.state.title)
+                Text("Activity checked " + activity.checkedAt.formatted(date: .abbreviated, time: .standard))
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                if let running = activity.runningCount, let queued = activity.pendingCount {
+                    Text("\(running) running · \(queued) queued")
+                }
+                Text(activity.detail).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            } else { Text("Host activity unknown").foregroundStyle(WorkbenchColor.muted) }
+            if let models = conditions.loadedModels {
+                Text(conditions.loadedStateSummary)
+                Text(conditions.unknownResidencyCount.map { "Residency unknown for \($0) \($0 == 1 ? "model" : "models")" } ?? "Residency reporting unknown")
+                    .foregroundStyle(WorkbenchColor.muted)
+                if !models.isEmpty {
+                    DisclosureGroup("Reported loaded models") {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                                ForEach(models) { model in
+                                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                                        Text(model.name + (model.id == conditions.targetID ? " · selected lane model" : ""))
+                                        Text(model.modelID).font(WorkbenchTypography.compactValue)
+                                        Text(model.memoryBytes.map { "Host-reported model memory: " + ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory) } ?? "Model memory unknown")
+                                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                                    }
+                                }
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }.frame(maxHeight: 180)
+                    }
+                }
+            } else { Text("Loaded model state unknown").foregroundStyle(WorkbenchColor.muted) }
+            ForEach(conditions.inventoryWarnings ?? [], id: \.self) { warning in
+                Text(warning).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+            }
         }
     }
 }

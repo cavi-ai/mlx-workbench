@@ -73,5 +73,57 @@ struct HostedComparisonRecord: Codable, Equatable, Identifiable, Sendable {
     let workflow: ComfyWorkflow?
     var submissions: [HostedWorkflowSubmission]
     var observedTargets: [HostedComparisonTarget]? = nil
+    /// Nil identifies older records; an empty array means no lane reached observation.
+    var conditions: [HostedLaneConditions]? = nil
     var id: UUID { run.id }
+
+    var conditionsNotice: String? {
+        guard let conditions else { return nil }
+        if conditions.contains(where: { !$0.timingCaveats.isEmpty }) {
+            return "Recorded activity, other loaded models or limited headroom may affect timings. Review the recorded conditions below."
+        }
+        if conditions.contains(where: { $0.inventoryCapturedAt != nil && ($0.activity == nil || $0.activity?.state == .unknown) }) {
+            return "Other-client activity was unknown before one or more lanes. Review the recorded conditions below."
+        }
+        return nil
+    }
+}
+
+/// Independent before-lane observations, never per-model allocation or continuous monitoring.
+struct HostedLaneConditions: Codable, Equatable, Sendable {
+    let targetID: String
+    let memoryCapturedAt: Date
+    let systemMemory: MemorySnapshot?
+    let reserveBytes: Int64
+    let inventoryCapturedAt: Date?
+    let activity: HostActivity?
+    let loadedModels: [HostedModel]?
+    let unknownResidencyCount: Int?
+    let inventoryWarnings: [String]?
+
+    var loadedStateSummary: String {
+        guard let loadedModels else { return "Loaded model state unknown" }
+        if loadedModels.isEmpty && unknownResidencyCount != 0 { return "Loaded model state unknown" }
+        return "\(loadedModels.count) \(loadedModels.count == 1 ? "model" : "models") reported loaded"
+    }
+
+    var validMemory: MemorySnapshot? {
+        guard let systemMemory, systemMemory.totalBytes > 0,
+              (0...systemMemory.totalBytes).contains(systemMemory.availableBytes) else { return nil }
+        return systemMemory
+    }
+
+    var timingCaveats: [String] {
+        var caveats: [String] = []
+        if let activity, activity.state == .busy || activity.state == .queued {
+            caveats.append("The host reported running or queued work before this lane.")
+        }
+        if loadedModels?.contains(where: { $0.id != targetID }) == true {
+            caveats.append("Other models were also reported loaded on this host.")
+        }
+        if let memory = validMemory, reserveBytes > 0, memory.availableBytes < reserveBytes {
+            caveats.append("System headroom was below the recorded reserve for model fit.")
+        }
+        return caveats
+    }
 }

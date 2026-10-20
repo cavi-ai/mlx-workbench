@@ -18,6 +18,10 @@ Native lanes use an owned temporary server and the existing receipt-based cleanu
 
 Results preserve full outputs, requested prompts and limits, selected source snapshots and pre-inference host metadata. Latency includes transport and any model loading. Token speeds can differ because of tokenizer, host configuration and streaming behavior; estimated metrics remain labeled. Quality ratings stay separate from speed. These records do not enter local recommendation, promotion or reclaim evidence.
 
+**Recorded sources and settings → Conditions before each lane** retains estimated system headroom, the reserve used for model-fit estimates, host activity, reported loaded models, unknown residency and inventory warnings. Memory, inventory and activity keep separate capture times. Native lanes record system headroom only; their existing sampled memory results remain separate. The host observations reuse the inventory read before that lane, without additional polling or automatic unloading.
+
+Activity, other loaded models and headroom below the recorded reserve can produce a timing caveat. These snapshots do not establish the cause of a timing difference, continuous host activity or per-model GPU allocation. Missing readings remain unknown and do not block inference. Older comparisons show **Not recorded**; cancelled or partial runs retain observations only for lanes reached. Conditions and fresh source identity must be saved before a lane can start.
+
 ### ComfyUI images
 
 Choose checkpoint models, then **Import API workflow…** using ComfyUI's API-format JSON export. Bind a checkpoint loader, the positive `CLIPTextEncode` input and a `SaveImage` output. Review the graph and enter the image prompt before running.
