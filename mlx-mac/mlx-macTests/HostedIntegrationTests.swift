@@ -104,6 +104,8 @@ final class HostedIntegrationTests: XCTestCase {
             _ = try await coordinator.checkConnection(ModelHost(name: "Remote", provider: .ollama, baseURL: "https://example.com"), token: nil, replaceToken: false)
             XCTFail("Expected address rejection")
         } catch { XCTAssertEqual(error as? HostHTTPError, .invalidURL) }
+    }
+
     func testResidencySummaryPreservesUnknownAndPartialMetadata() {
         let host = ModelHost(name: "ComfyUI", provider: .comfyUI, baseURL: "http://127.0.0.1:8188")
         let unknown = HostedModel(hostID: host.id, modelID: "checkpoint", name: "Checkpoint")
