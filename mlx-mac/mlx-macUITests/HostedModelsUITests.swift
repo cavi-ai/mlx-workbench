@@ -52,10 +52,12 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(requestsBefore.split(separator: "\n").allSatisfy { $0.hasPrefix("GET ") })
         let details = app.disclosureTriangles["Reported device memory"].firstMatch
         XCTAssertTrue(details.waitForExistence(timeout: 5)); clickRunningDisclosure(details)
+        details.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 26, dy: 8)).scroll(byDeltaX: 0, deltaY: -260)
         let free = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Reported free: 0 bytes", "Reported free: 0 bytes")).firstMatch
         XCTAssertTrue(free.waitForExistence(timeout: 5))
         let shared = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Shared system memory", "Shared system memory")).firstMatch
-        XCTAssertTrue(shared.exists)
+        XCTAssertTrue(free.isHittable); XCTAssertTrue(shared.isHittable)
         let libraryImage = XCTAttachment(screenshot: app.screenshot())
         libraryImage.name = "comfy-device-memory-library"; libraryImage.lifetime = .keepAlways; add(libraryImage)
         app.buttons["Overview"].firstMatch.click()
@@ -66,7 +68,10 @@ final class HostedModelsUITests: XCTestCase {
         memoryDetails.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             .withOffset(CGVector(dx: 26, dy: 8)).scroll(byDeltaX: 0, deltaY: -260)
         clickRunningDisclosure(memoryDetails)
-        XCTAssertTrue(free.waitForExistence(timeout: 5)); XCTAssertTrue(shared.exists)
+        memoryDetails.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 26, dy: 8)).scroll(byDeltaX: 0, deltaY: -260)
+        XCTAssertTrue(free.waitForExistence(timeout: 5))
+        XCTAssertTrue(free.isHittable); XCTAssertTrue(shared.isHittable)
         let memoryImage = XCTAttachment(screenshot: app.screenshot())
         memoryImage.name = "comfy-device-memory-panel"; memoryImage.lifetime = .keepAlways; add(memoryImage)
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("requests"), encoding: .utf8), requestsBefore,
