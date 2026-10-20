@@ -45,7 +45,7 @@ final class HostedModelsUITests: XCTestCase {
         app.buttons["Save host"].click()
         let refresh = app.buttons["refresh-model-host"].firstMatch
         XCTAssertTrue(refresh.waitForExistence(timeout: 5)); refresh.click()
-        let model = app.staticTexts["fixture-model:latest"].firstMatch
+        let model = app.tables["hosted-model-table"].staticTexts["fixture-model:latest"].firstMatch
         XCTAssertTrue(model.waitForExistence(timeout: 10))
         let runningDisclosure = app.disclosureTriangles["host-running-models"]
         XCTAssertTrue(runningDisclosure.waitForExistence(timeout: 5))
@@ -60,6 +60,10 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertFalse(app.tables["hosted-model-table"].staticTexts["orphan-running:latest"].exists)
         let runningImage = XCTAttachment(screenshot: app.screenshot()); runningImage.name = "ollama-running-separate-from-tags"; runningImage.lifetime = .keepAlways; add(runningImage)
         clickRunningDisclosure(runningDisclosure)
+        let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (runningDisclosure.value as? String) == "0" || (runningDisclosure.value as? NSNumber)?.intValue == 0
+        }, object: nil)
+        wait(for: [collapsed], timeout: 5)
         runningDisclosure.scroll(byDeltaX: 0, deltaY: 240)
         try Data().write(to: root.appendingPathComponent("fail")); refresh.click()
         let error = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Refresh failed", "Refresh failed")).firstMatch
