@@ -137,7 +137,8 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(detailRequests.first?.hasPrefix("POST /api/show ") == true)
         let detailsImage = XCTAttachment(screenshot: app.screenshot()); detailsImage.name = "ollama-model-details-read"; detailsImage.lifetime = .keepAlways; add(detailsImage)
         clickRunningDisclosure(selectedDetails)
-        selectedDetails.scroll(byDeltaX: 0, deltaY: 240)
+        selectedDetails.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 26, dy: 8)).scroll(byDeltaX: 0, deltaY: 240)
         let compare = app.buttons["Compare…"].firstMatch
         let canCompare = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in compare.isEnabled }, object: nil)
         wait(for: [canCompare], timeout: 10); compare.click()
