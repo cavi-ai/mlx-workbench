@@ -45,7 +45,8 @@ final class HostedModelsUITests: XCTestCase {
         app.buttons["Save host"].click()
         let refresh = app.buttons["refresh-model-host"].firstMatch
         XCTAssertTrue(refresh.waitForExistence(timeout: 5)); refresh.click()
-        let model = app.tables["hosted-model-table"].staticTexts["fixture-model:latest"].firstMatch
+        let installedModels = app.outlines["hosted-model-table"]
+        let model = installedModels.staticTexts["fixture-model:latest"].firstMatch
         XCTAssertTrue(model.waitForExistence(timeout: 10))
         let runningDisclosure = app.disclosureTriangles["host-running-models"]
         XCTAssertTrue(runningDisclosure.waitForExistence(timeout: 5))
@@ -57,7 +58,7 @@ final class HostedModelsUITests: XCTestCase {
         runningDisclosure.scroll(byDeltaX: 0, deltaY: -240)
         let runningOnly = app.staticTexts["orphan-running:latest"].firstMatch
         XCTAssertTrue(runningOnly.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.tables["hosted-model-table"].staticTexts["orphan-running:latest"].exists)
+        XCTAssertFalse(installedModels.staticTexts["orphan-running:latest"].exists)
         let runningImage = XCTAttachment(screenshot: app.screenshot()); runningImage.name = "ollama-running-separate-from-tags"; runningImage.lifetime = .keepAlways; add(runningImage)
         clickRunningDisclosure(runningDisclosure)
         let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
