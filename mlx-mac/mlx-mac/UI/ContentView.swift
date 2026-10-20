@@ -228,7 +228,12 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var contextToolbar: some ToolbarContent {
         ToolbarItem(placement: .automatic) {
-            SystemResourceHeader(resources: appHost.resources, endpoint: endpoint, protectedModels: appHost.protectedServingModels, onUnload: { server in
+            SystemResourceHeader(resources: appHost.resources, endpoint: endpoint, hosts: appHost.modelHosts,
+                                 onOpenHost: { host in
+                appHost.hostedLibraryHostRequest = host
+                appHost.hostedLibraryRequested = true
+                navigate(to: .library)
+            }, protectedModels: appHost.protectedServingModels, onUnload: { server in
                 await appHost.unloadServing(server)
             })
         }

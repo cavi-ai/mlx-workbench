@@ -6,6 +6,8 @@ import SwiftUI
 struct SystemResourceHeader: View {
     @ObservedObject var resources: SystemResourceMonitor
     @ObservedObject var endpoint: EndpointSupervisor
+    var hosts: ModelHostsCoordinator? = nil
+    var onOpenHost: (ModelHost?) -> Void = { _ in }
     var protectedModels: Set<String> = []
     let onUnload: (ServerInfo) async -> Bool
     @State private var expanded = false
@@ -39,6 +41,7 @@ struct SystemResourceHeader: View {
     }
 
     var panel: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
             CardHeader("Memory & serving", systemImage: "memorychip") {
                 Button { Task { await resources.refreshMemory(); await resources.refreshServers() } } label: {
@@ -123,9 +126,18 @@ struct SystemResourceHeader: View {
             }
             if endpoint.isUnloading { ProgressView("Unloading…").controlSize(.small) }
             if let unloadError { Text(unloadError).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning) }
+            if let hosts {
+                Divider()
+                SavedModelHostsSection(hosts: hosts) { host in
+                    expanded = false
+                    onOpenHost(host)
+                }
+            }
         }
         .padding(WorkbenchSpacing.md)
+        }
         .frame(width: 420)
+        .frame(maxHeight: 620)
         .task {
             while !Task.isCancelled {
                 await resources.refreshServers()
@@ -229,5 +241,84 @@ struct ProcessMemorySheet: View {
         .padding(WorkbenchSpacing.lg)
         .frame(minWidth: 480, idealWidth: 580, maxWidth: 640, minHeight: 460, idealHeight: 520, maxHeight: 560)
         .task { await resources.refreshProcesses() }
+    }
+}
+
+/// A cached view of explicit connections. Only its Refresh buttons read a host.
+struct SavedModelHostsSection: View {
+    @ObservedObject var hosts: ModelHostsCoordinator
+    let onOpenHost: (ModelHost?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Saved model hosts").font(WorkbenchTypography.label)
+            Text("Snapshots, refreshed individually. Reported model memory is separate from system headroom.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            if let error = hosts.storageError {
+                Text(error).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+            }
+            if hosts.hosts.isEmpty {
+                Text("No saved connections").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                Button("Manage hosts…") { onOpenHost(nil) }.buttonStyle(.borderless)
+            }
+            ForEach(hosts.hosts) { host in
+                hostRow(host)
+            }
+        }
+        .accessibilityIdentifier("saved-model-hosts")
+    }
+
+    private func hostRow(_ host: ModelHost) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(host.name).font(WorkbenchTypography.label).lineLimit(2).help(host.baseURL)
+                Spacer(minLength: WorkbenchSpacing.xs)
+                Button("Open host") { onOpenHost(host) }
+                    .accessibilityLabel("Open \(host.name) in Library")
+                    .accessibilityIdentifier("open-resource-host-\(host.id)")
+                Button { Task { await hosts.refresh(host.id) } } label: {
+                    if hosts.refreshing.contains(host.id) { ProgressView().controlSize(.small) }
+                    else { Image(systemName: "arrow.clockwise") }
+                }
+                .disabled(hosts.refreshing.contains(host.id))
+                .help("Refresh this host's inventory and activity")
+                .accessibilityLabel("Refresh \(host.name)")
+                .accessibilityIdentifier("refresh-resource-host-\(host.id)")
+            }
+            Text(host.provider.title + " · " + host.baseURL)
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).lineLimit(2)
+            if let error = hosts.errors[host.id] {
+                Text(error).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+            }
+            if let inventory = hosts.inventories[host.id] {
+                Text("Inventory read " + inventory.capturedAt.formatted(date: .abbreviated, time: .standard))
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Text(inventory.activity.map { activity in
+                    activity.state.title + " · checked " + activity.checkedAt.formatted(date: .abbreviated, time: .standard)
+                } ?? "Activity unknown")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                Text(inventory.loadedStateSummary).font(WorkbenchTypography.secondary)
+                ForEach(Array(inventory.reportedLoadedModels.prefix(3))) { model in
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                        Text(model.name).font(WorkbenchTypography.secondary).lineLimit(2)
+                        Text(model.memoryBytes.map { "Host-reported memory: " + ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory) }
+                             ?? "Model memory unknown")
+                            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    }
+                }
+                if inventory.reportedLoadedModels.count > 3 {
+                    Text("\(inventory.reportedLoadedModels.count - 3) more reported loaded · Open host to inspect")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                }
+                if !inventory.warnings.isEmpty {
+                    Text("Inventory has warnings · Open host for details")
+                        .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+                }
+            } else {
+                Text("Not refreshed · loaded state and activity unknown")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            }
+        }
+        .buttonStyle(.borderless)
     }
 }

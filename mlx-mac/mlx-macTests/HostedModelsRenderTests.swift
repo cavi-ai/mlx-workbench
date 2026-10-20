@@ -5,6 +5,79 @@ import XCTest
 
 @MainActor
 final class HostedModelsRenderTests: XCTestCase {
+    func testHostNavigationConsumesExactConnectionAndRejectsChanges() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let hosts = ModelHostsCoordinator(store: JSONStore(fileURL: root.appendingPathComponent("hosts.json")),
+            readToken: { _ in nil }, writeToken: { _, _ in })
+        let first = ModelHost(name: "Same name", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+        var second = ModelHost(name: "Same name", provider: .ollama, baseURL: "http://127.0.0.1:11435")
+        try hosts.save(first, token: nil, replaceToken: false)
+        try hosts.save(second, token: nil, replaceToken: false)
+        let host = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", configPath: root.appendingPathComponent("config.json").path,
+            agentHealth: .notConfigured, runtimeReport: report(), modelHosts: hosts)
+        host.hostedLibraryHostRequest = second
+        XCTAssertEqual(try host.consumeHostedLibraryHostRequest(), second)
+        XCTAssertNil(try host.consumeHostedLibraryHostRequest())
+        host.hostedLibraryHostRequest = second
+        second.baseURL = "http://127.0.0.1:11436"
+        try hosts.save(second, token: nil, replaceToken: false)
+        XCTAssertThrowsError(try host.consumeHostedLibraryHostRequest())
+        XCTAssertNil(host.hostedLibraryHostRequest)
+        host.hostedLibraryHostRequest = first
+        try hosts.remove(first.id)
+        XCTAssertThrowsError(try host.consumeHostedLibraryHostRequest())
+        XCTAssertNil(host.hostedLibraryHostRequest)
+    }
+
+    func testMemoryPanelReadsNoHostsUntilExplicitRefresh() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let reads = HostSummaryReads()
+        let hosts = ModelHostsCoordinator(store: JSONStore(fileURL: root.appendingPathComponent("hosts.json")),
+            readToken: { _ in nil }, writeToken: { _, _ in }, fetch: { host, _ in try await reads.fetch(host) })
+        let first = ModelHost(name: "First", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+        let second = ModelHost(name: "Second", provider: .lmStudio, baseURL: "http://127.0.0.1:1234")
+        for host in [first, second] { try hosts.save(host, token: nil, replaceToken: false) }
+        let header = SystemResourceHeader(resources: SystemResourceMonitor(probe: { nil }), endpoint: endpoint(root: root), hosts: hosts,
+            onUnload: { _ in XCTFail("Rendering must not unload"); return false })
+        let hosting = NSHostingView(rootView: header.panel)
+        hosting.frame = NSRect(x: 0, y: 0, width: 420, height: 620)
+        hosting.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        var requested = await reads.requested
+        XCTAssertEqual(requested, [])
+        await hosts.refresh(second.id)
+        requested = await reads.requested
+        XCTAssertEqual(requested, [second.id])
+        XCTAssertNil(hosts.inventories[first.id])
+        let previous = hosts.inventories[second.id]
+        await hosts.refresh(second.id)
+        XCTAssertEqual(hosts.inventories[second.id], previous)
+        XCTAssertNotNil(hosts.errors[second.id])
+    }
+
+    func testSavedHostsMemoryPanelStatesRender() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for state in ["unrefreshed", "loaded", "error"] {
+            let reads = HostSummaryReads()
+            let hosts = ModelHostsCoordinator(store: JSONStore(fileURL: root.appendingPathComponent(state + ".json")),
+                readToken: { _ in nil }, writeToken: { _, _ in }, fetch: { host, _ in try await reads.fetch(host) })
+            let connection = ModelHost(name: "Development models with a deliberately long connection name", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+            try hosts.save(connection, token: nil, replaceToken: false)
+            if state != "unrefreshed" { await hosts.refresh(connection.id) }
+            if state == "error" { await hosts.refresh(connection.id) }
+            let resources = SystemResourceMonitor(probe: { MemorySnapshot(totalBytes: 32_000_000_000, availableBytes: 6_000_000_000) })
+            await resources.refreshMemory(); await resources.refreshServers()
+            let header = SystemResourceHeader(resources: resources, endpoint: endpoint(root: root), hosts: hosts, onUnload: { _ in false })
+            for dark in [false, true] {
+                try await capture(header.panel, name: "memory-hosts-" + state, dark: dark, width: 740)
+            }
+        }
+    }
+
     func testNativeRequestsReturnFromHostedWorkspaceWithoutStartingWork() async throws {
         let host = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", configPath: "/state/config.json",
             agentHealth: .notConfigured, runtimeReport: report())
@@ -71,6 +144,12 @@ final class HostedModelsRenderTests: XCTestCase {
             serve: ServeStatus(ok: true, executables: [:], missingExecutables: [], install: "make install", message: "Ready"), install: "make install", ok: true)
     }
 
+    private func endpoint(root: URL) -> EndpointSupervisor {
+        let world = FakeServeWorld()
+        return EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore(fileURL: root.appendingPathComponent("endpoints.json")))
+    }
+
     func testHostResourceConfirmationStatesRender() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -113,5 +192,18 @@ final class HostedModelsRenderTests: XCTestCase {
         if let destination = ProcessInfo.processInfo.environment["MLX_HOST_RENDER_DIR"] {
             try png.write(to: URL(fileURLWithPath: destination).appendingPathComponent(filename + ".png"))
         }
+    }
+}
+
+private actor HostSummaryReads {
+    var requested: [UUID] = []
+    func fetch(_ host: ModelHost) throws -> HostInventory {
+        requested.append(host.id)
+        if requested.count > 1 { throw URLError(.cannotConnectToHost) }
+        return HostInventory(host: host, models: [
+            HostedModel(hostID: host.id, modelID: "loaded", name: "Qwen coding model with a long model name", isLoaded: true, memoryBytes: 5_000_000_000),
+            HostedModel(hostID: host.id, modelID: "unknown", name: "Unknown residency")
+        ], capturedAt: Date(timeIntervalSince1970: 1_792_512_000),
+            activity: HostActivity(state: .unknown, checkedAt: Date(timeIntervalSince1970: 1_792_512_000), detail: "Other clients' activity is unavailable."))
     }
 }

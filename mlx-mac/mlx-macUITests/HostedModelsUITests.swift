@@ -65,6 +65,29 @@ final class HostedModelsUITests: XCTestCase {
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "hosted-comparison-cancelled"; attachment.lifetime = .keepAlways; add(attachment)
 
         library.click()
+        // A different selected connection must not win over an explicit toolbar request.
+        clickVisibleControl(app.buttons["Add host…"].firstMatch, in: app)
+        let secondName = app.sheets.textFields.matching(NSPredicate(format: "value == %@", "Ollama")).firstMatch
+        XCTAssertTrue(secondName.waitForExistence(timeout: 5))
+        secondName.click(); secondName.typeKey("a", modifierFlags: .command); secondName.typeText("Other host")
+        let secondURL = app.textFields["model-host-url"]
+        secondURL.click(); secondURL.typeKey("a", modifierFlags: .command); secondURL.typeText("http://127.0.0.1:1")
+        app.buttons["Save host"].click()
+        let hostPicker = app.popUpButtons["model-host-picker"]
+        XCTAssertTrue(hostPicker.waitForExistence(timeout: 5)); clickVisibleControl(hostPicker, in: app)
+        app.menuItems["Other host"].click()
+        app.buttons["Overview"].firstMatch.click()
+        let memory = app.buttons["system-memory-header"]
+        XCTAssertTrue(memory.waitForExistence(timeout: 5)); memory.click()
+        let openHost = app.buttons["Open Ollama in Library"]
+        XCTAssertTrue(openHost.waitForExistence(timeout: 5))
+        let refreshHost = app.buttons["Refresh Ollama"]
+        XCTAssertTrue(refreshHost.exists); clickVisibleControl(refreshHost, in: app)
+        let memoryImage = XCTAttachment(screenshot: app.screenshot()); memoryImage.name = "memory-saved-hosts"; memoryImage.lifetime = .keepAlways; add(memoryImage)
+        clickVisibleControl(openHost, in: app)
+        XCTAssertTrue(hostPicker.waitForExistence(timeout: 5))
+        XCTAssertEqual(hostPicker.value as? String, "Ollama")
+        XCTAssertTrue(model.waitForExistence(timeout: 5)); clickVisibleControl(model, in: app)
         let unload = app.buttons["host-resource-open"]
         XCTAssertTrue(unload.waitForExistence(timeout: 5)); clickVisibleControl(unload, in: app)
         let confirm = app.buttons["host-resource-confirm"]
