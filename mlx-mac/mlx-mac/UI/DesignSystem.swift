@@ -486,6 +486,10 @@ extension WorkbenchSize {
 
     /// Training route dimensions.
     enum Training {
+        static let datasetSheetMinWidth: CGFloat = 520
+        static let datasetSheetWidth: CGFloat = 620
+        static let datasetSheetHeight: CGFloat = 540
+        static let datasetListMinHeight: CGFloat = 160
         static let baseModelMenuWidth: CGFloat = 420
         static let iterationsWidth: CGFloat = 120
         static let evidenceMaxHeight: CGFloat = 240

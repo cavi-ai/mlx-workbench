@@ -1692,6 +1692,93 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Training-completed-without-refresh")
     }
 
+    func testTrainingDatasetCreationSavesWithoutStartingWork() throws {
+        launch(appearance: "Dark", route: "training-studio", isolatedHome: true)
+        let scroll = app.scrollViews.containing(.textField, identifier: "Dataset path").firstMatch
+        func reveal(_ element: XCUIElement) {
+            XCTAssertTrue(element.waitForExistence(timeout: 10), app.debugDescription)
+            for _ in 0..<8 where !element.isHittable {
+                scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 180 : -180)
+            }
+            XCTAssertTrue(element.isHittable)
+        }
+        func replace(_ field: XCUIElement, _ value: String) {
+            field.click()
+            app.typeKey("a", modifierFlags: .command)
+            field.typeText(value)
+        }
+        let batch = app.textFields["Batch size"]
+        reveal(batch); replace(batch, "1")
+        let create = app.buttons["training-create-dataset"]
+        reveal(create); create.click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let save = sheet.buttons["Save dataset…"]
+        XCTAssertFalse(save.isEnabled)
+        capture("Dataset-editor-empty-standard")
+        replace(sheet.textFields["dataset-train-1-prompt"], "What is a local model?")
+        replace(sheet.textFields["dataset-train-1-reply"], "A model that runs on your own computer.")
+        sheet.buttons["Cancel"].click()
+        XCTAssertTrue(sheet.buttons["Keep editing"].firstMatch.waitForExistence(timeout: 5))
+        sheet.buttons["Keep editing"].firstMatch.click()
+        let validation = sheet.radioButtons.matching(NSPredicate(format: "label BEGINSWITH %@", "Validation")).firstMatch
+        XCTAssertTrue(validation.exists, app.debugDescription)
+        validation.click()
+        replace(sheet.textFields["dataset-valid-1-prompt"], "Why keep validation examples separate?")
+        replace(sheet.textFields["dataset-valid-1-reply"], "They check performance on examples held out from learning.")
+        XCTAssertTrue(save.isEnabled)
+        capture("Dataset-editor-ready-standard")
+        sheet.buttons["Cancel"].click()
+        XCTAssertTrue(sheet.buttons["Discard changes"].firstMatch.waitForExistence(timeout: 5))
+        sheet.buttons["Discard changes"].firstMatch.click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        resizeWindow(width: 740, height: 560)
+        reveal(create); create.click()
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        replace(sheet.textFields["dataset-train-1-prompt"], "What is a local model?")
+        replace(sheet.textFields["dataset-train-1-reply"], "A model that runs on your own computer.")
+        sheet.radioButtons.matching(NSPredicate(format: "label BEGINSWITH %@", "Validation")).firstMatch.click()
+        replace(sheet.textFields["dataset-valid-1-prompt"], "Why keep validation examples separate?")
+        replace(sheet.textFields["dataset-valid-1-reply"], "They check performance on held-out examples.")
+        let bounds = sheet.frame, window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(bounds.minX, window.minX)
+        XCTAssertLessThanOrEqual(bounds.maxX, window.maxX)
+        XCTAssertGreaterThanOrEqual(bounds.minY, window.minY)
+        XCTAssertLessThanOrEqual(bounds.maxY, window.maxY)
+        capture("Dataset-editor-ready-minimum")
+        save.click()
+        let createFolder = app.dialogs["save-panel"].buttons["OKButton"]
+        XCTAssertTrue(createFolder.waitForExistence(timeout: 10), app.debugDescription)
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(root.path)
+        app.typeKey(.return, modifierFlags: [])
+        createFolder.click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 15), app.debugDescription)
+        let target = root.appendingPathComponent("Training dataset")
+        XCTAssertEqual(app.textFields["Dataset path"].value as? String, target.path)
+        for file in ["train.jsonl", "valid.jsonl"] {
+            let data = try Data(contentsOf: target.appendingPathComponent(file))
+            XCTAssertNotNil(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+        capture("Dataset-selected-without-training")
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        let requests = calls.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        XCTAssertFalse(requests.contains { Array($0.prefix(2)) == ["lora", "inspect"] || Array($0.prefix(2)) == ["lora", "start"] },
+                       "Creating a dataset must not inspect, preview, or start training; read-only status refreshes remain allowed")
+    }
+
+    func testTrainingDatasetEntryBaseline() {
+        launch(appearance: "Dark", route: "training-studio", isolatedHome: true)
+        let field = app.textFields["Dataset path"]
+        let scroll = app.scrollViews.containing(.textField, identifier: "Dataset path").firstMatch
+        for narrow in [false, true] {
+            if narrow { resizeWindow(width: 740, height: 560) }
+            for _ in 0..<8 where !field.isHittable { scroll.scroll(byDeltaX: 0, deltaY: -180) }
+            XCTAssertTrue(field.isHittable)
+            capture(narrow ? "Training-dataset-before-minimum" : "Training-dataset-before-standard")
+        }
+    }
+
     func testTrainingWorkflowGuidanceAndResults() throws {
         let before = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_STAGE"] == "before"
         func flag(_ name: String, _ enabled: Bool) throws {
