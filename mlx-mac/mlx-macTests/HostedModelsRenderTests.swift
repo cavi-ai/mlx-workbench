@@ -18,6 +18,30 @@ final class HostedModelsRenderTests: XCTestCase {
         }
     }
 
+    func testRecordedComparisonConditionStatesRender() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
+        let host = ModelHost(name: "Local development host with a long saved connection name", provider: .comfyUI, baseURL: "http://127.0.0.1:8188")
+        let selected = HostedModel(hostID: host.id, modelID: "selected", name: "Selected model", isLoaded: true)
+        let other = HostedModel(hostID: host.id, modelID: "another", name: "Another loaded model", isLoaded: true, memoryBytes: 4_000_000_000)
+        let date = Date(timeIntervalSince1970: 1_792_512_000)
+        let run = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "Test", useCase: nil, variants: [selected.id],
+            results: [], startedAt: date, finishedAt: date, state: .completed)
+        for state in ["recorded", "unknown", "legacy"] {
+            let conditions = HostedLaneConditions(targetID: selected.id, memoryCapturedAt: date,
+                systemMemory: state == "unknown" ? nil : MemorySnapshot(totalBytes: 32_000_000_000, availableBytes: 2_000_000_000),
+                reserveBytes: FitAdvisor.reserveBytes, inventoryCapturedAt: date,
+                activity: state == "unknown" ? nil : HostActivity(state: .busy, checkedAt: date, runningCount: 1, pendingCount: 2, detail: "Observed from the host queue."),
+                loadedModels: state == "unknown" ? [] : [selected, other], unknownResidencyCount: state == "unknown" ? 12 : 1,
+                inventoryWarnings: ["Some model metadata is unavailable."])
+            let record = HostedComparisonRecord(run: run, targets: [HostedComparisonTarget(host: host, model: selected, capturedAt: date)],
+                temperature: 0, workflow: nil, submissions: [], conditions: state == "legacy" ? nil : [conditions])
+            for dark in [false, true] {
+                try await capture(ScrollView { HostedRunConditionsView(record: record).padding(WorkbenchSpacing.pageInset).frame(maxWidth: .infinity, alignment: .leading) },
+                    name: "comparison-conditions-" + state, dark: dark, width: 740)
+            }
+        }
+    }
+
     func testHostNavigationConsumesExactConnectionAndRejectsChanges() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

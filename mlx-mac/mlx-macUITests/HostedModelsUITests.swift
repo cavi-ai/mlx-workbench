@@ -41,6 +41,36 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(addHostButton.waitForExistence(timeout: 5)); addHostButton.click()
         let url = app.textFields["model-host-url"]
         XCTAssertTrue(url.waitForExistence(timeout: 5)); url.click(); url.typeKey("a", modifierFlags: .command)
+        url.typeText("https://example.com")
+        let testConnection = app.buttons["test-model-host-connection"]
+        XCTAssertFalse(testConnection.isEnabled)
+        XCTAssertFalse(app.buttons["Save host"].isEnabled)
+        url.click(); url.typeKey("a", modifierFlags: .command)
+        url.typeText("http://127.0.0.1:\(port)")
+        try Data().write(to: root.appendingPathComponent("unauthorized"))
+        testConnection.click()
+        let connectionError = app.otherElements["model-host-connection-error"].firstMatch
+        let authentication = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Authentication was refused", "Authentication was refused")).firstMatch
+        XCTAssertTrue(authentication.waitForExistence(timeout: 10))
+        let failureCapture = XCTAttachment(screenshot: app.screenshot())
+        failureCapture.name = "host-connection-authentication-guidance"; failureCapture.lifetime = .keepAlways; add(failureCapture)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("unauthorized"))
+        testConnection.click()
+        let inventoryRead = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Inventory read", "Inventory read")).firstMatch
+        XCTAssertTrue(inventoryRead.waitForExistence(timeout: 10))
+        XCTAssertFalse(authentication.exists)
+        let requests = try String(contentsOf: root.appendingPathComponent("requests"), encoding: .utf8)
+        XCTAssertTrue(requests.split(separator: "\n").allSatisfy { $0.hasPrefix("GET ") })
+        let successCapture = XCTAttachment(screenshot: app.screenshot())
+        successCapture.name = "host-connection-inventory-read"; successCapture.lifetime = .keepAlways; add(successCapture)
+        let name = app.textFields["model-host-name"]
+        name.click(); name.typeText(" edited")
+        XCTAssertFalse(inventoryRead.exists)
+        XCTAssertFalse(connectionError.exists)
+        app.buttons["Cancel"].click()
+        XCTAssertTrue(app.staticTexts["Connect a local model host"].waitForExistence(timeout: 5))
+        addHostButton.click()
+        XCTAssertTrue(url.waitForExistence(timeout: 5)); url.click(); url.typeKey("a", modifierFlags: .command)
         url.typeText("http://127.0.0.1:\(port)")
         app.buttons["Save host"].click()
         let refresh = app.buttons["refresh-model-host"].firstMatch
@@ -66,21 +96,39 @@ final class HostedModelsUITests: XCTestCase {
         }, object: nil)
         wait(for: [collapsed], timeout: 5)
         runningDisclosure.scroll(byDeltaX: 0, deltaY: 240)
+        try Data().write(to: root.appendingPathComponent("unauthorized")); refresh.click()
+        XCTAssertTrue(authentication.waitForExistence(timeout: 10))
+        XCTAssertTrue(model.exists, "Authentication failure retains the last inventory")
+        app.buttons["repair-model-host-connection"].click()
+        XCTAssertTrue(url.waitForExistence(timeout: 5))
+        XCTAssertEqual(url.value as? String, "http://127.0.0.1:\(port)")
+        app.buttons["Cancel"].click()
+        XCTAssertTrue(authentication.exists)
+        let refreshFailureCapture = XCTAttachment(screenshot: app.screenshot())
+        refreshFailureCapture.name = "host-refresh-authentication-recovery"; refreshFailureCapture.lifetime = .keepAlways; add(refreshFailureCapture)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("unauthorized"))
+        app.buttons["retry-model-host-refresh"].click()
+        let recovered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !authentication.exists }, object: nil)
+        wait(for: [recovered], timeout: 10)
+        XCTAssertTrue(model.exists)
         try Data().write(to: root.appendingPathComponent("fail")); refresh.click()
         let error = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Refresh failed", "Refresh failed")).firstMatch
         XCTAssertTrue(error.waitForExistence(timeout: 10)); XCTAssertTrue(model.exists)
-        try FileManager.default.removeItem(at: root.appendingPathComponent("fail")); refresh.click()
+        try FileManager.default.removeItem(at: root.appendingPathComponent("fail")); app.buttons["retry-model-host-refresh"].click()
         XCTAssertTrue(model.waitForExistence(timeout: 10)); model.click()
         let compare = app.buttons["Compare…"].firstMatch
         let canCompare = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in compare.isEnabled }, object: nil)
         wait(for: [canCompare], timeout: 10); compare.click()
         let run = app.buttons["run-hosted-comparison"]
         XCTAssertTrue(run.waitForExistence(timeout: 10)); XCTAssertTrue(run.isEnabled); run.click()
+        let conditionsNotice = app.staticTexts["hosted-conditions-notice"]
+        XCTAssertTrue(conditionsNotice.waitForExistence(timeout: 10))
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 10)); cancel.click()
         XCTAssertTrue(run.waitForExistence(timeout: 10))
         let cancelled = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Recorded host comparisons · cancelled", "Recorded host comparisons · cancelled")).firstMatch
         XCTAssertTrue(cancelled.waitForExistence(timeout: 10))
+        XCTAssertTrue(conditionsNotice.exists)
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "hosted-comparison-cancelled"; attachment.lifetime = .keepAlways; add(attachment)
 
         library.click()
@@ -197,6 +245,16 @@ private final class HostedUIFixture: @unchecked Sendable {
             let length = header.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("content-length:") }
                 .flatMap { Int($0.split(separator: ":", maxSplits: 1).last!.trimmingCharacters(in: .whitespaces)) } ?? 0
             guard request[end.upperBound...].utf8.count >= length else { receive(connection, data: data); return }
+            let requestLog = root.appendingPathComponent("requests")
+            var recorded = (try? Data(contentsOf: requestLog)) ?? Data()
+            recorded.append(Data(((header.components(separatedBy: "\r\n").first ?? "") + "\n").utf8))
+            try? recorded.write(to: requestLog)
+            if FileManager.default.fileExists(atPath: root.appendingPathComponent("unauthorized").path) {
+                let body = "private-server-body"
+                let response = "HTTP/1.1 401 Unauthorized\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body
+                connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
             if request.hasPrefix("POST ") {
                 if request.hasPrefix("POST /api/generate ") {
                     do {

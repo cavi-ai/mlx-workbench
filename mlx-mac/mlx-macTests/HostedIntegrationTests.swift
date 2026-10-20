@@ -6,6 +6,230 @@ import Network
 
 @MainActor
 final class HostedIntegrationTests: XCTestCase {
+    func testConditionsPersistBeforeHostedInference() async throws {
+        let store = JSONStore<HostedComparisonRecord>(fileURL: try directory().appendingPathComponent("hosted.json"))
+        let host = ModelHost(name: "Host", provider: .ollama, baseURL: "http://localhost:11434")
+        let model = HostedModel(hostID: host.id, modelID: "selected", name: "Selected", digest: "sha", isLoaded: true)
+        let other = HostedModel(hostID: host.id, modelID: "other", name: "Other", isLoaded: true, memoryBytes: 4_000_000_000)
+        let unknown = HostedModel(hostID: host.id, modelID: "unknown", name: "Unknown")
+        let inventory = HostInventory(host: host, models: [model, other, unknown], capturedAt: Date(), warnings: ["Partial metadata"],
+            activity: HostActivity(state: .busy, runningCount: 1, pendingCount: 2, detail: "Reported queue"))
+        let coordinator = HostedComparisonCoordinator(store: store, readToken: { _ in nil }, freshInventory: { _, _ in inventory },
+            hostedChat: { _, _, _, _ in
+                let wire = try XCTUnwrap((JSONSerialization.jsonObject(with: Data(contentsOf: store.url)) as? [[String: Any]])?.first)
+                let conditions = try XCTUnwrap(wire["conditions"] as? [[String: Any]])
+                XCTAssertEqual(conditions.count, 1)
+                XCTAssertEqual(conditions.first?["targetID"] as? String, model.id)
+                XCTAssertEqual((conditions.first?["activity"] as? [String: Any])?["state"] as? String, "busy")
+                XCTAssertEqual((conditions.first?["loadedModels"] as? [[String: Any]])?.count, 2)
+                XCTAssertEqual(conditions.first?["unknownResidencyCount"] as? Int, 1)
+                return ProbeSample(text: "Answer", completionTokens: 1, timeToFirstTokenSeconds: 0.1,
+                    durationSeconds: 1, metricsEstimated: false, finishReason: "stop")
+            }, memoryProbe: { MemorySnapshot(totalBytes: 32_000_000_000, availableBytes: 2_000_000_000) },
+            now: { Date(timeIntervalSince1970: 42) })
+        let done = expectation(description: "Conditions run finished")
+        let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
+        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: inventory.capturedAt)], promptSet: testPrompts())
+        await fulfillment(of: [done], timeout: 5)
+        XCTAssertEqual(try store.load().first?.run.state, .completed)
+        let saved = try XCTUnwrap(store.load().first)
+        let observed = try XCTUnwrap(saved.conditions?.first)
+        XCTAssertEqual(observed.memoryCapturedAt, Date(timeIntervalSince1970: 42))
+        XCTAssertEqual(observed.systemMemory?.availableBytes, 2_000_000_000)
+        XCTAssertEqual(observed.inventoryCapturedAt, inventory.capturedAt)
+        XCTAssertEqual(observed.activity, inventory.activity)
+        XCTAssertEqual(observed.inventoryWarnings, ["Partial metadata"])
+        XCTAssertEqual(observed.timingCaveats.count, 3)
+        XCTAssertEqual(saved.observedTargets?.first?.model, model)
+        subscription.cancel()
+    }
+
+    func testConditionsDecodeLegacyAndRoundTripWithoutBackfill() throws {
+        let host = ModelHost(name: "Host", provider: .ollama, baseURL: "http://localhost:11434")
+        let model = HostedModel(hostID: host.id, modelID: "model", name: "Model", isLoaded: true)
+        let run = ComparisonRun(id: UUID(), promptSetID: "p", promptSetName: "Test", useCase: nil, variants: [model.id],
+            results: [], startedAt: Date(), finishedAt: Date(), state: .completed)
+        var record = HostedComparisonRecord(run: run, targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())],
+            temperature: 0, workflow: nil, submissions: [])
+        let store = JSONStore<HostedComparisonRecord>(fileURL: try directory().appendingPathComponent("hosted.json"))
+        try store.upsert(record, id: \.id)
+        let original = try Data(contentsOf: store.url)
+        let coordinator = HostedComparisonCoordinator(store: store)
+        XCTAssertNil(coordinator.records.first?.conditions)
+        XCTAssertNil(coordinator.records.first?.conditionsNotice)
+        XCTAssertEqual(try Data(contentsOf: store.url), original)
+        record.conditions = [HostedLaneConditions(targetID: model.id, memoryCapturedAt: Date(timeIntervalSince1970: 42),
+            systemMemory: nil, reserveBytes: FitAdvisor.reserveBytes, inventoryCapturedAt: Date(timeIntervalSince1970: 40),
+            activity: nil, loadedModels: [model], unknownResidencyCount: 0, inventoryWarnings: [])]
+        let decoded = try JSONDecoder().decode(HostedComparisonRecord.self, from: JSONEncoder().encode(record))
+        XCTAssertEqual(decoded, record)
+        XCTAssertTrue(decoded.conditions!.first!.timingCaveats.isEmpty, "The selected model is not a competing model")
+        XCTAssertNotNil(decoded.conditionsNotice, "Unknown activity must remain visible")
+    }
+
+    func testUnknownOrInvalidMemoryDoesNotBlockInference() async throws {
+        for reading in [nil, MemorySnapshot(totalBytes: 32, availableBytes: 33), MemorySnapshot(totalBytes: 0, availableBytes: 0)] {
+            let store = JSONStore<HostedComparisonRecord>(fileURL: try directory().appendingPathComponent("hosted.json"))
+            let host = ModelHost(name: "Host", provider: .ollama, baseURL: "http://localhost:11434")
+            let model = HostedModel(hostID: host.id, modelID: "unknown", name: "Unknown")
+            let coordinator = HostedComparisonCoordinator(store: store, readToken: { _ in nil },
+                freshInventory: { _, _ in HostInventory(host: host, models: [model], capturedAt: Date()) }, hostedChat: { _, _, _, _ in
+                    ProbeSample(text: "Answer", completionTokens: 1, timeToFirstTokenSeconds: 0.1, durationSeconds: 1, metricsEstimated: false, finishReason: "stop")
+                }, memoryProbe: { reading })
+            let done = expectation(description: "Unknown conditions do not block")
+            let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
+            try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
+            await fulfillment(of: [done], timeout: 5)
+            let record = try XCTUnwrap(store.load().first)
+            XCTAssertEqual(record.run.state, .completed)
+            let conditions = try XCTUnwrap(record.conditions?.first)
+            XCTAssertNil(conditions.systemMemory)
+            XCTAssertNil(conditions.activity)
+            XCTAssertEqual(conditions.loadedModels, [])
+            XCTAssertEqual(conditions.unknownResidencyCount, 1)
+            XCTAssertEqual(conditions.loadedStateSummary, "Loaded model state unknown")
+            XCTAssertTrue(conditions.timingCaveats.isEmpty)
+            subscription.cancel()
+        }
+    }
+
+    func testFailedConditionSavePreventsInferenceAndFreshSourcePublication() async throws {
+        let store = JSONStore<HostedComparisonRecord>(fileURL: try directory().appendingPathComponent("hosted.json"),
+            replaceItem: { _, _ in throw CocoaError(.fileWriteNoPermission) })
+        let host = ModelHost(name: "Host", provider: .ollama, baseURL: "http://localhost:11434")
+        let model = HostedModel(hostID: host.id, modelID: "model", name: "Model")
+        let coordinator = HostedComparisonCoordinator(store: store, readToken: { _ in nil },
+            freshInventory: { _, _ in HostInventory(host: host, models: [model], capturedAt: Date()) },
+            hostedChat: { _, _, _, _ in XCTFail("Unrecorded conditions must prevent inference"); throw CancellationError() })
+        let done = expectation(description: "Failed condition write stops run")
+        let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
+        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
+        await fulfillment(of: [done], timeout: 5)
+        XCTAssertNotNil(coordinator.storageError)
+        XCTAssertEqual(try store.load().first?.conditions, [])
+        XCTAssertNil(try store.load().first?.observedTargets)
+        subscription.cancel()
+    }
+
+    func testCancellationDuringObservationPreventsInference() async throws {
+        let store = JSONStore<HostedComparisonRecord>(fileURL: try directory().appendingPathComponent("hosted.json"))
+        let host = ModelHost(name: "Host", provider: .ollama, baseURL: "http://localhost:11434")
+        let model = HostedModel(hostID: host.id, modelID: "model", name: "Model")
+        let started = expectation(description: "Observation started"), done = expectation(description: "Cancelled observation recorded")
+        let coordinator = HostedComparisonCoordinator(store: store, readToken: { _ in nil }, freshInventory: { _, _ in
+            started.fulfill(); try await Task.sleep(for: .seconds(10)); throw CancellationError()
+        }, hostedChat: { _, _, _, _ in XCTFail("Cancelled observation must not infer"); throw CancellationError() })
+        let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
+        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
+        await fulfillment(of: [started], timeout: 5)
+        coordinator.cancel()
+        await fulfillment(of: [done], timeout: 5)
+        XCTAssertEqual(try store.load().first?.run.state, .cancelled)
+        XCTAssertEqual(try store.load().first?.conditions, [])
+        XCTAssertNil(try store.load().first?.observedTargets)
+        subscription.cancel()
+    }
+
+    func testRefreshFailureExplainsAuthenticationWithoutLeakingServerText() async throws {
+        let host = ModelHost(name: "Local", provider: .ollama, baseURL: "http://localhost:11434")
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+            readToken: { _ in nil }, writeToken: { _, _ in },
+            fetch: { _, _ in throw HostHTTPError.httpStatus(401) })
+        try coordinator.save(host, token: nil, replaceToken: false)
+        let refreshed = await coordinator.refresh(host.id)
+        XCTAssertFalse(refreshed)
+        let message = try XCTUnwrap(coordinator.errors[host.id])
+        XCTAssertTrue(message.contains("Authentication was refused"))
+        XCTAssertTrue(message.contains("token"))
+        XCTAssertFalse(message.contains("Previous inventory retained"), "There was no previous inventory")
+    }
+
+    func testConnectionCheckInvalidationRejectsLateSuccess() async throws {
+        let check = ModelHostConnectionCheck()
+        let host = ModelHost(name: "Draft", provider: .ollama, baseURL: "http://localhost:11434")
+        var resume: CheckedContinuation<HostInventory, Never>?
+        let task = try XCTUnwrap(check.check { await withCheckedContinuation { resume = $0 } })
+        while resume == nil { await Task.yield() }
+        XCTAssertTrue(check.isChecking)
+        check.invalidate()
+        resume?.resume(returning: HostInventory(host: host, models: [], capturedAt: Date()))
+        await task.value
+        XCTAssertFalse(check.isChecking)
+        XCTAssertNil(check.inventory)
+        XCTAssertNil(check.errorMessage)
+    }
+
+    func testConnectionCheckFailureCanBeRetriedAndNeverLeaksUnderlyingText() async throws {
+        let check = ModelHostConnectionCheck()
+        let failed = try XCTUnwrap(check.check { throw NSError(domain: "secret-token-and-body", code: 1) })
+        await failed.value
+        XCTAssertNotNil(check.errorMessage)
+        XCTAssertFalse(check.errorMessage!.contains("secret-token"))
+        let host = ModelHost(name: "Draft", provider: .ollama, baseURL: "http://localhost:11434")
+        let retry = try XCTUnwrap(check.check { HostInventory(host: host, models: [], capturedAt: Date()) })
+        await retry.value
+        XCTAssertEqual(check.inventory?.models.count, 0)
+        XCTAssertNil(check.errorMessage)
+    }
+
+    func testConnectionFailureGuidanceDistinguishesAuthenticationAndWrongAPI() {
+        XCTAssertTrue(ModelHostConnectionCheck.guidance(for: HostHTTPError.httpStatus(401)).contains("token"))
+        XCTAssertTrue(ModelHostConnectionCheck.guidance(for: HostHTTPError.httpStatus(403)).contains("access"))
+        XCTAssertTrue(ModelHostConnectionCheck.guidance(for: HostHTTPError.httpStatus(404)).contains("provider"))
+        XCTAssertTrue(ModelHostConnectionCheck.guidance(for: HostHTTPError.requestFailed).contains("reached"))
+    }
+
+    func testHostEditorValidationMatchesLocalConnectionRules() {
+        var host = ModelHost(name: "", provider: .ollama, baseURL: "http://localhost:11434")
+        XCTAssertNotNil(host.validationMessage)
+        host.name = "Local"
+        XCTAssertNil(host.validationMessage)
+        host.baseURL = "https://example.com"
+        XCTAssertNotNil(host.validationMessage)
+        host.baseURL = "http://localhost:11434"
+        host.name = String(repeating: "a", count: 121)
+        XCTAssertNotNil(host.validationMessage)
+    }
+
+    func testConnectionCheckUsesDraftCredentialsWithoutSaving() async throws {
+        let file = try directory().appendingPathComponent("hosts.json")
+        let host = ModelHost(name: "Draft", provider: .ollama, baseURL: "http://localhost:11434")
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: file),
+            readToken: { _ in "saved-token" }, writeToken: { _, _ in XCTFail("Checking wrote credentials") },
+            fetch: { received, token in
+                XCTAssertEqual(received, host)
+                XCTAssertEqual(token, "draft-token")
+                return HostInventory(host: received, models: [], capturedAt: Date())
+            })
+        let result = try await coordinator.checkConnection(host, token: "draft-token", replaceToken: true)
+        XCTAssertEqual(result.host, host)
+        XCTAssertTrue(coordinator.hosts.isEmpty)
+        XCTAssertTrue(coordinator.inventories.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testConnectionCheckUsesSavedCredentialUnlessReplacementIsSelected() async throws {
+        let host = ModelHost(name: "Saved", provider: .ollama, baseURL: "http://localhost:11434")
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+            readToken: { _ in "saved-token" }, writeToken: { _, _ in XCTFail("Checking wrote credentials") },
+            fetch: { received, token in
+                XCTAssertEqual(token, "saved-token")
+                return HostInventory(host: received, models: [], capturedAt: Date())
+            })
+        _ = try await coordinator.checkConnection(host, token: "unused-draft", replaceToken: false)
+    }
+
+    func testInvalidConnectionDoesNotReadCredentialsOrContactHost() async throws {
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+            readToken: { _ in XCTFail("Invalid address read credentials"); return nil },
+            writeToken: { _, _ in XCTFail("Checking wrote credentials") },
+            fetch: { host, _ in XCTFail("Invalid address contacted host"); return HostInventory(host: host, models: [], capturedAt: Date()) })
+        do {
+            _ = try await coordinator.checkConnection(ModelHost(name: "Remote", provider: .ollama, baseURL: "https://example.com"), token: nil, replaceToken: false)
+            XCTFail("Expected address rejection")
+        } catch { XCTAssertEqual(error as? HostHTTPError, .invalidURL) }
+    }
+
     func testResidencySummaryPreservesUnknownAndPartialMetadata() {
         let host = ModelHost(name: "ComfyUI", provider: .comfyUI, baseURL: "http://127.0.0.1:8188")
         let unknown = HostedModel(hostID: host.id, modelID: "checkpoint", name: "Checkpoint")
@@ -60,6 +284,7 @@ final class HostedIntegrationTests: XCTestCase {
         await coordinator.refresh(host.id)
         XCTAssertEqual(coordinator.inventories[host.id]?.capturedAt, captured)
         XCTAssertNotNil(coordinator.errors[host.id])
+        XCTAssertTrue(coordinator.errors[host.id]?.contains("Previous inventory retained") == true)
         XCTAssertFalse(coordinator.refreshing.contains(host.id))
     }
 
@@ -153,11 +378,16 @@ final class HostedIntegrationTests: XCTestCase {
                 started.fulfill(); try await Task.sleep(nanoseconds: 10_000_000_000); throw CancellationError()
             })
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
+        let second = HostedModel(hostID: host.id, modelID: "later", name: "Later")
+        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date()),
+            HostedComparisonTarget(host: host, model: second, capturedAt: Date())], promptSet: testPrompts())
         await fulfillment(of: [started], timeout: 5)
         coordinator.cancel()
         await fulfillment(of: [done], timeout: 5)
         XCTAssertEqual(try store.load().first?.run.state, .cancelled)
+        XCTAssertEqual(try store.load().first?.conditions?.count, 1)
+        XCTAssertEqual(try store.load().first?.conditions?.first?.targetID, model.id)
+        XCTAssertEqual(try store.load().first?.run.results.count, 1)
         XCTAssertFalse(coordinator.cancelling)
         XCTAssertNil(coordinator.activeRunID)
         subscription.cancel()
@@ -168,7 +398,14 @@ final class HostedIntegrationTests: XCTestCase {
         let events = NativeLifecycleEvents()
         let receipt = ComparisonServerReceipt(port: 9998, pid: 123, modelIdentity: "/Models/native", previewHash: "reviewed", startedAt: "stamp")
         let probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "reviewed" }, start: { _, _, _ in },
-            stop: { port in await events.stopped(port) }, startWithReceipt: { _, _, _ in receipt }),
+            stop: { port in await events.stopped(port) }, startWithReceipt: { _, _, _ in
+                let conditions = try XCTUnwrap(store.load().first?.conditions?.first)
+                XCTAssertEqual(conditions.targetID, "local:/Models/native")
+                XCTAssertNil(conditions.inventoryCapturedAt)
+                XCTAssertNil(conditions.activity)
+                XCTAssertNil(conditions.loadedModels)
+                return receipt
+            }),
             prober: HostedNativeProber(check: {
                 XCTAssertEqual(try store.load().first?.run.pendingServerCleanup?.server, receipt)
             }), pickPort: { 9998 })
@@ -192,6 +429,7 @@ final class HostedIntegrationTests: XCTestCase {
         let stopped = await events.ports
         XCTAssertEqual(stopped, [9998])
         XCTAssertEqual(result.observedTargets?.first?.host, host)
+        XCTAssertEqual(result.conditions?.map(\.targetID), result.targets.map(\.id))
         subscription.cancel()
     }
 

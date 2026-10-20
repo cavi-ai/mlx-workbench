@@ -176,7 +176,25 @@ The screen never writes configuration. When the scan does not reach the folder, 
 
 Choose **Library → Source → Hosted models**, then **Add host…**. Presets cover Ollama, LM Studio, ComfyUI and llama.cpp; **OpenAI-compatible** accepts other local servers exposing a model-list API. Enter the server's HTTP or HTTPS loopback address, including its port. A trailing `/v1` is accepted. Remote addresses are not supported. Optional API tokens are stored in macOS Keychain, separately from the saved connection.
 
+The editor shows invalid names or addresses before Save. **Test connection** is
+optional: it reads the selected provider's model inventory using the entered
+replacement token, or the saved token when replacement is off. Authentication
+and missing-API errors offer guidance without showing server response bodies.
+A successful check shows the reported model count and check time; it does not
+test generation or establish that a model is ready to run. Editing any connection
+field or token clears the result. **Cancel check** stops waiting for a result.
+Testing never saves the host, changes Keychain, loads a model or publishes the
+inventory to Library. **Save host** remains the explicit persistence action;
+you can save a valid connection without testing it, then use **Refresh** later.
+
 **Refresh** reads inventory without loading models, generating outputs, downloading weights or changing the host's configuration. Refresh is manual. A failed refresh retains the previous inventory with its capture time and an error. Editing an address or provider clears that connection's cached inventory. Removing a connection leaves the host and its models untouched.
+
+Failed refreshes distinguish authentication, missing API and connection errors.
+**Retry refresh** rereads only the inventory. **Edit connection…** opens the saved
+provider, address and token controls; Cancel preserves the connection and error.
+When no prior inventory exists, the error says so. Retained inventory is dated
+evidence and does not establish the host's current state. A successful refresh
+replaces it and clears the error. Recovery actions never start generation.
 
 The table shows model identifiers, available or loaded state, parameter size, quantization and file size where reported. Select a row and expand **Reported model details** for context, memory, capabilities and digest. Missing metadata is **Unknown**. Reported model memory is separate from whole-device memory; model context limits are separate from loaded context.
 

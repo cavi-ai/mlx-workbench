@@ -29,6 +29,14 @@ struct ModelHost: Codable, Equatable, Identifiable, Sendable {
     var provider: ModelHostProvider
     var baseURL: String
 
+    var validationMessage: String? {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name.count <= 120 else {
+            return "Enter a host name of 1–120 characters."
+        }
+        do { _ = try validatedURL(); return nil }
+        catch { return error.localizedDescription }
+    }
+
     /// Connections are explicit local HTTP endpoints. A pasted OpenAI base URL may end in /v1.
     func validatedURL() throws -> URL {
         guard !baseURL.isEmpty, baseURL.utf8.count <= 2048,

@@ -41,7 +41,21 @@ struct HostedModelsView: View {
                         Text(message).font(WorkbenchTypography.secondary).textSelection(.enabled)
                             .accessibilityIdentifier("host-resource-result")
                     }
-                    if let error = hosts.errors[host.id] { ErrorBanner(text: error) }
+                    if let error = hosts.errors[host.id] {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            ErrorBanner(text: error)
+                            HStack {
+                                Button("Retry refresh") { Task { await hosts.refresh(host.id) } }
+                                    .disabled(hosts.refreshing.contains(host.id))
+                                    .accessibilityIdentifier("retry-model-host-refresh")
+                                    .help("Read this host's inventory again without loading models.")
+                                Button("Edit connection…") { editor = host }
+                                    .disabled(appHost.hostedComparison.activeRunID != nil || hosts.resourceBusy)
+                                    .accessibilityIdentifier("repair-model-host-connection")
+                                    .help("Review the server URL, provider and credential before saving changes.")
+                            }.controlSize(.small)
+                        }
+                    }
                     if let inventory {
                         inventoryContent(inventory)
                     } else {
@@ -343,6 +357,7 @@ private struct ModelHostEditor: View {
     @State private var token = ""
     @State private var replaceToken = false
     @State private var error: String?
+    @StateObject private var connectionCheck = ModelHostConnectionCheck()
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -353,13 +368,47 @@ private struct ModelHostEditor: View {
                         if host.baseURL == previous.defaultURL { host.baseURL = selected.defaultURL }
                         if host.name == previous.title { host.name = selected.title }
                     }
-                TextField("Name", text: $host.name)
+                TextField("Name", text: $host.name).accessibilityIdentifier("model-host-name")
                 TextField("Server URL", text: $host.baseURL).accessibilityIdentifier("model-host-url")
                 Toggle("Replace saved API token", isOn: $replaceToken)
                 if replaceToken { SecureField("API token (optional)", text: $token) }
             }.formStyle(.grouped)
             Text("Local servers only. Tokens are stored in Keychain; leaving the replacement token blank removes it.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            if let message = host.validationMessage {
+                Label(message, systemImage: "exclamationmark.circle")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                HStack {
+                    Button("Test connection") {
+                        let host = host, token = token, replaceToken = replaceToken
+                        connectionCheck.check { try await coordinator.checkConnection(host, token: token, replaceToken: replaceToken) }
+                    }
+                    .disabled(host.validationMessage != nil || connectionCheck.isChecking)
+                    .accessibilityIdentifier("test-model-host-connection")
+                    if connectionCheck.isChecking {
+                        ProgressView().controlSize(.small)
+                        Button("Cancel check") { connectionCheck.invalidate() }
+                    }
+                }
+                if let inventory = connectionCheck.inventory {
+                    Label("Inventory read · \(inventory.models.count) models reported", systemImage: "checkmark.circle")
+                        .foregroundStyle(WorkbenchColor.success)
+                        .accessibilityIdentifier("model-host-connection-result")
+                    Text("Checked \(inventory.capturedAt.formatted(date: .omitted, time: .standard)) · Generation is not tested.")
+                        .foregroundStyle(WorkbenchColor.muted)
+                }
+                if let message = connectionCheck.errorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(WorkbenchColor.failure)
+                        .accessibilityIdentifier("model-host-connection-error")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Optional: reads the model inventory without loading models or saving this connection or token.")
+                    .foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
+            }.font(WorkbenchTypography.secondary)
             ErrorBanner(text: error)
             HStack {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -368,7 +417,12 @@ private struct ModelHostEditor: View {
                     do { try coordinator.save(host, token: token, replaceToken: replaceToken); dismiss() }
                     catch { self.error = AppHost.render(error) }
                 }.keyboardShortcut(.defaultAction).buttonStyle(.workbenchPrimary)
+                    .disabled(host.validationMessage != nil || connectionCheck.isChecking)
             }
-        }.padding(WorkbenchSpacing.pageInset).frame(width: 500)
+        }.padding(WorkbenchSpacing.pageInset).frame(width: 500, height: 540)
+            .onChange(of: host) { _, _ in connectionCheck.invalidate(); error = nil }
+            .onChange(of: token) { _, _ in connectionCheck.invalidate(); error = nil }
+            .onChange(of: replaceToken) { _, _ in connectionCheck.invalidate(); error = nil }
+            .onDisappear { connectionCheck.invalidate() }
     }
 }

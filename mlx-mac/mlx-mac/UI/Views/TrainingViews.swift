@@ -126,6 +126,10 @@ struct TrainingJobRowView: View {
                 Spacer(minLength: WorkbenchSpacing.xs)
                 StatusBadge(status: row.status, pulses: pulses)
             }
+            if let guidance = row.recoveryGuidance {
+                Text(guidance).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if row.canCompare || row.logPath != nil || row.canCancel {
                 ReclaimFlowLayout(spacing: WorkbenchSpacing.xs, lineSpacing: WorkbenchSpacing.xs) {
                     if row.canCompare {
