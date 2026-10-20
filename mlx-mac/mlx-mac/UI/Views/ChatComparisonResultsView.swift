@@ -10,6 +10,7 @@ struct ChatComparisonResultsView<Actions: View>: View {
     let onReview: (String, Int?) -> Void
     let reviewError: String?
     let onPromote: (VariantResult) -> Void
+    let allowsPromotion: Bool
     @ViewBuilder let laneActions: (CompareLane) -> Actions
     @State private var promptID: String
     @State private var firstID: String?
@@ -20,10 +21,11 @@ struct ChatComparisonResultsView<Actions: View>: View {
 
     init(run: ComparisonRun, store: ComparisonOutputStore, contentWidth: CGFloat,
          name: @escaping (String) -> String, onReview: @escaping (String, Int?) -> Void,
-         reviewError: String?, onPromote: @escaping (VariantResult) -> Void,
+         reviewError: String?, onPromote: @escaping (VariantResult) -> Void, allowsPromotion: Bool = true,
          @ViewBuilder laneActions: @escaping (CompareLane) -> Actions) {
         self.run = run; self.store = store; self.contentWidth = contentWidth; self.name = name
         self.onReview = onReview; self.reviewError = reviewError; self.onPromote = onPromote; self.laneActions = laneActions
+        self.allowsPromotion = allowsPromotion
         _promptID = State(initialValue: ComparisonViewLogic.rows(for: run).first?.id ?? "")
         let readable = ChatComparisonPresentation.readingResults(in: run)
         let first = readable.first?.id ?? run.variantIdentities.first
@@ -186,7 +188,7 @@ struct ChatComparisonResultsView<Actions: View>: View {
                     }
                 }
                 if let reviewError { ErrorBanner(text: reviewError) }
-                if run.state == .completed, !run.hasCustomServingConfiguration,
+                if allowsPromotion, run.state == .completed, !run.hasCustomServingConfiguration,
                    let winner = run.winner, [firstID, secondID].contains(winner.id),
                    let lane = lanes.first(where: { $0.resultKey == winner.id }) {
                     Divider()

@@ -612,9 +612,10 @@ enum EphemeralPort {
 
 // MARK: - OpenAIEndpointProber
 
-enum ProbeHTTPError: LocalizedError {
+enum ProbeHTTPError: LocalizedError, Equatable {
     case httpStatus(Int)
     case invalidResponse
+    case responseTooLarge
 
     var errorDescription: String? {
         switch self {
@@ -622,6 +623,43 @@ enum ProbeHTTPError: LocalizedError {
             return "The verification server returned HTTP \(code)."
         case .invalidResponse:
             return "The verification server returned an unreadable response."
+        case .responseTooLarge:
+            return "The model server response exceeded the streaming size limit."
+        }
+    }
+}
+
+/// Bounds the byte stream before building lines, including a peer that never sends a newline.
+private struct BoundedProbeLines: AsyncSequence {
+    typealias Element = String
+    let bytes: URLSession.AsyncBytes
+    let maximumBytes: Int
+    let maximumLineBytes: Int
+    func makeAsyncIterator() -> Iterator {
+        Iterator(bytes: bytes.makeAsyncIterator(), maximumBytes: maximumBytes, maximumLineBytes: maximumLineBytes)
+    }
+    struct Iterator: AsyncIteratorProtocol {
+        var bytes: URLSession.AsyncBytes.Iterator
+        let maximumBytes: Int
+        let maximumLineBytes: Int
+        var received = 0
+        mutating func next() async throws -> String? {
+            var line = Data()
+            while let byte = try await bytes.next() {
+                try Task.checkCancellation()
+                received += 1
+                guard received <= maximumBytes else { throw ProbeHTTPError.responseTooLarge }
+                if byte == 10 {
+                    if line.last == 13 { line.removeLast() }
+                    guard let value = String(data: line, encoding: .utf8) else { throw ProbeHTTPError.invalidResponse }
+                    return value
+                }
+                guard line.count < maximumLineBytes else { throw ProbeHTTPError.responseTooLarge }
+                line.append(byte)
+            }
+            guard !line.isEmpty else { return nil }
+            guard let value = String(data: line, encoding: .utf8) else { throw ProbeHTTPError.invalidResponse }
+            return value
         }
     }
 }
@@ -632,14 +670,22 @@ enum ProbeHTTPError: LocalizedError {
 struct OpenAIEndpointProber: EndpointProbing {
     private let session: URLSession
     private let requestTimeout: TimeInterval
+    private let bearerToken: String?
+    private let maximumResponseBytes: Int
+    private let maximumLineBytes: Int
 
-    init(session: URLSession = .shared, requestTimeout: TimeInterval = 180) {
+    init(session: URLSession = .shared, requestTimeout: TimeInterval = 180, bearerToken: String? = nil,
+         maximumResponseBytes: Int = 8_388_608, maximumLineBytes: Int = 1_048_576) {
         self.session = session
         self.requestTimeout = requestTimeout
+        self.bearerToken = bearerToken
+        self.maximumResponseBytes = max(1, maximumResponseBytes)
+        self.maximumLineBytes = max(1, maximumLineBytes)
     }
 
     func isReady(baseURL: URL) async -> Bool {
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/models"))
+        if let bearerToken { request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization") }
         request.timeoutInterval = 5
         guard let result = try? await session.data(for: request),
               let http = result.1 as? HTTPURLResponse else { return false }
@@ -648,6 +694,7 @@ struct OpenAIEndpointProber: EndpointProbing {
 
     func listModels(baseURL: URL) async -> [String] {
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/models"))
+        if let bearerToken { request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization") }
         request.timeoutInterval = 5
         guard let result = try? await session.data(for: request),
               let object = try? JSONSerialization.jsonObject(with: result.0) as? [String: Any],
@@ -661,6 +708,7 @@ struct OpenAIEndpointProber: EndpointProbing {
 
     func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int, tool: PromptToolSpec?) async throws -> ProbeSample {
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/chat/completions"))
+        if let bearerToken { request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization") }
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = requestTimeout
@@ -699,7 +747,7 @@ struct OpenAIEndpointProber: EndpointProbing {
         // names and accumulate argument fragments per call.
         var toolCallNamesByIndex: [Int: String] = [:]
         var toolCallArgumentsByIndex: [Int: String] = [:]
-        for try await line in bytes.lines {
+        for try await line in BoundedProbeLines(bytes: bytes, maximumBytes: maximumResponseBytes, maximumLineBytes: maximumLineBytes) {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if payload == "[DONE]" { break }
