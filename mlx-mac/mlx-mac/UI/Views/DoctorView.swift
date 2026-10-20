@@ -53,6 +53,7 @@ struct DoctorView: View {
     @State private var lastCheckedAt: Date?
     @State private var layout = HealthLayout()
     @StateObject private var backends: HealthBackendSession
+    @StateObject private var recovery: ModelRuntimeRecoverySession
     @Environment(\.openWindow) private var openWindow
 
     private var isRunning: Bool { checkState.isRunning }
@@ -61,6 +62,11 @@ struct DoctorView: View {
         self.appHost = appHost
         self.onRouteSelection = onRouteSelection
         _backends = StateObject(wrappedValue: HealthBackendSession(fetch: { try await appHost.api.backendList() }))
+        _recovery = StateObject(wrappedValue: ModelRuntimeRecoverySession(
+            fetch: { try await appHost.api.backendList() },
+            preview: { try await appHost.api.backendInstallPreview(id: $0) },
+            start: { _ = try await appHost.api.backendInstallStart(id: $0, previewHash: $1) }
+        ))
     }
 
     var body: some View {
@@ -74,6 +80,11 @@ struct DoctorView: View {
         GeometryReader { viewport in
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
+                    if let request = appHost.modelRuntimeRecoveryRequest {
+                        ModelRuntimeRecoveryView(appHost: appHost, session: recovery, request: request,
+                                                 onInstalled: { await backends.refresh(source: appHost.config.mlxAgentPath) },
+                                                 onReturn: { onRouteSelection(.library) })
+                    }
                     HealthHeroView(
                         chain: chain,
                         fingerprint: fingerprint,

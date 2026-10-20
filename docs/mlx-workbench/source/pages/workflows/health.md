@@ -28,6 +28,10 @@ a model or prove model-specific readiness.
 
 Each successful check records its time. A failed refresh keeps the last result with an explicit stale label and the error; a successful retry replaces it. Changing the engine checkout clears the previous checkout's result. **Add from Hugging Face…** opens model intake, where missing dependencies keep their existing installation preview and confirmation. Opening Health or refreshing its status starts no installation, model download or generation.
 
+For an existing local model marked **Needs Runtime**, **Library → Repair runtime…** opens a targeted card at the top of Health. It checks the model's declared backend and offers **Review installation…** for an absent or failed optional backend. Review the package, target version, destination and download hosts, then choose **Confirm installation**. Canceling the review installs nothing. A failed attempt keeps the model selected and requires a fresh preview before retrying; unknown states require a status refresh. Built-in backends use the base runtime setup instead.
+
+**Return to model** rescans the library and reveals the original model with its refreshed readiness. A failed scan or changed model keeps the recovery card open with an error. Installing a backend does not verify or start the model, and this repair does not download model weights. Run and verification retain their separate checks and confirmation steps.
+
 It also counts verified models whose verification still matches this environment, and lists model health findings from the engine's `doctor models` scan:
 
 | Finding | Meaning |

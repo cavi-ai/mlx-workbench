@@ -328,7 +328,7 @@ struct LibraryWorkspace: View {
     var body: some View {
         ZStack {
             ForEach(LibrarySource.allCases.filter { visitedSources.contains($0) }) { destination in
-                let active = source == destination
+                let active = isRouteActive && source == destination
                 sourceView(destination)
                     .environment(\.isRouteActive, isRouteActive && active)
                     .opacity(active ? 1 : 0)
@@ -794,13 +794,15 @@ struct LibraryView: View {
         Button("Copy Path") { actions.copyPath() }
         Button("Reveal in Finder") { actions.revealInFinder() }
         Divider()
-        if actions.canPrepare {
+        if ModelRuntimeRecoveryRequest(model: actions.model) != nil {
+            Button("Repair runtime…") { actions.repairRuntime() }
+        } else if actions.canPrepare {
             Button("Prepare to run") { actions.prepare() }
         }
         if actions.canCompare {
             Button("Select for Compare") { actions.compare() }
         }
-        if actions.canServe {
+        if actions.canServe, actions.model.readiness != .needsRuntime {
             Button("Select for Run") { actions.run() }
         }
         Divider()

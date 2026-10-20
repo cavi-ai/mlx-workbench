@@ -815,6 +815,13 @@ server.
 
 ## Review/build guidance for an agent
 
+- Local models missing a declared backend offer `ModelRuntimeRecoveryRequest`
+  from Library to Health. `ModelRuntimeRecoverySession` reads backend status,
+  presents the engine's install preview and requires explicit confirmation.
+  Return rescans and revalidates the original path, signature and task/backend
+  before issuing the existing Library reveal request. Installation does not
+  verify, download or start a model; built-in backends keep base setup ownership.
+
 - Prefer project-local inspection first, keep edits scoped.
 - Update this file when execution/integration behavior changes so it continues to
   match the README and docs.

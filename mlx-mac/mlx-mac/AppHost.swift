@@ -20,6 +20,7 @@ class AppHost: ObservableObject {
     @Published var selectedModelPath: String?
     /// Explicit model navigation, consumed when Library becomes active.
     @Published var libraryRevealRequest: LibraryRevealRequest?
+    @Published var modelRuntimeRecoveryRequest: ModelRuntimeRecoveryRequest?
     /// One-shot navigation intent; client configuration still requires its own preview.
     @Published var clientWiringRequest: ClientWiringRequest?
     @Published var servingProfileComparisonRequest: ServingProfileComparisonSetup?
@@ -326,6 +327,32 @@ class AppHost: ObservableObject {
 
     func requestRescan() {
         Task { await self.rescan() }
+    }
+
+    func modelRuntimeRecoveryIsCurrent(_ request: ModelRuntimeRecoveryRequest, source: String) -> Bool {
+        modelRuntimeRecoveryRequest?.id == request.id && config.mlxAgentPath == source
+            && librarySnapshot?.models.contains(where: request.matches) == true
+    }
+
+    /// Return only after an authoritative scan; never substitute another model or start it.
+    func returnFromRuntimeRecovery(_ request: ModelRuntimeRecoveryRequest, source: String) async throws {
+        func failure(_ message: String) -> NSError {
+            NSError(domain: "ModelRuntimeRecovery", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        guard modelRuntimeRecoveryIsCurrent(request, source: source) else {
+            throw failure("The model or engine changed. Select the model again in Library.")
+        }
+        guard !isScanning else { throw failure("A library scan is already running. Wait for it to finish, then return to the model.") }
+        guard let snapshot = await rescan(limit: nil, reconcileWorkflow: false) else {
+            throw failure(lastError ?? "The model inventory could not be refreshed. Retry Return to model.")
+        }
+        guard config.mlxAgentPath == source, modelRuntimeRecoveryRequest?.id == request.id,
+              snapshot.models.contains(where: request.matches) else {
+            throw failure("The original model is missing or changed in the refreshed library. Select it again in Library.")
+        }
+        selectedModelPath = request.modelPath
+        libraryRevealRequest = LibraryRevealRequest(modelPath: request.modelPath)
+        modelRuntimeRecoveryRequest = nil
     }
 
     func rescan(limit: Int? = nil) async {
