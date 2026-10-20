@@ -53,7 +53,7 @@ struct SystemMemoryEvidence: Codable, Equatable, Sendable {
 }
 
 /// Live unified-memory snapshot via Mach probes.
-struct MemorySnapshot: Equatable, Sendable {
+struct MemorySnapshot: Codable, Equatable, Sendable {
     let totalBytes: Int64
     /// Free (including speculative) + reclaimable inactive memory, right now.
     let availableBytes: Int64

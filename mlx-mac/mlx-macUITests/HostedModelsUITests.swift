@@ -75,8 +75,27 @@ final class HostedModelsUITests: XCTestCase {
         app.buttons["Save host"].click()
         let refresh = app.buttons["refresh-model-host"].firstMatch
         XCTAssertTrue(refresh.waitForExistence(timeout: 5)); refresh.click()
-        let model = app.staticTexts["fixture-model:latest"].firstMatch
+        let installedModels = app.outlines["hosted-model-table"]
+        let model = installedModels.staticTexts["fixture-model:latest"].firstMatch
         XCTAssertTrue(model.waitForExistence(timeout: 10))
+        let runningDisclosure = app.disclosureTriangles["host-running-models"]
+        XCTAssertTrue(runningDisclosure.waitForExistence(timeout: 5))
+        clickRunningDisclosure(runningDisclosure)
+        let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (runningDisclosure.value as? String) == "1" || (runningDisclosure.value as? NSNumber)?.intValue == 1
+        }, object: nil)
+        wait(for: [expanded], timeout: 5)
+        runningDisclosure.scroll(byDeltaX: 0, deltaY: -240)
+        let runningOnly = app.staticTexts["orphan-running:latest"].firstMatch
+        XCTAssertTrue(runningOnly.waitForExistence(timeout: 5))
+        XCTAssertFalse(installedModels.staticTexts["orphan-running:latest"].exists)
+        let runningImage = XCTAttachment(screenshot: app.screenshot()); runningImage.name = "ollama-running-separate-from-tags"; runningImage.lifetime = .keepAlways; add(runningImage)
+        clickRunningDisclosure(runningDisclosure)
+        let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (runningDisclosure.value as? String) == "0" || (runningDisclosure.value as? NSNumber)?.intValue == 0
+        }, object: nil)
+        wait(for: [collapsed], timeout: 5)
+        runningDisclosure.scroll(byDeltaX: 0, deltaY: 240)
         try Data().write(to: root.appendingPathComponent("unauthorized")); refresh.click()
         XCTAssertTrue(authentication.waitForExistence(timeout: 10))
         XCTAssertTrue(model.exists, "Authentication failure retains the last inventory")
@@ -97,16 +116,42 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(error.waitForExistence(timeout: 10)); XCTAssertTrue(model.exists)
         try FileManager.default.removeItem(at: root.appendingPathComponent("fail")); app.buttons["retry-model-host-refresh"].click()
         XCTAssertTrue(model.waitForExistence(timeout: 10)); model.click()
+        let selectedDetails = app.disclosureTriangles["Reported model details"]
+        XCTAssertTrue(selectedDetails.waitForExistence(timeout: 5))
+        clickRunningDisclosure(selectedDetails)
+        let readDetails = app.buttons["read-host-model-details"]
+        XCTAssertTrue(readDetails.waitForExistence(timeout: 5))
+        readDetails.scroll(byDeltaX: 0, deltaY: -240)
+        clickVisibleControl(readDetails, in: app)
+        let context = app.staticTexts["host-model-context"]
+        let inspected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            context.label.contains("Maximum context: 32768") || (context.value as? String)?.contains("Maximum context: 32768") == true
+        }, object: nil)
+        wait(for: [inspected], timeout: 10)
+        let capabilities = app.staticTexts["host-model-capabilities"]
+        XCTAssertTrue(capabilities.label.contains("vision") || (capabilities.value as? String)?.contains("vision") == true)
+        XCTAssertTrue(app.staticTexts["host-model-details-read-at"].exists)
+        let detailRequests = try String(contentsOf: root.appendingPathComponent("requests"), encoding: .utf8)
+            .split(separator: "\n").filter { $0.hasPrefix("POST ") }
+        XCTAssertEqual(detailRequests.count, 1)
+        XCTAssertTrue(detailRequests.first?.hasPrefix("POST /api/show ") == true)
+        let detailsImage = XCTAttachment(screenshot: app.screenshot()); detailsImage.name = "ollama-model-details-read"; detailsImage.lifetime = .keepAlways; add(detailsImage)
+        clickRunningDisclosure(selectedDetails)
+        selectedDetails.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 26, dy: 8)).scroll(byDeltaX: 0, deltaY: 240)
         let compare = app.buttons["Compare…"].firstMatch
         let canCompare = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in compare.isEnabled }, object: nil)
         wait(for: [canCompare], timeout: 10); compare.click()
         let run = app.buttons["run-hosted-comparison"]
         XCTAssertTrue(run.waitForExistence(timeout: 10)); XCTAssertTrue(run.isEnabled); run.click()
+        let conditionsNotice = app.staticTexts["hosted-conditions-notice"]
+        XCTAssertTrue(conditionsNotice.waitForExistence(timeout: 10))
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 10)); cancel.click()
         XCTAssertTrue(run.waitForExistence(timeout: 10))
         let cancelled = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Recorded host comparisons · cancelled", "Recorded host comparisons · cancelled")).firstMatch
         XCTAssertTrue(cancelled.waitForExistence(timeout: 10))
+        XCTAssertTrue(conditionsNotice.exists)
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "hosted-comparison-cancelled"; attachment.lifetime = .keepAlways; add(attachment)
 
         library.click()
@@ -128,6 +173,7 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(openHost.waitForExistence(timeout: 5))
         let refreshHost = app.buttons["Refresh Ollama"]
         XCTAssertTrue(refreshHost.exists); clickVisibleControl(refreshHost, in: app)
+        XCTAssertTrue(app.staticTexts["2 models reported loaded"].firstMatch.waitForExistence(timeout: 5))
         let memoryImage = XCTAttachment(screenshot: app.screenshot()); memoryImage.name = "memory-saved-hosts"; memoryImage.lifetime = .keepAlways; add(memoryImage)
         clickVisibleControl(openHost, in: app)
         XCTAssertTrue(hostPicker.waitForExistence(timeout: 5))
@@ -155,6 +201,12 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("released"), encoding: .utf8), "1")
         let resultImage = XCTAttachment(screenshot: app.screenshot()); resultImage.name = "unload-readback"; resultImage.lifetime = .keepAlways; add(resultImage)
         clickVisibleControl(app.buttons["Close"].firstMatch, in: app)
+    }
+
+    private func clickRunningDisclosure(_ control: XCUIElement) {
+        // The AX frame includes the leading indent and, when expanded, the content below the header.
+        control.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 26, dy: 8)).click()
     }
 
     private func clickVisibleControl(_ control: XCUIElement, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
@@ -227,6 +279,12 @@ private final class HostedUIFixture: @unchecked Sendable {
                 return
             }
             if request.hasPrefix("POST ") {
+                if request.hasPrefix("POST /api/show ") {
+                    let body = #"{"capabilities":["completion","vision","tools"],"model_info":{"general.architecture":"fixture","fixture.context_length":32768}}"#
+                    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body
+                    connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+                    return
+                }
                 if request.hasPrefix("POST /api/generate ") {
                     do {
                         let file = root.appendingPathComponent("released")
@@ -251,7 +309,7 @@ private final class HostedUIFixture: @unchecked Sendable {
             let digest = FileManager.default.fileExists(atPath: root.appendingPathComponent("changed-digest").path) ? "changed" : "fixture-digest"
             let body: String
             if failing { body = "{}" }
-            else if request.hasPrefix("GET /api/ps ") { body = released ? "{\"models\":[]}" : "{\"models\":[{\"name\":\"fixture-model:latest\",\"digest\":\"\(digest)\",\"size_vram\":4000000}]}" }
+            else if request.hasPrefix("GET /api/ps ") { body = released ? "{\"models\":[]}" : "{\"models\":[{\"name\":\"fixture-model:latest\",\"digest\":\"\(digest)\",\"size_vram\":4000000},{\"name\":\"orphan-running:latest\",\"digest\":\"orphan-digest\",\"size_vram\":2000000}]}" }
             else if request.hasPrefix("GET /api/version ") { body = "{\"version\":\"fixture\"}" }
             else { body = "{\"models\":[{\"name\":\"fixture-model:latest\",\"digest\":\"\(digest)\",\"size\":4000000,\"details\":{\"family\":\"fixture\",\"parameter_size\":\"1B\",\"quantization_level\":\"Q4\"}}]}" }
             let response = "HTTP/1.1 \(failing ? "503 Unavailable" : "200 OK")\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body

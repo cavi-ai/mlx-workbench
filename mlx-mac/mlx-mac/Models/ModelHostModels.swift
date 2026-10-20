@@ -94,6 +94,7 @@ struct HostedModel: Codable, Equatable, Identifiable, Sendable {
     var capabilities: [String]? = nil
     var category: String? = nil
     var loadedInstanceIDs: [String]? = nil
+    var detailsCapturedAt: Date? = nil
     var id: String { hostID.uuidString + "/" + modelID }
 }
 
@@ -105,12 +106,19 @@ struct HostInventory: Codable, Equatable, Sendable {
     var deviceSummary: String? = nil
     var warnings: [String] = []
     var activity: HostActivity? = nil
+    /// Ollama's complete running list, independent of the available tags. Nil means unavailable.
+    var runningModels: [HostedModel]? = nil
 
     var reportedLoadedModels: [HostedModel] {
-        models.filter { $0.isLoaded == true }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        (runningModels ?? models.filter { $0.isLoaded == true })
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     var loadedStateSummary: String {
+        if let runningModels {
+            let count = runningModels.count
+            return "\(count) \(count == 1 ? "model" : "models") reported loaded"
+        }
         let unknown = models.filter { $0.isLoaded == nil }.count
         guard !models.isEmpty, unknown != models.count else { return "Loaded state unknown" }
         let loaded = reportedLoadedModels.count

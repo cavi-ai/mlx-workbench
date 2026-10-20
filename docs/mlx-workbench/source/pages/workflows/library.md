@@ -198,16 +198,22 @@ replaces it and clears the error. Recovery actions never start generation.
 
 The table shows model identifiers, available or loaded state, parameter size, quantization and file size where reported. Select a row and expand **Reported model details** for context, memory, capabilities and digest. Missing metadata is **Unknown**. Reported model memory is separate from whole-device memory; model context limits are separate from loaded context.
 
-- Ollama reports its model tags and digest-matched loaded models. Maximum context and per-model capabilities are unavailable in this inventory.
+- Ollama lists installed tags separately from **Reported running models**. Expand that disclosure for each running model's digest, host-reported memory and loaded context, including weights absent from the installed tags or with a different digest. Warnings identify these differences. Running allocation size is not disk size. Maximum context and capabilities require an explicit model-details read.
 - LM Studio uses its native inventory API, with compatibility fallbacks for older servers. Multiple loaded instances with different contexts have an unknown loaded context.
 - ComfyUI lists model files by category, plus reported device and version information. File availability does not establish whether a model is loaded. Unsupported categories can produce a partial inventory with a warning.
 - llama.cpp and compatible servers expose their advertised models. Additional metadata is shown only when reported; names never establish capabilities or identical weights.
+
+For an installed Ollama tag, select its row, expand **Reported model details**, then choose **Read model details**. This reads the selected tag's reported capabilities and its architecture's maximum context, with a separate read time. Loaded context remains the current running allocation. Missing fields are **Unknown**; an explicitly empty capability list is **None reported**. The action requires a reported digest and checks that the installed digest matches before and after the metadata read. These are dated host observations, not an atomic runtime snapshot.
+
+The read refreshes inventory and publishes the selected model's details only after the final identity check. Failed reads retain the previous dated inventory. Ordinary **Refresh** replaces inspected metadata with the basic inventory; read details again when needed. Selection and disclosure expansion perform no metadata requests. Reading details does not generate, load, unload or download models.
 
 **Compare…** sends the selected model to the **Hosted & mixed** comparison setup without starting a run. Text models can be compared with ready native models. ComfyUI image comparisons require checkpoint models and an explicitly imported API workflow. Host inventories remain separate from local scan, conversion, verification and reclaim state.
 
 ### Release host memory
 
 The toolbar memory panel also lists saved hosts and their dated residency and activity readings. **Open host** selects the corresponding connection here; the refresh button beside each host reads only that host without loading or unloading models.
+
+Ollama's memory summary includes its complete reported running list, even when installed tags differ. A successful empty running list reports zero; a failed or malformed list leaves residency unknown. Running-only weights do not become comparison candidates or unload targets. Use Ollama to manage weights absent from or different from the installed tags. Workbench unload still requires a loaded installed tag with the same digest.
 
 Select a model reported as loaded, then **Unload model…** for Ollama or **Unload instance…** for LM Studio. LM Studio requires its native loaded-instance identities; when several instances are loaded, choose the exact instance first. Legacy inventory without those identities cannot authorize unloading. ComfyUI offers **Free host memory…**, which requests cleanup of all cached models on that host, independently of the selected checkpoint. llama.cpp and generic OpenAI-compatible connections do not offer a supported unload action.
 

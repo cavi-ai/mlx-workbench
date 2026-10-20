@@ -160,16 +160,27 @@ struct HostedModelsView: View {
             .frame(minHeight: 300, idealHeight: 390)
             .accessibilityIdentifier("hosted-model-table")
             if rows.isEmpty { Label("No models match this inventory or filter.", systemImage: "line.3.horizontal.decrease.circle").foregroundStyle(WorkbenchColor.muted) }
+            if let running = inventory.runningModels {
+                DisclosureGroup("Reported running models (\(running.count))") {
+                    HostedRunningModelsView(models: inventory.reportedLoadedModels)
+                }.accessibilityIdentifier("host-running-models")
+            }
             if let model = selectedModel {
                 DisclosureGroup("Reported model details") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        Text(model.modelID).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                        Text("Family: \(model.family ?? "Unknown") · Format: \(model.format ?? "Unknown")")
-                        Text("Loaded context: \(model.contextLength.map(String.init) ?? "Unknown") · Maximum context: \(model.maximumContextLength.map(String.init) ?? "Unknown")")
-                        Text("Reported model memory: \(Self.bytes(model.memoryBytes))")
-                        Text("Capabilities: \(model.capabilities?.joined(separator: ", ") ?? "Unknown")")
-                        if let digest = model.digest { Text("Digest: \(digest)").font(WorkbenchTypography.compactValue).textSelection(.enabled) }
-                    }.font(WorkbenchTypography.secondary).padding(.top, WorkbenchSpacing.xs)
+                        if inventory.host.provider == .ollama {
+                            Button("Read model details") {
+                                Task { await hosts.readModelDetails(inventory.host.id, modelID: model.modelID) }
+                            }
+                            .disabled(hosts.refreshing.contains(inventory.host.id) || hosts.resourceBusy
+                                || hosts.errors[inventory.host.id] != nil || model.digest?.isEmpty != false)
+                            .help(model.digest?.isEmpty != false
+                                ? "A reported installed digest is required. Refresh the host first."
+                                : "Refresh inventory and read this model's reported maximum context and capabilities.")
+                            .accessibilityIdentifier("read-host-model-details")
+                        }
+                        HostedModelDetailsView(model: model)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, WorkbenchSpacing.xs)
                 }
             }
             if let version = inventory.runtimeVersion { Text("Runtime version: \(version)").font(WorkbenchTypography.secondary) }
@@ -236,6 +247,55 @@ struct HostedModelsView: View {
             }
             appHost.compareHostedModels = true; onRouteSelection(.compare)
         } catch { actionError = AppHost.render(error) }
+    }
+}
+
+struct HostedModelDetailsView: View {
+    let model: HostedModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Text(model.modelID).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+            Text("Family: \(model.family ?? "Unknown") · Format: \(model.format ?? "Unknown")")
+            Text("Loaded context: \(model.contextLength.map(String.init) ?? "Unknown") · Maximum context: \(model.maximumContextLength.map(String.init) ?? "Unknown")")
+                .accessibilityIdentifier("host-model-context")
+            Text("Reported model memory: \(HostedModelsView.bytes(model.memoryBytes))")
+            Text("Capabilities: \(model.capabilities.map { $0.isEmpty ? "None reported" : $0.joined(separator: ", ") } ?? "Unknown")")
+                .accessibilityIdentifier("host-model-capabilities")
+            if let digest = model.digest { Text("Digest: \(digest)").font(WorkbenchTypography.compactValue).textSelection(.enabled) }
+            if let date = model.detailsCapturedAt {
+                Text("Model details read · \(date.formatted(date: .abbreviated, time: .standard))")
+                    .foregroundStyle(WorkbenchColor.muted).accessibilityIdentifier("host-model-details-read-at")
+            }
+        }.font(WorkbenchTypography.secondary)
+    }
+}
+
+/// Running weights are observations, not installed selections or memory-release authority.
+struct HostedRunningModelsView: View {
+    let models: [HostedModel]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Text("Ollama reports these weights in memory; installed tags can refer to different weights. Use Ollama to manage differing or unlisted weights.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            if models.isEmpty {
+                Text("No running models were reported.").font(WorkbenchTypography.secondary)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                        ForEach(models) { model in
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                                Text(model.name).font(WorkbenchTypography.emphasis)
+                                Text("Digest: \(model.digest ?? "Unknown")").font(WorkbenchTypography.compactValue)
+                                Text("Host-reported memory: \(model.memoryBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory) } ?? "Unknown") · Loaded context: \(model.contextLength.map(String.init) ?? "Unknown")")
+                                    .font(WorkbenchTypography.secondary)
+                            }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }.padding(.vertical, WorkbenchSpacing.xs)
+                }.frame(height: 180)
+            }
+        }.padding(.top, WorkbenchSpacing.xs)
     }
 }
 

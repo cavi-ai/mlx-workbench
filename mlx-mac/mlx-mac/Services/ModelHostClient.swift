@@ -9,6 +9,51 @@ struct ModelHostClient: Sendable {
 
     init(http: HostHTTPClient = HostHTTPClient()) { self.http = http }
 
+    func inventoryInspecting(_ model: HostedModel, host: ModelHost, token: String? = nil) async throws -> HostInventory {
+        guard host.provider == .ollama, model.hostID == host.id,
+              let digest = Self.text(model.digest) else {
+            throw HostedIntegrationError.invalid("Select an installed Ollama model with a reported digest before reading details.")
+        }
+        _ = try Self.identifier(model.modelID)
+        let before = try await inventory(host: host, token: token)
+        guard before.models.contains(where: { $0.modelID == model.modelID && $0.digest == digest }) else {
+            throw HostedIntegrationError.invalid("The installed model changed. Refresh and select it again before reading details.")
+        }
+        try Task.checkCancellation()
+        let body = try JSONSerialization.data(withJSONObject: ["model": model.modelID, "verbose": false])
+        let data = try await http.request(host: host, path: "api/show", method: "POST", body: body, token: token)
+        guard let response = try Self.json(data) as? [String: Any] else { throw HostHTTPError.invalidResponse }
+        let capturedAt = Date()
+        var capabilities: [String]?
+        if let value = response["capabilities"], !(value is NSNull) {
+            guard let reported = value as? [String], reported.count <= 64,
+                  reported.allSatisfy({ Self.text($0) != nil && $0.utf8.count <= 128 }),
+                  Set(reported).count == reported.count else { throw HostHTTPError.invalidResponse }
+            capabilities = reported
+        }
+        var maximumContext: Int?
+        if let value = response["model_info"], !(value is NSNull) {
+            guard let info = value as? [String: Any] else { throw HostHTTPError.invalidResponse }
+            if let architecture = Self.text(info["general.architecture"]),
+               let context = Self.int(info[architecture + ".context_length"]), context > 0 {
+                maximumContext = context
+            }
+        }
+        try Task.checkCancellation()
+        let after = try await inventory(host: host, token: token)
+        guard let index = after.models.firstIndex(where: { $0.modelID == model.modelID && $0.digest == digest }) else {
+            throw HostedIntegrationError.invalid("The installed model changed while reading details. Refresh and select it again.")
+        }
+        try Task.checkCancellation()
+        var models = after.models
+        models[index].maximumContextLength = maximumContext
+        models[index].capabilities = capabilities
+        models[index].detailsCapturedAt = capturedAt
+        return HostInventory(host: after.host, models: models, capturedAt: after.capturedAt,
+            runtimeVersion: after.runtimeVersion, deviceSummary: after.deviceSummary, warnings: after.warnings,
+            activity: after.activity, runningModels: after.runningModels)
+    }
+
     func inventory(host: ModelHost, token: String? = nil) async throws -> HostInventory {
         _ = try host.validatedURL()
         var result: HostInventory
@@ -64,22 +109,37 @@ struct ModelHostClient: Sendable {
             )
         }
         try Self.validateIDs(models)
-        var warnings = ["Maximum context and capabilities are unavailable in this inventory."]
+        var warnings = ["Read model details for maximum context and capabilities; missing metadata remains unknown."]
+        var runningModels: [HostedModel]?
         do {
             let running = try Self.records(try await object(host, path: "api/ps", token: token)["models"])
-            let names = try running.map { try Self.identifier($0["name"] ?? $0["model"]) }
-            guard Set(names).count == names.count else { throw HostHTTPError.invalidResponse }
+            let observed = try running.map { record in
+                let id = try Self.identifier(record["name"] ?? record["model"])
+                let details = record["details"] as? [String: Any] ?? [:]
+                return HostedModel(hostID: host.id, modelID: id, name: id, digest: Self.text(record["digest"]),
+                    family: Self.text(details["family"]), parameters: Self.text(details["parameter_size"]),
+                    quantization: Self.text(details["quantization_level"]), format: Self.text(details["format"]),
+                    isLoaded: true, contextLength: Self.int(record["context_length"]), memoryBytes: Self.integer(record["size_vram"]))
+            }
+            try Self.validateIDs(observed)
+            runningModels = observed
             for index in models.indices {
-                let match = running.first { Self.text($0["name"] ?? $0["model"]) == models[index].modelID }
+                let match = observed.first { $0.modelID == models[index].modelID }
                 if let match {
-                    if let digest = models[index].digest, let runningDigest = Self.text(match["digest"]) {
+                    if let digest = models[index].digest, let runningDigest = match.digest {
                         models[index].isLoaded = digest == runningDigest
                         if digest == runningDigest {
-                            models[index].memoryBytes = Self.integer(match["size_vram"])
-                            models[index].contextLength = Self.int(match["context_length"])
+                            models[index].memoryBytes = match.memoryBytes
+                            models[index].contextLength = match.contextLength
                         }
                     }
                 } else { models[index].isLoaded = false }
+            }
+            if observed.contains(where: { loaded in !models.contains(where: { $0.modelID == loaded.modelID }) }) {
+                warnings.append("Some running models are absent from the installed tags. Review Reported running models; use Ollama to manage these weights.")
+            }
+            if observed.contains(where: { loaded in models.contains(where: { $0.modelID == loaded.modelID && $0.digest != nil && loaded.digest != nil && $0.digest != loaded.digest }) }) {
+                warnings.append("Running weights differ from the installed tags for some model names. Their memory readings describe the running weights. Use Ollama to manage them before comparing or unloading these names.")
             }
         } catch is CancellationError { throw CancellationError() }
         catch { warnings.append("Loaded-model metadata is unavailable; loaded state is unknown.") }
@@ -89,7 +149,7 @@ struct ModelHostClient: Sendable {
             if version == nil { warnings.append("The host did not report its runtime version.") }
         } catch is CancellationError { throw CancellationError() }
         catch { warnings.append("The runtime version is unavailable.") }
-        return HostInventory(host: host, models: models, capturedAt: Date(), runtimeVersion: version, warnings: warnings)
+        return HostInventory(host: host, models: models, capturedAt: Date(), runtimeVersion: version, warnings: warnings, runningModels: runningModels)
     }
 
     private func lmStudio(_ host: ModelHost, token: String?) async throws -> HostInventory {
