@@ -133,9 +133,9 @@ final class HostedModelsUITests: XCTestCase {
     }
 
     private func clickRunningDisclosure(_ control: XCUIElement) {
-        // The macOS AX frame includes 22 points before the painted chevron and the full label.
-        control.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
-            .withOffset(CGVector(dx: 26, dy: 0)).click()
+        // The AX frame includes the leading indent and, when expanded, the content below the header.
+        control.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 26, dy: 8)).click()
     }
 
     private func clickVisibleControl(_ control: XCUIElement, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
