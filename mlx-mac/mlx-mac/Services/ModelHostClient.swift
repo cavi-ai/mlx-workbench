@@ -65,21 +65,36 @@ struct ModelHostClient: Sendable {
         }
         try Self.validateIDs(models)
         var warnings = ["Maximum context and capabilities are unavailable in this inventory."]
+        var runningModels: [HostedModel]?
         do {
             let running = try Self.records(try await object(host, path: "api/ps", token: token)["models"])
-            let names = try running.map { try Self.identifier($0["name"] ?? $0["model"]) }
-            guard Set(names).count == names.count else { throw HostHTTPError.invalidResponse }
+            let observed = try running.map { record in
+                let id = try Self.identifier(record["name"] ?? record["model"])
+                let details = record["details"] as? [String: Any] ?? [:]
+                return HostedModel(hostID: host.id, modelID: id, name: id, digest: Self.text(record["digest"]),
+                    family: Self.text(details["family"]), parameters: Self.text(details["parameter_size"]),
+                    quantization: Self.text(details["quantization_level"]), format: Self.text(details["format"]),
+                    isLoaded: true, contextLength: Self.int(record["context_length"]), memoryBytes: Self.integer(record["size_vram"]))
+            }
+            try Self.validateIDs(observed)
+            runningModels = observed
             for index in models.indices {
-                let match = running.first { Self.text($0["name"] ?? $0["model"]) == models[index].modelID }
+                let match = observed.first { $0.modelID == models[index].modelID }
                 if let match {
-                    if let digest = models[index].digest, let runningDigest = Self.text(match["digest"]) {
+                    if let digest = models[index].digest, let runningDigest = match.digest {
                         models[index].isLoaded = digest == runningDigest
                         if digest == runningDigest {
-                            models[index].memoryBytes = Self.integer(match["size_vram"])
-                            models[index].contextLength = Self.int(match["context_length"])
+                            models[index].memoryBytes = match.memoryBytes
+                            models[index].contextLength = match.contextLength
                         }
                     }
                 } else { models[index].isLoaded = false }
+            }
+            if observed.contains(where: { loaded in !models.contains(where: { $0.modelID == loaded.modelID }) }) {
+                warnings.append("Some running models are absent from the installed tags. Review Reported running models; use Ollama to manage these weights.")
+            }
+            if observed.contains(where: { loaded in models.contains(where: { $0.modelID == loaded.modelID && $0.digest != nil && loaded.digest != nil && $0.digest != loaded.digest }) }) {
+                warnings.append("Running weights differ from the installed tags for some model names. Their memory readings describe the running weights. Use Ollama to manage them before comparing or unloading these names.")
             }
         } catch is CancellationError { throw CancellationError() }
         catch { warnings.append("Loaded-model metadata is unavailable; loaded state is unknown.") }
@@ -89,7 +104,7 @@ struct ModelHostClient: Sendable {
             if version == nil { warnings.append("The host did not report its runtime version.") }
         } catch is CancellationError { throw CancellationError() }
         catch { warnings.append("The runtime version is unavailable.") }
-        return HostInventory(host: host, models: models, capturedAt: Date(), runtimeVersion: version, warnings: warnings)
+        return HostInventory(host: host, models: models, capturedAt: Date(), runtimeVersion: version, warnings: warnings, runningModels: runningModels)
     }
 
     private func lmStudio(_ host: ModelHost, token: String?) async throws -> HostInventory {

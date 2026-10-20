@@ -42,6 +42,88 @@ final class ModelHostClientTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(inventory.warnings.count, 2)
     }
 
+    func testOllamaMemoryInventoryRetainsRunningWeightsSeparateFromInstalledTags() async throws {
+        let (client, requests) = client(responses: [
+            "/api/tags": .json(#"{"models":[{"name":"alpha","digest":"new","size":100},{"name":"beta","digest":"beta"}]}"#),
+            "/api/ps": .json(#"{"models":[{"name":"alpha","digest":"old","size":90,"size_vram":80,"context_length":4096,"details":{"family":"llama","parameter_size":"8B","quantization_level":"Q4","format":"gguf"}},{"name":"orphan","digest":"orphan","size_vram":50}]}"#),
+            "/api/version": .json(#"{"version":"0.12.0"}"#)
+        ])
+        let inventory = try await client.inventory(host: host(.ollama))
+        XCTAssertEqual(inventory.models.map(\.modelID), ["alpha", "beta"])
+        XCTAssertEqual(inventory.models.first?.digest, "new")
+        XCTAssertEqual(inventory.models.first?.isLoaded, false)
+        XCTAssertNil(inventory.models.first?.memoryBytes)
+        let loaded = inventory.reportedLoadedModels
+        XCTAssertEqual(loaded.map(\.modelID), ["alpha", "orphan"])
+        XCTAssertEqual(loaded.first?.digest, "old")
+        XCTAssertEqual(loaded.first?.memoryBytes, 80)
+        XCTAssertEqual(loaded.first?.contextLength, 4096)
+        XCTAssertEqual(loaded.first?.parameters, "8B")
+        XCTAssertNil(loaded.first?.sizeBytes, "A running allocation is not installed disk size")
+        XCTAssertEqual(inventory.loadedStateSummary, "2 models reported loaded")
+        let restored = try JSONDecoder().decode(HostInventory.self, from: JSONEncoder().encode(inventory))
+        XCTAssertEqual(restored.reportedLoadedModels, loaded)
+        XCTAssertEqual(restored.models, inventory.models)
+        XCTAssertTrue(inventory.warnings.contains { $0.contains("differ") })
+        XCTAssertTrue(inventory.warnings.contains { $0.contains("absent") })
+        XCTAssertEqual(requests.values.map { $0.url!.path }, ["/api/tags", "/api/ps", "/api/version"])
+        XCTAssertTrue(requests.values.allSatisfy { $0.httpMethod == "GET" })
+    }
+
+    func testOllamaRunningListEstablishesResidencyWithoutInstalledTagsOrDigests() async throws {
+        for (running, expectedIDs, summary) in [
+            (#"[{"model":"only-running","size_vram":42}]"#, ["only-running"], "1 model reported loaded"),
+            ("[]", [], "0 models reported loaded")
+        ] {
+            let (client, _) = client(responses: [
+                "/api/tags": .json(#"{"models":[]}"#),
+                "/api/ps": .json("{\"models\":\(running)}"),
+                "/api/version": .json(#"{"version":"0.12.0"}"#)
+            ])
+            let inventory = try await client.inventory(host: host(.ollama))
+            XCTAssertTrue(inventory.models.isEmpty)
+            XCTAssertEqual(inventory.reportedLoadedModels.map(\.modelID), expectedIDs)
+            XCTAssertEqual(inventory.loadedStateSummary, summary)
+            if !expectedIDs.isEmpty {
+                XCTAssertEqual(inventory.reportedLoadedModels.first?.isLoaded, true)
+                XCTAssertNil(inventory.reportedLoadedModels.first?.digest)
+            }
+        }
+    }
+
+    func testMalformedOllamaRunningListsDoNotPublishPartialResidency() async throws {
+        for running in [#"[{"name":"alpha","digest":"a"},{"name":"alpha","digest":"b"}]"#,
+                        #"[{"name":"alpha","digest":"a"},{"name":""}]"#] {
+            let (client, _) = client(responses: [
+                "/api/tags": .json(#"{"models":[{"name":"alpha","digest":"a"}]}"#),
+                "/api/ps": .json("{\"models\":\(running)}"),
+                "/api/version": .json(#"{"version":"0.12.0"}"#)
+            ])
+            let inventory = try await client.inventory(host: host(.ollama))
+            XCTAssertEqual(inventory.models.count, 1)
+            XCTAssertNil(inventory.models.first?.isLoaded)
+            XCTAssertTrue(inventory.reportedLoadedModels.isEmpty)
+            XCTAssertEqual(inventory.loadedStateSummary, "Loaded state unknown")
+        }
+    }
+
+    func testOllamaRunningOnlyModelsCannotAuthorizeUnloadingByTag() async throws {
+        for running in [#"[{"name":"orphan","digest":"o","size_vram":42}]"#,
+                        #"[{"name":"alpha","digest":"old","size_vram":42}]"#] {
+            let (http, requests) = transport(responses: [
+                "/api/tags": .json(#"{"models":[{"name":"alpha","digest":"new"}]}"#),
+                "/api/ps": .json("{\"models\":\(running)}"),
+                "/api/version": .json(#"{"version":"0.12.0"}"#)
+            ])
+            let selected = running.contains("orphan") ? "orphan" : "alpha"
+            do {
+                _ = try await HostResourceClient(http: http).preview(host: host(.ollama), selection: HostResourceSelection(modelID: selected))
+                XCTFail("Running observations must not grant unload authority for an unavailable installed identity")
+            } catch { XCTAssertTrue(error is HostResourceError) }
+            XCTAssertTrue(requests.values.allSatisfy { $0.httpMethod == "GET" })
+        }
+    }
+
     func testOllamaPrimaryFailureThrowsWithoutReturningServerBody() async throws {
         let (client, _) = client(responses: ["/api/tags": .init(status: 401, body: "secret-server-body")])
         do { _ = try await client.inventory(host: host(.ollama)); XCTFail("Expected HTTP error") }

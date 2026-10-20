@@ -160,6 +160,11 @@ struct HostedModelsView: View {
             .frame(minHeight: 300, idealHeight: 390)
             .accessibilityIdentifier("hosted-model-table")
             if rows.isEmpty { Label("No models match this inventory or filter.", systemImage: "line.3.horizontal.decrease.circle").foregroundStyle(WorkbenchColor.muted) }
+            if let running = inventory.runningModels {
+                DisclosureGroup("Reported running models (\(running.count))") {
+                    HostedRunningModelsView(models: inventory.reportedLoadedModels)
+                }.accessibilityIdentifier("host-running-models")
+            }
             if let model = selectedModel {
                 DisclosureGroup("Reported model details") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -236,6 +241,34 @@ struct HostedModelsView: View {
             }
             appHost.compareHostedModels = true; onRouteSelection(.compare)
         } catch { actionError = AppHost.render(error) }
+    }
+}
+
+/// Running weights are observations, not installed selections or memory-release authority.
+struct HostedRunningModelsView: View {
+    let models: [HostedModel]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            Text("Ollama reports these weights in memory; installed tags can refer to different weights. Use Ollama to manage differing or unlisted weights.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            if models.isEmpty {
+                Text("No running models were reported.").font(WorkbenchTypography.secondary)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                        ForEach(models) { model in
+                            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                                Text(model.name).font(WorkbenchTypography.emphasis)
+                                Text("Digest: \(model.digest ?? "Unknown")").font(WorkbenchTypography.compactValue)
+                                Text("Host-reported memory: \(model.memoryBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory) } ?? "Unknown") · Loaded context: \(model.contextLength.map(String.init) ?? "Unknown")")
+                                    .font(WorkbenchTypography.secondary)
+                            }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }.padding(.vertical, WorkbenchSpacing.xs)
+                }.frame(height: 180)
+            }
+        }.padding(.top, WorkbenchSpacing.xs)
     }
 }
 

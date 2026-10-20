@@ -62,6 +62,10 @@ server.
   inventory adapter with draft credentials, without saving hosts, changing Keychain
   or publishing inventory. `ModelHostConnectionCheck` cancels and fences late results
   after edits or dismissal. Host transport bounds responses and refuses redirects and proxies.
+  Ollama's optional `HostInventory.runningModels` retains the complete running list
+  separately from installed tags; memory summaries prefer that list, including an
+  explicit empty observation. Running-only or digest-mismatched weights remain
+  read-only observations and never authorize tag-based comparisons or unloading.
   Compare's Hosted & mixed workspace uses `HostedComparisonCoordinator` and separate
   `hosted-comparison-runs.json` / `hosted-comparison-outputs` stores. Native lanes reuse
   ServeProbe and durable server-ownership recovery. External lanes retain captured
