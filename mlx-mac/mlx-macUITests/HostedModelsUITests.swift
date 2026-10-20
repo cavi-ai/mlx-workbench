@@ -47,6 +47,13 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(refresh.waitForExistence(timeout: 5)); refresh.click()
         let model = app.staticTexts["fixture-model:latest"].firstMatch
         XCTAssertTrue(model.waitForExistence(timeout: 10))
+        let runningDisclosure = app.disclosureTriangles.firstMatch
+        XCTAssertTrue(runningDisclosure.waitForExistence(timeout: 5)); clickVisibleControl(runningDisclosure, in: app)
+        let runningOnly = app.staticTexts["orphan-running:latest"].firstMatch
+        XCTAssertTrue(runningOnly.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.tables["hosted-model-table"].staticTexts["orphan-running:latest"].exists)
+        let runningImage = XCTAttachment(screenshot: app.screenshot()); runningImage.name = "ollama-running-separate-from-tags"; runningImage.lifetime = .keepAlways; add(runningImage)
+        clickVisibleControl(runningDisclosure, in: app)
         try Data().write(to: root.appendingPathComponent("fail")); refresh.click()
         let error = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Refresh failed", "Refresh failed")).firstMatch
         XCTAssertTrue(error.waitForExistence(timeout: 10)); XCTAssertTrue(model.exists)
@@ -83,6 +90,7 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(openHost.waitForExistence(timeout: 5))
         let refreshHost = app.buttons["Refresh Ollama"]
         XCTAssertTrue(refreshHost.exists); clickVisibleControl(refreshHost, in: app)
+        XCTAssertTrue(app.staticTexts["2 models reported loaded"].firstMatch.waitForExistence(timeout: 5))
         let memoryImage = XCTAttachment(screenshot: app.screenshot()); memoryImage.name = "memory-saved-hosts"; memoryImage.lifetime = .keepAlways; add(memoryImage)
         clickVisibleControl(openHost, in: app)
         XCTAssertTrue(hostPicker.waitForExistence(timeout: 5))
@@ -196,7 +204,7 @@ private final class HostedUIFixture: @unchecked Sendable {
             let digest = FileManager.default.fileExists(atPath: root.appendingPathComponent("changed-digest").path) ? "changed" : "fixture-digest"
             let body: String
             if failing { body = "{}" }
-            else if request.hasPrefix("GET /api/ps ") { body = released ? "{\"models\":[]}" : "{\"models\":[{\"name\":\"fixture-model:latest\",\"digest\":\"\(digest)\",\"size_vram\":4000000}]}" }
+            else if request.hasPrefix("GET /api/ps ") { body = released ? "{\"models\":[]}" : "{\"models\":[{\"name\":\"fixture-model:latest\",\"digest\":\"\(digest)\",\"size_vram\":4000000},{\"name\":\"orphan-running:latest\",\"digest\":\"orphan-digest\",\"size_vram\":2000000}]}" }
             else if request.hasPrefix("GET /api/version ") { body = "{\"version\":\"fixture\"}" }
             else { body = "{\"models\":[{\"name\":\"fixture-model:latest\",\"digest\":\"\(digest)\",\"size\":4000000,\"details\":{\"family\":\"fixture\",\"parameter_size\":\"1B\",\"quantization_level\":\"Q4\"}}]}" }
             let response = "HTTP/1.1 \(failing ? "503 Unavailable" : "200 OK")\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body

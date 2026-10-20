@@ -26,6 +26,19 @@ final class HostedIntegrationTests: XCTestCase {
         XCTAssertEqual(inventory.loadedStateSummary, "0 models reported loaded")
     }
 
+    func testLegacyHostInventoryKeepsItsRecordedResidencyWithoutBackfill() throws {
+        let host = ModelHost(name: "Ollama", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+        let loaded = HostedModel(hostID: host.id, modelID: "recorded", name: "Recorded", isLoaded: true, memoryBytes: 42)
+        let legacy = HostInventory(host: host, models: [loaded], capturedAt: Date(timeIntervalSince1970: 100))
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        json.removeValue(forKey: "runningModels")
+        let decoded = try JSONDecoder().decode(HostInventory.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(decoded.runningModels)
+        XCTAssertEqual(decoded.reportedLoadedModels, [loaded])
+        XCTAssertEqual(decoded.loadedStateSummary, "1 model reported loaded")
+        XCTAssertEqual(decoded.capturedAt, Date(timeIntervalSince1970: 100))
+    }
+
     private func directory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

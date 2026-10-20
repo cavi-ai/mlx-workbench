@@ -5,6 +5,19 @@ import XCTest
 
 @MainActor
 final class HostedModelsRenderTests: XCTestCase {
+    func testRunningWeightsRenderWithoutInstalledActions() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
+        let hostID = UUID()
+        let models = [
+            HostedModel(hostID: hostID, modelID: "changed", name: "A replaced model tag", digest: String(repeating: "a", count: 64), isLoaded: true, contextLength: 4096, memoryBytes: 4_000_000_000),
+            HostedModel(hostID: hostID, modelID: "orphan", name: "A running model absent from the installed tags with a deliberately long name", digest: "orphan-digest", isLoaded: true)
+        ]
+        for dark in [false, true] {
+            try await capture(HostedRunningModelsView(models: models).padding(WorkbenchSpacing.pageInset), name: "ollama-running-weights", dark: dark, width: 740)
+            try await capture(HostedRunningModelsView(models: []).padding(WorkbenchSpacing.pageInset), name: "ollama-running-empty", dark: dark, width: 740)
+        }
+    }
+
     func testHostNavigationConsumesExactConnectionAndRejectsChanges() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -113,11 +126,14 @@ final class HostedModelsRenderTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let connection = ModelHost(name: "Ollama", provider: .ollama, baseURL: "http://127.0.0.1:11434")
-        let inventory = HostInventory(host: connection, models: (1...12).map { index in
+        let installed = (1...12).map { index in
             HostedModel(hostID: connection.id, modelID: "model-\(index):q4", name: "Qwen model \(index)", digest: "digest-\(index)",
                 family: "qwen", parameters: "8B", quantization: "Q4_K_M", format: "gguf", sizeBytes: 4_500_000_000,
                 isLoaded: index == 1, contextLength: index == 1 ? 8192 : nil, memoryBytes: index == 1 ? 5_000_000_000 : nil)
-        }, capturedAt: Date(timeIntervalSince1970: 1_792_512_000), runtimeVersion: "0.12")
+        }
+        let inventory = HostInventory(host: connection, models: installed,
+            capturedAt: Date(timeIntervalSince1970: 1_792_512_000), runtimeVersion: "0.12",
+            runningModels: [installed[0], HostedModel(hostID: connection.id, modelID: "running-only", name: "Running-only weights", digest: "running-only-digest", isLoaded: true)])
         let hosts = ModelHostsCoordinator(store: JSONStore(fileURL: root.appendingPathComponent("hosts.json")),
             readToken: { _ in nil }, writeToken: { _, _ in }, fetch: { _, _ in inventory })
         let host = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", configPath: root.appendingPathComponent("config.json").path,
