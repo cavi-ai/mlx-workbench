@@ -991,12 +991,11 @@ final class RuntimeCheckerTests: XCTestCase {
         let root = try directory()
         let python = root.appendingPathComponent("python")
         try executable(python, script: """
-        #!/usr/bin/python3
-        import os, pathlib, sys
-        root = pathlib.Path(__file__).parent
-        with (root / 'calls').open('a') as stream: stream.write('probe\\n')
-        os.environ['PYTHONPATH'] = str(root)
-        os.execv('/usr/bin/python3', ['/usr/bin/python3'] + sys.argv[1:])
+        #!/bin/sh
+        root=$(dirname "$0")
+        printf 'probe\\n' >> "$root/calls"
+        export PYTHONPATH="$root"
+        exec /usr/bin/python3 "$@"
         """)
         for name in ["torch", "transformers", "gguf", "accelerate"] {
             try Data().write(to: root.appendingPathComponent(name + ".py"))
@@ -1014,16 +1013,12 @@ final class RuntimeCheckerTests: XCTestCase {
         let root = try directory()
         let python = root.appendingPathComponent("python")
         try executable(python, script: """
-        #!/usr/bin/python3
-        import pathlib, signal, subprocess, sys, time
-        child = subprocess.Popen(['/bin/sleep', '30'])
-        def stop(*args):
-            child.terminate()
-            child.wait()
-            sys.exit(0)
-        signal.signal(signal.SIGTERM, stop)
-        pathlib.Path(__file__).with_name('child').write_text(str(child.pid))
-        time.sleep(30)
+        #!/bin/sh
+        /bin/sleep 30 &
+        child=$!
+        trap 'kill "$child"; wait "$child"; exit 0' TERM
+        printf '%s' "$child" > "$(dirname "$0")/child"
+        wait "$child"
         """)
         let started = Date()
         let report = RuntimeChecker.report(python: python, timeout: 1)
