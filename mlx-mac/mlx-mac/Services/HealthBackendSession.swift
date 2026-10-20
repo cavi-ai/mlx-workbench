@@ -41,6 +41,8 @@ final class ModelRuntimeRecoverySession: ObservableObject {
     @Published private(set) var plan: InstallPlan?
     @Published private(set) var error: String?
     @Published private(set) var isBusy = false
+    @Published private(set) var installationLog: BackendInstallLog?
+    @Published private(set) var isReadingLog = false
     private(set) var source: String?
     private var generation = 0
     private let fetch: () async throws -> BackendList
@@ -48,16 +50,21 @@ final class ModelRuntimeRecoverySession: ObservableObject {
     private let start: (String, String) async throws -> Void
     private let pollInterval: Duration
     private let pollLimit: Int
+    private let readLog: (String) async -> BackendInstallLog
 
     init(fetch: @escaping () async throws -> BackendList,
          preview: @escaping (String) async throws -> [String: Any],
          start: @escaping (String, String) async throws -> Void,
-         pollInterval: Duration = .seconds(2), pollLimit: Int = 1800) {
+         pollInterval: Duration = .seconds(2), pollLimit: Int = 1800,
+         readLog: @escaping (String) async -> BackendInstallLog = { path in
+             await Task.detached(priority: .utility) { BackendInstallLog.read(path: path) }.value
+         }) {
         self.fetch = fetch
         self.preview = preview
         self.start = start
         self.pollInterval = pollInterval
         self.pollLimit = pollLimit
+        self.readLog = readLog
     }
 
     var canReview: Bool {
@@ -67,6 +74,7 @@ final class ModelRuntimeRecoverySession: ObservableObject {
     func check(request: ModelRuntimeRecoveryRequest, source: String) async {
         if self.request?.id == request.id, self.source == source, isBusy { return }
         generation += 1
+        clearLog()
         let token = generation
         self.request = request
         self.source = source
@@ -84,8 +92,27 @@ final class ModelRuntimeRecoverySession: ObservableObject {
 
     func cancelReview() { plan = nil }
 
+    func loadInstallationLog(isCurrent: () -> Bool) async {
+        guard !isBusy, !isReadingLog, isCurrent(), let backend,
+              let path = backend.logPath, !path.isEmpty else { return }
+        let token = generation
+        isReadingLog = true
+        installationLog = nil
+        defer { if generation == token { isReadingLog = false } }
+        let log = await readLog(path)
+        guard generation == token, self.backend == backend, isCurrent() else { return }
+        installationLog = log
+    }
+
+    private func clearLog() {
+        installationLog = nil
+        isReadingLog = false
+    }
+
     func review(isCurrent: () -> Bool) async {
         guard canReview, let request else { return }
+        generation += 1
+        clearLog()
         let token = generation
         isBusy = true
         error = nil
@@ -113,6 +140,8 @@ final class ModelRuntimeRecoverySession: ObservableObject {
 
     func install(isCurrent: () -> Bool) async {
         guard !isBusy, let request, let plan else { return }
+        generation += 1
+        clearLog()
         let token = generation
         self.plan = nil // Every retry needs a fresh reviewed preview, including a failed start.
         error = nil

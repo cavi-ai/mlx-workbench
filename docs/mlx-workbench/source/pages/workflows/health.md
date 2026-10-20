@@ -32,6 +32,8 @@ For an existing local model marked **Needs Runtime**, **Library → Repair runti
 
 **Return to model** rescans the library and reveals the original model with its refreshed readiness. A failed scan or changed model keeps the recovery card open with an error. Installing a backend does not verify or start the model, and this repair does not download model weights. Run and verification retain their separate checks and confirmation steps.
 
+When the engine reports an installation log, **View installation log…** opens a read-only excerpt with the recorded path and start time. It reads up to the last 64 KiB and shows up to 80 lines, with a label when output is shortened. Empty and unreadable logs have explicit messages; links and special files are refused. Viewing a log never retries an installation. Close the log and choose **Review installation…** for a fresh preview before another attempt. Changing the model or engine discards the previous excerpt.
+
 It also counts verified models whose verification still matches this environment, and lists model health findings from the engine's `doctor models` scan:
 
 | Finding | Meaning |

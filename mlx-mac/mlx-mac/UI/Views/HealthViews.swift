@@ -302,9 +302,11 @@ struct ModelRuntimeRecoveryView: View {
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var isReturning = false
     @State private var returnError: String?
+    @State private var showingLog = false
 
     private var isCurrent: Bool {
-        appHost.modelRuntimeRecoveryIsCurrent(request, source: session.source ?? "")
+        session.request?.id == request.id
+            && appHost.modelRuntimeRecoveryIsCurrent(request, source: session.source ?? "")
     }
 
     var body: some View {
@@ -348,16 +350,82 @@ struct ModelRuntimeRecoveryView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 ErrorBanner(text: returnError ?? session.error)
+                if session.backend?.logPath?.isEmpty == false {
+                    Button(session.isReadingLog ? "Reading installation log…" : "View installation log…") {
+                        let source = session.source ?? ""
+                        Task {
+                            await session.loadInstallationLog(isCurrent: {
+                                appHost.modelRuntimeRecoveryIsCurrent(request, source: source)
+                            })
+                            showingLog = session.installationLog != nil
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!isCurrent || session.isBusy || session.isReadingLog || isReturning)
+                } else if session.backend?.state == .failed {
+                    Text("The engine did not report an installation log. Review a new installation preview to retry.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if session.isBusy || isReturning { ProgressView().controlSize(.small) }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: WorkbenchSpacing.sm) { actions }
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { actions }
                 }
-                .disabled(session.isBusy || isReturning)
+                .disabled(session.isBusy || session.isReadingLog || isReturning)
             }
         }
         .task(id: isRouteActive ? request.id.uuidString + appHost.config.mlxAgentPath : nil) {
             if isRouteActive { await session.check(request: request, source: appHost.config.mlxAgentPath) }
+        }
+        .sheet(isPresented: $showingLog) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                HStack {
+                    Text("Installation log · \(request.backendID)").font(WorkbenchTypography.cardTitle)
+                    Spacer()
+                    Button("Done") { showingLog = false }.keyboardShortcut(.cancelAction)
+                }
+                Text("Recorded backend log. Reading it does not retry installation.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                if isCurrent, let path = session.backend?.logPath {
+                    Text(path).font(WorkbenchTypography.metadata).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if isCurrent, let startedAt = session.backend?.startedAt {
+                    Text("Recorded start: " + startedAt).font(WorkbenchTypography.metadata)
+                        .foregroundStyle(WorkbenchColor.muted)
+                }
+                logContent
+            }
+            .padding(WorkbenchSpacing.lg)
+            .frame(width: 520, height: 380)
+        }
+    }
+
+    @ViewBuilder private var logContent: some View {
+        switch isCurrent ? session.installationLog : nil {
+        case .content(let text, let truncated):
+            if truncated {
+                Text("Showing recent output: up to 80 lines from the last 64 KiB.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            ScrollView {
+                Text(text).font(WorkbenchTypography.value).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: .infinity)
+            .accessibilityIdentifier("runtime-installation-log")
+        case .empty:
+            Text("The recorded installation log is empty.").font(WorkbenchTypography.secondary)
+            Spacer()
+        case .unavailable:
+            Text("The recorded installation log could not be read. It may have moved or been removed.")
+                .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        case nil:
+            Text("The backend context changed. Close this log and check the selected model again.")
+                .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer()
         }
     }
 

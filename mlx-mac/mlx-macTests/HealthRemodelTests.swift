@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import XCTest
 import AppKit
 import SwiftUI
@@ -6,6 +7,85 @@ import SwiftUI
 @testable import mlx_workbench
 
 final class HealthBackendTests: XCTestCase {
+    func testInstallationLogIsBoundedAndRefusesLinksAndSpecialFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("backend-log-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("install.log")
+        try Data("Resolver failed\n".utf8).write(to: file)
+        XCTAssertEqual(BackendInstallLog.read(path: file.path), .content("Resolver failed\n", truncated: false))
+        try Data((0..<200).map { "line \($0)" }.joined(separator: "\n").utf8).write(to: file)
+        guard case .content(let tail, let truncated) = BackendInstallLog.read(path: file.path) else { return XCTFail("Missing tail") }
+        XCTAssertTrue(truncated)
+        XCTAssertTrue(tail.hasSuffix("line 199"))
+        XCTAssertFalse(tail.contains("line 119\n"))
+        try Data(repeating: 65, count: 2_000_000).write(to: file)
+        guard case .content(let bounded, let byteTruncated) = BackendInstallLog.read(path: file.path) else { return XCTFail("Missing bounded log") }
+        XCTAssertTrue(byteTruncated)
+        XCTAssertLessThanOrEqual(bounded.utf8.count, BackendInstallLog.byteLimit)
+        try Data().write(to: file)
+        XCTAssertEqual(BackendInstallLog.read(path: file.path), .empty)
+        let link = root.appendingPathComponent("link.log")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+        XCTAssertEqual(BackendInstallLog.read(path: link.path), .unavailable)
+        let fifo = root.appendingPathComponent("fifo.log")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        XCTAssertEqual(BackendInstallLog.read(path: fifo.path), .unavailable)
+        XCTAssertEqual(BackendInstallLog.read(path: root.path), .unavailable)
+        XCTAssertEqual(BackendInstallLog.read(path: root.appendingPathComponent("missing").path), .unavailable)
+        XCTAssertEqual(BackendInstallLog.read(path: "relative.log"), .unavailable)
+    }
+
+    @MainActor
+    func testLogReadingIsExplicitAndFreshReviewClearsTheExcerpt() async throws {
+        var reads = 0
+        var previews = 0
+        let request = try recoveryRequest()
+        let session = ModelRuntimeRecoverySession(fetch: { try self.list(state: "failed", logPath: "/logs/backend.log") },
+            preview: { id in
+                previews += 1
+                return ["id": id, "version": "1", "target": "/backend", "package": id,
+                        "network": ["pypi.org"], "preview_hash": "hash"]
+            }, start: { _, _ in XCTFail("Reading a log must never start installation") },
+            readLog: { path in
+                reads += 1
+                XCTAssertEqual(path, "/logs/backend.log")
+                return .content("Recorded failure", truncated: false)
+            })
+        await session.check(request: request, source: "/agent")
+        XCTAssertNil(session.installationLog)
+        XCTAssertEqual(reads, 0)
+        await session.loadInstallationLog(isCurrent: { false })
+        XCTAssertEqual(reads, 0)
+        await session.loadInstallationLog(isCurrent: { true })
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(previews, 0)
+        XCTAssertEqual(session.installationLog, .content("Recorded failure", truncated: false))
+        await session.review(isCurrent: { true })
+        XCTAssertEqual(previews, 1)
+        XCTAssertNil(session.installationLog)
+    }
+
+    @MainActor
+    func testLateLogReadCannotCrossEngineContexts() async throws {
+        let request = try recoveryRequest()
+        var pending: CheckedContinuation<BackendInstallLog, Never>?
+        let session = ModelRuntimeRecoverySession(fetch: { try self.list(state: "failed", logPath: "/logs/backend.log") },
+            preview: { _ in XCTFail("No preview requested"); return [:] },
+            start: { _, _ in XCTFail("No install requested") },
+            readLog: { _ in await withCheckedContinuation { pending = $0 } })
+        await session.check(request: request, source: "/first")
+        let old = Task { await session.loadInstallationLog(isCurrent: { true }) }
+        for _ in 0..<100 where pending == nil { await Task.yield() }
+        let continuation = try XCTUnwrap(pending)
+        await session.check(request: request, source: "/second")
+        continuation.resume(returning: .content("Old engine log", truncated: false))
+        await old.value
+        XCTAssertNil(session.installationLog)
+        XCTAssertFalse(session.isReadingLog)
+        XCTAssertEqual(session.source, "/second")
+    }
+
     @MainActor
     func testModelRecoveryRequiresReviewAndExplicitConfirmation() async throws {
         let item = try JSONDecoder().decode(ModelItem.self, from: Data("""
@@ -164,10 +244,11 @@ final class HealthBackendTests: XCTestCase {
         XCTAssertFalse(session.isBusy)
     }
 
-    private func list(state: String = "installed", schema: String = "backends/1") throws -> BackendList {
+    private func list(state: String = "installed", schema: String = "backends/1", logPath: String? = nil) throws -> BackendList {
         let data: [String: Any] = ["schema": schema, "root": "/fixture/backends", "backends": [
             ["id": "mlx-audio", "version": "1.0", "builtin": false, "state": state,
-             "categories": ["speech_to_text", "text_to_speech"], "model_types": 2, "registry_source": "installed"],
+             "categories": ["speech_to_text", "text_to_speech"], "model_types": 2, "registry_source": "installed",
+             "log_path": logPath as Any? ?? NSNull()],
             ["id": "mlx-lm", "version": "1.0", "builtin": true, "state": "installed",
              "categories": ["text_llm"], "model_types": 1, "registry_source": "installed"]]]
         return try JSONDecoder().decode(BackendList.self, from: JSONSerialization.data(withJSONObject: data))

@@ -227,17 +227,23 @@ final class WorkbenchReviewUITests: XCTestCase {
                         'package':backend, 'network':['pypi.org'], 'preview_hash':'runtime-repair-plan'}}
             else:
                 assert args[args.index('--preview-hash') + 1] == 'runtime-repair-plan'
-                if (root / 'fail-runtime-repair').exists():
-                    print('Fixture backend installation failed.', file=sys.stderr)
-                    sys.exit(2)
                 entries = json.loads((root / 'backends.json').read_text())
-                for entry in entries:
-                    if entry['id'] == backend: entry['state'] = 'installed'
+                log_path = root / 'backend-install.log'
+                if (root / 'fail-runtime-repair').exists():
+                    log_path.write_text('Fixture dependency resolution failed. Review the pinned package requirements.\\n')
+                    for entry in entries:
+                        if entry['id'] == backend:
+                            entry.update(state='failed', log_path=str(log_path), started_at='2026-01-01T00:00:00Z')
+                else:
+                    log_path.write_text('Fixture backend installed.\\n')
+                    for entry in entries:
+                        if entry['id'] == backend:
+                            entry.update(state='installed', log_path=str(log_path), started_at='2026-01-01T00:01:00Z')
+                    scan = json.loads((root / 'scan-result.json').read_text())
+                    for output in scan['outputs']:
+                        if output.get('backend', {}).get('id') == backend: output['backend']['installed'] = True
+                    (root / 'scan-result.json').write_text(json.dumps(scan))
                 (root / 'backends.json').write_text(json.dumps(entries))
-                scan = json.loads((root / 'scan-result.json').read_text())
-                for output in scan['outputs']:
-                    if output.get('backend', {}).get('id') == backend: output['backend']['installed'] = True
-                (root / 'scan-result.json').write_text(json.dumps(scan))
                 data = {'status':'started'}
         elif args and args[0] == 'doctor':
             time.sleep(0.5)
@@ -2858,8 +2864,26 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(confirm.isHittable)
         capture("Runtime-repair-review-minimum")
         confirm.click()
-        XCTAssertTrue(text(containing: "Fixture backend installation failed").waitForExistence(timeout: 15))
+        XCTAssertTrue(text(containing: "Installing mlx-audio failed.").waitForExistence(timeout: 15))
         XCTAssertFalse(confirm.exists, "Failures invalidate the preview")
+        let logButton = app.buttons["View installation log…"].firstMatch
+        XCTAssertTrue(logButton.waitForExistence(timeout: 10))
+        logButton.click()
+        let logSheet = app.sheets.firstMatch
+        XCTAssertTrue(logSheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(text(containing: "Fixture dependency resolution failed.").waitForExistence(timeout: 10))
+        capture("Runtime-repair-installation-log-minimum")
+        logSheet.buttons["Done"].click()
+        XCTAssertTrue(logSheet.waitForNonExistence(timeout: 10))
+        try FileManager.default.removeItem(at: root.appendingPathComponent("backend-install.log"))
+        logButton.click()
+        XCTAssertTrue(text(containing: "The recorded installation log could not be read.").waitForExistence(timeout: 10))
+        logSheet.buttons["Done"].click()
+        XCTAssertTrue(logSheet.waitForNonExistence(timeout: 10))
+        let beforeRetry = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+            .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        XCTAssertEqual(beforeRetry.filter { Array($0.prefix(2)) == ["backend", "install"] }.count, 2,
+                       "Reading logs must not preview or retry installation")
         try FileManager.default.removeItem(at: root.appendingPathComponent("fail-runtime-repair"))
         review.click()
         XCTAssertTrue(confirm.waitForExistence(timeout: 15))
