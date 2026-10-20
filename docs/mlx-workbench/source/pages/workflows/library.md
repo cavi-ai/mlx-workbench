@@ -35,6 +35,8 @@ In compact windows, selecting a model opens its details in a sheet. Use
 expand **Model details** for paths, runtime and other technical facts,
 including a speculative-decoding drafter's target. The inspector also holds:
 
+- **Repair runtime…**, for models whose declared backend is missing: review and explicitly confirm its installation in Health, then **Return to model** to refresh readiness and reveal the same model. No model download or execution starts from this navigation.
+
 - **Model lineage**: a provenance timeline of source, converted, verified, benchmarked, served, wired and quarantined events, built from the records the app already keeps. Events whose model signature no longer matches are dimmed. Export it as Markdown or JSON.
 - **Measured performance**: throughput and first-token latency aggregated from past comparisons.
 - **Generate image**, for ready image-generation models: prompt, optional width, height, steps and seed. Completed output is retained with its task and can be inspected or exported as a verified PNG.

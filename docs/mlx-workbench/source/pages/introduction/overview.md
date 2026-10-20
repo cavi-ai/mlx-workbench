@@ -26,12 +26,12 @@ and symbols. Each screen opens with its title and a short description.
 
 ## Screens
 
-The sidebar groups fifteen screens.
+The sidebar groups thirteen screens.
 
 | Group | Screen | Purpose |
 |---|---|---|
 | Workbench | **Overview** | Model budget for this Mac, one next-step action and the selected model's flight path |
-| | **Library** | Local weights, fit, details, classification and music tasks, lineage, deletion and LM Studio source |
+| | **Library** | Local weights, fit, details, task workspaces, lineage, deletion and LM Studio source |
 | Lifecycle | **Prepare** | Preview and confirm conversions; follow verification |
 | | **Compare** | Measured model comparisons with recorded prompts and outputs |
 | | **Run** | Loopback servers, memory runway, always-on endpoints and serving profiles |
@@ -43,6 +43,10 @@ The sidebar groups fifteen screens.
 | | **Studies** | Controlled experiments, generation jobs and blind review |
 | | **Training** | Text LoRA training and base-versus-adapter evaluation |
 | Settings | **Settings** | Engine, model locations, storage, defaults, advisors and updates |
+
+Overview's flight path includes only stages supported by the selected model: verification requires an available canary, measurement requires a compatible comparison mode, and serving applies to chat and vision models. **Measured** requires a usable metric from a completed compatible comparison with the same path and a known matching model signature. Missing signatures remain unmeasured.
+
+For a completed model, the next-step action uses its declared backend's installation status. Strata and declared backends have their own execution environments; the base-runtime warning does not establish their readiness. Run still previews the selected runtime and requires confirmation before serving.
 
 The menu bar item shows endpoint status and starts or stops each endpoint. The toolbar's memory header shows estimated RAM use and headroom on every screen.
 

@@ -220,6 +220,31 @@ final class WorkbenchReviewUITests: XCTestCase {
                 sys.exit(2)
             entries = json.loads((root / 'backends.json').read_text()) if (root / 'backends.json').exists() else []
             data = {'schema':'backends/1', 'root':'/fixture/backends', 'backends':entries}
+        elif args[:2] == ['backend', 'install'] and (root / 'allow-runtime-repair').exists():
+            backend = args[2]
+            if '--confirm' not in args:
+                data = {'status':'preview', 'plan':{'id':backend, 'version':'1.0', 'target':'/fixture/backends/' + backend,
+                        'package':backend, 'network':['pypi.org'], 'preview_hash':'runtime-repair-plan'}}
+            else:
+                assert args[args.index('--preview-hash') + 1] == 'runtime-repair-plan'
+                entries = json.loads((root / 'backends.json').read_text())
+                log_path = root / 'backend-install.log'
+                if (root / 'fail-runtime-repair').exists():
+                    log_path.write_text('Fixture dependency resolution failed. Review the pinned package requirements.\\n')
+                    for entry in entries:
+                        if entry['id'] == backend:
+                            entry.update(state='failed', log_path=str(log_path), started_at='2026-01-01T00:00:00Z')
+                else:
+                    log_path.write_text('Fixture backend installed.\\n')
+                    for entry in entries:
+                        if entry['id'] == backend:
+                            entry.update(state='installed', log_path=str(log_path), started_at='2026-01-01T00:01:00Z')
+                    scan = json.loads((root / 'scan-result.json').read_text())
+                    for output in scan['outputs']:
+                        if output.get('backend', {}).get('id') == backend: output['backend']['installed'] = True
+                    (root / 'scan-result.json').write_text(json.dumps(scan))
+                (root / 'backends.json').write_text(json.dumps(entries))
+                data = {'status':'started'}
         elif args and args[0] == 'doctor':
             time.sleep(0.5)
             if (root / 'fail-doctor').exists():
@@ -2770,6 +2795,120 @@ final class WorkbenchReviewUITests: XCTestCase {
                 XCTAssertEqual(try Data(contentsOf: file), recorded, "Reading must not rewrite historical runs")
             }
         }
+    }
+
+    func testOverviewUsesTaskSpecificStages() throws {
+        for (kind, canVerify, canCompare) in [("music_generation", false, true),
+                                              ("image_generation", true, true),
+                                              ("speculative_draft", false, false)] {
+            let name = "Overview " + kind
+            _ = try installTaskModel(kind: kind, name: name)
+            launch(appearance: "Dark", route: "models", isolatedHome: true)
+            let row = app.outlines.staticTexts[name].firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 15)); row.click()
+            select("Overview")
+            func stage(_ title: String) -> XCUIElement {
+                app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", title + ":")).firstMatch
+            }
+            XCTAssertTrue(stage("Prepared").waitForExistence(timeout: 10))
+            XCTAssertFalse(stage("Serving").exists)
+            XCTAssertEqual(stage("Verified").exists, canVerify)
+            XCTAssertEqual(stage("Measured").exists, canCompare)
+            resizeWindow(width: 1440, height: 900)
+            capture("Overview-\(kind)-wide")
+            resizeWindow(width: 740, height: 560)
+            capture("Overview-\(kind)-minimum")
+            app.terminate()
+        }
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        for command in ["\"task\", \"start\"", "\"serve\", \"start\"", "\"convert\", \"start\"", "\"backend\", \"install\""] {
+            XCTAssertFalse(calls.contains(command), "Guidance and navigation must not start work")
+        }
+    }
+
+    func testMissingModelBackendRepairReturnsToOriginalModel() throws {
+        let model = try installTaskModel(kind: "speech_to_text", name: "Local speech model")
+        let scanURL = root.appendingPathComponent("scan-result.json")
+        var scan = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: scanURL)) as? [String: Any])
+        var outputs = try XCTUnwrap(scan["outputs"] as? [[String: Any]])
+        outputs[0]["backend"] = ["id": "mlx-audio", "installed": false]
+        outputs[0]["provenance"] = "speech-original"
+        scan["outputs"] = outputs
+        try JSONSerialization.data(withJSONObject: scan).write(to: scanURL)
+        try JSONSerialization.data(withJSONObject: [["id": "mlx-audio", "version": "1.0", "builtin": false,
+            "state": "absent", "categories": ["speech_to_text"], "model_types": 1, "registry_source": "snapshot"]])
+            .write(to: root.appendingPathComponent("backends.json"))
+        try Data().write(to: root.appendingPathComponent("allow-runtime-repair"))
+        try Data().write(to: root.appendingPathComponent("fail-runtime-repair"))
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let row = app.outlines.staticTexts["Local speech model"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 20))
+        row.doubleClick()
+        let repair = app.buttons["Repair runtime…"].firstMatch
+        XCTAssertTrue(repair.waitForExistence(timeout: 10))
+        repair.click()
+        let review = app.buttons["Review installation…"].firstMatch
+        XCTAssertTrue(review.waitForExistence(timeout: 15))
+        XCTAssertTrue(review.isEnabled)
+        XCTAssertFalse(app.descendants(matching: .any)["library-source"].exists,
+                       "The retained Library picker must not cover Health's controls")
+        var calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        XCTAssertFalse(calls.contains("\"backend\", \"install\""))
+        capture("Runtime-repair-selected-model")
+        XCTAssertTrue(waitForHittability(review, timeout: 10), app.debugDescription)
+        review.click()
+        let confirm = app.buttons["Confirm installation"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 15))
+        XCTAssertTrue(text(containing: "/fixture/backends/mlx-audio").exists)
+        resizeWindow(width: 740, height: 560)
+        XCTAssertTrue(confirm.isHittable)
+        capture("Runtime-repair-review-minimum")
+        confirm.click()
+        XCTAssertTrue(text(containing: "Installing mlx-audio failed.").waitForExistence(timeout: 15))
+        XCTAssertFalse(confirm.exists, "Failures invalidate the preview")
+        let logButton = app.buttons["View installation log…"].firstMatch
+        XCTAssertTrue(logButton.waitForExistence(timeout: 10))
+        logButton.click()
+        let logSheet = app.sheets.firstMatch
+        XCTAssertTrue(logSheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(text(containing: "Fixture dependency resolution failed.").waitForExistence(timeout: 10))
+        capture("Runtime-repair-installation-log-minimum")
+        logSheet.buttons["Done"].click()
+        XCTAssertTrue(logSheet.waitForNonExistence(timeout: 10))
+        try FileManager.default.removeItem(at: root.appendingPathComponent("backend-install.log"))
+        logButton.click()
+        XCTAssertTrue(text(containing: "The recorded installation log could not be read.").waitForExistence(timeout: 10))
+        logSheet.buttons["Done"].click()
+        XCTAssertTrue(logSheet.waitForNonExistence(timeout: 10))
+        let beforeRetry = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+            .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        XCTAssertEqual(beforeRetry.filter { Array($0.prefix(2)) == ["backend", "install"] }.count, 2,
+                       "Reading logs must not preview or retry installation")
+        try FileManager.default.removeItem(at: root.appendingPathComponent("fail-runtime-repair"))
+        review.click()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 15))
+        confirm.click()
+        XCTAssertTrue(app.staticTexts["runtime-repair-installed"].waitForExistence(timeout: 15))
+        let backendStatus = app.staticTexts["health-backend-mlx-audio-status"]
+        let refreshed = expectation(for: NSPredicate(format: "value == %@ OR label == %@", "Installed", "Installed"), evaluatedWith: backendStatus)
+        wait(for: [refreshed], timeout: 15)
+        let back = app.buttons["Return to model"]
+        XCTAssertTrue(back.isHittable)
+        capture("Runtime-repair-installed-minimum")
+        back.click()
+        XCTAssertTrue(app.buttons["Verify now"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(text(containing: "Local speech model").exists)
+        capture("Runtime-repair-returned-to-model")
+        calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        let requests = calls.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        let installs = requests.filter { Array($0.prefix(2)) == ["backend", "install"] }
+        XCTAssertEqual(installs.count, 4, "Each attempt must preview and explicitly confirm")
+        XCTAssertTrue(installs.allSatisfy { $0[2] == "mlx-audio" })
+        XCTAssertTrue(requests.filter { Array($0.prefix(2)) == ["convert", "scan"] }.count >= 2)
+        for command in [["intake", "fetch"], ["serve", "start"], ["task", "start"], ["convert", "start"]] {
+            XCTAssertFalse(requests.contains { Array($0.prefix(2)) == command })
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
     }
 
     func testRouteCaptures() throws {

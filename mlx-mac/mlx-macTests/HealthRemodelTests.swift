@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import XCTest
 import AppKit
 import SwiftUI
@@ -6,6 +7,123 @@ import SwiftUI
 @testable import mlx_workbench
 
 final class HealthBackendTests: XCTestCase {
+    func testInstallationLogIsBoundedAndRefusesLinksAndSpecialFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("backend-log-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("install.log")
+        try Data("Resolver failed\n".utf8).write(to: file)
+        XCTAssertEqual(BackendInstallLog.read(path: file.path), .content("Resolver failed\n", truncated: false))
+        try Data((0..<200).map { "line \($0)" }.joined(separator: "\n").utf8).write(to: file)
+        guard case .content(let tail, let truncated) = BackendInstallLog.read(path: file.path) else { return XCTFail("Missing tail") }
+        XCTAssertTrue(truncated)
+        XCTAssertTrue(tail.hasSuffix("line 199"))
+        XCTAssertFalse(tail.contains("line 119\n"))
+        try Data(repeating: 65, count: 2_000_000).write(to: file)
+        guard case .content(let bounded, let byteTruncated) = BackendInstallLog.read(path: file.path) else { return XCTFail("Missing bounded log") }
+        XCTAssertTrue(byteTruncated)
+        XCTAssertLessThanOrEqual(bounded.utf8.count, BackendInstallLog.byteLimit)
+        try Data().write(to: file)
+        XCTAssertEqual(BackendInstallLog.read(path: file.path), .empty)
+        let link = root.appendingPathComponent("link.log")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+        XCTAssertEqual(BackendInstallLog.read(path: link.path), .unavailable)
+        let fifo = root.appendingPathComponent("fifo.log")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        XCTAssertEqual(BackendInstallLog.read(path: fifo.path), .unavailable)
+        XCTAssertEqual(BackendInstallLog.read(path: root.path), .unavailable)
+        XCTAssertEqual(BackendInstallLog.read(path: root.appendingPathComponent("missing").path), .unavailable)
+        XCTAssertEqual(BackendInstallLog.read(path: "relative.log"), .unavailable)
+    }
+
+    @MainActor
+    func testLogReadingIsExplicitAndFreshReviewClearsTheExcerpt() async throws {
+        var reads = 0
+        var previews = 0
+        let request = try recoveryRequest()
+        let session = ModelRuntimeRecoverySession(fetch: { try self.list(state: "failed", logPath: "/logs/backend.log") },
+            preview: { id in
+                previews += 1
+                return ["id": id, "version": "1", "target": "/backend", "package": id,
+                        "network": ["pypi.org"], "preview_hash": "hash"]
+            }, start: { _, _ in XCTFail("Reading a log must never start installation") },
+            readLog: { path in
+                reads += 1
+                XCTAssertEqual(path, "/logs/backend.log")
+                return .content("Recorded failure", truncated: false)
+            })
+        await session.check(request: request, source: "/agent")
+        XCTAssertNil(session.installationLog)
+        XCTAssertEqual(reads, 0)
+        await session.loadInstallationLog(isCurrent: { false })
+        XCTAssertEqual(reads, 0)
+        await session.loadInstallationLog(isCurrent: { true })
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(previews, 0)
+        XCTAssertEqual(session.installationLog, .content("Recorded failure", truncated: false))
+        await session.review(isCurrent: { true })
+        XCTAssertEqual(previews, 1)
+        XCTAssertNil(session.installationLog)
+    }
+
+    @MainActor
+    func testLateLogReadCannotCrossEngineContexts() async throws {
+        let request = try recoveryRequest()
+        var pending: CheckedContinuation<BackendInstallLog, Never>?
+        let session = ModelRuntimeRecoverySession(fetch: { try self.list(state: "failed", logPath: "/logs/backend.log") },
+            preview: { _ in XCTFail("No preview requested"); return [:] },
+            start: { _, _ in XCTFail("No install requested") },
+            readLog: { _ in await withCheckedContinuation { pending = $0 } })
+        await session.check(request: request, source: "/first")
+        let old = Task { await session.loadInstallationLog(isCurrent: { true }) }
+        for _ in 0..<100 where pending == nil { await Task.yield() }
+        let continuation = try XCTUnwrap(pending)
+        await session.check(request: request, source: "/second")
+        continuation.resume(returning: .content("Old engine log", truncated: false))
+        await old.value
+        XCTAssertNil(session.installationLog)
+        XCTAssertFalse(session.isReadingLog)
+        XCTAssertEqual(session.source, "/second")
+    }
+
+    @MainActor
+    func testModelRecoveryRequiresReviewAndExplicitConfirmation() async throws {
+        let item = try JSONDecoder().decode(ModelItem.self, from: Data("""
+        {"path":"/models/audio","name":"Audio","bytes":1024,"status":"needs_runtime","outputs":[],
+         "signature":"original","backend":{"id":"mlx-audio","installed":false}}
+        """.utf8))
+        let model = LibraryModel(item: item, readiness: .needsRuntime)
+        let request = try XCTUnwrap(ModelRuntimeRecoveryRequest(model: model))
+        var installed = false
+        var calls: [String] = []
+        let session = ModelRuntimeRecoverySession(
+            fetch: { try self.list(state: installed ? "installed" : "absent") },
+            preview: { id in
+                calls.append("preview:" + id)
+                return ["id": id, "version": "1.0", "target": "/backends/audio", "package": "mlx-audio",
+                        "network": ["pypi.org"], "preview_hash": "reviewed"]
+            },
+            start: { id, hash in calls.append("start:" + id + ":" + hash); installed = true },
+            pollInterval: .zero
+        )
+        await session.check(request: request, source: "/agent")
+        XCTAssertTrue(calls.isEmpty, "Navigation must only read status")
+        await session.install(isCurrent: { true })
+        XCTAssertTrue(calls.isEmpty, "Install requires a reviewed plan")
+        await session.review(isCurrent: { true })
+        XCTAssertEqual(calls, ["preview:mlx-audio"])
+        XCTAssertEqual(session.plan?.target, "/backends/audio")
+        await session.install(isCurrent: { true })
+        XCTAssertEqual(calls, ["preview:mlx-audio", "start:mlx-audio:reviewed"])
+        XCTAssertEqual(session.backend?.state, .installed)
+        XCTAssertNil(session.plan)
+        XCTAssertNil(session.error)
+        XCTAssertTrue(request.matches(model))
+        let encoded = String(decoding: try JSONEncoder().encode(item), as: UTF8.self)
+        let changed = try JSONDecoder().decode(ModelItem.self, from: Data(encoded.replacingOccurrences(of: "original", with: "replacement").utf8))
+        XCTAssertFalse(request.matches(LibraryModel(item: changed, readiness: .needsRuntime)))
+    }
+
     @MainActor
     func testHealthReadsBackendStatusThroughTheRealAgent() async throws {
         let checkout = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -22,10 +140,115 @@ final class HealthBackendTests: XCTestCase {
         XCTAssertFalse(session.rows.contains { $0.status == "Ready" })
     }
 
-    private func list(state: String = "installed", schema: String = "backends/1") throws -> BackendList {
+    private func recoveryRequest() throws -> ModelRuntimeRecoveryRequest {
+        let item = try JSONDecoder().decode(ModelItem.self, from: Data("""
+        {"path":"/models/audio","name":"Audio","bytes":1024,"status":"needs_runtime","outputs":[],
+         "backend":{"id":"mlx-audio","installed":false}}
+        """.utf8))
+        return try XCTUnwrap(ModelRuntimeRecoveryRequest(model: LibraryModel(item: item, readiness: .needsRuntime)))
+    }
+
+    @MainActor
+    func testReturnRescansAndRejectsMissingOrChangedModels() async throws {
+        let original = try JSONDecoder().decode(ModelItem.self, from: Data("""
+        {"path":"/models/audio","name":"Audio","bytes":1024,"status":"needs_runtime","outputs":[],
+         "signature":"original","backend":{"id":"mlx-audio","installed":false}}
+        """.utf8))
+        let model = LibraryModel(item: original, readiness: .needsRuntime)
+        let request = try XCTUnwrap(ModelRuntimeRecoveryRequest(model: model))
+        for outcome in ["installed", "missing", "changed", "failed"] {
+            let outputs: [[String: Any]] = outcome == "missing" ? [] : [[
+                "path": original.path, "name": "Audio", "bytes": 1024,
+                "provenance": outcome == "changed" ? "replacement" : "original",
+                "backend": ["id": "mlx-audio", "installed": true]]]
+            let scan = try JSONDecoder().decode(ScanResult.self, from: JSONSerialization.data(withJSONObject: [
+                "models": [], "outputs": outputs, "pending": [], "duplicates": [],
+                "totals": ["gguf": 0, "pending": 0, "converted": outputs.count, "unreadable": 0,
+                           "bytes": 1024, "reclaimable_bytes": 0]]))
+            let host = AppHost(config: Config.defaults(), scanOperation: { _, _, _, _ in
+                if outcome == "failed" { throw NSError(domain: "scan-failed", code: 1) }
+                return scan
+            })
+            host.librarySnapshot = LibrarySnapshot(models: [model], groups: [], hardware: host.hardwareProfile, generatedAt: Date())
+            host.modelRuntimeRecoveryRequest = request
+            let source = host.config.mlxAgentPath
+            do {
+                try await host.returnFromRuntimeRecovery(request, source: source)
+                XCTAssertEqual(outcome, "installed")
+                XCTAssertEqual(host.libraryRevealRequest?.modelPath, original.path)
+                XCTAssertEqual(host.librarySnapshot?.models.first?.readiness, .ready)
+                XCTAssertNil(host.modelRuntimeRecoveryRequest)
+            } catch {
+                XCTAssertNotEqual(outcome, "installed", error.localizedDescription)
+                XCTAssertNil(host.libraryRevealRequest)
+                XCTAssertEqual(host.modelRuntimeRecoveryRequest?.id, request.id)
+            }
+        }
+    }
+
+    @MainActor
+    func testRecoveryRefusesUnknownStateAndDiscardsPlansAfterContextChanges() async throws {
+        let request = try recoveryRequest()
+        var state = "unknown"
+        var calls: [String] = []
+        let session = ModelRuntimeRecoverySession(fetch: { try self.list(state: state) }, preview: { id in
+            calls.append("preview")
+            return ["id": id, "version": "1", "target": "/backend", "package": id,
+                    "network": ["pypi.org"], "preview_hash": "hash"]
+        }, start: { _, _ in calls.append("start") }, pollInterval: .zero)
+        await session.check(request: request, source: "/agent")
+        await session.review(isCurrent: { true })
+        XCTAssertTrue(calls.isEmpty)
+        state = "absent"
+        await session.check(request: request, source: "/agent")
+        await session.review(isCurrent: { true })
+        XCTAssertNotNil(session.plan)
+        await session.install(isCurrent: { false })
+        XCTAssertNil(session.plan)
+        XCTAssertNotNil(session.error)
+        XCTAssertEqual(calls, ["preview"])
+        await session.check(request: request, source: "/other-agent")
+        XCTAssertNil(session.plan)
+        XCTAssertNil(session.error)
+    }
+
+    @MainActor
+    func testRecoveryErrorsKeepTheModelContextAndAllowRetry() async throws {
+        let request = try recoveryRequest()
+        var validPlan = false
+        var installFails = true
+        var state = "absent"
+        let session = ModelRuntimeRecoverySession(fetch: { try self.list(state: state) }, preview: { id in
+            ["id": id, "version": "1", "target": "/backend", "package": id,
+             "network": ["pypi.org"], "preview_hash": validPlan ? "hash" : ""]
+        }, start: { _, _ in
+            if installFails { throw NSError(domain: "fixture-install", code: 1) }
+            state = "failed"
+        }, pollInterval: .zero)
+        await session.check(request: request, source: "/agent")
+        await session.review(isCurrent: { true })
+        XCTAssertNil(session.plan)
+        XCTAssertNotNil(session.error)
+        validPlan = true
+        await session.review(isCurrent: { true })
+        XCTAssertNotNil(session.plan)
+        await session.install(isCurrent: { true })
+        XCTAssertNotNil(session.error)
+        XCTAssertNil(session.plan, "A retry must get a new preview")
+        XCTAssertEqual(session.request?.id, request.id)
+        installFails = false
+        await session.review(isCurrent: { true })
+        await session.install(isCurrent: { true })
+        XCTAssertEqual(session.backend?.state, .failed)
+        XCTAssertNotNil(session.error)
+        XCTAssertFalse(session.isBusy)
+    }
+
+    private func list(state: String = "installed", schema: String = "backends/1", logPath: String? = nil) throws -> BackendList {
         let data: [String: Any] = ["schema": schema, "root": "/fixture/backends", "backends": [
             ["id": "mlx-audio", "version": "1.0", "builtin": false, "state": state,
-             "categories": ["speech_to_text", "text_to_speech"], "model_types": 2, "registry_source": "installed"],
+             "categories": ["speech_to_text", "text_to_speech"], "model_types": 2, "registry_source": "installed",
+             "log_path": logPath as Any? ?? NSNull()],
             ["id": "mlx-lm", "version": "1.0", "builtin": true, "state": "installed",
              "categories": ["text_llm"], "model_types": 1, "registry_source": "installed"]]]
         return try JSONDecoder().decode(BackendList.self, from: JSONSerialization.data(withJSONObject: data))
@@ -991,12 +1214,11 @@ final class RuntimeCheckerTests: XCTestCase {
         let root = try directory()
         let python = root.appendingPathComponent("python")
         try executable(python, script: """
-        #!/usr/bin/python3
-        import os, pathlib, sys
-        root = pathlib.Path(__file__).parent
-        with (root / 'calls').open('a') as stream: stream.write('probe\\n')
-        os.environ['PYTHONPATH'] = str(root)
-        os.execv('/usr/bin/python3', ['/usr/bin/python3'] + sys.argv[1:])
+        #!/bin/sh
+        root=$(dirname "$0")
+        printf 'probe\\n' >> "$root/calls"
+        export PYTHONPATH="$root"
+        exec /usr/bin/python3 "$@"
         """)
         for name in ["torch", "transformers", "gguf", "accelerate"] {
             try Data().write(to: root.appendingPathComponent(name + ".py"))
@@ -1014,16 +1236,12 @@ final class RuntimeCheckerTests: XCTestCase {
         let root = try directory()
         let python = root.appendingPathComponent("python")
         try executable(python, script: """
-        #!/usr/bin/python3
-        import pathlib, signal, subprocess, sys, time
-        child = subprocess.Popen(['/bin/sleep', '30'])
-        def stop(*args):
-            child.terminate()
-            child.wait()
-            sys.exit(0)
-        signal.signal(signal.SIGTERM, stop)
-        pathlib.Path(__file__).with_name('child').write_text(str(child.pid))
-        time.sleep(30)
+        #!/bin/sh
+        /bin/sleep 30 &
+        child=$!
+        trap 'kill "$child"; wait "$child"; exit 0' TERM
+        printf '%s' "$child" > "$(dirname "$0")/child"
+        wait "$child"
         """)
         let started = Date()
         let report = RuntimeChecker.report(python: python, timeout: 1)

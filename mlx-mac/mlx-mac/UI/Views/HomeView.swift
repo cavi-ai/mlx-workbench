@@ -37,7 +37,19 @@ struct HomeNextAction: Equatable {
                     : "Conversion completed; \(type.title.lowercased()) models are used from the Library inspector, not served."
                 return .init(kind: .openModel(completed.item.path), title: "Open the completed model", reason: reason, route: AppRoute.library.rawValue)
             }
-            guard agentReady && serveRuntimeReady else { return .init(kind: .configure, title: "Repair the Run runtime", reason: "The model is complete, but the agent or serving runtime is unavailable. Health shows which link is broken.", route: AppRoute.health.rawValue) }
+            // Declared backends and Strata have their own execution environment.
+            // The serving preview still checks that environment before confirmation.
+            let canPreviewRuntime = completed.item.backend?.installed
+                ?? (completed.item.servingRuntime == "strata" || serveRuntimeReady)
+            guard agentReady && canPreviewRuntime else {
+                let reason: String
+                if let backend = completed.item.backend, !backend.installed {
+                    reason = "The model's \(backend.id) backend is not installed. Review optional backends in Health."
+                } else {
+                    reason = "The model is complete, but the agent or serving runtime is unavailable. Health shows which link is broken."
+                }
+                return .init(kind: .configure, title: "Repair the Run runtime", reason: reason, route: AppRoute.health.rawValue)
+            }
             return .init(kind: .run(path), title: "Run completed model", reason: "Conversion completed and the selected MLX output is ready for a serve preview.", route: AppRoute.run.rawValue)
         }
         guard rootsConfigured else { return .init(kind: .configure, title: "Configure model roots", reason: "No GGUF or MLX roots are configured, so the library has nowhere to scan.", route: AppRoute.settings.rawValue) }
@@ -127,18 +139,35 @@ struct ModelFlightPathPresentation: Equatable {
             verificationState = .active
             verificationDetail = "The canary suite is running."
         }
-        let measured = completedRuns.contains { run in run.state == .completed && run.results.contains { result in result.modelPath == path && result.modelSignature == signature && result.error == nil && !result.samples.isEmpty } }
+        let hasSignature = signature.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
+        let measured = hasSignature && completedRuns.contains { run in
+            run.state == .completed && run.effectiveMode.supports(model.item) && run.results.contains { result in
+                result.modelPath == path && result.modelSignature == signature && result.error == nil
+                    && run.metricValue(of: result) != nil && result.samples.contains { $0.error == nil }
+            }
+        }
         let serverConfirms = servers.contains { $0.state?.lowercased() == "running" && $0.matchesUnadaptedModel(path) }
         let stateConfirms: Bool
         if case .running(let servedPath, _) = endpointState { stateConfirms = HFRepoID.matches(servedPath, path) } else { stateConfirms = false }
         let serving = serverConfirms && stateConfirms
-        return .init(modelPath: path, stages: [
+        var stages: [ModelFlightStagePresentation] = [
             .init(stage: .discovered, state: .complete, detail: "Present in the latest Library snapshot."),
-            .init(stage: .prepared, state: prepared ? .complete : .pending, detail: prepared ? "Library readiness is Ready." : "Library readiness is \(model.readiness.title)."),
-            .init(stage: .verified, state: verificationState, detail: verificationDetail),
-            .init(stage: .measured, state: measured ? .complete : .pending, detail: measured ? "A completed comparison result matches path and signature." : "No completed comparison result matches path and signature."),
-            .init(stage: .serving, state: serving ? .complete : .pending, detail: serving ? "Endpoint state and authoritative server agree on this identity." : "Endpoint state and server receipts do not both confirm this identity.")
-        ])
+            .init(stage: .prepared, state: prepared ? .complete : .pending, detail: prepared ? "Library readiness is Ready." : "Library readiness is \(model.readiness.title).")
+        ]
+        if model.item.task?.type.hasCanary ?? true {
+            stages.append(.init(stage: .verified, state: verificationState, detail: verificationDetail))
+        }
+        if ComparisonMode.preferred(for: model.item) != nil {
+            stages.append(.init(stage: .measured, state: measured ? .complete : .pending,
+                detail: measured ? "A compatible completed comparison has a usable measurement for this path and signature."
+                    : "No compatible completed comparison has a usable measurement for this path and signature."))
+        }
+        if ModelTaskPresentation.isServable(model) {
+            stages.append(.init(stage: .serving, state: serving ? .complete : .pending,
+                detail: serving ? "Endpoint state and authoritative server agree on this identity."
+                    : "Endpoint state and server receipts do not both confirm this identity."))
+        }
+        return .init(modelPath: path, stages: stages)
     }
 }
 
@@ -285,7 +314,7 @@ struct HomeView: View {
     private var runtimeWarning: some View {
         InlineMessage(
             kind: .warning,
-            text: "The convert and serve runtime needs setup.",
+            text: "Base runtime setup needs attention.",
             action: (title: "Open Health", perform: { onRouteSelection(.health) })
         )
     }

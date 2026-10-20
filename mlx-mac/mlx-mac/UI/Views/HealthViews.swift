@@ -292,6 +292,183 @@ struct HealthHeroView: View {
     }
 }
 
+/// An explicit repair for a local model; opening this card only reads backend status.
+struct ModelRuntimeRecoveryView: View {
+    @ObservedObject var appHost: AppHost
+    @ObservedObject var session: ModelRuntimeRecoverySession
+    let request: ModelRuntimeRecoveryRequest
+    let onInstalled: () async -> Void
+    let onReturn: () -> Void
+    @Environment(\.isRouteActive) private var isRouteActive
+    @State private var isReturning = false
+    @State private var returnError: String?
+    @State private var showingLog = false
+
+    private var isCurrent: Bool {
+        session.request?.id == request.id
+            && appHost.modelRuntimeRecoveryIsCurrent(request, source: session.source ?? "")
+    }
+
+    var body: some View {
+        WorkbenchSurface {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                SectionTitle(text: "Repair model runtime")
+                Text(request.modelName).font(WorkbenchTypography.emphasis)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(request.modelPath).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                if let backend = session.backend {
+                    Text("\(request.backendID) · \(HealthBackendRow(entry: backend).status)")
+                        .font(WorkbenchTypography.label)
+                    if backend.state == .installed {
+                        Text("Backend installed. Return to refresh this model's readiness. Verification and running the model remain separate actions.")
+                            .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("runtime-repair-installed")
+                    } else if backend.builtin {
+                        Text("This backend ships with the base runtime. Use Install Runtime below to review its setup, then return to the model.")
+                            .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+                    } else if backend.state == .installing {
+                        Text("Installation is in progress. Refresh requirements to check it again.")
+                            .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+                    } else if backend.state == .unknown {
+                        Text("Installation status is unknown. Refresh requirements before attempting a repair.")
+                            .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if let plan = session.plan {
+                    Text("Install \(plan.package) · \(plan.version)").font(WorkbenchTypography.label)
+                    Text("Destination: \(plan.target)").font(WorkbenchTypography.metadata)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text("Downloads dependencies from \(plan.network.joined(separator: ", ")). No model files are downloaded.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !isCurrent, !session.isBusy {
+                    Text("The model or engine changed. Select the model again in Library before repairing its runtime.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ErrorBanner(text: returnError ?? session.error)
+                if session.backend?.logPath?.isEmpty == false {
+                    Button(session.isReadingLog ? "Reading installation log…" : "View installation log…") {
+                        let source = session.source ?? ""
+                        Task {
+                            await session.loadInstallationLog(isCurrent: {
+                                appHost.modelRuntimeRecoveryIsCurrent(request, source: source)
+                            })
+                            showingLog = session.installationLog != nil
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!isCurrent || session.isBusy || session.isReadingLog || isReturning)
+                } else if session.backend?.state == .failed {
+                    Text("The engine did not report an installation log. Review a new installation preview to retry.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if session.isBusy || isReturning { ProgressView().controlSize(.small) }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WorkbenchSpacing.sm) { actions }
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) { actions }
+                }
+                .disabled(session.isBusy || session.isReadingLog || isReturning)
+            }
+        }
+        .task(id: isRouteActive ? request.id.uuidString + appHost.config.mlxAgentPath : nil) {
+            if isRouteActive { await session.check(request: request, source: appHost.config.mlxAgentPath) }
+        }
+        .sheet(isPresented: $showingLog) {
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+                HStack {
+                    Text("Installation log · \(request.backendID)").font(WorkbenchTypography.cardTitle)
+                    Spacer()
+                    Button("Done") { showingLog = false }.keyboardShortcut(.cancelAction)
+                }
+                Text("Recorded backend log. Reading it does not retry installation.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                if isCurrent, let path = session.backend?.logPath {
+                    Text(path).font(WorkbenchTypography.metadata).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if isCurrent, let startedAt = session.backend?.startedAt {
+                    Text("Recorded start: " + startedAt).font(WorkbenchTypography.metadata)
+                        .foregroundStyle(WorkbenchColor.muted)
+                }
+                logContent
+            }
+            .padding(WorkbenchSpacing.lg)
+            .frame(width: 520, height: 380)
+        }
+    }
+
+    @ViewBuilder private var logContent: some View {
+        switch isCurrent ? session.installationLog : nil {
+        case .content(let text, let truncated):
+            if truncated {
+                Text("Showing recent output: up to 80 lines from the last 64 KiB.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            ScrollView {
+                Text(text).font(WorkbenchTypography.value).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: .infinity)
+            .accessibilityIdentifier("runtime-installation-log")
+        case .empty:
+            Text("The recorded installation log is empty.").font(WorkbenchTypography.secondary)
+            Spacer()
+        case .unavailable:
+            Text("The recorded installation log could not be read. It may have moved or been removed.")
+                .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        case nil:
+            Text("The backend context changed. Close this log and check the selected model again.")
+                .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+    }
+
+    @ViewBuilder private var actions: some View {
+        if session.plan != nil {
+            Button("Confirm installation") {
+                returnError = nil
+                let source = session.source ?? ""
+                Task {
+                    await session.install(isCurrent: { appHost.modelRuntimeRecoveryIsCurrent(request, source: source) })
+                    if session.error == nil, session.backend?.state == .installed { await onInstalled() }
+                }
+            }
+            .healthProminence(true).disabled(!isCurrent)
+            Button("Cancel installation review") { session.cancelReview() }.buttonStyle(.bordered)
+        } else if session.canReview {
+            Button("Review installation…") {
+                returnError = nil
+                let source = session.source ?? ""
+                Task { await session.review(isCurrent: { appHost.modelRuntimeRecoveryIsCurrent(request, source: source) }) }
+            }
+            .healthProminence(true).disabled(!isCurrent)
+        } else {
+            Button("Refresh requirements") {
+                returnError = nil
+                Task { await session.check(request: request, source: appHost.config.mlxAgentPath) }
+            }.buttonStyle(.bordered)
+        }
+        Button("Return to model") {
+            let source = session.source ?? ""
+            isReturning = true
+            returnError = nil
+            Task {
+                defer { isReturning = false }
+                do {
+                    try await appHost.returnFromRuntimeRecovery(request, source: source)
+                    onReturn()
+                } catch { returnError = AppHost.render(error) }
+            }
+        }.buttonStyle(.bordered).disabled(appHost.isScanning || !isCurrent)
+    }
+}
+
 /// The base probe does not inspect isolated model runtimes.
 struct HealthRuntimeScopeView: View {
     @ObservedObject var backends: HealthBackendSession

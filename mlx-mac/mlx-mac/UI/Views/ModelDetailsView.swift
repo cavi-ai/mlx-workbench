@@ -20,6 +20,14 @@ struct ModelActions {
     var canServe: Bool { ModelTaskPresentation.isServable(model) }
     var canCompare: Bool { ComparisonModelRequest(model: model) != nil }
 
+    func repairRuntime() {
+        guard let request = ModelRuntimeRecoveryRequest(model: model),
+              appHost.librarySnapshot?.models.contains(where: request.matches) == true else { return }
+        appHost.selectedModelPath = request.modelPath
+        appHost.modelRuntimeRecoveryRequest = request
+        onRouteSelection(.health)
+    }
+
     func copyPath() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -121,7 +129,7 @@ enum ModelDetailsPresentation {
             return "No local MLX output was detected, so this model still needs Prepare work."
         case .needsRuntime:
             if let backend = model.item.backend, !backend.installed {
-                return "The \(backend.id) backend that runs this model is not installed. Health lists optional backends; Add from Hugging Face installs one with a model."
+                return "The \(backend.id) backend that runs this model is not installed. Repair runtime opens its installation review in Health."
             }
             return "The scan marked the runtime as missing for this model."
         case .incompleteCache:
@@ -419,7 +427,12 @@ struct ModelDetailsView: View {
 
     @ViewBuilder
     private var primaryAction: some View {
-        if actions.canPrepare {
+        if ModelRuntimeRecoveryRequest(model: model) != nil {
+            Button("Repair runtime…") { actions.repairRuntime() }
+                .buttonStyle(.workbenchPrimary)
+                .help("Review this model's missing backend in Health")
+                .fixedSize()
+        } else if actions.canPrepare {
             Button("Prepare to run") { actions.prepare() }
                 .buttonStyle(.workbenchPrimary)
                 .fixedSize()
@@ -437,7 +450,7 @@ struct ModelDetailsView: View {
     @ViewBuilder
     private var secondaryActions: some View {
         if actions.canServe {
-            if actions.canPrepare {
+            if actions.canPrepare, model.readiness != .needsRuntime {
                 Button("Select for Run") { actions.run() }
                     .fixedSize()
             }
