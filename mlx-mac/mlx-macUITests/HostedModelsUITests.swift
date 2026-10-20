@@ -47,13 +47,13 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(refresh.waitForExistence(timeout: 5)); refresh.click()
         let model = app.staticTexts["fixture-model:latest"].firstMatch
         XCTAssertTrue(model.waitForExistence(timeout: 10))
-        let runningDisclosure = app.disclosureTriangles.firstMatch
-        XCTAssertTrue(runningDisclosure.waitForExistence(timeout: 5)); clickVisibleControl(runningDisclosure, in: app)
+        let runningDisclosure = app.disclosureTriangles["host-running-models"]
+        XCTAssertTrue(runningDisclosure.waitForExistence(timeout: 5)); runningDisclosure.click()
         let runningOnly = app.staticTexts["orphan-running:latest"].firstMatch
         XCTAssertTrue(runningOnly.waitForExistence(timeout: 5))
         XCTAssertFalse(app.tables["hosted-model-table"].staticTexts["orphan-running:latest"].exists)
         let runningImage = XCTAttachment(screenshot: app.screenshot()); runningImage.name = "ollama-running-separate-from-tags"; runningImage.lifetime = .keepAlways; add(runningImage)
-        clickVisibleControl(runningDisclosure, in: app)
+        runningDisclosure.click()
         try Data().write(to: root.appendingPathComponent("fail")); refresh.click()
         let error = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Refresh failed", "Refresh failed")).firstMatch
         XCTAssertTrue(error.waitForExistence(timeout: 10)); XCTAssertTrue(model.exists)
