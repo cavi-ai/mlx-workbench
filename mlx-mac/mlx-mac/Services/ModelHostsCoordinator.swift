@@ -198,7 +198,9 @@ final class ModelHostsCoordinator: ObservableObject {
             return true
         } catch {
             guard generations[id] == generation, hosts.contains(host) else { return false }
-            errors[id] = error is CancellationError ? "Refresh cancelled. Previous inventory retained." : "Refresh failed. Check the host address, credentials and running server. Previous inventory retained."
+            let retained = inventories[id] == nil ? "No inventory is available yet." : "Previous inventory retained."
+            errors[id] = error is CancellationError ? "Refresh cancelled. \(retained)"
+                : "Refresh failed. \(ModelHostConnectionCheck.guidance(for: error)) \(retained)"
             return false
         }
     }

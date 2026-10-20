@@ -41,7 +41,21 @@ struct HostedModelsView: View {
                         Text(message).font(WorkbenchTypography.secondary).textSelection(.enabled)
                             .accessibilityIdentifier("host-resource-result")
                     }
-                    if let error = hosts.errors[host.id] { ErrorBanner(text: error) }
+                    if let error = hosts.errors[host.id] {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                            ErrorBanner(text: error)
+                            HStack {
+                                Button("Retry refresh") { Task { await hosts.refresh(host.id) } }
+                                    .disabled(hosts.refreshing.contains(host.id))
+                                    .accessibilityIdentifier("retry-model-host-refresh")
+                                    .help("Read this host's inventory again without loading models.")
+                                Button("Edit connection…") { editor = host }
+                                    .disabled(appHost.hostedComparison.activeRunID != nil || hosts.resourceBusy)
+                                    .accessibilityIdentifier("repair-model-host-connection")
+                                    .help("Review the server URL, provider and credential before saving changes.")
+                            }.controlSize(.small)
+                        }
+                    }
                     if let inventory {
                         inventoryContent(inventory)
                     } else {

@@ -189,6 +189,13 @@ you can save a valid connection without testing it, then use **Refresh** later.
 
 **Refresh** reads inventory without loading models, generating outputs, downloading weights or changing the host's configuration. Refresh is manual. A failed refresh retains the previous inventory with its capture time and an error. Editing an address or provider clears that connection's cached inventory. Removing a connection leaves the host and its models untouched.
 
+Failed refreshes distinguish authentication, missing API and connection errors.
+**Retry refresh** rereads only the inventory. **Edit connection…** opens the saved
+provider, address and token controls; Cancel preserves the connection and error.
+When no prior inventory exists, the error says so. Retained inventory is dated
+evidence and does not establish the host's current state. A successful refresh
+replaces it and clears the error. Recovery actions never start generation.
+
 The table shows model identifiers, available or loaded state, parameter size, quantization and file size where reported. Select a row and expand **Reported model details** for context, memory, capabilities and digest. Missing metadata is **Unknown**. Reported model memory is separate from whole-device memory; model context limits are separate from loaded context.
 
 - Ollama reports its model tags and digest-matched loaded models. Maximum context and per-model capabilities are unavailable in this inventory.

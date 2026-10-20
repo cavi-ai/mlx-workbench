@@ -6,6 +6,20 @@ import Network
 
 @MainActor
 final class HostedIntegrationTests: XCTestCase {
+    func testRefreshFailureExplainsAuthenticationWithoutLeakingServerText() async throws {
+        let host = ModelHost(name: "Local", provider: .ollama, baseURL: "http://localhost:11434")
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+            readToken: { _ in nil }, writeToken: { _, _ in },
+            fetch: { _, _ in throw HostHTTPError.httpStatus(401) })
+        try coordinator.save(host, token: nil, replaceToken: false)
+        let refreshed = await coordinator.refresh(host.id)
+        XCTAssertFalse(refreshed)
+        let message = try XCTUnwrap(coordinator.errors[host.id])
+        XCTAssertTrue(message.contains("Authentication was refused"))
+        XCTAssertTrue(message.contains("token"))
+        XCTAssertFalse(message.contains("Previous inventory retained"), "There was no previous inventory")
+    }
+
     func testConnectionCheckInvalidationRejectsLateSuccess() async throws {
         let check = ModelHostConnectionCheck()
         let host = ModelHost(name: "Draft", provider: .ollama, baseURL: "http://localhost:11434")
@@ -113,6 +127,7 @@ final class HostedIntegrationTests: XCTestCase {
         await coordinator.refresh(host.id)
         XCTAssertEqual(coordinator.inventories[host.id]?.capturedAt, captured)
         XCTAssertNotNil(coordinator.errors[host.id])
+        XCTAssertTrue(coordinator.errors[host.id]?.contains("Previous inventory retained") == true)
         XCTAssertFalse(coordinator.refreshing.contains(host.id))
     }
 
