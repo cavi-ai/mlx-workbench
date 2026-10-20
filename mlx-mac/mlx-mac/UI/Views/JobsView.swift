@@ -204,22 +204,28 @@ struct JobsView: View {
         GeometryReader { viewport in
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                    ErrorBanner(text: statusError)
+                    if let statusError { statusRecovery(statusError, context: "activity") }
                     ErrorBanner(text: modelWorkflow.persistenceError)
                     ActivityComparisonSection(comparison: appHost.comparison) { onRouteSelection(.compare) }
                     if !page.inFlight.isEmpty { rowSection("In flight", rows: page.inFlight) }
                     ActivityStudySection(lab: lab, jobs: currentStudies, error: lab.error,
-                        isWorking: lab.runningJobID != nil, onOpen: { onRouteSelection(.studies) })
+                        isWorking: lab.runningJobID != nil, isRefreshing: isRefreshing,
+                        onRetry: retryStatus, onHealth: openHealth, onOpen: { onRouteSelection(.studies) })
                     ActivityTrainingSection(jobs: currentTraining, error: trainingState.error,
-                        onOpen: { onRouteSelection(.training) }, onCancel: cancelTraining)
+                        isRefreshing: isRefreshing, onRetry: retryStatus, onHealth: openHealth,
+                        onOpen: { onRouteSelection(.training) },
+                        onViewLog: { selectedLog = LogSelection(id: $0, path: $0) }, onCancel: cancelTraining)
                     if !page.needsAttention.isEmpty { rowSection("Needs attention", rows: page.needsAttention) }
                     serversSection
                     queueSection
                     conversions(page)
                     ActivityStudySection(lab: lab, jobs: earlierStudies, error: nil, historical: true,
+                        isRefreshing: isRefreshing, onRetry: retryStatus, onHealth: openHealth,
                         onOpen: { onRouteSelection(.studies) })
                     ActivityTrainingSection(jobs: earlierTraining, error: nil, historical: true,
-                        onOpen: { onRouteSelection(.training) }, onCancel: cancelTraining)
+                        isRefreshing: isRefreshing, onRetry: retryStatus, onHealth: openHealth,
+                        onOpen: { onRouteSelection(.training) },
+                        onViewLog: { selectedLog = LogSelection(id: $0, path: $0) }, onCancel: cancelTraining)
                 }
                 .frame(maxWidth: WorkbenchSize.Run.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
@@ -323,7 +329,7 @@ struct JobsView: View {
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             SectionTitle(text: "Servers")
             if let error = modelWorkflow.serversError {
-                ErrorBanner(text: error)
+                statusRecovery(error, context: "server")
                 if !modelWorkflow.servers.isEmpty {
                     Text("Showing last known server records.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
@@ -423,7 +429,7 @@ struct JobsView: View {
             }
             Text("Reviewed conversion plans are retained by mlx-agent. Run next starts one plan; refresh reconciles its receipt.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
-            if let problem = webQueue.problem { Text(problem).foregroundStyle(WorkbenchColor.failure) }
+            if let problem = webQueue.problem { statusRecovery(problem, context: "queue") }
             ForEach(webQueue.items) { item in
                 Divider()
                 HStack {
@@ -477,6 +483,14 @@ struct JobsView: View {
                 queueImport = QueueImport(source: source.path, hash: hash, digest: digest, count: count)
             } catch { statusError = AppHost.render(error) }
         }
+    }
+
+    private func retryStatus() { Task { await refresh() } }
+    private func openHealth() { onRouteSelection(.health) }
+
+    private func statusRecovery(_ error: String, context: String) -> some View {
+        ActivityStatusRecovery(error: error, context: context, isRefreshing: isRefreshing,
+                               onRetry: retryStatus, onHealth: openHealth)
     }
 
     private func refresh() async {
@@ -549,18 +563,20 @@ struct LogSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
             }
         }
-        .padding().frame(width: 720, height: 480).onAppear { load() }
+        .padding().frame(width: 720, height: 480).task(id: path) { await load() }
     }
 
-    private func load() {
-        Task {
-            let maxBytes = 64 * 1024
-            let url = URL(string: path).flatMap { $0.scheme == "file" ? $0 : nil } ?? URL(fileURLWithPath: path)
-            guard FileManager.default.fileExists(atPath: url.path) else { text = "Invalid log path."; return }
-            guard let data = try? Data(contentsOf: url) else { text = "Log not readable yet."; return }
-            truncated = data.count > maxBytes
-            let chunk = truncated ? data.suffix(maxBytes) : data
-            text = (truncated ? "...\n" : "") + String(decoding: chunk, as: UTF8.self)
+    @MainActor
+    private func load() async {
+        text = "Loading…"; truncated = false
+        let source = URL(string: path).flatMap { $0.isFileURL ? $0.path : nil } ?? path
+        let result = await Task.detached(priority: .utility) { BackendInstallLog.read(path: source) }.value
+        guard !Task.isCancelled else { return }
+        switch result {
+        case .content(let content, let clipped): text = content; truncated = clipped
+        case .empty: text = "The log is empty."
+        case .unavailable:
+            text = "The log is unavailable. It may have moved or is not a readable regular file."
         }
     }
 }

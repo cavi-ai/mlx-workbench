@@ -46,6 +46,31 @@ It also counts verified models whose verification still matches this environment
 
 **Setup Assistant…** reopens the first-launch assistant: a four-step sheet over the same engine, runtime and model-folder checks. **Review setup** summarizes the current base checks and links back to any engine or runtime step that needs attention. **Scan my library** is offered when those checks pass; otherwise **Finish for now** closes the review without claiming readiness or starting a scan. Finishing either way is remembered. **Skip setup** leaves it unfinished, so it returns on the next launch. Model-specific readiness remains separate from these base checks.
 
+## Activity recovery
+
+When Activity cannot read conversion, study, training, queue or server status,
+the error offers **Retry status** and **Open Health**. Retry refreshes the existing
+records without resubmitting jobs. Normal conversion-completion reconciliation,
+including its fresh scan and verification gate, still applies. Repeated retries are disabled while
+the read is in progress. Health opens the existing engine and runtime checks;
+installation still requires its separate confirmation.
+
+Previously loaded jobs remain visible when a status read fails. Those records
+may have changed since the last successful read. A successful retry replaces
+the relevant status and clears its read error; it does not turn a failed job
+into a successful one.
+
+Failed training jobs offer **View log** when a log path was recorded, alongside
+**Review training setup**. The latter opens Training without changing its draft
+or submitting a job. Correct the inputs, use **Check setup**, then preview and
+confirm a new run explicitly. Study jobs retain their existing Studies controls;
+conversion retry retains its preview and confirmation boundary.
+
+Activity's log window reads only a bounded tail of a regular file in the
+background: at most 64 KiB and 80 lines. Larger logs are labeled truncated.
+Empty, missing, linked or non-regular log files are reported separately from job
+status. Opening a log never restarts work.
+
 ## Watch alerts
 
 With **Settings → Advisors → Watch & regression alerts** on, the app checks two kinds of change and shows them under **Watch alerts** on Overview:

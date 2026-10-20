@@ -824,6 +824,19 @@ final class TrainingEvaluationSuiteSessionTests: XCTestCase {
 // MARK: - Presentation
 
 final class TrainingPresentationTests: XCTestCase {
+    func testOnlyFailedTrainingJobsOfferFailureRecoveryGuidance() throws {
+        for state in ["failed", "running", "done", "cancelled", "unknown"] {
+            let row = TrainingJobRow(job: try TF.job(state), home: nil)
+            XCTAssertEqual(row.recoveryGuidance != nil, state == "failed")
+            XCTAssertEqual(row.canCancel, state == "running")
+            if let guidance = row.recoveryGuidance {
+                XCTAssertTrue(guidance.contains("Check setup"))
+                XCTAssertTrue(guidance.contains("new run"))
+                XCTAssertFalse(row.canCompare)
+            }
+        }
+    }
+
     func testTrainingPlanShowsCapturedOutputAndDatasetCounts() {
         let payload: [String: Any] = ["preview_hash": "h", "out": "model-lora",
             "base_identity": ["path": "/cache/snapshots/revision"],

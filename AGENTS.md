@@ -849,6 +849,11 @@ server.
   and generation checks reject late reads from a previous backend context.
 
 - Prefer project-local inspection first, keep edits scoped.
+- Activity's `ActivityStatusRecovery` retries only the existing status reads and
+  routes to Health; it never restarts jobs. Failed training rows share
+  `TrainingJobRow.recoveryGuidance`, open recorded logs or navigate to Training
+  without changing its draft. `LogSheet` reads through `BackendInstallLog` on a
+  utility task and fences cancelled view loads before publishing the bounded tail.
 - Update this file when execution/integration behavior changes so it continues to
   match the README and docs.
 - Do not invent cross-repo semantics for conversion/receipt behavior; state
