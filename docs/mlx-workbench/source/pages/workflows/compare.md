@@ -4,6 +4,30 @@
 
 When the selected mode has no results, setup comes first, followed by compact history and empty-state guidance. Existing results remain above setup when a run is available.
 
+## Hosted and mixed comparisons
+
+The **Compare source** picker keeps **Local models** and **Hosted & mixed** setups separate. Switching preserves the existing local setup and results. Finish or cancel an active comparison before changing source.
+
+For hosted comparisons, first add and refresh connections in [Library's Hosted models source](library.md#hosted-models). Choose **Hosted & mixed**, add up to four models and select **Text** or **ComfyUI images**. Selecting models never starts inference.
+
+### Text
+
+Text comparisons accept hosted models and ready native chat models in the same run. Choose an existing chat prompt set, then **Run comparison**. Each lane runs sequentially. Requests use temperature zero and the recorded per-prompt output-token limits, capped by Settings. Templates, active context and other host defaults are not overridden. Unsupported model operations fail visibly rather than being replaced with another model.
+
+Native lanes use an owned temporary server and the existing receipt-based cleanup boundary. External lanes send requests to the selected host without starting or stopping its server. Before each hosted lane, the saved connection and available model identity are rechecked; a changed recorded digest blocks inference. Missing digests remain unknown and matching names do not establish identical weights.
+
+Results preserve full outputs, requested prompts and limits, selected source snapshots and pre-inference host metadata. Latency includes transport and any model loading. Token speeds can differ because of tokenizer, host configuration and streaming behavior; estimated metrics remain labeled. Quality ratings stay separate from speed. These records do not enter local recommendation, promotion or reclaim evidence.
+
+### ComfyUI images
+
+Choose checkpoint models, then **Import API workflow…** using ComfyUI's API-format JSON export. Bind a checkpoint loader, the positive `CLIPTextEncode` input and a `SaveImage` output. Review the graph and enter the image prompt before running.
+
+The supported graph uses standard local image nodes. Custom nodes and cloud/API nodes are refused. The host's advertised node definitions and checkpoint choices are validated before submission. Only the bound checkpoint and positive text change; seeds, negative text, samplers and remaining settings are preserved. Any referenced LoRAs, input images and other assets remain host-owned; their file contents are not captured.
+
+The accepted prompt ID and submitted graph are saved before observing that job's history. Outputs are retrieved from the selected output node only after the owned job reports success. Compare retains a PNG or JPEG output for image inspection. Elapsed time includes queue wait, loading and execution; cached nodes can affect it, and per-step inference speed is not inferred.
+
+**Cancel** stops local observation and skips later work. A submitted ComfyUI job may continue on the host. Its recorded prompt ID remains available under **Recorded sources and settings**; no global interrupt, queue clear or server stop is issued. Runs interrupted by an app restart retain their records and are marked interrupted. Failed native server cleanup must be retried before another run.
+
 ## Run a comparison
 
 1. Choose a mode. The picker is segmented when it fits and a menu otherwise.

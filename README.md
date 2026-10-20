@@ -49,7 +49,7 @@ See [Your first model](docs/mlx-workbench/source/pages/introduction/quickstart.m
 
 | Area | Screens | Highlights |
 |---|---|---|
-| Workbench | Overview, Library | Model budget, fit per model, model details and lineage, LM Studio source |
+| Workbench | Overview, Library | Model budget, fit per model, model details and lineage, LM Studio folders and local host inventories |
 | Lifecycle | Prepare, Compare, Run | Previewed conversion, quality gate canaries, measured comparisons in eight modes, always-on endpoints with load on request |
 | Operations | Activity, Reclaim, Clients, Health | Job timeline, quarantine and Trash with restore, client config wiring with rollback, runtime readiness |
 | Lab | Discover, Studies, Training | Hub candidates and task recommendations, controlled studies, text LoRA training with evaluation |

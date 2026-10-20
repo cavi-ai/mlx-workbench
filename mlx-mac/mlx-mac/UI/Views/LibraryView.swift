@@ -298,9 +298,15 @@ struct LibraryRevealRequest: Equatable {
 }
 
 enum LibrarySource: String, CaseIterable, Identifiable {
-    case allModels, lmStudio
+    case allModels, lmStudio, hosted
     var id: Self { self }
-    var title: String { self == .allModels ? "All models" : "LM Studio" }
+    var title: String {
+        switch self {
+        case .allModels: return "All models"
+        case .lmStudio: return "LM Studio"
+        case .hosted: return "Hosted models"
+        }
+    }
 }
 
 /// Source-specific views share Library's inventory and preserve the main table's state.
@@ -344,6 +350,9 @@ struct LibraryWorkspace: View {
         }
         .onChange(of: appHost.libraryRevealRequest, initial: true) { receiveRevealRequest() }
         .onChange(of: isRouteActive, initial: true) { receiveRevealRequest() }
+        .onChange(of: appHost.hostedLibraryRequested, initial: true) { _, requested in
+            if requested { source = .hosted; visitedSources.insert(.hosted); appHost.hostedLibraryRequested = false }
+        }
     }
 
     @ViewBuilder private func sourceView(_ source: LibrarySource) -> some View {
@@ -355,6 +364,11 @@ struct LibraryWorkspace: View {
             VStack(spacing: 0) {
                 LibrarySourcePicker(selection: $source)
                 LMStudioView(appHost: appHost, home: sourceHome, onRouteSelection: navigateFromSource)
+            }
+        case .hosted:
+            VStack(spacing: 0) {
+                LibrarySourcePicker(selection: $source)
+                HostedModelsView(appHost: appHost, onRouteSelection: onRouteSelection)
             }
         }
     }
@@ -384,7 +398,7 @@ private struct LibrarySourcePicker: View {
             ForEach(LibrarySource.allCases) { Text($0.title).tag($0) }
         }
         .pickerStyle(.segmented)
-        .frame(maxWidth: 350)
+        .frame(maxWidth: 460)
         .padding(.horizontal, WorkbenchSpacing.pageInset)
         .padding(.top, WorkbenchSpacing.pageInset)
         .accessibilityIdentifier("library-source")
