@@ -189,6 +189,8 @@ The table shows model identifiers, available or loaded state, parameter size, qu
 
 ### Release host memory
 
+The toolbar memory panel also lists saved hosts and their dated residency and activity readings. **Open host** selects the corresponding connection here; the refresh button beside each host reads only that host without loading or unloading models.
+
 Select a model reported as loaded, then **Unload model…** for Ollama or **Unload instance…** for LM Studio. LM Studio requires its native loaded-instance identities; when several instances are loaded, choose the exact instance first. Legacy inventory without those identities cannot authorize unloading. ComfyUI offers **Free host memory…**, which requests cleanup of all cached models on that host, independently of the selected checkpoint. llama.cpp and generic OpenAI-compatible connections do not offer a supported unload action.
 
 The review shows the target, host address, activity and check time. ComfyUI reports running and queued jobs. Ollama and LM Studio remain **Activity unknown** because their public inventory APIs do not report other clients' active requests. Missing or failed activity checks never imply idle. Busy, queued and unknown activity carry a warning; **Cancel** or Escape sends no memory-release request.

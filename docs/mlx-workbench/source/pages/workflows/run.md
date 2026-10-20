@@ -92,6 +92,10 @@ requested an allocation. Exited or unreadable processes are omitted. Failed
 refreshes retain the dated reading with a warning. The serving headroom guard
 and model-fit estimate continue to use system memory readings.
 
+**Saved model hosts** shows cached readings from your configured Ollama, LM Studio, ComfyUI and other local connections. Each row shows reported loaded models, any reported model memory, activity and capture times. Unknown residency stays unknown, including ComfyUI checkpoint inventories. These values are not added to system memory estimates.
+
+Opening the panel never refreshes external hosts. The refresh button beside each host reads only that connection; a failed refresh keeps its dated inventory and shows the error. **Open host** selects that exact connection in Library's Hosted models source, where memory actions retain their activity review and confirmation.
+
 ## Serving profiles
 
 Saved serving profiles carry runtime settings for one model through verification and the endpoint configuration. They are used by the optional Strata runtime; see [Strata](strata.md).

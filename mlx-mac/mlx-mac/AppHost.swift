@@ -41,6 +41,7 @@ class AppHost: ObservableObject {
     let hostedComparison: HostedComparisonCoordinator
     @Published var compareHostedModels = false
     @Published var hostedLibraryRequested = false
+    @Published var hostedLibraryHostRequest: ModelHost?
     @Published var hostedComparisonTargets: [HostedComparisonTarget] = []
     let servingProfiles: ServingProfileCoordinator
     let lab: LabCoordinator
@@ -356,6 +357,16 @@ class AppHost: ObservableObject {
         self.verification.environmentFingerprint = { [weak self] in
             self?.watch.currentFingerprintDescription
         }
+    }
+
+    /// Consume once; a removed or edited connection must not select another host.
+    func consumeHostedLibraryHostRequest() throws -> ModelHost? {
+        guard let requested = hostedLibraryHostRequest else { return nil }
+        hostedLibraryHostRequest = nil
+        guard modelHosts.hosts.contains(requested) else {
+            throw HostedIntegrationError.invalid("The requested host connection changed or was removed. Select a host to continue.")
+        }
+        return requested
     }
 
     func requestRescan() {
