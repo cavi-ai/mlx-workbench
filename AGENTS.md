@@ -79,6 +79,10 @@ server.
   promotion or reclaim evidence. ComfyUI accepts explicitly bound core image API graphs;
   submission records persist owned prompt IDs and submitted graphs before observation.
   Cancellation never interrupts the shared host; ComfyUI timing includes queue wait.
+  ComfyUI's existing `system_stats` read retains optional dated per-device free/total
+  memory in `HostInventory.deviceMemory` and before-lane conditions. Library, the
+  Memory panel and historical conditions share a cached disclosure. MPS/CPU readings
+  overlap shared system memory; devices are never summed or attributed to models.
 - Hosted memory controls use `HostResourceClient` through `ModelHostsCoordinator`'s
   read-only prepare and explicit confirm flow. Confirm rechecks the connection,
   model/instance and activity; drift requires renewed confirmation. Ollama unloads

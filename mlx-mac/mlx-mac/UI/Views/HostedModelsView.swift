@@ -185,6 +185,7 @@ struct HostedModelsView: View {
             }
             if let version = inventory.runtimeVersion { Text("Runtime version: \(version)").font(WorkbenchTypography.secondary) }
             if let device = inventory.deviceSummary { Text(device).font(WorkbenchTypography.secondary) }
+            if inventory.host.provider == .comfyUI { HostDeviceMemoryDisclosure(snapshot: inventory.deviceMemory) }
             ForEach(inventory.warnings, id: \.self) { Label($0, systemImage: "info.circle").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
             Text("Host-reported metadata · \(inventory.capturedAt.formatted(date: .abbreviated, time: .standard))")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -247,6 +248,61 @@ struct HostedModelsView: View {
             }
             appHost.compareHostedModels = true; onRouteSelection(.compare)
         } catch { actionError = AppHost.render(error) }
+    }
+}
+
+struct HostDeviceMemoryDisclosure: View {
+    let snapshot: HostDeviceMemorySnapshot?
+
+    var body: some View {
+        DisclosureGroup("Reported device memory") {
+            HostDeviceMemoryView(snapshot: snapshot)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.top, WorkbenchSpacing.xs)
+        }
+    }
+}
+
+/// Cached values only. Opening this content never reads a host or releases memory.
+struct HostDeviceMemoryView: View {
+    let snapshot: HostDeviceMemorySnapshot?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+            if let snapshot {
+                Text("Device memory read " + snapshot.capturedAt.formatted(date: .abbreviated, time: .standard))
+                    .foregroundStyle(WorkbenchColor.muted)
+                if snapshot.devices.isEmpty { Text("No devices reported").foregroundStyle(WorkbenchColor.muted) }
+                if !snapshot.devices.isEmpty {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                            ForEach(Array(snapshot.devices.enumerated()), id: \.offset) { offset, device in
+                                VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+                                    Text("\(offset + 1). " + (device.name ?? "Unnamed device")).font(WorkbenchTypography.label)
+                                    Text((device.type ?? "Type unknown") + (device.index.map { " · index \($0)" } ?? ""))
+                                        .foregroundStyle(WorkbenchColor.muted)
+                                    Text("Reported free: " + bytes(device.freeBytes) + " · total: " + bytes(device.totalBytes))
+                                    Text(device.reportsSystemMemory
+                                        ? "Shared system memory reported by ComfyUI; overlaps system headroom."
+                                        : "Host-reported device memory; allocations may be shared.")
+                                        .foregroundStyle(WorkbenchColor.muted)
+                                }
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.frame(maxHeight: 220)
+                }
+                Text("Device readings are separate observations, never added together. They do not measure a model's allocation or memory released by cleanup.")
+                    .foregroundStyle(WorkbenchColor.muted)
+            } else {
+                Text("Device memory unknown").foregroundStyle(WorkbenchColor.muted)
+                Text("This snapshot contains no device-memory readings.").foregroundStyle(WorkbenchColor.muted)
+            }
+        }
+        .font(WorkbenchTypography.secondary).textSelection(.enabled)
+    }
+
+    private func bytes(_ value: Int64?) -> String {
+        guard let value else { return "Unknown" }
+        return value == 0 ? "0 bytes" : ByteCountFormatter.string(fromByteCount: value, countStyle: .memory)
     }
 }
 

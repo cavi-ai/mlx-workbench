@@ -5,6 +5,21 @@ import XCTest
 
 @MainActor
 final class HostedModelsRenderTests: XCTestCase {
+    func testDeviceMemoryRendersSharedPartialEmptyAndUnknownReadings() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
+        let date = Date(timeIntervalSince1970: 1_792_512_000)
+        let known = HostDeviceMemorySnapshot(capturedAt: date, devices: [
+            HostDeviceMemory(name: "Apple M4 Max shared memory", type: "mps", index: nil, totalBytes: 64_000_000_000, freeBytes: 0),
+            HostDeviceMemory(name: "A device with a deliberately long repeated name", type: "cuda", index: 0, totalBytes: 24_000_000_000, freeBytes: 8_000_000_000),
+            HostDeviceMemory(name: "A device with a deliberately long repeated name", type: "cuda", index: 1, totalBytes: nil, freeBytes: nil)])
+        for (state, snapshot) in [("known", Optional(known)), ("empty", HostDeviceMemorySnapshot(capturedAt: date, devices: [])), ("unknown", nil)] {
+            for dark in [false, true] {
+                try await capture(HostDeviceMemoryView(snapshot: snapshot).padding(WorkbenchSpacing.pageInset),
+                    name: "device-memory-" + state, dark: dark, width: 380)
+            }
+        }
+    }
+
     func testInspectedModelDetailsRenderKnownEmptyAndUnknownMetadata() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
         var model = HostedModel(hostID: UUID(), modelID: "selected-model-with-a-long-installed-tag:latest", name: "Selected",
@@ -48,7 +63,9 @@ final class HostedModelsRenderTests: XCTestCase {
                 reserveBytes: FitAdvisor.reserveBytes, inventoryCapturedAt: date,
                 activity: state == "unknown" ? nil : HostActivity(state: .busy, checkedAt: date, runningCount: 1, pendingCount: 2, detail: "Observed from the host queue."),
                 loadedModels: state == "unknown" ? [] : [selected, other], unknownResidencyCount: state == "unknown" ? 12 : 1,
-                inventoryWarnings: ["Some model metadata is unavailable."])
+                inventoryWarnings: ["Some model metadata is unavailable."],
+                deviceMemory: state == "recorded" ? HostDeviceMemorySnapshot(capturedAt: date, devices: [
+                    HostDeviceMemory(name: "Apple M4", type: "mps", index: nil, totalBytes: 32_000_000_000, freeBytes: 0)]) : nil)
             let record = HostedComparisonRecord(run: run, targets: [HostedComparisonTarget(host: host, model: selected, capturedAt: date)],
                 temperature: 0, workflow: nil, submissions: [], conditions: state == "legacy" ? nil : [conditions])
             for dark in [false, true] {

@@ -243,7 +243,7 @@ final class HostedComparisonCoordinator: ObservableObject {
         let conditions = HostedLaneConditions(targetID: target.id, memoryCapturedAt: capturedAt, systemMemory: validReading,
             reserveBytes: FitAdvisor.reserveBytes, inventoryCapturedAt: inventory?.capturedAt, activity: inventory?.activity,
             loadedModels: inventory?.reportedLoadedModels, unknownResidencyCount: inventory.map { $0.models.filter { $0.isLoaded == nil }.count },
-            inventoryWarnings: inventory?.warnings)
+            inventoryWarnings: inventory?.warnings, deviceMemory: inventory?.deviceMemory)
         try update(id) { record in
             if let inventory, let model = inventory.models.first(where: { $0.id == target.id }) {
                 var observed = HostedComparisonTarget(host: inventory.host, model: model, capturedAt: inventory.capturedAt, runtimeVersion: inventory.runtimeVersion)

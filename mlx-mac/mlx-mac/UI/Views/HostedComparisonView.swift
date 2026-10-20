@@ -324,7 +324,7 @@ struct HostedRunConditionsView: View {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                         Text(target.displayName).font(WorkbenchTypography.label)
                         if let conditions = record.conditions?.first(where: { $0.targetID == target.id }) {
-                            conditionDetails(conditions, hosted: target.host != nil)
+                            conditionDetails(conditions, hosted: target.host != nil, showsDeviceMemory: target.host?.provider == .comfyUI)
                         } else {
                             Text("Not recorded for this lane.").foregroundStyle(WorkbenchColor.muted)
                         }
@@ -336,7 +336,7 @@ struct HostedRunConditionsView: View {
         .textSelection(.enabled)
     }
 
-    private func conditionDetails(_ conditions: HostedLaneConditions, hosted: Bool) -> some View {
+    private func conditionDetails(_ conditions: HostedLaneConditions, hosted: Bool, showsDeviceMemory: Bool) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             Text("Memory checked " + conditions.memoryCapturedAt.formatted(date: .abbreviated, time: .standard))
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
@@ -348,6 +348,7 @@ struct HostedRunConditionsView: View {
             if hosted {
                 hostDetails(conditions)
             }
+            if showsDeviceMemory { HostDeviceMemoryDisclosure(snapshot: conditions.deviceMemory) }
             ForEach(conditions.timingCaveats, id: \.self) { caveat in
                 Text(caveat).foregroundStyle(WorkbenchColor.warning)
             }

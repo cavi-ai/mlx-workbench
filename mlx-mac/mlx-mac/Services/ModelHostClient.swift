@@ -269,9 +269,11 @@ struct ModelHostClient: Sendable {
         try Self.validateIDs(models)
         var version: String?
         var devices: String?
+        var deviceMemory: HostDeviceMemorySnapshot?
         do {
             let stats = try await object(host, path: "system_stats", token: token)
             version = Self.text((stats["system"] as? [String: Any])?["comfyui_version"])
+            deviceMemory = try Self.deviceMemory(stats["devices"])
             if let reported = stats["devices"] as? [[String: Any]], reported.count <= 32 {
                 let names = reported.compactMap { device -> String? in
                     guard let name = Self.text(device["name"]) else { return nil }
@@ -281,7 +283,22 @@ struct ModelHostClient: Sendable {
             }
         } catch is CancellationError { throw CancellationError() }
         catch { warnings.append("ComfyUI runtime and device metadata is unavailable.") }
-        return HostInventory(host: host, models: models, capturedAt: Date(), runtimeVersion: version, deviceSummary: devices, warnings: warnings)
+        return HostInventory(host: host, models: models, capturedAt: Date(), runtimeVersion: version, deviceSummary: devices,
+            warnings: warnings, deviceMemory: deviceMemory)
+    }
+
+    private static func deviceMemory(_ value: Any?) throws -> HostDeviceMemorySnapshot? {
+        guard let value, !(value is NSNull) else { return nil }
+        guard let devices = value as? [[String: Any]], devices.count <= 32 else { throw HostHTTPError.invalidResponse }
+        let readings = devices.map { device in
+            let reportedTotal = integer(device["vram_total"])
+            let total = reportedTotal.flatMap { $0 > 0 ? $0 : nil }
+            var free = integer(device["vram_free"])
+            if let reportedTotal, let reportedFree = free, reportedFree > reportedTotal { free = nil }
+            return HostDeviceMemory(name: text(device["name"]), type: text(device["type"]),
+                index: int(device["index"]), totalBytes: total, freeBytes: free)
+        }
+        return HostDeviceMemorySnapshot(capturedAt: Date(), devices: readings)
     }
 
     private func object(_ host: ModelHost, path: String, token: String?) async throws -> [String: Any] {

@@ -4,6 +4,89 @@ import XCTest
 @testable import mlx_workbench
 
 final class ModelHostClientTests: XCTestCase {
+    func testComfyUIDeviceMemoryKeepsUnknownEmptyAndPartialReportsDistinct() async throws {
+        for (body, count) in [("{}", Optional<Int>.none), (#"{"devices":null}"#, nil), (#"{"devices":[]}"#, 0),
+                              (#"{"devices":[{"name":"Repeated","type":"cpu","index":null,"vram_free":0},{"name":"Repeated","type":"cuda","index":1,"vram_total":8000}]}"#, 2)] {
+            let (client, _) = client(responses: ["/models": .json("[]"), "/system_stats": .json(body)])
+            let inventory = try await client.inventory(host: host(.comfyUI))
+            XCTAssertEqual(inventory.deviceMemory?.devices.count, count)
+            if count == 2 {
+                let devices = try XCTUnwrap(inventory.deviceMemory?.devices)
+                XCTAssertTrue(devices[0].reportsSystemMemory)
+                XCTAssertNil(devices[0].totalBytes)
+                XCTAssertEqual(devices[0].freeBytes, 0)
+                XCTAssertFalse(devices[1].reportsSystemMemory)
+                XCTAssertEqual(devices[1].index, 1)
+                XCTAssertEqual(devices[1].totalBytes, 8000)
+                XCTAssertNil(devices[1].freeBytes)
+            }
+        }
+    }
+
+    func testComfyUIDeviceMemoryNeverAcceptsInvalidByteReadings() async throws {
+        for value in ["true", "false", "-1", "1.5", "9223372036854775808", "\"4096\"", "null", "{}", "[]"] {
+            let (client, _) = client(responses: ["/models": .json("[]"),
+                "/system_stats": .json("{\"devices\":[{\"vram_total\":\(value),\"vram_free\":\(value)}]}")])
+            let inventory = try await client.inventory(host: host(.comfyUI))
+            let device = try XCTUnwrap(inventory.deviceMemory?.devices.first)
+            XCTAssertNil(device.totalBytes, value)
+            XCTAssertNil(device.freeBytes, value)
+        }
+        let (client, _) = client(responses: ["/models": .json("[]"),
+            "/system_stats": .json(#"{"devices":[{"vram_total":100,"vram_free":101},{"vram_total":0,"vram_free":0},{"vram_total":0,"vram_free":1}]}"#)])
+        let inventory = try await client.inventory(host: host(.comfyUI))
+        let devices = try XCTUnwrap(inventory.deviceMemory?.devices)
+        XCTAssertEqual(devices[0].totalBytes, 100)
+        XCTAssertNil(devices[0].freeBytes)
+        XCTAssertNil(devices[1].totalBytes)
+        XCTAssertEqual(devices[1].freeBytes, 0)
+        XCTAssertNil(devices[2].freeBytes)
+    }
+
+    func testComfyUIMalformedDeviceListsDoNotPublishPartialSnapshotsOrLoseInventory() async throws {
+        let tooMany = "{\"devices\":[" + Array(repeating: "{}", count: 33).joined(separator: ",") + "]}"
+        for response in [HostStubResponse.json(#"{"devices":{}}"#), .json(#"{"devices":[{},42]}"#), .json(tooMany),
+                         HostStubResponse(status: 503, body: "private-host-error")] {
+            let (client, _) = client(responses: ["/models": .json(#"["checkpoints"]"#),
+                "/models/checkpoints": .json(#"["alpha"]"#), "/system_stats": response,
+                "/queue": .json(#"{"queue_running":[],"queue_pending":[]}"#)])
+            let inventory = try await client.inventory(host: host(.comfyUI))
+            XCTAssertNil(inventory.deviceMemory)
+            XCTAssertEqual(inventory.models.map(\.modelID), ["checkpoints/alpha"])
+            XCTAssertEqual(inventory.activity?.state, .idle)
+            XCTAssertFalse(inventory.warnings.isEmpty)
+            XCTAssertFalse(inventory.warnings.joined().contains("private-host-error"))
+        }
+    }
+
+    func testComfyUIDeviceMemoryRetainsDatedPerDeviceReadingsWithoutExtraRequests() async throws {
+        let (client, requests) = client(responses: [
+            "/models": .json(#"["checkpoints"]"#),
+            "/models/checkpoints": .json(#"["model.safetensors"]"#),
+            "/system_stats": .json(#"{"system":{"comfyui_version":"0.3","argv":["private-argument"]},"devices":[{"name":"Apple M4","type":"mps","index":null,"vram_total":16000,"vram_free":0},{"name":"GPU","type":"cuda","index":0,"vram_total":8000,"vram_free":3000}]}"#),
+            "/queue": .json(#"{"queue_running":[],"queue_pending":[]}"#)
+        ])
+        let inventory = try await client.inventory(host: host(.comfyUI), token: "device-token")
+        let encoded = try JSONEncoder().encode(inventory)
+        let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let snapshot = try XCTUnwrap(wire["deviceMemory"] as? [String: Any])
+        let devices = try XCTUnwrap(snapshot["devices"] as? [[String: Any]])
+        XCTAssertNotNil(snapshot["capturedAt"])
+        XCTAssertEqual(devices.count, 2)
+        XCTAssertEqual(devices.first?["name"] as? String, "Apple M4")
+        XCTAssertEqual(devices.first?["totalBytes"] as? Int, 16000)
+        XCTAssertEqual(devices.first?["freeBytes"] as? Int, 0)
+        XCTAssertEqual(devices.last?["freeBytes"] as? Int, 3000)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("private-argument"))
+        XCTAssertEqual(inventory.models.first?.modelID, "checkpoints/model.safetensors")
+        XCTAssertNil(inventory.models.first?.memoryBytes)
+        XCTAssertEqual(inventory.deviceMemory?.devices.first?.type, "mps")
+        XCTAssertTrue(inventory.deviceMemory?.devices.first?.reportsSystemMemory == true)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(inventory.deviceMemory?.capturedAt), inventory.capturedAt)
+        XCTAssertEqual(requests.values.map { $0.url!.path }, ["/models", "/models/checkpoints", "/system_stats", "/queue"])
+        XCTAssertTrue(requests.values.allSatisfy { $0.httpMethod == "GET" && $0.value(forHTTPHeaderField: "Authorization") == "Bearer device-token" })
+    }
+
     func testOllamaDetailsReadUsesOnlyMetadataAndPreservesLoadedContext() async throws {
         let selectedHost = host(.ollama)
         let selected = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "a")

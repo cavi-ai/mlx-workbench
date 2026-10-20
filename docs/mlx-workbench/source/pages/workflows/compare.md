@@ -24,6 +24,8 @@ Activity, other loaded models and headroom below the recorded reserve can produc
 
 ### ComfyUI images
 
+ComfyUI lanes retain the dated **Reported device memory** snapshot from the inventory read before inference. Expand it within the lane's conditions for each device's reported free and total memory. MPS/CPU readings overlap shared system headroom; devices are never added together. Missing historical readings stay unknown, and refreshing a live host does not change saved conditions. These readings do not establish model allocations or memory released by cleanup.
+
 Choose checkpoint models, then **Import API workflow…** using ComfyUI's API-format JSON export. Bind a checkpoint loader, the positive `CLIPTextEncode` input and a `SaveImage` output. Review the graph and enter the image prompt before running.
 
 The supported graph uses standard local image nodes. Custom nodes and cloud/API nodes are refused. The host's advertised node definitions and checkpoint choices are validated before submission. Only the bound checkpoint and positive text change; seeds, negative text, samplers and remaining settings are preserved. Any referenced LoRAs, input images and other assets remain host-owned; their file contents are not captured.
