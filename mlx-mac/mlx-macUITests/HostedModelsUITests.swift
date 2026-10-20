@@ -116,11 +116,13 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(error.waitForExistence(timeout: 10)); XCTAssertTrue(model.exists)
         try FileManager.default.removeItem(at: root.appendingPathComponent("fail")); app.buttons["retry-model-host-refresh"].click()
         XCTAssertTrue(model.waitForExistence(timeout: 10)); model.click()
-        let selectedDetails = app.disclosureTriangles["host-selected-model-details"]
+        let selectedDetails = app.disclosureTriangles["Reported model details"]
         XCTAssertTrue(selectedDetails.waitForExistence(timeout: 5))
         clickRunningDisclosure(selectedDetails)
         let readDetails = app.buttons["read-host-model-details"]
-        XCTAssertTrue(readDetails.waitForExistence(timeout: 5)); clickVisibleControl(readDetails, in: app)
+        XCTAssertTrue(readDetails.waitForExistence(timeout: 5))
+        readDetails.scroll(byDeltaX: 0, deltaY: -240)
+        clickVisibleControl(readDetails, in: app)
         let context = app.staticTexts["host-model-context"]
         let inspected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             context.label.contains("Maximum context: 32768") || (context.value as? String)?.contains("Maximum context: 32768") == true
@@ -135,6 +137,7 @@ final class HostedModelsUITests: XCTestCase {
         XCTAssertTrue(detailRequests.first?.hasPrefix("POST /api/show ") == true)
         let detailsImage = XCTAttachment(screenshot: app.screenshot()); detailsImage.name = "ollama-model-details-read"; detailsImage.lifetime = .keepAlways; add(detailsImage)
         clickRunningDisclosure(selectedDetails)
+        selectedDetails.scroll(byDeltaX: 0, deltaY: 240)
         let compare = app.buttons["Compare…"].firstMatch
         let canCompare = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in compare.isEnabled }, object: nil)
         wait(for: [canCompare], timeout: 10); compare.click()

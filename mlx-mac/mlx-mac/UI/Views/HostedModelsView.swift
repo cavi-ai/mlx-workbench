@@ -180,8 +180,8 @@ struct HostedModelsView: View {
                             .accessibilityIdentifier("read-host-model-details")
                         }
                         HostedModelDetailsView(model: model)
-                    }.padding(.top, WorkbenchSpacing.xs)
-                }.accessibilityIdentifier("host-selected-model-details")
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, WorkbenchSpacing.xs)
+                }
             }
             if let version = inventory.runtimeVersion { Text("Runtime version: \(version)").font(WorkbenchTypography.secondary) }
             if let device = inventory.deviceSummary { Text(device).font(WorkbenchTypography.secondary) }
