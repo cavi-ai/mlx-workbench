@@ -1,4 +1,5 @@
 import CoreGraphics
+import Combine
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -7,6 +8,44 @@ import XCTest
 @testable import mlx_workbench
 
 final class ComfyWorkflowTests: XCTestCase {
+    @MainActor
+    func testCoordinatorPersistsConditionsBeforeComfySubmission() async throws {
+        let fixture = try ComfyHTTPFixture()
+        defer { fixture.close() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = JSONStore<HostedComparisonRecord>(fileURL: root.appendingPathComponent("run.json"))
+        let model = HostedModel(hostID: fixture.host.id, modelID: "first.safetensors", name: "first.safetensors", category: "checkpoints")
+        fixture.handler = { request in
+            let saved = try XCTUnwrap(store.load().first)
+            XCTAssertEqual(saved.conditions?.first?.targetID, model.id)
+            XCTAssertEqual(saved.observedTargets?.first?.model, model)
+            switch request.url!.path {
+            case "/object_info": return try self.encoded(self.objectInfo)
+            case "/prompt": return Data(#"{"prompt_id":"owned-id","node_errors":{}}"#.utf8)
+            case "/history/owned-id": return try self.encoded(["owned-id": self.completedHistory])
+            case "/view": return try self.image()
+            default: throw URLError(.badURL)
+            }
+        }
+        let inventory = HostInventory(host: fixture.host, models: [model], capturedAt: Date(),
+            activity: HostActivity(state: .busy, runningCount: 1, pendingCount: 0, detail: "Reported queue"))
+        let coordinator = HostedComparisonCoordinator(store: store, outputStore: ComparisonOutputStore(root: root.appendingPathComponent("outputs")),
+            readToken: { _ in nil }, freshInventory: { _, _ in inventory }, comfy: fixture.runner, memoryProbe: { nil })
+        let done = expectation(description: "Comfy comparison completed")
+        let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
+        try coordinator.start(targets: [HostedComparisonTarget(host: fixture.host, model: model, capturedAt: Date())],
+            promptSet: PromptSet(id: "image", name: "Image", useCase: nil, prompts: [PromptEntry(id: "p", text: "Tree", maxTokens: 32)], origin: .userCreated, mode: .imageGeneration),
+            workflow: workflow)
+        await fulfillment(of: [done], timeout: 5)
+        let record = try XCTUnwrap(store.load().first)
+        XCTAssertEqual(record.run.state, .completed)
+        XCTAssertEqual(record.submissions.count, 1)
+        XCTAssertNil(record.conditions?.first?.systemMemory)
+        XCTAssertNotNil(record.conditionsNotice)
+        subscription.cancel()
+    }
+
     func testBindingsPreserveSamplerSettingsAndNegativePrompt() throws {
         let graph = try json(workflow.submittedGraph(modelID: "second.safetensors", prompt: "A cedar tree"))
         let checkpoint = try XCTUnwrap(graph["4"] as? [String: Any])

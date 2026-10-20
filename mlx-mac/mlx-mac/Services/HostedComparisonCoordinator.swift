@@ -19,6 +19,8 @@ final class HostedComparisonCoordinator: ObservableObject {
     private let hostedChat: Chat
     private let comfy: ComfyWorkflowRunner
     private let recoverCleanup: @Sendable (ComparisonServerReceipt) async throws -> Void
+    private let memoryProbe: @Sendable () -> MemorySnapshot?
+    private let now: @Sendable () -> Date
     private var task: Task<Void, Never>?
     private var pendingNativeServer: ComparisonServerReceipt?
     /// Current local inventory and connection configuration are rechecked before each lane.
@@ -38,10 +40,12 @@ final class HostedComparisonCoordinator: ObservableObject {
          }, comfy: ComfyWorkflowRunner = ComfyWorkflowRunner(),
          recoverCleanup: @escaping @Sendable (ComparisonServerReceipt) async throws -> Void = { _ in
              throw HostedIntegrationError.invalid("Reopen with the original native runtime to recover its owned server.")
-         }) {
+         }, memoryProbe: @escaping @Sendable () -> MemorySnapshot? = MemorySnapshot.probe,
+         now: @escaping @Sendable () -> Date = { Date() }) {
         self.store = store; self.outputStore = outputStore; self.nativeProbe = nativeProbe
         self.readToken = readToken; self.freshInventory = freshInventory; self.hostedChat = hostedChat
         self.comfy = comfy; self.recoverCleanup = recoverCleanup
+        self.memoryProbe = memoryProbe; self.now = now
         do {
             var saved = try store.load().sorted { $0.run.startedAt > $1.run.startedAt }
             for index in saved.indices where saved[index].run.state == .running {
@@ -78,7 +82,7 @@ final class HostedComparisonCoordinator: ObservableObject {
         let run = ComparisonRun(id: UUID(), promptSetID: promptSet.id, promptSetName: promptSet.name,
             useCase: promptSet.useCase, variants: targets.map(\.id), results: [], startedAt: Date(), finishedAt: nil,
             state: .running, mode: mode == .chat ? nil : mode, promptEntries: promptSet.prompts)
-        let record = HostedComparisonRecord(run: run, targets: targets, temperature: 0, workflow: workflow, submissions: [])
+        let record = HostedComparisonRecord(run: run, targets: targets, temperature: 0, workflow: workflow, submissions: [], conditions: [])
         try store.upsert(record, id: \.id)
         records.insert(record, at: 0); activeRunID = run.id; lastError = nil; cancelling = false
         task = Task { await execute(record.id) }
@@ -160,9 +164,7 @@ final class HostedComparisonCoordinator: ObservableObject {
                               model.digest == nil || current.digest == model.digest else {
                             throw HostedIntegrationError.invalid("This model's recorded identity is no longer available. Refresh and select it again.")
                         }
-                        var observed = HostedComparisonTarget(host: host, model: current, capturedAt: fresh.capturedAt, runtimeVersion: fresh.runtimeVersion)
-                        observed.deviceSummary = fresh.deviceSummary
-                        try update(id) { $0.observedTargets = ($0.observedTargets ?? []) + [observed] }
+                        try await recordConditions(id, target: target, inventory: fresh)
                         for entry in entries {
                             try Task.checkCancellation()
                             if let workflow = original.workflow {
@@ -180,6 +182,7 @@ final class HostedComparisonCoordinator: ObservableObject {
                             }
                         }
                     } else if let nativeProbe, let path = target.localPath {
+                        try await recordConditions(id, target: target, inventory: nil)
                         do {
                             outcome = try await nativeProbe.run(modelPath: path, prompts: entries.map {
                                 ProbePrompt(id: $0.id, prompt: $0.text, maxTokens: $0.maxTokens, tool: $0.tool)
@@ -228,6 +231,26 @@ final class HostedComparisonCoordinator: ObservableObject {
             }
             do { try update(id) { $0.run.state = Task.isCancelled ? .cancelled : .failed; $0.run.finishedAt = Date() } }
             catch { storageError = "Comparison results could not be saved. Resolve the storage error before another run." }
+        }
+    }
+
+    private func recordConditions(_ id: UUID, target: HostedComparisonTarget, inventory: HostInventory?) async throws {
+        let probe = memoryProbe, clock = now
+        let (reading, capturedAt) = await Task.detached(priority: .utility) { (probe(), clock()) }.value
+        try Task.checkCancellation()
+        try validateTarget(target)
+        let validReading = reading.flatMap { $0.totalBytes > 0 && (0...$0.totalBytes).contains($0.availableBytes) ? $0 : nil }
+        let conditions = HostedLaneConditions(targetID: target.id, memoryCapturedAt: capturedAt, systemMemory: validReading,
+            reserveBytes: FitAdvisor.reserveBytes, inventoryCapturedAt: inventory?.capturedAt, activity: inventory?.activity,
+            loadedModels: inventory?.reportedLoadedModels, unknownResidencyCount: inventory.map { $0.models.filter { $0.isLoaded == nil }.count },
+            inventoryWarnings: inventory?.warnings)
+        try update(id) { record in
+            if let inventory, let model = inventory.models.first(where: { $0.id == target.id }) {
+                var observed = HostedComparisonTarget(host: inventory.host, model: model, capturedAt: inventory.capturedAt, runtimeVersion: inventory.runtimeVersion)
+                observed.deviceSummary = inventory.deviceSummary
+                record.observedTargets = (record.observedTargets ?? []) + [observed]
+            }
+            record.conditions = (record.conditions ?? []) + [conditions]
         }
     }
 

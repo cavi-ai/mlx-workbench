@@ -102,11 +102,14 @@ final class HostedModelsUITests: XCTestCase {
         wait(for: [canCompare], timeout: 10); compare.click()
         let run = app.buttons["run-hosted-comparison"]
         XCTAssertTrue(run.waitForExistence(timeout: 10)); XCTAssertTrue(run.isEnabled); run.click()
+        let conditionsNotice = app.staticTexts["hosted-conditions-notice"]
+        XCTAssertTrue(conditionsNotice.waitForExistence(timeout: 10))
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 10)); cancel.click()
         XCTAssertTrue(run.waitForExistence(timeout: 10))
         let cancelled = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Recorded host comparisons · cancelled", "Recorded host comparisons · cancelled")).firstMatch
         XCTAssertTrue(cancelled.waitForExistence(timeout: 10))
+        XCTAssertTrue(conditionsNotice.exists)
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "hosted-comparison-cancelled"; attachment.lifetime = .keepAlways; add(attachment)
 
         library.click()
