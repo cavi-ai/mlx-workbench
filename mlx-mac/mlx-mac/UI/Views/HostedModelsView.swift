@@ -78,6 +78,13 @@ struct HostedModelsView: View {
             .padding(WorkbenchSpacing.pageInset)
         }
         .accessibilityIdentifier("hosted-models-workspace")
+        .onChange(of: appHost.hostedLibraryHostRequest, initial: true) { _, _ in
+            do {
+                guard let host = try appHost.consumeHostedLibraryHostRequest() else { return }
+                selectedHostID = host.id; selectedModelID = nil; selectedInstanceID = nil
+                query = ""; actionError = nil
+            } catch { actionError = AppHost.render(error) }
+        }
         .sheet(item: $editor) { ModelHostEditor(host: $0, coordinator: hosts) }
         .sheet(item: $resourceRequest) { request in
             HostResourceSheet(coordinator: hosts, hostID: request.hostID, selection: request.selection)

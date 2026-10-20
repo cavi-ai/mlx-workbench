@@ -105,6 +105,18 @@ struct HostInventory: Codable, Equatable, Sendable {
     var deviceSummary: String? = nil
     var warnings: [String] = []
     var activity: HostActivity? = nil
+
+    var reportedLoadedModels: [HostedModel] {
+        models.filter { $0.isLoaded == true }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    var loadedStateSummary: String {
+        let unknown = models.filter { $0.isLoaded == nil }.count
+        guard !models.isEmpty, unknown != models.count else { return "Loaded state unknown" }
+        let loaded = reportedLoadedModels.count
+        let summary = "\(loaded) \(loaded == 1 ? "model" : "models") reported loaded"
+        return unknown > 0 ? summary + " · \(unknown) unknown" : summary
+    }
 }
 
 enum HostActivityState: String, Codable, Sendable {

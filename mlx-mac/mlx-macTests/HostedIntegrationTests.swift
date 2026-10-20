@@ -104,6 +104,24 @@ final class HostedIntegrationTests: XCTestCase {
             _ = try await coordinator.checkConnection(ModelHost(name: "Remote", provider: .ollama, baseURL: "https://example.com"), token: nil, replaceToken: false)
             XCTFail("Expected address rejection")
         } catch { XCTAssertEqual(error as? HostHTTPError, .invalidURL) }
+    func testResidencySummaryPreservesUnknownAndPartialMetadata() {
+        let host = ModelHost(name: "ComfyUI", provider: .comfyUI, baseURL: "http://127.0.0.1:8188")
+        let unknown = HostedModel(hostID: host.id, modelID: "checkpoint", name: "Checkpoint")
+        var inventory = HostInventory(host: host, models: [unknown], capturedAt: Date())
+        XCTAssertEqual(inventory.loadedStateSummary, "Loaded state unknown")
+        XCTAssertTrue(inventory.reportedLoadedModels.isEmpty)
+        inventory = HostInventory(host: host, models: [], capturedAt: Date())
+        XCTAssertEqual(inventory.loadedStateSummary, "Loaded state unknown")
+        let loaded = HostedModel(hostID: host.id, modelID: "loaded", name: "Loaded", isLoaded: true, memoryBytes: 4_000_000_000)
+        let noMemory = HostedModel(hostID: host.id, modelID: "no-memory", name: "No memory", isLoaded: true)
+        let unloaded = HostedModel(hostID: host.id, modelID: "unloaded", name: "Unloaded", isLoaded: false)
+        inventory = HostInventory(host: host, models: [unknown, loaded, noMemory, unloaded], capturedAt: Date())
+        XCTAssertEqual(inventory.loadedStateSummary, "2 models reported loaded · 1 unknown")
+        XCTAssertEqual(inventory.reportedLoadedModels.map(\.modelID), ["loaded", "no-memory"])
+        XCTAssertEqual(inventory.reportedLoadedModels.first?.memoryBytes, 4_000_000_000)
+        XCTAssertNil(inventory.reportedLoadedModels.last?.memoryBytes)
+        inventory = HostInventory(host: host, models: [unloaded], capturedAt: Date())
+        XCTAssertEqual(inventory.loadedStateSummary, "0 models reported loaded")
     }
 
     private func directory() throws -> URL {

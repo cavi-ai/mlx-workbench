@@ -32,6 +32,29 @@ final class RuntimeInstallPrerequisitesTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".venv").path))
     }
 
+    func testMissingHomebrewUsesOfficialSetupHelpInsteadOfAnUnavailableCommand() async throws {
+        let root = try root()
+        let report = await RuntimeInstallPrerequisites.inspect(root: root, environment: ["PATH": "/missing"],
+            searchDirectories: [], probe: { _, _, _ in nil })
+        let python = try XCTUnwrap(report.issues.first { $0.guide == .uv })
+        XCTAssertNil(python.command)
+        XCTAssertEqual(python.guide?.url.absoluteString, "https://docs.astral.sh/uv/getting-started/installation/")
+        XCTAssertTrue(python.detail.contains("Homebrew"))
+        XCTAssertFalse(report.canInstall)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".venv").path))
+    }
+
+    func testDetectedHomebrewKeepsAnExplicitCopyablePythonCommand() async throws {
+        let root = try root()
+        let tools = root.appendingPathComponent("tools")
+        try executable(tools.appendingPathComponent("brew"))
+        let report = await RuntimeInstallPrerequisites.inspect(root: root, environment: ["PATH": tools.path],
+            searchDirectories: [], probe: { _, _, _ in nil })
+        let python = try XCTUnwrap(report.issues.first { $0.guide == .uv })
+        XCTAssertEqual(python.command, "brew install python@3.12")
+        XCTAssertFalse(report.canInstall)
+    }
+
     func testMissingDeveloperToolsNeverLaunchTheSystemPythonInstallerShim() async throws {
         let root = try root()
         let calls = ShimCalls()
