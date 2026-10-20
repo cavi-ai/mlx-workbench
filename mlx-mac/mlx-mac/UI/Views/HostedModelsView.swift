@@ -168,13 +168,19 @@ struct HostedModelsView: View {
             if let model = selectedModel {
                 DisclosureGroup("Reported model details") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        Text(model.modelID).font(WorkbenchTypography.compactValue).textSelection(.enabled)
-                        Text("Family: \(model.family ?? "Unknown") · Format: \(model.format ?? "Unknown")")
-                        Text("Loaded context: \(model.contextLength.map(String.init) ?? "Unknown") · Maximum context: \(model.maximumContextLength.map(String.init) ?? "Unknown")")
-                        Text("Reported model memory: \(Self.bytes(model.memoryBytes))")
-                        Text("Capabilities: \(model.capabilities?.joined(separator: ", ") ?? "Unknown")")
-                        if let digest = model.digest { Text("Digest: \(digest)").font(WorkbenchTypography.compactValue).textSelection(.enabled) }
-                    }.font(WorkbenchTypography.secondary).padding(.top, WorkbenchSpacing.xs)
+                        if inventory.host.provider == .ollama {
+                            Button("Read model details") {
+                                Task { await hosts.readModelDetails(inventory.host.id, modelID: model.modelID) }
+                            }
+                            .disabled(hosts.refreshing.contains(inventory.host.id) || hosts.resourceBusy
+                                || hosts.errors[inventory.host.id] != nil || model.digest?.isEmpty != false)
+                            .help(model.digest?.isEmpty != false
+                                ? "A reported installed digest is required. Refresh the host first."
+                                : "Refresh inventory and read this model's reported maximum context and capabilities.")
+                            .accessibilityIdentifier("read-host-model-details")
+                        }
+                        HostedModelDetailsView(model: model)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, WorkbenchSpacing.xs)
                 }
             }
             if let version = inventory.runtimeVersion { Text("Runtime version: \(version)").font(WorkbenchTypography.secondary) }
@@ -241,6 +247,27 @@ struct HostedModelsView: View {
             }
             appHost.compareHostedModels = true; onRouteSelection(.compare)
         } catch { actionError = AppHost.render(error) }
+    }
+}
+
+struct HostedModelDetailsView: View {
+    let model: HostedModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Text(model.modelID).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+            Text("Family: \(model.family ?? "Unknown") · Format: \(model.format ?? "Unknown")")
+            Text("Loaded context: \(model.contextLength.map(String.init) ?? "Unknown") · Maximum context: \(model.maximumContextLength.map(String.init) ?? "Unknown")")
+                .accessibilityIdentifier("host-model-context")
+            Text("Reported model memory: \(HostedModelsView.bytes(model.memoryBytes))")
+            Text("Capabilities: \(model.capabilities.map { $0.isEmpty ? "None reported" : $0.joined(separator: ", ") } ?? "Unknown")")
+                .accessibilityIdentifier("host-model-capabilities")
+            if let digest = model.digest { Text("Digest: \(digest)").font(WorkbenchTypography.compactValue).textSelection(.enabled) }
+            if let date = model.detailsCapturedAt {
+                Text("Model details read · \(date.formatted(date: .abbreviated, time: .standard))")
+                    .foregroundStyle(WorkbenchColor.muted).accessibilityIdentifier("host-model-details-read-at")
+            }
+        }.font(WorkbenchTypography.secondary)
     }
 }
 

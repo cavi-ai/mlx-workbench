@@ -5,6 +5,22 @@ import XCTest
 
 @MainActor
 final class HostedModelsRenderTests: XCTestCase {
+    func testInspectedModelDetailsRenderKnownEmptyAndUnknownMetadata() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
+        var model = HostedModel(hostID: UUID(), modelID: "selected-model-with-a-long-installed-tag:latest", name: "Selected",
+            digest: String(repeating: "a", count: 64), family: "llama", format: "gguf", isLoaded: true,
+            contextLength: 4096, maximumContextLength: 131072, memoryBytes: 4_000_000_000,
+            capabilities: ["completion", "vision", "tools", "thinking"], detailsCapturedAt: Date(timeIntervalSince1970: 1_792_512_000))
+        for state in ["known", "empty", "unknown"] {
+            if state == "empty" { model.capabilities = [] }
+            if state == "unknown" { model.capabilities = nil; model.maximumContextLength = nil; model.detailsCapturedAt = nil }
+            for dark in [false, true] {
+                try await capture(HostedModelDetailsView(model: model).padding(WorkbenchSpacing.pageInset),
+                    name: "ollama-model-details-" + state, dark: dark, width: 740)
+            }
+        }
+    }
+
     func testRunningWeightsRenderWithoutInstalledActions() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
         let hostID = UUID()

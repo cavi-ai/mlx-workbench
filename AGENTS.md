@@ -66,6 +66,12 @@ server.
   separately from installed tags; memory summaries prefer that list, including an
   explicit empty observation. Running-only or digest-mismatched weights remain
   read-only observations and never authorize tag-based comparisons or unloading.
+  Ollama model details are read explicitly through `ModelHostClient.inventoryInspecting`:
+  the selected installed digest must match before and after `api/show`. Only that
+  model gains reported capabilities, architecture-declared maximum context and
+  `detailsCapturedAt`; residency comes from the final inventory. Ordinary refresh
+  replaces inspected metadata. The coordinator shares its generation and in-flight
+  guards between refresh and inspection, retaining prior inventory on failure.
   Compare's Hosted & mixed workspace uses `HostedComparisonCoordinator` and separate
   `hosted-comparison-runs.json` / `hosted-comparison-outputs` stores. Native lanes reuse
   ServeProbe and durable server-ownership recovery. External lanes retain captured

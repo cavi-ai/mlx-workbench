@@ -4,6 +4,132 @@ import XCTest
 @testable import mlx_workbench
 
 final class ModelHostClientTests: XCTestCase {
+    func testOllamaDetailsReadUsesOnlyMetadataAndPreservesLoadedContext() async throws {
+        let selectedHost = host(.ollama)
+        let selected = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "a")
+        let (client, requests) = client(responses: [
+            "/api/tags": .json(#"{"models":[{"name":"alpha","digest":"a","size":100},{"name":"beta","digest":"b"}]}"#),
+            "/api/ps": .json(#"{"models":[{"name":"alpha","digest":"a","context_length":4096,"size_vram":80}]}"#),
+            "/api/version": .json(#"{"version":"fixture"}"#),
+            "/api/show": .json(#"{"capabilities":["completion","vision","tools"],"model_info":{"general.architecture":"llama","llama.context_length":32768,"other.context_length":999999},"template":"private-template","system":"private-system"}"#)
+        ])
+        let inventory = try await client.inventoryInspecting(selected, host: selectedHost, token: "details-token")
+        let inspected = try XCTUnwrap(inventory.models.first)
+        XCTAssertEqual(inspected.maximumContextLength, 32768)
+        XCTAssertEqual(inspected.capabilities, ["completion", "vision", "tools"])
+        XCTAssertEqual(inspected.contextLength, 4096)
+        XCTAssertEqual(inspected.memoryBytes, 80)
+        XCTAssertEqual(inspected.sizeBytes, 100)
+        XCTAssertNotNil(inspected.detailsCapturedAt)
+        XCTAssertNil(inventory.models.last?.maximumContextLength)
+        XCTAssertNil(inventory.models.last?.capabilities)
+        XCTAssertEqual(requests.values.map { $0.url!.path }, ["/api/tags", "/api/ps", "/api/version", "/api/show", "/api/tags", "/api/ps", "/api/version"])
+        let posts = requests.values.filter { $0.httpMethod == "POST" }
+        XCTAssertEqual(posts.count, 1)
+        if let post = posts.first {
+            let body = try requestJSON(post)
+            XCTAssertEqual(body["model"] as? String, "alpha")
+            XCTAssertEqual(body["verbose"] as? Bool, false)
+            XCTAssertEqual(body.count, 2)
+            XCTAssertEqual(post.value(forHTTPHeaderField: "Authorization"), "Bearer details-token")
+        }
+        let encoded = try JSONEncoder().encode(inventory)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("private-"))
+        XCTAssertEqual(try JSONDecoder().decode(HostInventory.self, from: encoded), inventory)
+    }
+
+    func testOllamaDetailsRejectInvalidSelectionsBeforeNetwork() async throws {
+        let ollama = host(.ollama), other = host(.lmStudio)
+        let (client, requests) = client(responses: [:])
+        for (selectedHost, model) in [
+            (other, HostedModel(hostID: other.id, modelID: "alpha", name: "Alpha", digest: "a")),
+            (ollama, HostedModel(hostID: UUID(), modelID: "alpha", name: "Alpha", digest: "a")),
+            (ollama, HostedModel(hostID: ollama.id, modelID: "alpha", name: "Alpha")),
+            (ollama, HostedModel(hostID: ollama.id, modelID: "", name: "Alpha", digest: "a"))
+        ] {
+            do { _ = try await client.inventoryInspecting(model, host: selectedHost); XCTFail("Expected invalid selection") }
+            catch {}
+        }
+        XCTAssertTrue(requests.values.isEmpty)
+    }
+
+    func testOllamaDetailsRejectDigestChangesBeforeOrAfterTheRead() async throws {
+        let selectedHost = host(.ollama)
+        let selected = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "a")
+        let same = HostStubResponse.json(#"{"models":[{"name":"alpha","digest":"a"}]}"#)
+        let changed = HostStubResponse.json(#"{"models":[{"name":"alpha","digest":"changed"}]}"#)
+        for (tags, expectedPosts) in [([changed], 0), ([same, changed], 1), ([same, .json(#"{"models":[]}"#)], 1)] {
+            let (http, requests) = transport(sequences: ["/api/tags": tags,
+                "/api/ps": [.json(#"{"models":[]}"#)], "/api/version": [.json(#"{"version":"fixture"}"#)],
+                "/api/show": [.json(#"{"capabilities":["completion"]}"#)]])
+            do { _ = try await ModelHostClient(http: http).inventoryInspecting(selected, host: selectedHost); XCTFail("Expected identity drift rejection") }
+            catch { XCTAssertTrue(error.localizedDescription.contains("changed")) }
+            XCTAssertEqual(requests.values.filter { $0.httpMethod == "POST" }.count, expectedPosts)
+        }
+    }
+
+    func testOllamaDetailsUseFinalResidencyAndOnlyTheDeclaredContextKey() async throws {
+        let selectedHost = host(.ollama)
+        let selected = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "a", isLoaded: true)
+        let (http, _) = transport(sequences: [
+            "/api/tags": [.json(#"{"models":[{"name":"alpha","digest":"a","size":100}]}"#), .json(#"{"models":[{"name":"alpha","digest":"a","size":200}]}"#)],
+            "/api/ps": [.json(#"{"models":[{"name":"alpha","digest":"a","context_length":4096,"size_vram":80}]}"#), .json(#"{"models":[]}"#)],
+            "/api/show": [.json(#"{"capabilities":["embedding"],"model_info":{"other.context_length":99999}}"#)]])
+        let result = try await ModelHostClient(http: http).inventoryInspecting(selected, host: selectedHost)
+        let inspected = try XCTUnwrap(result.models.first)
+        XCTAssertEqual(inspected.isLoaded, false)
+        XCTAssertEqual(inspected.sizeBytes, 200)
+        XCTAssertNil(inspected.memoryBytes)
+        XCTAssertNil(inspected.contextLength)
+        XCTAssertNil(inspected.maximumContextLength)
+        XCTAssertEqual(result.runningModels, [])
+        XCTAssertEqual(result.loadedStateSummary, "0 models reported loaded")
+        XCTAssertThrowsError(try HostedComparisonTarget(host: selectedHost, model: inspected, capturedAt: result.capturedAt).validate(mode: .chat))
+    }
+
+    func testOllamaDetailsKeepMissingAndEmptyCapabilitiesDistinct() async throws {
+        let selectedHost = host(.ollama)
+        let selected = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "digest-alpha")
+        for (body, expected) in [("{}", Optional<[String]>.none), (#"{"capabilities":null}"#, nil), (#"{"capabilities":[]}"#, [])] {
+            var responses = ollamaLoadedResponses()
+            responses["/api/show"] = .json(body)
+            let (client, _) = client(responses: responses)
+            let result = try await client.inventoryInspecting(selected, host: selectedHost)
+            XCTAssertEqual(result.models.first?.capabilities, expected)
+            XCTAssertNil(result.models.first?.maximumContextLength)
+        }
+    }
+
+    func testOllamaDetailsNeverGuessInvalidMaximumContext() async throws {
+        let selectedHost = host(.ollama)
+        let selected = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "digest-alpha")
+        for value in ["true", "-1", "0", "1.5", "\"32768\"", "1e100", "null"] {
+            var responses = ollamaLoadedResponses()
+            responses["/api/show"] = .json("{\"model_info\":{\"general.architecture\":\"llama\",\"llama.context_length\":\(value),\"other.context_length\":32768}}")
+            let (client, _) = client(responses: responses)
+            let result = try await client.inventoryInspecting(selected, host: selectedHost)
+            XCTAssertNil(result.models.first?.maximumContextLength, value)
+        }
+    }
+
+    func testOllamaDetailsRejectMalformedMetadataAndPropagateCancellation() async throws {
+        let selectedHost = host(.ollama)
+        let selected = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "digest-alpha")
+        for response in [HostStubResponse.json(#"{"capabilities":["completion",42]}"#),
+                         .json(#"{"capabilities":["completion",""]}"#), .json(#"{"capabilities":["tools","tools"]}"#),
+                         .json(#"{"model_info":[]}"#), .json("[]"), .failure(.cancelled),
+                         .init(status: 401, body: "private-server-body")] {
+            var responses = ollamaLoadedResponses(); responses["/api/show"] = response
+            let (client, requests) = client(responses: responses)
+            do { _ = try await client.inventoryInspecting(selected, host: selectedHost); XCTFail("Expected rejection") }
+            catch {
+                if response.failure == .cancelled { XCTAssertTrue(error is CancellationError) }
+                XCTAssertFalse(error.localizedDescription.contains("private-server-body"))
+            }
+            XCTAssertEqual(requests.values.map { $0.url!.path }, ["/api/tags", "/api/ps", "/api/version", "/api/show"])
+        }
+    }
+
     func testHostURLAcceptsOnlyExplicitLoopbackAndRemovesV1Suffix() throws {
         for value in ["http://127.0.0.1:11434/v1/", "http://localhost:11434/v1", "https://[::1]:11434/v1"] {
             let url = try host(.ollama, url: value).validatedURL()
@@ -472,9 +598,13 @@ final class ModelHostClientTests: XCTestCase {
     }
 
     private func transport(responses: [String: HostStubResponse]) -> (HostHTTPClient, HostRequestLog) {
+        transport(sequences: responses.mapValues { [$0] })
+    }
+
+    private func transport(sequences: [String: [HostStubResponse]]) -> (HostHTTPClient, HostRequestLog) {
         let log = HostRequestLog()
         let key = UUID().uuidString
-        HostInventoryStub.register(key: key, responses: responses, log: log)
+        HostInventoryStub.register(key: key, responses: sequences, log: log)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [HostInventoryStub.self]
         configuration.httpAdditionalHeaders = ["X-Inventory-Test": key]
@@ -505,18 +635,23 @@ private final class HostRequestLog: @unchecked Sendable {
 
 private final class HostInventoryStub: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
-    private static var fixtures: [String: ([String: HostStubResponse], HostRequestLog)] = [:]
-    static func register(key: String, responses: [String: HostStubResponse], log: HostRequestLog) {
+    private static var fixtures: [String: ([String: [HostStubResponse]], HostRequestLog)] = [:]
+    static func register(key: String, responses: [String: [HostStubResponse]], log: HostRequestLog) {
         lock.lock(); defer { lock.unlock() }; fixtures[key] = (responses, log)
     }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.lock.lock()
-        let fixture = Self.fixtures[request.value(forHTTPHeaderField: "X-Inventory-Test") ?? ""]
+        let key = request.value(forHTTPHeaderField: "X-Inventory-Test") ?? ""
+        var fixture = Self.fixtures[key]
+        let path = request.url!.path
+        let stub = fixture?.0[path]?.first ?? .init(status: 404, body: "")
+        if var sequence = fixture?.0[path], sequence.count > 1 {
+            sequence.removeFirst(); fixture?.0[path] = sequence; Self.fixtures[key] = fixture
+        }
         Self.lock.unlock()
         fixture?.1.append(request)
-        let stub = fixture?.0[request.url!.path] ?? .init(status: 404, body: "")
         if let failure = stub.failure {
             client?.urlProtocol(self, didFailWithError: URLError(failure))
             return

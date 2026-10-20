@@ -15,6 +15,7 @@ final class ModelHostsCoordinator: ObservableObject {
     var resourceUseBlocked: () -> Bool = { false }
     private let store: JSONStore<ModelHost>
     private let fetch: @Sendable (ModelHost, String?) async throws -> HostInventory
+    private let inspectModel: @Sendable (ModelHost, HostedModel, String?) async throws -> HostInventory
     private let readToken: (UUID) throws -> String?
     private let writeToken: (String?, UUID) throws -> Void
     private var generations: [UUID: UUID] = [:]
@@ -28,13 +29,16 @@ final class ModelHostsCoordinator: ObservableObject {
          fetch: @escaping @Sendable (ModelHost, String?) async throws -> HostInventory = { host, token in
              try await ModelHostClient().inventory(host: host, token: token)
          },
+         inspectModel: @escaping @Sendable (ModelHost, HostedModel, String?) async throws -> HostInventory = { host, model, token in
+             try await ModelHostClient().inventoryInspecting(model, host: host, token: token)
+         },
          inspectResource: @escaping @Sendable (ModelHost, HostResourceSelection, String?) async throws -> HostResourcePreview = { host, selection, token in
              try await HostResourceClient().preview(host: host, selection: selection, token: token)
          },
          releaseResource: @escaping @Sendable (HostResourcePreview, String?) async throws -> Void = { preview, token in
              try await HostResourceClient().release(preview: preview, token: token)
          }) {
-        self.store = store; self.fetch = fetch; self.readToken = readToken; self.writeToken = writeToken
+        self.store = store; self.fetch = fetch; self.inspectModel = inspectModel; self.readToken = readToken; self.writeToken = writeToken
         self.inspectResource = inspectResource; self.releaseResource = releaseResource
         do {
             let saved = try store.load()
@@ -183,24 +187,53 @@ final class ModelHostsCoordinator: ObservableObject {
     }
 
     @discardableResult
+    func readModelDetails(_ id: UUID, modelID: String) async -> Bool {
+        guard !resourceBusy, errors[id] == nil,
+              let inventory = inventories[id], inventory.host.provider == .ollama,
+              let model = inventory.models.first(where: { $0.modelID == modelID }),
+              model.digest?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
+        return await readInventory(id, inspecting: model)
+    }
+
+    @discardableResult
     func refresh(_ id: UUID) async -> Bool {
+        await readInventory(id)
+    }
+
+    private func readInventory(_ id: UUID, inspecting model: HostedModel? = nil) async -> Bool {
         guard let host = hosts.first(where: { $0.id == id }), !refreshing.contains(id) else { return false }
         let generation = UUID(); generations[id] = generation; refreshing.insert(id); errors[id] = nil
         defer { if generations[id] == generation { refreshing.remove(id) } }
         do {
-            let result = try await fetch(host, readToken(id))
+            let token = try readToken(id)
+            let result: HostInventory
+            if let model { result = try await inspectModel(host, model, token) }
+            else { result = try await fetch(host, token) }
             guard !Task.isCancelled, generations[id] == generation, hosts.contains(host) else { return false }
             guard result.host == host, result.models.allSatisfy({ $0.hostID == id }),
                   Set(result.models.map(\.id)).count == result.models.count else {
                 throw HostedIntegrationError.invalid("The host returned inconsistent model identities.")
+            }
+            if let model {
+                guard result.models.contains(where: { $0.id == model.id && $0.digest == model.digest && $0.detailsCapturedAt != nil }) else {
+                    throw HostedIntegrationError.invalid("The installed model changed. Refresh and select it again before reading details.")
+                }
             }
             inventories[id] = result
             return true
         } catch {
             guard generations[id] == generation, hosts.contains(host) else { return false }
             let retained = inventories[id] == nil ? "No inventory is available yet." : "Previous inventory retained."
-            errors[id] = error is CancellationError ? "Refresh cancelled. \(retained)"
-                : "Refresh failed. \(ModelHostConnectionCheck.guidance(for: error)) \(retained)"
+            let action = model == nil ? "Refresh" : "Model details read"
+            var guidance = ModelHostConnectionCheck.guidance(for: error)
+            if model != nil {
+                if error is HostedIntegrationError { guidance = error.localizedDescription }
+                else if case HostHTTPError.httpStatus(404) = error {
+                    guidance = "The model-details API or selected model was not found. Refresh the inventory and check this Ollama server's API support."
+                }
+            }
+            errors[id] = error is CancellationError ? "\(action) cancelled. \(retained)"
+                : "\(action) failed. \(guidance) \(retained)"
             return false
         }
     }
