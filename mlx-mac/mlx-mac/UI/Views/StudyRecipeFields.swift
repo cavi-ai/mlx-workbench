@@ -13,11 +13,13 @@ struct StudyRecipeFields: View {
                     ForEach(option.revisions, id: \.self) { revision in Text(revision).tag(revision) }
                 }
             }
-            if let reason = session.unavailableReason {
-                Text(reason).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
-            }
             TextField("Shared prompt", text: $session.draft.prompt, axis: .vertical).lineLimit(3...6)
             TextField("Negative prompt (optional)", text: $session.draft.negativePrompt, axis: .vertical).lineLimit(1...3)
+            if let reason = session.unavailableReason, !session.isBusy {
+                Text(reason).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("study-recipe-guidance")
+            }
             Grid(alignment: .leading, horizontalSpacing: WorkbenchSpacing.md, verticalSpacing: WorkbenchSpacing.sm) {
                 GridRow {
                     numberField("Width", text: $session.draft.width)
@@ -33,11 +35,18 @@ struct StudyRecipeFields: View {
                 }
                 GridRow { numberField("Baseline seed", text: $session.draft.seed) }
             }
-            if session.unavailableReason == nil, let message = session.draft.validationError {
-                Text(message).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            DisclosureGroup("Generation settings explained") {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("Steps set the number of refinement passes. Guidance controls how strongly the prompt conditions generation. Seed selects the starting randomness; keep it fixed when comparing another setting.")
+                    Text("Width and height set the clip size. Frames sets the number of images; FPS sets playback speed. Duration is frames divided by FPS.")
+                }
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 Button("Capture recipe") { Task { await session.capture() } }.disabled(!session.canCapture)
+                    .help(session.unavailableReason ?? "Record this baseline and its model and runtime identities without starting generation.")
+                    .accessibilityHint(session.unavailableReason ?? "Record this baseline without starting generation.")
                 Button("Refresh availability") { Task { await session.load() } }.disabled(session.isBusy)
                 if session.isBusy { ProgressView().controlSize(.small) }
             }

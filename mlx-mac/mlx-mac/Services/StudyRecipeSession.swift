@@ -67,10 +67,22 @@ final class StudyRecipeSession: ObservableObject {
 
     init(request: @escaping (LabRequest) async throws -> LabResponse) { self.request = request }
 
-    var unavailableReason: String? { options.first?.unavailableReason }
-    var canCapture: Bool {
-        !isBusy && draft.settings != nil && unavailableReason == nil && options.first?.revisions.contains(draft.revision) == true
+    var unavailableReason: String? {
+        if isBusy { return "Wait for the current recipe request to finish." }
+        guard let option = options.first else {
+            return "Refresh availability to check the cached model and study runtime."
+        }
+        if let reason = option.unavailableReason { return reason }
+        guard !option.revisions.isEmpty else {
+            return "No cached revision is available. Use the supported Diffusers model in your configured Hugging Face cache, then Refresh availability."
+        }
+        if let error = draft.validationError { return error }
+        guard option.revisions.contains(draft.revision) else {
+            return "The selected revision is no longer available. Choose a current cached revision."
+        }
+        return nil
     }
+    var canCapture: Bool { unavailableReason == nil }
 
     func load() async {
         guard !isBusy else { return }

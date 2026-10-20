@@ -1328,6 +1328,82 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertFalse(videoControl("task-video-input", label: "Pause").exists, app.debugDescription)
     }
 
+    func testDiscoveryAndStudyReadinessGuidance() throws {
+        func expectContent(_ element: XCUIElement, _ text: String) {
+            XCTAssertTrue(element.waitForExistence(timeout: 15))
+            let condition = NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", text, text)
+            wait(for: [expectation(for: condition, evaluatedWith: element)], timeout: 15)
+        }
+        for appearance in ["Light", "Dark"] {
+            launch(appearance: appearance, route: "scout", isolatedHome: true)
+            select("Discover")
+            let guidance = app.staticTexts["discover-inspection-guidance"]
+            expectContent(guidance, "never runs a model")
+            app.checkBoxes["Fast"].click()
+            expectContent(guidance, "Sizes and memory-fit estimates may be missing")
+            for width in [1050.0, 740.0] {
+                resizeWindow(width: width, height: width == 740 ? 612 : 720)
+                capture("Discover-guidance-\(appearance)-\(Int(width))")
+            }
+            let scroll = app.scrollViews.containing(.staticText, identifier: "Discovery").firstMatch
+            let catalog = app.staticTexts["discover-catalog-guidance"]
+            for _ in 0..<8 where !catalog.isHittable {
+                scroll.scroll(byDeltaX: 0, deltaY: -200)
+            }
+            XCTAssertTrue(catalog.isHittable)
+            expectContent(catalog, "no provider is configured")
+            XCTAssertFalse(app.buttons["Refresh Metadata"].isEnabled)
+            capture("Discover-catalog-unavailable-\(appearance)")
+            selectRadioOption("Recommend for a task", in: "discovery-mode")
+            let recommendation = app.staticTexts["adopt-inspection-guidance"]
+            let recommendations = app.scrollViews.containing(.popUpButton, identifier: "adopt-role").firstMatch
+            recommendations.checkBoxes["Fast"].click()
+            expectContent(recommendation, "still receive verification prompts")
+            capture("Discover-recommendation-guidance-\(appearance)")
+            resizeWindow(width: 1050, height: 900)
+            select("Studies")
+            let create = app.buttons["New experiment…"]
+            XCTAssertTrue(create.waitForExistence(timeout: 15))
+            XCTAssertEqual(app.buttons["Studies"].value as? String, "Selected")
+            resizeWindow(width: 740, height: 612)
+            XCTAssertTrue(create.isHittable)
+            create.click()
+            let sheet = app.sheets.firstMatch
+            let recipeGuidance = sheet.staticTexts["study-recipe-guidance"]
+            expectContent(recipeGuidance, "Enter a prompt")
+            XCTAssertFalse(app.buttons["Capture recipe"].isEnabled)
+            let prompt = app.textFields["Shared prompt"].exists ? app.textFields["Shared prompt"] : app.textViews["Shared prompt"]
+            replace(prompt, with: "A boat on a quiet lake")
+            XCTAssertTrue(app.buttons["Capture recipe"].isEnabled)
+            replace(app.textFields["Width"], with: "257")
+            expectContent(recipeGuidance, "Width")
+            XCTAssertFalse(app.buttons["Capture recipe"].isEnabled)
+            XCTAssertFalse(app.buttons["Validate pair"].isEnabled)
+            capture("Studies-invalid-setting-\(appearance)")
+            XCTAssertLessThanOrEqual(sheet.frame.width, app.windows.firstMatch.frame.width)
+            sheet.buttons["Cancel"].click()
+            try Data().write(to: root.appendingPathComponent("missing-study-runtime"))
+            app.buttons["New experiment…"].click()
+            expectContent(recipeGuidance, "Install video runtime")
+            XCTAssertFalse(app.buttons["Capture recipe"].isEnabled)
+            capture("Studies-runtime-guidance-\(appearance)")
+            sheet.buttons["Cancel"].click()
+            try FileManager.default.removeItem(at: root.appendingPathComponent("missing-study-runtime"))
+            let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+            for operation in ["adopt", "discover"] {
+                XCTAssertFalse(calls.contains("\"" + operation + "\""), "Guidance must not start \(operation)")
+            }
+            let requests = try String(contentsOf: root.appendingPathComponent("workspace-requests.jsonl"), encoding: .utf8)
+                .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+            let operations = requests.compactMap { $0["operation"] as? String }
+            XCTAssertEqual(operations.count, requests.count)
+            XCTAssertTrue(operations.contains("recipe-catalog"))
+            XCTAssertTrue(Set(operations).isSubset(of: ["snapshot", "study-list", "recipe-catalog"]),
+                          "Guidance may only read the workspace and recipe catalog: \(operations)")
+            app.terminate()
+        }
+    }
+
     func testHealthAndDiscoveryResultsAndRecovery() throws {
         func statusText(_ element: XCUIElement) -> String { element.value as? String ?? element.label }
         func entries(_ audioState: String) -> [[String: Any]] {

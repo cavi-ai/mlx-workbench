@@ -854,6 +854,10 @@ server.
   `TrainingJobRow.recoveryGuidance`, open recorded logs or navigate to Training
   without changing its draft. `LogSheet` reads through `BackendInstallLog` on a
   utility task and fences cancelled view loads before publishing the bounded tail.
+- `StudyRecipeSession.unavailableReason` owns recipe capture readiness and its
+  visible guidance, including catalog availability, cached revision membership
+  and draft validation. Checking availability retains draft fields and never
+  captures a recipe or starts generation.
 - Update this file when execution/integration behavior changes so it continues to
   match the README and docs.
 - Do not invent cross-repo semantics for conversion/receipt behavior; state

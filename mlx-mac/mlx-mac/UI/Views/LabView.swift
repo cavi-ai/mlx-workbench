@@ -349,6 +349,13 @@ struct LabAuthorSheet: View {
                         Text("Guidance").tag("guidance_scale")
                         Text("Seed").tag("seed")
                     }
+                    Text(variable == "guidance_scale"
+                         ? "Guidance changes how strongly the prompt conditions generation. The prompt, seed and other settings stay fixed."
+                         : variable == "seed"
+                         ? "Seed changes the starting randomness. The prompt and other settings stay fixed."
+                         : "Inference steps changes the number of refinement passes. The prompt, seed and other settings stay fixed.")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                     if let value = selectedBaseline?.object?[variable]?.decimal {
                         Text("Baseline: " + value.formatted()).font(WorkbenchTypography.secondary)
                     }
@@ -787,7 +794,7 @@ private struct AdaptiveStudiesPanel: View {
                 Button("Import frozen recipe…") { importRecipe() }.buttonStyle(.bordered).controlSize(.small).disabled(busy)
                 Button("Refresh studies") { Task { await refresh() } }.buttonStyle(.bordered).controlSize(.small).disabled(busy || lab.isRefreshing)
             }
-            Text("Adaptive studies explore guidance strength across successive pairs. Import a frozen recipe to begin; each blind review helps choose the next pair while the prompt and seed stay fixed.")
+            Text("Adaptive studies explore guidance strength across successive pairs. Import a frozen recipe—a saved baseline with recorded model and runtime identities—to begin. Each blind review helps choose the next pair while the prompt and seed stay fixed.")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(lab.studies) { row in
