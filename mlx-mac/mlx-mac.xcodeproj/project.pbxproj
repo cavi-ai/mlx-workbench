@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		PRMEMB1 /* ProcessMemorySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRMEMF1 /* ProcessMemorySnapshot.swift */; };
 		28MEM002B /* SystemResourceHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28MEM002F /* SystemResourceHeader.swift */; };
 		28MEM001B /* SystemResourceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28MEM001F /* SystemResourceMonitor.swift */; };
 		26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF001 /* GGUFToRunRealDataUITests.swift */; };
@@ -271,6 +272,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		PRMEMF1 /* ProcessMemorySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProcessMemorySnapshot.swift; path = Services/ProcessMemorySnapshot.swift; sourceTree = "<group>"; };
 		28MEM002F /* SystemResourceHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemResourceHeader.swift; path = UI/SystemResourceHeader.swift; sourceTree = "<group>"; };
 		28MEM001F /* SystemResourceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemResourceMonitor.swift; path = Services/SystemResourceMonitor.swift; sourceTree = "<group>"; };
 		26UIREF001 /* GGUFToRunRealDataUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GGUFToRunRealDataUITests.swift; sourceTree = "<group>"; };
@@ -652,6 +654,7 @@
 				24FREF062 /* FitAdvisor.swift */,
 				28MEM002F /* SystemResourceHeader.swift */,
 				28MEM001F /* SystemResourceMonitor.swift */,
+				PRMEMF1 /* ProcessMemorySnapshot.swift */,
 				24FREF067 /* AlertNotifier.swift */,
 				24FREF06A /* WorkbenchPython.swift */,
 				28WSPREF001 /* WorkbenchStatePaths.swift */,
@@ -1160,6 +1163,7 @@
 				24BBLD064 /* FitAdvisor.swift in Sources */,
 				28MEM002B /* SystemResourceHeader.swift in Sources */,
 				28MEM001B /* SystemResourceMonitor.swift in Sources */,
+				PRMEMB1 /* ProcessMemorySnapshot.swift in Sources */,
 				24BBLD069 /* AlertNotifier.swift in Sources */,
 				24BBLD06A /* HFRepoID.swift in Sources */,
 				24BBLD06C /* WorkbenchPython.swift in Sources */,

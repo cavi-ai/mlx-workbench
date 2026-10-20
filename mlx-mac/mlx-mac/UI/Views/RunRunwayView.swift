@@ -59,6 +59,7 @@ struct RunRunwayView: View {
     let nextModel: LibraryModel?
     let isCompact: Bool
     /// Read only to choose labels-under versus legend; no frame uses it.
+    @State private var inspectingProcesses = false
     @State private var measuredBarWidth = WorkbenchSize.assumedContentWidth
 
     private var runway: RunRunway {
@@ -78,6 +79,7 @@ struct RunRunwayView: View {
         let runway = runway
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             header(runway)
+            ProcessMemoryButton { inspectingProcesses = true }
             if runway.isLive {
                 bar(runway)
                 if let sentence = verdictSentence(runway) {
@@ -100,6 +102,7 @@ struct RunRunwayView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(runway.budget.accessibilityLabel)
+        .sheet(isPresented: $inspectingProcesses) { ProcessMemorySheet(resources: resources) }
     }
 
     private func verdictSentence(_ runway: RunRunway) -> String? {

@@ -92,6 +92,37 @@ final class FitAdvisorTests: XCTestCase {
         XCTAssertNil(missing.capturedAt)
     }
 
+    func testProcessMemoryReadsCurrentProcessWithoutArguments() throws {
+        let reading = try ProcessMemorySnapshot.probe()
+        let current = try XCTUnwrap(reading.processes.first { $0.pid == getpid() })
+        XCTAssertGreaterThan(current.residentBytes, 0)
+        XCTAssertFalse(current.name.isEmpty)
+        XCTAssertEqual(reading.processes.map(\.residentBytes), reading.processes.map(\.residentBytes).sorted(by: >))
+        XCTAssertEqual(Set(reading.processes.map(\.pid)).count, reading.processes.count)
+    }
+
+    @MainActor
+    func testProcessMemoryRefreshIsExplicitAndFailureKeepsDatedReading() async {
+        let first = ProcessMemorySnapshot(processes: [.init(pid: 42, name: "Example", residentBytes: 1234)])
+        let calls = ProcessMemoryProbeFixture(reading: first)
+        let date = Date(timeIntervalSince1970: 1234)
+        let monitor = SystemResourceMonitor(probe: { nil }, now: { date }, processProbe: { try calls.read() })
+        XCTAssertNil(monitor.processMemory)
+        await monitor.refreshMemory()
+        XCTAssertNil(monitor.processMemory, "Background headroom probes must not inspect processes")
+        XCTAssertEqual(calls.count, 0)
+        await monitor.refreshProcesses()
+        XCTAssertEqual(monitor.processMemory, first)
+        XCTAssertEqual(monitor.processCapturedAt, date)
+        XCTAssertNil(monitor.processError)
+        calls.fail()
+        await monitor.refreshProcesses()
+        XCTAssertEqual(monitor.processMemory, first)
+        XCTAssertEqual(monitor.processCapturedAt, date)
+        XCTAssertNotNil(monitor.processError, "A retained reading must be labeled stale after failure")
+        XCTAssertFalse(monitor.refreshingProcesses)
+    }
+
     // MARK: - Parameter parsing
 
     func testParameterBillionsParsesCommonShapes() {
@@ -204,5 +235,21 @@ final class FitAdvisorTests: XCTestCase {
         XCTAssertGreaterThan(snapshot.totalBytes, 0)
         XCTAssertGreaterThan(snapshot.availableBytes, 0)
         XCTAssertLessThanOrEqual(snapshot.availableBytes, snapshot.totalBytes)
+    }
+}
+
+private final class ProcessMemoryProbeFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private let reading: ProcessMemorySnapshot
+    private var failed = false
+    private var reads = 0
+    init(reading: ProcessMemorySnapshot) { self.reading = reading }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return reads }
+    func fail() { lock.lock(); defer { lock.unlock() }; failed = true }
+    func read() throws -> ProcessMemorySnapshot {
+        lock.lock(); defer { lock.unlock() }
+        reads += 1
+        if failed { throw NSError(domain: "test", code: 1) }
+        return reading
     }
 }

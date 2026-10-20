@@ -280,6 +280,11 @@ final class WorkbenchReviewUITests: XCTestCase {
                 print('Fixture training jobs unavailable: receipt directory is unreadable.', file=sys.stderr)
                 sys.exit(2)
             data = {'jobs': json.loads((root / 'training-jobs.json').read_text()) if (root / 'training-jobs.json').exists() else []}
+        elif args[:2] == ['lab', 'queue']:
+            request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
+            assert request['operation'] == 'snapshot', 'This fixture only reads the conversion queue'
+            data = {'conversion_queue':{'schema_version':'1.1', 'items':[]},
+                    'queue_path':str(root / 'convert-queue.json')}
         elif args and args[0] == 'lab' and 'workspace' in args:
             request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
             operation = request['operation']
@@ -2909,6 +2914,61 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertFalse(requests.contains { Array($0.prefix(2)) == command })
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
+    }
+
+    func testProcessMemoryInspectorReadsWithoutStartingWork() throws {
+        launch(appearance: "Dark")
+        select("Run")
+        let inspect = app.buttons["inspect-process-memory"].firstMatch
+        XCTAssertTrue(inspect.waitForExistence(timeout: 10))
+        XCTAssertTrue(inspect.isHittable)
+        inspect.click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let table = sheet.outlines["process-memory-table"]
+        XCTAssertTrue(table.waitForExistence(timeout: 10))
+        let populated = expectation(for: NSPredicate(format: "count > 0"), evaluatedWith: table.outlineRows)
+        wait(for: [populated], timeout: 15)
+        XCTAssertTrue(sheet.staticTexts["process-memory-timestamp"].exists)
+        XCTAssertFalse(sheet.staticTexts["process-memory-error"].exists)
+        XCTAssertTrue(sheet.buttons["Open Activity Monitor"].isHittable)
+        capture("Process-memory-standard")
+        sheet.buttons["Refresh"].click()
+        let refreshed = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: sheet.buttons["Refresh"])
+        wait(for: [refreshed], timeout: 15)
+        XCTAssertGreaterThan(table.outlineRows.count, 0)
+        XCTAssertLessThanOrEqual(table.outlineRows.count, 15)
+        sheet.buttons["Done"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        resizeWindow(width: 740, height: 560)
+        XCTAssertTrue(inspect.isHittable)
+        inspect.click()
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(sheet.buttons["Done"].isHittable)
+        XCTAssertTrue(sheet.buttons["Refresh"].isHittable)
+        capture("Process-memory-minimum")
+        sheet.buttons["Done"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        app.buttons["system-memory-header"].click()
+        let toolbarInspect = app.popovers.buttons["inspect-process-memory"].firstMatch
+        XCTAssertTrue(toolbarInspect.waitForExistence(timeout: 10))
+        toolbarInspect.click()
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(sheet.buttons["Done"].isHittable)
+        let windowBounds = app.windows.firstMatch.frame
+        let sheetBounds = sheet.frame
+        XCTAssertGreaterThanOrEqual(sheetBounds.minX, windowBounds.minX)
+        XCTAssertGreaterThanOrEqual(sheetBounds.minY, windowBounds.minY)
+        XCTAssertLessThanOrEqual(sheetBounds.maxX, windowBounds.maxX)
+        XCTAssertLessThanOrEqual(sheetBounds.maxY, windowBounds.maxY)
+        capture("Process-memory-from-toolbar")
+        sheet.buttons["Done"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        let requests = calls.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        for command in [["intake", "fetch"], ["serve", "start"], ["task", "start"], ["convert", "start"], ["backend", "install"]] {
+            XCTAssertFalse(requests.contains { Array($0.prefix(2)) == command })
+        }
     }
 
     func testRouteCaptures() throws {

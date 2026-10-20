@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// One compact toolbar entry; model controls and estimation settings live
@@ -8,6 +9,7 @@ struct SystemResourceHeader: View {
     var protectedModels: Set<String> = []
     let onUnload: (ServerInfo) async -> Bool
     @State private var expanded = false
+    @State private var inspectingProcesses = false
     @State private var unloadError: String?
 
     private func gb(_ bytes: Int64) -> String { String(format: "%.1f", Double(bytes) / 1e9) }
@@ -31,7 +33,9 @@ struct SystemResourceHeader: View {
         }
         .buttonStyle(.plain)
         .help("Live memory headroom and serving model controls")
+        .accessibilityIdentifier("system-memory-header")
         .popover(isPresented: $expanded, arrowEdge: .bottom) { panel }
+        .sheet(isPresented: $inspectingProcesses) { ProcessMemorySheet(resources: resources) }
     }
 
     var panel: some View {
@@ -59,6 +63,10 @@ struct SystemResourceHeader: View {
                 }
             } else {
                 Text("Memory readings unavailable").foregroundStyle(WorkbenchColor.muted)
+            }
+            ProcessMemoryButton {
+                expanded = false
+                inspectingProcesses = true
             }
             Picker("Context for model fit", selection: $resources.contextTokens) {
                 ForEach(SystemResourceMonitor.contextOptions, id: \.self) { tokens in
@@ -134,5 +142,92 @@ struct SystemResourceHeader: View {
                 .contentTransition(.numericText())
                 .workbenchAnimation(value: bytes)
         }
+    }
+}
+
+/// Shared entry point from Run and the toolbar resource popover.
+struct ProcessMemoryButton: View {
+    let onOpen: () -> Void
+    var body: some View {
+        Button(action: onOpen) {
+            Label("What’s using memory…", systemImage: "list.bullet.rectangle")
+        }
+        .buttonStyle(.borderless)
+        .font(WorkbenchTypography.secondary)
+        .accessibilityIdentifier("inspect-process-memory")
+        .help("Read the largest processes by resident memory without stopping anything")
+    }
+}
+
+struct ProcessMemorySheet: View {
+    @ObservedObject var resources: SystemResourceMonitor
+    @Environment(\.dismiss) private var dismiss
+    @State private var activityMonitorError: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            HStack {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    Text("What’s using memory").font(WorkbenchTypography.title)
+                    Text("Largest processes by resident memory")
+                        .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+                Spacer()
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    Task { await resources.refreshProcesses() }
+                }
+                .disabled(resources.refreshingProcesses)
+            }
+            Text("Resident memory can include shared pages and omit GPU allocations. These values do not add up to system memory use or change the model-fit estimate.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            if let error = resources.processError {
+                Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.warning)
+                    .accessibilityIdentifier("process-memory-error")
+            }
+            HStack {
+                if resources.refreshingProcesses { ProgressView().controlSize(.small) }
+                if let date = resources.processCapturedAt {
+                    Text("Read \(date.formatted(date: .omitted, time: .standard)) · Refresh to update")
+                        .accessibilityIdentifier("process-memory-timestamp")
+                } else { Text(resources.processError == nil ? "Reading processes…" : "No reading available") }
+            }
+            .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            Table(Array((resources.processMemory?.processes ?? []).prefix(15))) {
+                TableColumn("Process") { process in
+                    Text(process.name).lineLimit(1).help(process.name)
+                }
+                TableColumn("PID") { process in Text(String(process.pid)).monospacedDigit() }
+                    .width(65)
+                TableColumn("Resident RAM") { process in
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(clamping: process.residentBytes), countStyle: .memory))
+                        .monospacedDigit()
+                }.width(110)
+            }
+            .accessibilityIdentifier("process-memory-table")
+            .frame(minHeight: 160, maxHeight: .infinity)
+            Text("Up to 15 readable processes. Exited or unreadable processes are omitted. Process names may be shortened by macOS; they do not identify individual models or clients.")
+                .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+            if let activityMonitorError {
+                Text(activityMonitorError).font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.warning)
+            }
+            HStack {
+                Button("Open Activity Monitor") {
+                    guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.ActivityMonitor") else {
+                        activityMonitorError = "Activity Monitor could not be found."
+                        return
+                    }
+                    NSWorkspace.shared.openApplication(at: url, configuration: .init()) { _, error in
+                        Task { @MainActor in
+                            activityMonitorError = error == nil ? nil : "Activity Monitor could not be opened."
+                        }
+                    }
+                }
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(WorkbenchSpacing.lg)
+        .frame(minWidth: 480, idealWidth: 580, maxWidth: 640, minHeight: 460, idealHeight: 520, maxHeight: 560)
+        .task { await resources.refreshProcesses() }
     }
 }
