@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		PRMEMB1 /* ProcessMemorySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRMEMF1 /* ProcessMemorySnapshot.swift */; };
 		344ACD737165AB685172C35B /* HostedModelsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */; };
 		1E7408BAF5C49A83A83446B7 /* HostedModelsRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */; };
 		BE10FB560CF5CCF42E69AB69 /* HostedComparisonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4C365A7BD89CAB4572F9F65 /* HostedComparisonView.swift */; };
@@ -287,6 +288,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		PRMEMF1 /* ProcessMemorySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProcessMemorySnapshot.swift; path = Services/ProcessMemorySnapshot.swift; sourceTree = "<group>"; };
 		74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedModelsUITests.swift; sourceTree = "<group>"; };
 		B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedModelsRenderTests.swift; sourceTree = "<group>"; };
 		B4C365A7BD89CAB4572F9F65 /* HostedComparisonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostedComparisonView.swift; path = UI/Views/HostedComparisonView.swift; sourceTree = "<group>"; };
@@ -695,6 +697,7 @@
 				24FREF062 /* FitAdvisor.swift */,
 				28MEM002F /* SystemResourceHeader.swift */,
 				28MEM001F /* SystemResourceMonitor.swift */,
+				PRMEMF1 /* ProcessMemorySnapshot.swift */,
 				24FREF067 /* AlertNotifier.swift */,
 				24FREF06A /* WorkbenchPython.swift */,
 				28WSPREF001 /* WorkbenchStatePaths.swift */,
@@ -1220,6 +1223,7 @@
 				24BBLD064 /* FitAdvisor.swift in Sources */,
 				28MEM002B /* SystemResourceHeader.swift in Sources */,
 				28MEM001B /* SystemResourceMonitor.swift in Sources */,
+				PRMEMB1 /* ProcessMemorySnapshot.swift in Sources */,
 				24BBLD069 /* AlertNotifier.swift in Sources */,
 				24BBLD06A /* HFRepoID.swift in Sources */,
 				24BBLD06C /* WorkbenchPython.swift in Sources */,

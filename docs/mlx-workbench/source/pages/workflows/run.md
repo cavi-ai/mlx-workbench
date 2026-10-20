@@ -81,6 +81,17 @@ Before a cold load, the engine checks fresh system headroom against local weight
 
 The toolbar's memory header shows estimated RAM use and headroom on every screen, refreshed every five seconds. Open it for serving status and the same **Unload** and **Stop server** controls. Its context selector feeds model-fit reviews, not server configuration.
 
+Choose **What’s using memory…** from Run’s memory runway or the toolbar popover
+for an on-demand snapshot of up to 15 readable processes, sorted by resident RAM.
+The table shows process names, PIDs and a capture time; **Refresh** reads again.
+It never stops a process. **Open Activity Monitor** opens macOS’s process inspector.
+
+Resident memory can include shared pages and omit GPU allocations, so the rows
+do not add up to system-wide usage and cannot identify which model or client
+requested an allocation. Exited or unreadable processes are omitted. Failed
+refreshes retain the dated reading with a warning. The serving headroom guard
+and model-fit estimate continue to use system memory readings.
+
 ## Serving profiles
 
 Saved serving profiles carry runtime settings for one model through verification and the endpoint configuration. They are used by the optional Strata runtime; see [Strata](strata.md).
