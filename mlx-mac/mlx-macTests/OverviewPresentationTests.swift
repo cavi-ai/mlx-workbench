@@ -233,6 +233,64 @@ final class OverviewPresentationTests: XCTestCase {
 
     // MARK: - Flight path
 
+    func testGuidanceUsesTheModelsRuntimeAndApplicableStages() {
+        for (runtime, backend) in [(Optional("strata"), Optional<OutputBackend>.none),
+                                   (nil, OutputBackend(id: "mlx-vlm", installed: true))] {
+            let model = makeModel(bytes: 1000, parameters: nil, runtime: runtime, backend: backend)
+            let action = HomeNextAction.derive(workflow: workflow(state: .completed, completedModelPath: model.item.path),
+                snapshot: snapshot(with: [model]), rootsConfigured: true, isScanning: false, lastError: nil,
+                agentReady: true, convertRuntimeReady: true, serveRuntimeReady: false)
+            XCTAssertEqual(action.kind, .run(model.item.path))
+        }
+        let missingBackend = makeModel(bytes: 1000, parameters: nil, backend: OutputBackend(id: "mlx-vlm", installed: false))
+        let blocked = derive(workflow: workflow(state: .completed, completedModelPath: missingBackend.item.path),
+            snapshot: snapshot(with: [missingBackend]))
+        XCTAssertEqual(blocked.route, AppRoute.health.rawValue, "Base readiness cannot replace the model's missing backend")
+        for (type, expected) in [(ModelTaskType.textLLM, [ModelFlightStage.discovered, .prepared, .verified, .measured, .serving]),
+                                 (.visionLanguage, [.discovered, .prepared, .verified, .measured, .serving]),
+                                 (.imageGeneration, [.discovered, .prepared, .verified, .measured]),
+                                 (.musicGeneration, [.discovered, .prepared, .measured]),
+                                 (.textToSpeech, [.discovered, .prepared, .measured]),
+                                 (.speechToText, [.discovered, .prepared, .verified, .measured]),
+                                 (.videoGeneration, [.discovered, .prepared, .measured]),
+                                 (.classification, [.discovered, .prepared, .verified]),
+                                 (.embedding, [.discovered, .prepared]),
+                                 (.speculativeDraft, [.discovered, .prepared])] {
+            let model = makeModel(bytes: 1000, parameters: nil, type: type)
+            let path = ModelFlightPathPresentation.derive(model: model, verification: .unverified,
+                completedRuns: [], endpointState: .disabled, servers: [])
+            XCTAssertEqual(path.stages.map(\.stage), expected, type.rawValue)
+        }
+    }
+
+    func testMeasurementNeedsAKnownIdentityCompatibleModeAndUsableMetrics() {
+        let model = makeModel(bytes: 1000, parameters: nil, type: .musicGeneration, signature: "current")
+        let sample = ComparisonSample(promptID: "p", outputExcerpt: "", tokensPerSecond: 20,
+            timeToFirstTokenSeconds: nil, error: nil, realTimeFactor: 0.5)
+        let result = VariantResult(modelPath: model.item.path, modelSignature: "current", samples: [sample],
+            aggregateTokensPerSecond: 20, aggregateTTFTSeconds: nil, error: nil, aggregateMetric: 0.5)
+        var run = ComparisonRun(id: UUID(), promptSetID: "set", promptSetName: "Set", useCase: nil,
+            variants: [model.item.path], results: [result], startedAt: stamp, finishedAt: stamp, state: .completed)
+        func measured(_ model: LibraryModel, _ run: ComparisonRun) -> ModelFlightStageState? {
+            ModelFlightPathPresentation.derive(model: model, verification: .unverified, completedRuns: [run],
+                endpointState: .disabled, servers: []).stages.first { $0.stage == .measured }?.state
+        }
+        XCTAssertEqual(measured(model, run), .pending, "Legacy chat evidence cannot measure a music model")
+        run.mode = .musicGeneration
+        XCTAssertEqual(measured(model, run), .complete)
+        run.results = [VariantResult(modelPath: model.item.path, modelSignature: "current", samples: [sample],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: "failed", aggregateMetric: 0.5)]
+        XCTAssertEqual(measured(model, run), .pending)
+        run.results = [VariantResult(modelPath: model.item.path, modelSignature: "current", samples: [
+            ComparisonSample(promptID: "p", outputExcerpt: "", tokensPerSecond: nil, timeToFirstTokenSeconds: nil, error: nil)],
+            aggregateTokensPerSecond: nil, aggregateTTFTSeconds: nil, error: nil)]
+        XCTAssertEqual(measured(model, run), .pending, "A result without a measurement is not measured")
+        let unknown = makeModel(bytes: 1000, parameters: nil, type: .musicGeneration)
+        run.results = [VariantResult(modelPath: unknown.item.path, modelSignature: nil, samples: [sample],
+            aggregateTokensPerSecond: 20, aggregateTTFTSeconds: nil, error: nil, aggregateMetric: 0.5)]
+        XCTAssertEqual(measured(unknown, run), .pending, "Two missing signatures do not establish identity")
+    }
+
     func testStageStateToneMappingIsPinned() {
         XCTAssertEqual(ModelFlightStageState.pending.tone, .neutral)
         XCTAssertEqual(ModelFlightStageState.active.tone, .accent)
@@ -296,15 +354,16 @@ final class OverviewPresentationTests: XCTestCase {
         ModelBudgetPresentation(memory: memory(total, available), reserveGB: reserveGB, contextTokens: context, model: model, hardware: hardware)
     }
 
-    private func makeModel(bytes: Int64, parameters: String?, type: ModelTaskType? = nil, readiness: ModelReadiness = .ready, path: String = "/models/atlas-mlx") -> LibraryModel {
+    private func makeModel(bytes: Int64, parameters: String?, type: ModelTaskType? = nil, readiness: ModelReadiness = .ready, path: String = "/models/atlas-mlx", runtime: String? = nil, backend: OutputBackend? = nil, signature: String? = nil) -> LibraryModel {
         let item = ModelItem(
             path: path, name: URL(fileURLWithPath: path).lastPathComponent, bytes: bytes,
             modifiedAt: nil, shard: nil,
             modelKey: "model", architecture: nil, quantization: "Q4_K_M", parameters: parameters,
-            structure: nil, signature: nil, companion: nil, readable: true,
+            structure: nil, signature: signature, companion: nil, readable: true,
             status: readiness == .ready ? "ready" : "needs_conversion",
             outputs: [], tensorCount: nil, error: nil,
-            task: type.map { ModelTask(type: $0, useCases: [], source: "registry", confidence: "confirmed") }
+            task: type.map { ModelTask(type: $0, useCases: [], source: "registry", confidence: "confirmed") },
+            servingRuntime: runtime, backend: backend
         )
         return LibraryModel(item: item, readiness: readiness)
     }

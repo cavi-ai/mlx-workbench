@@ -2772,6 +2772,35 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
     }
 
+    func testOverviewUsesTaskSpecificStages() throws {
+        for (kind, canVerify, canCompare) in [("music_generation", false, true),
+                                              ("image_generation", true, true),
+                                              ("speculative_draft", false, false)] {
+            let name = "Overview " + kind
+            _ = try installTaskModel(kind: kind, name: name)
+            launch(appearance: "Dark", route: "models", isolatedHome: true)
+            let row = app.outlines.staticTexts[name].firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 15)); row.click()
+            select("Overview")
+            func stage(_ title: String) -> XCUIElement {
+                app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", title + ":")).firstMatch
+            }
+            XCTAssertTrue(stage("Prepared").waitForExistence(timeout: 10))
+            XCTAssertFalse(stage("Serving").exists)
+            XCTAssertEqual(stage("Verified").exists, canVerify)
+            XCTAssertEqual(stage("Measured").exists, canCompare)
+            resizeWindow(width: 1440, height: 900)
+            capture("Overview-\(kind)-wide")
+            resizeWindow(width: 740, height: 560)
+            capture("Overview-\(kind)-minimum")
+            app.terminate()
+        }
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        for command in ["\"task\", \"start\"", "\"serve\", \"start\"", "\"convert\", \"start\"", "\"backend\", \"install\""] {
+            XCTAssertFalse(calls.contains(command), "Guidance and navigation must not start work")
+        }
+    }
+
     func testRouteCaptures() throws {
         // XCUIDevice changes only the disposable VM's appearance.
         for appearance in [ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_APPEARANCE"] ?? "System"] {
