@@ -184,6 +184,202 @@ final class ModelHostClientTests: XCTestCase {
         XCTAssertEqual(server.requestCount, 1)
     }
 
+    func testComfyUIActivityDistinguishesIdleRunningAndQueuedWork() async throws {
+        for (body, state, running, pending) in [
+            (#"{"queue_running":[],"queue_pending":[]}"#, HostActivityState.idle, 0, 0),
+            (#"{"queue_running":[[0,"running",{}, {}, []]],"queue_pending":[[1,"pending",{}, {}, []]]}"#, .busy, 1, 1),
+            (#"{"queue_running":[],"queue_pending":[[1,"pending",{}, {}, []]]}"#, .queued, 0, 1),
+            (#"{"queue_running":[],"queue_pending":[[-0.5,"front",{}, {}, []]]}"#, .queued, 0, 1)
+        ] {
+            let (client, requests) = client(responses: ["/queue": .json(body)])
+            let activity = try await client.activity(host: host(.comfyUI), token: "queue-token")
+            XCTAssertEqual(activity.state, state)
+            XCTAssertEqual(activity.runningCount, running)
+            XCTAssertEqual(activity.pendingCount, pending)
+            XCTAssertEqual(requests.values.map { $0.httpMethod }, ["GET"])
+            XCTAssertEqual(requests.values.first?.value(forHTTPHeaderField: "Authorization"), "Bearer queue-token")
+        }
+    }
+
+    func testComfyUIActivityNeverCallsMissingOrMalformedQueueIdle() async throws {
+        for body in [#"{}"#, #"{"queue_running":[],"queue_pending":null}"#,
+                     #"{"queue_running":[42],"queue_pending":[]}"#,
+                     #"{"queue_running":[[true,"id",{},{},[]]],"queue_pending":[]}"#,
+                     #"{"queue_running":[[0,"",{},{},[]]],"queue_pending":[]}"#,
+                     #"{"queue_running":[[0,"same",{},{},[]]],"queue_pending":[[1,"same",{},{},[]]]}"#] {
+            let (client, _) = client(responses: ["/queue": .json(body)])
+            let activity = try await client.activity(host: host(.comfyUI))
+            XCTAssertEqual(activity.state, .unknown)
+            XCTAssertNil(activity.runningCount)
+            XCTAssertNil(activity.pendingCount)
+            XCTAssertFalse(activity.detail.isEmpty)
+        }
+        let (client, _) = client(responses: ["/queue": .init(status: 500, body: "private-server-body")])
+        let activity = try await client.activity(host: host(.comfyUI))
+        XCTAssertEqual(activity.state, .unknown)
+        XCTAssertFalse(activity.detail.contains("private-server-body"))
+    }
+
+    func testActivityCancellationPropagatesAndLLMActivityStaysUnknownWithoutRequests() async throws {
+        let (cancelled, _) = client(responses: ["/queue": .failure(.cancelled)])
+        do { _ = try await cancelled.activity(host: host(.comfyUI)); XCTFail("Expected cancellation") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        for provider in [ModelHostProvider.ollama, .lmStudio, .llamaCpp, .openAICompatible] {
+            let (client, requests) = client(responses: [:])
+            let activity = try await client.activity(host: host(provider))
+            XCTAssertEqual(activity.state, .unknown)
+            XCTAssertNil(activity.runningCount)
+            XCTAssertTrue(requests.values.isEmpty)
+        }
+    }
+
+    func testInventoryRetainsModelsWhenQueueIsUnavailable() async throws {
+        let (client, _) = client(responses: ["/models": .json(#"["checkpoints"]"#), "/models/checkpoints": .json(#"["alpha.safetensors"]"#)])
+        let inventory = try await client.inventory(host: host(.comfyUI))
+        XCTAssertEqual(inventory.models.count, 1)
+        XCTAssertEqual(inventory.activity?.state, .unknown)
+    }
+
+    func testLMStudioLoadedInstanceIDsAreAuthoritativeOnlyWhenCompleteAndUnique() async throws {
+        for (instances, expected) in [
+            (#"[{"id":"one"},{"id":"two"}]"#, Optional(["one", "two"])),
+            ("[]", Optional([])),
+            (#"[{"id":"same"},{"id":"same"}]"#, nil),
+            (#"[{"id":""}]"#, nil),
+            (#"[{"config":{}}]"#, nil),
+            ("null", nil)
+        ] {
+            let (client, _) = client(responses: ["/api/v1/models": .json("{\"models\":[{\"key\":\"alpha\",\"loaded_instances\":\(instances)}]}")])
+            let inventory = try await client.inventory(host: host(.lmStudio))
+            XCTAssertEqual(inventory.models.first?.loadedInstanceIDs, expected)
+            if expected == nil { XCTAssertNil(inventory.models.first?.isLoaded) }
+        }
+        let (client, _) = client(responses: ["/api/v1/models": .json(#"{"models":[{"key":"alpha","loaded_instances":[{"id":"shared"}]},{"key":"beta","loaded_instances":[{"id":"shared"}]}]}"#)])
+        let inventory = try await client.inventory(host: host(.lmStudio))
+        XCTAssertTrue(inventory.models.allSatisfy { $0.loadedInstanceIDs == nil })
+    }
+
+    func testOllamaResourcePreviewRequiresFreshDigestMatchedLoadedModel() async throws {
+        let selectedHost = host(.ollama)
+        let (http, requests) = transport(responses: ollamaLoadedResponses())
+        let client = HostResourceClient(http: http)
+        let preview = try await client.preview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha"))
+        XCTAssertEqual(preview.model?.digest, "digest-alpha")
+        XCTAssertEqual(preview.model?.isLoaded, true)
+        XCTAssertEqual(preview.activity.state, .unknown)
+        XCTAssertTrue(requests.values.allSatisfy { $0.httpMethod == "GET" })
+        for selection in [HostResourceSelection(), HostResourceSelection(modelID: "missing"), HostResourceSelection(modelID: "alpha", instanceID: "unexpected")] {
+            do { _ = try await client.preview(host: selectedHost, selection: selection); XCTFail("Expected invalid target") } catch {}
+        }
+        let (driftHTTP, _) = transport(responses: ollamaLoadedResponses(runningDigest: "different"))
+        do { _ = try await HostResourceClient(http: driftHTTP).preview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha")); XCTFail("Expected digest drift refusal") } catch {}
+    }
+
+    func testLMStudioResourcePreviewSelectsOnlyExactLoadedInstance() async throws {
+        let (http, requests) = transport(responses: ["/api/v1/models": .json(#"{"models":[{"key":"alpha","loaded_instances":[{"id":"first"},{"id":"second"}]}]}"#)])
+        let client = HostResourceClient(http: http)
+        let selectedHost = host(.lmStudio)
+        let preview = try await client.preview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha", instanceID: "second"))
+        XCTAssertEqual(preview.model?.loadedInstanceIDs, ["first", "second"])
+        XCTAssertEqual(preview.selection.instanceID, "second")
+        XCTAssertTrue(requests.values.allSatisfy { $0.httpMethod == "GET" })
+        for selection in [HostResourceSelection(modelID: "alpha"), HostResourceSelection(modelID: "alpha", instanceID: "absent")] {
+            do { _ = try await client.preview(host: selectedHost, selection: selection); XCTFail("Expected exact instance requirement") } catch {}
+        }
+    }
+
+    func testComfyUIResourcePreviewReadsQueueOnlyAndUnsupportedHostsSendNoRequests() async throws {
+        let (http, requests) = transport(responses: ["/queue": .json(#"{"queue_running":[],"queue_pending":[]}"#)])
+        let client = HostResourceClient(http: http)
+        let preview = try await client.preview(host: host(.comfyUI), selection: HostResourceSelection())
+        XCTAssertNil(preview.model)
+        XCTAssertEqual(preview.activity.state, .idle)
+        XCTAssertEqual(requests.values.map { $0.url!.path }, ["/queue"])
+        let before = requests.values.count
+        for provider in [ModelHostProvider.llamaCpp, .openAICompatible] {
+            do { _ = try await client.preview(host: host(provider), selection: HostResourceSelection()); XCTFail("Expected unsupported provider") } catch {}
+        }
+        do { _ = try await client.preview(host: host(.comfyUI), selection: HostResourceSelection(modelID: "checkpoint")); XCTFail("Expected host-wide selection") } catch {}
+        XCTAssertEqual(requests.values.count, before)
+    }
+
+    func testResourceReleaseUsesOnlyDocumentedMutationForEachProvider() async throws {
+        for provider in [ModelHostProvider.ollama, .lmStudio, .comfyUI] {
+            let selectedHost = host(provider)
+            let selection: HostResourceSelection
+            let model: HostedModel?
+            let path: String
+            let expected: [String: AnyHashable]
+            switch provider {
+            case .ollama:
+                selection = HostResourceSelection(modelID: "alpha")
+                model = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "digest-alpha", isLoaded: true)
+                path = "/api/generate"; expected = ["model": "alpha", "keep_alive": 0, "stream": false]
+            case .lmStudio:
+                selection = HostResourceSelection(modelID: "alpha", instanceID: "exact-instance")
+                var loaded = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", isLoaded: true)
+                loaded.loadedInstanceIDs = ["exact-instance"]
+                model = loaded
+                path = "/api/v1/models/unload"; expected = ["instance_id": "exact-instance"]
+            default:
+                selection = HostResourceSelection(); model = nil
+                path = "/free"; expected = ["unload_models": true, "free_memory": true]
+            }
+            let response = provider == .comfyUI ? HostStubResponse(status: 200, body: "") : .json("{}")
+            let (http, requests) = transport(responses: [path: response])
+            let preview = HostResourcePreview(host: selectedHost, selection: selection, model: model,
+                activity: HostActivity(state: .unknown, detail: "Active requests are not reported."))
+            try await HostResourceClient(http: http).release(preview: preview, token: "release-token")
+            XCTAssertEqual(requests.values.count, 1)
+            let request = try XCTUnwrap(requests.values.first)
+            XCTAssertEqual(request.url?.path, path)
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer release-token")
+            XCTAssertEqual(try JSONSerialization.data(withJSONObject: requestJSON(request), options: [.sortedKeys]),
+                try JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]))
+        }
+    }
+
+    func testResourceReleaseRejectsForgedOrUnsupportedTargetsWithoutNetwork() async throws {
+        let selectedHost = host(.ollama)
+        let activity = HostActivity(state: .unknown, detail: "Unknown")
+        let validModel = HostedModel(hostID: selectedHost.id, modelID: "alpha", name: "Alpha", digest: "digest", isLoaded: true)
+        let wrongHostModel = HostedModel(hostID: UUID(), modelID: "alpha", name: "Alpha", digest: "digest", isLoaded: true)
+        let previews = [
+            HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha"), model: wrongHostModel, activity: activity),
+            HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "other"), model: validModel, activity: activity),
+            HostResourcePreview(host: selectedHost, selection: HostResourceSelection(modelID: "alpha", instanceID: "unexpected"), model: validModel, activity: activity),
+            HostResourcePreview(host: host(.comfyUI), selection: HostResourceSelection(modelID: "alpha"), model: nil, activity: activity),
+            HostResourcePreview(host: host(.openAICompatible), selection: HostResourceSelection(), model: nil, activity: activity)
+        ]
+        let (http, requests) = transport(responses: [:])
+        for preview in previews {
+            do { try await HostResourceClient(http: http).release(preview: preview); XCTFail("Expected invalid target") } catch {}
+        }
+        XCTAssertTrue(requests.values.isEmpty)
+    }
+
+    private func ollamaLoadedResponses(runningDigest: String = "digest-alpha") -> [String: HostStubResponse] {
+        ["/api/tags": .json(#"{"models":[{"name":"alpha","digest":"digest-alpha"}]}"#),
+         "/api/ps": .json("{\"models\":[{\"name\":\"alpha\",\"digest\":\"\(runningDigest)\"}]}"),
+         "/api/version": .json(#"{"version":"0.12"}"#)]
+    }
+
+    private func requestJSON(_ request: URLRequest) throws -> [String: AnyHashable] {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var bytes = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&bytes, maxLength: bytes.count)
+                guard count >= 0 else { throw URLError(.cannotDecodeRawData) }
+                if count == 0 { break }
+                data.append(contentsOf: bytes.prefix(count))
+            }
+        }
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: AnyHashable])
+    }
+
     private func host(_ provider: ModelHostProvider, url: String = "http://localhost:1234") -> ModelHost {
         ModelHost(name: "Test host", provider: provider, baseURL: url)
     }
@@ -207,9 +403,15 @@ final class ModelHostClientTests: XCTestCase {
 private struct HostStubResponse {
     let status: Int
     let data: Data
+    var failure: URLError.Code? = nil
     init(status: Int, body: String) { self.init(status: status, data: Data(body.utf8)) }
     init(status: Int, data: Data) { self.status = status; self.data = data }
     static func json(_ body: String) -> Self { .init(status: 200, body: body) }
+    static func failure(_ code: URLError.Code) -> Self {
+        var response = Self(status: 200, body: "")
+        response.failure = code
+        return response
+    }
 }
 
 private final class HostRequestLog: @unchecked Sendable {
@@ -233,6 +435,10 @@ private final class HostInventoryStub: URLProtocol, @unchecked Sendable {
         Self.lock.unlock()
         fixture?.1.append(request)
         let stub = fixture?.0[request.url!.path] ?? .init(status: 404, body: "")
+        if let failure = stub.failure {
+            client?.urlProtocol(self, didFailWithError: URLError(failure))
+            return
+        }
         let response = HTTPURLResponse(url: request.url!, statusCode: stub.status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: stub.data)

@@ -66,6 +66,14 @@ server.
   promotion or reclaim evidence. ComfyUI accepts explicitly bound core image API graphs;
   submission records persist owned prompt IDs and submitted graphs before observation.
   Cancellation never interrupts the shared host; ComfyUI timing includes queue wait.
+- Hosted memory controls use `HostResourceClient` through `ModelHostsCoordinator`'s
+  read-only prepare and explicit confirm flow. Confirm rechecks the connection,
+  model/instance and activity; drift requires renewed confirmation. Ollama unloads
+  one digest-matched loaded model, LM Studio one native instance, and ComfyUI requests
+  host-wide cached-model cleanup without interrupting jobs. Activity is timestamped;
+  Ollama/LM Studio other-client activity stays unknown. Mutations are serialized,
+  blocked during Workbench comparisons, never automatically retried, and followed by
+  inventory readback. API acceptance alone never establishes released memory.
 - `make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json` is the
   opt-in real-data native GGUF-to-Run acceptance surface. Its runner validates
   an explicit allowlisted local source and loopback config, selects only the

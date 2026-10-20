@@ -11,12 +11,42 @@ struct ModelHostClient: Sendable {
 
     func inventory(host: ModelHost, token: String? = nil) async throws -> HostInventory {
         _ = try host.validatedURL()
+        var result: HostInventory
         switch host.provider {
-        case .ollama: return try await ollama(host, token: token)
-        case .lmStudio: return try await lmStudio(host, token: token)
-        case .comfyUI: return try await comfyUI(host, token: token)
+        case .ollama: result = try await ollama(host, token: token)
+        case .lmStudio: result = try await lmStudio(host, token: token)
+        case .comfyUI: result = try await comfyUI(host, token: token)
         case .llamaCpp, .openAICompatible:
-            return HostInventory(host: host, models: try await openAIModels(host, token: token), capturedAt: Date())
+            result = HostInventory(host: host, models: try await openAIModels(host, token: token), capturedAt: Date())
+        }
+        result.activity = try await activity(host: host, token: token)
+        return result
+    }
+
+    func activity(host: ModelHost, token: String? = nil) async throws -> HostActivity {
+        try Task.checkCancellation()
+        _ = try host.validatedURL()
+        guard host.provider == .comfyUI else {
+            return HostActivity(state: .unknown, detail: "This host does not report other clients' active requests. Check its application before releasing model memory.")
+        }
+        do {
+            let queue = try await object(host, path: "queue", token: token)
+            let running = try Self.queuePromptIDs(queue["queue_running"])
+            let pending = try Self.queuePromptIDs(queue["queue_pending"])
+            guard running.count + pending.count <= Self.maximumModels,
+                  Set(running + pending).count == running.count + pending.count else { throw HostHTTPError.invalidResponse }
+            let state: HostActivityState = !running.isEmpty ? .busy : (!pending.isEmpty ? .queued : .idle)
+            let detail: String
+            switch state {
+            case .idle: detail = "ComfyUI reports no running or queued workflows."
+            case .busy: detail = "ComfyUI reports \(running.count) running and \(pending.count) queued workflows."
+            case .queued: detail = "ComfyUI reports \(pending.count) queued workflows."
+            case .unknown: detail = "ComfyUI activity is unknown."
+            }
+            return HostActivity(state: state, runningCount: running.count, pendingCount: pending.count, detail: detail)
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            return HostActivity(state: .unknown, detail: "ComfyUI queue activity could not be read. Check the host address, credentials and queue API before releasing memory.")
         }
     }
 
@@ -65,9 +95,10 @@ struct ModelHostClient: Sendable {
     private func lmStudio(_ host: ModelHost, token: String?) async throws -> HostInventory {
         do {
             let response = try await object(host, path: "api/v1/models", token: token)
-            let models = try Self.records(response["models"]).map { record in
+            var models = try Self.records(response["models"]).map { record in
                 let id = try Self.identifier(record["key"])
-                let instances = record["loaded_instances"] as? [[String: Any]]
+                let instanceIDs = Self.loadedInstanceIDs(record["loaded_instances"])
+                let instances = instanceIDs == nil ? nil : record["loaded_instances"] as? [[String: Any]]
                 let contexts = instances?.compactMap { Self.int(($0["config"] as? [String: Any])?["context_length"]) }
                 let context: Int? = if let contexts, let instances,
                                       !instances.isEmpty, contexts.count == instances.count, Set(contexts).count == 1 { contexts.first } else { nil }
@@ -85,11 +116,19 @@ struct ModelHostClient: Sendable {
                     format: Self.text(record["format"]), sizeBytes: Self.integer(record["size_bytes"]),
                     isLoaded: instances.map { !$0.isEmpty }, contextLength: context,
                     maximumContextLength: Self.int(record["max_context_length"]),
-                    capabilities: capabilities, category: Self.text(record["type"])
+                    capabilities: capabilities, category: Self.text(record["type"]), loadedInstanceIDs: instanceIDs
                 )
             }
             try Self.validateIDs(models)
-            return HostInventory(host: host, models: models, capturedAt: Date())
+            let occurrences = Dictionary((models.flatMap { $0.loadedInstanceIDs ?? [] }).map { ($0, 1) }, uniquingKeysWith: +)
+            for index in models.indices where models[index].loadedInstanceIDs?.contains(where: { occurrences[$0, default: 0] > 1 }) == true {
+                models[index].loadedInstanceIDs = nil
+                models[index].isLoaded = nil
+                models[index].contextLength = nil
+            }
+            let warnings = models.contains(where: { $0.loadedInstanceIDs == nil })
+                ? ["Some loaded-instance identities are unavailable. Refresh the host before selecting an instance for memory release."] : []
+            return HostInventory(host: host, models: models, capturedAt: Date(), warnings: warnings)
         } catch HostHTTPError.httpStatus(404) {
             // Older native endpoints are used only when the newer endpoint is absent.
         }
@@ -203,6 +242,26 @@ struct ModelHostClient: Sendable {
 
     private static func validateIDs(_ models: [HostedModel]) throws {
         guard models.count <= maximumModels, Set(models.map(\.modelID)).count == models.count else { throw HostHTTPError.invalidResponse }
+    }
+
+    private static func loadedInstanceIDs(_ value: Any?) -> [String]? {
+        guard let instances = value as? [[String: Any]], instances.count <= maximumModels else { return nil }
+        let identifiers = instances.compactMap { try? identifier($0["id"]) }
+        guard identifiers.count == instances.count, Set(identifiers).count == identifiers.count else { return nil }
+        return identifiers
+    }
+
+    private static func queuePromptIDs(_ value: Any?) throws -> [String] {
+        guard let entries = value as? [[Any]], entries.count <= maximumModels else { throw HostHTTPError.invalidResponse }
+        return try entries.map { entry in
+            // Core queue entries contain position, prompt ID, graph, extra data and output nodes.
+            guard (5...8).contains(entry.count), let priority = entry[0] as? NSNumber,
+                  CFGetTypeID(priority) != CFBooleanGetTypeID(), priority.doubleValue.isFinite,
+                  entry[2] is [String: Any], entry[3] is [String: Any], entry[4] is [String] else {
+                throw HostHTTPError.invalidResponse
+            }
+            return try identifier(entry[1])
+        }
     }
 
     private static func identifier(_ value: Any?) throws -> String {

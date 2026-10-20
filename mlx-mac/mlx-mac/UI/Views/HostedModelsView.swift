@@ -10,6 +10,8 @@ struct HostedModelsView: View {
     @State private var removing: ModelHost?
     @State private var actionError: String?
     @State private var query = ""
+    @State private var selectedInstanceID: String?
+    @State private var resourceRequest: HostResourceRequest?
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost; self.onRouteSelection = onRouteSelection
@@ -34,6 +36,11 @@ struct HostedModelsView: View {
                 ErrorBanner(text: hosts.storageError ?? actionError)
                 if let host = selectedHost {
                     Label(host.baseURL, systemImage: "network").font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                    resourceControls(host)
+                    if hosts.resourceHostID == host.id, let message = hosts.resourceMessage {
+                        Text(message).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                            .accessibilityIdentifier("host-resource-result")
+                    }
                     if let error = hosts.errors[host.id] { ErrorBanner(text: error) }
                     if let inventory {
                         inventoryContent(inventory)
@@ -58,6 +65,10 @@ struct HostedModelsView: View {
         }
         .accessibilityIdentifier("hosted-models-workspace")
         .sheet(item: $editor) { ModelHostEditor(host: $0, coordinator: hosts) }
+        .sheet(item: $resourceRequest) { request in
+            HostResourceSheet(coordinator: hosts, hostID: request.hostID, selection: request.selection)
+        }
+        .onChange(of: selectedModelID) { _, _ in selectedInstanceID = nil }
         .confirmationDialog("Remove \(removing?.name ?? "host")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             Button("Remove host", role: .destructive) {
                 guard let host = removing else { return }
@@ -80,7 +91,7 @@ struct HostedModelsView: View {
                     Button("Remove host…", role: .destructive) { removing = host }
                 } label: { Label("Host options", systemImage: "ellipsis.circle") }
                 .menuStyle(.borderlessButton).fixedSize()
-                .disabled(appHost.hostedComparison.activeRunID != nil)
+                .disabled(appHost.hostedComparison.activeRunID != nil || hosts.resourceBusy)
                 .help("Edit or remove this connection when comparisons are idle.")
             }
         }
@@ -89,7 +100,7 @@ struct HostedModelsView: View {
     private var actions: some View {
         HStack {
             if let host = selectedHost { refreshButton(host) }
-            Button("Add host…") { addHost() }.disabled(hosts.storageError != nil)
+            Button("Add host…") { addHost() }.disabled(hosts.storageError != nil || hosts.resourceBusy)
         }
     }
 
@@ -148,6 +159,46 @@ struct HostedModelsView: View {
         }
     }
 
+    @ViewBuilder
+    private func resourceControls(_ host: ModelHost) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            if let activity = inventory?.activity { HostActivityLabel(activity: activity) }
+            switch host.provider {
+            case .comfyUI:
+                Button("Free host memory…") { resourceRequest = HostResourceRequest(hostID: host.id, selection: HostResourceSelection()) }
+                    .disabled(hosts.resourceBusy || hosts.resourceUseBlocked())
+                    .accessibilityIdentifier("host-resource-open")
+                    .help("Review activity before requesting cleanup of all cached ComfyUI models.")
+            case .ollama, .lmStudio:
+                if let model = selectedModel, model.isLoaded == true {
+                    let instances = model.loadedInstanceIDs ?? []
+                    let instance = instances.count == 1 ? instances.first : selectedInstanceID.flatMap { instances.contains($0) ? $0 : nil }
+                    HStack {
+                        if host.provider == .lmStudio, instances.count > 1 {
+                            Picker("Loaded instance", selection: $selectedInstanceID) {
+                                Text("Choose instance").tag(String?.none)
+                                ForEach(instances, id: \.self) { Text($0).tag(Optional($0)) }
+                            }.frame(maxWidth: 300).accessibilityIdentifier("host-resource-instance")
+                        }
+                        Button(host.provider == .lmStudio ? "Unload instance…" : "Unload model…") {
+                            resourceRequest = HostResourceRequest(hostID: host.id,
+                                selection: HostResourceSelection(modelID: model.modelID, instanceID: host.provider == .lmStudio ? instance : nil))
+                        }.disabled(hosts.resourceBusy || hosts.resourceUseBlocked() || (host.provider == .lmStudio && instance == nil))
+                            .accessibilityIdentifier("host-resource-open")
+                            .help("Check current activity and review the exact target before unloading.")
+                    }
+                    if host.provider == .lmStudio, instances.isEmpty {
+                        Text("Unloading requires native loaded-instance identities from this host.").font(WorkbenchTypography.secondary)
+                    }
+                } else {
+                    Text("Select a model reported as loaded to review unloading.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                }
+            case .llamaCpp, .openAICompatible:
+                Text("Unloading is unavailable for this provider.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+        }
+    }
+
     static func state(_ model: HostedModel) -> String {
         switch model.isLoaded { case true: return "Loaded"; case false: return "Available"; case nil: return "Load unknown" }
     }
@@ -164,6 +215,84 @@ struct HostedModelsView: View {
             }
             appHost.compareHostedModels = true; onRouteSelection(.compare)
         } catch { actionError = AppHost.render(error) }
+    }
+}
+
+private struct HostResourceRequest: Identifiable {
+    let id = UUID()
+    let hostID: UUID
+    let selection: HostResourceSelection
+}
+
+struct HostActivityLabel: View {
+    let activity: HostActivity
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            HStack {
+                Label(activity.state.title, systemImage: activity.state == .idle ? "checkmark.circle" : "info.circle")
+                if let running = activity.runningCount, let pending = activity.pendingCount { Text("\(running) running · \(pending) queued") }
+                Text("Checked \(activity.checkedAt.formatted(date: .omitted, time: .standard))").foregroundStyle(WorkbenchColor.muted)
+            }
+            Text(activity.detail).foregroundStyle(WorkbenchColor.muted)
+        }.font(WorkbenchTypography.secondary)
+    }
+}
+
+struct HostResourceSheet: View {
+    @ObservedObject var coordinator: ModelHostsCoordinator
+    let hostID: UUID
+    let selection: HostResourceSelection
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text(coordinator.resourcePreview?.actionTitle ?? "Host memory").font(WorkbenchTypography.title)
+            if coordinator.resourceBusy {
+                ProgressView(coordinator.resourceApplying ? "Sending request and refreshing inventory…" : "Checking current target and activity…")
+                    .controlSize(.small)
+            }
+            if let preview = coordinator.resourcePreview {
+                Text(preview.host.name).font(WorkbenchTypography.section)
+                Text(preview.host.baseURL).font(WorkbenchTypography.compactValue).textSelection(.enabled)
+                Text(preview.scope).fixedSize(horizontal: false, vertical: true)
+                if let model = preview.model {
+                    VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                        Text("Model: \(model.modelID)").font(WorkbenchTypography.compactValue)
+                        Text("Weights digest: \(model.digest ?? "Unknown")").font(WorkbenchTypography.compactValue)
+                        Text("Loaded context: \(model.contextLength.map(String.init) ?? "Unknown") · Quantization: \(model.quantization ?? "Unknown")")
+                            .font(WorkbenchTypography.secondary)
+                    }.textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+                HostActivityLabel(activity: preview.activity)
+                Label(preview.warning, systemImage: "exclamationmark.triangle")
+                    .font(WorkbenchTypography.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("Activity is checked again before the request. Model files and the host application stay in place.")
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            if let message = coordinator.resourceMessage {
+                Text(message).font(WorkbenchTypography.secondary).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("host-resource-message")
+            }
+            HStack {
+                Button(coordinator.resourcePreview == nil && !coordinator.resourceBusy ? "Close" : "Cancel") {
+                    if coordinator.resourcePreview != nil || coordinator.resourceBusy { coordinator.cancelResourcePreview() }
+                    dismiss()
+                }.keyboardShortcut(.cancelAction).disabled(coordinator.resourceApplying)
+                Spacer()
+                if let preview = coordinator.resourcePreview {
+                    Button(preview.actionTitle, role: .destructive) { Task { await coordinator.confirmResource() } }
+                        .disabled(coordinator.resourceBusy || coordinator.resourceUseBlocked())
+                        .accessibilityIdentifier("host-resource-confirm")
+                } else if !coordinator.resourceBusy {
+                    Button("Check again") { Task { await coordinator.prepareResource(hostID: hostID, selection: selection) } }
+                }
+            }
+        }.padding(WorkbenchSpacing.pageInset).frame(width: 520)
+            .task { await coordinator.prepareResource(hostID: hostID, selection: selection) }
+            .interactiveDismissDisabled(coordinator.resourceBusy || coordinator.resourcePreview != nil)
+            .onDisappear {
+                if coordinator.resourcePreview != nil || coordinator.resourceBusy { coordinator.cancelResourcePreview() }
+            }
     }
 }
 

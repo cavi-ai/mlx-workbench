@@ -71,6 +71,31 @@ final class HostedModelsRenderTests: XCTestCase {
             serve: ServeStatus(ok: true, executables: [:], missingExecutables: [], install: "make install", message: "Ready"), install: "make install", ok: true)
     }
 
+    func testHostResourceConfirmationStatesRender() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for state in [HostActivityState.idle, .busy, .unknown] {
+            let host = ModelHost(name: state == .unknown ? "LM Studio" : "ComfyUI", provider: state == .unknown ? .lmStudio : .comfyUI,
+                baseURL: "http://127.0.0.1:8188")
+            let selection = state == .unknown ? HostResourceSelection(modelID: "qwen-8b", instanceID: "coding-context-8192") : HostResourceSelection()
+            let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: root.appendingPathComponent(state.rawValue + ".json")),
+                readToken: { _ in nil }, writeToken: { _, _ in }, inspectResource: { host, selection, _ in
+                    HostResourcePreview(host: host, selection: selection,
+                        model: host.provider == .comfyUI ? nil : HostedModel(hostID: host.id, modelID: "qwen-8b", name: "Qwen 8B", isLoaded: true, loadedInstanceIDs: ["coding-context-8192"]),
+                        activity: HostActivity(state: state, runningCount: state == .unknown ? nil : (state == .busy ? 1 : 0),
+                            pendingCount: state == .unknown ? nil : (state == .busy ? 2 : 0),
+                            detail: state == .unknown ? "This API does not expose other clients' active requests." : "Observed from the host queue."))
+                })
+            try coordinator.save(host, token: nil, replaceToken: false)
+            for dark in [false, true] {
+                try await capture(HostResourceSheet(coordinator: coordinator, hostID: host.id, selection: selection),
+                    name: "host-memory-\(state.rawValue)", dark: dark, width: 740)
+            }
+        }
+    }
+
     private func capture<Content: View>(_ view: Content, name: String, dark: Bool, width: CGFloat = 1100) async throws {
         let hosting = NSHostingView(rootView: view.frame(width: width, height: 820).background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 820), styleMask: [.titled], backing: .buffered, defer: false)

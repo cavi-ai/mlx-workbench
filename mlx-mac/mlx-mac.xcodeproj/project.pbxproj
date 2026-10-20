@@ -20,6 +20,7 @@
 		B5805AEBFB1AA15E839C28C6 /* ModelHostClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1839BD951FAB0F39AB6E84F6 /* ModelHostClient.swift */; };
 		56845F045EDA0A492791C0BD /* HostCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2065A3157E955A011208BD03 /* HostCredentialStore.swift */; };
 		29CD5E63B01797F3BCB24255 /* HostHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF05CD85F4C08985DC605F2 /* HostHTTPClient.swift */; };
+		94389A0EA13D43E1A77F2220 /* HostResourceClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94389A0EA13D43E1A77F2221 /* HostResourceClient.swift */; };
 		1B459810A3D55893A2E9C962 /* ModelHostModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F75C2451BE9C8DE6EC7A250 /* ModelHostModels.swift */; };
 		33CB1B0DE6A5B26995477A5A /* ModelHostClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D0A57E3F565A07488FBF280 /* ModelHostClientTests.swift */; };
 		07DC542B16E33D64215AB114 /* ComfyWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66524588EF77E79A4523FC45 /* ComfyWorkflowTests.swift */; };
@@ -301,6 +302,7 @@
 		1839BD951FAB0F39AB6E84F6 /* ModelHostClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelHostClient.swift; path = Services/ModelHostClient.swift; sourceTree = "<group>"; };
 		2065A3157E955A011208BD03 /* HostCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostCredentialStore.swift; path = Services/HostCredentialStore.swift; sourceTree = "<group>"; };
 		4FF05CD85F4C08985DC605F2 /* HostHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostHTTPClient.swift; path = Services/HostHTTPClient.swift; sourceTree = "<group>"; };
+		94389A0EA13D43E1A77F2221 /* HostResourceClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostResourceClient.swift; path = Services/HostResourceClient.swift; sourceTree = "<group>"; };
 		4F75C2451BE9C8DE6EC7A250 /* ModelHostModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelHostModels.swift; path = Models/ModelHostModels.swift; sourceTree = "<group>"; };
 		8D0A57E3F565A07488FBF280 /* ModelHostClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelHostClientTests.swift; sourceTree = "<group>"; };
 		66524588EF77E79A4523FC45 /* ComfyWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComfyWorkflowTests.swift; sourceTree = "<group>"; };
@@ -629,6 +631,7 @@
 				1839BD951FAB0F39AB6E84F6 /* ModelHostClient.swift */,
 				2065A3157E955A011208BD03 /* HostCredentialStore.swift */,
 				4FF05CD85F4C08985DC605F2 /* HostHTTPClient.swift */,
+				94389A0EA13D43E1A77F2221 /* HostResourceClient.swift */,
 				4F75C2451BE9C8DE6EC7A250 /* ModelHostModels.swift */,
 				24FREF000000 /* App.swift */,
 				24FREF000001 /* AppHost.swift */,
@@ -1083,6 +1086,7 @@
 				B5805AEBFB1AA15E839C28C6 /* ModelHostClient.swift in Sources */,
 				56845F045EDA0A492791C0BD /* HostCredentialStore.swift in Sources */,
 				29CD5E63B01797F3BCB24255 /* HostHTTPClient.swift in Sources */,
+				94389A0EA13D43E1A77F2220 /* HostResourceClient.swift in Sources */,
 				1B459810A3D55893A2E9C962 /* ModelHostModels.swift in Sources */,
 				24BBLD000000 /* x */,
 				24BBLD000001 /* x */,
