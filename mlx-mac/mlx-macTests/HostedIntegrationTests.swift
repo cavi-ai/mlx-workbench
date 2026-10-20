@@ -128,6 +128,8 @@ final class HostedIntegrationTests: XCTestCase {
         XCTAssertEqual(try store.load().first?.conditions, [])
         XCTAssertNil(try store.load().first?.observedTargets)
         subscription.cancel()
+    }
+
     func testRefreshFailureExplainsAuthenticationWithoutLeakingServerText() async throws {
         let host = ModelHost(name: "Local", provider: .ollama, baseURL: "http://localhost:11434")
         let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
