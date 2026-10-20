@@ -961,7 +961,7 @@ final class LMStudioRenderTests: XCTestCase {
             (view as? NSSegmentedControl).map { [$0] } ?? view.subviews.flatMap(controls)
         }
         try await Task.sleep(for: .milliseconds(100))
-        let picker = try XCTUnwrap(controls(hosting).first { $0.segmentCount == 2 && $0.label(forSegment: 0) == "All models" })
+        let picker = try XCTUnwrap(controls(hosting).first { $0.segmentCount == 3 && $0.label(forSegment: 0) == "All models" && $0.label(forSegment: 2) == "Hosted models" })
         XCTAssertEqual(picker.selectedSegment, 1)
         let request = LibraryRevealRequest(modelPath: models[1].item.path)
         app.libraryRevealRequest = request
@@ -1050,7 +1050,7 @@ final class LMStudioRenderTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(300))
         try capture("all-models")
         let picker = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSSegmentedControl }
-            .first { $0.segmentCount == 2 && $0.label(forSegment: 0) == "All models" })
+            .first { $0.segmentCount == 3 && $0.label(forSegment: 0) == "All models" && $0.label(forSegment: 2) == "Hosted models" })
         let action = try XCTUnwrap(picker.action)
         picker.selectedSegment = 1
         XCTAssertTrue(picker.sendAction(action, to: picker.target))

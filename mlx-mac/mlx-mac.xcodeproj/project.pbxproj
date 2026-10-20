@@ -8,6 +8,22 @@
 
 /* Begin PBXBuildFile section */
 		PRMEMB1 /* ProcessMemorySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRMEMF1 /* ProcessMemorySnapshot.swift */; };
+		344ACD737165AB685172C35B /* HostedModelsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */; };
+		1E7408BAF5C49A83A83446B7 /* HostedModelsRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */; };
+		BE10FB560CF5CCF42E69AB69 /* HostedComparisonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4C365A7BD89CAB4572F9F65 /* HostedComparisonView.swift */; };
+		DA220300AF9616739E5D2445 /* HostedModelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 005CE28BCD11F9309E165034 /* HostedModelsView.swift */; };
+		39BF931D8504CBB8F934D203 /* HostedComparisonCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3DD74CC95E96FA3509B47F2 /* HostedComparisonCoordinator.swift */; };
+		81592BC5CD12C661AD050DF4 /* ModelHostsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2A2EEE7C96B832C4EFAC45 /* ModelHostsCoordinator.swift */; };
+		EC231501BA6CADD228406515 /* HostedComparisonModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 320BFF9B16CFFAC0F6AB1586 /* HostedComparisonModels.swift */; };
+		D17A57E6D18959F89DE2AA65 /* ComfyWorkflowRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E2B848EE45F9B9A59A2A311 /* ComfyWorkflowRunner.swift */; };
+		1C9C4F287524505F450F4145 /* ComfyWorkflow.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB04FF727F0A1187454F12DD /* ComfyWorkflow.swift */; };
+		B5805AEBFB1AA15E839C28C6 /* ModelHostClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1839BD951FAB0F39AB6E84F6 /* ModelHostClient.swift */; };
+		56845F045EDA0A492791C0BD /* HostCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2065A3157E955A011208BD03 /* HostCredentialStore.swift */; };
+		29CD5E63B01797F3BCB24255 /* HostHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF05CD85F4C08985DC605F2 /* HostHTTPClient.swift */; };
+		1B459810A3D55893A2E9C962 /* ModelHostModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F75C2451BE9C8DE6EC7A250 /* ModelHostModels.swift */; };
+		33CB1B0DE6A5B26995477A5A /* ModelHostClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D0A57E3F565A07488FBF280 /* ModelHostClientTests.swift */; };
+		07DC542B16E33D64215AB114 /* ComfyWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66524588EF77E79A4523FC45 /* ComfyWorkflowTests.swift */; };
+		EA2E65DE954451E9056E32A3 /* HostedIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CDAF8D5C3A83DABBDAC5B8C /* HostedIntegrationTests.swift */; };
 		28MEM002B /* SystemResourceHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28MEM002F /* SystemResourceHeader.swift */; };
 		28MEM001B /* SystemResourceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28MEM001F /* SystemResourceMonitor.swift */; };
 		26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF001 /* GGUFToRunRealDataUITests.swift */; };
@@ -273,6 +289,22 @@
 
 /* Begin PBXFileReference section */
 		PRMEMF1 /* ProcessMemorySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProcessMemorySnapshot.swift; path = Services/ProcessMemorySnapshot.swift; sourceTree = "<group>"; };
+		74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedModelsUITests.swift; sourceTree = "<group>"; };
+		B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedModelsRenderTests.swift; sourceTree = "<group>"; };
+		B4C365A7BD89CAB4572F9F65 /* HostedComparisonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostedComparisonView.swift; path = UI/Views/HostedComparisonView.swift; sourceTree = "<group>"; };
+		005CE28BCD11F9309E165034 /* HostedModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostedModelsView.swift; path = UI/Views/HostedModelsView.swift; sourceTree = "<group>"; };
+		D3DD74CC95E96FA3509B47F2 /* HostedComparisonCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostedComparisonCoordinator.swift; path = Services/HostedComparisonCoordinator.swift; sourceTree = "<group>"; };
+		1A2A2EEE7C96B832C4EFAC45 /* ModelHostsCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelHostsCoordinator.swift; path = Services/ModelHostsCoordinator.swift; sourceTree = "<group>"; };
+		320BFF9B16CFFAC0F6AB1586 /* HostedComparisonModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostedComparisonModels.swift; path = Models/HostedComparisonModels.swift; sourceTree = "<group>"; };
+		7E2B848EE45F9B9A59A2A311 /* ComfyWorkflowRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComfyWorkflowRunner.swift; path = Services/ComfyWorkflowRunner.swift; sourceTree = "<group>"; };
+		FB04FF727F0A1187454F12DD /* ComfyWorkflow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComfyWorkflow.swift; path = Models/ComfyWorkflow.swift; sourceTree = "<group>"; };
+		1839BD951FAB0F39AB6E84F6 /* ModelHostClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelHostClient.swift; path = Services/ModelHostClient.swift; sourceTree = "<group>"; };
+		2065A3157E955A011208BD03 /* HostCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostCredentialStore.swift; path = Services/HostCredentialStore.swift; sourceTree = "<group>"; };
+		4FF05CD85F4C08985DC605F2 /* HostHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HostHTTPClient.swift; path = Services/HostHTTPClient.swift; sourceTree = "<group>"; };
+		4F75C2451BE9C8DE6EC7A250 /* ModelHostModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelHostModels.swift; path = Models/ModelHostModels.swift; sourceTree = "<group>"; };
+		8D0A57E3F565A07488FBF280 /* ModelHostClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelHostClientTests.swift; sourceTree = "<group>"; };
+		66524588EF77E79A4523FC45 /* ComfyWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComfyWorkflowTests.swift; sourceTree = "<group>"; };
+		1CDAF8D5C3A83DABBDAC5B8C /* HostedIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedIntegrationTests.swift; sourceTree = "<group>"; };
 		28MEM002F /* SystemResourceHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemResourceHeader.swift; path = UI/SystemResourceHeader.swift; sourceTree = "<group>"; };
 		28MEM001F /* SystemResourceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemResourceMonitor.swift; path = Services/SystemResourceMonitor.swift; sourceTree = "<group>"; };
 		26UIREF001 /* GGUFToRunRealDataUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GGUFToRunRealDataUITests.swift; sourceTree = "<group>"; };
@@ -587,6 +619,17 @@
 		24GSRC01 /* mlx-mac */ = {
 			isa = PBXGroup;
 			children = (
+				B4C365A7BD89CAB4572F9F65 /* HostedComparisonView.swift */,
+				005CE28BCD11F9309E165034 /* HostedModelsView.swift */,
+				D3DD74CC95E96FA3509B47F2 /* HostedComparisonCoordinator.swift */,
+				1A2A2EEE7C96B832C4EFAC45 /* ModelHostsCoordinator.swift */,
+				320BFF9B16CFFAC0F6AB1586 /* HostedComparisonModels.swift */,
+				7E2B848EE45F9B9A59A2A311 /* ComfyWorkflowRunner.swift */,
+				FB04FF727F0A1187454F12DD /* ComfyWorkflow.swift */,
+				1839BD951FAB0F39AB6E84F6 /* ModelHostClient.swift */,
+				2065A3157E955A011208BD03 /* HostCredentialStore.swift */,
+				4FF05CD85F4C08985DC605F2 /* HostHTTPClient.swift */,
+				4F75C2451BE9C8DE6EC7A250 /* ModelHostModels.swift */,
 				24FREF000000 /* App.swift */,
 				24FREF000001 /* AppHost.swift */,
 				24FREF000002 /* BridgeError.swift */,
@@ -764,6 +807,10 @@
 		24GTEST01 /* mlx-macTests */ = {
 			isa = PBXGroup;
 			children = (
+				B73BE79EE64AC0A5A1FF4BA3 /* HostedModelsRenderTests.swift */,
+				8D0A57E3F565A07488FBF280 /* ModelHostClientTests.swift */,
+				66524588EF77E79A4523FC45 /* ComfyWorkflowTests.swift */,
+				1CDAF8D5C3A83DABBDAC5B8C /* HostedIntegrationTests.swift */,
 				24FREF01A /* AppHostHealthTests.swift */,
 				E9CB1A694F41D8E826B681FE /* LabWorkspaceTests.swift */,
 				24FREF027 /* CatalogStoreTests.swift */,
@@ -847,6 +894,7 @@
 		26UIGRP001 /* mlx-macUITests */ = {
 			isa = PBXGroup;
 			children = (
+				74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */,
 				26UIREF001 /* GGUFToRunRealDataUITests.swift */,
 				26UIREF101 /* SetupAssistantUITests.swift */,
                 26UIREF201 /* UnifiedWorkflowUITests.swift */,
@@ -1014,6 +1062,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				344ACD737165AB685172C35B /* HostedModelsUITests.swift in Sources */,
 				26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */,
 				26UIBLD101 /* SetupAssistantUITests.swift in Sources */,
                 26UIBLD201 /* UnifiedWorkflowUITests.swift in Sources */,
@@ -1024,6 +1073,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BE10FB560CF5CCF42E69AB69 /* HostedComparisonView.swift in Sources */,
+				DA220300AF9616739E5D2445 /* HostedModelsView.swift in Sources */,
+				39BF931D8504CBB8F934D203 /* HostedComparisonCoordinator.swift in Sources */,
+				81592BC5CD12C661AD050DF4 /* ModelHostsCoordinator.swift in Sources */,
+				EC231501BA6CADD228406515 /* HostedComparisonModels.swift in Sources */,
+				D17A57E6D18959F89DE2AA65 /* ComfyWorkflowRunner.swift in Sources */,
+				1C9C4F287524505F450F4145 /* ComfyWorkflow.swift in Sources */,
+				B5805AEBFB1AA15E839C28C6 /* ModelHostClient.swift in Sources */,
+				56845F045EDA0A492791C0BD /* HostCredentialStore.swift in Sources */,
+				29CD5E63B01797F3BCB24255 /* HostHTTPClient.swift in Sources */,
+				1B459810A3D55893A2E9C962 /* ModelHostModels.swift in Sources */,
 				24BBLD000000 /* x */,
 				24BBLD000001 /* x */,
 				24BBLD000002 /* x */,
@@ -1191,6 +1251,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1E7408BAF5C49A83A83446B7 /* HostedModelsRenderTests.swift in Sources */,
+				33CB1B0DE6A5B26995477A5A /* ModelHostClientTests.swift in Sources */,
+				07DC542B16E33D64215AB114 /* ComfyWorkflowTests.swift in Sources */,
+				EA2E65DE954451E9056E32A3 /* HostedIntegrationTests.swift in Sources */,
 				24BBLD020 /* AppHostHealthTests.swift in Sources */,
 				6C7A0C52AA77A71EA41F6133 /* LabWorkspaceTests.swift in Sources */,
 				24BBLD033 /* CatalogStoreTests.swift in Sources */,
@@ -1276,6 +1340,7 @@
 		26UITCLD1 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "mlx-macUITests/UITest.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1293,6 +1358,7 @@
 		26UITCLR1 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "mlx-macUITests/UITest.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;

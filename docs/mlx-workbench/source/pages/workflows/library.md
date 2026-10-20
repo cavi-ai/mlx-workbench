@@ -8,7 +8,7 @@
 
 **Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. Families with multiple variants expand to show their models; single variants appear directly in the table.
 
-The **Source** picker switches between **All models** and **LM Studio**. Switching sources preserves the main table's filters and selected model, without changing configuration or starting conversion or serving.
+The **Source** picker switches between **All models**, **LM Studio** and **Hosted models**. Switching sources preserves the main table's filters and selected model, without changing configuration or starting conversion or serving.
 
 **Show in Library** on a source model opens **All models**, clears search and readiness/quantization filters, and selects the model in the inspector. This explicit reveal leaves column and grouping preferences intact.
 
@@ -171,3 +171,18 @@ Two lanes are ranked by fit:
 The fit summary shows **fit unknown** until the MLX models have fit estimates. A partial set of estimates is labeled **known to fit**; a complete set uses **fit now**. Zero is shown only as the known count, never as a substitute for unavailable estimates.
 
 The screen never writes configuration. When the scan does not reach the folder, add it to your roots in Settings.
+
+## Hosted models
+
+Choose **Library → Source → Hosted models**, then **Add host…**. Presets cover Ollama, LM Studio, ComfyUI and llama.cpp; **OpenAI-compatible** accepts other local servers exposing a model-list API. Enter the server's HTTP or HTTPS loopback address, including its port. A trailing `/v1` is accepted. Remote addresses are not supported. Optional API tokens are stored in macOS Keychain, separately from the saved connection.
+
+**Refresh** reads inventory without loading models, generating outputs, downloading weights or changing the host's configuration. Refresh is manual. A failed refresh retains the previous inventory with its capture time and an error. Editing an address or provider clears that connection's cached inventory. Removing a connection leaves the host and its models untouched.
+
+The table shows model identifiers, available or loaded state, parameter size, quantization and file size where reported. Select a row and expand **Reported model details** for context, memory, capabilities and digest. Missing metadata is **Unknown**. Reported model memory is separate from whole-device memory; model context limits are separate from loaded context.
+
+- Ollama reports its model tags and digest-matched loaded models. Maximum context and per-model capabilities are unavailable in this inventory.
+- LM Studio uses its native inventory API, with compatibility fallbacks for older servers. Multiple loaded instances with different contexts have an unknown loaded context.
+- ComfyUI lists model files by category, plus reported device and version information. File availability does not establish whether a model is loaded. Unsupported categories can produce a partial inventory with a warning.
+- llama.cpp and compatible servers expose their advertised models. Additional metadata is shown only when reported; names never establish capabilities or identical weights.
+
+**Compare…** sends the selected model to the **Hosted & mixed** comparison setup without starting a run. Text models can be compared with ready native models. ComfyUI image comparisons require checkpoint models and an explicitly imported API workflow. Host inventories remain separate from local scan, conversion, verification and reclaim state.

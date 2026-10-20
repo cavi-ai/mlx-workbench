@@ -37,6 +37,11 @@ class AppHost: ObservableObject {
     let verification: VerificationCoordinator
     /// Measured Comparisons (prompt-set replay across variants).
     let comparison: ComparisonCoordinator
+    let modelHosts: ModelHostsCoordinator
+    let hostedComparison: HostedComparisonCoordinator
+    @Published var compareHostedModels = false
+    @Published var hostedLibraryRequested = false
+    @Published var hostedComparisonTargets: [HostedComparisonTarget] = []
     let servingProfiles: ServingProfileCoordinator
     let lab: LabCoordinator
     /// Cross-client wiring transactions (premium spec 02).
@@ -93,6 +98,8 @@ class AppHost: ObservableObject {
         modelWorkflowPersistence: ModelWorkflowPersistence? = nil,
         verification: VerificationCoordinator? = nil,
         comparison: ComparisonCoordinator? = nil,
+        modelHosts: ModelHostsCoordinator? = nil,
+        hostedComparison: HostedComparisonCoordinator? = nil,
         wiring: WiringCoordinator? = nil,
         endpoint: EndpointSupervisor? = nil,
         usage: UsageTracker? = nil,
@@ -157,6 +164,12 @@ class AppHost: ObservableObject {
             strataProbe: { options in ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
                 prober: OpenAIEndpointProber(requestTimeout: 900)) }
         )
+        let hosts = modelHosts ?? ModelHostsCoordinator()
+        self.modelHosts = hosts
+        self.hostedComparison = hostedComparison ?? HostedComparisonCoordinator(
+            nativeProbe: ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber()),
+            readToken: { try hosts.token(for: $0) },
+            recoverCleanup: { try await api.recoverComparisonServer($0) })
         self.wiring = wiring ?? WiringCoordinator(
             home: WorkbenchStatePaths.userHome(),
             store: JSONStore<WiringTransaction>(fileURL: JSONStore<WiringTransaction>.defaultFileURL("wiring-transactions.json"))
@@ -225,6 +238,22 @@ class AppHost: ObservableObject {
                 signatures: signatures,
                 limit: limit
             )
+        }
+        self.hostedComparison.validateTarget = { [weak self] target in
+            guard let self, self.comparison.activeRunID == nil else {
+                throw HostedIntegrationError.invalid("Finish the local comparison before starting hosted lanes.")
+            }
+            if let host = target.host {
+                guard self.modelHosts.hosts.contains(host) else {
+                    throw HostedIntegrationError.invalid("The host configuration changed. Refresh and select the model again.")
+                }
+            } else if let path = target.localPath {
+                guard let model = self.librarySnapshot?.models.first(where: { $0.item.path == path }),
+                      model.item.signature == target.localSignature,
+                      ComparePresentation.candidates(from: [model]).count == 1 else {
+                    throw HostedIntegrationError.invalid("The local model changed or is no longer ready. Scan and select it again.")
+                }
+            }
         }
         // Measured comparisons feed the RecommendationEngine: rehydrate
         // aggregates from completed runs, then append as new runs finish.
@@ -890,6 +919,9 @@ class AppHost: ObservableObject {
         occupied.formUnion(recommendationPreferences.preferredModelIDs.values)
         if let path = verification.activeModelPath { occupied.insert(path) }
         occupied.formUnion(inferenceTasks.activeModelPaths)
+        if let id = hostedComparison.activeRunID, let record = hostedComparison.records.first(where: { $0.id == id }) {
+            occupied.formUnion(record.targets.compactMap(\.localPath))
+        }
         if let id = comparison.activeRunID, let run = comparison.runs.first(where: { $0.id == id }) {
             occupied.formUnion(run.variants)
         }

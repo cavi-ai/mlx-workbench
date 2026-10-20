@@ -54,6 +54,18 @@ server.
 - Studies is a Lab sidebar destination using the shared `LabCoordinator`.
   Compare's Open Studies action routes there. Cached study views refresh their
   read-only lists on activation; navigation never starts jobs or installs a runtime.
+- Library's Hosted models source reads explicit loopback connections from `model-hosts.json`
+  through `ModelHostsCoordinator` and `ModelHostClient`. Presets cover Ollama, LM Studio,
+  ComfyUI, llama.cpp and OpenAI-compatible APIs. Tokens live in Keychain; inventory
+  refresh never generates, loads, stops or downloads models. Failed refreshes retain
+  dated snapshots. Host transport bounds responses and refuses redirects and proxies.
+  Compare's Hosted & mixed workspace uses `HostedComparisonCoordinator` and separate
+  `hosted-comparison-runs.json` / `hosted-comparison-outputs` stores. Native lanes reuse
+  ServeProbe and durable server-ownership recovery. External lanes retain captured
+  identity and pre-inference inventory metadata without feeding local recommendation,
+  promotion or reclaim evidence. ComfyUI accepts explicitly bound core image API graphs;
+  submission records persist owned prompt IDs and submitted graphs before observation.
+  Cancellation never interrupts the shared host; ComfyUI timing includes queue wait.
 - `make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json` is the
   opt-in real-data native GGUF-to-Run acceptance surface. Its runner validates
   an explicit allowlisted local source and loopback config, selects only the
