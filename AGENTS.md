@@ -58,7 +58,10 @@ server.
   through `ModelHostsCoordinator` and `ModelHostClient`. Presets cover Ollama, LM Studio,
   ComfyUI, llama.cpp and OpenAI-compatible APIs. Tokens live in Keychain; inventory
   refresh never generates, loads, stops or downloads models. Failed refreshes retain
-  dated snapshots. Host transport bounds responses and refuses redirects and proxies.
+  dated snapshots. The host editor's optional Test connection uses the same read-only
+  inventory adapter with draft credentials, without saving hosts, changing Keychain
+  or publishing inventory. `ModelHostConnectionCheck` cancels and fences late results
+  after edits or dismissal. Host transport bounds responses and refuses redirects and proxies.
   Compare's Hosted & mixed workspace uses `HostedComparisonCoordinator` and separate
   `hosted-comparison-runs.json` / `hosted-comparison-outputs` stores. Native lanes reuse
   ServeProbe and durable server-ownership recovery. External lanes retain captured
@@ -846,6 +849,11 @@ server.
   and generation checks reject late reads from a previous backend context.
 
 - Prefer project-local inspection first, keep edits scoped.
+- Activity's `ActivityStatusRecovery` retries only the existing status reads and
+  routes to Health; it never restarts jobs. Failed training rows share
+  `TrainingJobRow.recoveryGuidance`, open recorded logs or navigate to Training
+  without changing its draft. `LogSheet` reads through `BackendInstallLog` on a
+  utility task and fences cancelled view loads before publishing the bounded tail.
 - Update this file when execution/integration behavior changes so it continues to
   match the README and docs.
 - Do not invent cross-repo semantics for conversion/receipt behavior; state

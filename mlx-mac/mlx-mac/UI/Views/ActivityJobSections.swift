@@ -1,11 +1,38 @@
 import SwiftUI
 
+struct ActivityStatusRecovery: View {
+    let error: String
+    let context: String
+    let isRefreshing: Bool
+    let onRetry: () -> Void
+    let onHealth: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            FailureNotice(error: error, details: .whenDifferent)
+            Text("Retry reads status without restarting work. Health shows the engine and runtime checks.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(isRefreshing ? "Refreshing status…" : "Retry status", action: onRetry)
+                    .disabled(isRefreshing)
+                    .accessibilityIdentifier("activity-retry-\(context)-status")
+                Button("Open Health", action: onHealth)
+                    .accessibilityIdentifier("activity-health-\(context)")
+            }.controlSize(.small)
+        }
+    }
+}
+
 struct ActivityStudySection: View {
     @ObservedObject var lab: LabCoordinator
     let jobs: [LabJob]
     let error: String?
     var isWorking = false
     var historical = false
+    var isRefreshing = false
+    let onRetry: () -> Void
+    let onHealth: () -> Void
     let onOpen: () -> Void
     @State private var expanded = false
 
@@ -18,7 +45,10 @@ struct ActivityStudySection: View {
                         Spacer()
                         Button("Open Studies", action: onOpen).buttonStyle(.bordered)
                     }
-                    ErrorBanner(text: error)
+                    if let error {
+                        ActivityStatusRecovery(error: error, context: "study", isRefreshing: isRefreshing,
+                                               onRetry: onRetry, onHealth: onHealth)
+                    }
                     if error != nil, !jobs.isEmpty {
                         Text("Showing latest available study jobs.")
                             .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -40,7 +70,11 @@ struct ActivityTrainingSection: View {
     let jobs: [TrainingJob]
     let error: String?
     var historical = false
+    var isRefreshing = false
+    let onRetry: () -> Void
+    let onHealth: () -> Void
     let onOpen: () -> Void
+    let onViewLog: (String) -> Void
     let onCancel: (TrainingJob) -> Void
     @State private var expanded = false
 
@@ -53,7 +87,10 @@ struct ActivityTrainingSection: View {
                         Spacer()
                         Button("Open Training", action: onOpen).buttonStyle(.bordered)
                     }
-                    ErrorBanner(text: error)
+                    if let error {
+                        ActivityStatusRecovery(error: error, context: "training", isRefreshing: isRefreshing,
+                                               onRetry: onRetry, onHealth: onHealth)
+                    }
                     if error != nil, !jobs.isEmpty {
                         Text("Showing last known training jobs.")
                             .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -71,12 +108,27 @@ struct ActivityTrainingSection: View {
 
     private var rows: some View {
         ForEach(jobs) { job in
-            HStack {
-                Text(job.repo + " · " + job.state).font(WorkbenchTypography.secondary)
-                Spacer()
-                if job.state == "running" {
-                    Button("Cancel training") { onCancel(job) }
+            let row = TrainingJobRow(job: job, home: NSHomeDirectory())
+            VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                HStack {
+                    Text(row.repo).font(WorkbenchTypography.emphasis).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    StatusBadge(status: row.status, pulses: false)
                 }
+                if let guidance = row.recoveryGuidance {
+                    Text(guidance).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ReclaimFlowLayout(spacing: WorkbenchSpacing.xs, lineSpacing: WorkbenchSpacing.xs) {
+                    if let log = row.logPath, !log.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button("View log") { onViewLog(log) }.accessibilityIdentifier("activity-view-training-log")
+                    }
+                    if row.recoveryGuidance != nil {
+                        Button("Review training setup", action: onOpen)
+                            .accessibilityIdentifier("activity-review-training-setup")
+                    }
+                    if row.canCancel { Button("Cancel training") { onCancel(job) } }
+                }.controlSize(.small)
             }
         }
     }

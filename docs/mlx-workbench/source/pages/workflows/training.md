@@ -59,6 +59,12 @@ keeps its separate refresh control.
 
 Each run pins the cached base model, copies the reviewed dataset bytes, records the actual process result and verifies the adapter content. **Open log** shows a job's execution log. To retry failed training, correct the setup, preview it again, and confirm a new job.
 
+Failed rows explain the next steps: review the log, correct the inputs and use
+**Check setup** before previewing a new run. Activity offers **View log** and
+**Review training setup** beside the failed job. A failed status read instead
+offers **Retry status** and **Open Health**; retry only reads status and retains
+the last known jobs until the read succeeds. These actions never resubmit a job.
+
 **Use in Run** stages a completed job's recorded base and adapter in
 [Run](run.md#serve-a-trained-adapter). It does not start inference. Preview and
 confirmation recheck the artifacts before starting an explicit adapter server.

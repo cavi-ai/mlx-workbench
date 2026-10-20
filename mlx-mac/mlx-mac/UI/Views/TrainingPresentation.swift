@@ -114,6 +114,7 @@ struct TrainingJobRow: Equatable, Identifiable {
     let adapterIdentity: LabValue?
     let canCompare: Bool
     let canCancel: Bool
+    let recoveryGuidance: String?
 
     init(job: TrainingJob, home: String?) {
         id = job.id
@@ -125,6 +126,9 @@ struct TrainingJobRow: Equatable, Identifiable {
         adapterIdentity = job.adapterIdentity
         canCompare = job.state == "done" && job.adapterIdentity != nil
         canCancel = job.state == "running"
+        recoveryGuidance = job.state == "failed"
+            ? "Review the log and correct the inputs in Training. Use Check setup, then preview and confirm a new run."
+            : nil
     }
 }
 

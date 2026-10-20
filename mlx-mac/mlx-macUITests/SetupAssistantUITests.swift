@@ -1692,6 +1692,44 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Training-completed-without-refresh")
     }
 
+    func testActivityRetriesTrainingStatusAndOpensFailedJobLogWithoutRestarting() throws {
+        let log = root.appendingPathComponent("failed-training.log")
+        try (String(repeating: "older log line\n", count: 8000) + "Training failed: fixture runtime error\n").write(to: log, atomically: true, encoding: .utf8)
+        let job: [String: Any] = ["receipt": "fixture-failed-adapter", "repo": "fixture/failed-base",
+            "out": root.appendingPathComponent("adapter").path, "pid": 123, "state": "failed", "log_path": log.path]
+        let file = root.appendingPathComponent("training-jobs.json")
+        let original = try JSONSerialization.data(withJSONObject: [job])
+        try original.write(to: file)
+        try Data().write(to: root.appendingPathComponent("fail-training-status"))
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Activity")
+        let retry = app.buttons["Retry status"].firstMatch
+        XCTAssertTrue(retry.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["Open Health"].firstMatch.isEnabled)
+        capture("Activity-training-status-recovery")
+        try FileManager.default.removeItem(at: root.appendingPathComponent("fail-training-status"))
+        let canRetry = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: retry)
+        wait(for: [canRetry], timeout: 10)
+        retry.click()
+        let setup = app.buttons["Review training setup"].firstMatch
+        XCTAssertTrue(setup.waitForExistence(timeout: 15))
+        XCTAssertFalse(retry.exists)
+        XCTAssertTrue(app.staticTexts["fixture/failed-base"].firstMatch.exists)
+        let viewLog = app.buttons["View log"].firstMatch
+        XCTAssertTrue(viewLog.isHittable); viewLog.click()
+        let sheet = app.sheets.firstMatch
+        let tail = sheet.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "fixture runtime error", "fixture runtime error")).firstMatch
+        XCTAssertTrue(tail.waitForExistence(timeout: 10))
+        XCTAssertTrue(sheet.staticTexts["(truncated to the tail)"].exists)
+        capture("Activity-failed-training-log-tail")
+        sheet.buttons["Close"].click()
+        setup.click()
+        XCTAssertTrue(app.textFields["Base model repo id"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Confirm & Train"].exists)
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("confirmed-training.json").path))
+    }
+
     func testTrainingDatasetCreationSavesWithoutStartingWork() throws {
         launch(appearance: "Dark", route: "training-studio", isolatedHome: true)
         let scroll = app.scrollViews.containing(.textField, identifier: "Dataset path").firstMatch
