@@ -46,6 +46,19 @@ final class ModelHostsCoordinator: ObservableObject {
 
     func token(for id: UUID) throws -> String? { try readToken(id) }
 
+    /// Checks the unsaved connection through the same read-only adapter as Refresh.
+    /// Neither host state, published inventory nor Keychain is modified.
+    func checkConnection(_ host: ModelHost, token: String?, replaceToken: Bool) async throws -> HostInventory {
+        _ = try host.validatedURL()
+        if let message = host.validationMessage { throw HostedIntegrationError.invalid(message) }
+        let credential = replaceToken ? (token?.isEmpty == true ? nil : token) : try readToken(host.id)
+        let result = try await fetch(host, credential)
+        try Task.checkCancellation()
+        guard result.host == host, result.models.allSatisfy({ $0.hostID == host.id }),
+              Set(result.models.map(\.id)).count == result.models.count else { throw HostHTTPError.invalidResponse }
+        return result
+    }
+
     func save(_ host: ModelHost, token: String?, replaceToken: Bool) throws {
         guard !resourceBusy else { throw HostedIntegrationError.invalid("Wait for the host memory operation to finish.") }
         guard storageError == nil else { throw HostedIntegrationError.invalid(storageError!) }

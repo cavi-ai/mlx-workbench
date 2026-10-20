@@ -6,6 +6,92 @@ import Network
 
 @MainActor
 final class HostedIntegrationTests: XCTestCase {
+    func testConnectionCheckInvalidationRejectsLateSuccess() async throws {
+        let check = ModelHostConnectionCheck()
+        let host = ModelHost(name: "Draft", provider: .ollama, baseURL: "http://localhost:11434")
+        var resume: CheckedContinuation<HostInventory, Never>?
+        let task = try XCTUnwrap(check.check { await withCheckedContinuation { resume = $0 } })
+        while resume == nil { await Task.yield() }
+        XCTAssertTrue(check.isChecking)
+        check.invalidate()
+        resume?.resume(returning: HostInventory(host: host, models: [], capturedAt: Date()))
+        await task.value
+        XCTAssertFalse(check.isChecking)
+        XCTAssertNil(check.inventory)
+        XCTAssertNil(check.errorMessage)
+    }
+
+    func testConnectionCheckFailureCanBeRetriedAndNeverLeaksUnderlyingText() async throws {
+        let check = ModelHostConnectionCheck()
+        let failed = try XCTUnwrap(check.check { throw NSError(domain: "secret-token-and-body", code: 1) })
+        await failed.value
+        XCTAssertNotNil(check.errorMessage)
+        XCTAssertFalse(check.errorMessage!.contains("secret-token"))
+        let host = ModelHost(name: "Draft", provider: .ollama, baseURL: "http://localhost:11434")
+        let retry = try XCTUnwrap(check.check { HostInventory(host: host, models: [], capturedAt: Date()) })
+        await retry.value
+        XCTAssertEqual(check.inventory?.models.count, 0)
+        XCTAssertNil(check.errorMessage)
+    }
+
+    func testConnectionFailureGuidanceDistinguishesAuthenticationAndWrongAPI() {
+        XCTAssertTrue(ModelHostConnectionCheck.guidance(for: HostHTTPError.httpStatus(401)).contains("token"))
+        XCTAssertTrue(ModelHostConnectionCheck.guidance(for: HostHTTPError.httpStatus(403)).contains("access"))
+        XCTAssertTrue(ModelHostConnectionCheck.guidance(for: HostHTTPError.httpStatus(404)).contains("provider"))
+        XCTAssertTrue(ModelHostConnectionCheck.guidance(for: HostHTTPError.requestFailed).contains("reached"))
+    }
+
+    func testHostEditorValidationMatchesLocalConnectionRules() {
+        var host = ModelHost(name: "", provider: .ollama, baseURL: "http://localhost:11434")
+        XCTAssertNotNil(host.validationMessage)
+        host.name = "Local"
+        XCTAssertNil(host.validationMessage)
+        host.baseURL = "https://example.com"
+        XCTAssertNotNil(host.validationMessage)
+        host.baseURL = "http://localhost:11434"
+        host.name = String(repeating: "a", count: 121)
+        XCTAssertNotNil(host.validationMessage)
+    }
+
+    func testConnectionCheckUsesDraftCredentialsWithoutSaving() async throws {
+        let file = try directory().appendingPathComponent("hosts.json")
+        let host = ModelHost(name: "Draft", provider: .ollama, baseURL: "http://localhost:11434")
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: file),
+            readToken: { _ in "saved-token" }, writeToken: { _, _ in XCTFail("Checking wrote credentials") },
+            fetch: { received, token in
+                XCTAssertEqual(received, host)
+                XCTAssertEqual(token, "draft-token")
+                return HostInventory(host: received, models: [], capturedAt: Date())
+            })
+        let result = try await coordinator.checkConnection(host, token: "draft-token", replaceToken: true)
+        XCTAssertEqual(result.host, host)
+        XCTAssertTrue(coordinator.hosts.isEmpty)
+        XCTAssertTrue(coordinator.inventories.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testConnectionCheckUsesSavedCredentialUnlessReplacementIsSelected() async throws {
+        let host = ModelHost(name: "Saved", provider: .ollama, baseURL: "http://localhost:11434")
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+            readToken: { _ in "saved-token" }, writeToken: { _, _ in XCTFail("Checking wrote credentials") },
+            fetch: { received, token in
+                XCTAssertEqual(token, "saved-token")
+                return HostInventory(host: received, models: [], capturedAt: Date())
+            })
+        _ = try await coordinator.checkConnection(host, token: "unused-draft", replaceToken: false)
+    }
+
+    func testInvalidConnectionDoesNotReadCredentialsOrContactHost() async throws {
+        let coordinator = ModelHostsCoordinator(store: JSONStore(fileURL: try directory().appendingPathComponent("hosts.json")),
+            readToken: { _ in XCTFail("Invalid address read credentials"); return nil },
+            writeToken: { _, _ in XCTFail("Checking wrote credentials") },
+            fetch: { host, _ in XCTFail("Invalid address contacted host"); return HostInventory(host: host, models: [], capturedAt: Date()) })
+        do {
+            _ = try await coordinator.checkConnection(ModelHost(name: "Remote", provider: .ollama, baseURL: "https://example.com"), token: nil, replaceToken: false)
+            XCTFail("Expected address rejection")
+        } catch { XCTAssertEqual(error as? HostHTTPError, .invalidURL) }
+    }
+
     private func directory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
