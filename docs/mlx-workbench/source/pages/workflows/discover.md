@@ -7,7 +7,7 @@
 **Discover** runs the engine's `discover` command for a role and lists ranked candidates from remote catalog metadata.
 
 1. Pick a **Role**. The picker offers only the roles the engine accepts.
-2. Set the number of candidates per role. **Fast** skips per-model enrichment and ranks by name heuristics only.
+2. Set the number of candidates per role. **Any** searches every supported role, so the total can exceed this limit. **Fast** uses repository names instead of inspecting each model; sizes and memory-fit estimates may be missing. Turn it off and select **Discover** again to request inspection.
 3. **Discover**.
 
 Each candidate shows its license, a fit bar for this Mac and an **In Library** mark when it is already on disk. Actions: **Add from Hugging Face…**, **Open on Hugging Face**, **Copy repo id**.
@@ -16,7 +16,7 @@ Memory fit is an estimate, not a runtime check. **Add from Hugging Face…** ope
 a separate review before downloading; use **Recommend for a task** to check
 installed candidates through local runtimes.
 
-The separate **Catalog metadata** section shows cached metadata. **Refresh Metadata** is disabled when no metadata provider is configured; its help explains why. Role-based discovery and cached entries remain available.
+The separate **Catalog metadata** section shows cached metadata. **Refresh Metadata** is disabled when no metadata provider is configured; the reason appears beside the section. Role-based discovery and cached entries remain available. This cache does not determine which models are installed; Library scans do.
 
 ## Recommend for a task
 

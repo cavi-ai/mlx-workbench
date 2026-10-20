@@ -160,6 +160,19 @@ struct AdoptView: View {
                         .accessibilityIdentifier("adopt-progress")
                 }
             }
+            Text(fast
+                 ? "Fast skips detailed discovery metadata. Installed candidates still receive verification prompts and may load into RAM."
+                 : "Detailed discovery inspects candidate metadata. Verification prompts run separately and may load installed models into RAM.")
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("adopt-inspection-guidance")
+            if offline {
+                Text("Offline metadata uses the discovery cache. Local verification prompts still run.")
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
