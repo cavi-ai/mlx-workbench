@@ -7,13 +7,28 @@ import XCTest
 
 @MainActor
 final class VerificationCoordinatorTests: XCTestCase {
+    func testVerificationStartupReadsHistoryOffTheMainActor() async throws {
+        let store = VerificationStore(fileURL: temporaryURL("startup-reports.json"))
+        _ = try store.load()
+        let transaction = try HistoryReadTransaction(store.databaseURL)
+        transaction.release(after: 0.5)
+        let verification = VerificationCoordinator(probe: verificationProbe(responder: passingResponder), store: store)
+        XCTAssertFalse(transaction.isReleased, "Constructing verification must not wait for history I/O")
+        verification.verifyNow(modelPath: "/Models/source", signature: "signature-1")
+        let finished = await waitFor { verification.activeModelPath == nil }
+        XCTAssertTrue(finished)
+        XCTAssertEqual(verification.reports.first?.outcome, .passed)
+    }
+
     func testFailedReportWriteCannotPublishAVerdictOrVerifyTheWorkflow() async throws {
         let url = temporaryURL("reports.json")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let before = Data("[]".utf8)
         try before.write(to: url)
-        let store = VerificationStore(fileURL: url, replaceItem: { _, _ in throw WorkflowEvidenceError.invalid("Report write unavailable") })
-        let verification = makeVerification(store: store, responder: passingResponder)
+        let store = VerificationStore(fileURL: url)
+        _ = try store.load()
+        try rejectHistoryWrites(store.databaseURL)
+        let verification = await makeVerification(store: store, responder: passingResponder)
         let workflow = makeWorkflowCoordinator(), record = makeWorkflow(state: .verifying)
         workflow.restore(record); verification.attach(to: workflow)
         var publications = 0
@@ -37,28 +52,27 @@ final class VerificationCoordinatorTests: XCTestCase {
             workflowRecordID: record.id, suiteVersion: CanarySuite.version, canaries: [], tokensPerSecond: nil,
             timeToFirstTokenSeconds: nil, metricsEstimated: false, startedAt: Date(), finishedAt: Date(),
             outcome: .failed(canaryIDs: ["hello"]))
-        try VerificationStore(fileURL: url).upsert(failed)
-        let before = try Data(contentsOf: url)
-        let store = VerificationStore(fileURL: url, replaceItem: { _, _ in throw WorkflowEvidenceError.invalid("Report write unavailable") })
-        let verification = makeVerification(store: store, responder: passingResponder)
+        let store = VerificationStore(fileURL: url)
+        try store.upsert(failed)
+        let before = try store.load()
+        try rejectHistoryWrites(store.databaseURL)
+        let verification = await makeVerification(store: store, responder: passingResponder)
         workflow.restore(record); verification.attach(to: workflow)
-        verification.keepAnyway(recordID: record.id)
+        await verification.keepAnyway(recordID: record.id)
         XCTAssertEqual(workflow.workflow.state, .verificationFailed)
         XCTAssertEqual(verification.reports, [failed])
         XCTAssertNotNil(verification.persistenceError)
-        XCTAssertEqual(try Data(contentsOf: url), before)
+        XCTAssertEqual(try store.load(), before)
     }
 
     func testSuccessfulRetryPublishesOnlyAfterTheReportIsSaved() async throws {
         let url = temporaryURL("reports.json")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("[]".utf8).write(to: url)
-        var writable = false
-        let store = VerificationStore(fileURL: url, replaceItem: { existing, temporary in
-            guard writable else { throw WorkflowEvidenceError.invalid("Report write unavailable") }
-            _ = try FileManager.default.replaceItemAt(existing, withItemAt: temporary)
-        })
-        let verification = makeVerification(store: store, responder: passingResponder)
+        let store = VerificationStore(fileURL: url)
+        _ = try store.load()
+        try rejectHistoryWrites(store.databaseURL)
+        let verification = await makeVerification(store: store, responder: passingResponder)
         var publications = 0
         verification.onReport = { report in
             publications += 1
@@ -68,7 +82,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let failed = await waitFor { verification.activeModelPath == nil }
         XCTAssertTrue(failed); XCTAssertEqual(publications, 0)
         XCTAssertTrue(verification.reports.isEmpty); XCTAssertNotNil(verification.persistenceError)
-        writable = true
+        try executeHistorySQL(store.databaseURL, "DROP TRIGGER reject_write")
         verification.verifyNow(modelPath: "/Models/source", signature: "signature-1")
         let saved = await waitFor { verification.activeModelPath == nil }
         XCTAssertTrue(saved); XCTAssertEqual(publications, 1)
@@ -157,7 +171,7 @@ final class VerificationCoordinatorTests: XCTestCase {
             promptEntries: [PromptEntry(id: "p", text: "17 * 19")], laneConfigurations: [lane])
     }
 
-    func testProfileChoicesReadSavedEvidenceWithoutWritingOrServing() throws {
+    func testProfileChoicesReadSavedEvidenceWithoutWritingOrServing() async throws {
         let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         let runs = JSONStore<ComparisonRun>(fileURL: temporaryURL("runs.json"))
         var measured = managementProfile()
@@ -172,7 +186,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let profileBytes = try Data(contentsOf: store.url), runBytes = try Data(contentsOf: runs.url)
         let coordinator = managementCoordinator(store)
         coordinator.comparisonSource = { id in try runs.load().first { $0.id == id } }
-        let choices = try coordinator.profileChoices(modelPath: measured.modelPath)
+        let choices = try await coordinator.profileChoices(modelPath: measured.modelPath)
         XCTAssertEqual(choices.map(\.profile.id), [measured.id, unmeasured.id])
         XCTAssertEqual(choices[0].evidence?.result.memoryTradeoffAnswerSeconds, 2)
         XCTAssertEqual(choices[0].evidence?.taskReview?.score, 4)
@@ -180,13 +194,13 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertNil(choices[0].evidenceUnavailableReason)
         XCTAssertNil(choices[1].evidence)
         XCTAssertNotNil(choices[1].evidenceUnavailableReason)
-        XCTAssertEqual(try coordinator.selectChoice(choices[0], modelPath: measured.modelPath), measured)
-        XCTAssertEqual(try coordinator.selectChoice(choices[1], modelPath: measured.modelPath), unmeasured)
+        try await assertAsyncEqual(try await coordinator.selectChoice(choices[0], modelPath: measured.modelPath), measured)
+        try await assertAsyncEqual(try await coordinator.selectChoice(choices[1], modelPath: measured.modelPath), unmeasured)
         XCTAssertThrowsError(try coordinator.resolve(unmeasured))
         XCTAssertEqual(try Data(contentsOf: store.url), profileBytes)
         XCTAssertEqual(try Data(contentsOf: runs.url), runBytes)
         try Data("corrupt".utf8).write(to: runs.url)
-        let unavailable = try coordinator.profileChoices(modelPath: measured.modelPath)
+        let unavailable = try await coordinator.profileChoices(modelPath: measured.modelPath)
         XCTAssertNil(unavailable[0].evidence)
         XCTAssertNotNil(unavailable[0].evidenceUnavailableReason)
         XCTAssertTrue(unavailable[0].profile.hasPassedVerification)
@@ -210,7 +224,7 @@ final class VerificationCoordinatorTests: XCTestCase {
             XCTAssertEqual(requested, profile)
             return self.profileMemoryPlan(requested)
         }
-        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        let choice = try await unwrapAsync(try await coordinator.profileChoices(modelPath: profile.modelPath).first)
         let before = try Data(contentsOf: store.url)
         let review = try await coordinator.memoryReview(for: choice, memoryProbe: {
             MemorySnapshot(totalBytes: 64_000_000_000, availableBytes: 10_000_000_000)
@@ -247,7 +261,7 @@ final class VerificationCoordinatorTests: XCTestCase {
             try store.replaceAll([changed])
             return self.profileMemoryPlan(requested)
         }
-        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        let choice = try await unwrapAsync(try await coordinator.profileChoices(modelPath: profile.modelPath).first)
         do {
             _ = try await coordinator.memoryReview(for: choice, memoryProbe: { nil })
             XCTFail("A changed profile cannot receive the old memory review")
@@ -274,7 +288,7 @@ final class VerificationCoordinatorTests: XCTestCase {
             try await api.servePreview(repo: requested.modelPath, runtime: "strata", port: nil,
                 strataOptions: requested.options, timeout: 30)
         }
-        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        let choice = try await unwrapAsync(try await coordinator.profileChoices(modelPath: profile.modelPath).first)
         let review = try await coordinator.memoryReview(for: choice, memoryProbe: { nil })
         XCTAssertNil(review.memory); XCTAssertTrue(review.verificationMatches)
     }
@@ -289,7 +303,7 @@ final class VerificationCoordinatorTests: XCTestCase {
             withUnsafeCurrentTask { $0?.cancel() }
             return self.profileMemoryPlan(requested)
         }
-        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        let choice = try await unwrapAsync(try await coordinator.profileChoices(modelPath: profile.modelPath).first)
         let operation = Task {
             try await coordinator.memoryReview(for: choice, memoryProbe: {
                 XCTFail("A cancelled preview must not capture RAM"); return nil
@@ -313,7 +327,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let coordinator = managementCoordinator(store)
         coordinator.comparisonSource = { id in try runs.load().first { $0.id == id } }
         let modelPath = try XCTUnwrap(coordinator.profiles.first?.modelPath)
-        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: modelPath).first { $0.evidence != nil && $0.profile.hasPassedVerification })
+        let choice = try await unwrapAsync(try await coordinator.profileChoices(modelPath: modelPath).first { $0.evidence != nil && $0.profile.hasPassedVerification })
         let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath,
             receiptDirectory: root.appendingPathComponent("receipts").path)
         coordinator.memoryPreview = { requested in
@@ -343,7 +357,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: root.appendingPathComponent("memory-review.png"))
     }
 
-    func testProfileChoiceRejectsChangedProfileAndComparisonSnapshots() throws {
+    func testProfileChoiceRejectsChangedProfileAndComparisonSnapshots() async throws {
         let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         let runs = JSONStore<ComparisonRun>(fileURL: temporaryURL("runs.json"))
         var profile = managementProfile()
@@ -352,29 +366,50 @@ final class VerificationCoordinatorTests: XCTestCase {
         try store.replaceAll([profile]); try runs.replaceAll([run])
         let coordinator = managementCoordinator(store)
         coordinator.comparisonSource = { id in try runs.load().first { $0.id == id } }
-        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        let choice = try await unwrapAsync(try await coordinator.profileChoices(modelPath: profile.modelPath).first)
         var changedRun = run; changedRun.qualityReviews = ["measured": ComparisonQualityReview(score: 1,
             rubricID: ComparisonQualityReview.taskOutcomeRubric, reviewedAt: Date())]
         try runs.replaceAll([changedRun])
-        XCTAssertThrowsError(try coordinator.selectChoice(choice, modelPath: profile.modelPath))
-        let refreshed = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        await assertAsyncThrows(try await coordinator.selectChoice(choice, modelPath: profile.modelPath))
+        let refreshed = try await unwrapAsync(try await coordinator.profileChoices(modelPath: profile.modelPath).first)
         XCTAssertEqual(refreshed.evidence?.taskReview?.score, 1)
-        XCTAssertEqual(try coordinator.selectChoice(refreshed, modelPath: profile.modelPath), profile)
+        try await assertAsyncEqual(try await coordinator.selectChoice(refreshed, modelPath: profile.modelPath), profile)
         var changedProfile = profile; changedProfile.name = "Renamed elsewhere"
         try store.replaceAll([changedProfile])
-        XCTAssertThrowsError(try coordinator.selectChoice(refreshed, modelPath: profile.modelPath))
-        let renamed = try XCTUnwrap(try coordinator.profileChoices(modelPath: profile.modelPath).first)
+        await assertAsyncThrows(try await coordinator.selectChoice(refreshed, modelPath: profile.modelPath))
+        let renamed = try await unwrapAsync(try await coordinator.profileChoices(modelPath: profile.modelPath).first)
         XCTAssertEqual(coordinator.profiles, [changedProfile])
-        XCTAssertEqual(try coordinator.selectChoice(renamed, modelPath: profile.modelPath), changedProfile)
-        XCTAssertThrowsError(try coordinator.selectChoice(refreshed, modelPath: "/Models/other"))
+        try await assertAsyncEqual(try await coordinator.selectChoice(renamed, modelPath: profile.modelPath), changedProfile)
+        await assertAsyncThrows(try await coordinator.selectChoice(refreshed, modelPath: "/Models/other"))
         try store.replaceAll([])
-        XCTAssertThrowsError(try coordinator.selectChoice(refreshed, modelPath: profile.modelPath))
+        await assertAsyncThrows(try await coordinator.selectChoice(refreshed, modelPath: profile.modelPath))
         try store.replaceAll([profile, profile])
-        XCTAssertThrowsError(try coordinator.profileChoices(modelPath: profile.modelPath))
-        XCTAssertThrowsError(try coordinator.selectChoice(choice, modelPath: profile.modelPath))
+        await assertAsyncThrows(try await coordinator.profileChoices(modelPath: profile.modelPath))
+        await assertAsyncThrows(try await coordinator.selectChoice(choice, modelPath: profile.modelPath))
         try Data("corrupt".utf8).write(to: store.url)
-        XCTAssertThrowsError(try coordinator.profileChoices(modelPath: profile.modelPath))
+        await assertAsyncThrows(try await coordinator.profileChoices(modelPath: profile.modelPath))
         XCTAssertEqual(try Data(contentsOf: store.url), Data("corrupt".utf8))
+    }
+
+    func testProfileSelectionRechecksTheProfileAfterLoadingComparisonEvidence() async throws {
+        let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
+        var linked = managementProfile()
+        let run = try measuredProfileRun(linked)
+        linked.sourceRunID = run.id; linked.sourceLaneID = "measured"
+        let original = linked
+        try store.replaceAll([original])
+        let coordinator = managementCoordinator(store)
+        coordinator.comparisonSource = { _ in run }
+        let choices = try await coordinator.profileChoices(modelPath: original.modelPath)
+        let choice = try XCTUnwrap(choices.first)
+        var changed = original; changed.name = "Changed during evidence read"
+        let replacement = changed
+        coordinator.comparisonSource = { _ in
+            try store.replaceAll([replacement])
+            return run
+        }
+        await assertAsyncThrows(try await coordinator.selectChoice(choice, modelPath: original.modelPath))
+        XCTAssertEqual(try store.load(), [replacement])
     }
 
     func testMeasuredProfileVerificationRetainsIdentityAndRevokesOldProofOnFailure() async throws {
@@ -390,9 +425,9 @@ final class VerificationCoordinatorTests: XCTestCase {
             ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in throw WorkflowEvidenceError.invalid("Runtime unavailable") },
                 start: { _, _, _ in XCTFail("Failed preflight must not start") }, stop: { _ in }), prober: OpenAIEndpointProber())
         })
-        coordinator.measuredSource = { try comparison.requireCurrentProfileLane($0, laneID: $1) }
+        coordinator.measuredSource = { try await comparison.requireCurrentProfileLane($0, laneID: $1) }
         let before = try Data(contentsOf: store.url)
-        XCTAssertEqual(try coordinator.prepareMeasuredVerification(run: run, laneID: "measured"), original)
+        try await assertAsyncEqual(try await coordinator.prepareMeasuredVerification(run: run, laneID: "measured"), original)
         XCTAssertEqual(try Data(contentsOf: store.url), before)
         await coordinator.verifyMeasuredLane(run: run, laneID: "measured", original: original)
         let linked = try XCTUnwrap(try store.load().first)
@@ -404,17 +439,17 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(try store.load().count, 1)
         var changed = run; changed.finishedAt = run.finishedAt?.addingTimeInterval(1)
         try runs.upsert(changed, id: \.id)
-        XCTAssertThrowsError(try comparison.requireCurrentProfileLane(run, laneID: "measured"))
+        await assertAsyncThrows(try await comparison.requireCurrentProfileLane(run, laneID: "measured"))
         let linkedBytes = try Data(contentsOf: store.url)
         await coordinator.verifyMeasuredLane(run: run, laneID: "measured", original: linked)
         XCTAssertEqual(try Data(contentsOf: store.url), linkedBytes)
         try runs.upsert(run, id: \.id)
         var edited = linked; edited.options.contextTokens = 32768
         try store.upsert(edited, id: \.id)
-        XCTAssertThrowsError(try coordinator.prepareMeasuredVerification(run: run, laneID: "measured"))
+        await assertAsyncThrows(try await coordinator.prepareMeasuredVerification(run: run, laneID: "measured"))
         var incomplete = run; incomplete.results = []
         try runs.upsert(incomplete, id: \.id)
-        XCTAssertThrowsError(try comparison.requireCurrentProfileLane(incomplete, laneID: "measured"))
+        await assertAsyncThrows(try await comparison.requireCurrentProfileLane(incomplete, laneID: "measured"))
     }
 
     func testMeasuredProfileRejectsChangedSourceAfterPassingCanaries() async throws {
@@ -469,8 +504,8 @@ final class VerificationCoordinatorTests: XCTestCase {
             ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
                 prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
         })
-        coordinator.measuredSource = { try comparison.requireCurrentProfileLane($0, laneID: $1) }
-        XCTAssertEqual(try coordinator.prepareMeasuredVerification(run: run, laneID: lane.id), original)
+        coordinator.measuredSource = { try await comparison.requireCurrentProfileLane($0, laneID: $1) }
+        try await assertAsyncEqual(try await coordinator.prepareMeasuredVerification(run: run, laneID: lane.id), original)
         await coordinator.verifyMeasuredLane(run: run, laneID: lane.id, original: original)
         XCTAssertNil(coordinator.lastError)
         let saved = try XCTUnwrap(try store.load().first { $0.id == original.id })
@@ -568,7 +603,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: store.url), bytes)
     }
 
-    func testProfileEvidenceReadsDurableSourceAndRefusesMismatchesWithoutWriting() throws {
+    func testProfileEvidenceReadsDurableSourceAndRefusesMismatchesWithoutWriting() async throws {
         let store = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         let source = JSONStore<ComparisonRun>(fileURL: temporaryURL("comparisons.json"))
         var profile = managementProfile()
@@ -592,8 +627,8 @@ final class VerificationCoordinatorTests: XCTestCase {
             start: { _, _, _ in XCTFail("Evidence inspection must not load a model") }, stop: { _ in }), prober: OpenAIEndpointProber()),
             runStore: source, promptSetStore: JSONStore(fileURL: temporaryURL("prompts.json")))
         let coordinator = managementCoordinator(store)
-        coordinator.comparisonSource = { try comparison.recordedRun(id: $0) }
-        let read = try coordinator.comparisonEvidence(for: profile)
+        coordinator.comparisonSource = { try await comparison.recordedRun(id: $0) }
+        let read = try await coordinator.comparisonEvidence(for: profile)
         XCTAssertEqual(read.result.memoryTradeoffAnswerSeconds, 2)
         XCTAssertEqual(read.memory?.minimumAvailableBytes, 25_000_000_000)
         XCTAssertEqual(read.taskReview?.score, 5)
@@ -617,12 +652,12 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertThrowsError(try ServingProfileComparisonEvidence(profile: changed, run: run))
         var legacy = profile; legacy.sourceRunID = nil; legacy.sourceLaneID = nil
         try store.upsert(legacy, id: \.id)
-        XCTAssertThrowsError(try coordinator.comparisonEvidence(for: legacy))
+        await assertAsyncThrows(try await coordinator.comparisonEvidence(for: legacy))
         try store.upsert(profile, id: \.id)
         try Data("[]".utf8).write(to: source.url)
-        XCTAssertThrowsError(try coordinator.comparisonEvidence(for: profile))
+        await assertAsyncThrows(try await coordinator.comparisonEvidence(for: profile))
         try Data("corrupt".utf8).write(to: source.url)
-        XCTAssertThrowsError(try coordinator.comparisonEvidence(for: profile))
+        await assertAsyncThrows(try await coordinator.comparisonEvidence(for: profile))
         XCTAssertEqual(try Data(contentsOf: source.url), Data("corrupt".utf8))
         XCTAssertEqual(try Data(contentsOf: store.url), originalProfiles)
     }
@@ -663,14 +698,14 @@ final class VerificationCoordinatorTests: XCTestCase {
         let comparison = ComparisonCoordinator(probe: ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber()),
             runStore: runs, promptSetStore: JSONStore(fileURL: root.appendingPathComponent("prompts.json")))
         let run = try XCTUnwrap(try runs.load().first)
-        let selected = try comparison.requireCurrentSuggestion(run)
+        let selected = try await comparison.requireCurrentSuggestion(run)
         let store = JSONStore<ServingProfile>(fileURL: root.appendingPathComponent("profiles.json"))
         let profiles = ServingProfileCoordinator(store: store, probe: { options in
             ServeProbe(lifecycle: .live(api: api, runtime: "strata", strataOptions: options),
                 prober: OpenAIEndpointProber(requestTimeout: 900), readyTimeout: 900)
         })
-        profiles.suggestionSource = { try comparison.requireCurrentSuggestion($0) }
-        let draft = try XCTUnwrap(profiles.createSuggestedProfile(run: run, name: "Suggested configuration"))
+        profiles.suggestionSource = { try await comparison.requireCurrentSuggestion($0) }
+        let draft = try await unwrapAsync(await profiles.createSuggestedProfile(run: run, name: "Suggested configuration"))
         XCTAssertFalse(draft.hasPassedVerification)
         XCTAssertEqual(draft.sourceRunID, run.id)
         XCTAssertEqual(draft.sourceLaneID, selected.id)
@@ -782,8 +817,8 @@ final class VerificationCoordinatorTests: XCTestCase {
         let verification = Task { await coordinator.verify(id: original.id) }
         for _ in 0..<20 { if coordinator.activeID != nil { break }; await Task.yield() }
         XCTAssertEqual(coordinator.activeID, original.id)
-        let choice = try XCTUnwrap(try coordinator.profileChoices(modelPath: original.modelPath).first)
-        XCTAssertThrowsError(try coordinator.selectChoice(choice, modelPath: original.modelPath))
+        let choice = try await unwrapAsync(try await coordinator.profileChoices(modelPath: original.modelPath).first)
+        await assertAsyncThrows(try await coordinator.selectChoice(choice, modelPath: original.modelPath))
         XCTAssertNil(coordinator.rename(original, name: "Other"))
         XCTAssertFalse(coordinator.remove(original))
         XCTAssertEqual(try store.load(), [original])
@@ -861,7 +896,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         scenes.append(("compare-profiles", AnyView(ServingProfileComparisonSetupSheet(profiles: coordinator, baseline: profile,
             onUse: { _ in XCTFail("Rendering must not prepare or run a comparison"); return nil })), 560))
         let chooser = ServingProfileChooserRequest(modelPath: profile.modelPath,
-            choices: try coordinator.profileChoices(modelPath: profile.modelPath))
+            choices: try await coordinator.profileChoices(modelPath: profile.modelPath))
         scenes.append(("profile-chooser-unmeasured", AnyView(ServingProfileChooserSheet(profiles: coordinator,
             request: chooser, selectedID: profile.id,
             onSelect: { _ in XCTFail("Rendering must not select a profile"); return nil })), 640))
@@ -884,7 +919,7 @@ final class VerificationCoordinatorTests: XCTestCase {
             reader.comparisonSource = { id in try recordedRuns.load().first { $0.id == id } }
             let profileBytes = try Data(contentsOf: profilesURL)
             let runBytes = try Data(contentsOf: recordedRuns.url)
-            let evidence = try reader.comparisonEvidence(for: selected)
+            let evidence = try await reader.comparisonEvidence(for: selected)
             XCTAssertNotNil(evidence.memory); XCTAssertNotNil(evidence.result.memoryTradeoffAnswerSeconds)
             XCTAssertNotNil(evidence.taskReview)
             XCTAssertEqual(try Data(contentsOf: profilesURL), profileBytes)
@@ -917,11 +952,11 @@ final class VerificationCoordinatorTests: XCTestCase {
             let reader = managementCoordinator(profilesStore)
             reader.comparisonSource = { id in try runsStore.load().first { $0.id == id } }
             let modelPath = try XCTUnwrap(reader.profiles.first?.modelPath)
-            let choices = try reader.profileChoices(modelPath: modelPath)
+            let choices = try await reader.profileChoices(modelPath: modelPath)
             let measured = try XCTUnwrap(choices.first { $0.evidence != nil })
             XCTAssertNotNil(measured.evidence?.memory)
             XCTAssertNotNil(measured.evidence?.result.memoryTradeoffAnswerSeconds)
-            let selected = try reader.selectChoice(measured, modelPath: modelPath)
+            let selected = try await reader.selectChoice(measured, modelPath: modelPath)
             workflow.selectServingProfile(selected)
             XCTAssertEqual(workflow.servingProfile, selected)
             XCTAssertEqual(workflow.workflow.serveState, .idle)
@@ -1078,7 +1113,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testPassingCanariesResolveWorkflowToVerified() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.attach(to: workflow)
         let record = makeWorkflow(state: .verifying)
         workflow.restore(record)
@@ -1097,7 +1132,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     /// Speech models skip the server and transcribe a spoken sentence instead.
     func testSpeechModelPassesOnAnAccurateTranscript() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         let clips = SpeechCalls()
         verification.taskType = { _ in .speechToText }
         verification.speech = SpeechCanaryRunner(
@@ -1123,7 +1158,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testSpeechModelFailsOnAPoorTranscriptAndIsUnverifiableWithoutTheRunner() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.taskType = { _ in .speechToText }
         verification.speech = SpeechCanaryRunner(
             synthesize: { _ in FileManager.default.temporaryDirectory.appendingPathComponent("canary.wav") },
@@ -1137,7 +1172,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(failed)
         XCTAssertTrue(verification.reports.first?.canaries.first?.failureReason?.contains("Word error rate") == true)
 
-        let bare = makeVerification(responder: passingResponder)
+        let bare = await makeVerification(responder: passingResponder)
         bare.taskType = { _ in .speechToText }
         bare.attach(to: workflow)
         let second = makeWorkflow(state: .verifying)
@@ -1150,7 +1185,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     /// A Verify now run that cannot produce a verdict keeps its error for that model only.
     func testVerifyNowErrorIsReportedForTheModelThatFailed() async {
         struct BackendMissing: LocalizedError { var errorDescription: String? { "The mlx-audio backend is not installed." } }
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.taskType = { _ in .speechToText }
         verification.speech = SpeechCanaryRunner(
             synthesize: { _ in FileManager.default.temporaryDirectory.appendingPathComponent("canary.wav") },
@@ -1169,7 +1204,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     /// Classification models skip the server and route a canary support ticket.
     func testClassificationModelPassesTheDecisionCanary() async throws {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         let calls = SpeechCalls()
         verification.taskType = { _ in .classification }
         verification.decide = { path, request in
@@ -1195,7 +1230,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testDecisionCanaryFailsOnAWrongRouteAndIsUnverifiableWithoutTheRunner() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.taskType = { _ in .classification }
         verification.decide = { _, _ in Self.decision(department: "technical", refund: "yes") }
         verification.attach(to: workflow)
@@ -1206,7 +1241,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(failed)
         XCTAssertEqual(verification.reports.first?.canaries.first?.failureReason, "department answered technical, expected billing.")
 
-        let bare = makeVerification(responder: passingResponder)
+        let bare = await makeVerification(responder: passingResponder)
         bare.taskType = { _ in .classification }
         bare.attach(to: workflow)
         let second = makeWorkflow(state: .verifying)
@@ -1226,7 +1261,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     /// Image models skip the server and render the canary prompt instead.
     func testImageModelPassesOnANonBlankRenderAndIsUnverifiableWithoutTheRenderer() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         let calls = SpeechCalls()
         verification.taskType = { _ in .imageGeneration }
         verification.render = { path, out, request in
@@ -1244,7 +1279,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let seen = await calls.values
         XCTAssertEqual(seen, ["/Models/qwen-image|512|20"])
 
-        let bare = makeVerification(responder: passingResponder)
+        let bare = await makeVerification(responder: passingResponder)
         bare.taskType = { _ in .imageGeneration }
         bare.attach(to: workflow)
         let second = makeWorkflow(state: .verifying)
@@ -1262,7 +1297,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testFailingCanariesResolveWorkflowToVerificationFailed() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: { _ in Self.sample("   ") })
+        let verification = await makeVerification(responder: { _ in Self.sample("   ") })
         verification.attach(to: workflow)
         let record = makeWorkflow(state: .verifying)
         workflow.restore(record)
@@ -1277,7 +1312,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testProbeErrorResolvesWorkflowToCompletedUnverified() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: { _ in throw ProbeStubError.offline })
+        let verification = await makeVerification(responder: { _ in throw ProbeStubError.offline })
         verification.attach(to: workflow)
         let record = makeWorkflow(state: .verifying)
         workflow.restore(record)
@@ -1294,7 +1329,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     func testKeepAnywayResolvesToCompletedAndPersistsOverride() async {
         let workflow = makeWorkflowCoordinator()
         let storeURL = temporaryURL("reports.json")
-        let verification = makeVerification(storeURL: storeURL, responder: { _ in Self.sample("   ") })
+        let verification = await makeVerification(storeURL: storeURL, responder: { _ in Self.sample("   ") })
         verification.attach(to: workflow)
         let record = makeWorkflow(state: .verifying)
         workflow.restore(record)
@@ -1302,7 +1337,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let resolved = await waitFor { workflow.workflow.state == .verificationFailed }
         XCTAssertTrue(resolved)
 
-        verification.keepAnyway(recordID: record.id)
+        await verification.keepAnyway(recordID: record.id)
 
         let resolvedAfterKeep = await waitFor { workflow.workflow.state == .completed }
         XCTAssertTrue(resolvedAfterKeep)
@@ -1313,12 +1348,12 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testResolveVerificationIgnoresStaleRecords() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.attach(to: workflow)
         let record = makeWorkflow(state: .completed)
         workflow.restore(record)
 
-        workflow.resolveVerification(recordID: record.id, resolution: .passed(summary: "late callback"))
+        await workflow.resolveVerification(recordID: record.id, resolution: .passed(summary: "late callback"))
 
         XCTAssertEqual(workflow.workflow.state, .completed)
     }
@@ -1326,7 +1361,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     func testConcurrentBeginResolvesSecondAsUnavailable() async {
         let workflow = makeWorkflowCoordinator()
         let gate = CompletionGate()
-        let verification = makeVerification(responder: { id in
+        let verification = await makeVerification(responder: { id in
             await gate.wait()
             return Self.passingSample(id)
         })
@@ -1351,7 +1386,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     // MARK: - Status
 
     func testStatusReflectsOutcomeAndSignature() async {
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.verifyNow(modelPath: "/Models/converted", signature: "sig-1")
         let resolved = await waitFor { verification.reports.count == 1 }
         XCTAssertTrue(resolved)
@@ -1396,8 +1431,15 @@ final class VerificationCoordinatorTests: XCTestCase {
         storeURL: URL? = nil,
         store: VerificationStore? = nil,
         responder: @escaping @Sendable (String) async throws -> ProbeSample
-    ) -> VerificationCoordinator {
-        let probe = ServeProbe(
+    ) async -> VerificationCoordinator {
+        let verification = VerificationCoordinator(probe: verificationProbe(responder: responder),
+            store: store ?? VerificationStore(fileURL: storeURL ?? temporaryURL("reports.json")))
+        await verification.waitForHistory()
+        return verification
+    }
+
+    private func verificationProbe(responder: @escaping @Sendable (String) async throws -> ProbeSample) -> ServeProbe {
+        ServeProbe(
             lifecycle: ServeLifecycle(
                 preview: { _, _ in "hash-1" },
                 start: { _, _, _ in },
@@ -1406,10 +1448,6 @@ final class VerificationCoordinatorTests: XCTestCase {
             prober: StubVerificationProber(responder: responder),
             readyPollIntervalNanoseconds: 1_000_000,
             pickPort: { 9999 }
-        )
-        return VerificationCoordinator(
-            probe: probe,
-            store: store ?? VerificationStore(fileURL: storeURL ?? temporaryURL("reports.json"))
         )
     }
 

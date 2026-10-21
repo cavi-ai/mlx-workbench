@@ -1,6 +1,6 @@
 import Foundation
 
-enum ConversionWorkflowState: String, Codable, Equatable {
+enum ConversionWorkflowState: String, Codable, Equatable, Sendable {
     case idle
     case inspectingSource
     case existingModelFound
@@ -39,7 +39,7 @@ enum VerificationResolution: Equatable {
     case keptAnyway
 }
 
-enum ServeWorkflowState: String, Codable, Equatable {
+enum ServeWorkflowState: String, Codable, Equatable, Sendable {
     case idle
     case previewing
     case readyToConfirm
@@ -48,7 +48,7 @@ enum ServeWorkflowState: String, Codable, Equatable {
     case failed
 }
 
-struct ConversionWorkflow: Codable, Equatable, Identifiable {
+struct ConversionWorkflow: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let sourcePath: String
     let sourceModelKey: String?

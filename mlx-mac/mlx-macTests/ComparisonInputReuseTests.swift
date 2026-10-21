@@ -333,12 +333,12 @@ extension ComparisonMediaTests {
         let sets = root.appendingPathComponent("sets.json")
         let oldBytes = try Data(contentsOf: sets)
         try Data("corrupt".utf8).write(to: sets)
-        XCTAssertFalse(coordinator.removePromptSet(id: owner.id))
+        try await assertAsyncFalse(await coordinator.removePromptSet(id: owner.id))
         XCTAssertTrue(FileManager.default.fileExists(atPath: path))
         try oldBytes.write(to: sets)
-        XCTAssertTrue(coordinator.removePromptSet(id: owner.id))
+        try await assertAsyncTrue(await coordinator.removePromptSet(id: owner.id))
         XCTAssertTrue(FileManager.default.fileExists(atPath: path), "Another durable set still references this copy")
-        XCTAssertTrue(coordinator.removePromptSet(id: borrowed.id))
+        try await assertAsyncTrue(await coordinator.removePromptSet(id: borrowed.id))
         XCTAssertFalse(FileManager.default.fileExists(atPath: path))
         XCTAssertEqual(try Data(contentsOf: source), Data("original".utf8))
         XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.appendingPathComponent("keep.txt").path))
@@ -506,7 +506,7 @@ extension ComparisonMediaTests {
         // A failed authoritative run-store read must also prevent reclamation.
         let current = try XCTUnwrap(coordinator.promptSets.first { $0.id == saved.id })
         try Data("broken-runs".utf8).write(to: runs.url)
-        XCTAssertTrue(coordinator.removePromptSet(id: saved.id))
+        try await assertAsyncTrue(await coordinator.removePromptSet(id: saved.id))
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(current.prompts.first?.inputPath)))
     }
 

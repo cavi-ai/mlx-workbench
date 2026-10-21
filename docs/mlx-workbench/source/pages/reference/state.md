@@ -2,12 +2,14 @@
 
 ## App state
 
-The app keeps its records in `~/Library/Application Support/mlx-workbench`. JSON stores replace their files atomically. Comparison archives use transactional SQLite records. Stores refuse a symbolic link in place of the file.
+The app keeps its records in `~/Library/Application Support/mlx-workbench`. JSON stores replace their files atomically. Workflow, verification and comparison archives use transactional SQLite records. Stores refuse a symbolic link in place of the file.
+
+History loads and saves run in the background. The toolbar shows workflow history progress; conversion and verification wait for their required state to be saved before proceeding.
 
 | File | Holds |
 |---|---|
-| `model-workflows.json` | Conversion workflows and their lifecycle state |
-| `verification-reports.json` | Quality gate verdicts |
+| `model-workflows.json.sqlite` | Conversion workflows and their lifecycle state |
+| `verification-reports.json.sqlite` | Quality gate verdicts |
 | `comparison-runs.json.sqlite` | Native comparison runs, indexed history entries, prompt snapshots, samples and quality reviews |
 | `hosted-comparison-runs.json.sqlite` | Hosted comparison runs, captured conditions and submitted workflow evidence |
 | `prompt-sets.json` | Saved prompt sets |
@@ -26,7 +28,7 @@ The app keeps its records in `~/Library/Application Support/mlx-workbench`. JSON
 | `prompt-set-inputs/<uuid>/` | Input files owned by saved prompt sets |
 | `runtimes/<manifest-sha256>/` | Prepared bundled engine sources and their explicitly installed Python environment; existing versions are retained |
 
-Existing `comparison-runs.json` and `hosted-comparison-runs.json` arrays migrate once into their SQLite archives. Migration validates every record in one transaction and leaves the original JSON files untouched as backups. Later edits use the archives; editing a backup does not update current history. Preserve the archives when backing up or moving app state.
+Existing `model-workflows.json`, `verification-reports.json`, `comparison-runs.json` and `hosted-comparison-runs.json` arrays migrate once into their SQLite archives. Migration validates every record in one transaction and leaves the original JSON files untouched as backups. Later edits use the archives; editing a backup does not update current history. Preserve the archives when backing up or moving app state.
 
 `endpoint-config.json` from earlier releases is migrated once into `endpoint-fleet.json` and then only read.
 

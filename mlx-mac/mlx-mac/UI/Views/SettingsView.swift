@@ -451,6 +451,7 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(maxWidth: WorkbenchSize.Settings.channelPickerMaximum, alignment: .leading)
+                .disabled(updater.phase == .applying)
             }
             SettingsSeparator()
             SettingsRow(label: "Status", stacked: layout.stacksRows) {

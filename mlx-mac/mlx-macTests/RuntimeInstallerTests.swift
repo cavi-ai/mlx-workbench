@@ -7,6 +7,54 @@ import XCTest
 
 @MainActor
 final class RuntimeInstallerTests: XCTestCase {
+    func testCaptureDrainsBothPipesAndKeepsDiagnosticsOutOfStandardOutput() async throws {
+        let output = try await WorkbenchIO.perform { Result {
+            try BoundedProcessCapture.run(executable: URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", "dd if=/dev/zero bs=1024 count=256 2>/dev/null; dd if=/dev/zero bs=1024 count=256 1>&2 2>/dev/null; printf answer"], timeout: 5)
+        } }.get()
+        XCTAssertEqual(output.status, 0)
+        XCTAssertEqual(output.stdout.utf8.count, 262_150)
+        XCTAssertTrue(output.stdout.hasSuffix("answer"))
+        XCTAssertEqual(output.stderr.utf8.count, 65_536)
+    }
+
+    func testCaptureTimeoutStopsTheOwnedChild() async throws {
+        let root = try directory(), pidFile = root.appendingPathComponent("pid")
+        let result = await WorkbenchIO.perform { Result {
+            try BoundedProcessCapture.run(executable: URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", "sleep 30 & child=$!; echo $child > \"$1\"; wait", "capture", pidFile.path], timeout: 0.3)
+        } }
+        guard case .failure(BoundedProcessCapture.Failure.timedOut) = result else { return XCTFail("Expected bounded timeout: \(result)") }
+        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile).trimmingCharacters(in: .whitespacesAndNewlines)))
+        XCTAssertEqual(kill(pid, 0), -1, "The child must exit before timeout is reported")
+    }
+
+    func testCaptureRejectsOversizedStandardOutput() async {
+        let result = await WorkbenchIO.perform { Result {
+            try BoundedProcessCapture.run(executable: URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", "dd if=/dev/zero bs=1024 count=256 2>/dev/null"], timeout: 5, outputLimit: 1024)
+        } }
+        guard case .failure(BoundedProcessCapture.Failure.outputTooLarge) = result else { return XCTFail("Expected bounded output refusal") }
+    }
+
+    func testCaptureCancellationWaitsForTheOwnedProcessToExit() async throws {
+        let root = try directory(), pidFile = root.appendingPathComponent("cancel-pid")
+        let cancellation = CLIInvocationCancellation()
+        let task = Task {
+            await WorkbenchIO.perform { Result {
+                try BoundedProcessCapture.run(executable: URL(fileURLWithPath: "/bin/sh"),
+                    arguments: ["-c", "echo $$ > \"$1\"; exec sleep 30", "capture", pidFile.path],
+                    timeout: 10, cancellation: cancellation)
+            } }
+        }
+        try await waitForFile(pidFile)
+        cancellation.cancel()
+        let result = await task.value
+        guard case .failure(is CancellationError) = result else { return XCTFail("Expected cancellation") }
+        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile).trimmingCharacters(in: .whitespacesAndNewlines)))
+        XCTAssertEqual(kill(pid, 0), -1)
+    }
+
     private func directory() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("installer-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

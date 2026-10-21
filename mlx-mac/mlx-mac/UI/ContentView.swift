@@ -240,6 +240,15 @@ struct ContentView: View {
                 await appHost.unloadServing(server)
             })
         }
+        if modelWorkflow.isLoadingHistory || modelWorkflow.isSavingHistory {
+            ToolbarItem(placement: .automatic) {
+                HStack(spacing: WorkbenchSpacing.xs) {
+                    ProgressView().controlSize(.small)
+                    Text(modelWorkflow.isLoadingHistory ? "Reading workflow history…" : "Saving workflow history…")
+                        .font(WorkbenchTypography.metadata)
+                }.accessibilityElement(children: .combine)
+            }
+        }
         if Self.showsWorkflowBadge(route: selectedRoute, state: modelWorkflow.workflow.state,
                                    acknowledged: acknowledgedOutcome == Self.outcomeKey(modelWorkflow.workflow)) {
             ToolbarItem(placement: .automatic) {

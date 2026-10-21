@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import os
 
 // MARK: - UpdateCoordinator
 //
@@ -24,7 +23,7 @@ import os
 
 @MainActor
 final class UpdateCoordinator: ObservableObject {
-    enum Channel: String, CaseIterable, Identifiable {
+    enum Channel: String, CaseIterable, Identifiable, Sendable {
         case official
         case beta
 
@@ -67,7 +66,7 @@ final class UpdateCoordinator: ObservableObject {
         }
     }
 
-    struct Offer: Equatable {
+    struct Offer: Equatable, Sendable {
         let target: String
         let current: String
         let dirtyFiles: Int
@@ -88,7 +87,14 @@ final class UpdateCoordinator: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published var channel: Channel {
-        didSet { defaults.set(channel.rawValue, forKey: Self.channelKey) }
+        didSet {
+            defaults.set(channel.rawValue, forKey: Self.channelKey)
+            if channel != oldValue {
+                checkGeneration = UUID(); reviewedCheckout = nil; releaseOffer = nil
+                activeGitCancellation?.cancel()
+                if phase != .applying { phase = .idle }
+            }
+        }
     }
     @Published private(set) var logTail: [String] = []
 
@@ -98,20 +104,23 @@ final class UpdateCoordinator: ObservableObject {
     /// The installed bundle, when there is no checkout to update.
     let installed: InstalledApp?
     private var releaseOffer: ReleaseOffer?
-    /// Injected git runner: argv in, stdout out; throws on non-zero exit.
-    private let runGit: @Sendable ([String]) throws -> String
-
-    /// Sendable wrapper for the default runner (a bare static function value
-    /// loses its isolation context when passed as a default argument).
-    nonisolated private static let defaultGit: @Sendable ([String]) throws -> String = { argv in
-        try UpdateCoordinator.git(argv)
+    private var checkGeneration = UUID()
+    private struct ReviewedCheckout: Sendable {
+        let channel: Channel
+        let offer: Offer
+        let currentRevision: String
+        let targetRevision: String
     }
+    private var reviewedCheckout: ReviewedCheckout?
+    /// Injected git runner: argv in, stdout out; throws on non-zero exit.
+    private let runGit: (@Sendable ([String]) throws -> String)?
+    private var activeGitCancellation: CLIInvocationCancellation?
 
     init(
         repoRoot: URL? = WorkbenchPython.buildCheckoutRoot(),
         installed: InstalledApp? = nil,
         defaults: UserDefaults = .standard,
-        runGit: @escaping @Sendable ([String]) throws -> String = UpdateCoordinator.defaultGit
+        runGit: (@Sendable ([String]) throws -> String)? = nil
     ) {
         self.repoRoot = repoRoot
         self.installed = repoRoot == nil ? installed : nil
@@ -146,29 +155,36 @@ final class UpdateCoordinator: ObservableObject {
 
     /// Read-only check of the selected channel. Never mutates the checkout.
     func check() async {
+        guard phase != .checking, phase != .applying else { return }
+        let generation = UUID(); checkGeneration = generation
+        defer { if checkGeneration == generation, phase == .checking { phase = .idle } }
+        let selectedChannel = channel
         if let installed {
-            await checkRelease(installed)
+            await checkRelease(installed, channel: selectedChannel, generation: generation)
             return
         }
         guard let repoRoot else {
             phase = .failed("The app is neither running from a repository checkout nor installed from a release, so it cannot update itself.")
             return
         }
-        phase = .checking
+        phase = .checking; reviewedCheckout = nil
+        let result: Result<ReviewedCheckout, Error>
+        do { result = .success(try await gitWork { runner in
+            let dirty = try Self.dirtyFileCount(repoRoot: repoRoot, runGit: runner)
+            let current = try Self.currentLabel(repoRoot: repoRoot, runGit: runner)
+            let currentRevision = try Self.revision("HEAD", root: repoRoot, runGit: runner)
+            let target = try Self.fetchTarget(channel: selectedChannel, repoRoot: repoRoot, runGit: runner)
+            let targetRevision = try Self.revision(target, root: repoRoot, runGit: runner)
+            return ReviewedCheckout(channel: selectedChannel,
+                offer: Offer(target: target, current: current, dirtyFiles: dirty),
+                currentRevision: currentRevision, targetRevision: targetRevision)
+        }) } catch { result = .failure(error) }
+        guard !Task.isCancelled, checkGeneration == generation, channel == selectedChannel else { return }
         do {
-            let dirty = try Self.dirtyFileCount(repoRoot: repoRoot, runGit: runGit)
-            let current = try Self.currentLabel(repoRoot: repoRoot, runGit: runGit)
-            let target = try Self.fetchTarget(
-                channel: channel, repoRoot: repoRoot, runGit: runGit
-            )
-            if target == current {
-                phase = .upToDate(current: current)
-            } else {
-                phase = .available(Offer(target: target, current: current, dirtyFiles: dirty))
-            }
-        } catch {
-            phase = .failed(AppHost.render(error))
-        }
+            let checked = try result.get()
+            if checked.targetRevision == checked.currentRevision { phase = .upToDate(current: checked.offer.current) }
+            else { reviewedCheckout = checked; phase = .available(checked.offer) }
+        } catch { phase = .failed(AppHost.render(error)) }
     }
 
     // MARK: - Apply
@@ -180,24 +196,29 @@ final class UpdateCoordinator: ObservableObject {
             await applyRelease(offer: offer, installed: installed)
             return
         }
-        guard let repoRoot, case .available = phase else { return }
-        do {
-            let dirty = try Self.dirtyFileCount(repoRoot: repoRoot, runGit: runGit)
-            guard dirty == 0 else {
-                phase = .failed("The checkout has \(dirty) uncommitted change\(dirty == 1 ? "" : "s"). Commit or discard them first — the updater never mixes local edits into an update.")
-                return
-            }
-        } catch {
-            phase = .failed(AppHost.render(error))
-            return
-        }
+        guard let repoRoot, case .available(let currentOffer) = phase, currentOffer == offer,
+              let reviewed = reviewedCheckout, reviewed.offer == offer, reviewed.channel == channel else { return }
         phase = .applying
+        do {
+            try await gitWork { runner in
+                let dirty = try Self.dirtyFileCount(repoRoot: repoRoot, runGit: runner)
+                guard dirty == 0 else { throw UpdateError.gitFailed("status", "The checkout has uncommitted changes. Commit or discard them before updating.") }
+                guard try Self.revision("HEAD", root: repoRoot, runGit: runner) == reviewed.currentRevision else {
+                    throw UpdateError.gitFailed("update", "The checkout changed. Review the update again.")
+                }
+                if reviewed.channel == .beta {
+                    _ = try runner(["-C", repoRoot.path, "merge-base", "--is-ancestor", "main", reviewed.targetRevision])
+                }
+            }
+            guard !Task.isCancelled, reviewed.channel == channel else { throw CancellationError() }
+        } catch { phase = .failed(AppHost.render(error)); return }
         logTail = []
         do {
-            for argv in Self.applyPlan(channel: channel, target: offer.target) {
+            for argv in Self.applyPlan(channel: reviewed.channel, target: reviewed.targetRevision) {
+                try Task.checkCancellation()
+                guard reviewed.channel == channel else { throw CancellationError() }
                 try await Self.runStreaming(
                     argv, repoRoot: repoRoot,
-                    runGit: runGit,
                     onLine: { [weak self] line in
                         guard let self else { return }
                         Task { @MainActor in
@@ -209,7 +230,13 @@ final class UpdateCoordinator: ObservableObject {
                     }
                 )
             }
-            let current = try Self.currentLabel(repoRoot: repoRoot, runGit: runGit)
+            let current = try await gitWork { runner in
+                guard try Self.revision("HEAD", root: repoRoot, runGit: runner) == reviewed.targetRevision else {
+                    throw UpdateError.gitFailed("update", "The checkout no longer matches the reviewed revision.")
+                }
+                return try Self.currentLabel(repoRoot: repoRoot, runGit: runner)
+            }
+            reviewedCheckout = nil
             phase = .updated(target: current)
         } catch {
             phase = .failed(AppHost.render(error))
@@ -218,7 +245,7 @@ final class UpdateCoordinator: ObservableObject {
 
     // MARK: - Installed builds (GitHub releases)
 
-    private func checkRelease(_ installed: InstalledApp) async {
+    private func checkRelease(_ installed: InstalledApp, channel selectedChannel: Channel, generation: UUID) async {
         releaseOffer = nil
         if let refusal = ReleaseFeed.installRefusal(bundle: installed.bundle) {
             phase = .failed(refusal)
@@ -226,8 +253,9 @@ final class UpdateCoordinator: ObservableObject {
         }
         phase = .checking
         do {
-            let release = try await installed.installer.fetchRelease(ReleaseFeed.endpoint(for: channel))
-            switch ReleaseFeed.decide(channel: channel, release: release, installed: installed.build) {
+            let release = try await installed.installer.fetchRelease(ReleaseFeed.endpoint(for: selectedChannel))
+            guard !Task.isCancelled, generation == checkGeneration, selectedChannel == channel else { return }
+            switch ReleaseFeed.decide(channel: selectedChannel, release: release, installed: installed.build) {
             case .current:
                 phase = .upToDate(current: installed.build.label)
             case .available(let offer):
@@ -237,7 +265,7 @@ final class UpdateCoordinator: ObservableObject {
                 phase = .failed(reason)
             }
         } catch {
-            phase = .failed(AppHost.render(error))
+            if generation == checkGeneration { phase = .failed(AppHost.render(error)) }
         }
     }
 
@@ -277,13 +305,13 @@ final class UpdateCoordinator: ObservableObject {
         switch channel {
         case .official:
             return [
-                ["checkout", target],
+                ["checkout", "--detach", target],
                 ["submodule", "update", "--init", "--recursive"],
             ]
         case .beta:
             return [
                 ["checkout", "main"],
-                ["pull", "--ff-only", "origin", "main"],
+                ["merge", "--ff-only", target],
                 ["submodule", "update", "--init", "--recursive"],
             ]
         }
@@ -291,31 +319,39 @@ final class UpdateCoordinator: ObservableObject {
 
     // MARK: - Git plumbing
 
-    nonisolated static func git(_ argv: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = argv
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        do {
-            try process.run()
-        } catch {
-            throw UpdateError.launchFailed(error.localizedDescription)
+    private func gitWork<Value: Sendable>(_ operation: @escaping @Sendable (@Sendable ([String]) throws -> String) throws -> Value) async throws -> Value {
+        let token = CLIInvocationCancellation()
+        activeGitCancellation = token
+        defer { if activeGitCancellation === token { activeGitCancellation = nil } }
+        let runner = runGit ?? { try Self.git($0, cancellation: token) }
+        return try await withTaskCancellationHandler {
+            try await WorkbenchIO.perform { Result { try operation(runner) } }.get()
+        } onCancel: { token.cancel() }
+    }
+
+    nonisolated static func git(_ argv: [String], cancellation: CLIInvocationCancellation = CLIInvocationCancellation()) throws -> String {
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        let result = try BoundedProcessCapture.run(executable: URL(fileURLWithPath: "/usr/bin/git"),
+            arguments: argv, environment: environment, timeout: 60, cancellation: cancellation)
+        guard result.status == 0 else {
+            throw UpdateError.gitFailed(argv.first ?? "git", result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
         }
-        process.waitUntilExit()
-        let out = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        let err = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw UpdateError.gitFailed(argv.first ?? "git", err.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        return out
+        return result.stdout
     }
 
     nonisolated static func dirtyFileCount(repoRoot: URL, runGit: @Sendable ([String]) throws -> String) throws -> Int {
         let porcelain = try runGit(["-C", repoRoot.path, "status", "--porcelain"])
         return dirtyFileCount(from: porcelain)
+    }
+
+    nonisolated private static func revision(_ reference: String, root: URL, runGit: @Sendable ([String]) throws -> String) throws -> String {
+        let hash = try runGit(["-C", root.path, "rev-parse", "--verify", reference + "^{commit}"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (hash.count == 40 || hash.count == 64), hash.allSatisfy({ $0.isHexDigit }) else {
+            throw UpdateError.gitFailed("rev-parse", "The update did not resolve to a complete commit identity.")
+        }
+        return hash
     }
 
     /// Tag when HEAD is exactly on a `v*` tag, else the short commit.
@@ -350,40 +386,14 @@ final class UpdateCoordinator: ObservableObject {
     static func runStreaming(
         _ argv: [String],
         repoRoot: URL,
-        runGit: @Sendable ([String]) throws -> String,
         onLine: @escaping @Sendable (String) -> Void
     ) async throws {
-        // Streaming needs a live process; the injectable runner is used for
-        // the probe paths. The apply path always runs the real git.
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = ["-C", repoRoot.path] + argv
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            let buffer = LineBuffer(onLine: onLine)
-            pipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                guard !data.isEmpty else { return }
-                buffer.append(data)
-            }
-            process.terminationHandler = { process in
-                pipe.fileHandleForReading.readabilityHandler = nil
-                buffer.finish()
-                if process.terminationStatus == 0 {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: UpdateError.gitFailed(argv.first ?? "git", "exited with status \(process.terminationStatus)"))
-                }
-            }
-            do {
-                try process.run()
-            } catch {
-                pipe.fileHandleForReading.readabilityHandler = nil
-                continuation.resume(throwing: UpdateError.launchFailed(error.localizedDescription))
-            }
-        }
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        do {
+            try await RuntimeInstaller.runInstall(repoRoot: repoRoot, executable: URL(fileURLWithPath: "/usr/bin/git"),
+                arguments: argv, environment: environment, timeout: 120, onLine: onLine)
+        } catch { throw UpdateError.gitFailed(argv.first ?? "git", error.localizedDescription) }
     }
 
     // MARK: - Rebuild & relaunch
@@ -423,36 +433,8 @@ final class UpdateCoordinator: ObservableObject {
         repoRoot: URL,
         onLine: @escaping @Sendable (String) -> Void
     ) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/make")
-            process.arguments = ["build-swift"]
-            process.currentDirectoryURL = repoRoot
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            let buffer = LineBuffer(onLine: onLine)
-            pipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                guard !data.isEmpty else { return }
-                buffer.append(data)
-            }
-            process.terminationHandler = { process in
-                pipe.fileHandleForReading.readabilityHandler = nil
-                buffer.finish()
-                if process.terminationStatus == 0 {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: UpdateError.gitFailed("build-swift", "exited with status \(process.terminationStatus)"))
-                }
-            }
-            do {
-                try process.run()
-            } catch {
-                pipe.fileHandleForReading.readabilityHandler = nil
-                continuation.resume(throwing: UpdateError.launchFailed(error.localizedDescription))
-            }
-        }
+        try await RuntimeInstaller.runInstall(repoRoot: repoRoot, executable: URL(fileURLWithPath: "/usr/bin/make"),
+            arguments: ["build-swift"], timeout: 1800, onLine: onLine)
     }
 
     enum UpdateError: LocalizedError {
@@ -472,40 +454,4 @@ final class UpdateCoordinator: ObservableObject {
         }
     }
 
-    /// Thread-safe accumulator that splits streamed bytes into lines.
-    private final class LineBuffer: Sendable {
-        private let pending = OSAllocatedUnfairLock(initialState: Data())
-        private let onLine: @Sendable (String) -> Void
-
-        init(onLine: @escaping @Sendable (String) -> Void) {
-            self.onLine = onLine
-        }
-
-        func append(_ data: Data) {
-            pending.withLock { buffer in
-                buffer.append(data)
-                while let newline = buffer.firstIndex(of: 0x0A) {
-                    let line = buffer.prefix(upTo: newline)
-                    buffer = buffer.suffix(from: buffer.index(after: newline))
-                    emit(line)
-                }
-            }
-        }
-
-        func finish() {
-            pending.withLock { buffer in
-                guard !buffer.isEmpty else { return }
-                let rest = buffer
-                buffer = Data()
-                emit(rest)
-            }
-        }
-
-        private func emit(_ data: Data.SubSequence) {
-            let line = String(decoding: data, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty else { return }
-            onLine(line)
-        }
-    }
 }

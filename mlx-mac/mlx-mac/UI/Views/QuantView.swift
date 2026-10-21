@@ -945,10 +945,12 @@ struct QuantView: View {
            let result = run.results.first(where: { $0.id == lane.resultKey }), result.error == nil,
            !result.samples.isEmpty, result.samples.allSatisfy(\.hasCompletedAnswer) {
             Button("Verify measured profile…") {
-                do {
-                    let profile = try servingProfiles.prepareMeasuredVerification(run: run, laneID: lane.resultKey)
-                    profileSaveRequest = ServingProfileSaveRequest(run: run, laneID: lane.resultKey, letter: lane.letter, action: .verifyMeasured(profile))
-                } catch { profileActionError = AppHost.render(error) }
+                Task {
+                    do {
+                        let profile = try await servingProfiles.prepareMeasuredVerification(run: run, laneID: lane.resultKey)
+                        profileSaveRequest = ServingProfileSaveRequest(run: run, laneID: lane.resultKey, letter: lane.letter, action: .verifyMeasured(profile))
+                    } catch { profileActionError = AppHost.render(error) }
+                }
             }.buttonStyle(.workbenchPrimary).controlSize(.small)
                 .disabled(comparison.activeRunID != nil || servingProfiles.activeID != nil)
         }
@@ -1053,9 +1055,11 @@ struct QuantView: View {
     }
 
     private func removePromptSet(_ set: PromptSet) {
-        guard comparison.removePromptSet(id: set.id) else { return }
-        if reusedPromptSet?.id == set.id { reusedPromptSet = nil }
-        if selectedPromptSetID == set.id { selectedPromptSetID = modePromptSets.first?.id ?? "" }
+        Task {
+            guard await comparison.removePromptSet(id: set.id) else { return }
+            if reusedPromptSet?.id == set.id { reusedPromptSet = nil }
+            if selectedPromptSetID == set.id { selectedPromptSetID = modePromptSets.first?.id ?? "" }
+        }
     }
 
     private func openPromptSetCopy() {

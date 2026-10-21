@@ -5,6 +5,84 @@ import XCTest
 
 @MainActor
 final class UpdateCoordinatorTests: XCTestCase {
+    func testUpdateCheckRunsGitOffTheMainActor() async {
+        let (coordinator, _) = makeCoordinator(git: { argv in
+            XCTAssertFalse(Thread.isMainThread, "Git checks must not freeze Settings")
+            if argv.contains("status") { return "" }
+            if argv.contains("--exact-match") { return "v0.1.0" }
+            if argv.contains("tag") { return "v0.2.0" }
+            if argv.contains("--verify") { return String(repeating: argv.last == "HEAD^{commit}" ? "a" : "b", count: 40) }
+            return ""
+        })
+        await coordinator.check()
+        guard case .available = coordinator.phase else { return XCTFail("Expected a reviewed update") }
+    }
+
+    func testChangingChannelInvalidatesTheReviewedOffer() async {
+        let (coordinator, _) = makeCoordinator(git: { argv in
+            if argv.contains("status") { return "" }
+            if argv.contains("--exact-match") { return "v0.1.0" }
+            if argv.contains("tag") { return "v0.2.0" }
+            if argv.contains("--verify") { return String(repeating: argv.last == "HEAD^{commit}" ? "a" : "b", count: 40) }
+            return ""
+        })
+        await coordinator.check()
+        guard case .available = coordinator.phase else { return XCTFail("Expected offer") }
+        coordinator.channel = .beta
+        XCTAssertEqual(coordinator.phase, .idle, "A different channel needs a fresh preview")
+    }
+
+    func testChangingChannelRejectsAnInFlightChecksLateOffer() async {
+        let entered = expectation(description: "Checking old channel")
+        let release = DispatchSemaphore(value: 0)
+        let (coordinator, _) = makeCoordinator { argv in
+            if argv.contains("status") {
+                entered.fulfill()
+                _ = release.wait(timeout: .now() + 5)
+                return ""
+            }
+            if argv.contains("--exact-match") { return "v0.1.0" }
+            if argv.contains("tag") { return "v0.2.0" }
+            if argv.contains("--verify") { return String(repeating: argv.last == "HEAD^{commit}" ? "a" : "b", count: 40) }
+            return ""
+        }
+        let check = Task { await coordinator.check() }
+        await fulfillment(of: [entered], timeout: 5)
+        coordinator.channel = .beta
+        release.signal()
+        await check.value
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testNightlyApplyDoesNotFollowCommitsPublishedAfterReview() async throws {
+        let root = try makeThrowawayRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let clone = root.appendingPathComponent("worktree"), seed = root.appendingPathComponent("seed")
+        let coordinator = UpdateCoordinator(repoRoot: clone, defaults: isolatedDefaults(), runGit: { try UpdateCoordinator.git($0) })
+        coordinator.channel = .beta
+        await coordinator.check()
+        guard case .available(let reviewed) = coordinator.phase else { return XCTFail("Expected offer") }
+        let expected = try UpdateCoordinator.git(["-C", clone.path, "rev-parse", "origin/main"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try Data("new upstream commit".utf8).write(to: seed.appendingPathComponent("tracked.txt"))
+        _ = try UpdateCoordinator.git(["-C", seed.path, "add", "."])
+        _ = try UpdateCoordinator.git(["-C", seed.path, "commit", "-q", "-m", "three"])
+        _ = try UpdateCoordinator.git(["-C", seed.path, "push", "-q", root.appendingPathComponent("origin.git").path, "main"])
+        await coordinator.apply(offer: reviewed)
+        let actual = try UpdateCoordinator.git(["-C", clone.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(actual, expected, "Confirmation authorizes the reviewed commit only")
+    }
+
+    func testNightlyAtTheReviewedCommitIsCurrentEvenWhenHeadHasAReleaseTag() async throws {
+        let root = try makeThrowawayRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let clone = root.appendingPathComponent("worktree")
+        _ = try UpdateCoordinator.git(["-C", clone.path, "checkout", "--detach", "origin/main"])
+        let coordinator = UpdateCoordinator(repoRoot: clone, defaults: isolatedDefaults())
+        coordinator.channel = .beta
+        await coordinator.check()
+        XCTAssertEqual(coordinator.phase, .upToDate(current: "v0.2.0"))
+    }
+
     // MARK: - Pure planners
 
     func testLatestTagPicksTheHighestVersionTag() {
@@ -25,13 +103,13 @@ final class UpdateCoordinatorTests: XCTestCase {
     func testApplyPlansUseArgvTokensAndSyncSubmodules() {
         let official = UpdateCoordinator.applyPlan(channel: .official, target: "v0.3.0")
         XCTAssertEqual(official, [
-            ["checkout", "v0.3.0"],
+            ["checkout", "--detach", "v0.3.0"],
             ["submodule", "update", "--init", "--recursive"],
         ])
         let beta = UpdateCoordinator.applyPlan(channel: .beta, target: "abc1234")
         XCTAssertEqual(beta, [
             ["checkout", "main"],
-            ["pull", "--ff-only", "origin", "main"],
+            ["merge", "--ff-only", "abc1234"],
             ["submodule", "update", "--init", "--recursive"],
         ])
     }
@@ -59,6 +137,7 @@ final class UpdateCoordinatorTests: XCTestCase {
             if argv.suffix(2) == ["--short", "HEAD"] { return "abc1234" }
             if argv.last == "origin/main" { return "abc1234" }
             if argv.contains("tag") { return "v0.2.0\nv0.1.0\n" }
+            if argv.contains("--verify") { return String(repeating: "a", count: 40) }
             return ""
         })
 
@@ -75,6 +154,7 @@ final class UpdateCoordinatorTests: XCTestCase {
             if argv.suffix(2) == ["--short", "HEAD"] { return "abc1234" }
             if argv.last == "origin/main" { return "def5678" }
             if argv.contains("tag") { return "v0.2.0\nv0.1.0\n" }
+            if argv.contains("--verify") { return String(repeating: argv.last == "HEAD^{commit}" ? "a" : "b", count: 40) }
             return ""
         })
 
@@ -166,6 +246,13 @@ final class UpdateCoordinatorTests: XCTestCase {
 
     private enum TestGitError: Error { case exited(Int) }
 
+    private func isolatedDefaults() -> UserDefaults {
+        let suite = "mlx-workbench-update-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        return defaults
+    }
+
     /// Run an async @MainActor body synchronously from this sync test.
     private nonisolated func await_on_main(_ body: @escaping @MainActor () async -> Void) {
         let done = XCTestExpectation(description: "main-actor body")
@@ -186,13 +273,6 @@ final class UpdateCoordinatorTests: XCTestCase {
             .appendingPathComponent("mlx-workbench-update-\(UUID().uuidString)", isDirectory: true)
         let coordinator = UpdateCoordinator(repoRoot: root, defaults: defaults, runGit: git)
         return (coordinator, defaults)
-    }
-
-    private func isolatedDefaults() -> UserDefaults {
-        let suite = "mlx-workbench-update-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
-        return defaults
     }
 
     /// Seed repo (two tagged commits) -> bare origin -> a worktree clone

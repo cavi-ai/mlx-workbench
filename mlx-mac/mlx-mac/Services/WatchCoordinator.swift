@@ -1,5 +1,60 @@
 import Foundation
-import os
+
+/// One in-flight probe per generation. Invalidating a runtime cancels its old
+/// process and prevents late results from repopulating the cache.
+final class EnvironmentVersionProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private let run: @Sendable (CLIInvocationCancellation) -> String?
+    private var generation = UUID()
+    private var cached: String??
+    private struct Pending {
+        let generation: UUID
+        let cancellation: CLIInvocationCancellation
+        let task: Task<String?, Never>
+    }
+    private enum Request {
+        case cached(String?)
+        case pending(Pending)
+    }
+    private var pending: Pending?
+
+    init(run: @escaping @Sendable (CLIInvocationCancellation) -> String?) { self.run = run }
+    var valueIfProbed: String?? { lock.withLock { cached } }
+    func invalidate() {
+        lock.withLock {
+            generation = UUID(); cached = nil
+            pending?.cancellation.cancel(); pending = nil
+        }
+    }
+    func value(refresh: Bool = false) async -> String? {
+        var refreshRequested = refresh
+        while !Task.isCancelled {
+            let request: Request = lock.withLock {
+                if let pending { return .pending(pending) }
+                if !refreshRequested, let cached { return .cached(cached) }
+                generation = UUID()
+                let cancellation = CLIInvocationCancellation(), run = run
+                let task = Task { await WorkbenchIO.perform { run(cancellation) } }
+                let started = Pending(generation: generation, cancellation: cancellation, task: task)
+                pending = started
+                return .pending(started)
+            }
+            refreshRequested = false
+            switch request {
+            case .cached(let value): return value
+            case .pending(let started):
+                let value = await started.task.value
+                let accepted = lock.withLock {
+                    guard generation == started.generation else { return false }
+                    cached = .some(value); pending = nil
+                    return true
+                }
+                if accepted { return value }
+            }
+        }
+        return nil
+    }
+}
 
 // MARK: - WatchCoordinator
 //
@@ -84,47 +139,25 @@ final class WatchCoordinator: ObservableObject {
         fingerprint().description
     }
 
-    /// Probe the installed mlx-lm version via the resolved Python. Returns
-    /// nil when unavailable — the fingerprint degrades to "unknown".
-    ///
-    /// CRITICAL: this spawns a process. It must never run on the main
-    /// thread with a cold cache — a synchronous `waitUntilExit` during view
-    /// layout spins the run loop, re-enters NSHostingView.layout, and trips
-    /// an AttributeGraph precondition (crash). The cache is prewarmed off
-    /// the main thread at startup; a cold main-thread call degrades to nil.
-    nonisolated static func probeMLXLVersion() -> String? {
-        if let cached = versionProbe.valueIfProbed { return cached }
-        guard !Thread.isMainThread else { return nil }
-        let version = runVersionProbe()
-        versionProbe.store(version)
-        return version
-    }
+    /// View evaluation reads only the cached result; cold probes run on an I/O worker.
+    nonisolated static func probeMLXLVersion() -> String? { versionProbe.valueIfProbed ?? nil }
 
-    /// Probe off the main thread so the first render hits a warm cache.
-    /// Called once from app startup.
     nonisolated static func prewarmEnvironmentProbe() {
-        Task.detached(priority: .utility) {
-            _ = probeMLXLVersion()
-        }
+        Task(priority: .utility) { _ = await versionProbe.value() }
     }
 
-    /// The runtime changed (e.g. guided install) — drop the cached version
-    /// and re-probe off the main thread.
     nonisolated static func invalidateEnvironmentProbe() {
-        versionProbe.reset()
+        versionProbe.invalidate()
         prewarmEnvironmentProbe()
     }
 
     nonisolated static func refreshEnvironmentProbe() async {
-        await Task.detached(priority: .utility) {
-            versionProbe.reset()
-            _ = probeMLXLVersion()
-        }.value
+        _ = await versionProbe.value(refresh: true)
     }
 
-    nonisolated private static let versionProbe = VersionProbeCache()
+    nonisolated private static let versionProbe = EnvironmentVersionProbe { runVersionProbe($0) }
 
-    nonisolated private static func runVersionProbe() -> String? {
+    nonisolated private static func runVersionProbe(_ cancellation: CLIInvocationCancellation) -> String? {
         let script = "import importlib.metadata as m; print(m.version('mlx-lm'))"
         var candidates: [URL] = []
         if let preferred = WorkbenchPython.preferredExecutable() {
@@ -132,37 +165,13 @@ final class WatchCoordinator: ObservableObject {
         }
         candidates.append(URL(fileURLWithPath: "/usr/bin/python3"))
         for python in candidates {
-            let process = Process()
-            process.executableURL = python
-            process.arguments = ["-c", script]
-            let stdout = Pipe()
-            process.standardOutput = stdout
-            process.standardError = Pipe()
-            do {
-                try process.run()
-            } catch {
-                continue
-            }
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else { continue }
-            let text = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if cancellation.isRequested { return nil }
+            guard let output = try? BoundedProcessCapture.run(executable: python, arguments: ["-c", script],
+                timeout: 5, outputLimit: 16 * 1024, cancellation: cancellation), output.status == 0 else { continue }
+            let text = output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty { return text }
         }
         return nil
-    }
-
-    /// Lock-protected cache for the version probe, including the probed-but-
-    /// unavailable (nil) result so we probe at most once per invalidation.
-    private final class VersionProbeCache: Sendable {
-        private let probed = OSAllocatedUnfairLock<String??>(initialState: nil)
-
-        /// `.some(cached)` once probed (cached may be nil), nil before that.
-        var valueIfProbed: String?? { probed.withLock { $0 } }
-
-        func store(_ version: String?) { probed.withLock { $0 = .some(version) } }
-
-        func reset() { probed.withLock { $0 = nil } }
     }
 
     // MARK: - Check cycle

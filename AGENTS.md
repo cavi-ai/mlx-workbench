@@ -42,6 +42,16 @@ server.
   resolution mirror the engine queue and are pinned by shared fixtures. Never
   write to that file directly from the native app.
 - `tests/` contains unit and release-doc coverage.
+- `RecordArchive` owns transactional per-record storage and one-time JSON
+  migration for workflow, verification and comparison histories. Legacy JSON
+  stays untouched as a backup. `ModelWorkflowStore` and `VerificationStore`
+  update one record per transaction; `ComparisonRecordArchive` adds lightweight
+  history projections without changing complete recorded payloads.
+  `ModelWorkflowCoordinator` loads and saves through its serial I/O queue;
+  draft edits remain value-only. Submission waits for history and commits
+  cleanup consent before launching conversion. Receipts stay bound to the
+  submitted workflow across selection changes, and verification starts only
+  after its workflow state commits. The toolbar exposes history I/O progress.
 - `mlx-mac/` is the native SwiftUI app (Xcode project, explicit file list in
   `project.pbxproj` — register new sources there). `make test-swift` runs its
   XCTest suite. Design specs for premium features live in
@@ -111,6 +121,10 @@ server.
   boundary), runs the canary suite in `Models/VerificationModels.swift`, and
   only then marks the workflow `verified`. The gate attaches in `App.swift`;
   without an attached verifier the workflow behavior is unchanged.
+  `VerificationCoordinator` loads saved reports and commits verdicts on its
+  serial I/O queue. Verification waits for initial history, and failed writes
+  publish no verdict or workflow override. Library scans await the initial
+  report load before publishing readiness evidence.
 - **Hugging Face Intake**: `IntakeCoordinator` + a single Add from Hugging Face window
   (`IntakeSheet`; Prepare field, ⌘V on the Library table and Prepare view, ⇧⌘V anywhere) over
   `mlx-agent intake resolve|fetch|status|port-analysis|port-plan` and
@@ -181,6 +195,10 @@ server.
   arguments validated against the schema's required keys). Past runs are
   browsable in a searchable history popover; `ModelPerformanceProfile` aggregates
   per-model stats into Model Details.
+  Indexed history reads and writes use the serial `ComparisonHistoryWorker`.
+  Profile evidence and selection await authoritative reads and recheck profile
+  snapshots after suspension. Prompt-input reclamation reads history and removes
+  owned files off the main actor while prompt-set management remains busy.
   **Compare modes**: a picker above the variant slots (segmented when it fits, otherwise a menu; `ComparisonMode`:
   chat, vision, video understanding, speech to text, text to speech, image
   generation, video generation, music generation); slots list only models whose `ModelTaskType`
@@ -728,7 +746,11 @@ server.
   Persisted via UserDefaults once completed; re-openable from Health.
 - `UpdateCoordinator` provides **in-app updates** for checkout-run installs:
   Official channel checks out the newest `v*` tag, Beta fast-forwards to
-  `origin/main`; both refuse a dirty tree, sync submodules, and finish with a
+  the captured full commit from `origin/main`; channel changes invalidate old
+  offers and in-flight checks. Git checks run off the main actor with bounded
+  output and a 60-second deadline; streamed update commands use the installer's
+  owned process runner with a 120-second deadline. Both refuse a dirty or
+  changed checkout, sync submodules, and finish with a
   streamed `make build-swift` rebuild-and-relaunch. Git runs as argv tokens
   through an injectable runner; the apply path is integration-tested against
   a throwaway git repo. Installed builds (no checkout) update from GitHub
