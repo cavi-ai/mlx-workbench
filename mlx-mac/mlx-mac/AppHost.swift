@@ -12,6 +12,7 @@ class AppHost: ObservableObject {
     @Published var configPath: String = ""
     @Published var isScanning = false
     @Published var scanResult: ScanResult?
+    @Published private(set) var scanError: String?
     @Published var librarySnapshot: LibrarySnapshot?
     /// The effective roots `librarySnapshot` was scanned from; nil until a scan succeeds.
     @Published var scannedRoots: ScanRoots?
@@ -546,6 +547,7 @@ class AppHost: ObservableObject {
             )
             let snapshot = ModelLibraryBuilder.build(scan: scan, hardware: hardwareProfile, now: now())
             scanResult = scan
+            scanError = nil
             scannedRoots = ScanRoots(gguf: roots, mlx: mlxRoots)
             librarySnapshot = snapshot
             lastError = nil
@@ -558,6 +560,7 @@ class AppHost: ObservableObject {
             isScanning = false
             return snapshot
         } catch {
+            scanError = Self.render(error)
             lastError = Self.render(error)
             isScanning = false
             return nil

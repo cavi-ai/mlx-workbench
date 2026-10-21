@@ -1,4 +1,6 @@
 import XCTest
+import AppKit
+import SwiftUI
 
 @testable import mlx_workbench
 
@@ -170,6 +172,86 @@ final class ReclaimRemodelTests: XCTestCase {
         XCTAssertEqual(stages.map(\.detail), ["No suggestions", "Empty", "Nothing in Trash"])
         XCTAssertEqual(stages.map(\.caption), ["", "", ""])
         XCTAssertEqual(stages.map(\.subject), [nil, nil, nil])
+    }
+
+    func testReviewOnlyCopiesRemainVisibleWithoutClaimingDiskSavings() {
+        let ledger = Fixture.ledger(opportunities: [Fixture.opportunity("/models/copy", bytes: 294_000_000, actionable: false, kind: .crossRootDuplicate)])
+        XCTAssertEqual(ledger.readyBytes, 0)
+        XCTAssertEqual(ledger.readyCount, 0)
+        XCTAssertEqual(ledger.stages[0].figure, .items(1))
+        XCTAssertEqual(ledger.stages[0].detail, "1 item needs review")
+        XCTAssertEqual(ledger.stages[0].caption, "Disk savings require review")
+    }
+
+    func testDuplicateCoverageNeverTreatsMissingOrFailedEvidenceAsAnEmptyScan() {
+        let roots = ScanRoots(gguf: ["/models"], mlx: ["/models"])
+        let missing = ReclaimScanCoverage(hasScan: false, isScanning: false, error: nil, roots: nil)
+        XCTAssertEqual(missing.heading, "Model folders not scanned")
+        XCTAssertFalse(missing.emptyMessage.hasPrefix("No "))
+        let failed = ReclaimScanCoverage(hasScan: false, isScanning: false, error: "failed", roots: nil)
+        XCTAssertEqual(failed.heading, "Scan failed")
+        let retained = ReclaimScanCoverage(hasScan: true, isScanning: false, error: "failed", roots: roots)
+        XCTAssertEqual(retained.heading, "Scan failed · showing previous results")
+        XCTAssertTrue(retained.emptyMessage.contains("previous successful scan"))
+        let scanning = ReclaimScanCoverage(hasScan: true, isScanning: true, error: nil, roots: roots)
+        XCTAssertEqual(scanning.heading, "Scanning · showing previous results")
+        let unknown = ReclaimScanCoverage(hasScan: true, isScanning: false, error: nil, roots: nil)
+        XCTAssertEqual(unknown.heading, "Scan coverage unavailable")
+        let successful = ReclaimScanCoverage(hasScan: true, isScanning: false, error: nil, roots: roots)
+        XCTAssertEqual(successful.emptyMessage, "No matching copies or model variants in the scanned folders.")
+        XCTAssertTrue(ReclaimScanCoverage.limitations.contains("Standalone model assets"))
+        XCTAssertTrue(ReclaimScanCoverage.limitations.contains("Connecting a host does not add its folders"))
+    }
+
+    func testReviewOnlyCandidatesDoNotReplaceAnUnknownScanWithANumber() {
+        let ledger = Fixture.ledger(opportunities: [Fixture.opportunity("/models/copy", bytes: 100, actionable: false)], hasLibrary: false)
+        XCTAssertEqual(ledger.stages[0].figure, .pending)
+        XCTAssertEqual(ledger.stages[0].detail, "Waiting for the library scan")
+    }
+
+    func testDuplicateFolderAndCoverageRenderInLightDarkAndNarrowWindows() async throws {
+        let root = try makeRoot()
+        let copy = root.appendingPathComponent("Qwen-copy")
+        try FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
+        try Data("{\"quantization\":{\"bits\":4}}".utf8).write(to: copy.appendingPathComponent("config.json"))
+        try Data("weights".utf8).write(to: copy.appendingPathComponent("model.safetensors"))
+        let keeper = root.appendingPathComponent("Qwen-keeper").path
+        let group = DuplicateGroup(kind: "exact", modelKey: "qwen", quantization: "4-bit", quantizations: nil,
+            reclaimableBytes: 294_000_000, keep: keeper, redundant: [copy.path], members: nil, count: nil, groupId: "qwen")
+        let scan = ScanResult(roots: ScanRoots(gguf: [root.path], mlx: [root.path]), models: [],
+            outputs: [MLXOutput(path: copy.path, name: "Qwen-copy", modelKey: "qwen", quantization: QuantInfo(bits: 4, groupSize: nil, modelType: nil), provenance: nil)],
+            pending: [], duplicates: [group], totals: ScanTotals(gguf: 0, pending: 0, converted: 0, unreadable: 0, bytes: 0, reclaimableBytes: 294_000_000))
+        var config = Config.defaults(ggufRoots: [root.path])
+        config.mlxRoots = [root.path]; config.quarantineDir = root.appendingPathComponent("quarantine").path
+        let report = RuntimeReport(convert: ConvertStatus(ok: true, modules: [:], executables: [:], missingModules: [], missingExecutables: [], install: "", message: ""),
+            serve: ServeStatus(ok: true, executables: [:], missingExecutables: [], install: "", message: ""), install: "", ok: true)
+        let app = AppHost(config: config, discoveredRoots: [], agentHealth: .notConfigured, runtimeReport: report,
+            scanOperation: { _, _, _, _ in scan })
+        app.scanResult = scan
+        app.librarySnapshot = ModelLibraryBuilder.build(scan: scan, hardware: app.hardwareProfile, now: Date())
+        for width in [1100, 560] {
+            for dark in [false, true] {
+                let hosting = NSHostingView(rootView: DuplicatesView(appHost: app)
+                    .environment(\.isRouteActive, true).frame(width: CGFloat(width), height: 1000)
+                    .background(WorkbenchColor.canvas)
+                    .preferredColorScheme(dark ? .dark : .light))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 1000), styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = hosting
+                window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                window.orderFront(nil)
+                try await Task.sleep(for: .milliseconds(150))
+                hosting.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                let capture = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+                capture.name = "Reclaim-folder-review-\(width)-\(dark ? "dark" : "light")"; capture.lifetime = .keepAlways; add(capture)
+                window.close()
+            }
+        }
+        XCTAssertEqual(app.reclaim.opportunities.count, 1)
+        XCTAssertFalse(try XCTUnwrap(app.reclaim.opportunities.first).actionable)
+        XCTAssertEqual(app.reclaim.totalReclaimableBytes, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
     }
 
     func testNonEmptyStagesNameTheirLargestMemberAndTheReadyStageSaysHowOldItIs() {

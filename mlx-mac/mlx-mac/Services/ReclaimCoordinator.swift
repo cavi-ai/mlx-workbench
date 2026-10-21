@@ -184,8 +184,10 @@ final class ReclaimCoordinator: ObservableObject {
     var mlxRoots: () -> [String] = { [] }
     var protectedPaths: () -> [String] = { [] }
 
+    private var duplicateKeepers: [String] = []
+
     private var protectedFolderPaths: [String] {
-        protectedPaths() + opportunities.compactMap { $0.replacement?.keeper.path }
+        protectedPaths() + duplicateKeepers + opportunities.compactMap { $0.replacement?.keeper.path }
     }
 
     func previewLibraryTrash(_ path: String) async {
@@ -326,6 +328,7 @@ final class ReclaimCoordinator: ObservableObject {
         staleDays: Int = ReclaimAdvisor.defaultStaleDays,
         measuredSuperseded: [ReclaimOpportunity] = []
     ) {
+        duplicateKeepers = duplicates.filter { $0.kind == "exact" }.compactMap(\.keep)
         opportunities = ReclaimAdvisor.opportunities(
             snapshot: snapshot,
             duplicates: duplicates,

@@ -8,6 +8,7 @@ import AppKit
 struct DuplicatesView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var reclaim: ReclaimCoordinator
+    private let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive
 
     @State private var selectedOpportunities: Set<String> = []
@@ -18,8 +19,9 @@ struct DuplicatesView: View {
 
     private static let recentQuarantineCount = 8
 
-    init(appHost: AppHost) {
+    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
+        self.onRouteSelection = onRouteSelection
         _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
     }
 
@@ -30,6 +32,11 @@ struct DuplicatesView: View {
     }
 
     private var libraryGeneration: Date? { appHost.librarySnapshot?.generatedAt }
+    private var scanRoots: ScanRoots? { appHost.scanResult?.roots ?? appHost.scannedRoots }
+    private var scanCoverage: ReclaimScanCoverage {
+        ReclaimScanCoverage(hasScan: appHost.scanResult != nil, isScanning: appHost.isScanning,
+                            error: appHost.scanError, roots: scanRoots)
+    }
 
     /// Only opportunities that are still actionable can be part of a selection.
     private var effectiveSelection: Set<String> {
@@ -66,6 +73,7 @@ struct DuplicatesView: View {
                     ErrorBanner(text: reclaim.sourceHistoryError)
                     ErrorBanner(text: appHost.lastError)
                     ReclaimLedgerView(ledger: ledger, isStacked: layout.stacksStages)
+                    scanCoverageSection
                     suggestionsSection(models)
                     Divider()
                     quarantinedSection(models)
@@ -191,7 +199,8 @@ struct DuplicatesView: View {
                     .foregroundStyle(WorkbenchColor.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 if state.showsEmpty {
-                    ReclaimDesignedState(symbol: "checkmark.circle", text: "No reclaim opportunities from the latest snapshot.")
+                    ReclaimDesignedState(symbol: "square.on.square", text: appHost.scanResult == nil || appHost.isScanning || appHost.scanError != nil
+                        ? scanCoverage.emptyMessage : "No suggestions from this scan. Review Scan coverage for the checked folders and supported formats.")
                 }
                 ForEach(ReclaimSuggestionGroup.groups(reclaim.opportunities)) { group in
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
@@ -207,6 +216,9 @@ struct DuplicatesView: View {
                                     isCompact: layout.compactSuggestions,
                                     isSelected: opportunityBinding(opportunity.id)
                                 )
+                                if opportunity.kind == .crossRootDuplicate && !opportunity.actionable {
+                                    duplicateFolderActions(opportunity.paths)
+                                }
                             }
                         }
                     }
@@ -416,6 +428,61 @@ struct DuplicatesView: View {
 
     // MARK: - Duplicate groups
 
+    private var scanCoverageSection: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+            Label(scanCoverage.heading, systemImage: "folder.badge.questionmark")
+                .font(WorkbenchTypography.label)
+                .accessibilityIdentifier("reclaim-scan-status")
+            if let generatedAt = libraryGeneration {
+                Text(generatedAt, format: .dateTime.year().month().day().hour().minute())
+                    .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            }
+            DisclosureGroup("Scan coverage") {
+                VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
+                    if let roots = scanRoots {
+                        scanRootList("GGUF folders", paths: roots.gguf)
+                        scanRootList("MLX folders", paths: roots.mlx)
+                    } else {
+                        Text("Scanned folders are not available.")
+                    }
+                    Text(ReclaimScanCoverage.limitations)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.font(WorkbenchTypography.secondary).padding(.top, WorkbenchSpacing.xs)
+            }
+            Button("Review scan folders…") { onRouteSelection(.settings) }
+                .buttonStyle(.bordered).tint(WorkbenchColor.ink)
+                .controlSize(.small).accessibilityIdentifier("reclaim-review-scan-folders")
+        }
+    }
+
+    private func scanRootList(_ title: String, paths: [String]) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
+            Text(title).font(WorkbenchTypography.label)
+            if paths.isEmpty { Text("No folders recorded") }
+            ForEach(Array(paths.enumerated()), id: \.offset) { _, path in
+                Text(path).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func duplicateFolderActions(_ paths: [String]) -> some View {
+        let localFolders = paths.filter { path in
+            HFRepoID.forPath(path) == nil && appHost.scanResult?.outputs.contains(where: { $0.path == path }) == true
+        }
+        return ForEach(localFolders, id: \.self) { path in
+            HStack {
+                if localFolders.count > 1 {
+                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                        .font(WorkbenchTypography.secondary).lineLimit(1).truncationMode(.middle)
+                }
+                Button("Review folder…") { Task { await reclaim.previewFolder(path) } }
+                    .controlSize(.small).disabled(reclaim.isApplying)
+                    .help("Review \(path) before moving it to quarantine.")
+                    .accessibilityIdentifier("review-duplicate-folder")
+            }
+        }
+    }
+
     private var duplicatesSection: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
             if appHost.isScanning {
@@ -425,7 +492,7 @@ struct DuplicatesView: View {
             if groups.isEmpty {
                 SectionTitle(text: "Duplicate groups")
                 if !appHost.isScanning {
-                    ReclaimDesignedState(symbol: "square.on.square", text: "No duplicate groups found.")
+                    ReclaimDesignedState(symbol: "square.on.square", text: scanCoverage.emptyMessage)
                 }
             } else {
                 DisclosureGroup("Duplicate groups (\(groups.count))", isExpanded: $showsDuplicates) {
@@ -443,10 +510,15 @@ struct DuplicatesView: View {
                 Text(group.modelKey ?? group.id).font(WorkbenchTypography.label)
                 Spacer()
                 if let reclaimable = group.reclaimableBytes {
-                    Text("Reclaims \(ByteCountFormatter.string(fromByteCount: reclaimable, countStyle: .file))")
+                    Text(group.kind == "variant" ? "Different variants" : "Copy size: \(ByteCountFormatter.string(fromByteCount: reclaimable, countStyle: .file))")
                         .font(WorkbenchTypography.secondaryTabular)
                 }
             }
+            Text(group.kind == "variant"
+                 ? "Different quantizations or variants; no removal recommendation."
+                 : "Matching model weights reported by the scan. Copy size is a logical file size; disk savings depend on shared storage and the folder review.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
             ForEach(group.sources, id: \.self) { path in
                 HStack(alignment: .firstTextBaseline, spacing: WorkbenchSpacing.xs) {
                     Image(systemName: "doc")

@@ -314,7 +314,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
     @MainActor
     func testAppHostPreservesLastSuccessfulLibrarySnapshotOnFailedScan() async throws {
         let scan = makeFixtureScan()
-        let script = ScanScript(steps: [.success(scan), .failure(TestScanError.boom)])
+        let script = ScanScript(steps: [.success(scan), .failure(TestScanError.boom), .success(scan)])
         let hardware = fixtureHardware
         let now = fixtureDate
         let host = AppHost(
@@ -343,6 +343,11 @@ final class ModelLibraryBuilderTests: XCTestCase {
         XCTAssertEqual(host.scanResult, scan)
         XCTAssertEqual(host.hardwareProfile, hardware)
         XCTAssertEqual(host.lastError, TestScanError.boom.localizedDescription)
+        XCTAssertEqual(host.scanError, TestScanError.boom.localizedDescription)
+        host.lastError = "An unrelated operation failed"
+        XCTAssertEqual(host.scanError, TestScanError.boom.localizedDescription)
+        await host.rescan()
+        XCTAssertNil(host.scanError)
     }
 
     private func readiness(in snapshot: LibrarySnapshot, path: String) -> ModelReadiness? {
