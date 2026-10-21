@@ -215,10 +215,13 @@ extension WorkbenchSize {
     /// the setup tiles. Widths are content widths inside the results surface.
     enum Compare {
         static let boardBreakpoint: CGFloat = 1000
-        static let boardMatrixMaximum: CGFloat = 506
-        static let boardModelColumn: CGFloat = 168
-        static let boardPromptColumn: CGFloat = 92
-        static let boardMetricColumn: CGFloat = 80
+        static let boardMatrixShare: CGFloat = 0.45
+        static let boardInspectorMinimum: CGFloat = 480
+        static let boardModelColumn: CGFloat = 220
+        static let boardModelMaximum: CGFloat = 360
+        static let boardPromptColumn: CGFloat = 132
+        static let boardPromptMaximum: CGFloat = 200
+        static let boardMetricColumn: CGFloat = 88
         static let boardRowHeight: CGFloat = 72
         static let promptColumn: CGFloat = 184
         static let promptColumnCompact: CGFloat = 140

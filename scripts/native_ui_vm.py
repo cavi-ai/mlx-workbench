@@ -267,7 +267,7 @@ def guest(input_dir, output_dir):
     manifest = json.loads((input_dir / "source-manifest.json").read_text())
     output_dir.mkdir(parents=True, exist_ok=True)
     desktop = manifest.get("desktop_size", "1440x1000")
-    if desktop not in ("1024x768", "1440x1000"):
+    if desktop not in ("1024x768", "1440x1000", "2048x1280"):
         raise RuntimeError("Unsupported test desktop; no GUI operation was started.")
     width, height = desktop.split("x")
     desktop_environment = dict(os.environ, MLX_WORKBENCH_UI_DESKTOP_WIDTH=width, MLX_WORKBENCH_UI_DESKTOP_HEIGHT=height)
@@ -619,7 +619,7 @@ def main():
     parser.add_argument("--runtime-bundle", help="Verified source payload to include before normal app code signing")
     parser.add_argument("--runtime-install-uv", help="Existing uv binary for opt-in packaged installation; downloads Python and runtime packages only inside the VM")
     parser.add_argument("--runtime-install-dmg", help="Existing DMG built from this revision; copy its app into the VM and run the packaged installation test against that artifact")
-    parser.add_argument("--desktop-size", choices=("1024x768", "1440x1000"), default="1440x1000",
+    parser.add_argument("--desktop-size", choices=("1024x768", "1440x1000", "2048x1280"), default="1440x1000",
                         help="Configure the guest desktop before launching the UI test runner")
     parser.add_argument("--unit-test", help="Run only this XCTest identifier for failure diagnosis; no full-suite or UI acceptance")
     parser.add_argument("--ui-test", action="append", help="Run an exact UI test for scoped failure diagnosis; repeat for multiple cases. No complete UI-suite acceptance")

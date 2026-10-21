@@ -44,7 +44,7 @@ make test-native-ui NATIVE_UI_BASE_VM=mlx-workbench-ui-base
 downloads an image implicitly.
 
 Use `--desktop-size 1024x768` to check a smaller desktop; the default is
-`1440x1000`. The runner configures and validates the guest's logical display
+`1440x1000`; `2048x1280` supports wide-window checks. The runner configures and validates the guest's logical display
 size before launching XCUITest, and records it with the run's evidence.
 
 Each run clones the prepared base, snapshots the current source and records
