@@ -2265,7 +2265,7 @@ final class ComparisonMediaTests: XCTestCase {
         coordinator.start(variants: [("/video/a", "old-signature")], promptSet: originalSet)
         await waitForRun(coordinator)
         let runID = try XCTUnwrap(coordinator.runs.first?.id)
-        coordinator.reviewQuality(runID: runID, modelPath: "/video/a", score: 4)
+        await coordinator.reviewQuality(runID: runID, modelPath: "/video/a", score: 4)?.value
         let originalRun = try XCTUnwrap(coordinator.runs.first)
         let historyBefore = try Data(contentsOf: root.appendingPathComponent("runs.json"))
         var setup = try ComparisonRunSetup(run: originalRun)
@@ -2327,7 +2327,7 @@ final class ComparisonMediaTests: XCTestCase {
         coordinator.start(variants: [("/music/a", nil)], promptSet: set)
         await waitForRun(coordinator)
         let originalID = try XCTUnwrap(coordinator.runs.first?.id)
-        coordinator.reviewQuality(runID: originalID, modelPath: "/music/a", score: 4)
+        await coordinator.reviewQuality(runID: originalID, modelPath: "/music/a", score: 4)?.value
         let original = try XCTUnwrap(coordinator.runs.first)
         var setup = try ComparisonRunSetup(run: original)
         setup.draft.prompts[0].duration = "20"
@@ -3444,7 +3444,7 @@ final class ComparisonMediaTests: XCTestCase {
         coordinator.start(variants: [("/music/a", nil)], promptSet: original)
         await waitForRun(coordinator)
         let runID = try XCTUnwrap(coordinator.runs.first?.id)
-        coordinator.reviewQuality(runID: runID, modelPath: "/music/a", score: 4)
+        await coordinator.reviewQuality(runID: runID, modelPath: "/music/a", score: 4)?.value
         let historical = try XCTUnwrap(coordinator.runs.first)
         let historyURL = root.appendingPathComponent("runs.json"), history = try Data(contentsOf: historyURL)
         var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
@@ -3491,7 +3491,7 @@ final class ComparisonMediaTests: XCTestCase {
         coordinator.start(variants: [("/music/a", nil)], promptSet: original)
         await waitForRun(coordinator)
         let runID = try XCTUnwrap(coordinator.runs.first?.id)
-        coordinator.reviewQuality(runID: runID, modelPath: "/music/a", score: 4)
+        await coordinator.reviewQuality(runID: runID, modelPath: "/music/a", score: 4)?.value
         let historical = try XCTUnwrap(coordinator.runs.first)
         let historyURL = root.appendingPathComponent("runs.json"), historyBytes = try Data(contentsOf: historyURL)
         let artifact = try XCTUnwrap(coordinator.outputStore?.artifactURL(runID: runID,
@@ -3834,7 +3834,7 @@ final class ComparisonMediaTests: XCTestCase {
         coordinator.start(variants: [("/music/a", nil)], promptSet: source)
         await waitForRun(coordinator)
         let run = try XCTUnwrap(coordinator.runs.first)
-        coordinator.reviewQuality(runID: run.id, modelPath: "/music/a", score: 4)
+        await coordinator.reviewQuality(runID: run.id, modelPath: "/music/a", score: 4)?.value
         let history = try Data(contentsOf: root.appendingPathComponent("runs.json"))
         let artifact = try XCTUnwrap(coordinator.outputStore?.artifactURL(runID: run.id,
             artifact: try XCTUnwrap(run.results.first?.samples.first?.artifact)))
@@ -3914,7 +3914,7 @@ final class ComparisonMediaTests: XCTestCase {
         coordinator.start(variants: [("/music/a", nil)], promptSet: original)
         await waitForRun(coordinator)
         let run = try XCTUnwrap(coordinator.runs.first)
-        coordinator.reviewQuality(runID: run.id, modelPath: "/music/a", score: 4)
+        await coordinator.reviewQuality(runID: run.id, modelPath: "/music/a", score: 4)?.value
         let history = try Data(contentsOf: root.appendingPathComponent("runs.json"))
         let setsURL = root.appendingPathComponent("sets.json"), before = try Data(contentsOf: setsURL)
         let artifact = try XCTUnwrap(coordinator.outputStore?.artifactURL(runID: run.id,
@@ -4410,7 +4410,7 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
-    func testTaskQualityRatingsPersistClearAndDoNotChangeMeasuredOutputs() throws {
+    func testTaskQualityRatingsPersistClearAndDoNotChangeMeasuredOutputs() async throws {
         for mode in ComparisonMode.allCases where mode != .musicGeneration {
             let runsURL = root.appendingPathComponent("quality-\(mode.rawValue).json")
             var run = historyRun(mode, "Quality", at: 100)
@@ -4421,21 +4421,21 @@ final class ComparisonMediaTests: XCTestCase {
                 aggregateTokensPerSecond: 20, aggregateTTFTSeconds: 0.3, error: nil)]
             try JSONStore<ComparisonRun>(fileURL: runsURL).replaceAll([run])
             let coordinator = makeCoordinator(runner: StubMediaRunner(), runsURL: runsURL)
-            coordinator.reviewQuality(runID: run.id, modelPath: "/model", score: 4)
+            await coordinator.reviewQuality(runID: run.id, modelPath: "/model", score: 4)?.value
             let reloaded = makeCoordinator(runner: StubMediaRunner(), runsURL: runsURL)
             let saved = try XCTUnwrap(reloaded.runs.first)
             XCTAssertEqual(saved.qualityReviews?["/model"]?.score, 4)
             XCTAssertEqual(saved.qualityReviews?["/model"]?.rubricID, "task-outcome-v1")
             XCTAssertEqual(saved.results, run.results)
             XCTAssertEqual(saved.promptEntries, run.promptEntries)
-            reloaded.reviewQuality(runID: run.id, modelPath: "/model", score: nil)
+            await reloaded.reviewQuality(runID: run.id, modelPath: "/model", score: nil)?.value
             XCTAssertNil(try JSONStore<ComparisonRun>(fileURL: runsURL).load().first?.qualityReviews?["/model"])
             XCTAssertNil(reloaded.activeRunID)
         }
     }
 
     @MainActor
-    func testTaskQualityRatingWriteFailureRetainsPublishedReview() throws {
+    func testTaskQualityRatingWriteFailureRetainsPublishedReview() async throws {
         var run = historyRun(.vision, "Quality", at: 100)
         run.promptEntries = [PromptEntry(id: "p", text: "Task")]
         run.results = [VariantResult(modelPath: "/model", modelSignature: nil, samples: [],
@@ -4445,12 +4445,12 @@ final class ComparisonMediaTests: XCTestCase {
         try JSONStore<ComparisonRun>(fileURL: url).replaceAll([run])
         let coordinator = makeCoordinator(runner: StubMediaRunner())
         let corrupt = Data("broken-json".utf8); try corrupt.write(to: url)
-        coordinator.reviewQuality(runID: run.id, modelPath: "/model", score: 1)
+        await coordinator.reviewQuality(runID: run.id, modelPath: "/model", score: 1)?.value
         XCTAssertEqual(coordinator.runs.first, run)
         XCTAssertNotNil(coordinator.persistenceError)
         XCTAssertEqual(try Data(contentsOf: url), corrupt)
         try JSONStore<ComparisonRun>(fileURL: url).replaceAll([run])
-        coordinator.reviewQuality(runID: run.id, modelPath: "/model", score: 3)
+        await coordinator.reviewQuality(runID: run.id, modelPath: "/model", score: 3)?.value
         XCTAssertEqual(coordinator.runs.first?.qualityReviews?["/model"]?.score, 3)
         XCTAssertNil(coordinator.persistenceError)
     }
@@ -4462,13 +4462,13 @@ final class ComparisonMediaTests: XCTestCase {
         coordinator.start(variants: [("/music/a", nil)], promptSet: promptSet(for: .musicGeneration))
         await waitForRun(coordinator)
         let id = try XCTUnwrap(coordinator.runs.first?.id)
-        coordinator.reviewQuality(runID: id, modelPath: "/music/a", score: 4)
+        await coordinator.reviewQuality(runID: id, modelPath: "/music/a", score: 4)?.value
         let reloaded = makeCoordinator(runner: StubMediaRunner(), runsURL: url)
         let review = try XCTUnwrap(reloaded.runs.first?.qualityReviews?["/music/a"])
         XCTAssertEqual(review.score, 4)
         XCTAssertEqual(review.rubricID, "music-listening-v1")
         XCTAssertNil(reloaded.runs.first?.winner, "listening scores must not promote a speed winner")
-        reloaded.reviewQuality(runID: id, modelPath: "/music/a", score: nil)
+        await reloaded.reviewQuality(runID: id, modelPath: "/music/a", score: nil)?.value
         XCTAssertNil(try JSONStore<ComparisonRun>(fileURL: url).load().first?.qualityReviews?["/music/a"])
     }
 
@@ -4621,7 +4621,7 @@ final class ComparisonMediaTests: XCTestCase {
         coordinator.start(variants: [("/m/c", nil)], promptSet: set)
         XCTAssertEqual(coordinator.lastError, "A comparison run is already in progress.")
         XCTAssertEqual(coordinator.activeRunID, firstRun)
-        XCTAssertEqual(coordinator.runs.count, 1)
+        XCTAssertTrue(coordinator.runs.isEmpty, "The run publishes only after its initial write; its identity is already reserved")
 
         // Release only the first variant's requests: its result must reach the disk while the second variant is still gated.
         await runner.release(set.prompts.count)
