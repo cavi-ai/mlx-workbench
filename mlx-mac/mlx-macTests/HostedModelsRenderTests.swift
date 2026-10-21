@@ -5,6 +5,125 @@ import XCTest
 
 @MainActor
 final class HostedModelsRenderTests: XCTestCase {
+    func testLibrarySourceMenuSelectsExactHostsAndRetainsSetupAfterRemoval() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let reads = HostSummaryReads()
+        let hosts = ModelHostsCoordinator(store: JSONStore(fileURL: root.appendingPathComponent("hosts.json")),
+            readToken: { _ in nil }, writeToken: { _, _ in }, fetch: { host, _ in
+                try await reads.fetch(host, instances: ["context-4096", "context-8192"])
+            })
+        let connections = [
+            ModelHost(name: "Shared", provider: .ollama, baseURL: "http://127.0.0.1:11434"),
+            ModelHost(name: "Shared", provider: .lmStudio, baseURL: "http://127.0.0.1:1234"),
+            ModelHost(name: "Images", provider: .comfyUI, baseURL: "http://127.0.0.1:8188")
+        ]
+        for connection in connections.prefix(2) { try hosts.save(connection, token: nil, replaceToken: false) }
+        let app = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", configPath: root.appendingPathComponent("config.json").path,
+            agentHealth: .notConfigured, runtimeReport: report(), modelHosts: hosts)
+        let originalConfig = app.config
+        let hosting = NSHostingView(rootView: LibraryWorkspace(appHost: app, sourceHome: root).frame(width: 950, height: 820)
+            .background(WorkbenchColor.canvas).preferredColorScheme(.light))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 950, height: 820), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
+        defer { window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func controls() -> [NSPopUpButton] {
+            return descendants(hosting).compactMap { $0 as? NSPopUpButton }
+        }
+        func sourcePicker() throws -> NSPopUpButton {
+            try XCTUnwrap(controls().first { $0.itemTitles.contains("All local models") && $0.itemTitles.contains("Hosted models") })
+        }
+        func select(_ title: String) async throws {
+            let picker = try sourcePicker()
+            let menu = try XCTUnwrap(picker.menu)
+            let item = try XCTUnwrap(picker.item(withTitle: title))
+            menu.performActionForItem(at: menu.index(of: item))
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(try sourcePicker().selectedItem?.title, title)
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertFalse(try sourcePicker().itemTitles.contains("Images · ComfyUI"))
+        try hosts.save(connections[2], token: nil, replaceToken: false)
+        try await Task.sleep(for: .milliseconds(100))
+        for connection in connections {
+            let title = LibrarySource.host(connection.id).title(in: connections)
+            XCTAssertTrue(try sourcePicker().itemTitles.contains(title))
+            try await select(title)
+            XCTAssertTrue(controls().contains { $0.itemTitles.contains("Select a host") && $0.selectedItem?.title == title },
+                "The displayed host and top source must share the exact selection")
+        }
+        let hostPicker = try XCTUnwrap(controls().first { $0.itemTitles.contains("Select a host") })
+        let hostMenu = try XCTUnwrap(hostPicker.menu)
+        let hostItem = try XCTUnwrap(hostPicker.item(withTitle: "Shared · Ollama"))
+        hostMenu.performActionForItem(at: hostMenu.index(of: hostItem))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(try sourcePicker().selectedItem?.title, "Shared · Ollama")
+        var requested = await reads.requested
+        XCTAssertEqual(requested, [])
+        await hosts.refresh(connections[1].id)
+        try await select("Shared · LM Studio")
+        let table = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSTableView }.first { $0.numberOfRows == 2 })
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        try await Task.sleep(for: .milliseconds(100))
+        let instances = try XCTUnwrap(controls().first { $0.itemTitles.contains("Choose instance") })
+        let instanceMenu = try XCTUnwrap(instances.menu)
+        let instanceItem = try XCTUnwrap(instances.item(withTitle: "context-8192"))
+        instanceMenu.performActionForItem(at: instanceMenu.index(of: instanceItem))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(instances.selectedItem?.title, "context-8192")
+        try await select("All local models")
+        try await select("LM Studio files")
+        try await select("Shared · LM Studio")
+        XCTAssertEqual(table.selectedRow, 0, "Leaving the hosted workspace must retain its selected model")
+        XCTAssertEqual(try XCTUnwrap(controls().first { $0.itemTitles.contains("Choose instance") }).selectedItem?.title, "context-8192",
+            "Returning to the same host must retain the selected loaded instance")
+        for width in [950, 740] {
+            window.setContentSize(NSSize(width: width, height: 820))
+            for dark in [false, true] {
+                window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                hosting.rootView = LibraryWorkspace(appHost: app, sourceHome: root).frame(width: CGFloat(width), height: 820)
+                    .background(WorkbenchColor.canvas).preferredColorScheme(dark ? .dark : .light)
+                hosting.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(100))
+                let image = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+                hosting.cacheDisplay(in: hosting.bounds, to: image)
+                let png = try XCTUnwrap(image.representation(using: .png, properties: [:]))
+                let name = "library-sources-\(dark ? "dark" : "light")-\(width)"
+                let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+                if let destination = ProcessInfo.processInfo.environment["MLX_HOST_RENDER_DIR"] {
+                    try png.write(to: URL(fileURLWithPath: destination).appendingPathComponent(name + ".png"))
+                }
+            }
+        }
+        try await select("Images · ComfyUI")
+        let selected = connections[2]
+        try hosts.remove(selected.id)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(try sourcePicker().selectedItem?.title, "Hosted models")
+        XCTAssertFalse(try sourcePicker().itemTitles.contains("Images · ComfyUI"))
+        XCTAssertTrue(controls().contains { $0.selectedItem?.title == "Select a host" })
+        app.hostedLibraryHostRequest = selected
+        app.hostedLibraryRequested = true
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(try sourcePicker().selectedItem?.title, "Hosted models")
+        XCTAssertNil(app.hostedLibraryHostRequest)
+        var edited = connections[1]; edited.name = "Renamed"
+        try hosts.save(edited, token: nil, replaceToken: false)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(try sourcePicker().itemTitles.contains("Renamed · LM Studio"))
+        app.hostedLibraryHostRequest = connections[0]
+        app.hostedLibraryRequested = true
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(try sourcePicker().selectedItem?.title, "Shared · Ollama")
+        XCTAssertNil(app.hostedLibraryHostRequest)
+        XCTAssertEqual(app.config, originalConfig)
+        XCTAssertNil(app.hostedComparison.activeRunID)
+        requested = await reads.requested
+        XCTAssertEqual(requested, [connections[1].id])
+    }
+
     func testDeviceMemoryRendersSharedPartialEmptyAndUnknownReadings() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["MLX_WORKBENCH_RENDERS"] == "1")
         let date = Date(timeIntervalSince1970: 1_792_512_000)
@@ -270,11 +389,11 @@ final class HostedModelsRenderTests: XCTestCase {
 
 private actor HostSummaryReads {
     var requested: [UUID] = []
-    func fetch(_ host: ModelHost) throws -> HostInventory {
+    func fetch(_ host: ModelHost, instances: [String]? = nil) throws -> HostInventory {
         requested.append(host.id)
         if requested.count > 1 { throw URLError(.cannotConnectToHost) }
         return HostInventory(host: host, models: [
-            HostedModel(hostID: host.id, modelID: "loaded", name: "Qwen coding model with a long model name", isLoaded: true, memoryBytes: 5_000_000_000),
+            HostedModel(hostID: host.id, modelID: "loaded", name: "Qwen coding model with a long model name", isLoaded: true, memoryBytes: 5_000_000_000, loadedInstanceIDs: instances),
             HostedModel(hostID: host.id, modelID: "unknown", name: "Unknown residency")
         ], capturedAt: Date(timeIntervalSince1970: 1_792_512_000),
             activity: HostActivity(state: .unknown, checkedAt: Date(timeIntervalSince1970: 1_792_512_000), detail: "Other clients' activity is unavailable."))

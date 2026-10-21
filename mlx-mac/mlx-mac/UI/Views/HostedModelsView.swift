@@ -4,6 +4,7 @@ struct HostedModelsView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var hosts: ModelHostsCoordinator
     let onRouteSelection: (AppRoute) -> Void
+    private let suppliedHostSelection: Binding<UUID?>?
     @State private var selectedHostID: UUID?
     @State private var selectedModelID: String?
     @State private var editor: ModelHost?
@@ -13,12 +14,15 @@ struct HostedModelsView: View {
     @State private var selectedInstanceID: String?
     @State private var resourceRequest: HostResourceRequest?
 
-    init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
+    init(appHost: AppHost, selectedHostID: Binding<UUID?>? = nil, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost; self.onRouteSelection = onRouteSelection
+        self.suppliedHostSelection = selectedHostID
+        _selectedHostID = State(initialValue: selectedHostID == nil ? appHost.modelHosts.hosts.first?.id : nil)
         _hosts = ObservedObject(wrappedValue: appHost.modelHosts)
     }
 
-    private var selectedHost: ModelHost? { hosts.hosts.first { $0.id == selectedHostID } ?? hosts.hosts.first }
+    private var hostSelection: Binding<UUID?> { suppliedHostSelection ?? $selectedHostID }
+    private var selectedHost: ModelHost? { hosts.hosts.first { $0.id == hostSelection.wrappedValue } }
     private var inventory: HostInventory? { selectedHost.flatMap { hosts.inventories[$0.id] } }
     private var selectedModel: HostedModel? { inventory?.models.first { $0.id == selectedModelID } }
     private var rows: [HostedModel] {
@@ -67,9 +71,11 @@ struct HostedModelsView: View {
                     }
                 } else {
                     ContentUnavailableView {
-                        Label("Connect a local model host", systemImage: "externaldrive.connected.to.line.below")
+                        Label(hosts.hosts.isEmpty ? "Connect a local model host" : "Choose a model host", systemImage: "externaldrive.connected.to.line.below")
                     } description: {
-                        Text("See models managed by Ollama, LM Studio, ComfyUI or an OpenAI-compatible server.")
+                        Text(hosts.hosts.isEmpty
+                            ? "See models managed by Ollama, LM Studio, ComfyUI or an OpenAI-compatible server."
+                            : "Choose a saved connection above, or add another model host.")
                     } actions: {
                         Button("Add host…") { addHost() }.buttonStyle(.workbenchPrimary)
                     }
@@ -79,13 +85,20 @@ struct HostedModelsView: View {
         }
         .accessibilityIdentifier("hosted-models-workspace")
         .onChange(of: appHost.hostedLibraryHostRequest, initial: true) { _, _ in
+            guard suppliedHostSelection == nil else { return }
             do {
                 guard let host = try appHost.consumeHostedLibraryHostRequest() else { return }
-                selectedHostID = host.id; selectedModelID = nil; selectedInstanceID = nil
+                hostSelection.wrappedValue = host.id; selectedModelID = nil; selectedInstanceID = nil
                 query = ""; actionError = nil
             } catch { actionError = AppHost.render(error) }
         }
-        .sheet(item: $editor) { ModelHostEditor(host: $0, coordinator: hosts) }
+        .onChange(of: hostSelection.wrappedValue) { _, _ in selectedModelID = nil; selectedInstanceID = nil }
+        .onChange(of: hosts.hosts) { _, saved in
+            if let id = hostSelection.wrappedValue, !saved.contains(where: { $0.id == id }) { hostSelection.wrappedValue = nil }
+        }
+        .sheet(item: $editor) { host in
+            ModelHostEditor(host: host, coordinator: hosts, onSaved: { hostSelection.wrappedValue = $0.id })
+        }
         .sheet(item: $resourceRequest) { request in
             HostResourceSheet(coordinator: hosts, hostID: request.hostID, selection: request.selection)
         }
@@ -102,9 +115,9 @@ struct HostedModelsView: View {
 
     private var hostControls: some View {
         HStack {
-            Picker("Host", selection: Binding(get: { selectedHost?.id }, set: { selectedHostID = $0; selectedModelID = nil })) {
-                if hosts.hosts.isEmpty { Text("No hosts").tag(UUID?.none) }
-                ForEach(hosts.hosts) { Text($0.name).tag(Optional($0.id)) }
+            Picker("Host", selection: hostSelection) {
+                Text(hosts.hosts.isEmpty ? "No hosts" : "Select a host").tag(UUID?.none)
+                ForEach(hosts.hosts) { Text(LibrarySource.host($0.id).title(in: hosts.hosts)).tag(Optional($0.id)) }
             }.frame(maxWidth: 320).accessibilityIdentifier("model-host-picker")
             if let host = selectedHost {
                 Menu {
@@ -436,6 +449,7 @@ struct HostResourceSheet: View {
 private struct ModelHostEditor: View {
     @State var host: ModelHost
     @ObservedObject var coordinator: ModelHostsCoordinator
+    var onSaved: (ModelHost) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
     @State private var token = ""
     @State private var replaceToken = false
@@ -497,7 +511,7 @@ private struct ModelHostEditor: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Save host") {
-                    do { try coordinator.save(host, token: token, replaceToken: replaceToken); dismiss() }
+                    do { try coordinator.save(host, token: token, replaceToken: replaceToken); onSaved(host); dismiss() }
                     catch { self.error = AppHost.render(error) }
                 }.keyboardShortcut(.defaultAction).buttonStyle(.workbenchPrimary)
                     .disabled(host.validationMessage != nil || connectionCheck.isChecking)
