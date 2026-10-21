@@ -1592,7 +1592,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Discover-failed-recovery")
 
         select("Library")
-        selectRadioOption("LM Studio", in: "library-source")
+        app.popUpButtons["library-source"].firstMatch.click()
+        app.menuItems["LM Studio files"].click()
         XCTAssertTrue(app.buttons["Scan Again"].waitForExistence(timeout: 15))
         XCTAssertFalse(app.textFields.firstMatch.exists, "The shelf reads LM Studio's folders; it takes no typed path")
         capture("LMStudio-shelf")
@@ -2845,7 +2846,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         launch(appearance: "Light", route: "lmstudio", isolatedHome: true, forcedRoute: "lmstudio")
         XCTAssertTrue(app.buttons["Scan Again"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.buttons["Library"].value as? String, "Selected")
-        XCTAssertEqual(app.radioGroups["library-source"].radioButtons["LM Studio"].value as? Int, 1)
+        XCTAssertEqual(app.popUpButtons["library-source"].firstMatch.value as? String, "LM Studio files")
         capture("Library-legacy-lmstudio")
     }
 
@@ -3802,11 +3803,12 @@ final class SetupAssistantUITests: XCTestCase {
         library.click()
         XCTAssertTrue(app.buttons["Settings"].exists)
         XCTAssertTrue(app.buttons["Discover"].exists)
-        let sourcePicker = app.radioGroups["library-source"]
+        let sourcePicker = app.popUpButtons["library-source"].firstMatch
         let heading = app.staticTexts["page-heading-models"]
         XCTAssertTrue(sourcePicker.exists)
         XCTAssertTrue(heading.exists)
-        XCTAssertTrue(sourcePicker.radioButtons["All models"].isHittable)
+        XCTAssertTrue(sourcePicker.isHittable)
+        XCTAssertEqual(sourcePicker.value as? String, "All local models")
         XCTAssertTrue(heading.isHittable)
         XCTAssertGreaterThanOrEqual(sourcePicker.frame.minY, app.windows.firstMatch.frame.minY)
         XCTAssertLessThanOrEqual(sourcePicker.frame.maxY, heading.frame.minY)
@@ -3863,7 +3865,8 @@ final class SetupAssistantUITests: XCTestCase {
                       "The wide inspector must close before opening compact model details.")
         capture("10b-library-compact-content")
         print("Compact Library bounds: window=\(window.frame), source=\(sourcePicker.frame), heading=\(heading.frame)")
-        XCTAssertTrue(sourcePicker.radioButtons["All models"].isHittable, app.debugDescription)
+        XCTAssertTrue(sourcePicker.isHittable, app.debugDescription)
+        XCTAssertEqual(sourcePicker.value as? String, "All local models")
         XCTAssertTrue(heading.isHittable)
         XCTAssertGreaterThanOrEqual(sourcePicker.frame.minY, app.windows.firstMatch.frame.minY)
         XCTAssertLessThanOrEqual(sourcePicker.frame.maxY, heading.frame.minY)

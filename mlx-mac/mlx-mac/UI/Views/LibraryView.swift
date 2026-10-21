@@ -297,14 +297,42 @@ struct LibraryRevealRequest: Equatable {
     }
 }
 
-enum LibrarySource: String, CaseIterable, Identifiable {
+enum LibrarySource: Hashable, Identifiable {
     case allModels, lmStudio, hosted
+    case host(UUID)
     var id: Self { self }
-    var title: String {
+
+    static let workspaces: [Self] = [.allModels, .lmStudio, .hosted]
+
+    static func available(in hosts: [ModelHost]) -> [Self] {
+        [.allModels] + hosts.map { .host($0.id) } + [.hosted, .lmStudio]
+    }
+
+    var workspace: Self {
+        if case .host = self { return .hosted }
+        return self
+    }
+
+    func resolved(in hosts: [ModelHost]) -> Self {
+        guard case .host(let id) = self else { return self }
+        return hosts.contains(where: { $0.id == id }) ? self : .hosted
+    }
+
+    func title(in hosts: [ModelHost]) -> String {
         switch self {
-        case .allModels: return "All models"
-        case .lmStudio: return "LM Studio"
+        case .allModels: return "All local models"
+        case .lmStudio: return "LM Studio files"
         case .hosted: return "Hosted models"
+        case .host(let id):
+            guard let host = hosts.first(where: { $0.id == id }) else { return "Hosted models" }
+            func name(_ host: ModelHost) -> String {
+                host.name == host.provider.title ? host.name : "\(host.name) · \(host.provider.title)"
+            }
+            let peers = hosts.filter { name($0) == name(host) }
+            guard peers.count > 1 else { return name(host) }
+            let address = "\(name(host)) · \(host.baseURL)"
+            return peers.filter { $0.baseURL == host.baseURL }.count > 1
+                ? "\(address) · \(host.id.uuidString.prefix(8))" : address
         }
     }
 }
@@ -312,29 +340,34 @@ enum LibrarySource: String, CaseIterable, Identifiable {
 /// Source-specific views share Library's inventory and preserve the main table's state.
 struct LibraryWorkspace: View {
     @ObservedObject var appHost: AppHost
+    @ObservedObject private var hosts: ModelHostsCoordinator
     let lmStudioRequested: Bool
     let sourceHome: URL
     let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var source: LibrarySource
+    @State private var selectedHostedID: UUID?
     @State private var visitedSources: Set<LibrarySource>
     @State private var revealRequest: LibraryRevealRequest?
+    @State private var sourceError: String?
 
     init(appHost: AppHost, initialSource: LibrarySource = .allModels, lmStudioRequested: Bool = false,
          sourceHome: URL = WorkbenchStatePaths.userHome(), onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
+        _hosts = ObservedObject(wrappedValue: appHost.modelHosts)
         self.lmStudioRequested = lmStudioRequested
         self.sourceHome = sourceHome
         self.onRouteSelection = onRouteSelection
-        let initial = lmStudioRequested ? LibrarySource.lmStudio : initialSource
-        _source = State(initialValue: initial)
-        _visitedSources = State(initialValue: [initial])
+        let initial = (lmStudioRequested ? LibrarySource.lmStudio : initialSource).resolved(in: appHost.modelHosts.hosts)
+        _source = State(initialValue: initial.workspace)
+        _selectedHostedID = State(initialValue: { if case .host(let id) = initial { return id }; return nil }())
+        _visitedSources = State(initialValue: [initial.workspace])
     }
 
     var body: some View {
         ZStack {
-            ForEach(LibrarySource.allCases.filter { visitedSources.contains($0) }) { destination in
-                let active = isRouteActive && source == destination
+            ForEach(LibrarySource.workspaces.filter { visitedSources.contains($0) }) { destination in
+                let active = isRouteActive && source.workspace == destination
                 sourceView(destination)
                     .environment(\.isRouteActive, isRouteActive && active)
                     .opacity(active ? 1 : 0)
@@ -344,33 +377,68 @@ struct LibraryWorkspace: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: source) { _, selected in visitedSources.insert(selected) }
+        .onChange(of: source) { _, selected in visitedSources.insert(selected.workspace) }
         .onChange(of: lmStudioRequested) { _, requested in
             if requested { source = .lmStudio; visitedSources.insert(.lmStudio) }
         }
         .onChange(of: appHost.libraryRevealRequest, initial: true) { receiveRevealRequest() }
-        .onChange(of: isRouteActive, initial: true) { receiveRevealRequest() }
-        .onChange(of: appHost.hostedLibraryRequested, initial: true) { _, requested in
-            if requested { source = .hosted; visitedSources.insert(.hosted); appHost.hostedLibraryRequested = false }
+        .onChange(of: isRouteActive, initial: true) { receiveRevealRequest(); receiveHostedRequest() }
+        .onChange(of: appHost.hostedLibraryRequested, initial: true) { receiveHostedRequest() }
+        .onChange(of: appHost.hostedLibraryHostRequest, initial: true) { receiveHostedRequest() }
+        .onChange(of: hosts.hosts) { _, saved in
+            if let id = selectedHostedID, !saved.contains(where: { $0.id == id }) {
+                selectedHostedID = nil
+                if source == .hosted { sourceError = "The selected host was removed. Choose a saved host or add a connection." }
+            }
         }
     }
 
     @ViewBuilder private func sourceView(_ source: LibrarySource) -> some View {
         switch source {
         case .allModels:
-            LibraryView(appHost: appHost, revealRequest: revealRequest, sourceSelection: $source,
+            LibraryView(appHost: appHost, revealRequest: revealRequest, sourceSelection: sourceSelection,
                         onRouteSelection: onRouteSelection)
         case .lmStudio:
             VStack(spacing: 0) {
-                LibrarySourcePicker(selection: $source)
+                LibrarySourcePicker(selection: sourceSelection, hosts: hosts)
                 LMStudioView(appHost: appHost, home: sourceHome, onRouteSelection: navigateFromSource)
             }
-        case .hosted:
+        case .hosted, .host:
             VStack(spacing: 0) {
-                LibrarySourcePicker(selection: $source)
-                HostedModelsView(appHost: appHost, onRouteSelection: onRouteSelection)
+                LibrarySourcePicker(selection: sourceSelection, hosts: hosts)
+                ErrorBanner(text: sourceError).padding(.horizontal, WorkbenchSpacing.pageInset)
+                HostedModelsView(appHost: appHost, selectedHostID: hostSelection, onRouteSelection: onRouteSelection)
             }
         }
+    }
+
+    private var sourceSelection: Binding<LibrarySource> {
+        Binding(get: {
+            if source == .hosted, let id = selectedHostedID { return .host(id) }
+            return source
+        }, set: { selected in
+            let resolved = selected.resolved(in: hosts.hosts)
+            if case .host(let id) = resolved { selectedHostedID = id }
+            else if resolved == .hosted { selectedHostedID = nil }
+            sourceError = nil
+            source = resolved.workspace
+        })
+    }
+
+    private var hostSelection: Binding<UUID?> {
+        Binding(get: { selectedHostedID }, set: { id in
+            selectedHostedID = id
+            if id != nil { sourceError = nil }
+        })
+    }
+
+    private func receiveHostedRequest() {
+        guard isRouteActive, appHost.hostedLibraryRequested || appHost.hostedLibraryHostRequest != nil else { return }
+        source = .hosted; selectedHostedID = nil; visitedSources.insert(.hosted); sourceError = nil
+        appHost.hostedLibraryRequested = false
+        do {
+            if let host = try appHost.consumeHostedLibraryHostRequest() { selectedHostedID = host.id }
+        } catch { sourceError = AppHost.render(error) }
     }
 
     private func navigateFromSource(_ route: AppRoute) {
@@ -392,13 +460,23 @@ struct LibraryWorkspace: View {
 
 private struct LibrarySourcePicker: View {
     @Binding var selection: LibrarySource
+    @ObservedObject var hosts: ModelHostsCoordinator
 
     var body: some View {
         Picker("Source", selection: $selection) {
-            ForEach(LibrarySource.allCases) { Text($0.title).tag($0) }
+            Text(LibrarySource.allModels.title(in: hosts.hosts)).tag(LibrarySource.allModels)
+            Section("Model hosts") {
+                ForEach(LibrarySource.available(in: hosts.hosts).filter { if case .host = $0 { return true }; return false }) { source in
+                    Text(source.title(in: hosts.hosts)).tag(source)
+                }
+                Text(LibrarySource.hosted.title(in: hosts.hosts)).tag(LibrarySource.hosted)
+            }
+            Section("Local files") {
+                Text(LibrarySource.lmStudio.title(in: hosts.hosts)).tag(LibrarySource.lmStudio)
+            }
         }
-        .pickerStyle(.segmented)
-        .frame(maxWidth: 460)
+        .pickerStyle(.menu)
+        .frame(maxWidth: 420)
         .padding(.horizontal, WorkbenchSpacing.pageInset)
         .padding(.top, WorkbenchSpacing.pageInset)
         .accessibilityIdentifier("library-source")
@@ -500,7 +578,7 @@ struct LibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let sourceSelection { LibrarySourcePicker(selection: sourceSelection) }
+            if let sourceSelection { LibrarySourcePicker(selection: sourceSelection, hosts: appHost.modelHosts) }
             WorkbenchPageHeading(route: .library)
             if let revealError {
                 InlineMessage(kind: .warning, text: revealError,

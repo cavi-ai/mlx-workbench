@@ -35,8 +35,9 @@ final class HostedModelsUITests: XCTestCase {
         app.launch()
         let library = app.buttons["Library"].firstMatch
         XCTAssertTrue(library.waitForExistence(timeout: 15)); library.click()
-        let source = app.radioGroups["library-source"].radioButtons["Hosted models"]
+        let source = app.popUpButtons["library-source"].firstMatch
         XCTAssertTrue(source.waitForExistence(timeout: 15)); source.click()
+        app.menuItems["Hosted models"].click()
         app.buttons["Add host…"].firstMatch.click()
         let provider = app.sheets.popUpButtons.matching(NSPredicate(format: "value == %@", "Ollama")).firstMatch
         XCTAssertTrue(provider.waitForExistence(timeout: 5)); provider.click()
@@ -101,8 +102,9 @@ final class HostedModelsUITests: XCTestCase {
         app.launch()
         let library = app.buttons["Library"].firstMatch
         XCTAssertTrue(library.waitForExistence(timeout: 15)); library.click()
-        let source = app.radioGroups["library-source"].radioButtons["Hosted models"]
+        let source = app.popUpButtons["library-source"].firstMatch
         XCTAssertTrue(source.waitForExistence(timeout: 15)); source.click()
+        app.menuItems["Hosted models"].click()
         let addHostButton = app.buttons["Add host…"].firstMatch
         XCTAssertTrue(addHostButton.waitForExistence(timeout: 5)); addHostButton.click()
         let url = app.textFields["model-host-url"]
@@ -223,15 +225,22 @@ final class HostedModelsUITests: XCTestCase {
         library.click()
         // A different selected connection must not win over an explicit toolbar request.
         clickVisibleControl(app.buttons["Add host…"].firstMatch, in: app)
-        let secondName = app.sheets.textFields.matching(NSPredicate(format: "value == %@", "Ollama")).firstMatch
+        let secondHostName = "Other host"
+        let secondHostProvider = "Ollama"
+        let secondHostTitle = "\(secondHostName) · \(secondHostProvider)"
+        let secondProvider = app.sheets.popUpButtons.firstMatch
+        XCTAssertTrue(secondProvider.waitForExistence(timeout: 5))
+        XCTAssertEqual(secondProvider.value as? String, secondHostProvider)
+        let secondName = app.sheets.textFields.matching(NSPredicate(format: "value == %@", secondHostProvider)).firstMatch
         XCTAssertTrue(secondName.waitForExistence(timeout: 5))
-        secondName.click(); secondName.typeKey("a", modifierFlags: .command); secondName.typeText("Other host")
+        secondName.click(); secondName.typeKey("a", modifierFlags: .command); secondName.typeText(secondHostName)
         let secondURL = app.textFields["model-host-url"]
         secondURL.click(); secondURL.typeKey("a", modifierFlags: .command); secondURL.typeText("http://127.0.0.1:1")
         app.buttons["Save host"].click()
         let hostPicker = app.popUpButtons["model-host-picker"]
         XCTAssertTrue(hostPicker.waitForExistence(timeout: 5)); clickVisibleControl(hostPicker, in: app)
-        app.menuItems["Other host"].click()
+        app.menuItems[secondHostTitle].click()
+        XCTAssertEqual(hostPicker.value as? String, secondHostTitle)
         app.buttons["Overview"].firstMatch.click()
         let memory = app.buttons["system-memory-header"]
         XCTAssertTrue(memory.waitForExistence(timeout: 5)); memory.click()

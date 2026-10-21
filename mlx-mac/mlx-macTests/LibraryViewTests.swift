@@ -4,6 +4,33 @@ import XCTest
 @testable import mlx_workbench
 
 final class LibraryViewTests: XCTestCase {
+    func testSourceChoicesTreatEverySavedHostEquallyAndPreserveLocalFiles() {
+        let hosts = [
+            ModelHost(name: "Shared", provider: .ollama, baseURL: "http://127.0.0.1:11434"),
+            ModelHost(name: "Shared", provider: .lmStudio, baseURL: "http://127.0.0.1:1234"),
+            ModelHost(name: "Images", provider: .comfyUI, baseURL: "http://127.0.0.1:8188")
+        ]
+        XCTAssertEqual(LibrarySource.available(in: hosts), [.allModels] + hosts.map { .host($0.id) } + [.hosted, .lmStudio])
+        XCTAssertEqual(LibrarySource.available(in: []), [.allModels, .hosted, .lmStudio])
+        XCTAssertEqual(LibrarySource.host(hosts[0].id).title(in: hosts), "Shared · Ollama")
+        XCTAssertEqual(LibrarySource.host(hosts[1].id).title(in: hosts), "Shared · LM Studio")
+        XCTAssertEqual(LibrarySource.lmStudio.title(in: hosts), "LM Studio files")
+        XCTAssertEqual(LibrarySource.allModels.title(in: hosts), "All local models")
+    }
+
+    func testSourceIdentitySurvivesHostEditsAndRemovalReturnsToHostedSelection() {
+        var first = ModelHost(name: "Same", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+        let second = ModelHost(name: "Same", provider: .ollama, baseURL: "http://127.0.0.1:11435")
+        let selected = LibrarySource.host(first.id)
+        XCTAssertNotEqual(selected.title(in: [first, second]), LibrarySource.host(second.id).title(in: [first, second]))
+        first.name = "Renamed"
+        XCTAssertEqual(selected.resolved(in: [first, second]), selected)
+        XCTAssertEqual(selected.title(in: [first, second]), "Renamed · Ollama")
+        XCTAssertEqual(selected.workspace, .hosted)
+        XCTAssertEqual(selected.resolved(in: [second]), .hosted)
+        XCTAssertEqual(LibrarySource.lmStudio.resolved(in: [second]), .lmStudio)
+    }
+
     func testEmptyInventoryOffersAcquisitionWithoutClaimingFiltersHidModels() {
         let empty = LibraryEmptyPresentation(modelCount: 0, search: "", readiness: nil, quantization: nil)
         XCTAssertTrue(empty.showsAcquisition)

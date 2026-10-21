@@ -8,9 +8,11 @@
 
 **Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. Families with multiple variants expand to show their models; single variants appear directly in the table.
 
-The **Source** picker switches between **All models**, **LM Studio** and **Hosted models**. Switching sources preserves the main table's filters and selected model, without changing configuration or starting conversion or serving.
+The **Source** menu offers **All local models** and each saved model host, including Ollama, LM Studio and ComfyUI. Host choices use their saved identity and show their provider; connections with matching names and providers include their address to distinguish them. Adding, editing or removing a saved connection updates the menu. **Hosted models** opens host selection and connection setup. The separate **Local files** group contains **LM Studio files**.
 
-**Show in Library** on a source model opens **All models**, clears search and readiness/quantization filters, and selects the model in the inspector. This explicit reveal leaves column and grouping preferences intact.
+Switching sources preserves the main table's filters and selected model without refreshing a host, changing configuration or starting conversion or serving. Selecting a host shows that exact connection. If it is removed, Library returns to hosted selection rather than displaying another host.
+
+**Show in Library** on a source model opens **All local models**, clears search and readiness/quantization filters, and selects the model in the inspector. This explicit reveal leaves column and grouping preferences intact.
 
 | Column | Meaning |
 |---|---|
@@ -167,9 +169,9 @@ The engine labels each model with a task type. The type decides what the app off
 
 Drafters such as llama.cpp `dflash` or `eagle3` GGUFs borrow their target's embeddings and output head, so they are never served on their own.
 
-## LM Studio source
+## LM Studio files
 
-Choose **Library → Source → LM Studio** to list models in LM Studio's downloads folder from the last Library scan; it does not scan on its own. The folder comes from `downloadsFolder` in `~/.lmstudio/settings.json`. The view states, per format, whether the last scan reaches that folder. Existing saved LM Studio navigation opens this source inside Library.
+Choose **LM Studio files** in the Source menu's **Local files** group to list models in LM Studio's downloads folder from the last Library scan; it does not scan on its own. This filesystem shelf is separate from a saved LM Studio server connection. The folder comes from `downloadsFolder` in `~/.lmstudio/settings.json`. The view states, per format, whether the last scan reaches that folder. Existing saved LM Studio navigation opens this shelf inside Library.
 
 Two lanes are ranked by fit:
 

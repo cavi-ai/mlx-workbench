@@ -149,7 +149,7 @@ struct ContentView: View {
         case .activity:
             JobsView(appHost: appHost, onRouteSelection: navigate)
         case .reclaim:
-            DuplicatesView(appHost: appHost)
+            DuplicatesView(appHost: appHost, onRouteSelection: navigate)
         case .clientSetup:
             WireView(appHost: appHost, onRouteSelection: navigate)
         case .health:

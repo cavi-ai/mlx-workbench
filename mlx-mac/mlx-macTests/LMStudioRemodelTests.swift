@@ -957,22 +957,22 @@ final class LMStudioRenderTests: XCTestCase {
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
         defer { window.close() }
-        func controls(_ view: NSView) -> [NSSegmentedControl] {
-            (view as? NSSegmentedControl).map { [$0] } ?? view.subviews.flatMap(controls)
+        func controls(_ view: NSView) -> [NSPopUpButton] {
+            (view as? NSPopUpButton).map { [$0] } ?? view.subviews.flatMap(controls)
         }
         try await Task.sleep(for: .milliseconds(100))
-        let picker = try XCTUnwrap(controls(hosting).first { $0.segmentCount == 3 && $0.label(forSegment: 0) == "All models" && $0.label(forSegment: 2) == "Hosted models" })
-        XCTAssertEqual(picker.selectedSegment, 1)
+        let picker = try XCTUnwrap(controls(hosting).first { $0.itemTitles.contains("All local models") && $0.itemTitles.contains("Hosted models") })
+        XCTAssertEqual(picker.selectedItem?.title, "LM Studio files")
         let request = LibraryRevealRequest(modelPath: models[1].item.path)
         app.libraryRevealRequest = request
         try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(picker.selectedSegment, 1, "Hidden pages must retain the request until navigation arrives")
+        XCTAssertEqual(picker.selectedItem?.title, "LM Studio files", "Hidden pages must retain the request until navigation arrives")
         XCTAssertEqual(app.libraryRevealRequest, request)
         XCTAssertEqual(app.selectedModelPath, models[0].item.path)
         hosting.rootView = LibraryWorkspace(appHost: app, initialSource: .lmStudio)
             .environment(\.isRouteActive, true).frame(width: 814, height: 900)
         for _ in 0..<100 where app.selectedModelPath != models[1].item.path { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertEqual(picker.selectedSegment, 0)
+        XCTAssertEqual(picker.selectedItem?.title, "All local models")
         XCTAssertEqual(app.selectedModelPath, models[1].item.path)
         XCTAssertNil(app.libraryRevealRequest)
         XCTAssertEqual(app.modelWorkflow.workflow, originalWorkflow)
@@ -1049,16 +1049,14 @@ final class LMStudioRenderTests: XCTestCase {
         }
         try await Task.sleep(for: .milliseconds(300))
         try capture("all-models")
-        let picker = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSSegmentedControl }
-            .first { $0.segmentCount == 3 && $0.label(forSegment: 0) == "All models" && $0.label(forSegment: 2) == "Hosted models" })
-        let action = try XCTUnwrap(picker.action)
-        picker.selectedSegment = 1
-        XCTAssertTrue(picker.sendAction(action, to: picker.target))
+        let picker = try XCTUnwrap(descendants(hosting).compactMap { $0 as? NSPopUpButton }
+            .first { $0.itemTitles.contains("All local models") && $0.itemTitles.contains("Hosted models") })
+        let menu = try XCTUnwrap(picker.menu)
+        menu.performActionForItem(at: picker.indexOfItem(withTitle: "LM Studio files"))
         try await Task.sleep(for: .milliseconds(400))
         try capture("lm-studio-source")
-        XCTAssertEqual(picker.selectedSegment, 1)
-        picker.selectedSegment = 0
-        XCTAssertTrue(picker.sendAction(action, to: picker.target))
+        XCTAssertEqual(picker.selectedItem?.title, "LM Studio files")
+        menu.performActionForItem(at: picker.indexOfItem(withTitle: "All local models"))
         try await Task.sleep(for: .milliseconds(250))
         try capture("all-models-return")
         XCTAssertEqual(app.selectedModelPath, models[0].item.path)
@@ -1066,7 +1064,7 @@ final class LMStudioRenderTests: XCTestCase {
             .environment(\.isRouteActive, true).frame(width: 814, height: 1000)
             .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
         try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(picker.selectedSegment, 1)
+        XCTAssertEqual(picker.selectedItem?.title, "LM Studio files")
         try capture("legacy-lm-studio-request")
         XCTAssertEqual(app.selectedModelPath, models[0].item.path)
         XCTAssertEqual(app.modelWorkflow.workflow, workflow)

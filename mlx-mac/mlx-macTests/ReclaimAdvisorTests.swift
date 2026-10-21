@@ -305,6 +305,33 @@ final class ReclaimAdvisorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: model.path))
     }
 
+    func testDuplicateFolderReviewProtectsTheKeeperAndRechecksTheCopyAtConfirmation() async throws {
+        let root = try makeRoot()
+        let keeper = root.appendingPathComponent("keeper")
+        let copy = root.appendingPathComponent("copy")
+        for folder in [keeper, copy] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data("{\"quantization\":{\"bits\":4}}".utf8).write(to: folder.appendingPathComponent("config.json"))
+            try Data("weights".utf8).write(to: folder.appendingPathComponent("model.safetensors"))
+        }
+        let group = DuplicateGroup(kind: "exact", modelKey: "qwen", quantization: "4-bit", quantizations: nil, reclaimableBytes: 7,
+            keep: keeper.path, redundant: [copy.path], members: nil, count: nil, groupId: "folder-duplicate")
+        let coordinator = ReclaimCoordinator()
+        coordinator.mlxRoots = { [root.path] }
+        coordinator.quarantineDir = { root.appendingPathComponent("quarantine").path }
+        coordinator.analyze(snapshot: nil, duplicates: [group], lastUsedByPath: [:], isVerified: { _ in false }, occupiedPaths: [])
+        await coordinator.previewFolder(keeper.path)
+        XCTAssertNil(coordinator.folderPlan)
+        XCTAssertNotNil(coordinator.lastError)
+        await coordinator.previewFolder(copy.path)
+        XCTAssertNotNil(coordinator.folderPlan)
+        coordinator.protectedPaths = { [copy.path] }
+        await coordinator.confirmFolder()
+        XCTAssertNotNil(coordinator.lastError)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: keeper.path))
+    }
+
     func testPreviewConfirmMovesFilesAndDropsOpportunity() throws {
         let root = try makeRoot()
         let quarantine = try makeRoot()

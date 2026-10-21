@@ -6,6 +6,10 @@
 
 **Analyze** ranks reclaim opportunities from evidence the app already holds:
 
+The scan status and **Scan coverage** show the folders checked by the last successful scan. **Review scan folders…** opens Settings; add the shared model folder there and rescan if it is absent. Connecting Ollama, LM Studio, ComfyUI or another host does not add its server-side folders to the local disk scan. The scan compares GGUF files and recognized MLX folders, and includes Ollama stores beneath those roots. Standalone model assets, including ComfyUI checkpoints, are not compared.
+
+Folder copies that need a separate review remain visible in the headline as an item count instead of zero bytes. **Review folder…** beside a matching local MLX copy opens its guarded preview. Scan-reported copy sizes are logical file sizes, not guaranteed physical disk savings; shared files and filesystem storage sharing can change the space released. Failed or missing scans are labeled, and retained results remain tied to their previous coverage and date.
+
 | Opportunity | Evidence |
 |---|---|
 | Stale | No recorded use for the **Stale after** period (default 60 days, **Settings → Advisors**) |
@@ -24,7 +28,7 @@ GGUF files can be quarantined directly. A local MLX folder needs **Review model 
 
 - Folders with symbolic links, hard-linked or shared files, or a Hugging Face cache layout
 - Configured roots themselves
-- Active or preferred models and replacement-chain keepers
+- Active or preferred models, duplicate keepers and replacement-chain keepers
 
 ## Trash
 

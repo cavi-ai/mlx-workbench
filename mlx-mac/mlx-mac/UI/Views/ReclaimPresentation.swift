@@ -170,6 +170,7 @@ struct ReclaimLedger: Equatable {
         now: Date = Date()
     ) {
         let actionable = opportunities.filter(\.actionable)
+        let reviewOnly = opportunities.filter { !$0.actionable }
         readyBytes = actionable.reduce(0) { $0 + $1.bytes }
         readyCount = actionable.count
 
@@ -205,14 +206,30 @@ struct ReclaimLedger: Equatable {
         let largestReady = actionable.max { $0.bytes < $1.bytes }
         let largestQuarantined = quarantined.max { $0.bytes < $1.bytes }
         let largestTrashed = inTrash.max { ($0.record.bytes ?? -1) < ($1.record.bytes ?? -1) }
+        let readyFigure: Figure
+        let readyDetail: String
+        let readyCaption: String
+        if !hasLibrary {
+            readyFigure = .pending
+            readyDetail = "Waiting for the library scan"
+            readyCaption = ""
+        } else if readyCount == 0 && !reviewOnly.isEmpty {
+            readyFigure = .items(reviewOnly.count)
+            readyDetail = "\(ReclaimFormat.count(reviewOnly.count, "item")) \(reviewOnly.count == 1 ? "needs" : "need") review"
+            readyCaption = "Disk savings require review"
+        } else {
+            readyFigure = .bytes(readyBytes)
+            readyDetail = readyCount == 0 ? "No suggestions" : ReclaimFormat.count(readyCount, "suggestion")
+            readyCaption = !reviewOnly.isEmpty ? "\(ReclaimFormat.count(reviewOnly.count, "additional item")) to review" : readyCount > 0 ? "can move to quarantine now" : ""
+        }
 
         stages = [
             Stage(
                 id: .ready, title: "Ready to review",
-                figure: hasLibrary ? .bytes(readyBytes) : .pending,
-                detail: !hasLibrary ? "Waiting for the library scan" : readyCount == 0 ? "No suggestions" : ReclaimFormat.count(readyCount, "suggestion"),
-                caption: hasLibrary && readyCount > 0 ? "can move to quarantine now" : "",
-                subject: largestReady.map { "\(ReclaimNames.resolve(paths: $0.paths, models: models).title) · \($0.kind.title)" },
+                figure: readyFigure,
+                detail: readyDetail,
+                caption: readyCaption,
+                subject: (largestReady ?? reviewOnly.max { $0.bytes < $1.bytes }).map { "\(ReclaimNames.resolve(paths: $0.paths, models: models).title) · \($0.kind.title)" },
                 asOf: generatedAt.map { "as of " + WorkbenchRelativeTime.text(for: $0, style: .full, now: now) }
             ),
             Stage(
@@ -238,6 +255,33 @@ struct ReclaimLedger: Equatable {
 }
 
 // MARK: - Freshness and triggers
+
+/// Scope and freshness of duplicate evidence, independent of the number of matches.
+struct ReclaimScanCoverage: Equatable {
+    let heading: String
+    let emptyMessage: String
+
+    init(hasScan: Bool, isScanning: Bool, error: String?, roots: ScanRoots?) {
+        if isScanning {
+            heading = hasScan ? "Scanning · showing previous results" : "Scanning model folders"
+            emptyMessage = "Wait for the scan to finish before reviewing duplicate results."
+        } else if error != nil {
+            heading = hasScan ? "Scan failed · showing previous results" : "Scan failed"
+            emptyMessage = hasScan ? "Duplicate results are from the previous successful scan. Retry the scan to check current files." : "Duplicate detection is unavailable until a scan succeeds."
+        } else if !hasScan {
+            heading = "Model folders not scanned"
+            emptyMessage = "Scan your model folders to check for matching copies and model variants."
+        } else if roots == nil {
+            heading = "Scan coverage unavailable"
+            emptyMessage = "No duplicate groups were reported. This scan did not record which folders were checked."
+        } else {
+            heading = "Last successful scan"
+            emptyMessage = "No matching copies or model variants in the scanned folders."
+        }
+    }
+
+    static let limitations = "Checks GGUF files, recognized MLX folders and Ollama stores under the scanned roots. Standalone model assets, including ComfyUI checkpoints, are not compared. Connecting a host does not add its folders to the disk scan."
+}
 
 enum ReclaimFreshness {
     /// A preview, plan or apply is open: re-analysis would discard it.
@@ -389,7 +433,8 @@ struct ReclaimSuggestionRow: Identifiable, Equatable {
         kind = opportunity.kind
         name = ReclaimNames.resolve(paths: opportunity.paths, models: models)
         symbol = Self.symbol(for: opportunity.kind)
-        bytes = ReclaimFormat.byteCount(opportunity.bytes)
+        let reportedBytes = ReclaimFormat.byteCount(opportunity.bytes)
+        bytes = opportunity.kind == .crossRootDuplicate && !opportunity.actionable ? "Copy size: \(reportedBytes)" : reportedBytes
         evidence = "\(opportunity.evidence) · \(Self.confidenceWord(opportunity.confidence))"
         reason = opportunity.actionable ? nil : "Review only: not selectable here. Quarantine a local MLX folder with Review model folder…; shared Hugging Face cache snapshots are protected."
         paths = opportunity.paths
