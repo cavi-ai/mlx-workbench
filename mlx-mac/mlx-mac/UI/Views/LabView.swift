@@ -290,12 +290,18 @@ struct LabAuthorSheet: View {
     @State private var busy = false
     @State private var error: String?
     @State private var recipeSource = "cache"
+    @State private var confirmingDiscard = false
 
     init(lab: LabCoordinator) {
         self.lab = lab
         let workspace = lab.workspaceContext
         _workspace = State(initialValue: workspace)
         _recipe = StateObject(wrappedValue: StudyRecipeSession(request: { try await lab.request($0, in: workspace) }))
+    }
+
+    private var hasDraftChanges: Bool {
+        recipe.hasDraftChanges || baseline != nil || !prompt.isEmpty
+            || variable != "inference_steps" || alternate != "8"
     }
 
     private var selectedBaseline: LabValue? { recipeSource == "cache" ? recipe.manifest : baseline }
@@ -364,7 +370,9 @@ struct LabAuthorSheet: View {
             }
             ErrorBanner(text: error)
             HStack {
-                Button("Cancel") { dismiss() }.disabled(busy || recipe.isBusy)
+                Button("Cancel") {
+                    if hasDraftChanges { confirmingDiscard = true } else { dismiss() }
+                }.keyboardShortcut(.cancelAction).disabled(busy || recipe.isBusy)
                 Spacer()
                 Button("Validate pair") { Task { await validate() } }.disabled(request == nil || busy || recipe.isBusy || !lab.isCurrent(workspace))
                 Button("Create experiment") { Task { await create() } }
@@ -376,7 +384,11 @@ struct LabAuthorSheet: View {
         .padding(WorkbenchSpacing.pageInset)
         .frame(minWidth: WorkbenchSize.Lab.authorMinWidth, idealWidth: WorkbenchSize.Lab.authorIdealWidth,
                minHeight: 600, idealHeight: 730, maxHeight: 780)
-        .interactiveDismissDisabled(busy || recipe.isBusy)
+        .interactiveDismissDisabled(busy || recipe.isBusy || hasDraftChanges)
+        .confirmationDialog("Discard this experiment draft?", isPresented: $confirmingDiscard) {
+            Button("Discard changes", role: .destructive) { dismiss() }
+            Button("Keep editing", role: .cancel) {}
+        }
         .task { await recipe.load() }
     }
     private func chooseRecipe() {
