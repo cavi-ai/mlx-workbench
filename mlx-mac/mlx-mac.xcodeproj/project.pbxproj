@@ -32,7 +32,8 @@
 		28MEM002B /* SystemResourceHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28MEM002F /* SystemResourceHeader.swift */; };
 		28MEM001B /* SystemResourceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28MEM001F /* SystemResourceMonitor.swift */; };
 		26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF001 /* GGUFToRunRealDataUITests.swift */; };
-		26UIBLD101 /* SetupAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF101 /* SetupAssistantUITests.swift */; };
+		26UIBLD101 /* WorkbenchReviewUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26UIREF101 /* WorkbenchReviewUITests.swift */; };
+		5A1E5E770000000000000050 /* SetupAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E77000000000000004F /* SetupAssistantUITests.swift */; };
 		26UIBLD002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 24FREF01B /* XCTest.framework */; };
 		24BBLD000000 /* x in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF000000 /* x */; };
 
@@ -285,6 +286,12 @@
 		5A1E5E770000000000000042 /* agent-worker.py in Resources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000041 /* agent-worker.py */; };
 		5A1E5E770000000000000044 /* AgentWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000043 /* AgentWorker.swift */; };
 		5A1E5E770000000000000046 /* AgentWorkerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000045 /* AgentWorkerTests.swift */; };
+		5A1E5E770000000000000052 /* ComparisonPlaybackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000051 /* ComparisonPlaybackTests.swift */; };
+		5A1E5E770000000000000054 /* ComparisonInputReuseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000053 /* ComparisonInputReuseTests.swift */; };
+		5A1E5E770000000000000048 /* ComparisonPromptEditorViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000047 /* ComparisonPromptEditorViews.swift */; };
+		5A1E5E77000000000000004A /* ComparisonPickerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000049 /* ComparisonPickerViews.swift */; };
+		5A1E5E77000000000000004C /* ComparePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E77000000000000004B /* ComparePresentation.swift */; };
+		5A1E5E77000000000000004E /* CompareSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E77000000000000004D /* CompareSheets.swift */; };
 
 		A6C0100000000000000000B01 /* ComparisonInsights.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F01; };
 		A6C0100000000000000000B23 /* AgentTaskGuidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F23; };
@@ -336,7 +343,8 @@
 		28MEM002F /* SystemResourceHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemResourceHeader.swift; path = UI/SystemResourceHeader.swift; sourceTree = "<group>"; };
 		28MEM001F /* SystemResourceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemResourceMonitor.swift; path = Services/SystemResourceMonitor.swift; sourceTree = "<group>"; };
 		26UIREF001 /* GGUFToRunRealDataUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GGUFToRunRealDataUITests.swift; sourceTree = "<group>"; };
-		26UIREF101 /* SetupAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupAssistantUITests.swift; sourceTree = "<group>"; };
+		26UIREF101 /* WorkbenchReviewUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkbenchReviewUITests.swift; sourceTree = "<group>"; };
+		5A1E5E77000000000000004F /* SetupAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupAssistantUITests.swift; sourceTree = "<group>"; };
 		26UIREF002 /* mlx-workbenchUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "mlx-workbenchUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		24FREF000000 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = App.swift; path = App.swift; sourceTree = "<group>"; };
 
@@ -595,6 +603,12 @@
 		5A1E5E770000000000000041 /* agent-worker.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = "agent-worker.py"; path = "Resources/agent-worker.py"; sourceTree = "<group>"; };
 		5A1E5E770000000000000043 /* AgentWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentWorker.swift; path = Bridge/AgentWorker.swift; sourceTree = "<group>"; };
 		5A1E5E770000000000000045 /* AgentWorkerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentWorkerTests.swift; sourceTree = "<group>"; };
+		5A1E5E770000000000000051 /* ComparisonPlaybackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonPlaybackTests.swift; sourceTree = "<group>"; };
+		5A1E5E770000000000000053 /* ComparisonInputReuseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonInputReuseTests.swift; sourceTree = "<group>"; };
+		5A1E5E770000000000000047 /* ComparisonPromptEditorViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonPromptEditorViews.swift; path = UI/Views/ComparisonPromptEditorViews.swift; sourceTree = "<group>"; };
+		5A1E5E770000000000000049 /* ComparisonPickerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparisonPickerViews.swift; path = UI/Views/ComparisonPickerViews.swift; sourceTree = "<group>"; };
+		5A1E5E77000000000000004B /* ComparePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComparePresentation.swift; path = UI/Views/ComparePresentation.swift; sourceTree = "<group>"; };
+		5A1E5E77000000000000004D /* CompareSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CompareSheets.swift; path = UI/Views/CompareSheets.swift; sourceTree = "<group>"; };
 
 		24IREF001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = Info.plist; sourceTree = "<group>"; };
 
@@ -807,6 +821,10 @@
 				27STP002 /* SetupAssistantView.swift */,
 				24FREF000012 /* QuantView.swift */,
 				27ABCD10000000000000002B /* CompareMediaViews.swift */,
+				5A1E5E770000000000000047 /* ComparisonPromptEditorViews.swift */,
+				5A1E5E770000000000000049 /* ComparisonPickerViews.swift */,
+				5A1E5E77000000000000004B /* ComparePresentation.swift */,
+				5A1E5E77000000000000004D /* CompareSheets.swift */,
 				29ABCD100000000000000001 /* CompareImageInspection.swift */,
 				29ABCD100000000000000002 /* CompareVideoInspection.swift */,
 				2AABCD100000000000000001 /* CompareTextInspection.swift */,
@@ -908,6 +926,8 @@
 				24FREF069 /* HFRepoIDTests.swift */,
 				5A1E5E770000000000000033 /* RouteHandoffsTests.swift */,
 				5A1E5E770000000000000045 /* AgentWorkerTests.swift */,
+				5A1E5E770000000000000051 /* ComparisonPlaybackTests.swift */,
+				5A1E5E770000000000000053 /* ComparisonInputReuseTests.swift */,
 				24FREF04A /* ComparisonCoordinatorTests.swift */,
 				27ABCD10000000000000002C /* ComparisonMediaTests.swift */,
 				27ABCD10000000000000002E /* ReleaseUpdaterTests.swift */,
@@ -965,7 +985,8 @@
 			children = (
 				74B01426C206ADCCF1BCFD6E /* HostedModelsUITests.swift */,
 				26UIREF001 /* GGUFToRunRealDataUITests.swift */,
-				26UIREF101 /* SetupAssistantUITests.swift */,
+				26UIREF101 /* WorkbenchReviewUITests.swift */,
+				5A1E5E77000000000000004F /* SetupAssistantUITests.swift */,
                 26UIREF201 /* UnifiedWorkflowUITests.swift */,
 			);
 			path = "mlx-macUITests";
@@ -1134,7 +1155,8 @@
 			files = (
 				344ACD737165AB685172C35B /* HostedModelsUITests.swift in Sources */,
 				26UIBLD001 /* GGUFToRunRealDataUITests.swift in Sources */,
-				26UIBLD101 /* SetupAssistantUITests.swift in Sources */,
+				26UIBLD101 /* WorkbenchReviewUITests.swift in Sources */,
+				5A1E5E770000000000000050 /* SetupAssistantUITests.swift in Sources */,
                 26UIBLD201 /* UnifiedWorkflowUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1187,6 +1209,10 @@
 				24BBLD000011 /* x */,
 				24BBLD000012 /* x */,
 				27ABCD00000000000000002B /* CompareMediaViews.swift in Sources */,
+				5A1E5E770000000000000048 /* ComparisonPromptEditorViews.swift in Sources */,
+				5A1E5E77000000000000004A /* ComparisonPickerViews.swift in Sources */,
+				5A1E5E77000000000000004C /* ComparePresentation.swift in Sources */,
+				5A1E5E77000000000000004E /* CompareSheets.swift in Sources */,
 				29ABCD000000000000000001 /* CompareImageInspection.swift in Sources */,
 				29ABCD000000000000000002 /* CompareVideoInspection.swift in Sources */,
 				2AABCD000000000000000001 /* CompareTextInspection.swift in Sources */,
@@ -1375,6 +1401,8 @@
 				24BBLD06B /* HFRepoIDTests.swift in Sources */,
 				5A1E5E770000000000000034 /* RouteHandoffsTests.swift in Sources */,
 				5A1E5E770000000000000046 /* AgentWorkerTests.swift in Sources */,
+				5A1E5E770000000000000052 /* ComparisonPlaybackTests.swift in Sources */,
+				5A1E5E770000000000000054 /* ComparisonInputReuseTests.swift in Sources */,
 				24BBLD04C /* ComparisonCoordinatorTests.swift in Sources */,
 				27ABCD00000000000000002C /* ComparisonMediaTests.swift in Sources */,
 				27ABCD00000000000000002E /* ReleaseUpdaterTests.swift in Sources */,
