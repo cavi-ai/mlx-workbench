@@ -110,18 +110,14 @@ final class RuntimeInstallerTests: XCTestCase {
     func testPrerequisiteTimeoutStopsItsProcessAndChild() async throws {
         let root = try directory()
         let script = """
-        import pathlib, signal, subprocess, sys, time
-        child = subprocess.Popen(['/bin/sleep', '30'])
-        def stop(*args):
-            child.terminate()
-            child.wait()
-            sys.exit(0)
-        signal.signal(signal.SIGTERM, stop)
-        pathlib.Path('child').write_text(str(child.pid))
-        time.sleep(30)
+        /bin/sleep 30 &
+        child=$!
+        trap 'kill "$child"; wait "$child"; exit 0' TERM
+        printf '%s' "$child" > child
+        wait "$child"
         """
         do {
-            try await RuntimeInstaller.runInstall(repoRoot: root, executable: URL(fileURLWithPath: "/usr/bin/python3"),
+            try await RuntimeInstaller.runInstall(repoRoot: root, executable: URL(fileURLWithPath: "/bin/sh"),
                 arguments: ["-c", script], timeout: 1, terminationGrace: 0.2, onLine: { _ in })
             XCTFail("Expected a bounded prerequisite check")
         } catch RuntimeInstaller.InstallError.timedOut {
