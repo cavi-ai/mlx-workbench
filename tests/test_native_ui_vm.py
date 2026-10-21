@@ -1,8 +1,12 @@
 import importlib.util
+import fcntl
 import json
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -14,6 +18,209 @@ spec.loader.exec_module(vm)
 
 
 class NativeUIVMTests(unittest.TestCase):
+    def artifact(self, root, number, size=10):
+        run = root / f"ui-{number:012x}"
+        run.mkdir(parents=True)
+        (run / ".retention.json").write_text(json.dumps({"run_id": run.name}))
+        (run / "result").write_bytes(b"x" * size)
+        return run
+
+    def test_retention_bounds_count_and_bytes_and_preserves_latest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            runs = [self.artifact(root, n) for n in range(1, 5)]
+            for n, run in enumerate(runs):
+                vm.os.utime(run / ".retention.json", (n + 1, n + 1))
+            vm.prune_artifacts(root, keep=2, max_bytes=10**6)
+            self.assertEqual([r.exists() for r in runs], [False, False, True, True])
+            vm.prune_artifacts(root, keep=2, max_bytes=1)
+            self.assertFalse(runs[2].exists())
+            self.assertTrue(runs[3].exists())
+
+    def test_retention_protects_active_pinned_unknown_and_linked_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            active, pinned, unknown, linked = [self.artifact(root, n) for n in range(1, 5)]
+            (pinned / ".keep").touch()
+            (unknown / ".retention.json").unlink()
+            outside = root / "outside"
+            outside.write_text("preserve")
+            (linked / ".retention.json").unlink()
+            (linked / ".retention.json").symlink_to(outside)
+            (root / "ui-000000000005").symlink_to(pinned, target_is_directory=True)
+            with (active / ".lock").open("w") as lease:
+                fcntl.flock(lease, fcntl.LOCK_EX)
+                vm.prune_artifacts(root, keep=0, max_bytes=0)
+            self.assertTrue(all(r.exists() for r in [active, pinned, unknown, linked]))
+            self.assertEqual(outside.read_text(), "preserve")
+
+    def test_run_workspace_removes_inputs_even_on_failure_and_preserves_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            with self.assertRaisesRegex(RuntimeError, "fixture failure"):
+                with vm.artifact_workspace(root) as run:
+                    (run / "input").mkdir()
+                    (run / "input/source").write_text("temporary")
+                    (run / "output").mkdir()
+                    (run / "output/source-manifest.json").write_text("evidence")
+                    vm.prune_artifacts(root, keep=0, max_bytes=0)
+                    self.assertTrue(run.exists())
+                    raise RuntimeError("fixture failure")
+            self.assertFalse((run / "input").exists())
+            self.assertEqual((run / "output/source-manifest.json").read_text(), "evidence")
+
+    def test_unresolved_vm_teardown_keeps_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            with vm.artifact_workspace(root) as run:
+                (run / "input").mkdir()
+                (run / "input/source").write_text("shared input")
+                (run / ".vm-active").touch()
+            self.artifact(root, 1)
+            vm.prune_artifacts(root, keep=0, max_bytes=0)
+            self.assertEqual((run / "input/source").read_text(), "shared input")
+
+    def test_shared_evidence_lease_prevents_pruning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            evidence = self.artifact(root, 1)
+            self.artifact(root, 2)
+            with (evidence / ".lock").open("w") as lease:
+                fcntl.flock(lease, fcntl.LOCK_SH)
+                vm.prune_artifacts(root, keep=0, max_bytes=0)
+            self.assertTrue(evidence.exists())
+
+    def test_host_leases_evidence_before_creating_and_pruning_a_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory).resolve()
+            root = repo / ".build/native-ui/runs"
+            evidence = self.artifact(root, 1)
+            (evidence / "output").mkdir()
+            vm.os.utime(evidence / ".retention.json", (1, 1))
+            for number in range(2, 9):
+                self.artifact(root, number)
+            args = SimpleNamespace(tart="fixture-tart", vm_home=str(repo / "vms"), base_vm="fixture",
+                                   unit_evidence=str(evidence / "output"))
+            def run(*arguments):
+                self.assertTrue(evidence.exists())
+                self.assertTrue(arguments[-1].exists())
+            with patch.object(vm, "__file__", str(repo / "scripts/native_ui_vm.py")), \
+                    patch.object(vm.subprocess, "check_output", return_value="fixture\n"), \
+                    patch.object(vm, "host_run", side_effect=run) as execute:
+                vm.host(args)
+            execute.assert_called_once()
+            self.assertTrue(evidence.exists())
+
+    def test_retention_rejects_redirected_storage_and_preserves_external_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            external = root / "external"
+            external.mkdir()
+            (external / "data").write_text("preserve")
+            runs = root / "runs"
+            runs.symlink_to(external, target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "symbolic links"):
+                vm.prune_artifacts(runs)
+            runs.unlink()
+            old = self.artifact(runs, 1)
+            (old / "external").symlink_to(external, target_is_directory=True)
+            self.artifact(runs, 2)
+            vm.os.utime(old / ".retention.json", (1, 1))
+            vm.prune_artifacts(runs, keep=1)
+            self.assertFalse(old.exists())
+            self.assertEqual((external / "data").read_text(), "preserve")
+
+    def test_prune_only_does_not_start_a_vm(self):
+        with patch.object(vm.sys, "argv", ["native_ui_vm.py", "--prune-only"]), \
+                patch.object(vm, "prune_artifacts", return_value={"busy": False}), patch.object(vm, "host") as launch:
+            vm.main()
+        launch.assert_not_called()
+
+    def test_concurrent_pruners_do_not_recreate_a_deleted_run_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.artifact(root, 1)
+            with (root / ".prune.lock").open("w") as lease:
+                fcntl.flock(lease, fcntl.LOCK_EX)
+                self.assertTrue(vm.prune_artifacts(root)["busy"])
+                self.assertFalse((root / "ui-000000000001/.lock").exists())
+
+    def test_cleanup_preview_reports_the_same_files_as_cleanup_without_removing_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            runs = [self.artifact(root, n, size=n * 100) for n in range(1, 5)]
+            for number, run in enumerate(runs, 1):
+                vm.os.utime(run / ".retention.json", (number, number))
+            (runs[0] / ".keep").touch()
+            preview = vm.prune_artifacts(root, keep=1, dry_run=True)
+            states = {r["run_id"]: r["state"] for r in preview["runs"]}
+            self.assertEqual(states, {runs[0].name: "pinned", runs[1].name: "would_remove",
+                                     runs[2].name: "would_remove", runs[3].name: "retained"})
+            for number, run in enumerate(runs, 1):
+                self.assertEqual((run / "result").read_bytes(), b"x" * (number * 100))
+            cleanup = vm.prune_artifacts(root, keep=1)
+            removed = {r["run_id"] for r in cleanup["runs"] if r["state"] == "removed"}
+            self.assertEqual(removed, {runs[1].name, runs[2].name})
+            self.assertEqual(cleanup["removed_file_bytes"], preview["removable_file_bytes"])
+            self.assertTrue(runs[0].exists())
+            self.assertTrue(runs[3].exists())
+
+    def test_report_explains_protected_and_unmanaged_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            active, unresolved, pinned, unknown = [self.artifact(root, n) for n in range(1, 5)]
+            (unresolved / ".vm-active").touch()
+            (pinned / ".keep").symlink_to(root / "missing-pin-target")
+            (unknown / ".retention.json").unlink()
+            with (active / ".lock").open("w") as lease:
+                fcntl.flock(lease, fcntl.LOCK_EX)
+                report = vm.prune_artifacts(root, dry_run=True)
+            states = {r["run_id"]: r["state"] for r in report["runs"]}
+            self.assertEqual(states, {active.name: "active", unresolved.name: "vm_active",
+                                     pinned.name: "pinned", unknown.name: "unmanaged"})
+            self.assertEqual(report["removable_file_bytes"], 0)
+
+    def test_dry_run_requires_cleanup_and_never_starts_a_vm(self):
+        with patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture", "--dry-run"]), \
+                patch.object(vm, "host") as launch:
+            with self.assertRaises(SystemExit):
+                vm.main()
+            launch.assert_not_called()
+        with patch.object(vm.sys, "argv", ["native_ui_vm.py", "--prune-only", "--dry-run"]), \
+                patch.object(vm, "prune_artifacts", return_value={"busy": False}) as prune, \
+                patch.object(vm, "host") as launch:
+            vm.main()
+            self.assertTrue(prune.call_args.kwargs["dry_run"])
+            launch.assert_not_called()
+
+    def test_cleanup_cli_previews_applies_and_respects_another_process_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory).resolve()
+            script = repo / "scripts/native_ui_vm.py"
+            script.parent.mkdir()
+            shutil.copyfile(SCRIPT, script)
+            root = repo / ".build/native-ui/runs"
+            runs = [self.artifact(root, n) for n in range(1, 9)]
+            for number, run in enumerate(runs, 1):
+                vm.os.utime(run / ".retention.json", (number, number))
+            command = [sys.executable, str(script), "--prune-only"]
+            with (root / ".prune.lock").open("w") as lease:
+                fcntl.flock(lease, fcntl.LOCK_EX)
+                busy = subprocess.run(command, capture_output=True, text=True, timeout=10)
+                self.assertEqual(busy.returncode, 3, busy.stderr)
+                self.assertTrue(json.loads(busy.stdout)["busy"])
+                self.assertTrue(all(run.exists() for run in runs))
+            preview = json.loads(subprocess.check_output([*command, "--dry-run"], text=True, timeout=10))
+            self.assertTrue(all(run.exists() for run in runs))
+            expected = {r["run_id"] for r in preview["runs"] if r["state"] == "would_remove"}
+            self.assertEqual(expected, {r.name for r in runs[:3]})
+            cleanup = json.loads(subprocess.check_output(command, text=True, timeout=10))
+            self.assertEqual({r["run_id"] for r in cleanup["runs"] if r["state"] == "removed"}, expected)
+            self.assertEqual(cleanup["removed_file_bytes"], preview["removable_file_bytes"])
+            self.assertEqual([run.exists() for run in runs], [False] * 3 + [True] * 5)
+            repeat = json.loads(subprocess.check_output(command, text=True, timeout=10))
+            self.assertEqual(repeat["removed_file_bytes"], 0)
+
     def test_release_installation_requires_the_explicit_installation_route(self):
         selection = "mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup"
         routes = [[], ["--runtime-bundle", "bundle", "--ui-test", selection],

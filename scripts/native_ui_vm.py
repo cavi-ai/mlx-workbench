@@ -2,11 +2,14 @@
 """Run native UI tests on a disposable macOS VM, never on the host desktop."""
 
 import argparse
+from contextlib import ExitStack, contextmanager
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import signal
 import subprocess
@@ -16,6 +19,134 @@ import time
 import uuid
 
 RUNTIME_INSTALL_TEST = "mlx-workbenchUITests/SetupAssistantUITests/testPackagedRuntimeInstallsFromCleanSetup"
+ARTIFACT_KEEP_RUNS = 5
+ARTIFACT_MAX_BYTES = 2 * 1024**3
+
+
+def artifact_root(path):
+    path = Path(path)
+    if any(p.is_symlink() for p in (path, *path.parents)):
+        raise RuntimeError("Artifact storage must not use symbolic links.")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def artifact_bytes(path):
+    return sum((Path(directory) / name).lstat().st_size
+               for directory, _, names in os.walk(path, followlinks=False) for name in names)
+
+
+def protected_artifact_state(run):
+    if os.path.lexists(run / ".vm-active"):
+        return "vm_active"
+    if os.path.lexists(run / ".keep"):
+        return "pinned"
+    return None
+
+
+def prune_artifacts(root, keep=ARTIFACT_KEEP_RUNS, max_bytes=ARTIFACT_MAX_BYTES, dry_run=False):
+    """Prune only registered, unlocked runs; pins and unresolved VM leases survive."""
+    root = artifact_root(root)
+    report = {"schema": 1, "dry_run": dry_run, "busy": False,
+              "keep_runs": keep, "max_file_bytes": max_bytes, "runs": [],
+              "removable_file_bytes": 0, "removed_file_bytes": 0}
+    descriptor = os.open(root / ".prune.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "w") as lease:
+        try:
+            fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            report["busy"] = True
+            return report
+        report["runs"] = _prune_artifacts(root, keep, max_bytes, dry_run)
+    report["removable_file_bytes"] = sum(r["file_bytes"] for r in report["runs"]
+                                          if r["state"] in {"would_remove", "removed"})
+    report["removed_file_bytes"] = sum(r["file_bytes"] for r in report["runs"] if r["state"] == "removed")
+    return report
+
+
+def _prune_artifacts(root, keep, max_bytes, dry_run):
+    candidates = []
+    entries = []
+    def record(run, state, size=None):
+        entries.append({"run_id": run.name, "state": state, "file_bytes": size})
+    for run in root.iterdir():
+        if not re.fullmatch(r"ui-[0-9a-f]{12}", run.name):
+            continue
+        if run.is_symlink() or not run.is_dir():
+            record(run, "unmanaged")
+            continue
+        marker = run / ".retention.json"
+        try:
+            if marker.is_symlink() or not marker.is_file():
+                record(run, "unmanaged")
+                continue
+            if json.loads(marker.read_text()).get("run_id") != run.name:
+                record(run, "unmanaged")
+                continue
+            candidates.append((marker.stat().st_mtime, run))
+        except (OSError, ValueError, AttributeError):
+            record(run, "unmanaged")
+            continue
+    # Lock candidates before counting: active or pinned runs do not consume the
+    # bounded completed-run allowance and can never be removed by another run.
+    with ExitStack() as locks:
+        available = []
+        for _, run in sorted(candidates, reverse=True):
+            try:
+                descriptor = os.open(run / ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+                lease = locks.enter_context(os.fdopen(descriptor, "w"))
+                fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if state := protected_artifact_state(run):
+                    record(run, state, artifact_bytes(run))
+                    continue
+                available.append((run, artifact_bytes(run)))
+            except BlockingIOError:
+                record(run, "active")
+            except OSError:
+                record(run, "unavailable")
+                continue
+        retained_bytes = 0
+        retained_count = 0
+        for run, size in available:
+            if state := protected_artifact_state(run):
+                record(run, state, size)
+                continue
+            # Always retain the newest run even when that run alone exceeds the budget.
+            if retained_count == 0 or (retained_count < keep and retained_bytes + size <= max_bytes):
+                retained_count += 1
+                retained_bytes += size
+                record(run, "retained", size)
+                continue
+            if dry_run:
+                record(run, "would_remove", size)
+            else:
+                shutil.rmtree(run)
+                record(run, "removed", size)
+    return entries
+
+
+@contextmanager
+def artifact_workspace(root):
+    root = artifact_root(root)
+    run = root / f"ui-{uuid.uuid4().hex[:12]}"
+    run.mkdir()
+    try:
+        with (run / ".lock").open("w") as lease:
+            fcntl.flock(lease, fcntl.LOCK_EX)
+            (run / ".retention.json").write_text(json.dumps({"run_id": run.name}) + "\n")
+            prune_artifacts(root)
+            try:
+                yield run
+            finally:
+                # If VM teardown failed, its shared inputs must remain available.
+                if not os.path.lexists(run / ".vm-active"):
+                    inputs = run / "input"
+                    if inputs.is_symlink():
+                        inputs.unlink()
+                    elif inputs.exists():
+                        shutil.rmtree(inputs)
+    finally:
+        prune_artifacts(root)
 
 
 def checked(command, **kwargs):
@@ -391,8 +522,20 @@ def host(args):
     local_vms = subprocess.check_output([tart, "list", "--source", "local", "--quiet"], env=env, text=True).splitlines()
     if args.base_vm not in local_vms:
         raise RuntimeError("The prepared local base VM is unavailable; image provisioning must be explicit.")
-    run_id = f"ui-{uuid.uuid4().hex[:12]}"
-    run_dir = repo / ".build/native-ui/runs" / run_id
+    with ExitStack() as leases:
+        # Hold referenced unit evidence across pruning and the entire consuming run.
+        if args.unit_evidence:
+            evidence_run = Path(args.unit_evidence).resolve(strict=True).parent
+            if evidence_run.parent == repo / ".build/native-ui/runs":
+                descriptor = os.open(evidence_run / ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+                evidence_lease = leases.enter_context(os.fdopen(descriptor, "w"))
+                fcntl.flock(evidence_lease, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        with artifact_workspace(repo / ".build/native-ui/runs") as run_dir:
+            host_run(args, repo, tart, env, run_dir)
+
+
+def host_run(args, repo, tart, env, run_dir):
+    run_id = run_dir.name
     input_dir, output_dir = run_dir / "input", run_dir / "output"
     files = snapshot(repo, input_dir / "source")
     manifest = {"run_id": run_id, "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
@@ -431,6 +574,7 @@ def host(args):
         manifest["runtime_install_dmg_sha256"] = hashlib.sha256(copied.read_bytes()).hexdigest()
     (input_dir / "source-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     output_dir.mkdir(parents=True)
+    shutil.copyfile(input_dir / "source-manifest.json", output_dir / "source-manifest.json")
     vm = run_id
     running = None
     cloned = False
@@ -442,6 +586,7 @@ def host(args):
     try:
         tart_run("clone", args.base_vm, vm)
         cloned = True
+        (run_dir / ".vm-active").touch()
         tart_run("set", vm, "--cpu", "4", "--memory", "8192", "--display", args.desktop_size, "--no-display-refit")
         log = (run_dir / "vm.log").open("w")
         network = [] if args.runtime_install_uv else ["--net-host"]
@@ -462,6 +607,7 @@ def host(args):
                 running.wait(timeout=10)
         if cloned:
             subprocess.run([tart, "delete", vm], env=env, check=True)
+            (run_dir / ".vm-active").unlink()
 
 
 def main():
@@ -480,8 +626,12 @@ def main():
     parser.add_argument("--with-unit-tests", action="store_true", help="Run the complete native unit gate before the selected UI test")
     parser.add_argument("--preflight-only", action="store_true", help="Check the guest GUI session without building or running tests")
     parser.add_argument("--unit-evidence", help="Reuse a complete passed native unit run only when its source inputs match")
+    parser.add_argument("--prune-only", action="store_true", help="Prune managed test artifacts without starting a VM")
+    parser.add_argument("--dry-run", action="store_true", help="With --prune-only, report eligible artifact removals without deleting evidence")
     parser.add_argument("--guest", nargs=2, metavar=("INPUT", "OUTPUT"), help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.dry_run and not args.prune_only:
+        parser.error("--dry-run requires --prune-only")
     if args.runtime_install_dmg and (not args.runtime_install_uv or args.baseline_app):
         parser.error("--runtime-install-dmg requires the explicit runtime installation route without --baseline-app")
     if args.runtime_install_uv and (not args.runtime_bundle or args.ui_test != [RUNTIME_INSTALL_TEST] or args.unit_test or args.preflight_only):
@@ -490,7 +640,14 @@ def main():
         parser.error("--with-unit-tests requires --ui-test without --unit-test or --preflight-only")
     if args.ui_test and args.unit_test:
         parser.error("Select either --ui-test or --unit-test")
-    if args.guest:
+    if args.prune_only:
+        if args.guest or args.base_vm or args.ui_test or args.unit_test:
+            parser.error("--prune-only cannot be combined with a test run")
+        report = prune_artifacts(Path(__file__).resolve().parent.parent / ".build/native-ui/runs", dry_run=args.dry_run)
+        print(json.dumps(report, indent=2))
+        if report["busy"]:
+            parser.exit(3, "Another artifact cleanup is active; no cleanup was performed.\n")
+    elif args.guest:
         guest(*args.guest)
     elif not args.base_vm:
         parser.error("--base-vm is required; host-desktop testing is not supported")

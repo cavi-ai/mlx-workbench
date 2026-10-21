@@ -62,6 +62,23 @@ It stops at the first failed gate, rejects zero-test or skipped UI results, and
 preserves logs, result bundles, source hashes and screenshots under
 `.build/native-ui/runs/<run-id>/output`.
 
+Temporary source, baseline-app and runtime-payload copies are removed after VM
+teardown, including failed or interrupted runs. Recorded source hashes remain
+in `output/source-manifest.json`. Completed artifacts are retained for at most
+five runs within a 2 GiB budget, newest first; the newest run is always kept
+even if it alone exceeds the budget. Active runs and runs with unresolved VM
+teardown are protected. Create a `.keep` file in a run directory to preserve
+its evidence outside that budget; remove it to restore normal retention.
+Referenced `--unit-evidence` is protected while its consuming run is active.
+Preview cleanup with `python3 scripts/native_ui_vm.py --prune-only --dry-run`;
+omit `--dry-run` to apply retention without starting a VM. Both commands emit
+JSON listing each run's disposition and file sizes, including pinned, active,
+unmanaged and retained runs. The preview takes coordination locks but never
+removes evidence. Byte totals are sums of file sizes, not a promise of physical
+disk space freed. Concurrent cleanup reports `busy` and exits with status 3.
+Only directories registered by this runner are eligible; older unregistered
+artifacts, model files and prepared base VMs are untouched.
+
 `--preflight-only` checks the guest without running tests. `--unit-test` runs
 one named XCTest for diagnosis; its result is not full-suite acceptance.
 `--ui-test` builds and runs named UI tests without the complete unit gate;
