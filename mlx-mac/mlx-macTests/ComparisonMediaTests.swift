@@ -1313,9 +1313,8 @@ final class ComparisonMediaTests: XCTestCase {
         probe.arguments = ["-n", "hw.model"]; probe.standardOutput = output
         try probe.run(); probe.waitUntilExit()
         let model = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        guard probe.terminationStatus == 0, model.hasPrefix("VirtualMac") else {
-            XCTFail("Keyboard presentation tests require an isolated VM; no test window was opened."); return
-        }
+        try XCTSkipUnless(probe.terminationStatus == 0 && model.hasPrefix("VirtualMac"),
+            "Keyboard presentation tests require an isolated VM; no test window was opened.")
         let store = ComparisonOutputStore(root: root.appendingPathComponent("image-viewer-proof"))
         var run = historyRun(.imageGeneration, "Shapes", at: 100, models: ["/image/a", "/image/b"])
         run.promptEntries = [PromptEntry(id: "shapes", text: "Simple geometric shapes on a white background")]
