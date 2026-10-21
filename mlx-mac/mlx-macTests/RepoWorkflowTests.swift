@@ -146,7 +146,7 @@ final class RepoWorkflowTests: XCTestCase {
         XCTAssertTrue(repoCalls.isEmpty)
     }
 
-    func testCompletionRunsTheCanaryOnlyForTypesThatHaveOne() throws {
+    func testCompletionRunsTheCanaryOnlyForTypesThatHaveOne() async throws {
         let verifier = RecordingVerifier()
         for (type, expected, calls) in [
             (ModelTaskType.textToSpeech, ConversionWorkflowState.completed, 0),
@@ -160,7 +160,7 @@ final class RepoWorkflowTests: XCTestCase {
             verifier.calls = 0
             let output = "/models/mlx/out-\(type.rawValue)"
             workflow.restore(Self.record(output: output))
-            workflow.resolveCompletionAfterFreshScan(snapshot: Self.snapshot(output: output, type: type))
+            await workflow.resolveCompletionAfterFreshScan(snapshot: Self.snapshot(output: output, type: type))
             XCTAssertEqual(workflow.workflow.state, expected, type.rawValue)
             XCTAssertEqual(verifier.calls, calls, type.rawValue)
             if type == .textToSpeech {

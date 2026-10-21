@@ -307,7 +307,7 @@ struct JobsView: View {
                             perform: perform,
                             viewLog: { selectedLog = LogSelection(id: $0, path: $0) },
                             copySource: copyToPasteboard,
-                            dismiss: { appHost.modelWorkflow.dismiss(recordID: row.id) }
+                            dismiss: { Task { await appHost.modelWorkflow.dismiss(recordID: row.id) } }
                         )
                     }
                 }

@@ -47,6 +47,11 @@ server.
   stays untouched as a backup. `ModelWorkflowStore` and `VerificationStore`
   update one record per transaction; `ComparisonRecordArchive` adds lightweight
   history projections without changing complete recorded payloads.
+  `ModelWorkflowCoordinator` loads and saves through its serial I/O queue;
+  draft edits remain value-only. Submission waits for history and commits
+  cleanup consent before launching conversion. Receipts stay bound to the
+  submitted workflow across selection changes, and verification starts only
+  after its workflow state commits. The toolbar exposes history I/O progress.
 - `mlx-mac/` is the native SwiftUI app (Xcode project, explicit file list in
   `project.pbxproj` — register new sources there). `make test-swift` runs its
   XCTest suite. Design specs for premium features live in

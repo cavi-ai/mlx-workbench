@@ -68,15 +68,15 @@ struct RepoConversionRequest: Equatable {
     var sourcePath: String? = nil
 }
 
-struct ModelWorkflowPersistence {
-    let load: () throws -> [ConversionWorkflow]
-    let upsert: (ConversionWorkflow) throws -> Void
-    let remove: (String) throws -> Void
+struct ModelWorkflowPersistence: Sendable {
+    let load: @Sendable () throws -> [ConversionWorkflow]
+    let upsert: @Sendable (ConversionWorkflow) throws -> Void
+    let remove: @Sendable (String) throws -> Void
 
     init(
-        load: @escaping () throws -> [ConversionWorkflow],
-        upsert: @escaping (ConversionWorkflow) throws -> Void,
-        remove: @escaping (String) throws -> Void = { _ in }
+        load: @escaping @Sendable () throws -> [ConversionWorkflow],
+        upsert: @escaping @Sendable (ConversionWorkflow) throws -> Void,
+        remove: @escaping @Sendable (String) throws -> Void = { _ in }
     ) {
         self.load = load
         self.upsert = upsert
@@ -84,7 +84,7 @@ struct ModelWorkflowPersistence {
     }
 
     static func live(store: ModelWorkflowStore) -> ModelWorkflowPersistence {
-        ModelWorkflowPersistence(load: store.load, upsert: store.upsert, remove: store.remove)
+        ModelWorkflowPersistence(load: { try store.load() }, upsert: { try store.upsert($0) }, remove: { try store.remove(id: $0) })
     }
 }
 
@@ -104,6 +104,16 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     private let api: ModelWorkflowAPI
     private let persistence: ModelWorkflowPersistence
+    private let historyQueue = DispatchQueue(label: "workflow-history", qos: .utility)
+    private var historyLoadTask: Task<Void, Never>?
+    private var hasLoadedHistory = false
+    private var workflowRevision: UInt = 0
+    private var saveGeneration: UInt = 0
+    private var recordSaveGenerations: [UUID: UInt] = [:]
+    private var pendingRecordWrites: [UUID: Int] = [:]
+    @Published private(set) var isLoadingHistory = false
+    @Published private(set) var pendingHistoryWrites = 0
+    var isSavingHistory: Bool { pendingHistoryWrites > 0 }
     private let now: () -> Date
     private let fileManager: FileManager
     /// When set (via `VerificationCoordinator.attach`), a fresh-scan-confirmed
@@ -145,16 +155,48 @@ final class ModelWorkflowCoordinator: ObservableObject {
         self.servers = []
         self.persistenceError = nil
 
-        do {
-            let records = try persistence.load().sorted { $0.updatedAt > $1.updatedAt }
-            history = records
-            if let active = records.first(where: { $0.state != .completed && $0.state != .failed }) ?? records.first {
-                workflow = active
+        loadHistory()
+    }
+
+    private func loadHistory() {
+        guard historyLoadTask == nil else { return }
+        isLoadingHistory = true
+        let persistence = persistence, queue = historyQueue, initialID = workflow.id
+        historyLoadTask = Task { [weak self] in
+            let result = await WorkbenchIO.perform(on: queue) {
+                Result { try persistence.load().sorted { $0.updatedAt > $1.updatedAt } }
             }
-        } catch {
-            persistenceError = "Saved workflow history is unavailable: \(AppHost.render(error))"
-            workflow = Self.emptyWorkflow(at: now(), message: "Saved workflow history is unavailable: \(AppHost.render(error))")
+            guard let self else { return }
+            defer { self.isLoadingHistory = false; self.historyLoadTask = nil }
+            do {
+                let records = try result.get()
+                let localIDs = Set(self.history.map(\.id))
+                self.history += records.filter { !localIDs.contains($0.id) }
+                if self.workflow.id == initialID, self.workflow.state == .idle,
+                   let active = records.first(where: { $0.state != .completed && $0.state != .failed }) ?? records.first {
+                    self.workflow = active; self.workflowRevision += 1
+                }
+                self.hasLoadedHistory = true; self.persistenceError = nil
+            } catch {
+                let message = "Saved workflow history is unavailable: \(AppHost.render(error))"
+                self.persistenceError = message
+                self.preserveLastKnownState(message: message)
+            }
         }
+    }
+
+    func waitForHistory() async {
+        if !hasLoadedHistory, historyLoadTask == nil { loadHistory() }
+        await historyLoadTask?.value
+    }
+
+    private func historyAvailable() async -> Bool {
+        await waitForHistory()
+        guard hasLoadedHistory else {
+            preserveLastKnownState(message: persistenceError ?? "Saved workflow history is unavailable.")
+            return false
+        }
+        return true
     }
 
     func inspect(source: ModelItem, snapshot: LibrarySnapshot?) {
@@ -177,8 +219,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
                     state: .existingModelFound,
                     completedModelPath: exactPath,
                     message: "An equivalent MLX model is already available."
-                ),
-                persist: false
+                )
             )
         case .available(let output):
             replace(
@@ -187,8 +228,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
                     outputPath: output.path,
                     state: .inspectingSource,
                     message: "Ready to preview conversion."
-                ),
-                persist: false
+                )
             )
         case .blocked(let output, let reason):
             replace(
@@ -198,8 +238,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
                     state: .failed,
                     message: reason,
                     errorMessage: reason
-                ),
-                persist: false
+                )
             )
         }
     }
@@ -220,7 +259,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         record.modelType = intake.modelType
         record.allowedBits = intake.qBits
         record.localSourcePath = downloadedPath
-        replace(record, persist: false)
+        replace(record)
     }
 
     /// Prepare's bit-width picker for a repo source: the destination follows the
@@ -237,7 +276,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         record.modelType = workflow.modelType
         record.allowedBits = workflow.allowedBits
         record.localSourcePath = workflow.localSourcePath
-        replace(record, persist: false)
+        replace(record)
     }
 
     /// A repo workflow at `output`: the existing model when the library already
@@ -278,16 +317,20 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     func preview(qBits: Int, out: String?) async {
         guard !isConversionSubmissionInFlight else { return }
+        isConversionSubmissionInFlight = true
+        defer { isConversionSubmissionInFlight = false }
+        let requestedID = workflow.id
+        guard await historyAvailable(), workflow.id == requestedID else { return }
         if let repo = workflow.sourceRepo {
             await previewRepo(repo, backend: workflow.backend ?? "mlx-lm", qBits: qBits, out: out)
             return
         }
         guard !workflow.sourcePath.isEmpty else {
-            fail("Select a GGUF source before previewing conversion.")
+            await fail("Select a GGUF source before previewing conversion.")
             return
         }
         guard let source = selectedSource ?? restoredSource() else {
-            fail("The selected GGUF source is unavailable for validation.")
+            await fail("The selected GGUF source is unavailable for validation.")
             return
         }
         let output = safeOutputOverride(out) ?? workflow.outputPath
@@ -298,7 +341,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             now: now()
         ) {
         case .reuseExisting(let model):
-            useExisting(model)
+            await useExisting(model)
             return
         case .blocked(let destination, let reason):
             failDestination(destination: destination.path, reason: reason)
@@ -315,41 +358,43 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
         conversionPreviewQBits = qBits
         conversionPreviewOutput = output
-        isConversionSubmissionInFlight = true
-        defer { isConversionSubmissionInFlight = false }
         update(state: .previewingConversion, outputPath: output, message: "Preparing conversion preview.", errorMessage: .some(nil))
         do {
             let response = try await api.convertPreview(workflow.sourcePath, qBits, output)
             guard let hash = response.string("preview_hash"), !hash.isEmpty else {
-                fail("Conversion preview did not include a preview hash.")
+                await fail("Conversion preview did not include a preview hash.")
                 return
             }
             update(state: .readyToConfirm, outputPath: output, previewHash: hash, message: "Preview ready for confirmation.", errorMessage: .some(nil))
         } catch {
-            fail("Conversion preview failed: \(AppHost.render(error))")
+            await fail("Conversion preview failed: \(AppHost.render(error))")
         }
     }
 
     func confirm(qBits: Int, reclaimSourceAfterVerification: Bool = false) async {
         guard !isConversionSubmissionInFlight else { return }
+        isConversionSubmissionInFlight = true
+        defer { isConversionSubmissionInFlight = false }
+        let requestedID = workflow.id
+        guard await historyAvailable(), workflow.id == requestedID else { return }
         var record = workflow
         record.reclaimSourceAfterVerification = reclaimSourceAfterVerification
-        replace(record, persist: false)
+        replace(record)
         if let repo = workflow.sourceRepo {
             await confirmRepo(repo, backend: workflow.backend ?? "mlx-lm", qBits: qBits)
             return
         }
         guard let hash = workflow.previewHash, !hash.isEmpty else {
-            fail("Preview conversion before confirming it.")
+            await fail("Preview conversion before confirming it.")
             return
         }
         guard conversionPreviewQBits == qBits,
               conversionPreviewOutput == workflow.outputPath else {
-            fail("The conversion intent changed after preview. Preview it again before confirming.")
+            await fail("The conversion intent changed after preview. Preview it again before confirming.")
             return
         }
         guard let source = selectedSource ?? restoredSource() else {
-            fail("The selected GGUF source is unavailable for validation.")
+            await fail("The selected GGUF source is unavailable for validation.")
             return
         }
         switch ModelWorkflowResolver.destination(
@@ -359,7 +404,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             now: now()
         ) {
         case .reuseExisting(let model):
-            useExisting(model)
+            await useExisting(model)
             return
         case .blocked(let destination, let reason):
             failDestination(destination: destination.path, reason: reason)
@@ -374,19 +419,24 @@ final class ModelWorkflowCoordinator: ObservableObject {
             }
         }
 
-        isConversionSubmissionInFlight = true
-        defer { isConversionSubmissionInFlight = false }
+        let submitted = workflow
         do {
-            let response = try await api.convertStart(workflow.sourcePath, qBits, workflow.outputPath, hash)
-            guard let receipt = await receipt(from: response), !receipt.isEmpty else {
-                fail(PrepareWorkflowPresentation.missingReceiptMessage)
+            let requestedID = workflow.id, output = workflow.outputPath
+            guard await save(workflow), workflow.id == requestedID,
+                  workflow.outputPath == output, workflow.previewHash == hash,
+                  conversionPreviewQBits == qBits, conversionPreviewOutput == output else { return }
+            let response = try await api.convertStart(submitted.sourcePath, qBits, submitted.outputPath, hash)
+            guard let receipt = await receipt(from: response, outputPath: submitted.outputPath), !receipt.isEmpty else {
+                await failSubmission(submitted, message: PrepareWorkflowPresentation.missingReceiptMessage)
                 return
             }
             conversionPreviewQBits = nil
             conversionPreviewOutput = nil
-            update(state: .queued, jobReceipt: receipt, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: "queued", persist: true)
+            await save(updatedRecord(from: submitted, state: .queued, jobReceipt: receipt,
+                message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: "queued"),
+                makeCurrent: workflow.id == submitted.id)
         } catch {
-            fail("\(PrepareWorkflowPresentation.queueFailurePrefix): \(AppHost.render(error))")
+            await failSubmission(submitted, message: "\(PrepareWorkflowPresentation.queueFailurePrefix): \(AppHost.render(error))")
         }
     }
 
@@ -394,10 +444,10 @@ final class ModelWorkflowCoordinator: ObservableObject {
     /// authoritative receipt path only exists in convert status. Prefer a
     /// plain string receipt (older agents), else resolve the just-started
     /// job by output path.
-    private func receipt(from response: [String: Any]) async -> String? {
+    private func receipt(from response: [String: Any], outputPath: String) async -> String? {
         var receipt = response.string("receipt")
         if receipt == nil, let jobs = try? await api.convertStatus() {
-            let target = canonicalPath(workflow.outputPath)
+            let target = canonicalPath(outputPath)
             receipt = jobs.first(where: {
                 guard let out = $0.out else { return false }
                 return canonicalPath(out) == target
@@ -423,18 +473,16 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
         conversionPreviewQBits = qBits
         conversionPreviewOutput = output
-        isConversionSubmissionInFlight = true
-        defer { isConversionSubmissionInFlight = false }
         update(state: .previewingConversion, outputPath: output, message: "Preparing conversion preview.", errorMessage: .some(nil))
         do {
             let response = WorkbenchAPI.unwrapPlan(try await api.convertRepoPreview(repoRequest(repo, backend: backend, qBits: qBits, output: output)))
             guard let hash = response.string("preview_hash"), !hash.isEmpty else {
-                fail("Conversion preview did not include a preview hash.")
+                await fail("Conversion preview did not include a preview hash.")
                 return
             }
             update(state: .readyToConfirm, outputPath: output, previewHash: hash, message: "Preview ready for confirmation.", errorMessage: .some(nil))
         } catch {
-            fail("Conversion preview failed: \(AppHost.render(error))")
+            await fail("Conversion preview failed: \(AppHost.render(error))")
         }
     }
 
@@ -447,42 +495,48 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     private func confirmRepo(_ repo: String, backend: String, qBits: Int) async {
         guard let hash = workflow.previewHash, !hash.isEmpty else {
-            fail("Preview conversion before confirming it.")
+            await fail("Preview conversion before confirming it.")
             return
         }
         guard conversionPreviewQBits == qBits, conversionPreviewOutput == workflow.outputPath else {
-            fail("The conversion intent changed after preview. Preview it again before confirming.")
+            await fail("The conversion intent changed after preview. Preview it again before confirming.")
             return
         }
         guard !fileManager.fileExists(atPath: canonicalPath(workflow.outputPath)) else {
             failDestination(destination: workflow.outputPath, reason: "The destination became occupied after preview.")
             return
         }
-        isConversionSubmissionInFlight = true
-        defer { isConversionSubmissionInFlight = false }
+        let submitted = workflow
         do {
-            let response = try await api.convertRepoStart(repoRequest(repo, backend: backend, qBits: qBits, output: workflow.outputPath), hash)
-            guard let receipt = await receipt(from: response), !receipt.isEmpty else {
-                fail(PrepareWorkflowPresentation.missingReceiptMessage)
+            let requestedID = workflow.id, output = workflow.outputPath
+            guard await save(workflow), workflow.id == requestedID,
+                  workflow.outputPath == output, workflow.previewHash == hash,
+                  conversionPreviewQBits == qBits, conversionPreviewOutput == output else { return }
+            let response = try await api.convertRepoStart(repoRequest(repo, backend: backend, qBits: qBits, output: submitted.outputPath), hash)
+            guard let receipt = await receipt(from: response, outputPath: submitted.outputPath), !receipt.isEmpty else {
+                await failSubmission(submitted, message: PrepareWorkflowPresentation.missingReceiptMessage)
                 return
             }
             conversionPreviewQBits = nil
             conversionPreviewOutput = nil
-            update(state: .queued, jobReceipt: receipt, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: "queued", persist: true)
+            await save(updatedRecord(from: submitted, state: .queued, jobReceipt: receipt,
+                message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: "queued"),
+                makeCurrent: workflow.id == submitted.id)
         } catch {
-            fail("\(PrepareWorkflowPresentation.queueFailurePrefix): \(AppHost.render(error))")
+            await failSubmission(submitted, message: "\(PrepareWorkflowPresentation.queueFailurePrefix): \(AppHost.render(error))")
         }
     }
 
-    func useExisting(_ model: LibraryModel) {
+    func useExisting(_ model: LibraryModel) async {
+        let requestedID = workflow.id
+        guard await historyAvailable(), workflow.id == requestedID else { return }
         let exactPath = preferredModelPath(model, preferred: workflow.completedModelPath ?? workflow.outputPath)
-        update(
+        await savedUpdate(
             state: .completed,
             outputPath: exactPath,
             completedModelPath: exactPath,
             message: "Using existing MLX model.",
-            errorMessage: .some(nil),
-            persist: true
+            errorMessage: .some(nil)
         )
     }
 
@@ -531,6 +585,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
         guard !isServeSubmissionInFlight else { return }
         isServeSubmissionInFlight = true
         defer { isServeSubmissionInFlight = false }
+        let requestedID = workflow.id
+        guard await historyAvailable(), workflow.id == requestedID else { return }
         guard let model = workflow.completedModelPath, !model.isEmpty else {
             update(serveState: .failed, message: "Complete or select an MLX model before previewing serve.", errorMessage: "No completed MLX model selected.")
             return
@@ -572,6 +628,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
         guard !isServeSubmissionInFlight else { return }
         isServeSubmissionInFlight = true
         defer { isServeSubmissionInFlight = false }
+        let requestedID = workflow.id
+        guard await historyAvailable(), workflow.id == requestedID else { return }
         guard let model = workflow.completedModelPath,
               !model.isEmpty,
               let hash = servePreviewHash,
@@ -596,19 +654,22 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
         servePreviewHash = nil
         servePreviewIntent = nil
+        let submitted = workflow
         do {
+            let requestedID = workflow.id
+            guard await save(workflow), workflow.id == requestedID else { return }
             if let profile = servingProfile { _ = try await api.profileStart(profile, port, hash) }
             else { _ = try await api.serveStart(model, runtime, port, hash) }
             let statusAvailable = await refreshOperationalStatus()
             guard statusAvailable,
                   servers.contains(where: { serverRunsModel($0, model) }) else {
-                update(serveState: .failed, message: "Server start was requested, but authoritative status did not report it running.", errorMessage: "Refresh server status before trying again.", persist: true)
+                await savedUpdate(from: submitted, serveState: .failed, message: "Server start was requested, but authoritative status did not report it running.", errorMessage: "Refresh server status before trying again.")
                 return
             }
-            update(serveState: .running, message: "Server is running.", errorMessage: .some(nil), persist: true)
+            await savedUpdate(from: submitted, serveState: .running, message: "Server is running.", errorMessage: .some(nil))
             onServeStarted?(model)
         } catch {
-            update(serveState: .failed, message: "Server could not be started: \(AppHost.render(error))", errorMessage: AppHost.render(error), persist: true)
+            await savedUpdate(from: submitted, serveState: .failed, message: "Server could not be started: \(AppHost.render(error))", errorMessage: AppHost.render(error))
         }
     }
 
@@ -624,24 +685,26 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
         servePreviewHash = nil
         servePreviewIntent = nil
+        let stopped = workflow
         do {
             _ = try await api.serveStop(port)
             let statusAvailable = await refreshOperationalStatus()
             guard statusAvailable else {
-                update(serveState: .failed, message: "Server stop was requested, but authoritative status is unavailable.", errorMessage: "Refresh server status before assuming the server stopped.", persist: true)
+                await savedUpdate(from: stopped, serveState: .failed, message: "Server stop was requested, but authoritative status is unavailable.", errorMessage: "Refresh server status before assuming the server stopped.")
                 return
             }
             if servers.contains(where: { serverRunsModel($0, modelPath) }) {
-                update(serveState: .running, message: "The authoritative server is still running.", errorMessage: "Stop was requested but has not been confirmed.", persist: true)
+                await savedUpdate(from: stopped, serveState: .running, message: "The authoritative server is still running.", errorMessage: "Stop was requested but has not been confirmed.")
             } else {
-                update(serveState: .stopped, message: "Server stopped.", errorMessage: .some(nil), persist: true)
+                await savedUpdate(from: stopped, serveState: .stopped, message: "Server stopped.", errorMessage: .some(nil))
             }
         } catch {
-            update(serveState: .failed, message: "Server could not be stopped: \(AppHost.render(error))", errorMessage: AppHost.render(error), persist: true)
+            await savedUpdate(from: stopped, serveState: .failed, message: "Server could not be stopped: \(AppHost.render(error))", errorMessage: AppHost.render(error))
         }
     }
 
     func restore(_ record: ConversionWorkflow) {
+        workflowRevision += 1
         workflow = record
         selectedSource = nil
         selectedSnapshot = nil
@@ -657,6 +720,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
     }
 
     func reconcile(snapshot: LibrarySnapshot?, jobs: [Job]) async {
+        guard await historyAvailable() else { return }
         let authoritativeJobs: [Job]
         if jobs.isEmpty {
             do {
@@ -673,6 +737,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
 
     @discardableResult
     func refreshOperationalStatus() async -> Bool {
+        guard await historyAvailable() else { return await refreshServingStatus() }
         do {
             let jobs = try await api.convertStatus()
             await reconcileAuthoritative(snapshot: nil, jobs: jobs)
@@ -732,16 +797,18 @@ final class ModelWorkflowCoordinator: ObservableObject {
     /// Dismiss a terminal workflow record from history. Dismissing the active
     /// record resets the workflow to idle so Overview stops surfacing it as
     /// the next action. Persisted so the record stays dismissed on relaunch.
-    func dismiss(recordID: UUID) {
-        guard let record = history.first(where: { $0.id == recordID }) else { return }
-        history.removeAll { $0.persistenceIdentifier == record.persistenceIdentifier }
+    func dismiss(recordID: UUID) async {
+        guard await historyAvailable(), pendingRecordWrites[recordID, default: 0] == 0,
+              let record = history.first(where: { $0.id == recordID }) else { return }
+        let persistence = persistence
         do {
-            try persistence.remove(record.persistenceIdentifier)
+            try await WorkbenchIO.perform(on: historyQueue) { Result { try persistence.remove(record.persistenceIdentifier) } }.get()
+            history.removeAll { $0 == record }
+            if workflow == record {
+                workflow = Self.emptyWorkflow(at: now()); workflowRevision += 1
+            }
         } catch {
             persistenceError = "Workflow history could not be saved: \(AppHost.render(error))"
-        }
-        if workflow.id == recordID {
-            workflow = Self.emptyWorkflow(at: now())
         }
     }
 
@@ -756,14 +823,15 @@ final class ModelWorkflowCoordinator: ObservableObject {
         return requested
     }
 
-    func resolveCompletionAfterFreshScan(snapshot: LibrarySnapshot?) {
+    func resolveCompletionAfterFreshScan(snapshot: LibrarySnapshot?) async {
+        guard await historyAvailable() else { return }
         let ids = pendingCompletionRecordIDs.isEmpty ? [workflow.id] : Array(pendingCompletionRecordIDs)
         for id in ids {
             guard let record = history.first(where: { $0.id == id }) else { continue }
             if let completed = completedModel(in: snapshot, for: record) {
                 let skippedType = completed.model.item.task.flatMap { $0.type.hasCanary ? nil : $0.type }
                 if let verifier = completionVerifier, skippedType == nil {
-                    replace(
+                    guard await save(
                         updatedRecord(
                             from: record,
                             state: .verifying,
@@ -772,16 +840,15 @@ final class ModelWorkflowCoordinator: ObservableObject {
                             message: "Conversion completed; verifying the MLX output before it is marked verified.",
                             errorMessage: .some(nil)
                         ),
-                        persist: true,
                         makeCurrent: record.id == workflow.id
-                    )
+                    ) else { continue }
                     verifier.beginVerification(
                         recordID: record.id,
                         modelPath: completed.path,
                         signature: completed.model.item.signature
                     )
                 } else {
-                    replace(
+                    await save(
                         updatedRecord(
                             from: record,
                             state: .completed,
@@ -792,19 +859,17 @@ final class ModelWorkflowCoordinator: ObservableObject {
                             } ?? "Conversion completed and the MLX output was confirmed by a fresh scan.",
                             errorMessage: .some(nil)
                         ),
-                        persist: true,
                         makeCurrent: record.id == workflow.id
                     )
                 }
             } else {
-                replace(
+                await save(
                     updatedRecord(
                         from: record,
                         state: .running,
                         message: "Conversion completed, but the fresh library scan did not find its expected MLX output.",
                         errorMessage: .some(nil)
                     ),
-                    persist: true,
                     makeCurrent: record.id == workflow.id
                 )
             }
@@ -816,7 +881,8 @@ final class ModelWorkflowCoordinator: ObservableObject {
     /// Only records currently in `.verifying` are resolved; `.keptAnyway` is
     /// additionally accepted from `.verificationFailed` (the explicit user
     /// override). Anything else is a stale callback and ignored.
-    func resolveVerification(recordID: UUID, resolution: VerificationResolution) {
+    func resolveVerification(recordID: UUID, resolution: VerificationResolution) async {
+        guard await historyAvailable() else { return }
         guard let record = history.first(where: { $0.id == recordID }) else { return }
         if case .keptAnyway = resolution {
             guard record.state == .verifying || record.state == .verificationFailed else { return }
@@ -825,47 +891,43 @@ final class ModelWorkflowCoordinator: ObservableObject {
         }
         switch resolution {
         case .passed(let summary):
-            replace(
+            await save(
                 updatedRecord(
                     from: record,
                     state: .verified,
                     message: "\(VerificationOutcome.passedLead) \(summary)",
                     errorMessage: .some(nil)
                 ),
-                persist: true,
                 makeCurrent: record.id == workflow.id
             )
         case .failed(let summary):
-            replace(
+            await save(
                 updatedRecord(
                     from: record,
                     state: .verificationFailed,
                     message: "Verification failed. \(summary)",
                     errorMessage: .some("Verification failed. \(summary)")
                 ),
-                persist: true,
                 makeCurrent: record.id == workflow.id
             )
         case .unavailable(let reason):
-            replace(
+            await save(
                 updatedRecord(
                     from: record,
                     state: .completed,
                     message: "Verification result unavailable (\(reason)); the output is complete but unverified.",
                     errorMessage: .some(nil)
                 ),
-                persist: true,
                 makeCurrent: record.id == workflow.id
             )
         case .keptAnyway:
-            replace(
+            await save(
                 updatedRecord(
                     from: record,
                     state: .completed,
                     message: "Kept despite a failed verification (explicit override).",
                     errorMessage: .some(nil)
                 ),
-                persist: true,
                 makeCurrent: record.id == workflow.id
             )
         }
@@ -893,19 +955,19 @@ final class ModelWorkflowCoordinator: ObservableObject {
             switch agentState {
             case "queued", "pending", "starting":
                 guard !record.reflects(state: .queued, message: "Conversion queued.", errorMessage: nil, agentState: job.state) else { continue }
-                replace(updatedRecord(from: record, state: .queued, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
+                await save(updatedRecord(from: record, state: .queued, message: "Conversion queued.", errorMessage: .some(nil), lastKnownAgentState: job.state), makeCurrent: record.id == workflow.id)
             case "running", "active":
                 guard !record.reflects(state: .running, message: "Conversion running.", errorMessage: nil, agentState: job.state) else { continue }
-                replace(updatedRecord(from: record, state: .running, message: "Conversion running.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
+                await save(updatedRecord(from: record, state: .running, message: "Conversion running.", errorMessage: .some(nil), lastKnownAgentState: job.state), makeCurrent: record.id == workflow.id)
             case "done", "completed", "complete", "succeeded", "success":
                 // Once the scan confirmed the output, later refreshes of the same done job change nothing.
                 guard record.state != .verifying else { continue }
                 completionRescanRequested = true
                 pendingCompletionRecordIDs.insert(record.id)
-                replace(updatedRecord(from: record, state: .running, message: "Conversion completed; waiting for a fresh library scan to confirm its MLX output.", errorMessage: .some(nil), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
+                await save(updatedRecord(from: record, state: .running, message: "Conversion completed; waiting for a fresh library scan to confirm its MLX output.", errorMessage: .some(nil), lastKnownAgentState: job.state), makeCurrent: record.id == workflow.id)
             case "failed", "error", "cancelled", "canceled":
                 let message = "Conversion \(job.state)."
-                replace(updatedRecord(from: record, state: .failed, message: message, errorMessage: .some(message), lastKnownAgentState: job.state), persist: true, makeCurrent: record.id == workflow.id)
+                await save(updatedRecord(from: record, state: .failed, message: message, errorMessage: .some(message), lastKnownAgentState: job.state), makeCurrent: record.id == workflow.id)
             default:
                 if record.id == workflow.id {
                     preserveLastKnownState(message: "Conversion status \(job.state) is not recognized; preserving the last known state.")
@@ -1047,8 +1109,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         message: String?? = nil,
         errorMessage: String?? = nil,
         lastKnownAgentState: String? = nil,
-        clearPreviewHash: Bool = false,
-        persist: Bool = false
+        clearPreviewHash: Bool = false
     ) {
         let next = updatedRecord(
             from: workflow,
@@ -1063,7 +1124,38 @@ final class ModelWorkflowCoordinator: ObservableObject {
             lastKnownAgentState: lastKnownAgentState,
             clearPreviewHash: clearPreviewHash
         )
-        replace(next, persist: persist)
+        replace(next)
+    }
+
+    @discardableResult
+    private func savedUpdate(
+        from record: ConversionWorkflow? = nil,
+        state: ConversionWorkflowState? = nil,
+        serveState: ServeWorkflowState? = nil,
+        outputPath: String? = nil,
+        previewHash: String? = nil,
+        jobReceipt: String? = nil,
+        completedModelPath: String? = nil,
+        message: String?? = nil,
+        errorMessage: String?? = nil,
+        lastKnownAgentState: String? = nil,
+        clearPreviewHash: Bool = false
+    ) async -> Bool {
+        let base = record ?? workflow
+        let next = updatedRecord(
+            from: base,
+            state: state,
+            serveState: serveState,
+            outputPath: outputPath,
+            previewHash: previewHash,
+            jobReceipt: jobReceipt,
+            completedModelPath: completedModelPath,
+            message: message,
+            errorMessage: errorMessage,
+            lastKnownAgentState: lastKnownAgentState,
+            clearPreviewHash: clearPreviewHash
+        )
+        return await save(next, makeCurrent: workflow.id == base.id)
     }
 
     private func updatedRecord(
@@ -1108,11 +1200,12 @@ final class ModelWorkflowCoordinator: ObservableObject {
         )
     }
 
-    private func replace(_ record: ConversionWorkflow, persist: Bool, makeCurrent: Bool = true) {
+    private func replace(_ record: ConversionWorkflow, makeCurrent: Bool = true) {
         let previousState = history.first(where: {
             $0.persistenceIdentifier == record.persistenceIdentifier
         })?.state
         if makeCurrent {
+            workflowRevision += 1
             workflow = record
         }
         if let index = history.firstIndex(where: { $0.persistenceIdentifier == record.persistenceIdentifier }) {
@@ -1123,11 +1216,35 @@ final class ModelWorkflowCoordinator: ObservableObject {
         if record.state.isTerminal, previousState != nil, previousState != record.state {
             onTerminalState?(record)
         }
-        guard persist else { return }
+    }
+
+    @discardableResult
+    private func save(_ record: ConversionWorkflow, makeCurrent: Bool = true) async -> Bool {
+        guard await historyAvailable() else { return false }
+        let selectedRevision = workflowRevision, persistence = persistence
+        saveGeneration += 1
+        let generation = saveGeneration
+        recordSaveGenerations[record.id] = generation
+        pendingHistoryWrites += 1; pendingRecordWrites[record.id, default: 0] += 1
+        defer {
+            pendingHistoryWrites -= 1
+            let remaining = pendingRecordWrites[record.id, default: 1] - 1
+            if remaining == 0 { pendingRecordWrites.removeValue(forKey: record.id) }
+            else { pendingRecordWrites[record.id] = remaining }
+        }
         do {
-            try persistence.upsert(record)
+            try await WorkbenchIO.perform(on: historyQueue) { Result { try persistence.upsert(record) } }.get()
+            guard recordSaveGenerations[record.id] == generation else { return false }
+            replace(record, makeCurrent: makeCurrent && workflow.id == record.id && workflowRevision == selectedRevision)
+            persistenceError = nil
+            return true
         } catch {
-            preserveLastKnownState(message: "Workflow state could not be saved: \(AppHost.render(error))")
+            if recordSaveGenerations[record.id] == generation {
+                let message = "Workflow state could not be saved: \(AppHost.render(error))"
+                persistenceError = message
+                preserveLastKnownState(message: message)
+            }
+            return false
         }
     }
 
@@ -1135,10 +1252,18 @@ final class ModelWorkflowCoordinator: ObservableObject {
         update(message: message, errorMessage: .some(nil))
     }
 
-    private func fail(_ message: String) {
+    private func fail(_ message: String) async {
         conversionPreviewQBits = nil
         conversionPreviewOutput = nil
-        update(state: .failed, previewHash: nil, message: message, errorMessage: message, clearPreviewHash: true, persist: true)
+        await savedUpdate(state: .failed, previewHash: nil, message: message, errorMessage: message, clearPreviewHash: true)
+    }
+
+    private func failSubmission(_ submitted: ConversionWorkflow, message: String) async {
+        if workflow.id == submitted.id {
+            conversionPreviewQBits = nil; conversionPreviewOutput = nil
+        }
+        await save(updatedRecord(from: submitted, state: .failed, message: message,
+            errorMessage: message, clearPreviewHash: true), makeCurrent: workflow.id == submitted.id)
     }
 
     private static func emptyWorkflow(at date: Date, message: String? = nil) -> ConversionWorkflow {

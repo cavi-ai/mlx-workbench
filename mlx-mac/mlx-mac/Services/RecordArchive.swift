@@ -161,4 +161,3 @@ class RecordArchive<Value: Codable & Identifiable> where Value.ID == UUID {
         Data(bytes: sqlite3_column_blob(statement, column), count: Int(sqlite3_column_bytes(statement, column)))
     }
 }
-

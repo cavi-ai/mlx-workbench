@@ -155,7 +155,7 @@ final class WatchCoordinator: ObservableObject {
         _ = await versionProbe.value(refresh: true)
     }
 
-    nonisolated private static let versionProbe = EnvironmentVersionProbe(run: runVersionProbe)
+    nonisolated private static let versionProbe = EnvironmentVersionProbe { runVersionProbe($0) }
 
     nonisolated private static func runVersionProbe(_ cancellation: CLIInvocationCancellation) -> String? {
         let script = "import importlib.metadata as m; print(m.version('mlx-lm'))"

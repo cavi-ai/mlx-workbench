@@ -4,6 +4,107 @@ import XCTest
 @testable import mlx_workbench
 
 final class ModelWorkflowCoordinatorTests: XCTestCase {
+    @MainActor
+    func testWorkflowStartupReadsHistoryOffTheMainActor() async throws {
+        let store = makeStore(), record = makeWorkflow(state: .completed, receipt: "saved-receipt")
+        try store.upsert(record)
+        let transaction = try HistoryReadTransaction(store.databaseURL)
+        transaction.release(after: 0.5)
+        let api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] },
+            convertStatus: { [] }, servePreview: { _, _, _ in [:] }, serveStart: { _, _, _, _ in [:] },
+            serveStatus: { [] }, serveStop: { _ in [:] })
+        let coordinator = ModelWorkflowCoordinator(api: api, persistence: .live(store: store))
+        XCTAssertFalse(transaction.isReleased, "Constructing workflows must not wait for history I/O")
+        for _ in 0..<100 where coordinator.history.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(coordinator.history.first?.id, record.id)
+    }
+
+    @MainActor
+    func testFailedConsentWriteCannotStartConversion() async throws {
+        let store = makeStore(), started = temporaryURL("unexpected-conversion")
+        _ = try store.load()
+        try rejectHistoryWrites(store.databaseURL)
+        let coordinator = conversionCoordinator(persistence: .live(store: store), started: started)
+        await coordinator.waitForHistory()
+        coordinator.inspect(source: ggufSource, snapshot: nil)
+        await coordinator.preview(qBits: 4, out: nil)
+        await coordinator.confirm(qBits: 4, reclaimSourceAfterVerification: true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: started.path))
+        XCTAssertNil(coordinator.workflow.jobReceipt)
+        XCTAssertNotNil(coordinator.persistenceError)
+        XCTAssertFalse(coordinator.isConversionSubmissionInFlight)
+    }
+
+    @MainActor
+    func testChangingTheDraftDuringConsentWriteCannotStartConversion() async throws {
+        let store = makeStore(), started = temporaryURL("unexpected-conversion")
+        let writing = expectation(description: "Saving consent"), release = DispatchSemaphore(value: 0)
+        let persistence = ModelWorkflowPersistence(load: { try store.load() }, upsert: { record in
+            XCTAssertFalse(Thread.isMainThread)
+            writing.fulfill()
+            _ = release.wait(timeout: .now() + 5)
+            try store.upsert(record)
+        })
+        let coordinator = conversionCoordinator(persistence: persistence, started: started)
+        await coordinator.waitForHistory()
+        coordinator.inspect(source: ggufSource, snapshot: nil)
+        await coordinator.preview(qBits: 4, out: nil)
+        let reviewedID = coordinator.workflow.id
+        let confirmation = Task { await coordinator.confirm(qBits: 4, reclaimSourceAfterVerification: true) }
+        await fulfillment(of: [writing], timeout: 5)
+        coordinator.inspect(source: ggufSource, snapshot: nil)
+        let newID = coordinator.workflow.id
+        XCTAssertNotEqual(reviewedID, newID)
+        release.signal()
+        await confirmation.value
+        XCTAssertEqual(coordinator.workflow.id, newID)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: started.path))
+        let saved = try XCTUnwrap(store.load().first)
+        XCTAssertEqual(saved.id, reviewedID)
+        XCTAssertEqual(saved.reclaimSourceAfterVerification, true)
+        XCTAssertNil(saved.jobReceipt)
+    }
+
+    @MainActor
+    func testQueuedReceiptStaysWithTheSubmittedWorkflowAfterSelectionChanges() async throws {
+        let store = makeStore(), started = expectation(description: "Backend accepted request")
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let api = ModelWorkflowAPI(convertPreview: { _, _, _ in ["preview_hash": "reviewed"] },
+            convertStart: { _, _, _, _ in
+                started.fulfill()
+                for await _ in gate { break }
+                return ["receipt": "owned-receipt"]
+            }, convertStatus: { [] }, servePreview: { _, _, _ in [:] }, serveStart: { _, _, _, _ in [:] },
+            serveStatus: { [] }, serveStop: { _ in [:] })
+        let coordinator = ModelWorkflowCoordinator(api: api, persistence: .live(store: store))
+        await coordinator.waitForHistory()
+        coordinator.inspect(source: ggufSource, snapshot: nil)
+        await coordinator.preview(qBits: 4, out: nil)
+        let submittedID = coordinator.workflow.id
+        let confirmation = Task { await coordinator.confirm(qBits: 4) }
+        await fulfillment(of: [started], timeout: 5)
+        coordinator.inspect(source: ggufSource, snapshot: nil)
+        let selectedID = coordinator.workflow.id
+        release.yield(()); release.finish()
+        await confirmation.value
+        let saved = try store.load()
+        XCTAssertEqual(saved.first { $0.id == submittedID }?.jobReceipt, "owned-receipt")
+        XCTAssertFalse(saved.contains { $0.id == selectedID })
+        XCTAssertEqual(coordinator.workflow.id, selectedID)
+        XCTAssertNil(coordinator.workflow.jobReceipt)
+    }
+
+    @MainActor
+    private func conversionCoordinator(persistence: ModelWorkflowPersistence, started: URL) -> ModelWorkflowCoordinator {
+        let api = ModelWorkflowAPI(convertPreview: { _, _, _ in ["preview_hash": "reviewed"] },
+            convertStart: { _, _, _, _ in
+                try Data("started".utf8).write(to: started)
+                return ["receipt": "owned-receipt"]
+            }, convertStatus: { [] }, servePreview: { _, _, _ in [:] }, serveStart: { _, _, _, _ in [:] },
+            serveStatus: { [] }, serveStop: { _ in [:] })
+        return ModelWorkflowCoordinator(api: api, persistence: persistence)
+    }
+
     func testRestoredProjectorWorkflowCannotPreviewOrQueueConversion() async {
         let host = await makeHost(preview: ["preview_hash": "hash-1"], confirmReceipt: "receipt-1")
         let timestamp = Date()
@@ -505,11 +606,11 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let recorder = TerminalStateRecorder()
         let record = makeWorkflow(state: .verifying, receipt: "receipt-1", completedModelPath: "/Models/ready")
 
-        await MainActor.run {
+        await Task { @MainActor in
             host.modelWorkflow.onTerminalState = { recorder.states.append($0.state) }
             host.modelWorkflow.restore(record)
-            host.modelWorkflow.resolveVerification(recordID: record.id, resolution: .passed(summary: "canary ok"))
-        }
+            await host.modelWorkflow.resolveVerification(recordID: record.id, resolution: .passed(summary: "canary ok"))
+        }.value
 
         XCTAssertEqual(recorder.states, [.verified])
     }
@@ -519,11 +620,11 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let recorder = TerminalStateRecorder()
         let record = makeWorkflow(state: .verifying, receipt: "receipt-1", completedModelPath: "/Models/ready")
 
-        await MainActor.run {
+        await Task { @MainActor in
             host.modelWorkflow.onTerminalState = { recorder.states.append($0.state) }
             host.modelWorkflow.restore(record)
-            host.modelWorkflow.resolveVerification(recordID: record.id, resolution: .failed(summary: "canary mismatch"))
-        }
+            await host.modelWorkflow.resolveVerification(recordID: record.id, resolution: .failed(summary: "canary mismatch"))
+        }.value
 
         XCTAssertEqual(recorder.states, [.verificationFailed])
     }
@@ -753,16 +854,16 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let host = await makeHost()
         let record = makeWorkflow(id: "remove", state: .failed, receipt: nil)
 
-        await MainActor.run {
+        await Task { @MainActor in
             host.modelWorkflow.restore(record)
             XCTAssertEqual(host.modelWorkflow.workflow.state, .failed)
             XCTAssertTrue(host.modelWorkflow.history.contains(where: { $0.id == record.id }))
 
-            host.modelWorkflow.dismiss(recordID: record.id)
+            await host.modelWorkflow.dismiss(recordID: record.id)
 
             XCTAssertEqual(host.modelWorkflow.workflow.state, .idle)
             XCTAssertFalse(host.modelWorkflow.history.contains(where: { $0.id == record.id }))
-        }
+        }.value
     }
 
     func testDismissLeavesOtherRecordsAndActiveWorkflowAlone() async {
@@ -770,15 +871,15 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let failed = makeWorkflow(id: "remove", state: .failed, receipt: nil)
         let active = makeWorkflow(id: "remain", state: .completed, receipt: "receipt-2", completedModelPath: "/Models/other")
 
-        await MainActor.run {
+        await Task { @MainActor in
             host.modelWorkflow.restore(failed)
             host.modelWorkflow.restore(active)
-            host.modelWorkflow.dismiss(recordID: failed.id)
+            await host.modelWorkflow.dismiss(recordID: failed.id)
 
             XCTAssertEqual(host.modelWorkflow.workflow.id, active.id)
             XCTAssertTrue(host.modelWorkflow.history.contains(where: { $0.id == active.id }))
             XCTAssertFalse(host.modelWorkflow.history.contains(where: { $0.id == failed.id }))
-        }
+        }.value
     }
 
     private let existingMLXPath = "/Models/existing-mlx"
@@ -840,7 +941,7 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             serveStop: { _ in [:] }
         )
         let store = store ?? makeStore()
-        return await MainActor.run {
+        let host = await MainActor.run {
             let host = AppHost(
                 config: Config.defaults(),
                 scanOperation: scanOperation,
@@ -850,6 +951,8 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             host.librarySnapshot = snapshot
             return host
         }
+        await host.modelWorkflow.waitForHistory()
+        return host
     }
 
     private func scanResult(outputs: [MLXOutput]) -> ScanResult {

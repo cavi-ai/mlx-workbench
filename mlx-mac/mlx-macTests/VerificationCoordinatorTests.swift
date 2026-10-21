@@ -1353,7 +1353,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let record = makeWorkflow(state: .completed)
         workflow.restore(record)
 
-        workflow.resolveVerification(recordID: record.id, resolution: .passed(summary: "late callback"))
+        await workflow.resolveVerification(recordID: record.id, resolution: .passed(summary: "late callback"))
 
         XCTAssertEqual(workflow.workflow.state, .completed)
     }

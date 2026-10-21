@@ -33,7 +33,7 @@ final class VerificationCoordinator: ObservableObject {
     private var hasLoadedHistory = false
 
     /// Resolution callback into the model workflow. Set by `attach(to:)`.
-    var onResolution: ((UUID, VerificationResolution) -> Void)?
+    var onResolution: ((UUID, VerificationResolution) async -> Void)?
     /// Called after every completed probe run — stamps usage evidence for the
     /// Disk Pressure Advisor.
     var onReport: ((VerificationReport) -> Void)?
@@ -83,7 +83,7 @@ final class VerificationCoordinator: ObservableObject {
     func attach(to workflow: ModelWorkflowCoordinator) {
         workflow.completionVerifier = self
         onResolution = { [weak workflow] recordID, resolution in
-            workflow?.resolveVerification(recordID: recordID, resolution: resolution)
+            await workflow?.resolveVerification(recordID: recordID, resolution: resolution)
         }
     }
 
@@ -134,7 +134,7 @@ final class VerificationCoordinator: ObservableObject {
         do {
             try await persist(updated)
             lastError = nil
-            onResolution?(recordID, .keptAnyway)
+            await onResolution?(recordID, .keptAnyway)
         } catch { lastError = AppHost.render(error) }
     }
 
@@ -176,7 +176,7 @@ final class VerificationCoordinator: ObservableObject {
 extension VerificationCoordinator: ConversionCompletionVerifying {
     func beginVerification(recordID: UUID, modelPath: String, signature: String?) {
         guard activeModelPath == nil else {
-            onResolution?(recordID, .unavailable(reason: "Another verification is already in progress."))
+            Task { await onResolution?(recordID, .unavailable(reason: "Another verification is already in progress.")) }
             return
         }
         run(modelPath: modelPath, signature: signature, recordID: recordID)
@@ -261,9 +261,9 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                 if let recordID {
                     switch outcome {
                     case .passed:
-                        onResolution?(recordID, .passed(summary: reportSummary(report)))
+                        await onResolution?(recordID, .passed(summary: reportSummary(report)))
                     case .failed:
-                        onResolution?(recordID, .failed(summary: reportSummary(report)))
+                        await onResolution?(recordID, .failed(summary: reportSummary(report)))
                     case .error, .keptDespiteFailure:
                         break
                     }
@@ -273,7 +273,7 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                 lastError = rendered
                 lastErrorModelPath = target
                 if let recordID {
-                    onResolution?(recordID, .unavailable(reason: rendered))
+                    await onResolution?(recordID, .unavailable(reason: rendered))
                 }
             }
         }
