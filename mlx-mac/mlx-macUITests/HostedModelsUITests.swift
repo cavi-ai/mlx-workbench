@@ -225,15 +225,22 @@ final class HostedModelsUITests: XCTestCase {
         library.click()
         // A different selected connection must not win over an explicit toolbar request.
         clickVisibleControl(app.buttons["Add host…"].firstMatch, in: app)
-        let secondName = app.sheets.textFields.matching(NSPredicate(format: "value == %@", "Ollama")).firstMatch
+        let secondHostName = "Other host"
+        let secondHostProvider = "Ollama"
+        let secondHostTitle = "\(secondHostName) · \(secondHostProvider)"
+        let secondProvider = app.sheets.popUpButtons.firstMatch
+        XCTAssertTrue(secondProvider.waitForExistence(timeout: 5))
+        XCTAssertEqual(secondProvider.value as? String, secondHostProvider)
+        let secondName = app.sheets.textFields.matching(NSPredicate(format: "value == %@", secondHostProvider)).firstMatch
         XCTAssertTrue(secondName.waitForExistence(timeout: 5))
-        secondName.click(); secondName.typeKey("a", modifierFlags: .command); secondName.typeText("Other host")
+        secondName.click(); secondName.typeKey("a", modifierFlags: .command); secondName.typeText(secondHostName)
         let secondURL = app.textFields["model-host-url"]
         secondURL.click(); secondURL.typeKey("a", modifierFlags: .command); secondURL.typeText("http://127.0.0.1:1")
         app.buttons["Save host"].click()
         let hostPicker = app.popUpButtons["model-host-picker"]
         XCTAssertTrue(hostPicker.waitForExistence(timeout: 5)); clickVisibleControl(hostPicker, in: app)
-        app.menuItems["Other host"].click()
+        app.menuItems[secondHostTitle].click()
+        XCTAssertEqual(hostPicker.value as? String, secondHostTitle)
         app.buttons["Overview"].firstMatch.click()
         let memory = app.buttons["system-memory-header"]
         XCTAssertTrue(memory.waitForExistence(timeout: 5)); memory.click()
