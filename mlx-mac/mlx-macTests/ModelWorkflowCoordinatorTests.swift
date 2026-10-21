@@ -247,10 +247,8 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         let original = makeWorkflow(id: "original", state: .queued, receipt: "receipt-original")
         try originalStore.replace([original])
 
-        let failingStore = ModelWorkflowStore(fileURL: url, replaceItem: { _, temporaryURL in
-            XCTAssertTrue(FileManager.default.fileExists(atPath: temporaryURL.path))
-            throw TestError.replacementFailed
-        })
+        try rejectHistoryWrites(originalStore.databaseURL)
+        let failingStore = ModelWorkflowStore(fileURL: url)
         let replacement = makeWorkflow(id: "replacement", state: .completed, receipt: "receipt-replacement")
 
         XCTAssertThrowsError(try failingStore.replace([replacement]))

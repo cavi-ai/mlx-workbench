@@ -12,7 +12,9 @@ final class VerificationCoordinatorTests: XCTestCase {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let before = Data("[]".utf8)
         try before.write(to: url)
-        let store = VerificationStore(fileURL: url, replaceItem: { _, _ in throw WorkflowEvidenceError.invalid("Report write unavailable") })
+        let store = VerificationStore(fileURL: url)
+        _ = try store.load()
+        try rejectHistoryWrites(store.databaseURL)
         let verification = makeVerification(store: store, responder: passingResponder)
         let workflow = makeWorkflowCoordinator(), record = makeWorkflow(state: .verifying)
         workflow.restore(record); verification.attach(to: workflow)
@@ -37,27 +39,26 @@ final class VerificationCoordinatorTests: XCTestCase {
             workflowRecordID: record.id, suiteVersion: CanarySuite.version, canaries: [], tokensPerSecond: nil,
             timeToFirstTokenSeconds: nil, metricsEstimated: false, startedAt: Date(), finishedAt: Date(),
             outcome: .failed(canaryIDs: ["hello"]))
-        try VerificationStore(fileURL: url).upsert(failed)
-        let before = try Data(contentsOf: url)
-        let store = VerificationStore(fileURL: url, replaceItem: { _, _ in throw WorkflowEvidenceError.invalid("Report write unavailable") })
+        let store = VerificationStore(fileURL: url)
+        try store.upsert(failed)
+        let before = try store.load()
+        try rejectHistoryWrites(store.databaseURL)
         let verification = makeVerification(store: store, responder: passingResponder)
         workflow.restore(record); verification.attach(to: workflow)
         verification.keepAnyway(recordID: record.id)
         XCTAssertEqual(workflow.workflow.state, .verificationFailed)
         XCTAssertEqual(verification.reports, [failed])
         XCTAssertNotNil(verification.persistenceError)
-        XCTAssertEqual(try Data(contentsOf: url), before)
+        XCTAssertEqual(try store.load(), before)
     }
 
     func testSuccessfulRetryPublishesOnlyAfterTheReportIsSaved() async throws {
         let url = temporaryURL("reports.json")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("[]".utf8).write(to: url)
-        var writable = false
-        let store = VerificationStore(fileURL: url, replaceItem: { existing, temporary in
-            guard writable else { throw WorkflowEvidenceError.invalid("Report write unavailable") }
-            _ = try FileManager.default.replaceItemAt(existing, withItemAt: temporary)
-        })
+        let store = VerificationStore(fileURL: url)
+        _ = try store.load()
+        try rejectHistoryWrites(store.databaseURL)
         let verification = makeVerification(store: store, responder: passingResponder)
         var publications = 0
         verification.onReport = { report in
@@ -68,7 +69,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let failed = await waitFor { verification.activeModelPath == nil }
         XCTAssertTrue(failed); XCTAssertEqual(publications, 0)
         XCTAssertTrue(verification.reports.isEmpty); XCTAssertNotNil(verification.persistenceError)
-        writable = true
+        try executeHistorySQL(store.databaseURL, "DROP TRIGGER reject_write")
         verification.verifyNow(modelPath: "/Models/source", signature: "signature-1")
         let saved = await waitFor { verification.activeModelPath == nil }
         XCTAssertTrue(saved); XCTAssertEqual(publications, 1)

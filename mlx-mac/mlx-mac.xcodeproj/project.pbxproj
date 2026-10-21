@@ -471,6 +471,8 @@
 		26FREF002 /* ServingProfileViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingProfileViews.swift; path = UI/Views/ServingProfileViews.swift; sourceTree = "<group>"; };
 		26FREF001 /* ServingProfiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingProfiles.swift; path = Services/ServingProfiles.swift; sourceTree = "<group>"; };
 		C0DE52000000000000000002 /* JSONRecordStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/JSONRecordStream.swift; sourceTree = "<group>"; };
+		C0DE54000000000000000001 /* RecordArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE54000000000000000002 /* RecordArchive.swift */; };
+		C0DE54000000000000000002 /* RecordArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/RecordArchive.swift; sourceTree = "<group>"; };
 		C0DE52000000000000000004 /* ComparisonHistoryWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ComparisonHistoryWorker.swift; sourceTree = "<group>"; };
 		C0DE51000000000000000002 /* InlineReasoning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/InlineReasoning.swift; sourceTree = "<group>"; };
 		24FREF041 /* ServeProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServeProbe.swift; path = Services/ServeProbe.swift; sourceTree = "<group>"; };
@@ -701,6 +703,7 @@
 				26FREF002 /* ServingProfileViews.swift */,
 				26FREF001 /* ServingProfiles.swift */,
 				C0DE52000000000000000002 /* JSONRecordStream.swift */,
+				C0DE54000000000000000002 /* RecordArchive.swift */,
 				C0DE52000000000000000004 /* ComparisonHistoryWorker.swift */,
 				C0DE51000000000000000002 /* InlineReasoning.swift */,
 				24FREF041 /* ServeProbe.swift */,
@@ -1253,6 +1256,7 @@
 				26BBLD002 /* ServingProfileViews.swift in Sources */,
 				26BBLD001 /* ServingProfiles.swift in Sources */,
 				C0DE52000000000000000001 /* JSONRecordStream.swift in Sources */,
+				C0DE54000000000000000001 /* RecordArchive.swift in Sources */,
 				C0DE52000000000000000003 /* ComparisonHistoryWorker.swift in Sources */,
 				C0DE51000000000000000001 /* InlineReasoning.swift in Sources */,
 				24BBLD043 /* ServeProbe.swift in Sources */,

@@ -1,12 +1,71 @@
 import Foundation
 import XCTest
+import SQLite3
 
 @testable import mlx_workbench
+
+func executeHistorySQL(_ url: URL, _ sql: String) throws {
+    var connection: OpaquePointer?
+    guard sqlite3_open_v2(url.path, &connection, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
+        if let connection { sqlite3_close(connection) }
+        throw WorkflowEvidenceError.invalid("Could not open test history")
+    }
+    defer { sqlite3_close(connection) }
+    guard sqlite3_exec(connection, sql, nil, nil, nil) == SQLITE_OK else {
+        throw WorkflowEvidenceError.invalid(String(cString: sqlite3_errmsg(connection)))
+    }
+}
+
+func rejectHistoryWrites(_ url: URL) throws {
+    try executeHistorySQL(url, "CREATE TRIGGER reject_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT, 'Write unavailable'); END")
+}
 
 /// Durable state stores: same atomic-replace + corruption-blocking contract
 /// as JSONStore, exercised against the real record types.
 final class WorkflowStoreTests: XCTestCase {
     private let stamp = Date(timeIntervalSinceReferenceDate: 1_000_000_000)
+
+    func testWorkflowMigrationKeepsTheOriginalJSONAfterRecordUpdates() throws {
+        let url = storeURL("workflow-migration")
+        let original = workflow(sourcePath: "/models/a.gguf")
+        let backup = try JSONEncoder().encode([original])
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try backup.write(to: url)
+        let store = ModelWorkflowStore(fileURL: url)
+        XCTAssertEqual(try store.load(), [original])
+        let updated = workflow(id: original.id, sourcePath: original.sourcePath, state: .verified)
+        try store.upsert(updated)
+        XCTAssertEqual(try store.load(), [updated])
+        XCTAssertEqual(try Data(contentsOf: url), backup, "Migrated JSON remains a recovery source")
+    }
+
+    func testVerificationMigrationKeepsTheOriginalJSONAfterRecordUpdates() throws {
+        let url = storeURL("verification-migration"), original = report(modelPath: "/models/a")
+        let backup = try JSONEncoder().encode([original])
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try backup.write(to: url)
+        let store = VerificationStore(fileURL: url)
+        XCTAssertEqual(try store.load(), [original])
+        var updated = original; updated.outcome = .failed(canaryIDs: ["canary-1"])
+        try store.upsert(updated)
+        XCTAssertEqual(try store.load(), [updated])
+        XCTAssertEqual(try Data(contentsOf: url), backup, "Migrated JSON remains a recovery source")
+    }
+
+    func testWorkflowUpsertDoesNotReadOrRewriteOtherRecords() throws {
+        let url = storeURL("independent-workflows")
+        let first = workflow(sourcePath: "/models/a.gguf"), second = workflow(sourcePath: "/models/b.gguf")
+        let store = ModelWorkflowStore(fileURL: url)
+        try store.replace([first, second])
+        try executeHistorySQL(store.databaseURL,
+            "UPDATE records SET payload=x'7b',summary=x'7b' WHERE id='\(second.id.uuidString)'")
+        let updated = workflow(id: first.id, sourcePath: first.sourcePath, state: .verified)
+        try store.upsert(updated)
+        let archive = RecordArchive<ConversionWorkflow>(legacyURL: url)
+        XCTAssertEqual(try archive.record(id: first.id), updated)
+        XCTAssertThrowsError(try archive.record(id: second.id), "Unrelated corruption must remain visible")
+        XCTAssertThrowsError(try store.load())
+    }
 
     // MARK: - ModelWorkflowStore
 

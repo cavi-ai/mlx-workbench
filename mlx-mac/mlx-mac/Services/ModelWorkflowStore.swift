@@ -1,107 +1,22 @@
 import Foundation
 
-final class ModelWorkflowStore {
-    private static let fileName = "model-workflows.json"
-    private static let mutationLock = NSLock()
+/// Per-record transactions; the original JSON remains an untouched migration backup.
+final class ModelWorkflowStore: @unchecked Sendable {
+    private let archive: RecordArchive<ConversionWorkflow>
+    var databaseURL: URL { archive.url }
 
-    private let fileURL: URL
-    private let fileManager: FileManager
-    private let replaceItem: (URL, URL) throws -> Void
+    init(fileURL: URL) { archive = RecordArchive(legacyURL: fileURL) }
+    func load() throws -> [ConversionWorkflow] { try archive.load() }
+    func upsert(_ record: ConversionWorkflow) throws { try archive.upsert(record) }
 
-    init(fileURL: URL, fileManager: FileManager = .default) {
-        self.fileURL = fileURL
-        self.fileManager = fileManager
-        self.replaceItem = { existingURL, temporaryURL in
-            _ = try fileManager.replaceItemAt(
-                existingURL,
-                withItemAt: temporaryURL,
-                backupItemName: nil,
-                options: .usingNewMetadataOnly
-            )
-        }
-    }
-
-    init(
-        fileURL: URL,
-        fileManager: FileManager = .default,
-        replaceItem: @escaping (URL, URL) throws -> Void
-    ) {
-        self.fileURL = fileURL
-        self.fileManager = fileManager
-        self.replaceItem = replaceItem
-    }
-
-    func load() throws -> [ConversionWorkflow] {
-        try withLock {
-            try loadUnlocked()
-        }
-    }
-
-    private func loadUnlocked() throws -> [ConversionWorkflow] {
-        guard fileManager.fileExists(atPath: fileURL.path) else {
-            return []
-        }
-
-        return try JSONDecoder().decode([ConversionWorkflow].self, from: Data(contentsOf: fileURL))
-    }
-
-    func replace(_ records: [ConversionWorkflow]) throws {
-        try withLock {
-            try write(records)
-        }
-    }
-
-    func upsert(_ record: ConversionWorkflow) throws {
-        try withLock {
-            var records = try loadUnlocked()
-            if let index = records.firstIndex(where: { $0.persistenceIdentifier == record.persistenceIdentifier }) {
-                records[index] = record
-            } else {
-                records.append(record)
-            }
-            try write(records)
-        }
-    }
-
+    func replace(_ records: [ConversionWorkflow]) throws { try archive.replaceAll(records) }
     func remove(id: String) throws {
-        try withLock {
-            try write(try loadUnlocked().filter { $0.persistenceIdentifier != id })
-        }
-    }
-
-    private func write(_ records: [ConversionWorkflow]) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
-        let data = try encoder.encode(records)
-        let directory = fileURL.deletingLastPathComponent()
-        let temporaryURL = fileURL.appendingPathExtension("tmp-\(UUID().uuidString)")
-
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        if fileManager.fileExists(atPath: temporaryURL.path) {
-            try? fileManager.removeItem(at: temporaryURL)
-        }
-
-        do {
-            try data.write(to: temporaryURL, options: .atomic)
-            if fileManager.fileExists(atPath: fileURL.path) {
-                try replaceItem(fileURL, temporaryURL)
-            } else {
-                try fileManager.moveItem(at: temporaryURL, to: fileURL)
-            }
-        } catch {
-            try? fileManager.removeItem(at: temporaryURL)
-            throw error
-        }
-    }
-
-    private func withLock<T>(_ operation: () throws -> T) rethrows -> T {
-        Self.mutationLock.lock()
-        defer { Self.mutationLock.unlock() }
-        return try operation()
+        guard let id = UUID(uuidString: id) else { throw WorkflowEvidenceError.invalid("Invalid workflow identity.") }
+        _ = try archive.update(id: id) { _ in nil }
     }
 
     static func defaultFileURL(fileManager: FileManager = .default) -> URL {
         WorkbenchStatePaths.applicationSupport(fileManager: fileManager)
-            .appendingPathComponent(fileName, isDirectory: false)
+            .appendingPathComponent("model-workflows.json", isDirectory: false)
     }
 }

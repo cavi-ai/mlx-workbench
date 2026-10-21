@@ -42,6 +42,11 @@ server.
   resolution mirror the engine queue and are pinned by shared fixtures. Never
   write to that file directly from the native app.
 - `tests/` contains unit and release-doc coverage.
+- `RecordArchive` owns transactional per-record storage and one-time JSON
+  migration for workflow, verification and comparison histories. Legacy JSON
+  stays untouched as a backup. `ModelWorkflowStore` and `VerificationStore`
+  update one record per transaction; `ComparisonRecordArchive` adds lightweight
+  history projections without changing complete recorded payloads.
 - `mlx-mac/` is the native SwiftUI app (Xcode project, explicit file list in
   `project.pbxproj` — register new sources there). `make test-swift` runs its
   XCTest suite. Design specs for premium features live in
