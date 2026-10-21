@@ -12,24 +12,62 @@ and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-21
+### Added
+
+- Activity: running comparisons show their progress and pending cleanup, with Cancel comparison and Retry cleanup.
+- Compare: chat lanes can run one Strata model with separate speculation, expert-memory and context settings, and Find best settings prepares a four-lane search that suggests the fastest eligible first-answer or completed-response configuration once every lane is reviewed.
+- Compare: chat lanes record sampled system headroom, answer latency, finish reasons, token use, server-reported cached prompt tokens and speculative draft counts, with a memory and answer-latency chart and paired speculation on/off summaries.
+- Compare: a running comparison can be cancelled with its recorded samples kept, and a chat server left behind by a restart needs explicit cleanup before the next run.
+- Compare: Hosted & mixed comparisons run hosted and local chat models together and ComfyUI image workflows, recording each lane's identity, outputs and conditions (system headroom, host activity, loaded models, device memory) and rechecking each hosted model before its lane.
+- Compare: chat results show a model-by-prompt outcome matrix beside an answer reader with formatted code, collapsed reasoning and full-output A/B.
+- Discover: task recommendations sit beside candidate browsing, and Stop discovery keeps the previous results with their search settings.
+- Docs: the hosted operator guide covers every screen, Strata, configuration, state files, make targets, troubleshooting, development and security.
+- Health: optional backends show their installed state, target version and tasks, and a model missing its backend opens a reviewed install from Library that returns to the model after a fresh scan.
+- Library: classification, music, transcription, speech synthesis, image generation and understanding, and video understanding and generation run as inspector tasks with history, retained inputs, reuse, cancellation, playback and verified export.
+- Library: the Hosted models source connects to Ollama, LM Studio, ComfyUI, llama.cpp and OpenAI-compatible servers on loopback, with Keychain tokens, Test connection, dated inventory, Ollama model details and running models, and ComfyUI device memory.
+- Library: hosted models can unload one Ollama model or LM Studio instance, or free ComfyUI memory, after a reviewed activity check, with the inventory read back afterwards.
+- Library: Compare opens supported chat and media comparisons with the selected model in lane A.
+- Library: an empty library offers Add from Hugging Face, Settings and rescan, and empty search or filter results offer clearing them.
+- Memory panel: saved hosts show their loaded models, memory and activity, and Run and the panel inspect process memory by name, PID and resident RAM.
+- Overview: progress shows task-specific stages, and the next action follows each model's runtime.
+- Run: completed Strata comparison lanes save as named serving profiles verified by the canary suite, which can be renamed, removed, copied with new settings, compared, and reviewed with their evidence and memory before loading.
+- Setup Assistant: distribution builds prepare the bundled engine runtime, and setup checks prerequisites with copyable commands, reports actual readiness, and installs with cancel and retry.
+- Strata: the optional Strata runtime installs on request and prepares local GGUF profiles for Run and chat Compare.
+- Studies: Studies sits in the Lab sidebar, explains recipe capture blockers and video study settings, and asks before discarding edited experiment drafts.
+- Training: Use in Run serves a completed LoRA adapter on its recorded base, Check setup reports runtime, cached base and dataset split problems with repair actions, and a chat dataset editor writes training and validation JSONL whose problems link to the affected example.
+
 ### Changed
 
-- Clients: refresh installed-client detection and show supported clients in the empty board.
-- Training: expose batch size, choose fresh adapter output folders, and keep unavailable base selections editable.
-- Engine: validate training dataset splits and cached MLX-LM architectures during preview, and use the selected Hugging Face cache for the recorded base identity; update to mlx-agent 0.8.0 with scan backend readiness, `serve start --thinking off` and cached intake sources.
-- Library: the Status column shows Verified, Failed checks, Verifying… or Ready for ready models, Modified shows each MLX model's newest file time, and models whose backend is not installed show Needs Runtime and stay out of Compare.
-- Verification: canaries serve with reasoning switched off where the chat template allows and score the answer after any `<think>` block (canary suite 3); a run that cannot finish says why in the inspector.
-- Compare: inline `<think>` reasoning is kept apart from the answer, Fastest goes only to lanes that answered every prompt, decode speed is withheld when streamed tokens arrive in one burst, and music prompt sets use the same editor, reuse sheet and save rules as every other mode.
+- Activity: current study and training work and failed conversions come first, settled jobs collapse, and failed status reads and training jobs offer retry, Health, log and setup actions.
 - Add from Hugging Face: a repository already in the cache says so instead of a download size, and Prepare's quantization tiles estimate fit from its task.
+- App: graphite surfaces, yellow actions, consistent headings and a new icon, with the Library inspector as a sheet in compact windows.
+- Clients: Refresh detects added and removed clients, and the empty board shows the supported writable clients with setup guidance.
+- Compare: inline `<think>` reasoning is kept apart from the answer, Fastest goes only to lanes that answered every prompt, decode speed is withheld when streamed tokens arrive in one burst, and music prompt sets use the same editor, reuse sheet and save rules as every other mode.
+- Engine: vendored mlx-agent advances from `fe315aa` to 0.9.0, adding durable inference tasks, optional Strata serving, LoRA adapter serving and setup checks, `serve start --thinking off`, backend readiness and duplicate-folder and Ollama store groups in scans, and cached intake sources; training previews refuse splits smaller than one batch and unsupported base architectures and use the selected Hugging Face cache.
+- Health: Python, conversion and serving checks are labeled as base-environment checks, with optional backends and Strata explained separately.
+- Library: the Status column shows Verified, Failed checks, Verifying… or Ready for ready models, Modified shows each MLX model's newest file time, and models whose backend is not installed show Needs Runtime and stay out of Compare.
+- Library: the Source picker lists All models, LM Studio and every saved host, keeping the table's state and the selected host, model and instance.
+- Library: fit estimates sit under a neutral Memory fit heading.
 - Prepare: moving the original source to the Trash is offered, and runs after verification, only when the source is inside the model folders in Settings.
+- Reclaim: scans show their coverage, duplicate MLX model folders and Ollama store models appear in Duplicate groups (identical copies as reclaimable duplicates, other bit widths of one model as informational groups), and folder copies open a preview before review.
+- Run: ready Library models open a serving preview without a conversion record, using each model's own runtime.
+- Settings: Run's endpoints replace the Workbench API host and port fields, and catalog refresh is disabled when no provider is configured.
+- Training: batch size is editable, each preview chooses a fresh adapter output folder, and unavailable base selections stay editable.
+- Verification: canaries serve with reasoning switched off where the chat template allows and score the answer after any `<think>` block (canary suite 3); a run that cannot finish says why in the inspector.
 
 ### Fixed
 
+- App: retained pages stay inside the window, and training fields keep focus when validation changes the layout.
+- Health: runtime checks run in one selected Python within a time limit and say why when they cannot finish.
+- Install: a failed Python environment creation stops installation before any package is installed.
 - Library: a long verification failure no longer widens the inspector and hides table columns.
 - Library: task forms check settings against the engine's limits before Run, the same limits Compare prompt sets use, and speech forms show validation only after input.
+- Library: model links from Overview, Prepare, Activity, Run, intake and LM Studio open that model with hiding filters cleared, and a missing model shows a warning instead of selecting another.
 - Prepare: the source cleanup choice stays in place while a preview is prepared, so the actions and pipeline track no longer jump.
 - Run: Stop server and the toolbar's Unload refuse a model that a hosted comparison's local lane is serving.
-- Reclaim: duplicate MLX model folders and Ollama store models appear in Duplicate groups, identical copies as reclaimable duplicates and other bit widths of one model as informational groups.
+- Training: adapter evaluations stay bound to the reviewed prompt, and confirmation is disabled while the cached base is missing.
+- Verification: reports are saved before verdicts, and Keep anyway needs a saved override.
 
 ## [0.5.0] - 2026-10-12
 ### Added
@@ -426,7 +464,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.6.0
 [0.5.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.5.0
 [0.4.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.4.0
 [0.3.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.3.0
