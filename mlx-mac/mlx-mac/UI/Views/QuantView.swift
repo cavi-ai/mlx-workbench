@@ -552,6 +552,14 @@ struct QuantView: View {
                 .padding(WorkbenchSpacing.pageInset)
             }
             .accessibilityIdentifier("comparison-scroll")
+            .background(GeometryReader { proxy in
+                let available = max(0, proxy.size.width - 2 * WorkbenchSpacing.pageInset)
+                Color.clear.preference(key: CompareContentWidthKey.self,
+                    value: shownRun?.effectiveMode == .chat ? available : min(1100, available))
+            })
+            .onPreferenceChange(CompareContentWidthKey.self) { width in
+                if width > 0 { compareContentWidth = width }
+            }
         }
         .sheet(isPresented: $showingSettingsSearch) {
             StrataSettingsSearchSheet(models: readyModels.filter { $0.item.servingRuntime == "strata" }) { model, setup in
@@ -618,7 +626,9 @@ struct QuantView: View {
         .onChange(of: comparison.activeRunID) { _, newValue in
             if let newValue { selectedRunID = newValue }
         }
-        .onAppear {
+        .disabled(comparison.isLoadingHistory)
+        .task(id: comparison.isLoadingHistory) {
+            guard !comparison.isLoadingHistory, !Task.isCancelled else { return }
             if !initializedSuggestions,
                let restored = ComparePresentation.restoredPromptSetID(runs: comparison.runs, mode: mode, promptSets: modePromptSets) {
                 selectedPromptSetID = restored
@@ -632,7 +642,7 @@ struct QuantView: View {
             applySuggestions()
         }
         .onChange(of: readyModels.map { $0.item.path }) { _, _ in
-            guard comparison.activeRunID == nil else { return }
+            guard !comparison.isLoadingHistory, comparison.activeRunID == nil else { return }
             if let familyFilter, !readyModels.contains(where: { ComparePresentation.familyLabel($0) == familyFilter }) { self.familyFilter = nil }
             if reusedPromptSet == nil && laneSources.isEmpty {
                 let reconciled = ComparisonInsights.reconcile(slots: variantSlots, available: Set(readyModels.map { $0.item.path }))
@@ -1332,12 +1342,6 @@ struct QuantView: View {
                         .id(run.id)
                 }
             }
-        }
-        .background(GeometryReader { proxy in
-            Color.clear.preference(key: CompareContentWidthKey.self, value: proxy.size.width)
-        })
-        .onPreferenceChange(CompareContentWidthKey.self) { width in
-            if width > 0 { compareContentWidth = width }
         }
     }
 

@@ -2,6 +2,8 @@
 
 ## Health
 
+**Client and host setup → Open setup doctor…** opens the Clients setup doctor for missing client configs, endpoint mismatches and local model-host connections. It offers official installation guides, targeted config previews with backup and rollback, and the existing host connection editor and read-only test. Engine and model-runtime repairs remain in Health; see [Clients](clients.md).
+
 **Health** leads with checks of the engine checkout, base Python environment, conversion tools and mlx-lm server (**Base runtime checks passed**, **Base conversion needs setup**, **Base serving needs setup**). It names missing components, with a command to copy or a link to the right setting. **Install Runtime…** runs `make install` in the engine checkout to install the base dependencies.
 
 These checks do not establish readiness of isolated optional backends or Strata. **Model-specific runtimes → Open Run** leads to serving preview, which checks the selected model's runtime before confirmation. A successful base check does not prove that every model can run, and a missing base component does not establish that an isolated runtime is unavailable.

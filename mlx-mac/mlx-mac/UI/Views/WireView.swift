@@ -137,6 +137,7 @@ struct WireView: View {
     @State private var isPreparingCapture = false
     @State private var captureError: String?
     @State private var layout = ClientsLayout()
+    @State private var showsSetupDoctor = false
 
     init(appHost: AppHost, onRouteSelection: @escaping (AppRoute) -> Void = { _ in }) {
         self.appHost = appHost
@@ -215,6 +216,14 @@ struct WireView: View {
             hasServerStatus = false
             guard isRouteActive else { return }
             await refreshServers()
+            openRequestedSetup()
+        }
+        .onChange(of: appHost.handoffs[.clientSetup]) { _, _ in openRequestedSetup() }
+        .sheet(isPresented: $showsSetupDoctor) {
+            ClientSetupDoctorView(wiring: wiring, hosts: appHost.modelHosts, workflow: appHost.modelWorkflow,
+                selectedServerID: $selectedServerID, refreshClientsAndServers: { await refreshServers(); return serverMessage == nil },
+                previewClient: { await previewClients(clientIDs: [$0]) },
+                onOpenRun: { onRouteSelection(.run) }, onOpenHealth: { onRouteSelection(.health) })
         }
         .sheet(item: $capture, onDismiss: {
             if importAfterCapture { importAfterCapture = false; reviewReport() }
@@ -287,6 +296,11 @@ struct WireView: View {
             Text("Point installed clients at a running local server. Each client's own config is written atomically with backup and rollback.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
+            Button { showsSetupDoctor = true } label: {
+                Label("Add clients / Setup doctor…", systemImage: "stethoscope")
+            }
+            .accessibilityIdentifier("open-client-setup-doctor")
+            .disabled(isRefreshingServer || wiring.isCheckingServer || wiring.isApplying)
             noticeViews(.header)
         }
     }
@@ -448,19 +462,30 @@ struct WireView: View {
 
     private var clientPreviewButton: some View {
         Button(hasCurrentClientPreview ? "Refresh preview" : "Preview client wiring") {
-            Task { @MainActor in
-                clearWiringResult()
-                let chosen = selectedServer
-                await refreshServers()
-                guard let chosen, let current = selectedServer, ClientWiringSelection.sameServer(chosen, current) else {
-                    serverMessage = "Selected server stopped or changed. Choose a running server and preview again."
-                    return
-                }
-                wiring.preview(server: current)
-            }
+            Task { await previewClients() }
         }
         .disabled(selectedEndpoint == nil || isRefreshingServer || wiring.isCheckingServer || wiring.isApplying || wiring.installations.allSatisfy(\.advisoryOnly))
         .help("Review proposed client config changes before applying them.")
+    }
+
+    private func openRequestedSetup() {
+        guard isRouteActive, appHost.handoffs.take(.clientSetup) != nil else { return }
+        showsSetupDoctor = true
+    }
+
+    @discardableResult
+    private func previewClients(clientIDs: Set<String>? = nil) async -> Bool {
+        guard !isRefreshingServer, !wiring.isCheckingServer, !wiring.isApplying else { return false }
+        clearWiringResult()
+        let chosen = selectedServer
+        await refreshServers()
+        guard isRouteActive, let chosen, let current = selectedServer,
+              ClientWiringSelection.sameServer(chosen, current) else {
+            serverMessage = "Selected server stopped or changed. Choose a running server and preview again."
+            return false
+        }
+        wiring.preview(server: current, clientIDs: clientIDs)
+        return !wiring.plans.isEmpty
     }
 
     private func clearWiringResult() {

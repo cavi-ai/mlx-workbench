@@ -19,6 +19,14 @@ struct ClientAdapter: Sendable {
     let read: @Sendable (_ contents: String) -> ClientConfigReading
     let plan: @Sendable (_ before: String?, _ endpoint: WireEndpoint) throws -> String
 
+    /// A supported setup target, independent of whether its directory exists.
+    func configurationInstallation(home: URL) -> ClientInstallation? {
+        guard !advisoryOnly, let relativeConfigPath else { return nil }
+        return ClientInstallation(clientID: clientID, displayName: displayName,
+                                  configPath: home.appendingPathComponent(relativeConfigPath).path,
+                                  advisoryOnly: false, advisoryNote: nil)
+    }
+
     func installation(home: URL, fileManager: FileManager = .default) -> ClientInstallation? {
         if advisoryOnly {
             // Advisory rows only appear when the client looks installed.

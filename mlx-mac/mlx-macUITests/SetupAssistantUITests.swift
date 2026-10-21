@@ -2674,6 +2674,75 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Run-to-Clients-applied-endpoint")
     }
 
+    func testSetupDoctorCreatesMissingClientAndOffersHostConnections() throws {
+        let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+        let servers: [[String: Any]] = [["repo": "org/Qwen", "runtime": "mlx_lm", "port": 8766,
+                                        "pid": 123, "state": "running"]]
+        try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Clients")
+        let open = app.buttons["open-client-setup-doctor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 15))
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: open)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 15), .completed)
+        open.click()
+        XCTAssertTrue(text(containing: "Setup check finished.").waitForExistence(timeout: 15))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.deletingLastPathComponent().path), "Checking must not create folders")
+        let review = app.buttons["setup-client-opencode"]
+        XCTAssertFalse(review.isEnabled)
+        XCTAssertFalse(app.buttons["setup-client-continue"].isEnabled)
+        let endpoint = app.popUpButtons["setup-doctor-endpoint"]
+        endpoint.click()
+        app.menuItems["org/Qwen :8766"].click()
+        XCTAssertTrue(review.isEnabled)
+        capture("Setup-doctor-missing-client")
+        review.click()
+        let confirm = app.buttons["Confirm client wiring"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 15))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path), "Preview must not write")
+        for _ in 0..<6 where !confirm.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -220) }
+        confirm.click()
+        XCTAssertTrue(text(containing: "Wired 1 client").waitForExistence(timeout: 15))
+        let written = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any])
+        XCTAssertEqual(written["model"] as? String, "mlx-local/org/Qwen")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".config/zed").path))
+        capture("Setup-doctor-client-created")
+        app.buttons["Roll back last wiring"].click()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path))
+
+        for _ in 0..<6 where !open.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: 220) }
+        open.click()
+        XCTAssertTrue(text(containing: "Setup check finished.").waitForExistence(timeout: 15))
+        for (provider, defaultURL) in [("lmStudio", "http://127.0.0.1:1234"), ("comfyUI", "http://127.0.0.1:8188"),
+                                       ("ollama", "http://127.0.0.1:11434")] {
+            let add = app.buttons["setup-host-\(provider)"]
+            for _ in 0..<8 where !add.isHittable { app.scrollViews["setup-doctor-scroll"].scroll(byDeltaX: 0, deltaY: -200) }
+            XCTAssertTrue(add.isHittable)
+            if provider == "ollama" { capture("Setup-doctor-host-presets") }
+            add.click()
+            let url = app.textFields["model-host-url"]
+            XCTAssertTrue(url.waitForExistence(timeout: 10))
+            XCTAssertEqual(url.value as? String, defaultURL)
+            if provider == "ollama" {
+                replace(url, with: "http://127.0.0.1:1")
+                app.buttons["test-model-host-connection"].click()
+                XCTAssertTrue(text(containing: "The local host could not be reached.").waitForExistence(timeout: 15))
+                capture("Setup-doctor-host-check-failed")
+            }
+            app.buttons["Cancel"].click()
+        }
+        app.buttons["Done"].click()
+        select("Health")
+        let healthDoctor = app.buttons["health-client-setup-doctor"]
+        let healthScroll = app.scrollViews.containing(.button, identifier: "health-client-setup-doctor").firstMatch
+        XCTAssertTrue(healthScroll.waitForExistence(timeout: 10))
+        for _ in 0..<15 where !healthDoctor.isHittable { healthScroll.scroll(byDeltaX: 0, deltaY: -240) }
+        XCTAssertTrue(healthDoctor.isHittable)
+        healthDoctor.click()
+        XCTAssertTrue(text(containing: "Setup check finished.").waitForExistence(timeout: 15))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path), "Health navigation must not recreate a rolled-back config")
+    }
+
     func testClientWiringPreviewAndEndpointSelection() throws {
         let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
         try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -3270,6 +3339,38 @@ final class WorkbenchReviewUITests: XCTestCase {
                 XCTAssertTrue(app.staticTexts[legacy ? "Completion unknown · entire run" : "2/2 finished · entire run"].firstMatch.exists)
                 XCTAssertTrue(app.buttons["comparison-cell-1-0"].label.contains("Blocked"))
                 if !legacy {
+                    if appearance == "Dark" {
+                        let matrix = app.descendants(matching: .any)["comparison-outcome-matrix"].firstMatch
+                        let reader = app.descendants(matching: .any)["comparison-reading-inspector"].firstMatch
+                        XCTAssertTrue(matrix.waitForExistence(timeout: 5))
+                        let standardWidth = matrix.frame.width
+                        XCTAssertGreaterThanOrEqual(standardWidth, 600)
+                        XCTAssertGreaterThanOrEqual(reader.frame.width, 480)
+                        capture("Compare-board-standard-layout")
+                        if (NSScreen.main?.frame.width ?? 0) >= 2048 {
+                            let window = app.windows.firstMatch
+                            let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+                                .withOffset(CGVector(dx: 0, dy: 20))
+                            titlebar.press(forDuration: 0.1, thenDragTo: titlebar.withOffset(CGVector(
+                                dx: (NSScreen.main?.frame.minX ?? 0) - window.frame.minX, dy: 0)))
+                            resizeWindow(width: 2048, height: 1050)
+                            let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                                matrix.frame.width > standardWidth + 100
+                            }, object: nil)
+                            XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 5), .completed)
+                            XCTAssertGreaterThanOrEqual(app.windows.firstMatch.frame.width, 2000)
+                            XCTAssertGreaterThanOrEqual(matrix.frame.width, 790)
+                            XCTAssertGreaterThanOrEqual(reader.frame.width, 480)
+                            for index in 0..<2 {
+                                let cell = app.buttons["comparison-cell-0-\(index)"]
+                                XCTAssertTrue(cell.isHittable)
+                                XCTAssertGreaterThanOrEqual(cell.frame.width, 144)
+                                XCTAssertLessThanOrEqual(cell.frame.maxX, matrix.frame.maxX)
+                            }
+                            capture("Compare-board-wide-layout")
+                            resizeWindow(width: 1440, height: 900)
+                        }
+                    }
                     XCTAssertTrue(app.buttons["Use model A…"].exists)
                     XCTAssertFalse(app.buttons["Use model C…"].exists)
                     app.buttons["comparison-cell-2-1"].click()

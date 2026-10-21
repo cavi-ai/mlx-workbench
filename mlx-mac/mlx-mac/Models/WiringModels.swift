@@ -88,6 +88,39 @@ struct ClientConfigStatus: Equatable, Sendable {
     let isLinked: Bool
 }
 
+/// Config evidence only; a matching config does not prove the client used it.
+struct ClientSetupDiagnosis: Equatable {
+    let message: String
+    let canPreview: Bool
+
+    static func make(clientID: String, status: ClientConfigStatus?, servers: [ServerInfo], serverStatusAvailable: Bool = true) -> Self {
+        guard let status else { return Self(message: "Refresh to check this config.", canPreview: false) }
+        if status.isLinked { return Self(message: "Linked config. Review the link manually; Workbench cannot repair it.", canPreview: false) }
+        switch status.reading {
+        case .fileAbsent:
+            if clientID == "continue" {
+                return Self(message: "No legacy JSON config. Use Continue’s setup guide for its current YAML format.", canPreview: false)
+            }
+            return Self(message: "Config is missing. Review creation for the selected endpoint.", canPreview: true)
+        case .unreadable(let reason):
+            return Self(message: "Config needs manual review: \(reason).", canPreview: false)
+        case .noWorkbenchEntry:
+            return Self(message: "No local endpoint is configured.", canPreview: true)
+        case .notDefault:
+            return Self(message: "A local entry exists, but another provider is selected.", canPreview: true)
+        case .entries(let entries):
+            guard serverStatusAvailable else {
+                return Self(message: "Config has a local endpoint. Server status is unavailable; check setup again.", canPreview: false)
+            }
+            let matches = entries.compactMap { ClientEndpointMatch.match($0, servers: servers) }
+            if !matches.isEmpty && matches.allSatisfy({ if case .live = $0 { return true }; return false }) {
+                return Self(message: "Config matches a running endpoint. Client execution has not been tested.", canPreview: true)
+            }
+            return Self(message: "Configured endpoint is not running, has changed, or is ambiguous. Start it in Run or review a new endpoint.", canPreview: true)
+        }
+    }
+}
+
 enum ClientEndpointURL {
     /// The port of a base URL a Workbench server can serve: http, 127.0.0.1 or localhost,
     /// an explicit port, path /v1 or /v1/, and no query, fragment or userinfo.

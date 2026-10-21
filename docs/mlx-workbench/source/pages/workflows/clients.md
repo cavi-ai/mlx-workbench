@@ -7,12 +7,22 @@
 | Client | Config file | Mode |
 |---|---|---|
 | opencode | `~/.config/opencode/opencode.jsonc` | Writable |
-| Continue | `~/.continue/config.json` | Writable |
+| Continue | `~/.continue/config.json` | Writable legacy JSON configs |
 | Zed | `~/.config/zed/settings.json` | Writable |
 | Aider | `~/.aider.conf.yml` | Writable |
 | LM Studio, Ollama | None | Advisory only |
 
 Write targets are a fixed allowlist of these paths. Symbolic links at the config, backup or restore path are refused.
+
+## Add clients and check setup
+
+**Add clients / Setup doctor…** checks supported config files, running Workbench endpoints and saved model-host connections. Progress names the current check; results show the check time, missing configs, unreadable or linked files, and endpoint mismatches. Checks never install applications, write configs, start servers or generate output.
+
+Choose a running endpoint, then **Review config…** beside one client. OpenCode, Zed and Aider can create a config even when its folder does not exist. The wiring preview lists only that client; **Confirm client wiring** performs the existing server and file checks before writing. Rollback restores a backup or moves an unchanged newly created config to Trash. Unreadable and linked configs require manual review. Continue’s adapter supports existing legacy JSON files; its guide covers current YAML setup, and the doctor does not create a legacy file for a new installation.
+
+**Install / setup guide** opens the application’s official instructions. Creating a config does not establish that the application is installed or that it used the endpoint.
+
+The doctor offers the same **Add connection…** flow for Ollama, LM Studio, ComfyUI, llama.cpp and OpenAI-compatible hosts, including when no application folder was detected. Presets fill the local URL; review it and use **Test connection** before **Save host**. Saved hosts offer **Edit / test…**, dated inventory results and connection errors. Tests read inventory only; failed checks retain earlier snapshots. Canceling an editor saves nothing. See [Hosted models](library.md#hosted-models) for host capabilities.
 
 ## The wiring board
 

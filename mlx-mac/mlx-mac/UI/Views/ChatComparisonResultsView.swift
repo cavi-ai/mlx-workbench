@@ -1,6 +1,34 @@
 import AppKit
 import SwiftUI
 
+/// Share available width while keeping the reading pane usable. Extra table
+/// space first reveals model names, then more of each prompt heading.
+struct ChatComparisonLayout {
+    let isWide: Bool
+    let matrixWidth: CGFloat
+    let modelColumn: CGFloat
+    let promptColumn: CGFloat
+    let metricColumn = WorkbenchSize.Compare.boardMetricColumn
+
+    init(contentWidth: CGFloat, promptCount: Int) {
+        let size = WorkbenchSize.Compare.self
+        let count = CGFloat(max(0, promptCount))
+        let chrome = 2 * WorkbenchSpacing.md + (count + 1) * WorkbenchSpacing.xs
+        let minimum = size.boardModelColumn + count * size.boardPromptColumn + size.boardMetricColumn + chrome
+        let maximum = size.boardModelMaximum + count * size.boardPromptMaximum + size.boardMetricColumn + chrome
+        isWide = contentWidth >= size.boardBreakpoint
+        if isWide {
+            matrixWidth = min(min(max(minimum, contentWidth * size.boardMatrixShare), maximum),
+                              contentWidth - size.boardInspectorMinimum - WorkbenchSpacing.lg)
+        } else { matrixWidth = max(0, contentWidth) }
+        let extra = max(0, matrixWidth - minimum)
+        let modelGrowth = min(extra, size.boardModelMaximum - size.boardModelColumn)
+        modelColumn = size.boardModelColumn + modelGrowth
+        promptColumn = size.boardPromptColumn + (count > 0
+            ? min((extra - modelGrowth) / count, size.boardPromptMaximum - size.boardPromptColumn) : 0)
+    }
+}
+
 /// A prompt-outcome matrix and one reading inspector share recorded identities.
 struct ChatComparisonResultsView<Actions: View>: View {
     let run: ComparisonRun
@@ -35,14 +63,15 @@ struct ChatComparisonResultsView<Actions: View>: View {
 
     private var prompts: [PromptEntry] { ComparisonViewLogic.rows(for: run) }
     private var lanes: [CompareLane] { ComparePresentation.lanes(for: run) }
-    private var wide: Bool { contentWidth >= WorkbenchSize.Compare.boardBreakpoint }
+    private var layout: ChatComparisonLayout { ChatComparisonLayout(contentWidth: contentWidth, promptCount: prompts.count) }
+    private var wide: Bool { layout.isWide }
     private var selectedPrompt: PromptEntry? { prompts.first { $0.id == promptID } }
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 0) {
             if wide {
                 HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
-                    matrix.frame(width: min(WorkbenchSize.Compare.boardMatrixMaximum, contentWidth * 0.42))
+                    matrix.frame(width: layout.matrixWidth)
                     inspector
                 }
             } else {
@@ -52,6 +81,7 @@ struct ChatComparisonResultsView<Actions: View>: View {
                 }
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat-results-workspace")
         .onChange(of: run.results.map(\.id)) { _, _ in
             let readable = ChatComparisonPresentation.readingResults(in: run)
@@ -70,21 +100,21 @@ struct ChatComparisonResultsView<Actions: View>: View {
             ScrollView(.horizontal) {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .top, spacing: WorkbenchSpacing.xs) {
-                        Text("Model").frame(width: WorkbenchSize.Compare.boardModelColumn, alignment: .leading)
+                        Text("Model").frame(width: layout.modelColumn, alignment: .leading)
                         ForEach(Array(prompts.enumerated()), id: \.element.id) { index, prompt in
                             Button { promptID = prompt.id; matrixExpanded = false } label: {
                                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {
                                     Text("Prompt \(index + 1)").fontWeight(.semibold)
-                                    Text(prompt.text).lineLimit(2)
+                                    Text(prompt.text).lineLimit(3)
                                 }
-                                .frame(width: WorkbenchSize.Compare.boardPromptColumn, alignment: .leading)
+                                .frame(width: layout.promptColumn, alignment: .leading)
                                 .padding(.vertical, WorkbenchSpacing.xs)
                             }
                             .buttonStyle(.plain).foregroundStyle(prompt.id == promptID ? WorkbenchColor.accent : WorkbenchColor.muted)
                             .help(prompt.text).accessibilityLabel("Read prompt \(index + 1)")
                             .accessibilityAddTraits(prompt.id == promptID ? .isSelected : [])
                         }
-                        Text("Median\ndecode").frame(width: WorkbenchSize.Compare.boardMetricColumn, alignment: .trailing)
+                        Text("Median\ndecode").frame(width: layout.metricColumn, alignment: .trailing)
                     }
                     .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                     ForEach(lanes) { lane in matrixRow(lane) }
@@ -95,6 +125,8 @@ struct ChatComparisonResultsView<Actions: View>: View {
         }
         .padding(WorkbenchSpacing.md)
         .background(WorkbenchColor.surface, in: RoundedRectangle(cornerRadius: WorkbenchRadius.control))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("comparison-outcome-matrix")
     }
 
     private func matrixRow(_ lane: CompareLane) -> some View {
@@ -110,13 +142,13 @@ struct ChatComparisonResultsView<Actions: View>: View {
                     ChatModelDetailsButton(lane: lane, result: result, run: run, name: name(lane.path)) { laneActions(lane) }
                 }
             }
-            .frame(width: WorkbenchSize.Compare.boardModelColumn, height: WorkbenchSize.Compare.boardRowHeight, alignment: .leading)
+            .frame(width: layout.modelColumn, height: WorkbenchSize.Compare.boardRowHeight, alignment: .leading)
             ForEach(Array(prompts.enumerated()), id: \.element.id) { index, prompt in
                 let outcome = ChatComparisonPresentation.outcome(result, prompt: prompt, in: run)
                 Button { inspect(lane, prompt: prompt.id) } label: {
                     Label(outcome.label, systemImage: outcome.symbol)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(width: WorkbenchSize.Compare.boardPromptColumn, height: WorkbenchSize.Compare.boardRowHeight, alignment: .leading)
+                        .frame(width: layout.promptColumn, height: WorkbenchSize.Compare.boardRowHeight, alignment: .leading)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).foregroundStyle(outcome.color)
@@ -134,7 +166,7 @@ struct ChatComparisonResultsView<Actions: View>: View {
                     Text(String(format: "First %.2f s", latency)).foregroundStyle(WorkbenchColor.muted)
                         .help("Fastest recorded first token; may include reasoning.")
                 }
-            }.frame(width: WorkbenchSize.Compare.boardMetricColumn, alignment: .trailing)
+            }.frame(width: layout.metricColumn, alignment: .trailing)
         }
         .font(WorkbenchTypography.secondary)
         .background(firstID == lane.resultKey || secondID == lane.resultKey ? WorkbenchColor.accent.opacity(.wash) : Color.clear)
@@ -202,6 +234,7 @@ struct ChatComparisonResultsView<Actions: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(WorkbenchSpacing.md)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("comparison-reading-inspector")
     }
 

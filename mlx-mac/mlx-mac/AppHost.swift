@@ -151,6 +151,7 @@ class AppHost: ObservableObject {
             ),
             runStore: JSONStore<ComparisonRun>(fileURL: JSONStore<ComparisonRun>.defaultFileURL("comparison-runs.json")),
             promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json")),
+            loadHistoryInBackground: true,
             mediaRunner: LiveComparisonMediaRunner(api: api),
             outputStore: ComparisonOutputStore(),
             recoverCleanup: { try await api.recoverComparisonServer($0) },
@@ -315,8 +316,19 @@ class AppHost: ObservableObject {
             let roots = self.config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : self.config.ggufRoots
             return Self.scanMLXRoots(self.config, ggufRoots: roots)
         }
-        self.reclaim.protectedPaths = { [weak self] in Array(self?.occupancy.protectedPaths ?? []) }
-        self.reclaim.servingModelPaths = { try await api.servingPathsForRemoval() }
+        self.reclaim.protectedPaths = { [weak self] in
+            guard let self else { return [] }
+            if !self.comparison.hasLoadedHistory {
+                return Array(self.occupancy.protectedPaths) + self.reclaim.ggufRoots() + self.reclaim.mlxRoots()
+            }
+            return Array(self.occupancy.protectedPaths)
+        }
+        self.reclaim.servingModelPaths = { [weak self] in
+            guard self?.comparison.hasLoadedHistory == true else {
+                throw WorkflowEvidenceError.invalid("Saved comparison ownership is unavailable. Wait for history to load before reclaiming models.")
+            }
+            return try await api.servingPathsForRemoval()
+        }
         self.comparison.maxTokensCap = { [weak self] in self?.config.comparisonMaxTokens ?? 512 }
         // HF-cache reclaim rides the authoritative doctor prune flow.
         self.reclaim.doctorScan = { try await api.doctor(wiredRoots: [], hfCache: nil) }
@@ -894,13 +906,13 @@ class AppHost: ObservableObject {
 
     /// The one stop/unload path for the toolbar and Run; models a run serves are refused.
     func unloadServing(_ server: ServerInfo) async -> Bool {
-        guard !occupancy.blocksStop(server) else { return false }
+        guard comparison.hasLoadedHistory, !occupancy.blocksStop(server) else { return false }
         return await endpoint.unloadServer(server)
     }
 
     /// Run's stop for the selected model's server; a model a run serves is refused before any workflow call.
     func stopSelectedServer(modelPath: String) async -> Bool {
-        guard !occupancy.blocksStop(modelIdentity: modelPath) else { return false }
+        guard comparison.hasLoadedHistory, !occupancy.blocksStop(modelIdentity: modelPath) else { return false }
         await modelWorkflow.stopServer(modelPath: modelPath)
         return true
     }
@@ -950,13 +962,18 @@ class AppHost: ObservableObject {
     /// quality gate, watch and endpoint supervision, resource sampling, GGUF
     /// folder discovery, and the first scan with workflow reconciliation. Skipped
     /// in a hosted unit-test process so the suite never starts or stops real servers.
-    func startLiveServices(environment: [String: String] = ProcessInfo.processInfo.environment) {
-        guard !WorkbenchStatePaths.isHostedUnitTest(environment) else { return }
+    @discardableResult
+    func startLiveServices(environment: [String: String] = ProcessInfo.processInfo.environment) -> Task<Void, Never>? {
+        guard !WorkbenchStatePaths.isHostedUnitTest(environment) else { return nil }
         applyFeatureToggles()
-        endpoint.startMonitoring()
+        let startup = Task {
+            await comparison.waitForHistory()
+            if comparison.hasLoadedHistory { endpoint.startMonitoring() }
+        }
         resources.startMonitoring()
         Task { await self.refreshDiscoveredRoots() }
         requestRescan()
+        return startup
     }
 
     /// Default GGUF folders that Settings and Setup suggest, discovered off the main actor.

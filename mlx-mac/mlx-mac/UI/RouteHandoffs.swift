@@ -9,6 +9,7 @@ extension HandoffKind where Value == LibraryRevealRequest { static var revealMod
 extension HandoffKind where Value == ModelRuntimeRecoveryRequest { static var recoverModelRuntime: Self { Self(name: "recoverModelRuntime") } }
 extension HandoffKind where Value == HostedModelsRequest { static var openHostedModels: Self { Self(name: "openHostedModels") } }
 extension HandoffKind where Value == ClientWiringRequest { static var wireClient: Self { Self(name: "wireClient") } }
+extension HandoffKind where Value == ClientSetupRequest { static var clientSetup: Self { Self(name: "clientSetup") } }
 extension HandoffKind where Value == ComparisonModelRequest { static var compareModel: Self { Self(name: "compareModel") } }
 extension HandoffKind where Value == ServingProfileComparisonSetup { static var compareServingProfiles: Self { Self(name: "compareServingProfiles") } }
 extension HandoffKind where Value == WorkflowReportImportRequest { static var importWorkflowReport: Self { Self(name: "importWorkflowReport") } }
@@ -20,6 +21,10 @@ struct HostedModelsRequest: Equatable {
 
 /// Opens Compare's workflow report review; importing still requires review.
 struct WorkflowReportImportRequest: Equatable {
+    let id = UUID()
+}
+
+struct ClientSetupRequest: Equatable {
     let id = UUID()
 }
 
