@@ -252,11 +252,18 @@ final class WorkbenchReviewUITests: XCTestCase {
                 sys.exit(2)
             data = {'findings': [], 'prune_count': 0}
         elif args and args[0] == 'discover':
+            deadline = time.monotonic() + 30
+            while (root / 'hold-discover').exists():
+                if time.monotonic() > deadline:
+                    print('Discovery fixture was not released.', file=sys.stderr)
+                    sys.exit(2)
+                time.sleep(0.05)
             time.sleep(0.5)
             if (root / 'fail-discover').exists():
                 print('Fixture discovery failed: catalog unavailable.', file=sys.stderr)
                 sys.exit(2)
-            data = {'candidates': []}
+            candidates = root / 'discover-candidates.json'
+            data = {'candidates': json.loads(candidates.read_text()) if candidates.exists() else []}
         elif args[:2] == ['serve', 'status'] and (root / 'servers.json').exists():
             deadline = time.monotonic() + 20
             while (root / 'slow-server-status').exists():
@@ -1326,6 +1333,69 @@ final class WorkbenchReviewUITests: XCTestCase {
         let reopenedReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: reopenedPlay)
         XCTAssertEqual(XCTWaiter.wait(for: [reopenedReady], timeout: 15), .completed, app.debugDescription)
         XCTAssertFalse(videoControl("task-video-input", label: "Pause").exists, app.debugDescription)
+    }
+
+    func testDiscoveryStopRetryAndRetainedResults() throws {
+        func writeCandidate(_ repo: String) throws {
+            try JSONSerialization.data(withJSONObject: [["repo": repo, "roles": ["coding"], "est_ram_gb": 4,
+                "fits": true, "license": "apache-2.0"]]).write(to: root.appendingPathComponent("discover-candidates.json"))
+        }
+        func expectContent(_ element: XCUIElement, _ value: String) {
+            XCTAssertTrue(element.waitForExistence(timeout: 15))
+            wait(for: [expectation(for: NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", value, value),
+                                   evaluatedWith: element)], timeout: 15)
+        }
+        let first = "example/Discovery-Original-4bit", second = "example/Discovery-Retry-4bit"
+        try writeCandidate(first)
+        launch(appearance: "Dark", route: "scout", isolatedHome: true)
+        select("Discover")
+        let discover = app.scrollViews.containing(.staticText, identifier: "Discovery").buttons["Discover"].firstMatch
+        XCTAssertTrue(discover.waitForExistence(timeout: 10))
+        discover.click()
+        XCTAssertTrue(text(containing: first).waitForExistence(timeout: 15))
+        let context = app.staticTexts["discover-result-context"]
+        expectContent(context, "Repository inspection")
+        app.checkBoxes["Fast"].click()
+        expectContent(context, "Repository inspection")
+        try Data().write(to: root.appendingPathComponent("hold-discover"))
+        discover.click()
+        let stop = app.buttons["discover-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10))
+        XCTAssertFalse(discover.isEnabled)
+        XCTAssertFalse(app.buttons["Clear"].isEnabled)
+        XCTAssertFalse(app.checkBoxes["Fast"].isEnabled)
+        expectContent(context, "Showing previous search results")
+        XCTAssertTrue(text(containing: first).exists)
+        resizeWindow(width: 740, height: 612)
+        capture("Discovery-retained-while-running-740")
+        XCTAssertTrue(stop.isHittable)
+        stop.click()
+        XCTAssertTrue(text(containing: "Discovery stopped.").waitForExistence(timeout: 15))
+        XCTAssertTrue(discover.isEnabled)
+        XCTAssertTrue(text(containing: first).exists)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("hold-discover"))
+        try Data().write(to: root.appendingPathComponent("fail-discover"))
+        discover.click()
+        XCTAssertTrue(text(containing: "Fixture discovery failed").waitForExistence(timeout: 15))
+        XCTAssertTrue(text(containing: first).exists)
+        expectContent(context, "Repository inspection")
+        resizeWindow(width: 1050, height: 900)
+        capture("Discovery-retained-after-failure-1050")
+        try FileManager.default.removeItem(at: root.appendingPathComponent("fail-discover"))
+        try writeCandidate(second)
+        discover.click()
+        XCTAssertTrue(text(containing: second).waitForExistence(timeout: 15))
+        XCTAssertFalse(text(containing: first).exists)
+        expectContent(context, "Search results")
+        expectContent(context, "Fast")
+        capture("Discovery-retry-current-results-1050")
+        app.buttons["Clear"].click()
+        XCTAssertFalse(text(containing: second).exists)
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+            .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        XCTAssertEqual(calls.filter { $0.first == "discover" }.count, 4)
+        XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["intake", "fetch"] })
+        XCTAssertFalse(calls.contains { Array($0.prefix(2)) == ["serve", "start"] })
     }
 
     func testDiscoveryAndStudyReadinessGuidance() throws {

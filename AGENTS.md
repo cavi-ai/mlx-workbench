@@ -852,6 +852,11 @@ server.
 
 ## Review/build guidance for an agent
 
+- `DiscoverySession` owns one cancellable browse request. Stop keeps controls
+  busy until the invocation exits and rejects a canceled request's late result.
+  Last successful candidates retain their original search settings through
+  retries, failures and stops; a successful empty response replaces them.
+
 - Local models missing a declared backend offer `ModelRuntimeRecoveryRequest`
   from Library to Health. `ModelRuntimeRecoverySession` reads backend status,
   presents the engine's install preview and requires explicit confirmation.

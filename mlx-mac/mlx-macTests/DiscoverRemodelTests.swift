@@ -357,7 +357,7 @@ final class DiscoverIntakeHandoffTests: XCTestCase {
 
 @MainActor
 final class DiscoverySessionTests: XCTestCase {
-    private final class Gate {
+    @MainActor private final class Gate {
         var continuation: CheckedContinuation<[DiscoverCandidate], Error>?
         var requests: [DiscoveryRequest] = []
         func fetch(_ request: DiscoveryRequest) async throws -> [DiscoverCandidate] {
