@@ -483,6 +483,8 @@
 		27TST006 /* WorkbenchPythonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchPythonTests.swift; path = WorkbenchPythonTests.swift; sourceTree = "<group>"; };
 		27TST007 /* HomeNextActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HomeNextActionTests.swift; path = HomeNextActionTests.swift; sourceTree = "<group>"; };
 		27STP001 /* SetupCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SetupCoordinator.swift; path = Services/SetupCoordinator.swift; sourceTree = "<group>"; };
+		C0DE53000000000000000001 /* BoundedProcessCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE53000000000000000002 /* BoundedProcessCapture.swift */; };
+		C0DE53000000000000000002 /* BoundedProcessCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/BoundedProcessCapture.swift; sourceTree = "<group>"; };
 		27UPD001 /* UpdateCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = UpdateCoordinator.swift; path = Services/UpdateCoordinator.swift; sourceTree = "<group>"; };
 		27UPDB01 /* UpdateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27UPD001 /* UpdateCoordinator.swift */; };
 		27FS0001 /* EndpointFleetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EndpointFleetStore.swift; path = Services/EndpointFleetStore.swift; sourceTree = "<group>"; };
@@ -753,6 +755,7 @@
 				7D7300010000000000000002 /* RuntimeInstallPrerequisites.swift */,
 				27CFG0002 /* AppConfig.swift */,
 				27STP001 /* SetupCoordinator.swift */,
+				C0DE53000000000000000002 /* BoundedProcessCapture.swift */,
 				27UPD001 /* UpdateCoordinator.swift */,
 				27FS0001 /* EndpointFleetStore.swift */,
 				27FF0001 /* FleetFitAdvisor.swift */,
@@ -1311,6 +1314,7 @@
 				7D7300010000000000000001 /* RuntimeInstallPrerequisites.swift in Sources */,
 				27CFG0001 /* AppConfig.swift in Sources */,
 				27STPB01 /* SetupCoordinator.swift in Sources */,
+				C0DE53000000000000000001 /* BoundedProcessCapture.swift in Sources */,
 				27UPDB01 /* UpdateCoordinator.swift in Sources */,
 				27FSB001 /* EndpointFleetStore.swift in Sources */,
 				27FFB001 /* FleetFitAdvisor.swift in Sources */,

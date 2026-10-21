@@ -728,7 +728,11 @@ server.
   Persisted via UserDefaults once completed; re-openable from Health.
 - `UpdateCoordinator` provides **in-app updates** for checkout-run installs:
   Official channel checks out the newest `v*` tag, Beta fast-forwards to
-  `origin/main`; both refuse a dirty tree, sync submodules, and finish with a
+  the captured full commit from `origin/main`; channel changes invalidate old
+  offers and in-flight checks. Git checks run off the main actor with bounded
+  output and a 60-second deadline; streamed update commands use the installer's
+  owned process runner with a 120-second deadline. Both refuse a dirty or
+  changed checkout, sync submodules, and finish with a
   streamed `make build-swift` rebuild-and-relaunch. Git runs as argv tokens
   through an injectable runner; the apply path is integration-tested against
   a throwaway git repo. Installed builds (no checkout) update from GitHub
