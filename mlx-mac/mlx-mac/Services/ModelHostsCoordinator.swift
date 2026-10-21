@@ -162,34 +162,13 @@ final class ModelHostsCoordinator: ObservableObject {
         guard refreshed, errors[preview.host.id] == nil, let inventory = inventories[preview.host.id] else {
             return "A fresh inventory could not be read; the previous inventory is retained. Memory release could not be verified."
         }
-        if preview.host.provider == .comfyUI {
-            return "ComfyUI does not report completion of memory cleanup; released memory could not be verified."
-        }
-        guard let model = inventory.models.first(where: { $0.modelID == preview.selection.modelID }) else {
-            return "The model is absent from the refreshed inventory; memory release could not be verified."
-        }
-        if preview.host.provider == .ollama {
-            guard let digest = preview.model?.digest, model.digest == digest else {
-                return "The model identity changed; unloading the selected weights could not be verified."
-            }
-        }
-        if preview.host.provider == .lmStudio {
-            guard let instances = model.loadedInstanceIDs, let instance = preview.selection.instanceID else {
-                return "Loaded-instance state is unavailable; memory release could not be verified."
-            }
-            return instances.contains(instance) ? "The selected instance is still reported loaded." : "The selected instance is no longer loaded."
-        }
-        switch model.isLoaded {
-        case false: return "The model is no longer loaded."
-        case true: return "The model is still reported loaded."
-        case nil: return "Loaded state is unknown; memory release could not be verified."
-        }
+        return preview.host.provider.adapter.releaseReadback(preview, inventory: inventory)
     }
 
     @discardableResult
     func readModelDetails(_ id: UUID, modelID: String) async -> Bool {
         guard !resourceBusy, errors[id] == nil,
-              let inventory = inventories[id], inventory.host.provider == .ollama,
+              let inventory = inventories[id], inventory.host.provider.adapter.identifiesWeightsByDigest,
               let model = inventory.models.first(where: { $0.modelID == modelID }),
               model.digest?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
         return await readInventory(id, inspecting: model)

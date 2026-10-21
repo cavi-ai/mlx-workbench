@@ -251,6 +251,11 @@
 		24BBLD069 /* AlertNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF067 /* AlertNotifier.swift */; };
 		24BBLD06A /* HFRepoID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF068 /* HFRepoID.swift */; };
 		5A1E5E770000000000000012 /* ModelOccupancy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000011 /* ModelOccupancy.swift */; };
+		5A1E5E770000000000000022 /* ModelHostAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000021 /* ModelHostAdapter.swift */; };
+		5A1E5E770000000000000024 /* OllamaHostAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000023 /* OllamaHostAdapter.swift */; };
+		5A1E5E770000000000000026 /* LMStudioHostAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000025 /* LMStudioHostAdapter.swift */; };
+		5A1E5E770000000000000028 /* ComfyUIHostAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000027 /* ComfyUIHostAdapter.swift */; };
+		5A1E5E77000000000000002A /* OpenAIHostAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000029 /* OpenAIHostAdapter.swift */; };
 		24BBLD06B /* HFRepoIDTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF069 /* HFRepoIDTests.swift */; };
 		24BBLD067 /* PromptHistoryImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FREF065 /* PromptHistoryImport.swift */; };
 		26WQBL001 /* WebConvertQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26WQREF001 /* WebConvertQueue.swift */; };
@@ -529,6 +534,11 @@
 		24FREF067 /* AlertNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AlertNotifier.swift; path = Services/AlertNotifier.swift; sourceTree = "<group>"; };
 		24FREF068 /* HFRepoID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HFRepoID.swift; path = Models/HFRepoID.swift; sourceTree = "<group>"; };
 		5A1E5E770000000000000011 /* ModelOccupancy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelOccupancy.swift; path = Services/ModelOccupancy.swift; sourceTree = "<group>"; };
+		5A1E5E770000000000000021 /* ModelHostAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelHostAdapter.swift; path = Services/ModelHostAdapter.swift; sourceTree = "<group>"; };
+		5A1E5E770000000000000023 /* OllamaHostAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = OllamaHostAdapter.swift; path = Services/OllamaHostAdapter.swift; sourceTree = "<group>"; };
+		5A1E5E770000000000000025 /* LMStudioHostAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LMStudioHostAdapter.swift; path = Services/LMStudioHostAdapter.swift; sourceTree = "<group>"; };
+		5A1E5E770000000000000027 /* ComfyUIHostAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ComfyUIHostAdapter.swift; path = Services/ComfyUIHostAdapter.swift; sourceTree = "<group>"; };
+		5A1E5E770000000000000029 /* OpenAIHostAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = OpenAIHostAdapter.swift; path = Services/OpenAIHostAdapter.swift; sourceTree = "<group>"; };
 		24FREF069 /* HFRepoIDTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HFRepoIDTests.swift; sourceTree = "<group>"; };
 		24FREF065 /* PromptHistoryImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PromptHistoryImport.swift; path = Services/PromptHistoryImport.swift; sourceTree = "<group>"; };
 		26WQREF001 /* WebConvertQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WebConvertQueue.swift; path = Services/WebConvertQueue.swift; sourceTree = "<group>"; };
@@ -730,6 +740,11 @@
 				27FR0002 /* FleetRouterSheet.swift */,
 				24FREF068 /* HFRepoID.swift */,
 				5A1E5E770000000000000011 /* ModelOccupancy.swift */,
+				5A1E5E770000000000000021 /* ModelHostAdapter.swift */,
+				5A1E5E770000000000000023 /* OllamaHostAdapter.swift */,
+				5A1E5E770000000000000025 /* LMStudioHostAdapter.swift */,
+				5A1E5E770000000000000027 /* ComfyUIHostAdapter.swift */,
+				5A1E5E770000000000000029 /* OpenAIHostAdapter.swift */,
 				24FREF065 /* PromptHistoryImport.swift */,
 				26WQREF001 /* WebConvertQueue.swift */,
 				24FREF000006 /* WorkbenchAPI.swift */,
@@ -1254,6 +1269,11 @@
 				24BBLD069 /* AlertNotifier.swift in Sources */,
 				24BBLD06A /* HFRepoID.swift in Sources */,
 				5A1E5E770000000000000012 /* ModelOccupancy.swift in Sources */,
+				5A1E5E770000000000000022 /* ModelHostAdapter.swift in Sources */,
+				5A1E5E770000000000000024 /* OllamaHostAdapter.swift in Sources */,
+				5A1E5E770000000000000026 /* LMStudioHostAdapter.swift in Sources */,
+				5A1E5E770000000000000028 /* ComfyUIHostAdapter.swift in Sources */,
+				5A1E5E77000000000000002A /* OpenAIHostAdapter.swift in Sources */,
 				24BBLD06C /* WorkbenchPython.swift in Sources */,
 				28WSPBL001 /* WorkbenchStatePaths.swift in Sources */,
 				24BBLD06D /* RuntimeInstaller.swift in Sources */,

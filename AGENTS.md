@@ -56,7 +56,11 @@ server.
   read-only lists on activation; navigation never starts jobs or installs a runtime.
 - Library's Hosted models source reads explicit loopback connections from `model-hosts.json`
   through `ModelHostsCoordinator` and `ModelHostClient`. Presets cover Ollama, LM Studio,
-  ComfyUI, llama.cpp and OpenAI-compatible APIs. Tokens live in Keychain; inventory
+  ComfyUI, llama.cpp and OpenAI-compatible APIs. Each provider's inventory, model details,
+  activity, memory release and readback live in its `ModelHostAdapter`
+  (`Services/*HostAdapter.swift`, chosen by `ModelHostProvider.adapter`); `ModelHostClient`,
+  `HostResourceClient` and the views read its release scope and reported capabilities
+  instead of comparing providers. Tokens live in Keychain; inventory
   refresh never generates, loads, stops or downloads models. Failed refreshes retain
   dated snapshots. The host editor's optional Test connection uses the same read-only
   inventory adapter with draft credentials, without saving hosts, changing Keychain

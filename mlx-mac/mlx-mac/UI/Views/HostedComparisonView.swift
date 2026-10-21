@@ -125,7 +125,7 @@ struct HostedComparisonView: View {
         }
         .accessibilityIdentifier("hosted-comparison-workspace")
         .onChange(of: appHost.hostedComparisonTargets, initial: true) { _, targets in
-            if !targets.isEmpty, targets.allSatisfy({ $0.host?.provider == .comfyUI }) { mode = .imageGeneration }
+            if !targets.isEmpty, targets.allSatisfy({ $0.host?.provider.adapter.runsImageWorkflows == true }) { mode = .imageGeneration }
         }
     }
 
@@ -324,7 +324,7 @@ struct HostedRunConditionsView: View {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
                         Text(target.displayName).font(WorkbenchTypography.label)
                         if let conditions = record.conditions?.first(where: { $0.targetID == target.id }) {
-                            conditionDetails(conditions, hosted: target.host != nil, showsDeviceMemory: target.host?.provider == .comfyUI)
+                            conditionDetails(conditions, hosted: target.host != nil, showsDeviceMemory: target.host?.provider.adapter.reportsDeviceMemory == true)
                         } else {
                             Text("Not recorded for this lane.").foregroundStyle(WorkbenchColor.muted)
                         }
