@@ -5,6 +5,22 @@ import XCTest
 @testable import mlx_workbench
 
 final class WorkbenchAPISubprocessTests: XCTestCase {
+    func testScanTimeoutExplainsLibraryRecoveryAndRetainsErrorCode() async throws {
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, _, _, _ in
+            throw BridgeError.skillTimeout
+        })
+        do {
+            _ = try await api.scan(ggufRoots: ["/models"], mlxRoots: [], signatures: true)
+            XCTFail("Expected a scan timeout")
+        } catch let error as BridgeError {
+            XCTAssertEqual(error.code, "skill_timeout")
+            XCTAssertTrue(error.message.contains("Library"))
+            XCTAssertTrue(error.remediation.contains("Settings"))
+            XCTAssertTrue(error.remediation.contains("Retry"))
+            XCTAssertFalse(error.remediation.contains("discover"))
+        }
+    }
+
     private static var taskSummary: [String: Any] {
         ["schema": "task-run/1", "id": "11111111-1111-4111-8111-111111111111", "kind": "music_generation", "state": "starting",
          "model_path": "/Models/MiniMax Music", "created_at": "2026-10-17T12:00:00+00:00", "started_at": NSNull(), "completed_at": NSNull(),

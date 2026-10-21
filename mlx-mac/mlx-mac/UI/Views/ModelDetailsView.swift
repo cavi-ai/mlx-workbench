@@ -306,7 +306,8 @@ struct ModelDetailsView: View {
 
                 if model.readiness == .ready, let taskType = model.item.task?.type,
                    [.classification, .musicGeneration, .speechToText, .textToSpeech, .imageGeneration, .visionLanguage, .videoGeneration].contains(taskType) {
-                    InferenceTaskPanel(coordinator: appHost.inferenceTasks, model: model)
+                    InferenceTaskPanel(coordinator: appHost.inferenceTasks, model: model,
+                                       onEngineSetup: { onRouteSelection(.health) })
                 }
 
                 Divider()

@@ -23,6 +23,9 @@ Switching sources preserves the main table's filters and selected model without 
 | Modified | Newest file change on disk, including MLX folders and Hugging Face cache snapshots |
 
 Columns collapse as the window narrows. Filters narrow the list by quantization and readiness. **Refresh** rescans; a failed scan offers **Retry scan**.
+The last successful inventory stays visible during retries. A retry clears the
+previous scan error while it runs. If scanning times out repeatedly, check the
+model folders in **Settings** for unavailable drives or unnecessarily broad folders.
 
 When a scan finds no models, **Add from Hugging Face…** opens intake for review,
 **Open Settings** lets you choose model folders, and **Scan again** refreshes the inventory.
@@ -41,7 +44,7 @@ including a speculative-decoding drafter's target. The inspector also holds:
 
 - **Model lineage**: a provenance timeline of source, converted, verified, benchmarked, served, wired and quarantined events, built from the records the app already keeps. Events whose model signature no longer matches are dimmed. Export it as Markdown or JSON.
 - **Measured performance**: throughput and first-token latency aggregated from past comparisons.
-- **Generate image**, for ready image-generation models: prompt, optional width, height, steps and seed. Completed output is retained with its task and can be inspected or exported as a verified PNG.
+- **Generate image**, for ready image-generation models: enter a prompt and use the displayed defaults, or adjust dimensions, steps and seed in **Advanced options**. Completed output is retained with its task and can be inspected or exported as a verified PNG.
 - **Understand image**, for ready vision-language models: choose a local image and ask a question. The engine retains a verified input copy with the task; the result shows the full answer and input image.
 - **Classify**, for ready classification models: a state description and questions with choice, score or probability answers.
 - **Generate music**, for ready music models: caption, optional lyrics, duration, steps and seed, with playback of completed audio.
@@ -60,6 +63,11 @@ Choose a ready model and fill its task form in the inspector. **Start** submits
 one task to the engine and shows its ID and state. Editing inputs does not run
 the model. If the engine is busy or its backend is unavailable, the form keeps
 your inputs and shows the error.
+If the selected engine does not support the task, **Open Health…** takes you to
+the setup assistant action. In the assistant, **Use bundled engine…** offers an
+explicit preparation and confirmation step. Your task inputs stay in the form; try **Start** again after
+selecting a compatible engine. Passing a model's verification check does not
+establish that an older engine supports durable tasks for that model.
 
 For **Classify**, describe the **State** and add at least one question with
 instructions. Choice questions use two or more ordered labels; score questions
@@ -88,9 +96,11 @@ apply its defaults. A
 completed result exposes a verified WAV for playback and export. Workbench
 does not assign an automatic quality score to speech output.
 
-For **Generate image**, enter a prompt of up to 2,000 characters and optionally
-set width and height (multiples of 16 from 256 to 2048), steps (1–100) or seed.
-Blank settings are left to the engine planner. The completed task
+For **Generate image**, enter a prompt of up to 2,000 characters. New requests
+default to 1024 × 1024 pixels, 40 steps and seed 42, shown above **Advanced options**.
+That disclosure lets you set width and height (multiples of 16 from 256 to 2048),
+steps (1–100) or seed. Clearing a setting leaves it to the engine planner.
+The completed task
 shows the verified PNG and supports PNG export. For **Understand image**, choose
 a local image and ask a question of up to 4,000 characters. **Advanced options**
 sets max tokens (1–4096), temperature (0–2) and max pixels (up to 100,000,000);

@@ -213,10 +213,19 @@ struct SpeakTaskDraft: Equatable, Sendable {
 
 struct ImageGenerationTaskDraft: Equatable, Sendable {
     var prompt = ""
-    var width = ""
-    var height = ""
-    var steps = ""
-    var seed = ""
+    var width = String(InferenceSettings.ImageGeneration.defaults.width)
+    var height = String(InferenceSettings.ImageGeneration.defaults.height)
+    var steps = String(InferenceSettings.ImageGeneration.defaults.steps)
+    var seed = String(InferenceSettings.ImageGeneration.defaults.seed)
+
+    var settingsSummary: String {
+        let defaults = InferenceSettings.ImageGeneration.defaults
+        func display(_ raw: String, fallback: Int) -> String {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? String(fallback) : trimmed
+        }
+        return "\(display(width, fallback: defaults.width)) × \(display(height, fallback: defaults.height)) · \(display(steps, fallback: defaults.steps)) steps · seed \(display(seed, fallback: defaults.seed))"
+    }
 
     var validationError: String? {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Describe the image to generate." }
@@ -437,6 +446,7 @@ final class InferenceTaskCoordinator: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var startOutcomeUnknown = false
     @Published private(set) var error: String?
+    @Published private(set) var needsEngineSetup = false
     @Published private(set) var readError: String?
     @Published private(set) var cancellationPending = false
     @Published private(set) var lastReusedTaskKind: TaskKind?
@@ -492,6 +502,7 @@ final class InferenceTaskCoordinator: ObservableObject {
 
     func start(kind: TaskKind, model: LibraryModel) async {
         guard canStart else { return }
+        needsEngineSetup = false
         guard model.readiness == .ready, kind.modelTaskType != nil, model.item.task?.type == kind.modelTaskType else {
             error = "Choose a Ready model with the matching task type."
             return
@@ -524,7 +535,8 @@ final class InferenceTaskCoordinator: ObservableObject {
                   capabilities.requestSchema(for: kind) == request.schema,
                   capabilities.runSchema(for: kind) == ([.transcribe, .speak, .imageGeneration, .imageUnderstanding, .videoUnderstanding, .videoGeneration].contains(kind) ? "task-run/2" : "task-run/1") else {
                 cancellationPending = false
-                error = "The installed mlx-agent does not advertise this local task type."
+                needsEngineSetup = true
+                error = "The selected engine does not support this task. Open Health and run the setup assistant to select a compatible engine, then try again. Your inputs are retained."
                 return
             }
             let record = try await api.taskStart(request)

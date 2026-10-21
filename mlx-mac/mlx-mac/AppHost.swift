@@ -524,6 +524,8 @@ class AppHost: ObservableObject {
 
     private func rescan(limit: Int?, reconcileWorkflow: Bool) async -> LibrarySnapshot? {
         guard !isScanning else { return nil }
+        if let scanError, lastError == scanError { lastError = nil }
+        scanError = nil
         isScanning = true
 
         do {

@@ -238,8 +238,15 @@ actor WorkbenchAPI {
         if let limit {
             argv.append(contentsOf: ["--limit", String(limit)])
         }
-        let data = try await raw(argv)
-        return try Self.decodeScan(data)
+        do {
+            return try Self.decodeScan(await raw(argv))
+        } catch BridgeError.skillTimeout {
+            throw BridgeError.remote(
+                code: "skill_timeout",
+                message: "Library scanning timed out. The last successful inventory is still available.",
+                remediation: "Retry the scan. If it times out again, check model folders in Settings for unavailable drives or unnecessarily broad folders."
+            )
+        }
     }
 
     // MARK: - Convert
