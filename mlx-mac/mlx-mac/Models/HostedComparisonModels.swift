@@ -54,6 +54,28 @@ struct HostedComparisonTarget: Codable, Equatable, Identifiable, Sendable {
             }
         }
     }
+
+    /// Recheck dated host observations before a lane; unknown metadata stays unknown.
+    func validate(inventory: HostInventory, mode: ComparisonMode) throws {
+        try validate(mode: mode)
+        guard let host, let model, inventory.host == host,
+              let current = inventory.models.first(where: { $0.modelID == model.modelID }),
+              current.hostID == host.id, model.digest == nil || current.digest == model.digest else {
+            throw HostedIntegrationError.invalid("This model's recorded identity is no longer available. Refresh and select it again.")
+        }
+        do {
+            try HostedComparisonTarget(host: host, model: current, capturedAt: inventory.capturedAt).validate(mode: mode)
+        } catch {
+            throw HostedIntegrationError.invalid("The host's latest model metadata does not support this comparison. Refresh and select a compatible model.")
+        }
+        if host.provider == .ollama, let installedDigest = current.digest, !installedDigest.isEmpty,
+           inventory.runningModels?.contains(where: { running in
+               running.hostID == host.id && running.modelID == current.modelID
+                   && running.digest.map { !$0.isEmpty && $0 != installedDigest } == true
+           }) == true {
+            throw HostedIntegrationError.invalid("Ollama's running weights differ from the installed tag. Resolve the mismatch in Ollama, then refresh and select the model again.")
+        }
+    }
 }
 
 struct HostedWorkflowSubmission: Codable, Equatable, Identifiable, Sendable {

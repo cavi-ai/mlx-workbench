@@ -83,6 +83,11 @@ server.
   memory in `HostInventory.deviceMemory` and before-lane conditions. Library, the
   Memory panel and historical conditions share a cached disclosure. MPS/CPU readings
   overlap shared system memory; devices are never summed or attributed to models.
+  `HostedComparisonTarget.validate(inventory:mode:)` rechecks the current model's
+  ownership, recorded digest and existing task rules before inference. Known Ollama
+  running/tag digest conflicts block that lane; unavailable metadata adds no new
+  inspection requirement. Rejection precedes condition recording and generation,
+  and later compatible lanes retain the existing execution path.
 - Hosted memory controls use `HostResourceClient` through `ModelHostsCoordinator`'s
   read-only prepare and explicit confirm flow. Confirm rechecks the connection,
   model/instance and activity; drift requires renewed confirmation. Ollama unloads

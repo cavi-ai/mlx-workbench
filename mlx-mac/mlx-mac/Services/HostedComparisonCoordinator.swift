@@ -160,10 +160,7 @@ final class HostedComparisonCoordinator: ObservableObject {
                     if let host = target.host, let model = target.model {
                         let token = try readToken(host.id)
                         let fresh = try await freshInventory(host, token)
-                        guard fresh.host == host, let current = fresh.models.first(where: { $0.modelID == model.modelID }),
-                              model.digest == nil || current.digest == model.digest else {
-                            throw HostedIntegrationError.invalid("This model's recorded identity is no longer available. Refresh and select it again.")
-                        }
+                        try target.validate(inventory: fresh, mode: original.run.effectiveMode)
                         try await recordConditions(id, target: target, inventory: fresh)
                         for entry in entries {
                             try Task.checkCancellation()

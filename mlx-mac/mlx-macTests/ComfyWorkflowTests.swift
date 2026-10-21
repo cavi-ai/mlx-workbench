@@ -9,6 +9,33 @@ import XCTest
 
 final class ComfyWorkflowTests: XCTestCase {
     @MainActor
+    func testFreshNonCheckpointMetadataPreventsComfyWorkflowRequests() async throws {
+        let fixture = try ComfyHTTPFixture()
+        defer { fixture.close() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = JSONStore<HostedComparisonRecord>(fileURL: root.appendingPathComponent("run.json"))
+        let selected = HostedModel(hostID: fixture.host.id, modelID: "first.safetensors", name: "first.safetensors", category: "checkpoints")
+        var changed = selected; changed.category = "loras"
+        fixture.handler = { _ in XCTFail("An incompatible checkpoint must not reach the workflow API"); throw URLError(.badURL) }
+        let inventory = HostInventory(host: fixture.host, models: [changed], capturedAt: Date())
+        let coordinator = HostedComparisonCoordinator(store: store, readToken: { _ in nil }, freshInventory: { _, _ in inventory },
+            comfy: fixture.runner, memoryProbe: { nil })
+        let done = expectation(description: "Incompatible image lane rejected")
+        let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
+        try coordinator.start(targets: [HostedComparisonTarget(host: fixture.host, model: selected, capturedAt: Date())],
+            promptSet: PromptSet(id: "image", name: "Image", useCase: nil, prompts: [PromptEntry(id: "p", text: "Tree", maxTokens: 32)], origin: .userCreated, mode: .imageGeneration),
+            workflow: workflow)
+        await fulfillment(of: [done], timeout: 5)
+        let record = try XCTUnwrap(store.load().first)
+        XCTAssertEqual(record.run.state, .failed)
+        XCTAssertNotNil(record.run.results.first?.error)
+        XCTAssertTrue(record.submissions.isEmpty)
+        XCTAssertEqual(record.conditions, [])
+        subscription.cancel()
+    }
+
+    @MainActor
     func testCoordinatorPersistsConditionsBeforeComfySubmission() async throws {
         let fixture = try ComfyHTTPFixture()
         defer { fixture.close() }
