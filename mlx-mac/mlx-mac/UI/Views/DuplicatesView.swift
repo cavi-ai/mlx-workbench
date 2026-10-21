@@ -243,6 +243,7 @@ struct DuplicatesView: View {
     private func suggestionControls(_ state: ReclaimSuggestionsState) -> some View {
         Button("Analyze") { analyze() }
             .buttonStyle(.bordered)
+            .controlSize(.small)
         Button("Review model folder…") {
             let panel = NSOpenPanel()
             panel.canChooseFiles = false
@@ -255,11 +256,15 @@ struct DuplicatesView: View {
                 Task { await reclaim.previewFolder(path) }
             }
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(WorkbenchColor.ink)
         .disabled(reclaim.isApplying)
         if state.showsCacheControls {
             Button("Check HF cache") { Task { await reclaim.checkCache() } }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(WorkbenchColor.ink)
         }
     }
 

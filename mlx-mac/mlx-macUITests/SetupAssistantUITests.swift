@@ -3172,6 +3172,30 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
     }
 
+    func testReclaimSuggestionActionsAlignAtWideAndNarrowWidths() throws {
+        launch(appearance: "Dark", route: "duplicates", isolatedHome: true)
+        select("Reclaim")
+        let analyze = app.buttons["Analyze"]
+        let review = app.buttons["Review model folder…"]
+        let cache = app.buttons["Check HF cache"]
+        for button in [analyze, review, cache] {
+            XCTAssertTrue(button.waitForExistence(timeout: 15))
+        }
+        let scroll = app.scrollViews.containing(.button, identifier: "Analyze").firstMatch
+        for width in [1050.0, 740.0] {
+            resizeWindow(width: width, height: width == 740 ? 612 : 900)
+            for _ in 0..<8 where ![analyze, review, cache].allSatisfy(\.isHittable) {
+                scroll.scroll(byDeltaX: 0, deltaY: -180)
+            }
+            for button in [analyze, review, cache] { XCTAssertTrue(button.isHittable) }
+            for button in [review, cache] {
+                XCTAssertEqual(button.frame.height, analyze.frame.height, accuracy: 1)
+                XCTAssertEqual(button.frame.midY, analyze.frame.midY, accuracy: 1)
+            }
+            capture("Reclaim-action-alignment-\(Int(width))")
+        }
+    }
+
     func testRouteCaptures() throws {
         // XCUIDevice changes only the disposable VM's appearance.
         for appearance in [ProcessInfo.processInfo.environment["MLX_WORKBENCH_CAPTURE_APPEARANCE"] ?? "System"] {

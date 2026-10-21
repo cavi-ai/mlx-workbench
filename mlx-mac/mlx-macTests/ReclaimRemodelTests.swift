@@ -475,14 +475,14 @@ final class ReclaimProminenceTests: XCTestCase {
         XCTAssertEqual(Fixture.occurrences(of: ".workbenchPrimary", in: try Fixture.source("Views/SourceCleanupSection.swift")), 2)
     }
 
-    func testSurfaceAndBorderedActionsAreConfinedToTheLeadControls() throws {
+    func testReclaimSurfacesAndSuggestionButtonStyles() throws {
         let page = try Fixture.source("Views/DuplicatesView.swift")
         let cleanup = try Fixture.source("Views/SourceCleanupSection.swift")
         XCTAssertEqual(Fixture.occurrences(of: "WorkbenchSurface", in: page), 1)
         XCTAssertEqual(Fixture.occurrences(of: "WorkbenchSurface", in: cleanup), 0)
         XCTAssertFalse(page.contains("\"Check originals\""))
         XCTAssertTrue(cleanup.contains("\"Check originals\""))
-        XCTAssertEqual(Fixture.occurrences(of: ".borderless", in: page), 2)
+        XCTAssertEqual(Fixture.occurrences(of: ".borderless", in: page), 0)
         XCTAssertEqual(Fixture.occurrences(of: ".borderless", in: cleanup), 1)
     }
 
