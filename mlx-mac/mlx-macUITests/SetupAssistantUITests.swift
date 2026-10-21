@@ -1500,7 +1500,7 @@ final class WorkbenchReviewUITests: XCTestCase {
                     let diagnostic = XCTAttachment(string: app.debugDescription)
                     diagnostic.name = "Health scroll hierarchy"
                     diagnostic.lifetime = .keepAlways
-                    add(diagnostic)
+                    self.add(diagnostic)
                     capture("Health-scroll-unavailable")
                     XCTFail("Health needs visible content for scrolling")
                     return
