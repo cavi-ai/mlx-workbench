@@ -204,12 +204,16 @@ struct SettingsView: View {
                 SettingsSeparator()
                 SettingsRow(label: "Runtime", stacked: layout.stacksRows) {
                     HStack(spacing: WorkbenchSpacing.sm) {
-                        Label("Runtime needs setup", systemImage: "exclamationmark.triangle.fill")
-                            .font(WorkbenchTypography.secondary)
-                            .foregroundStyle(WorkbenchColor.warning)
-                        Button("Open Health") { onRouteSelection(.health) }
-                            .buttonStyle(.borderless)
-                            .controlSize(.small)
+                        if appHost.isCheckingRuntime {
+                            RuntimeCheckStatusView()
+                        } else {
+                            Label("Runtime needs setup", systemImage: "exclamationmark.triangle.fill")
+                                .font(WorkbenchTypography.secondary)
+                                .foregroundStyle(WorkbenchColor.warning)
+                            Button("Open Health") { onRouteSelection(.health) }
+                                .buttonStyle(.borderless)
+                                .controlSize(.small)
+                        }
                     }
                 }
             }

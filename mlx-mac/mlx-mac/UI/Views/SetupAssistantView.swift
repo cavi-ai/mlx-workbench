@@ -91,7 +91,9 @@ struct SetupAssistantView: View {
                 .font(WorkbenchTypography.body)
                 .foregroundStyle(WorkbenchColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
-            if appHost.runtimeReport.ok {
+            if appHost.isCheckingRuntime {
+                RuntimeCheckStatusView()
+            } else if appHost.runtimeReport.ok {
                 StatusBadge(status: .ready)
                 Text("Convert and serve runtimes are ready.").font(WorkbenchTypography.body)
                 if appHost.runtimeInstaller.state != .idle {
