@@ -355,6 +355,92 @@ final class DiscoverIntakeHandoffTests: XCTestCase {
 
 // MARK: - States, controls and layout
 
+@MainActor
+final class DiscoverySessionTests: XCTestCase {
+    @MainActor private final class Gate {
+        var continuation: CheckedContinuation<[DiscoverCandidate], Error>?
+        var requests: [DiscoveryRequest] = []
+        func fetch(_ request: DiscoveryRequest) async throws -> [DiscoverCandidate] {
+            requests.append(request)
+            return try await withCheckedThrowingContinuation { continuation = $0 }
+        }
+        func finish(_ result: Result<[DiscoverCandidate], Error>) {
+            let pending = continuation
+            continuation = nil
+            pending?.resume(with: result)
+        }
+    }
+    private struct Failed: LocalizedError { var errorDescription: String? { "Discovery connection failed" } }
+    private func settle(_ condition: () -> Bool) async {
+        for _ in 0..<500 where !condition() { await Task.yield() }
+        XCTAssertTrue(condition())
+    }
+
+    func testStopKeepsTheRequestBusyUntilItExitsAndRejectsItsLateResult() async {
+        let gate = Gate()
+        let session = DiscoverySession(fetch: gate.fetch)
+        let request = DiscoveryRequest(role: "coding", limit: 3, fast: true)
+        XCTAssertTrue(gate.requests.isEmpty)
+        session.start(request)
+        await settle { gate.continuation != nil }
+        session.stop()
+        XCTAssertTrue(session.isStopping)
+        XCTAssertTrue(session.state.isRunning)
+        session.start(request)
+        session.clear()
+        XCTAssertEqual(gate.requests, [request])
+        gate.finish(.success([DiscoverFixtures.candidate("o/late")]))
+        await settle { !session.state.isRunning }
+        XCTAssertEqual(session.state, .stopped)
+        XCTAssertNil(session.result)
+        XCTAssertFalse(session.isStopping)
+        XCTAssertEqual(session.resultToken, 0)
+        session.start(request)
+        await settle { gate.continuation != nil }
+        gate.finish(.success([DiscoverFixtures.candidate("o/retried")]))
+        await settle { !session.state.isRunning }
+        XCTAssertEqual(session.result?.candidates.first?.repo, "o/retried")
+    }
+
+    func testRefreshFailureRetainsCandidatesAndTheirOriginalSearchSettings() async {
+        let gate = Gate()
+        let session = DiscoverySession(fetch: gate.fetch)
+        let original = DiscoveryRequest(role: "coding", limit: 3, fast: true)
+        session.start(original)
+        await settle { gate.continuation != nil }
+        let candidates = [DiscoverFixtures.candidate("o/previous")]
+        gate.finish(.success(candidates))
+        await settle { !session.state.isRunning }
+        let next = DiscoveryRequest(role: "reasoning", limit: 5, fast: false)
+        session.start(next)
+        await settle { gate.continuation != nil }
+        XCTAssertEqual(session.result?.candidates, candidates)
+        XCTAssertEqual(session.result?.request, original)
+        XCTAssertEqual(session.request, next)
+        gate.finish(.failure(Failed()))
+        await settle { !session.state.isRunning }
+        XCTAssertTrue(session.state.isFailed)
+        XCTAssertEqual(session.result?.request, original)
+        XCTAssertEqual(session.resultToken, 1)
+        session.clear()
+        XCTAssertNil(session.result)
+        XCTAssertEqual(session.state, .notRun)
+    }
+
+    func testSuccessfulEmptySearchReplacesOlderCandidates() async {
+        let gate = Gate()
+        let session = DiscoverySession(initialState: .completed([DiscoverFixtures.candidate("o/old")]), fetch: gate.fetch)
+        XCTAssertNil(session.result?.request, "Render inputs must not invent recorded search settings")
+        session.start(DiscoveryRequest(role: "", limit: 50, fast: false))
+        await settle { gate.continuation != nil }
+        gate.finish(.success([]))
+        await settle { !session.state.isRunning }
+        XCTAssertEqual(session.result?.candidates, [])
+        XCTAssertEqual(session.state, .completed([]))
+        XCTAssertEqual(session.result?.request?.role, nil)
+    }
+}
+
 final class DiscoverStateAndControlTests: XCTestCase {
     func testEachStateHasASymbolAndOneSentence() {
         let idle = DiscoverStatePresentation.make(.notRun)

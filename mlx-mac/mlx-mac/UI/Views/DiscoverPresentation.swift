@@ -322,7 +322,7 @@ struct DiscoverStatePresentation: Equatable {
     /// `fast` is the mode the running discovery was started with.
     static func make(_ state: DiscoveryState, fast: Bool = false) -> DiscoverStatePresentation {
         switch state {
-        case .notRun:
+        case .notRun, .stopped:
             return DiscoverStatePresentation(kind: .idle, symbol: state.symbol, sentence: state.message)
         case .running:
             return DiscoverStatePresentation(kind: .running, symbol: state.symbol, sentence: fast ? fastRunningSentence : runningSentence)

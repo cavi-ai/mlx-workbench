@@ -290,6 +290,7 @@
 		SRFLDB1 /* StudyRecipeFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRFLDF1 /* StudyRecipeFields.swift */; };
 		BKLOGB1 /* BackendInstallLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = BKLOGF1 /* BackendInstallLog.swift */; };
 		HLTBKDB1 /* HealthBackendSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = HLTBKDF1 /* HealthBackendSession.swift */; };
+		DSCSNB1 /* DiscoverySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCSNF1 /* DiscoverySession.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -587,6 +588,7 @@
 		SRFLDF1 /* StudyRecipeFields.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StudyRecipeFields.swift; path = UI/Views/StudyRecipeFields.swift; sourceTree = "<group>"; };
 		BKLOGF1 /* BackendInstallLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BackendInstallLog.swift; path = Services/BackendInstallLog.swift; sourceTree = "<group>"; };
 		HLTBKDF1 /* HealthBackendSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HealthBackendSession.swift; path = Services/HealthBackendSession.swift; sourceTree = "<group>"; };
+		DSCSNF1 /* DiscoverySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverySession.swift; path = Services/DiscoverySession.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -786,6 +788,7 @@
 				BKLOGF1 /* BackendInstallLog.swift */,
 				HLTBKDF1 /* HealthBackendSession.swift */,
 				SRSESF1 /* StudyRecipeSession.swift */,
+				DSCSNF1 /* DiscoverySession.swift */,
 				SRFLDF1 /* StudyRecipeFields.swift */,
 				LABPRSF1 /* LabPresentation.swift */,
 				ADPPRSF1 /* AdoptPresentation.swift */,
@@ -1158,6 +1161,7 @@
 				BKLOGB1 /* BackendInstallLog.swift in Sources */,
 				HLTBKDB1 /* HealthBackendSession.swift in Sources */,
 				SRSESB1 /* StudyRecipeSession.swift in Sources */,
+				DSCSNB1 /* DiscoverySession.swift in Sources */,
 				SRFLDB1 /* StudyRecipeFields.swift in Sources */,
 				LABPRSB1 /* LabPresentation.swift in Sources */,
 				ADPPRSB1 /* AdoptPresentation.swift in Sources */,

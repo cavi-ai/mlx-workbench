@@ -10,6 +10,15 @@
 2. Set the number of candidates per role. **Any** searches every supported role, so the total can exceed this limit. **Fast** uses repository names instead of inspecting each model; sizes and memory-fit estimates may be missing. Turn it off and select **Discover** again to request inspection.
 3. **Discover**.
 
+**Stop discovery** cancels only the current search. Search controls stay busy
+until that request exits; **Discover** then starts a fresh search. Previous
+successful candidates remain visible while searching, after a failure, or after
+stopping, labeled **Showing previous search results** with their original role,
+limit and inspection mode. Editing the controls does not relabel those results.
+A successful search replaces them, including when it finds no candidates.
+**Clear** removes the displayed results when no search is running. Results are
+kept while switching modes or routes, but are not saved across app launches.
+
 Each candidate shows its license, a fit bar for this Mac and an **In Library** mark when it is already on disk. Actions: **Add from Hugging Face…**, **Open on Hugging Face**, **Copy repo id**.
 
 Memory fit is an estimate, not a runtime check. **Add from Hugging Face…** opens

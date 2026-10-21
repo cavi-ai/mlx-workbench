@@ -482,7 +482,7 @@ actor WorkbenchAPI {
         if let limit { argv.append(contentsOf: ["--limit", String(limit)]) }
         if fast { argv.append("--fast") }
         if new { argv.append("--new") }
-        let data = try await raw(argv, isScout: true)
+        let data = try await raw(argv, isScout: true, cancellable: true)
         return DiscoverResult(candidates: Self.candidates(from: data))
     }
 

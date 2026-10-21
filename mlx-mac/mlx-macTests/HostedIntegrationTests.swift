@@ -6,6 +6,105 @@ import Network
 
 @MainActor
 final class HostedIntegrationTests: XCTestCase {
+    func testFreshPreflightPreservesUnknownMetadataAndUnloadedModels() throws {
+        let host = ModelHost(name: "Ollama", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+        let model = HostedModel(hostID: host.id, modelID: "selected", name: "Selected", digest: "installed", isLoaded: false)
+        let target = HostedComparisonTarget(host: host, model: model, capturedAt: Date())
+        let running = HostedModel(hostID: host.id, modelID: model.modelID, name: model.name, digest: "installed", isLoaded: true)
+        var withoutDigest = running; withoutDigest.digest = nil
+        let unrelated = HostedModel(hostID: host.id, modelID: "other", name: "Other", digest: "different", isLoaded: true)
+        for observed in [Optional<[HostedModel]>.none, [], [running], [withoutDigest], [unrelated]] {
+            let inventory = HostInventory(host: host, models: [model], capturedAt: Date(), runningModels: observed)
+            XCTAssertNoThrow(try target.validate(inventory: inventory, mode: .chat))
+        }
+        var unknown = model; unknown.digest = nil; unknown.isLoaded = nil; unknown.capabilities = []
+        XCTAssertNoThrow(try HostedComparisonTarget(host: host, model: unknown, capturedAt: Date()).validate(
+            inventory: HostInventory(host: host, models: [unknown], capturedAt: Date(), runningModels: [running]), mode: .chat))
+        var conflict = running; conflict.digest = "other-weights"
+        XCTAssertThrowsError(try HostedComparisonTarget(host: host, model: unknown, capturedAt: Date()).validate(
+            inventory: HostInventory(host: host, models: [model], capturedAt: Date(), runningModels: [conflict]), mode: .chat),
+            "A digest missing at selection cannot excuse a conflict in the current inventory")
+    }
+
+    func testFreshPreflightRechecksOwnershipIdentityAndExistingTaskRules() throws {
+        let host = ModelHost(name: "Host", provider: .lmStudio, baseURL: "http://127.0.0.1:1234")
+        let selected = HostedModel(hostID: host.id, modelID: "selected", name: "Selected", digest: "installed")
+        let target = HostedComparisonTarget(host: host, model: selected, capturedAt: Date())
+        let wrongHost = HostedModel(hostID: UUID(), modelID: selected.modelID, name: selected.name, digest: selected.digest)
+        var changed = selected; changed.digest = "changed"
+        var missingDigest = selected; missingDigest.digest = nil
+        var embeddings = selected; embeddings.capabilities = ["embedding"]
+        var decision = selected; decision.category = "decision"
+        for model in [wrongHost, changed, missingDigest, embeddings, decision] {
+            XCTAssertThrowsError(try target.validate(inventory: HostInventory(host: host, models: [model], capturedAt: Date()), mode: .chat))
+        }
+        var otherConnection = host; otherConnection.baseURL = "http://127.0.0.1:1235"
+        XCTAssertThrowsError(try target.validate(inventory: HostInventory(host: otherConnection, models: [selected], capturedAt: Date()), mode: .chat))
+        XCTAssertThrowsError(try target.validate(inventory: HostInventory(host: host, models: [], capturedAt: Date()), mode: .chat))
+        var completion = selected; completion.capabilities = ["embedding", "completion"]
+        XCTAssertNoThrow(try target.validate(inventory: HostInventory(host: host, models: [completion], capturedAt: Date()), mode: .chat))
+    }
+
+    func testRejectedLaneDoesNotGenerateOrPreventLaterCompatibleLane() async throws {
+        let host = ModelHost(name: "Host", provider: .lmStudio, baseURL: "http://127.0.0.1:1234")
+        let selected = HostedModel(hostID: host.id, modelID: "selected", name: "Selected")
+        let chat = HostedModel(hostID: host.id, modelID: "chat", name: "Chat", category: "llm")
+        var changed = selected; changed.category = "embedding"
+        let inventory = HostInventory(host: host, models: [changed, chat], capturedAt: Date())
+        let store = JSONStore<HostedComparisonRecord>(fileURL: try directory().appendingPathComponent("hosted.json"))
+        let coordinator = HostedComparisonCoordinator(store: store, readToken: { _ in nil }, freshInventory: { _, _ in inventory },
+            hostedChat: { _, _, modelID, _ in
+                XCTAssertEqual(modelID, "chat", "An incompatible model must not generate")
+                return ProbeSample(text: "Compatible answer", completionTokens: 1, timeToFirstTokenSeconds: 0.1,
+                    durationSeconds: 1, metricsEstimated: false, finishReason: "stop")
+            }, memoryProbe: { nil })
+        let done = expectation(description: "Later lane completes")
+        let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
+        try coordinator.start(targets: [selected, chat].map { HostedComparisonTarget(host: host, model: $0, capturedAt: Date()) }, promptSet: testPrompts())
+        await fulfillment(of: [done], timeout: 5)
+        let saved = try XCTUnwrap(store.load().first)
+        XCTAssertEqual(saved.run.state, .failed)
+        XCTAssertNotNil(saved.run.results.first?.error)
+        XCTAssertEqual(saved.run.results.first?.samples.count, 0)
+        XCTAssertEqual(saved.run.results.last?.samples.first?.fullOutput, "Compatible answer")
+        XCTAssertEqual(saved.conditions?.map(\.targetID), [chat.id])
+        subscription.cancel()
+    }
+
+    func testFreshHostedMetadataRejectsIncompatibleLanesBeforeHTTPGeneration() async throws {
+        let cases: [(ModelHostProvider, [String: String], [String])] = [
+            (.ollama, [
+                "/api/tags": #"{"models":[{"name":"fixture-model","digest":"installed"}]}"#,
+                "/api/ps": #"{"models":[{"name":"fixture-model","digest":"older-running-weights"}]}"#,
+                "/api/version": #"{"version":"fixture"}"#
+            ], ["/api/tags", "/api/ps", "/api/version"]),
+            (.lmStudio, ["/api/v1/models": #"{"models":[{"key":"fixture-model","type":"embedding","loaded_instances":[],"capabilities":{"vision":false,"trained_for_tool_use":false}}]}"#], ["/api/v1/models"]),
+            (.llamaCpp, ["/v1/models": #"{"data":[{"id":"fixture-model","object":"model","owned_by":"llamacpp","architecture":{"input_modalities":["text"],"output_modalities":["decisions"]}}]}"#], ["/v1/models"])
+        ]
+        for (provider, bodies, paths) in cases {
+            let server = try await HostedFixtureServer.start(inventoryBodies: bodies)
+            defer { server.stop() }
+            let store = JSONStore<HostedComparisonRecord>(fileURL: try directory().appendingPathComponent("hosted.json"))
+            let host = ModelHost(name: "Fixture host", provider: provider, baseURL: "http://127.0.0.1:\(server.port)")
+            let selected = HostedModel(hostID: host.id, modelID: "fixture-model", name: "Selected model",
+                digest: provider == .ollama ? "installed" : nil)
+            let coordinator = HostedComparisonCoordinator(store: store, readToken: { _ in "fixture-token" }, memoryProbe: { nil })
+            let done = expectation(description: "Fresh metadata rejects " + provider.rawValue)
+            let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
+            try coordinator.start(targets: [HostedComparisonTarget(host: host, model: selected, capturedAt: Date())], promptSet: testPrompts())
+            await fulfillment(of: [done], timeout: 5)
+            let saved = try XCTUnwrap(store.load().first)
+            XCTAssertEqual(saved.run.state, .failed, provider.rawValue)
+            XCTAssertNotNil(saved.run.results.first?.error, provider.rawValue)
+            XCTAssertEqual(saved.run.results.first?.samples.count, 0, provider.rawValue)
+            XCTAssertEqual(saved.targets.first?.model, selected)
+            XCTAssertEqual(server.requests.count, paths.count, provider.rawValue)
+            XCTAssertEqual(server.requests.compactMap { $0.split(separator: " ").dropFirst().first.map(String.init) }, paths)
+            XCTAssertTrue(server.requests.allSatisfy { $0.hasPrefix("GET ") && $0.lowercased().contains("authorization: bearer fixture-token") })
+            subscription.cancel()
+        }
+    }
+
     func testExplicitModelDetailsPublishFreshInventoryAndFailureRetainsIt() async throws {
         let host = ModelHost(name: "Ollama", provider: .ollama, baseURL: "http://127.0.0.1:11434")
         let model = HostedModel(hostID: host.id, modelID: "alpha", name: "Alpha", digest: "a")
@@ -814,16 +913,18 @@ private final class HostedFixtureServer: @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [String] = []
     private let streamBody: String?
+    private let inventoryBodies: [String: String]
     var port: UInt16 { listener.port!.rawValue }
     var requests: [String] { lock.lock(); defer { lock.unlock() }; return recorded }
-    private init(streamBody: String?) throws {
+    private init(streamBody: String?, inventoryBodies: [String: String]) throws {
         self.streamBody = streamBody
+        self.inventoryBodies = inventoryBodies
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
         listener = try NWListener(using: parameters)
     }
-    static func start(streamBody: String? = nil) async throws -> HostedFixtureServer {
-        let server = try HostedFixtureServer(streamBody: streamBody)
+    static func start(streamBody: String? = nil, inventoryBodies: [String: String] = [:]) async throws -> HostedFixtureServer {
+        let server = try HostedFixtureServer(streamBody: streamBody, inventoryBodies: inventoryBodies)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             server.listener.stateUpdateHandler = { state in
                 switch state { case .ready: continuation.resume(); case .failed(let error): continuation.resume(throwing: error); default: break }
@@ -849,9 +950,10 @@ private final class HostedFixtureServer: @unchecked Sendable {
             guard request[end.upperBound...].utf8.count >= length else { receive(connection, data: data); return }
             lock.lock(); recorded.append(request); lock.unlock()
             let chat = request.hasPrefix("POST ")
+            let path = header.split(separator: " ").dropFirst().first.map(String.init) ?? ""
             let body = chat
                 ? (streamBody ?? "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"completion_tokens\":1,\"prompt_tokens\":3}}\n\ndata: [DONE]\n\n")
-                : "{\"data\":[{\"id\":\"fixture-model\"}]}"
+                : (inventoryBodies[path] ?? "{\"data\":[{\"id\":\"fixture-model\"}]}")
             let response = "HTTP/1.1 200 OK\r\nContent-Type: \(chat ? "text/event-stream" : "application/json")\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body
             connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
         }
