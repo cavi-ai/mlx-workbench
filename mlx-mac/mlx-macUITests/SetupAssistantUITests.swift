@@ -2449,7 +2449,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         let checkout = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         // Only hide the CLI in the VM runner's disposable source copy.
-        guard checkout.path.hasPrefix(NSHomeDirectory() + "/native-ui/") else {
+        guard let account = getpwuid(getuid()), let home = account.pointee.pw_dir,
+              checkout.path.hasPrefix(String(cString: home) + "/native-ui/ui-") else {
             return XCTFail("Detection testing requires the VM runner's disposable checkout")
         }
         let script = checkout.appendingPathComponent("vendor/mlx-agent/scripts/mlx-agent")
