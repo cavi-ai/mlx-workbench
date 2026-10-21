@@ -36,32 +36,56 @@ def artifact_bytes(path):
                for directory, _, names in os.walk(path, followlinks=False) for name in names)
 
 
-def prune_artifacts(root, keep=ARTIFACT_KEEP_RUNS, max_bytes=ARTIFACT_MAX_BYTES):
+def protected_artifact_state(run):
+    if os.path.lexists(run / ".vm-active"):
+        return "vm_active"
+    if os.path.lexists(run / ".keep"):
+        return "pinned"
+    return None
+
+
+def prune_artifacts(root, keep=ARTIFACT_KEEP_RUNS, max_bytes=ARTIFACT_MAX_BYTES, dry_run=False):
     """Prune only registered, unlocked runs; pins and unresolved VM leases survive."""
     root = artifact_root(root)
+    report = {"schema": 1, "dry_run": dry_run, "busy": False,
+              "keep_runs": keep, "max_file_bytes": max_bytes, "runs": [],
+              "removable_file_bytes": 0, "removed_file_bytes": 0}
     descriptor = os.open(root / ".prune.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "w") as lease:
         try:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return []
-        return _prune_artifacts(root, keep, max_bytes)
+            report["busy"] = True
+            return report
+        report["runs"] = _prune_artifacts(root, keep, max_bytes, dry_run)
+    report["removable_file_bytes"] = sum(r["file_bytes"] for r in report["runs"]
+                                          if r["state"] in {"would_remove", "removed"})
+    report["removed_file_bytes"] = sum(r["file_bytes"] for r in report["runs"] if r["state"] == "removed")
+    return report
 
 
-def _prune_artifacts(root, keep, max_bytes):
+def _prune_artifacts(root, keep, max_bytes, dry_run):
     candidates = []
-    removed = []
+    entries = []
+    def record(run, state, size=None):
+        entries.append({"run_id": run.name, "state": state, "file_bytes": size})
     for run in root.iterdir():
-        if run.is_symlink() or not run.is_dir() or not re.fullmatch(r"ui-[0-9a-f]{12}", run.name):
+        if not re.fullmatch(r"ui-[0-9a-f]{12}", run.name):
+            continue
+        if run.is_symlink() or not run.is_dir():
+            record(run, "unmanaged")
             continue
         marker = run / ".retention.json"
         try:
             if marker.is_symlink() or not marker.is_file():
+                record(run, "unmanaged")
                 continue
             if json.loads(marker.read_text()).get("run_id") != run.name:
+                record(run, "unmanaged")
                 continue
             candidates.append((marker.stat().st_mtime, run))
         except (OSError, ValueError, AttributeError):
+            record(run, "unmanaged")
             continue
     # Lock candidates before counting: active or pinned runs do not consume the
     # bounded completed-run allowance and can never be removed by another run.
@@ -72,23 +96,33 @@ def _prune_artifacts(root, keep, max_bytes):
                 descriptor = os.open(run / ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
                 lease = locks.enter_context(os.fdopen(descriptor, "w"))
                 fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                if (run / ".keep").exists() or (run / ".vm-active").exists():
+                if state := protected_artifact_state(run):
+                    record(run, state, artifact_bytes(run))
                     continue
                 available.append((run, artifact_bytes(run)))
+            except BlockingIOError:
+                record(run, "active")
             except OSError:
+                record(run, "unavailable")
                 continue
         retained_bytes = 0
         retained_count = 0
         for run, size in available:
+            if state := protected_artifact_state(run):
+                record(run, state, size)
+                continue
             # Always retain the newest run even when that run alone exceeds the budget.
             if retained_count == 0 or (retained_count < keep and retained_bytes + size <= max_bytes):
                 retained_count += 1
                 retained_bytes += size
+                record(run, "retained", size)
                 continue
-            if not (run / ".keep").exists() and not (run / ".vm-active").exists():
+            if dry_run:
+                record(run, "would_remove", size)
+            else:
                 shutil.rmtree(run)
-                removed.append(run.name)
-    return removed
+                record(run, "removed", size)
+    return entries
 
 
 @contextmanager
@@ -105,7 +139,7 @@ def artifact_workspace(root):
                 yield run
             finally:
                 # If VM teardown failed, its shared inputs must remain available.
-                if not (run / ".vm-active").exists():
+                if not os.path.lexists(run / ".vm-active"):
                     inputs = run / "input"
                     if inputs.is_symlink():
                         inputs.unlink()
@@ -593,8 +627,11 @@ def main():
     parser.add_argument("--preflight-only", action="store_true", help="Check the guest GUI session without building or running tests")
     parser.add_argument("--unit-evidence", help="Reuse a complete passed native unit run only when its source inputs match")
     parser.add_argument("--prune-only", action="store_true", help="Prune managed test artifacts without starting a VM")
+    parser.add_argument("--dry-run", action="store_true", help="With --prune-only, report eligible artifact removals without deleting evidence")
     parser.add_argument("--guest", nargs=2, metavar=("INPUT", "OUTPUT"), help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.dry_run and not args.prune_only:
+        parser.error("--dry-run requires --prune-only")
     if args.runtime_install_dmg and (not args.runtime_install_uv or args.baseline_app):
         parser.error("--runtime-install-dmg requires the explicit runtime installation route without --baseline-app")
     if args.runtime_install_uv and (not args.runtime_bundle or args.ui_test != [RUNTIME_INSTALL_TEST] or args.unit_test or args.preflight_only):
@@ -606,8 +643,10 @@ def main():
     if args.prune_only:
         if args.guest or args.base_vm or args.ui_test or args.unit_test:
             parser.error("--prune-only cannot be combined with a test run")
-        removed = prune_artifacts(Path(__file__).resolve().parent.parent / ".build/native-ui/runs")
-        print(f"Removed {len(removed)} expired native UI artifact directories.")
+        report = prune_artifacts(Path(__file__).resolve().parent.parent / ".build/native-ui/runs", dry_run=args.dry_run)
+        print(json.dumps(report, indent=2))
+        if report["busy"]:
+            parser.exit(3, "Another artifact cleanup is active; no cleanup was performed.\n")
     elif args.guest:
         guest(*args.guest)
     elif not args.base_vm:

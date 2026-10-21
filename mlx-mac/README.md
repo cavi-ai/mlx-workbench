@@ -70,9 +70,14 @@ even if it alone exceeds the budget. Active runs and runs with unresolved VM
 teardown are protected. Create a `.keep` file in a run directory to preserve
 its evidence outside that budget; remove it to restore normal retention.
 Referenced `--unit-evidence` is protected while its consuming run is active.
-Run `python3 scripts/native_ui_vm.py --prune-only` to apply retention without
-starting a VM. Only directories registered by this runner are eligible; older
-unregistered artifacts, model files and prepared base VMs are untouched.
+Preview cleanup with `python3 scripts/native_ui_vm.py --prune-only --dry-run`;
+omit `--dry-run` to apply retention without starting a VM. Both commands emit
+JSON listing each run's disposition and file sizes, including pinned, active,
+unmanaged and retained runs. The preview takes coordination locks but never
+removes evidence. Byte totals are sums of file sizes, not a promise of physical
+disk space freed. Concurrent cleanup reports `busy` and exits with status 3.
+Only directories registered by this runner are eligible; older unregistered
+artifacts, model files and prepared base VMs are untouched.
 
 `--preflight-only` checks the guest without running tests. `--unit-test` runs
 one named XCTest for diagnosis; its result is not full-suite acceptance.
