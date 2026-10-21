@@ -68,7 +68,7 @@ struct ChatComparisonResultsView<Actions: View>: View {
     private var selectedPrompt: PromptEntry? { prompts.first { $0.id == promptID } }
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 0) {
             if wide {
                 HStack(alignment: .top, spacing: WorkbenchSpacing.lg) {
                     matrix.frame(width: layout.matrixWidth)
@@ -81,6 +81,7 @@ struct ChatComparisonResultsView<Actions: View>: View {
                 }
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat-results-workspace")
         .onChange(of: run.results.map(\.id)) { _, _ in
             let readable = ChatComparisonPresentation.readingResults(in: run)

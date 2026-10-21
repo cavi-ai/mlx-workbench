@@ -3279,6 +3279,11 @@ final class WorkbenchReviewUITests: XCTestCase {
                         XCTAssertGreaterThanOrEqual(reader.frame.width, 480)
                         capture("Compare-board-standard-layout")
                         if (NSScreen.main?.frame.width ?? 0) >= 2048 {
+                            let window = app.windows.firstMatch
+                            let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+                                .withOffset(CGVector(dx: 0, dy: 20))
+                            titlebar.press(forDuration: 0.1, thenDragTo: titlebar.withOffset(CGVector(
+                                dx: (NSScreen.main?.frame.minX ?? 0) - window.frame.minX, dy: 0)))
                             resizeWindow(width: 2048, height: 1050)
                             let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                                 matrix.frame.width > standardWidth + 100
