@@ -7,6 +7,19 @@ import XCTest
 
 @MainActor
 final class VerificationCoordinatorTests: XCTestCase {
+    func testVerificationStartupReadsHistoryOffTheMainActor() async throws {
+        let store = VerificationStore(fileURL: temporaryURL("startup-reports.json"))
+        _ = try store.load()
+        let transaction = try HistoryReadTransaction(store.databaseURL)
+        transaction.release(after: 0.5)
+        let verification = VerificationCoordinator(probe: verificationProbe(responder: passingResponder), store: store)
+        XCTAssertFalse(transaction.isReleased, "Constructing verification must not wait for history I/O")
+        verification.verifyNow(modelPath: "/Models/source", signature: "signature-1")
+        let finished = await waitFor { verification.activeModelPath == nil }
+        XCTAssertTrue(finished)
+        XCTAssertEqual(verification.reports.first?.outcome, .passed)
+    }
+
     func testFailedReportWriteCannotPublishAVerdictOrVerifyTheWorkflow() async throws {
         let url = temporaryURL("reports.json")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -15,7 +28,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let store = VerificationStore(fileURL: url)
         _ = try store.load()
         try rejectHistoryWrites(store.databaseURL)
-        let verification = makeVerification(store: store, responder: passingResponder)
+        let verification = await makeVerification(store: store, responder: passingResponder)
         let workflow = makeWorkflowCoordinator(), record = makeWorkflow(state: .verifying)
         workflow.restore(record); verification.attach(to: workflow)
         var publications = 0
@@ -43,9 +56,9 @@ final class VerificationCoordinatorTests: XCTestCase {
         try store.upsert(failed)
         let before = try store.load()
         try rejectHistoryWrites(store.databaseURL)
-        let verification = makeVerification(store: store, responder: passingResponder)
+        let verification = await makeVerification(store: store, responder: passingResponder)
         workflow.restore(record); verification.attach(to: workflow)
-        verification.keepAnyway(recordID: record.id)
+        await verification.keepAnyway(recordID: record.id)
         XCTAssertEqual(workflow.workflow.state, .verificationFailed)
         XCTAssertEqual(verification.reports, [failed])
         XCTAssertNotNil(verification.persistenceError)
@@ -59,7 +72,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let store = VerificationStore(fileURL: url)
         _ = try store.load()
         try rejectHistoryWrites(store.databaseURL)
-        let verification = makeVerification(store: store, responder: passingResponder)
+        let verification = await makeVerification(store: store, responder: passingResponder)
         var publications = 0
         verification.onReport = { report in
             publications += 1
@@ -1100,7 +1113,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testPassingCanariesResolveWorkflowToVerified() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.attach(to: workflow)
         let record = makeWorkflow(state: .verifying)
         workflow.restore(record)
@@ -1119,7 +1132,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     /// Speech models skip the server and transcribe a spoken sentence instead.
     func testSpeechModelPassesOnAnAccurateTranscript() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         let clips = SpeechCalls()
         verification.taskType = { _ in .speechToText }
         verification.speech = SpeechCanaryRunner(
@@ -1145,7 +1158,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testSpeechModelFailsOnAPoorTranscriptAndIsUnverifiableWithoutTheRunner() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.taskType = { _ in .speechToText }
         verification.speech = SpeechCanaryRunner(
             synthesize: { _ in FileManager.default.temporaryDirectory.appendingPathComponent("canary.wav") },
@@ -1159,7 +1172,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(failed)
         XCTAssertTrue(verification.reports.first?.canaries.first?.failureReason?.contains("Word error rate") == true)
 
-        let bare = makeVerification(responder: passingResponder)
+        let bare = await makeVerification(responder: passingResponder)
         bare.taskType = { _ in .speechToText }
         bare.attach(to: workflow)
         let second = makeWorkflow(state: .verifying)
@@ -1172,7 +1185,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     /// A Verify now run that cannot produce a verdict keeps its error for that model only.
     func testVerifyNowErrorIsReportedForTheModelThatFailed() async {
         struct BackendMissing: LocalizedError { var errorDescription: String? { "The mlx-audio backend is not installed." } }
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.taskType = { _ in .speechToText }
         verification.speech = SpeechCanaryRunner(
             synthesize: { _ in FileManager.default.temporaryDirectory.appendingPathComponent("canary.wav") },
@@ -1191,7 +1204,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     /// Classification models skip the server and route a canary support ticket.
     func testClassificationModelPassesTheDecisionCanary() async throws {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         let calls = SpeechCalls()
         verification.taskType = { _ in .classification }
         verification.decide = { path, request in
@@ -1217,7 +1230,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testDecisionCanaryFailsOnAWrongRouteAndIsUnverifiableWithoutTheRunner() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.taskType = { _ in .classification }
         verification.decide = { _, _ in Self.decision(department: "technical", refund: "yes") }
         verification.attach(to: workflow)
@@ -1228,7 +1241,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(failed)
         XCTAssertEqual(verification.reports.first?.canaries.first?.failureReason, "department answered technical, expected billing.")
 
-        let bare = makeVerification(responder: passingResponder)
+        let bare = await makeVerification(responder: passingResponder)
         bare.taskType = { _ in .classification }
         bare.attach(to: workflow)
         let second = makeWorkflow(state: .verifying)
@@ -1248,7 +1261,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     /// Image models skip the server and render the canary prompt instead.
     func testImageModelPassesOnANonBlankRenderAndIsUnverifiableWithoutTheRenderer() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         let calls = SpeechCalls()
         verification.taskType = { _ in .imageGeneration }
         verification.render = { path, out, request in
@@ -1266,7 +1279,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let seen = await calls.values
         XCTAssertEqual(seen, ["/Models/qwen-image|512|20"])
 
-        let bare = makeVerification(responder: passingResponder)
+        let bare = await makeVerification(responder: passingResponder)
         bare.taskType = { _ in .imageGeneration }
         bare.attach(to: workflow)
         let second = makeWorkflow(state: .verifying)
@@ -1284,7 +1297,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testFailingCanariesResolveWorkflowToVerificationFailed() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: { _ in Self.sample("   ") })
+        let verification = await makeVerification(responder: { _ in Self.sample("   ") })
         verification.attach(to: workflow)
         let record = makeWorkflow(state: .verifying)
         workflow.restore(record)
@@ -1299,7 +1312,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testProbeErrorResolvesWorkflowToCompletedUnverified() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: { _ in throw ProbeStubError.offline })
+        let verification = await makeVerification(responder: { _ in throw ProbeStubError.offline })
         verification.attach(to: workflow)
         let record = makeWorkflow(state: .verifying)
         workflow.restore(record)
@@ -1316,7 +1329,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     func testKeepAnywayResolvesToCompletedAndPersistsOverride() async {
         let workflow = makeWorkflowCoordinator()
         let storeURL = temporaryURL("reports.json")
-        let verification = makeVerification(storeURL: storeURL, responder: { _ in Self.sample("   ") })
+        let verification = await makeVerification(storeURL: storeURL, responder: { _ in Self.sample("   ") })
         verification.attach(to: workflow)
         let record = makeWorkflow(state: .verifying)
         workflow.restore(record)
@@ -1324,7 +1337,7 @@ final class VerificationCoordinatorTests: XCTestCase {
         let resolved = await waitFor { workflow.workflow.state == .verificationFailed }
         XCTAssertTrue(resolved)
 
-        verification.keepAnyway(recordID: record.id)
+        await verification.keepAnyway(recordID: record.id)
 
         let resolvedAfterKeep = await waitFor { workflow.workflow.state == .completed }
         XCTAssertTrue(resolvedAfterKeep)
@@ -1335,7 +1348,7 @@ final class VerificationCoordinatorTests: XCTestCase {
 
     func testResolveVerificationIgnoresStaleRecords() async {
         let workflow = makeWorkflowCoordinator()
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.attach(to: workflow)
         let record = makeWorkflow(state: .completed)
         workflow.restore(record)
@@ -1348,7 +1361,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     func testConcurrentBeginResolvesSecondAsUnavailable() async {
         let workflow = makeWorkflowCoordinator()
         let gate = CompletionGate()
-        let verification = makeVerification(responder: { id in
+        let verification = await makeVerification(responder: { id in
             await gate.wait()
             return Self.passingSample(id)
         })
@@ -1373,7 +1386,7 @@ final class VerificationCoordinatorTests: XCTestCase {
     // MARK: - Status
 
     func testStatusReflectsOutcomeAndSignature() async {
-        let verification = makeVerification(responder: passingResponder)
+        let verification = await makeVerification(responder: passingResponder)
         verification.verifyNow(modelPath: "/Models/converted", signature: "sig-1")
         let resolved = await waitFor { verification.reports.count == 1 }
         XCTAssertTrue(resolved)
@@ -1418,8 +1431,15 @@ final class VerificationCoordinatorTests: XCTestCase {
         storeURL: URL? = nil,
         store: VerificationStore? = nil,
         responder: @escaping @Sendable (String) async throws -> ProbeSample
-    ) -> VerificationCoordinator {
-        let probe = ServeProbe(
+    ) async -> VerificationCoordinator {
+        let verification = VerificationCoordinator(probe: verificationProbe(responder: responder),
+            store: store ?? VerificationStore(fileURL: storeURL ?? temporaryURL("reports.json")))
+        await verification.waitForHistory()
+        return verification
+    }
+
+    private func verificationProbe(responder: @escaping @Sendable (String) async throws -> ProbeSample) -> ServeProbe {
+        ServeProbe(
             lifecycle: ServeLifecycle(
                 preview: { _, _ in "hash-1" },
                 start: { _, _, _ in },
@@ -1428,10 +1448,6 @@ final class VerificationCoordinatorTests: XCTestCase {
             prober: StubVerificationProber(responder: responder),
             readyPollIntervalNanoseconds: 1_000_000,
             pickPort: { 9999 }
-        )
-        return VerificationCoordinator(
-            probe: probe,
-            store: store ?? VerificationStore(fileURL: storeURL ?? temporaryURL("reports.json"))
         )
     }
 

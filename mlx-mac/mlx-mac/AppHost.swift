@@ -570,6 +570,7 @@ class AppHost: ObservableObject {
             guard !Task.isCancelled else { isScanning = false; return nil }
             let builder = libraryBuildOperation, hardware = hardwareProfile, capturedAt = now()
             let snapshot = await WorkbenchIO.perform { builder(scan, hardware, capturedAt) }
+            await verification.waitForHistory()
             guard !Task.isCancelled else { isScanning = false; return nil }
             guard config == scanConfig else {
                 isScanning = false

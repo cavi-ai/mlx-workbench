@@ -116,6 +116,10 @@ server.
   boundary), runs the canary suite in `Models/VerificationModels.swift`, and
   only then marks the workflow `verified`. The gate attaches in `App.swift`;
   without an attached verifier the workflow behavior is unchanged.
+  `VerificationCoordinator` loads saved reports and commits verdicts on its
+  serial I/O queue. Verification waits for initial history, and failed writes
+  publish no verdict or workflow override. Library scans await the initial
+  report load before publishing readiness evidence.
 - **Hugging Face Intake**: `IntakeCoordinator` + a single Add from Hugging Face window
   (`IntakeSheet`; Prepare field, ⌘V on the Library table and Prepare view, ⇧⌘V anywhere) over
   `mlx-agent intake resolve|fetch|status|port-analysis|port-plan` and

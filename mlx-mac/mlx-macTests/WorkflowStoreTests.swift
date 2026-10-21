@@ -20,6 +20,27 @@ func rejectHistoryWrites(_ url: URL) throws {
     try executeHistorySQL(url, "CREATE TRIGGER reject_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT, 'Write unavailable'); END")
 }
 
+final class HistoryReadTransaction: @unchecked Sendable {
+    private let lock = NSLock()
+    private var connection: OpaquePointer?
+    private var released = false
+    var isReleased: Bool { lock.withLock { released } }
+    init(_ url: URL) throws {
+        guard sqlite3_open_v2(url.path, &connection, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+              sqlite3_exec(connection, "BEGIN EXCLUSIVE", nil, nil, nil) == SQLITE_OK else {
+            if let connection { sqlite3_close(connection) }
+            throw WorkflowEvidenceError.invalid("Could not hold test history")
+        }
+    }
+    func release(after delay: TimeInterval) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
+            self.lock.withLock { self.released = true }
+            sqlite3_exec(self.connection, "ROLLBACK", nil, nil, nil)
+            sqlite3_close(self.connection)
+        }
+    }
+}
+
 /// Durable state stores: same atomic-replace + corruption-blocking contract
 /// as JSONStore, exercised against the real record types.
 final class WorkflowStoreTests: XCTestCase {
