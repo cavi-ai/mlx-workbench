@@ -74,6 +74,7 @@ struct SettingsInputValidation {
 struct SettingsView: View {
     @ObservedObject var appHost: AppHost
     @ObservedObject private var updater: UpdateCoordinator
+    @StateObject private var engineDetection = SettingsEngineDetection()
     @Environment(\.isRouteActive) private var isRouteActive
     private let probe: SettingsDirectoryProbe
     private let onRouteSelection: (AppRoute) -> Void
@@ -144,6 +145,13 @@ struct SettingsView: View {
         }
         .onAppear { loadFromConfig() }
         .task(id: probeKey) { await runProbe() }
+        .onChange(of: isRouteActive) { _, active in
+            if !active, engineDetection.isDetecting { engineDetection.cancel() }
+        }
+        .onDisappear { engineDetection.cancel() }
+        .onChange(of: mlxAgentPath) { _, path in
+            if let detectedPath = engineDetection.state.path, detectedPath != path { engineDetection.cancel() }
+        }
     }
 
     // MARK: - Ledger input
@@ -175,8 +183,22 @@ struct SettingsView: View {
             SettingsRow(label: "mlx-agent checkout", warning: pathWarning(mlxAgentPath), stacked: layout.stacksRows) {
                 SettingsPathField(
                     label: "mlx-agent checkout", text: $mlxAgentPath, placeholder: "/path/to/mlx-agent",
-                    detect: { mlxAgentPath = Config.discoverAgentPath() }
+                    detect: detectEngine, isDetecting: engineDetection.isDetecting
                 )
+                .disabled(engineDetection.isDetecting)
+            }
+            if let feedback = engineDetectionStatus {
+                SettingsSeparator()
+                SettingsRow(label: "Detection", stacked: layout.stacksRows) {
+                    HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
+                        if engineDetection.isDetecting { ProgressView().controlSize(.small) }
+                        SettingsStatusLabel(word: feedback.word, detail: feedback.detail, symbol: feedback.symbol, tone: feedback.tone)
+                            .accessibilityIdentifier("settings-engine-detection")
+                    }
+                    if case .notFound = engineDetection.state {
+                        Button("Open Health") { onRouteSelection(.health) }.buttonStyle(.borderless)
+                    }
+                }
             }
             if !appHost.runtimeReport.ok {
                 SettingsSeparator()
@@ -199,6 +221,30 @@ struct SettingsView: View {
                 .truncationMode(.middle)
                 .textSelection(.enabled)
                 .help(appHost.configPath)
+        }
+    }
+
+    private var engineDetectionStatus: SettingsEngineStatus? {
+        switch engineDetection.state {
+        case .idle: return nil
+        case .searching:
+            return SettingsEngineStatus(word: "Searching for engine…", detail: "Checking standard locations and the prepared bundled runtime.", symbol: "magnifyingglass", tone: .neutral)
+        case .found:
+            let saved = mlxAgentPath == appHost.config.mlxAgentPath
+            return SettingsEngineStatus(word: "Checkout detected", detail: saved ? "The current checkout was found. No changes needed." : "Review the path, then Save to use this checkout.", symbol: "checkmark.circle.fill", tone: .positive)
+        case .notFound:
+            return SettingsEngineStatus(word: "No engine detected", detail: "Your current path was kept. Choose a checkout, or open Health to prepare the bundled engine.", symbol: "exclamationmark.triangle.fill", tone: .warning)
+        case .failed(_, let message):
+            return SettingsEngineStatus(word: "Detection failed", detail: message + " Your current path was kept.", symbol: "exclamationmark.triangle.fill", tone: .negative)
+        }
+    }
+
+    private func detectEngine() {
+        guard !isSaving, !engineDetection.isDetecting else { return }
+        let original = mlxAgentPath
+        Task {
+            guard let path = await engineDetection.detect(currentPath: original), mlxAgentPath == original else { return }
+            mlxAgentPath = path
         }
     }
 
@@ -521,11 +567,11 @@ struct SettingsView: View {
 
                 Button("Discard") { loadFromConfig() }
                     .buttonStyle(.bordered)
-                    .disabled(!isDirty || isSaving)
+                    .disabled(!isDirty || isSaving || engineDetection.isDetecting)
                     .accessibilityIdentifier("settings-discard")
-                Button("Save") { save() }
+                Button(isSaving ? "Saving…" : "Save") { save() }
                     .buttonStyle(.workbenchPrimary)
-                    .disabled(!isDirty || !isValid || isSaving)
+                    .disabled(!isDirty || !isValid || isSaving || engineDetection.isDetecting)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("settings-save")
             }
@@ -539,7 +585,22 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var saveStateFeedback: some View {
-        if let notice {
+        if isSaving {
+            ProgressView().controlSize(.small)
+            Text("Saving settings…").font(WorkbenchTypography.secondary).accessibilityIdentifier("settings-action-status")
+        } else if let feedback = engineDetectionStatus {
+            if engineDetection.isDetecting { ProgressView().controlSize(.small) }
+            Label {
+                Text(feedback.word).accessibilityIdentifier("settings-action-status")
+            } icon: {
+                Image(systemName: feedback.symbol)
+            }
+                .font(WorkbenchTypography.secondary).foregroundStyle(feedback.tone.color)
+        } else if isDirty {
+            Text("Unsaved changes")
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.warning)
+        } else if let notice {
             Label {
                 Text(notice).accessibilityIdentifier("settings-save-success")
             } icon: {
@@ -548,10 +609,6 @@ struct SettingsView: View {
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.success)
                 .fixedSize(horizontal: false, vertical: true)
-        } else if isDirty {
-            Text("Unsaved changes")
-                .font(WorkbenchTypography.secondary)
-                .foregroundStyle(WorkbenchColor.warning)
         } else {
             Text("All changes saved")
                 .font(WorkbenchTypography.secondary)
@@ -626,6 +683,7 @@ struct SettingsView: View {
     // MARK: - Load / save
 
     private func loadFromConfig() {
+        engineDetection.cancel()
         let config = appHost.config
         ggufRoots = config.ggufRoots
         mlxRoots = config.mlxRoots
@@ -644,7 +702,8 @@ struct SettingsView: View {
     }
 
     private func save() {
-        guard isValid, !isSaving else { return }
+        guard isValid, !isSaving, !engineDetection.isDetecting else { return }
+        engineDetection.cancel()
         isSaving = true
         notice = nil
         noticeIsError = true
@@ -872,6 +931,7 @@ struct SettingsPathField: View {
     @Binding var text: String
     var placeholder: String = ""
     var detect: (() -> Void)? = nil
+    var isDetecting = false
 
     var body: some View {
         HStack(spacing: WorkbenchSpacing.xs) {
@@ -880,10 +940,11 @@ struct SettingsPathField: View {
                 .labelsHidden()
                 .accessibilityLabel(label)
             if let detect {
-                Button("Detect", action: detect)
+                Button(isDetecting ? "Detecting…" : "Detect", action: detect)
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .help("Detect looks for a vendored or installed checkout with scripts/mlx-agent.")
+                    .help("Look for an existing checkout or prepared bundled engine. Nothing is installed or saved.")
+                    .accessibilityIdentifier("settings-detect-engine")
             }
             Button("Choose…") { chooseDirectory() }
                 .buttonStyle(.bordered)

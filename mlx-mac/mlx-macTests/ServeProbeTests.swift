@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import XCTest
 
 @testable import mlx_workbench
@@ -14,6 +15,87 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertTrue(InlineReasoning.isInside("<think>plan</think>\n"))
         XCTAssertFalse(InlineReasoning.isInside("<think>plan</think>def"))
         XCTAssertFalse(InlineReasoning.isInside("def"))
+    }
+
+    func testIncrementalReasoningHandlesEveryTagBoundaryAndLiteralMarkup() {
+        let cases: [(String, Bool)] = [
+            ("<think>still planning", false), ("  <think>plan</think>\n", false),
+            ("\u{2003}<think>plan<</think>\nHello", true), ("<think>plan</think>答え 🐈", true),
+            ("Hello", true), ("<div>literal markup", true), ("<thinking>literal", true),
+            ("<thin", false), (" \n", false)
+        ]
+        for (text, expected) in cases {
+            for boundary in text.indices {
+                var tracker = InlineReasoning.StreamTracker()
+                tracker.consume(String(text[..<boundary]))
+                tracker.consume(String(text[boundary...]))
+                XCTAssertEqual(tracker.hasAnswer, expected, text)
+            }
+            var scalarTracker = InlineReasoning.StreamTracker()
+            for scalar in text.unicodeScalars { scalarTracker.consume(String(scalar)) }
+            XCTAssertEqual(scalarTracker.hasAnswer, expected, text)
+        }
+    }
+
+    func testFragmentedInlineTagsDoNotRecordReasoningAsAnAnswer() async throws {
+        for includeAnswer in [false, true] {
+            var fragments = ["<", "thi", "nk>", "Plan the answer.", "</th", "ink>", "\n"]
+            if includeAnswer { fragments.append("Hello") }
+            let body = try fragments.map { content -> String in
+                let data = try JSONSerialization.data(withJSONObject: ["choices": [["delta": ["content": content]]]])
+                return "data: " + String(decoding: data, as: UTF8.self) + "\n"
+            }.joined() + "data: [DONE]\n"
+            let session = stubSession(body: body)
+            defer { session.invalidateAndCancel() }
+            let sample = try await OpenAIEndpointProber(session: session).chat(
+                baseURL: URL(string: "http://127.0.0.1:9999")!, model: "model", prompt: "hello", maxTokens: 64)
+            XCTAssertEqual(sample.text, includeAnswer ? "Hello" : "")
+            XCTAssertEqual(sample.reasoningText, "Plan the answer.")
+            XCTAssertEqual(sample.timeToFirstAnswerSeconds != nil, includeAnswer)
+            XCTAssertNotNil(sample.timeToFirstTokenSeconds)
+        }
+    }
+
+    func testOpenHTTPStreamsCloseAfterDoneErrorsLimitsAndCancellation() async throws {
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        for mode in ["done", "error", "limit", "status", "cancel", "done"] {
+            let opened = expectation(description: "stream opened: " + mode)
+            let closed = expectation(description: "stream closed: " + mode)
+            let body: String
+            switch mode {
+            case "done": body = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: [DONE]\n\n"
+            case "error": body = "data: {\"error\":{\"message\":\"failed\"}}\n\n"
+            case "limit": body = String(repeating: "x", count: 256)
+            default: body = ": waiting\n\n"
+            }
+            let server = try await ProbeStreamPeer.start(body: body, status: mode == "status" ? 503 : 200,
+                opened: { opened.fulfill() }, closed: { closed.fulfill() })
+            defer { server.stop() }
+            let task = Task {
+                try await OpenAIEndpointProber(session: session, maximumResponseBytes: 128, maximumLineBytes: 128).chat(
+                    baseURL: URL(string: "http://127.0.0.1:\(server.port)")!, model: "model", prompt: "hello", maxTokens: 8)
+            }
+            await fulfillment(of: [opened], timeout: 5)
+            if mode == "cancel" { task.cancel() }
+            do {
+                let sample = try await task.value
+                XCTAssertEqual(mode, "done")
+                XCTAssertEqual(sample.text, "Hello")
+            } catch {
+                switch mode {
+                case "error": XCTAssertEqual(error as? ProbeHTTPError, .invalidResponse)
+                case "limit": XCTAssertEqual(error as? ProbeHTTPError, .responseTooLarge)
+                case "status": XCTAssertEqual(error as? ProbeHTTPError, .httpStatus(503))
+                case "cancel": XCTAssertTrue(error is CancellationError || (error as? URLError)?.code == .cancelled)
+                default: XCTFail("Unexpected error: \(error)")
+                }
+            }
+            // The peer never sends EOF: closure must come from the request owner,
+            // before this test invalidates the shared session or stops the peer.
+            await fulfillment(of: [closed], timeout: 5)
+            server.stop()
+        }
     }
 
     func testDecodeRateIsWithheldWhenDeltasArriveInABurst() {
@@ -807,5 +889,80 @@ private struct StubProber: EndpointProbing {
     func chat(baseURL: URL, model: String, prompt: String, maxTokens: Int) async throws -> ProbeSample {
         let id = CanarySuite.cases.first(where: { $0.prompt == prompt })?.id ?? "unknown"
         return try responder(id)
+    }
+}
+
+/// Sends an HTTP stream without its terminating chunk, and observes the client's close.
+private final class ProbeStreamPeer: @unchecked Sendable {
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "probe-stream-peer")
+    private var connections: [NWConnection] = []
+    private let body: String
+    private let status: Int
+    private let opened: @Sendable () -> Void
+    private let closed: @Sendable () -> Void
+    var port: UInt16 { listener.port!.rawValue }
+
+    private init(body: String, status: Int, opened: @escaping @Sendable () -> Void,
+                 closed: @escaping @Sendable () -> Void) throws {
+        self.body = body; self.status = status; self.opened = opened; self.closed = closed
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+        listener = try NWListener(using: parameters)
+    }
+
+    static func start(body: String, status: Int, opened: @escaping @Sendable () -> Void,
+                      closed: @escaping @Sendable () -> Void) async throws -> ProbeStreamPeer {
+        let peer = try ProbeStreamPeer(body: body, status: status, opened: opened, closed: closed)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            peer.listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready: peer.listener.stateUpdateHandler = nil; continuation.resume()
+                case .failed(let error): peer.listener.stateUpdateHandler = nil; continuation.resume(throwing: error)
+                default: break
+                }
+            }
+            peer.listener.newConnectionHandler = { connection in
+                peer.connections.append(connection)
+                connection.start(queue: peer.queue)
+                peer.receiveRequest(connection, data: Data())
+            }
+            peer.listener.start(queue: peer.queue)
+        }
+        return peer
+    }
+
+    private func receiveRequest(_ connection: NWConnection, data: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [self] chunk, _, complete, error in
+            guard error == nil else { connection.cancel(); return }
+            var data = data; data.append(chunk ?? Data())
+            guard data.count < 1_048_576, let request = String(data: data, encoding: .utf8) else { connection.cancel(); return }
+            guard let end = request.range(of: "\r\n\r\n") else {
+                if complete { connection.cancel() } else { receiveRequest(connection, data: data) }; return
+            }
+            let header = String(request[..<end.lowerBound])
+            let length = header.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("content-length:") }
+                .flatMap { Int($0.split(separator: ":", maxSplits: 1).last!.trimmingCharacters(in: .whitespaces)) } ?? 0
+            guard request[end.upperBound...].utf8.count >= length else { receiveRequest(connection, data: data); return }
+            let response = "HTTP/1.1 \(status) Response\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+                + String(body.utf8.count, radix: 16) + "\r\n" + body + "\r\n"
+            connection.send(content: Data(response.utf8), completion: .contentProcessed { [self] error in
+                guard error == nil else { connection.cancel(); return }
+                opened()
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { [self] _, _, complete, error in
+                    if complete || error != nil { closed() }
+                    connection.cancel()
+                }
+            })
+        }
+    }
+
+    func stop() {
+        queue.sync {
+            listener.newConnectionHandler = nil
+            listener.cancel()
+            connections.forEach { $0.cancel() }
+            connections.removeAll()
+        }
     }
 }

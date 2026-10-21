@@ -512,7 +512,7 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func launch(appearance: String, route: String = "doctor", isolatedHome: Bool = false, configURL: URL? = nil,
-                        forcedRoute: String? = nil) {
+                        forcedRoute: String? = nil, agentHome: String? = nil) {
         if appearance == "Light" || appearance == "Dark" {
             let requested: XCUIDevice.Appearance = appearance == "Dark" ? .dark : .light
             XCUIDevice.shared.appearance = requested
@@ -522,6 +522,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.launchEnvironment["MLX_WORKBENCH_CONFIG"] = (configURL ?? root.appendingPathComponent("config.json")).path
         app.launchEnvironment["XDG_STATE_HOME"] = root.appendingPathComponent("state").path
         app.launchEnvironment["MLX_WORKBENCH_PYTHON"] = "/usr/bin/python3"
+        if let agentHome { app.launchEnvironment["MLX_AGENT_HOME"] = agentHome }
         if isolatedHome { app.launchEnvironment["CFFIXED_USER_HOME"] = root.path }
         // NSArgumentDomain overrides writes to AppStorage. A mutable route
         // must be selected through the UI rather than forced as a launch default.
@@ -2442,6 +2443,39 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertTrue(field.isHittable, label)
         }
         capture("Settings-scrolled-semantic-inputs")
+    }
+
+    func testSettingsEngineDetectionReportsAnUnsavedSelection() throws {
+        let detected = root.appendingPathComponent("detected-engine")
+        try FileManager.default.copyItem(at: root.appendingPathComponent("agent"), to: detected)
+        let config = root.appendingPathComponent("config.json")
+        let original = try Data(contentsOf: config)
+        let selectedPath = root.appendingPathComponent("agent").path
+        launch(appearance: "Dark", route: "settings", isolatedHome: true,
+               agentHome: detected.path)
+        let path = app.textFields["mlx-agent checkout"]
+        let detect = app.buttons["settings-detect-engine"]
+        XCTAssertTrue(path.waitForExistence(timeout: 10))
+        XCTAssertEqual(path.value as? String, selectedPath)
+        detect.click()
+        XCTAssertTrue(text(containing: "Review the path, then Save").waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(path.value as? String, detected.path)
+        XCTAssertEqual(app.staticTexts["settings-action-status"].value as? String ?? app.staticTexts["settings-action-status"].label, "Checkout detected")
+        XCTAssertTrue(app.buttons["settings-save"].isEnabled)
+        XCTAssertEqual(try Data(contentsOf: config), original, "Detect must not save or switch the active engine")
+        capture("Settings-engine-detected")
+        resizeWindow(width: 740, height: 680)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(app.staticTexts["settings-action-status"].frame))
+        capture("Settings-engine-detected-narrow")
+        detect.click()
+        XCTAssertTrue(text(containing: "Review the path, then Save").waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(path.value as? String, detected.path)
+        XCTAssertTrue(app.buttons["settings-save"].isEnabled)
+        XCTAssertEqual(try Data(contentsOf: config), original, "Detect must not save or switch the active engine")
+        app.buttons["settings-discard"].click()
+        XCTAssertEqual(path.value as? String, selectedPath)
+        XCTAssertFalse(app.buttons["settings-save"].isEnabled)
+        XCTAssertFalse(text(containing: "Review the path, then Save").exists)
     }
 
     func testSettingsValidationRecoveryAndSaveFeedback() throws {

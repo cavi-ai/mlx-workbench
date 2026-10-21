@@ -137,29 +137,6 @@ struct ProbeSample: Equatable, Sendable {
     }
 }
 
-/// Reasoning a server streams inline as `<think>…</think>` content (no reasoning
-/// parser), separated from the answer the model gives after it.
-enum InlineReasoning {
-    private static let open = "<think>"
-    private static let close = "</think>"
-
-    /// Splits text that starts with an inline reasoning block; nil when it has none.
-    /// Reasoning cut off before its closing tag leaves an empty answer.
-    static func split(_ text: String) -> (reasoning: String, answer: String)? {
-        let body = text.drop(while: \.isWhitespace)
-        guard body.hasPrefix(open) else { return nil }
-        let inner = body.dropFirst(open.count)
-        guard let end = inner.range(of: close) else { return (String(inner), "") }
-        return (String(inner[..<end.lowerBound]), String(inner[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-
-    /// True while streamed content is still inside an opening reasoning block.
-    static func isInside(_ text: String) -> Bool {
-        guard let parts = split(text) else { return false }
-        return parts.answer.isEmpty
-    }
-}
-
 /// A tool definition offered during a probe. The parameters schema stays
 /// JSON text so prompt-set persistence remains schema-stable.
 struct PromptToolSpec: Codable, Equatable, Sendable {
@@ -727,11 +704,13 @@ struct OpenAIEndpointProber: EndpointProbing {
 
         let startedAt = Date()
         let (bytes, response) = try await session.bytes(for: request)
+        defer { bytes.task.cancel() }
         guard let http = response as? HTTPURLResponse else { throw ProbeHTTPError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else { throw ProbeHTTPError.httpStatus(http.statusCode) }
 
         var text = ""
         var reasoning = ""
+        var answerTracker = InlineReasoning.StreamTracker()
         var finishReason: String?
         var firstAnswerAt: Date?
         var completionTokens: Int?
@@ -784,7 +763,10 @@ struct OpenAIEndpointProber: EndpointProbing {
                     if firstTokenAt == nil { firstTokenAt = now }
                     lastTokenAt = now
                     streamedDeltas += 1
-                    if !answer.isEmpty, firstAnswerAt == nil, !InlineReasoning.isInside(text + answer) { firstAnswerAt = now }
+                    if !answer.isEmpty, firstAnswerAt == nil {
+                        answerTracker.consume(answer)
+                        if answerTracker.hasAnswer { firstAnswerAt = now }
+                    }
                     reasoning += thought
                     text += answer
                 }

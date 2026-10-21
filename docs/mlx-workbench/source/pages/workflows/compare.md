@@ -86,7 +86,7 @@ Fenced code uses monospaced formatting. Reasoning, including recorded inline `<t
 
 Media results retain one lettered lane per model, with the mode’s primary metric and a relative bar, followed by one row per prompt and one column per lane for text, images, audio or video.
 
-New streamed inline reasoning is separated before recording. Decode speed is omitted when tokens arrive in a single burst, since arrival timing cannot establish generation speed.
+New streamed inline reasoning is separated before recording. Streaming examines each incoming fragment without reparsing earlier reasoning; fragmented thinking tags do not count as the start of an answer. An incomplete opening tag leaves answer-start timing unavailable. Each request closes its own HTTP stream after completion, failure or cancellation, leaving the shared connection session available. Decode speed is omitted when tokens arrive in a single burst, since arrival timing cannot establish generation speed.
 
 ## Inspect outputs side by side
 
