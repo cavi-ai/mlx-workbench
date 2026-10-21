@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import os
 
 // MARK: - WorkbenchAPI
 //
@@ -179,11 +180,10 @@ actor WorkbenchAPI {
         return TaskEngineError(detail: detail, task: task)
     }
 
-    private final class ChildLaunchState: @unchecked Sendable {
-        private let lock = NSLock()
-        private var launched = false
-        var value: Bool { lock.withLock { launched } }
-        func mark() { lock.withLock { launched = true } }
+    private final class ChildLaunchState: Sendable {
+        private let launched = OSAllocatedUnfairLock(initialState: false)
+        var value: Bool { launched.withLock { $0 } }
+        func mark() { launched.withLock { $0 = true } }
     }
 
     private struct TaskInvocationFailure: Error, LocalizedError {

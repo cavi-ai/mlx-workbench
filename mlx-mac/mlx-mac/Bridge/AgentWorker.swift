@@ -1,17 +1,18 @@
 import Darwin
 import Foundation
+import os
 
-final class AgentWorker {
+final class AgentWorker: Sendable {
     static let shared = AgentWorker()
 
-    struct Reply {
+    struct Reply: Sendable {
         let stdout: Data
         let stderr: Data
     }
 
     static func handles(_ argv: [String]) -> Bool { Array(argv.prefix(2)) == ["serve", "status"] }
 
-    private struct Running {
+    private struct Running: Sendable {
         let key: String
         let process: Process
         let input: FileHandle
@@ -21,58 +22,62 @@ final class AgentWorker {
         var buffer = Data()
     }
 
+    private struct State: Sendable {
+        var running: Running?
+        var unavailable: Set<String> = []
+    }
+
     private static let replyTimeout: TimeInterval = 30
     private static let readyTimeout: TimeInterval = 15
 
-    private let lock = NSLock()
     private let script: URL?
-    private var running: Running?
-    private var unavailable: Set<String> = []
+    private let state = OSAllocatedUnfairLock(initialState: State())
 
     init(script: URL? = Bundle.main.url(forResource: "agent-worker", withExtension: "py")) {
         self.script = script
     }
 
     var processIdentifier: pid_t? {
-        lock.withLock { running?.process.processIdentifier }
+        state.withLock { $0.running?.process.processIdentifier }
     }
 
     func run(python: URL, agentRoot: URL, argv: [String], environment: [String: String],
              timeout: TimeInterval, registry: CLIProcessRegistry) -> Reply? {
-        lock.lock()
-        defer { lock.unlock() }
+        guard let script else { return nil }
         let key = python.path + "\n" + agentRoot.standardizedFileURL.path
-        guard let script, !unavailable.contains(key) else { return nil }
-        if running?.key != key { stopLocked() }
-        if running == nil {
-            guard let started = Self.start(script: script, python: python, agentRoot: agentRoot, key: key,
-                                           environment: environment, registry: registry) else {
-                unavailable.insert(key)
+        return state.withLock { state -> Reply? in
+            guard !state.unavailable.contains(key) else { return nil }
+            if state.running?.key != key { Self.stop(&state) }
+            if state.running == nil {
+                guard let started = Self.start(script: script, python: python, agentRoot: agentRoot, key: key,
+                                               environment: environment, registry: registry) else {
+                    state.unavailable.insert(key)
+                    return nil
+                }
+                state.running = started
+            }
+            guard var current = state.running,
+                  let request = try? JSONSerialization.data(withJSONObject: ["argv": argv]),
+                  Self.write(request + Data([0x0A]), to: current.input),
+                  let line = Self.readLine(current.output, buffer: &current.buffer,
+                                           deadline: Date().addingTimeInterval(min(timeout, Self.replyTimeout))),
+                  let reply = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let stdout = reply["stdout"] as? String, let stderr = reply["stderr"] as? String else {
+                Self.stop(&state)
                 return nil
             }
-            running = started
+            state.running = current
+            return Reply(stdout: Data(stdout.utf8), stderr: Data(stderr.utf8))
         }
-        guard var current = running,
-              let request = try? JSONSerialization.data(withJSONObject: ["argv": argv]),
-              Self.write(request + Data([0x0A]), to: current.input),
-              let line = Self.readLine(current.output, buffer: &current.buffer,
-                                       deadline: Date().addingTimeInterval(min(timeout, Self.replyTimeout))),
-              let reply = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-              let stdout = reply["stdout"] as? String, let stderr = reply["stderr"] as? String else {
-            stopLocked()
-            return nil
-        }
-        running = current
-        return Reply(stdout: Data(stdout.utf8), stderr: Data(stderr.utf8))
     }
 
     func stop() {
-        lock.withLock { stopLocked() }
+        state.withLock { Self.stop(&$0) }
     }
 
-    private func stopLocked() {
-        guard let current = running else { return }
-        running = nil
+    private static func stop(_ state: inout State) {
+        guard let current = state.running else { return }
+        state.running = nil
         try? current.input.close()
         AgentProcessGroup.stop([current.group], grace: CLIProcess.terminationGrace)
         current.registry.unregister(current.group)

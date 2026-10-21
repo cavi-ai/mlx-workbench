@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import os
 
 // MARK: - UpdateCoordinator
 //
@@ -472,9 +473,8 @@ final class UpdateCoordinator: ObservableObject {
     }
 
     /// Thread-safe accumulator that splits streamed bytes into lines.
-    private final class LineBuffer: @unchecked Sendable {
-        private var pending = Data()
-        private let lock = NSLock()
+    private final class LineBuffer: Sendable {
+        private let pending = OSAllocatedUnfairLock(initialState: Data())
         private let onLine: @Sendable (String) -> Void
 
         init(onLine: @escaping @Sendable (String) -> Void) {
@@ -482,24 +482,23 @@ final class UpdateCoordinator: ObservableObject {
         }
 
         func append(_ data: Data) {
-            lock.lock()
-            pending.append(data)
-            while let newline = pending.firstIndex(of: 0x0A) {
-                let line = pending.prefix(upTo: newline)
-                pending = pending.suffix(from: pending.index(after: newline))
-                emit(line)
+            pending.withLock { buffer in
+                buffer.append(data)
+                while let newline = buffer.firstIndex(of: 0x0A) {
+                    let line = buffer.prefix(upTo: newline)
+                    buffer = buffer.suffix(from: buffer.index(after: newline))
+                    emit(line)
+                }
             }
-            lock.unlock()
         }
 
         func finish() {
-            lock.lock()
-            if !pending.isEmpty {
-                let rest = pending
-                pending = Data()
+            pending.withLock { buffer in
+                guard !buffer.isEmpty else { return }
+                let rest = buffer
+                buffer = Data()
                 emit(rest)
             }
-            lock.unlock()
         }
 
         private func emit(_ data: Data.SubSequence) {

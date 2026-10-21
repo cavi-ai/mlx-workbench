@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import os
 
 // MARK: - AgentProcessGroup
 //
@@ -44,61 +45,64 @@ struct AgentProcessGroup: Hashable {
 // Live mlx-agent children. App termination stops every live group so no
 // agent or backend keeps running (and writing outputs) after quit.
 
-final class CLIProcessRegistry: @unchecked Sendable {
+final class CLIProcessRegistry: NSObject, Sendable {
     static let shared = CLIProcessRegistry(notificationCenter: .default)
 
-    private let lock = NSLock()
-    private var groups: [pid_t: AgentProcessGroup] = [:]
-    private var terminating = false
+    private struct State: Sendable {
+        var groups: [pid_t: AgentProcessGroup] = [:]
+        var terminating = false
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
     private let notificationCenter: NotificationCenter
-    private var observer: NSObjectProtocol?
+    private let terminationGrace: TimeInterval
 
     init(notificationCenter: NotificationCenter, terminationGrace: TimeInterval = CLIProcess.terminationGrace) {
         self.notificationCenter = notificationCenter
+        self.terminationGrace = terminationGrace
+        super.init()
         // Delivered synchronously on the posting (main) thread, so the
         // groups are stopped before the app exits.
-        observer = notificationCenter.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: nil
-        ) { [weak self] _ in
-            self?.terminateAll(grace: terminationGrace)
-        }
+        notificationCenter.addObserver(self, selector: #selector(applicationWillTerminate(_:)),
+                                       name: NSApplication.willTerminateNotification, object: nil)
     }
 
     deinit {
-        if let observer { notificationCenter.removeObserver(observer) }
+        notificationCenter.removeObserver(self)
+    }
+
+    @objc private func applicationWillTerminate(_ notification: Notification) {
+        terminateAll(grace: terminationGrace)
     }
 
     /// Tracks a launched child. Returns false once termination has begun;
     /// the caller then stops the child itself.
     func register(_ group: AgentProcessGroup) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !terminating else { return false }
-        groups[group.pid] = group
-        return true
+        state.withLock {
+            guard !$0.terminating else { return false }
+            $0.groups[group.pid] = group
+            return true
+        }
     }
 
     func unregister(_ group: AgentProcessGroup) {
-        lock.lock()
-        groups.removeValue(forKey: group.pid)
-        lock.unlock()
+        state.withLock { _ = $0.groups.removeValue(forKey: group.pid) }
     }
 
     func terminateAll(grace: TimeInterval) {
-        lock.lock()
-        terminating = true
-        let live = Array(groups.values)
-        lock.unlock()
+        let live = state.withLock { state -> [AgentProcessGroup] in
+            state.terminating = true
+            return Array(state.groups.values)
+        }
         AgentProcessGroup.stop(live, grace: grace)
     }
 }
 
 /// One invocation's cancellation request. Process shutdown stays on its owning worker.
-final class CLIInvocationCancellation: @unchecked Sendable {
-    private let lock = NSLock()
-    private var requested = false
-    var isRequested: Bool { lock.withLock { requested } }
-    func cancel() { lock.withLock { requested = true } }
+final class CLIInvocationCancellation: Sendable {
+    private let requested = OSAllocatedUnfairLock(initialState: false)
+    var isRequested: Bool { requested.withLock { $0 } }
+    func cancel() { requested.withLock { $0 = true } }
 }
 
 // MARK: - CLIProcess

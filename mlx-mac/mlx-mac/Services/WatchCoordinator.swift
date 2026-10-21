@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // MARK: - WatchCoordinator
 //
@@ -153,31 +154,15 @@ final class WatchCoordinator: ObservableObject {
 
     /// Lock-protected cache for the version probe, including the probed-but-
     /// unavailable (nil) result so we probe at most once per invalidation.
-    private final class VersionProbeCache: @unchecked Sendable {
-        private let lock = NSLock()
-        private var didProbe = false
-        private var cached: String?
+    private final class VersionProbeCache: Sendable {
+        private let probed = OSAllocatedUnfairLock<String??>(initialState: nil)
 
         /// `.some(cached)` once probed (cached may be nil), nil before that.
-        var valueIfProbed: String?? {
-            lock.lock()
-            defer { lock.unlock() }
-            return didProbe ? .some(cached) : .none
-        }
+        var valueIfProbed: String?? { probed.withLock { $0 } }
 
-        func store(_ version: String?) {
-            lock.lock()
-            cached = version
-            didProbe = true
-            lock.unlock()
-        }
+        func store(_ version: String?) { probed.withLock { $0 = .some(version) } }
 
-        func reset() {
-            lock.lock()
-            cached = nil
-            didProbe = false
-            lock.unlock()
-        }
+        func reset() { probed.withLock { $0 = nil } }
     }
 
     // MARK: - Check cycle

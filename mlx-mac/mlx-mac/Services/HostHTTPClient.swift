@@ -79,7 +79,7 @@ struct HostHTTPClient: Sendable {
     }
 }
 
-private final class HostRedirectFence: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+private final class HostRedirectFence: NSObject, URLSessionTaskDelegate, Sendable {
     static let shared = HostRedirectFence()
     func urlSession(
         _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
