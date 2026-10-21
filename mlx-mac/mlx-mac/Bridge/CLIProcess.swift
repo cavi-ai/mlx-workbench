@@ -117,10 +117,13 @@ struct CLIProcess {
 
     private let registry: CLIProcessRegistry
     private let terminationGrace: TimeInterval
+    private let worker: AgentWorker
 
-    init(registry: CLIProcessRegistry = .shared, terminationGrace: TimeInterval = CLIProcess.terminationGrace) {
+    init(registry: CLIProcessRegistry = .shared, terminationGrace: TimeInterval = CLIProcess.terminationGrace,
+         worker: AgentWorker = .shared) {
         self.registry = registry
         self.terminationGrace = terminationGrace
+        self.worker = worker
     }
 
     /// Absolute path to the interpreter (env override → repo .venv → PATH).
@@ -202,15 +205,26 @@ struct CLIProcess {
             command.append("--json")
         }
 
-        let process = Process()
-        process.executableURL = pythonURL
-        process.arguments = Array(command[1...])
         // The agent resolves sibling executables (e.g. mlx_lm.convert) via
         // PATH; put the running interpreter's directory first so a uv-tool
         // or Homebrew install of a different version cannot shadow it.
         var environment = ProcessInfo.processInfo.environment
         let pythonDirectory = pythonURL.deletingLastPathComponent().path
         environment["PATH"] = pythonDirectory + ":" + (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+
+        if AgentWorker.handles(argv), onChildLaunched == nil,
+           let reply = worker.run(python: pythonURL, agentRoot: script.deletingLastPathComponent().deletingLastPathComponent(),
+                                  argv: Array(command[2...]), environment: environment, timeout: time, registry: registry) {
+            if cancellation?.isRequested == true { throw CancellationError() }
+            if reply.stdout.count >= Self.maxOutputBytes { throw BridgeError.skillOutputTooLarge }
+            let envelope = parseEnvelope(reply.stdout, stderr: String(decoding: reply.stderr, as: UTF8.self))
+            if preserveEnvelope { return envelope }
+            return try unwrap(envelope)
+        }
+
+        let process = Process()
+        process.executableURL = pythonURL
+        process.arguments = Array(command[1...])
         process.environment = environment
 
         let stdout = Pipe()

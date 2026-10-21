@@ -282,6 +282,9 @@
 		27ABCD000000000000000006 /* ModelTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27ABCD100000000000000006 /* ModelTaskTests.swift */; };
 
 		24ABLD001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 24AREF001 /* Assets.xcassets */; };
+		5A1E5E770000000000000042 /* agent-worker.py in Resources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000041 /* agent-worker.py */; };
+		5A1E5E770000000000000044 /* AgentWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000043 /* AgentWorker.swift */; };
+		5A1E5E770000000000000046 /* AgentWorkerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1E5E770000000000000045 /* AgentWorkerTests.swift */; };
 
 		A6C0100000000000000000B01 /* ComparisonInsights.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F01; };
 		A6C0100000000000000000B23 /* AgentTaskGuidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C0100000000000000000F23; };
@@ -589,6 +592,9 @@
 		24FREF01B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
 		24AREF001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Assets.xcassets; sourceTree = "<group>"; };
+		5A1E5E770000000000000041 /* agent-worker.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = "agent-worker.py"; path = "Resources/agent-worker.py"; sourceTree = "<group>"; };
+		5A1E5E770000000000000043 /* AgentWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentWorker.swift; path = Bridge/AgentWorker.swift; sourceTree = "<group>"; };
+		5A1E5E770000000000000045 /* AgentWorkerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentWorkerTests.swift; sourceTree = "<group>"; };
 
 		24IREF001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = Info.plist; sourceTree = "<group>"; };
 
@@ -846,6 +852,8 @@
 				24FREF000019 /* WireView.swift */,
 				CLSETF01 /* ClientSetupDoctorView.swift */,
 				24AREF001 /* Assets.xcassets */,
+				5A1E5E770000000000000041 /* agent-worker.py */,
+				5A1E5E770000000000000043 /* AgentWorker.swift */,
 				24IREF001 /* Info.plist */,
 
 			);
@@ -899,6 +907,7 @@
 				24FREF046 /* VerificationCoordinatorTests.swift */,
 				24FREF069 /* HFRepoIDTests.swift */,
 				5A1E5E770000000000000033 /* RouteHandoffsTests.swift */,
+				5A1E5E770000000000000045 /* AgentWorkerTests.swift */,
 				24FREF04A /* ComparisonCoordinatorTests.swift */,
 				27ABCD10000000000000002C /* ComparisonMediaTests.swift */,
 				27ABCD10000000000000002E /* ReleaseUpdaterTests.swift */,
@@ -1095,6 +1104,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				24ABLD001 /* Assets.xcassets in Resources */,
+				5A1E5E770000000000000042 /* agent-worker.py in Resources */,
 
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1321,6 +1331,7 @@
 				26WQBL001 /* WebConvertQueue.swift in Sources */,
 				27ABCD000000000000000001 /* AppRoute.swift in Sources */,
 				5A1E5E770000000000000032 /* RouteHandoffs.swift in Sources */,
+				5A1E5E770000000000000044 /* AgentWorker.swift in Sources */,
 				27ABCD000000000000000002 /* DesignSystem.swift in Sources */,
 
 			);
@@ -1363,6 +1374,7 @@
 				24BBLD048 /* VerificationCoordinatorTests.swift in Sources */,
 				24BBLD06B /* HFRepoIDTests.swift in Sources */,
 				5A1E5E770000000000000034 /* RouteHandoffsTests.swift in Sources */,
+				5A1E5E770000000000000046 /* AgentWorkerTests.swift in Sources */,
 				24BBLD04C /* ComparisonCoordinatorTests.swift in Sources */,
 				27ABCD00000000000000002C /* ComparisonMediaTests.swift in Sources */,
 				27ABCD00000000000000002E /* ReleaseUpdaterTests.swift in Sources */,
