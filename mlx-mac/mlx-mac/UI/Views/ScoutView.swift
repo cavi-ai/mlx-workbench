@@ -66,35 +66,6 @@ struct DiscoveryWorkspace: View {
 // MARK: - ScoutView
 // Discover MLX models for this host, by role.
 
-enum DiscoveryState: Equatable {
-    case notRun
-    case running
-    case completed([DiscoverCandidate])
-    case failed(String)
-
-    var isRunning: Bool { if case .running = self { return true }; return false }
-    var isFailed: Bool { if case .failed = self { return true }; return false }
-    var candidates: [DiscoverCandidate] {
-        if case .completed(let candidates) = self { return candidates }
-        return []
-    }
-    var symbol: String {
-        switch self {
-        case .notRun, .running: return "magnifyingglass"
-        case .completed: return "line.3.horizontal.decrease.circle"
-        case .failed: return "exclamationmark.triangle"
-        }
-    }
-    var message: String {
-        switch self {
-        case .notRun: return "Discover models for this Mac. Choose a role, then select Discover."
-        case .running: return "Discovering models…"
-        case .completed: return "No candidates matched. Try another role or adjust the limit, then Discover again."
-        case .failed(let message): return "Discovery failed. \(message) Try Discover again after resolving the issue."
-        }
-    }
-}
-
 struct ScoutView: View {
     @ObservedObject var appHost: AppHost
     private let resources: SystemResourceMonitor
@@ -102,10 +73,7 @@ struct ScoutView: View {
     @State private var role = ""
     @State private var limit = DiscoverLimit.initial
     @State private var fast = false
-    /// The Fast setting the current or last discovery was started with.
-    @State private var runIsFast = false
-    @State private var discoveryState: DiscoveryState
-    @State private var resultToken = 0
+    @StateObject private var session: DiscoverySession
     @State private var showsCatalogDetails = false
     @State private var layout = DiscoverLayout()
 
@@ -113,10 +81,13 @@ struct ScoutView: View {
     init(appHost: AppHost, resources: SystemResourceMonitor? = nil, initialState: DiscoveryState = .notRun) {
         self.appHost = appHost
         self.resources = resources ?? appHost.resources
-        _discoveryState = State(initialValue: initialState)
+        _session = StateObject(wrappedValue: DiscoverySession(initialState: initialState) { request in
+            let response = try await appHost.api.discover(role: request.role, limit: request.limit, fast: request.fast, new: false)
+            return response.candidates ?? []
+        })
     }
 
-    private var isScouting: Bool { discoveryState.isRunning }
+    private var isScouting: Bool { session.state.isRunning }
 
     var body: some View {
         GeometryReader { viewport in
@@ -126,14 +97,17 @@ struct ScoutView: View {
                     DiscoverFitField(
                         resources: resources,
                         intake: appHost.intake,
-                        state: discoveryState,
-                        resultToken: resultToken,
+                        state: session.state,
+                        resultToken: session.resultToken,
                         reserveGB: appHost.config.fitReserveGB,
                         hardware: appHost.hardwareProfile,
                         library: appHost.librarySnapshot,
                         layout: layout,
-                        fast: runIsFast,
-                        onClear: { discoveryState = .notRun }
+                        fast: session.request?.fast ?? false,
+                        snapshot: session.result,
+                        isStopping: session.isStopping,
+                        onStop: { session.stop() },
+                        onClear: { session.clear() }
                     )
                     catalogSection
                 }
@@ -268,6 +242,7 @@ struct ScoutView: View {
             }
         }
         .pickerStyle(.menu)
+        .accessibilityIdentifier("discover-role")
         .fixedSize()
         .disabled(isScouting)
         .help("The task you want the model to handle. Any searches every supported role; the candidate limit applies to each role separately.")
@@ -336,23 +311,7 @@ struct ScoutView: View {
     }
 
     private func discover() {
-        guard !isScouting else { return }
-        runIsFast = fast
-        discoveryState = .running
-        let r = role.isEmpty ? nil : role
-        let l = DiscoverLimit.clamped(limit)
-        let isFast = fast
-        Task {
-            do {
-                let result = try await appHost.api.discover(role: r, limit: l, fast: isFast, new: false)
-                resultToken += 1
-                discoveryState = .completed(result.candidates ?? [])
-            } catch let error as BridgeError {
-                discoveryState = .failed(error.errorDescription ?? error.localizedDescription)
-            } catch {
-                discoveryState = .failed(error.localizedDescription)
-            }
-        }
+        session.start(DiscoveryRequest(role: role, limit: limit, fast: fast))
     }
 
     private func statusRow(label: String, value: String) -> some View {
