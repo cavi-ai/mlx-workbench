@@ -8,7 +8,7 @@ struct SystemResourceHeader: View {
     @ObservedObject var endpoint: EndpointSupervisor
     var hosts: ModelHostsCoordinator? = nil
     var onOpenHost: (ModelHost?) -> Void = { _ in }
-    var protectedModels: Set<String> = []
+    var occupancy = ModelOccupancy()
     let onUnload: (ServerInfo) async -> Bool
     @State private var expanded = false
     @State private var inspectingProcesses = false
@@ -111,7 +111,7 @@ struct SystemResourceHeader: View {
                         .disabled(endpoint.isUnloading || resources.refreshingServers || server.port == nil ||
                                   server.modelState == "unloaded" || server.modelState == "loading" || server.modelState == "unloading" ||
                                   (server.activeRequests ?? 0) > 0 ||
-                                  AppHost.isProtectedServer(server, protected: protectedModels))
+                                  occupancy.blocksStop(server))
                         .help(server.jit == true
                               ? "Release model weights while keeping this endpoint reachable. The next request loads the same local files."
                               : "Stop this server and disable automatic restart. Enable Load on request in Run for JIT unload.")
@@ -120,7 +120,7 @@ struct SystemResourceHeader: View {
             } else {
                 Text("Reading serving status…").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
-            if !protectedModels.isEmpty {
+            if resources.servers?.contains(where: { occupancy.blocksStop($0) }) == true {
                 Text("Models in an active comparison or verification cannot be unloaded here. Finish or cancel that run first.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }

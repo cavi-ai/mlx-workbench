@@ -175,7 +175,7 @@ struct ServeView: View {
         let baseName = RunModels.name(for: server.modelIdentity, model: model)
         let name = server.adapterSummary.map { baseName + " · " + $0 } ?? baseName
         let isSelected = presentation.activeServer == server
-        let protected = AppHost.isProtectedServer(server, protected: appHost.protectedServingModels)
+        let protected = appHost.occupancy.blocksStop(server)
         return VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             if isTwoLine {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.xxs) {

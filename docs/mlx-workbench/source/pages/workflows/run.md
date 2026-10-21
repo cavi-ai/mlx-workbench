@@ -61,7 +61,7 @@ New endpoints default to **Load on request**. The engine runs a loopback gateway
 - **Stop server** stops an eager endpoint and saves its desired state as disabled, so it is not restarted. Model files stay on disk.
 - Model file identity is checked before and after loading; changed files require a fresh plan.
 
-Endpoints created before this mode existed keep eager serving until you change them. Changing the mode restarts the endpoint. Comparison and verification always use eager serving, and their models are protected from unload.
+Endpoints created before this mode existed keep eager serving until you change them. Changing the mode restarts the endpoint. Comparison and verification always use eager serving. While verification, a comparison or a hosted comparison's local lane is serving a model, **Stop server** and **Unload** refuse its server.
 
 ## Memory policy
 

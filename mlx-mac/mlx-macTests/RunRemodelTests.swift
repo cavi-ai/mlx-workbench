@@ -865,17 +865,39 @@ extension RunRemodelTests {
 // MARK: - AC8: stop and unload protection
 
 extension RunRemodelTests {
-    func testProtectedModelIsRefusedBySharedOwner() {
+    func testOnlyRunsThatServeTheModelBlockStop() {
         let server = Fixture.server("/models/verifying-mlx", port: 8766)
-        XCTAssertTrue(AppHost.isProtectedServer(server, protected: ["/models/verifying-mlx"]))
-        XCTAssertFalse(AppHost.isProtectedServer(server, protected: ["/models/other-mlx"]))
-        XCTAssertFalse(AppHost.isProtectedServer(server, protected: []))
+        var occupancy = ModelOccupancy()
+        XCTAssertFalse(occupancy.blocksStop(server))
+        for holder in [ModelOccupancy.Holder.runningServer, .endpoint, .preference, .inferenceTask, .conversion] {
+            occupancy.add(["/models/verifying-mlx"], for: holder)
+        }
+        XCTAssertFalse(occupancy.blocksStop(server))
+        for holder in [ModelOccupancy.Holder.verification, .comparison, .hostedComparison] {
+            var held = ModelOccupancy()
+            held.add(["/models/other-mlx"], for: holder)
+            XCTAssertFalse(held.blocksStop(server), "\(holder)")
+            held.add(["/models/verifying-mlx"], for: holder)
+            XCTAssertTrue(held.blocksStop(server), "\(holder)")
+        }
     }
 
     func testProtectionMatchesCacheRepoIdentityAcrossPathForms() {
         let snapshot = "/Users/x/.cache/huggingface/hub/models--pub--coder/snapshots/rev"
-        let server = Fixture.server("pub/coder", port: 8766)
-        XCTAssertTrue(AppHost.isProtectedServer(server, protected: [snapshot]))
+        var occupancy = ModelOccupancy()
+        occupancy.add([snapshot], for: .verification)
+        XCTAssertTrue(occupancy.blocksStop(Fixture.server("pub/coder", port: 8766)))
+        XCTAssertTrue(occupancy.blocksStop(modelIdentity: "pub/coder"))
+    }
+
+    func testReclaimProtectsEveryLibraryCopyOfAClaimedRepo() {
+        let snapshots = ["/hub/models--pub--coder/snapshots/a", "/hub/models--pub--coder/snapshots/b"]
+        var repoClaim = ModelOccupancy(libraryPaths: snapshots + ["/models/other"])
+        repoClaim.add(["pub/coder"], for: .runningServer)
+        XCTAssertEqual(repoClaim.protectedPaths, Set(["pub/coder"] + snapshots))
+        var pathClaim = ModelOccupancy(libraryPaths: snapshots)
+        pathClaim.add([snapshots[0]], for: .preference)
+        XCTAssertEqual(pathClaim.protectedPaths, [snapshots[0]], "One revision's path never claims another revision")
     }
 }
 
@@ -980,11 +1002,16 @@ extension RunRemodelTests {
             statusProvider: { endpointCalls.hit("status"); return [server] },
             store: JSONStore<EndpointConfig>(fileURL: directory.appendingPathComponent("endpoint.json"))
         )
+        let hostedComparison = HostedComparisonCoordinator(
+            store: JSONStore(fileURL: directory.appendingPathComponent("hosted-runs.json")),
+            outputStore: ComparisonOutputStore(root: directory.appendingPathComponent("hosted-outputs")),
+            nativeProbe: probe, readToken: { _ in nil })
         let host = AppHost(
             config: Config.defaults(),
             modelWorkflowAPI: api,
             modelWorkflowPersistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }),
             verification: verification,
+            hostedComparison: hostedComparison,
             endpoint: endpoint
         )
         return (host, gate)
@@ -1016,7 +1043,7 @@ extension RunRemodelTests {
         let statusBefore = counter.count("serveStatus")
 
         host.verification.verifyNow(modelPath: path, signature: nil)
-        XCTAssertTrue(AppHost.isProtectedServer(server, protected: host.protectedServingModels))
+        XCTAssertTrue(host.occupancy.blocksStop(server))
 
         let selected = await host.stopSelectedServer(modelPath: path)
         let unloaded = await host.unloadServing(server)
@@ -1033,6 +1060,32 @@ extension RunRemodelTests {
         await gate.open()
         let deadline = Date().addingTimeInterval(5)
         while host.verification.activeModelPath != nil, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
+    func testHostedComparisonNativeLaneIsRefusedByBothStopPaths() async throws {
+        let counter = CallCounter()
+        let endpointCalls = CallCounter()
+        let server = Fixture.server(path, port: 8766)
+        let (host, gate) = makeProtectedHost(counter: counter, endpointCalls: endpointCalls, server: server)
+        await host.modelWorkflow.refreshServers()
+        host.hostedComparison.validateTarget = { _ in }
+        try host.hostedComparison.start(
+            targets: [HostedComparisonTarget(local: Fixture.model(path: path), capturedAt: Date())],
+            promptSet: PromptSet(id: "lane", name: "Lane", useCase: nil, prompts: [PromptEntry(id: "a", text: "Hi")], origin: .userCreated))
+
+        let selected = await host.stopSelectedServer(modelPath: path)
+        let unloaded = await host.unloadServing(server)
+
+        XCTAssertFalse(selected)
+        XCTAssertFalse(unloaded)
+        XCTAssertEqual(counter.count("serveStop"), 0)
+        XCTAssertEqual(endpointCalls.count("stop"), 0)
+
+        await gate.open()
+        let deadline = Date().addingTimeInterval(5)
+        while host.hostedComparison.activeRunID != nil, Date() < deadline {
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
     }
