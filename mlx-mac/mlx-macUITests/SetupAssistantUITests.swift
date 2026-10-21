@@ -2700,7 +2700,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.buttons["Done"].click()
         select("Health")
         let healthDoctor = app.buttons["health-client-setup-doctor"]
-        for _ in 0..<15 where !healthDoctor.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -240) }
+        let healthScroll = app.scrollViews.containing(.button, identifier: "health-client-setup-doctor").firstMatch
+        XCTAssertTrue(healthScroll.waitForExistence(timeout: 10))
+        for _ in 0..<15 where !healthDoctor.isHittable { healthScroll.scroll(byDeltaX: 0, deltaY: -240) }
         XCTAssertTrue(healthDoctor.isHittable)
         healthDoctor.click()
         XCTAssertTrue(text(containing: "Setup check finished.").waitForExistence(timeout: 15))
