@@ -1315,23 +1315,20 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertEqual(benchmarks.first?.useCase, .generalChat)
     }
 
-    func testSavePromptSetPersistsUserSetsOnly() async {
+    func testCreatedPromptSetsAreUserOwnedAndPersist() async throws {
         let coordinator = makeCoordinator()
         let builtinCount = coordinator.promptSets.count
-        let userSet = PromptSet(
-            id: UUID().uuidString,
-            name: "My prompts",
-            useCase: .coding,
-            prompts: [PromptEntry(id: "p1", text: "Say hi.")],
-            origin: .userCreated
-        )
+        var draft = PromptSetDraft(mode: .chat)
+        draft.name = "My prompts"
+        draft.prompts[0].text = "Say hi."
 
-        coordinator.savePromptSet(userSet)
-        coordinator.savePromptSet(BuiltinPromptSets.coding)  // builtins are code-owned
+        let created = await coordinator.createPromptSet(draft)
+        let userSet = try XCTUnwrap(created)
 
+        XCTAssertEqual(userSet.origin, .userCreated)
         XCTAssertEqual(coordinator.promptSets.count, builtinCount + 1)
         let reloaded = makeCoordinator(runStoreURL: coordinatorRunStoreURL, promptSetStoreURL: coordinatorPromptSetStoreURL)
-        XCTAssertTrue(reloaded.promptSets.contains(where: { $0.id == userSet.id }))
+        XCTAssertEqual(reloaded.promptSets.first(where: { $0.id == userSet.id }), userSet)
     }
 
     // MARK: - Helpers
