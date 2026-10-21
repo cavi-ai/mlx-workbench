@@ -512,7 +512,7 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     private func launch(appearance: String, route: String = "doctor", isolatedHome: Bool = false, configURL: URL? = nil,
-                        forcedRoute: String? = nil, agentHome: String? = nil) {
+                        forcedRoute: String? = nil, agentHome: String? = nil, isolatedHomeURL: URL? = nil) {
         if appearance == "Light" || appearance == "Dark" {
             let requested: XCUIDevice.Appearance = appearance == "Dark" ? .dark : .light
             XCUIDevice.shared.appearance = requested
@@ -523,7 +523,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         app.launchEnvironment["XDG_STATE_HOME"] = root.appendingPathComponent("state").path
         app.launchEnvironment["MLX_WORKBENCH_PYTHON"] = "/usr/bin/python3"
         if let agentHome { app.launchEnvironment["MLX_AGENT_HOME"] = agentHome }
-        if isolatedHome { app.launchEnvironment["CFFIXED_USER_HOME"] = root.path }
+        if isolatedHome { app.launchEnvironment["CFFIXED_USER_HOME"] = (isolatedHomeURL ?? root).path }
         // NSArgumentDomain overrides writes to AppStorage. A mutable route
         // must be selected through the UI rather than forced as a launch default.
         app.launchArguments = ["-mlx-workbench.setupCompleted.v1", "YES"]
@@ -3298,9 +3298,6 @@ final class WorkbenchReviewUITests: XCTestCase {
     }
 
     func testChatResultsWorkspace() throws {
-        let folder = root.appendingPathComponent("Library/Application Support/mlx-workbench")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let file = folder.appendingPathComponent("comparison-runs.json")
         let prompts: [[String: Any]] = [
             ["id": "p1", "text": "Write a Python function that returns the nth Fibonacci number. Code only.", "maxTokens": 256],
             ["id": "p2", "text": "Explain a Python context manager in two sentences.", "maxTokens": 256]
@@ -3326,13 +3323,18 @@ final class WorkbenchReviewUITests: XCTestCase {
         ]
         for appearance in ["Dark", "Light"] {
             for legacy in [false, true] {
+                // Each fixture has its own initial archive; later JSON edits are backups.
+                let home = root.appendingPathComponent("chat-\(appearance)-\(legacy)")
+                let folder = home.appendingPathComponent("Library/Application Support/mlx-workbench")
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                let file = folder.appendingPathComponent("comparison-runs.json")
                 var run: [String: Any] = ["id": UUID().uuidString, "promptSetID": "results-fixture", "promptSetName": "Coding basics",
                     "variants": results.map { $0["modelPath"]! }, "results": results,
                     "startedAt": 800000000.0, "finishedAt": 800000020.0, "state": "completed"]
                 if !legacy { run["promptEntries"] = prompts }
                 let recorded = try JSONSerialization.data(withJSONObject: [run], options: [.sortedKeys])
                 try recorded.write(to: file)
-                launch(appearance: appearance, isolatedHome: true)
+                launch(appearance: appearance, isolatedHome: true, isolatedHomeURL: home)
                 resizeWindow(width: 1440, height: 900)
                 select("Compare")
                 XCTAssertTrue(app.staticTexts["Models in this run"].firstMatch.waitForExistence(timeout: 15))
