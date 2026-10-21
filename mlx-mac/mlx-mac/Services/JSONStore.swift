@@ -124,6 +124,94 @@ final class JSONStore<Value: Codable> {
         }
     }
 
+    /// Object-array history reads retain at most one encoded record at a time.
+    func loadStreaming() throws -> [Value] {
+        try withLock {
+            var values: [Value] = []
+            try JSONRecordStream.forEach(at: fileURL) { data in
+                values.append(try JSONDecoder().decode(Value.self, from: data))
+            }
+            return values
+        }
+    }
+
+    func findStreaming<ID: Equatable>(id: ID, keyPath: KeyPath<Value, ID>) throws -> Value? {
+        try withLock {
+            var found: Value?
+            try JSONRecordStream.forEach(at: fileURL) { data in
+                let value = try JSONDecoder().decode(Value.self, from: data)
+                if found == nil, value[keyPath: keyPath] == id { found = value }
+            }
+            return found
+        }
+    }
+
+    func upsertStreaming<ID: Equatable>(_ value: Value, id keyPath: KeyPath<Value, ID>) throws {
+        try withLock {
+            var found = false
+            try rewriteStreaming(append: { found ? nil : value }) { current in
+                guard !found, current[keyPath: keyPath] == value[keyPath: keyPath] else { return .keep }
+                found = true
+                return .replace(value)
+            }
+        }
+    }
+
+    @discardableResult
+    func updateStreaming<ID: Equatable>(id: ID, keyPath: KeyPath<Value, ID>,
+                                        transform: (Value) throws -> Value?) throws -> Bool {
+        try withLock {
+            guard fileManager.fileExists(atPath: fileURL.path) else { return false }
+            var found = false
+            try rewriteStreaming(append: { nil }) { current in
+                guard !found, current[keyPath: keyPath] == id else { return .keep }
+                found = true
+                return try transform(current).map(RecordChange.replace) ?? .remove
+            }
+            return found
+        }
+    }
+
+    private enum RecordChange { case keep, replace(Value), remove }
+
+    /// Untouched records keep their bytes, including fields this version does not decode.
+    /// Publication happens only after every record has decoded and the staged file is synced.
+    private func rewriteStreaming(append: () -> Value?, change: (Value) throws -> RecordChange) throws {
+        try Self.refuseSymlink(fileURL, fileManager: fileManager)
+        let directory = fileURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let temporaryURL = fileURL.appendingPathExtension("tmp-\(UUID().uuidString)")
+        try Data().write(to: temporaryURL, options: .withoutOverwriting)
+        defer { try? fileManager.removeItem(at: temporaryURL) }
+        let output = try FileHandle(forWritingTo: temporaryURL)
+        defer { try? output.close() }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
+        var first = true, changed = false
+        func emit(_ data: Data) throws {
+            if !first { try output.write(contentsOf: Data(",\n".utf8)) }
+            try output.write(contentsOf: data)
+            first = false
+        }
+        try output.write(contentsOf: Data("[\n".utf8))
+        try JSONRecordStream.forEach(at: fileURL) { data in
+            let value = try JSONDecoder().decode(Value.self, from: data)
+            switch try change(value) {
+            case .keep: try emit(data)
+            case .replace(let replacement): try emit(encoder.encode(replacement)); changed = true
+            case .remove: changed = true
+            }
+        }
+        if let value = append() { try emit(encoder.encode(value)); changed = true }
+        guard changed else { return }
+        try output.write(contentsOf: Data("\n]\n".utf8))
+        try output.synchronize()
+        try output.close()
+        try Self.refuseSymlink(fileURL, fileManager: fileManager)
+        if fileManager.fileExists(atPath: fileURL.path) { try replaceItem(fileURL, temporaryURL) }
+        else { try fileManager.moveItem(at: temporaryURL, to: fileURL) }
+    }
+
     static func refuseSymlink(_ url: URL, fileManager: FileManager) throws {
         do {
             _ = try fileManager.destinationOfSymbolicLink(atPath: url.path)
