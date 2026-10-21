@@ -84,7 +84,7 @@ final class ComparisonRecordArchive<Value: Codable & Identifiable> where Value.I
                 if var samples = results[index]["samples"] as? [[String: Any]] {
                     for sample in samples.indices {
                         let text = samples[sample]["fullOutput"] as? String ?? samples[sample]["outputExcerpt"] as? String ?? ""
-                        samples[sample]["historyCompletedAnswer"] = samples[sample]["error"] == nil
+                        samples[sample]["historyCompletedAnswer"] = samples[sample]["error"] as? String == nil
                             && samples[sample]["finishReason"] as? String == "stop"
                             && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         samples[sample]["historyAnswerPresent"] = !ChatRecordedText(text).answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -117,6 +117,9 @@ final class ComparisonRecordArchive<Value: Codable & Identifiable> where Value.I
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 5000)
         try execute(db, "PRAGMA synchronous=FULL")
+        // Existing archives need only a read to validate their schema. Readers
+        // must not acquire the reserved writer lock just to inspect a run.
+        if try schemaVersion(db) == 1 { return try body(db) }
         try transaction(db) {
             try execute(db, "CREATE TABLE IF NOT EXISTS metadata(version INTEGER NOT NULL)")
             let version = try prepare(db, "SELECT version FROM metadata")
@@ -135,6 +138,25 @@ final class ComparisonRecordArchive<Value: Codable & Identifiable> where Value.I
             }
         }
         return try body(db)
+    }
+    private func schemaVersion(_ db: OpaquePointer) throws -> Int32? {
+        var statement: OpaquePointer?
+        let status = sqlite3_prepare_v2(db, "SELECT version FROM metadata", -1, &statement, nil)
+        defer { sqlite3_finalize(statement) }
+        if status != SQLITE_OK {
+            // Only a new database lacks the metadata table; other failures are
+            // corruption or I/O errors and must never authorize migration.
+            let check = try prepare(db, "SELECT name FROM sqlite_master WHERE name='metadata'")
+            defer { sqlite3_finalize(check) }
+            guard sqlite3_step(check) == SQLITE_DONE else { throw failure(db) }
+            return nil
+        }
+        let step = sqlite3_step(statement)
+        if step == SQLITE_DONE { return nil }
+        guard step == SQLITE_ROW, sqlite3_column_int(statement, 0) == 1 else {
+            throw WorkflowEvidenceError.invalid("Unsupported comparison history schema.")
+        }
+        return 1
     }
     private func transaction<T>(_ db: OpaquePointer, _ body: () throws -> T) throws -> T {
         try execute(db, "BEGIN IMMEDIATE")

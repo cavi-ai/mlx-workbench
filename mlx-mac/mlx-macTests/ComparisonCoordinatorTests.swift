@@ -8,6 +8,37 @@ import SQLite3
 
 @MainActor
 final class ComparisonCoordinatorTests: XCTestCase {
+    func testMigrationTreatsExplicitNullErrorAsASuccessfulSample() throws {
+        let sample = ComparisonSample(promptID: "p", outputExcerpt: "answer", tokensPerSecond: 10,
+            timeToFirstTokenSeconds: nil, error: nil, fullOutput: "answer", finishReason: "stop")
+        let run = makeRun(results: [VariantResult(modelPath: "/Models/a", modelSignature: nil,
+            samples: [sample], aggregateTokensPerSecond: 10, aggregateTTFTSeconds: nil, error: nil)], state: .completed)
+        var record = try JSONSerialization.jsonObject(with: JSONEncoder().encode(run)) as! [String: Any]
+        var results = record["results"] as! [[String: Any]]
+        var samples = results[0]["samples"] as! [[String: Any]]
+        samples[0]["error"] = NSNull(); results[0]["samples"] = samples; record["results"] = results
+        let original = try JSONSerialization.data(withJSONObject: [record])
+        try FileManager.default.createDirectory(at: coordinatorRunStoreURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try original.write(to: coordinatorRunStoreURL)
+        let archive = ComparisonRecordArchive<ComparisonRun>(legacyURL: coordinatorRunStoreURL)
+        let summary = try XCTUnwrap(archive.load().first)
+        XCTAssertEqual(summary.results.first?.samples.first?.hasCompletedAnswer, true)
+        XCTAssertEqual(try archive.record(id: run.id), run)
+        XCTAssertEqual(try Data(contentsOf: coordinatorRunStoreURL), original)
+    }
+
+    func testIndexedHistoryReadDoesNotAcquireAWriterLock() throws {
+        let archive = ComparisonRecordArchive<ComparisonRun>(legacyURL: coordinatorRunStoreURL)
+        let run = makeRun(results: [], state: .completed)
+        try archive.upsert(run)
+        var writer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(archive.url.path, &writer), SQLITE_OK)
+        defer { sqlite3_exec(writer, "ROLLBACK", nil, nil, nil); sqlite3_close(writer) }
+        XCTAssertEqual(sqlite3_exec(writer, "BEGIN IMMEDIATE", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(try archive.load().map(\.id), [run.id])
+        XCTAssertEqual(try archive.record(id: run.id), run)
+    }
+
     func testIndexedHistoryMigratesWithoutRetainingBodiesAndPreservesUntouchedRuns() async throws {
         let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL)
         let sample = ComparisonSample(promptID: "p", outputExcerpt: "answer", tokensPerSecond: 20,
