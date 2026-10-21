@@ -3,13 +3,13 @@ import SQLite3
 
 /// Atomic per-record payloads and optional lightweight entries. Migration keeps the original
 /// JSON array untouched and commits only after every record validates.
-class RecordArchive<Value: Codable & Identifiable> where Value.ID == UUID {
+final class RecordArchive<Value: Codable & Identifiable>: Sendable where Value.ID == UUID {
     let legacyURL: URL
     var url: URL { legacyURL.appendingPathExtension("sqlite") }
     private let lock = NSRecursiveLock()
-    private let project: (Data) throws -> Data
+    private let project: @Sendable (Data) throws -> Data
     private let descending: Bool
-    init(legacyURL: URL, descending: Bool = false, project: @escaping (Data) throws -> Data = { $0 }) {
+    init(legacyURL: URL, descending: Bool = false, project: @escaping @Sendable (Data) throws -> Data = { $0 }) {
         self.legacyURL = legacyURL; self.descending = descending; self.project = project
     }
 

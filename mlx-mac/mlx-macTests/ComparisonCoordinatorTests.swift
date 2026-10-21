@@ -86,7 +86,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
         let original = try JSONSerialization.data(withJSONObject: [record])
         try FileManager.default.createDirectory(at: coordinatorRunStoreURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try original.write(to: coordinatorRunStoreURL)
-        let archive = ComparisonRecordArchive<ComparisonRun>(legacyURL: coordinatorRunStoreURL)
+        let archive = ComparisonRecordArchive<ComparisonRun>.make(legacyURL: coordinatorRunStoreURL)
         let summary = try XCTUnwrap(archive.load().first)
         XCTAssertEqual(summary.results.first?.samples.first?.hasCompletedAnswer, true)
         XCTAssertEqual(try archive.record(id: run.id), run)
@@ -94,7 +94,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
     }
 
     func testIndexedHistoryReadDoesNotAcquireAWriterLock() throws {
-        let archive = ComparisonRecordArchive<ComparisonRun>(legacyURL: coordinatorRunStoreURL)
+        let archive = ComparisonRecordArchive<ComparisonRun>.make(legacyURL: coordinatorRunStoreURL)
         let run = makeRun(results: [], state: .completed)
         try archive.upsert(run)
         var writer: OpaquePointer?
@@ -142,14 +142,14 @@ final class ComparisonCoordinatorTests: XCTestCase {
             }
             XCTFail("A stale review must fail")
         } catch {}
-        XCTAssertThrowsError(try ComparisonRecordArchive<ComparisonRun>(legacyURL: store.url).upsert(entries[0]))
+        XCTAssertThrowsError(try ComparisonRecordArchive<ComparisonRun>.make(legacyURL: store.url).upsert(entries[0]))
         // A migrated archive never replays an edited backup over current evidence.
         try Data("corrupt backup".utf8).write(to: store.url)
         let reopened = try await ComparisonHistoryWorker(store: store, indexed: true).record(id: second.id)
         XCTAssertEqual(reopened, second)
         // Updating one row and listing history never decode another row's body.
         var db: OpaquePointer?
-        let archive = ComparisonRecordArchive<ComparisonRun>(legacyURL: store.url)
+        let archive = ComparisonRecordArchive<ComparisonRun>.make(legacyURL: store.url)
         XCTAssertEqual(sqlite3_open(archive.url.path, &db), SQLITE_OK)
         XCTAssertEqual(sqlite3_exec(db, "UPDATE records SET payload=x'7b' WHERE id='\(second.id.uuidString)'", nil, nil, nil), SQLITE_OK)
         sqlite3_close(db)
@@ -162,7 +162,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
         let url = coordinatorRunStoreURL
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let bad = Data("[{broken]".utf8); try bad.write(to: url)
-        let archive = ComparisonRecordArchive<ComparisonRun>(legacyURL: url)
+        let archive = ComparisonRecordArchive<ComparisonRun>.make(legacyURL: url)
         XCTAssertThrowsError(try archive.load())
         XCTAssertEqual(try Data(contentsOf: url), bad)
         let run = makeRun(results: [], state: .completed)
