@@ -36,6 +36,33 @@ private struct ComparisonRunFixtureView: View {
 }
 
 final class CompareRemodelTests: XCTestCase {
+    func testWideChatResultsGiveModelAndPromptColumnsTheAvailableSpace() {
+        let layout = ChatComparisonLayout(contentWidth: 1800, promptCount: 2)
+        XCTAssertTrue(layout.isWide)
+        XCTAssertGreaterThanOrEqual(layout.matrixWidth, 800)
+        XCTAssertGreaterThanOrEqual(layout.modelColumn, 320)
+        XCTAssertGreaterThanOrEqual(layout.promptColumn, 144)
+        XCTAssertGreaterThanOrEqual(1800 - layout.matrixWidth - WorkbenchSpacing.lg, 480)
+        XCTAssertEqual(layout.modelColumn + 2 * layout.promptColumn + layout.metricColumn
+                       + 3 * WorkbenchSpacing.xs + 2 * WorkbenchSpacing.md, layout.matrixWidth, accuracy: 0.01)
+    }
+
+    func testChatResultsReserveReadingSpaceAndScrollLargePromptSets() {
+        for width: CGFloat in [1000, 1200, 1800] {
+            let layout = ChatComparisonLayout(contentWidth: width, promptCount: 12)
+            XCTAssertGreaterThanOrEqual(width - layout.matrixWidth - WorkbenchSpacing.lg, 480)
+            XCTAssertGreaterThanOrEqual(layout.modelColumn, 220)
+            XCTAssertGreaterThanOrEqual(layout.promptColumn, 132)
+            XCTAssertGreaterThan(layout.modelColumn + 12 * layout.promptColumn, layout.matrixWidth)
+        }
+        for width: CGFloat in [340, 580, 999] {
+            let layout = ChatComparisonLayout(contentWidth: width, promptCount: 2)
+            XCTAssertFalse(layout.isWide)
+            XCTAssertEqual(layout.matrixWidth, width)
+            XCTAssertGreaterThanOrEqual(layout.modelColumn, 220)
+        }
+    }
+
     func testPromptOutcomeMatrixDistinguishesMissingUnknownAndIncompleteEvidence() {
         let prompt = PromptEntry(id: "p", text: "Answer", maxTokens: 128)
         var run = ComparisonRun(id: UUID(), promptSetID: "test", promptSetName: "Test", useCase: .coding,

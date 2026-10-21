@@ -3339,6 +3339,38 @@ final class WorkbenchReviewUITests: XCTestCase {
                 XCTAssertTrue(app.staticTexts[legacy ? "Completion unknown · entire run" : "2/2 finished · entire run"].firstMatch.exists)
                 XCTAssertTrue(app.buttons["comparison-cell-1-0"].label.contains("Blocked"))
                 if !legacy {
+                    if appearance == "Dark" {
+                        let matrix = app.descendants(matching: .any)["comparison-outcome-matrix"].firstMatch
+                        let reader = app.descendants(matching: .any)["comparison-reading-inspector"].firstMatch
+                        XCTAssertTrue(matrix.waitForExistence(timeout: 5))
+                        let standardWidth = matrix.frame.width
+                        XCTAssertGreaterThanOrEqual(standardWidth, 600)
+                        XCTAssertGreaterThanOrEqual(reader.frame.width, 480)
+                        capture("Compare-board-standard-layout")
+                        if (NSScreen.main?.frame.width ?? 0) >= 2048 {
+                            let window = app.windows.firstMatch
+                            let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+                                .withOffset(CGVector(dx: 0, dy: 20))
+                            titlebar.press(forDuration: 0.1, thenDragTo: titlebar.withOffset(CGVector(
+                                dx: (NSScreen.main?.frame.minX ?? 0) - window.frame.minX, dy: 0)))
+                            resizeWindow(width: 2048, height: 1050)
+                            let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                                matrix.frame.width > standardWidth + 100
+                            }, object: nil)
+                            XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 5), .completed)
+                            XCTAssertGreaterThanOrEqual(app.windows.firstMatch.frame.width, 2000)
+                            XCTAssertGreaterThanOrEqual(matrix.frame.width, 790)
+                            XCTAssertGreaterThanOrEqual(reader.frame.width, 480)
+                            for index in 0..<2 {
+                                let cell = app.buttons["comparison-cell-0-\(index)"]
+                                XCTAssertTrue(cell.isHittable)
+                                XCTAssertGreaterThanOrEqual(cell.frame.width, 144)
+                                XCTAssertLessThanOrEqual(cell.frame.maxX, matrix.frame.maxX)
+                            }
+                            capture("Compare-board-wide-layout")
+                            resizeWindow(width: 1440, height: 900)
+                        }
+                    }
                     XCTAssertTrue(app.buttons["Use model A…"].exists)
                     XCTAssertFalse(app.buttons["Use model C…"].exists)
                     app.buttons["comparison-cell-2-1"].click()

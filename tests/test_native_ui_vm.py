@@ -269,7 +269,7 @@ class NativeUIVMTests(unittest.TestCase):
         self.assertEqual(launch.call_args.args[0].ui_test, cases)
 
     def test_desktop_size_is_selected_before_guest_launch(self):
-        for desktop in ("1024x768", "1440x1000"):
+        for desktop in ("1024x768", "1440x1000", "2048x1280"):
             with self.subTest(desktop=desktop), \
                     patch.object(vm.sys, "argv", ["native_ui_vm.py", "--base-vm", "fixture", "--desktop-size", desktop]), \
                     patch.object(vm, "host") as launch:
