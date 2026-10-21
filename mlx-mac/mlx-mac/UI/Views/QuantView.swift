@@ -433,15 +433,12 @@ struct QuantView: View {
     @State private var compareContentWidth = WorkbenchSize.assumedContentWidth
     @State private var mode: ComparisonMode = .chat
     @State private var showingSetEditor = false
-    @State private var pendingPromptSetEdit: MusicPromptSetEdit?
-    @State private var pendingGeneralPromptSetEdit: ComparisonPromptSetDraft?
-    @State private var pendingMusicPromptSetCopy: MusicPromptSetDraft?
-    @State private var pendingGeneralPromptSetCopy: ComparisonPromptSetDraft?
+    /// A saved-set edit or a customized copy; new sets use `showingSetEditor`.
+    @State private var pendingPromptSetDraft: PromptSetDraft?
     @State private var promptSetCopyError: String?
     @State private var pendingPromptSetRename: PromptSet?
     @State private var pendingPromptSetRemoval: PromptSet?
-    @State private var pendingReuseSetup: MusicComparisonSetup?
-    @State private var pendingGeneralReuseSetup: ComparisonRunSetup?
+    @State private var pendingReuseSetup: ComparisonRunSetup?
     @State private var reusedPromptSet: PromptSet?
     @State private var reuseError: String?
     @State private var slotIDs = (0..<ComparePresentation.maxSlots).map { _ in UUID().uuidString }
@@ -592,20 +589,11 @@ struct QuantView: View {
         .task(id: isRouteActive) { consumeModelComparisonRequest() }
         .onChange(of: appHost.modelComparisonRequest?.id) { _, _ in consumeModelComparisonRequest() }
         .sheet(item: $pendingReuseSetup) { setup in
-            MusicComparisonSetupSheet(setup: setup,
-                availablePaths: Set(readyModels.map { $0.item.path }), name: shortName,
-                onApply: applyReusedSetup, onSave: { set in
-                    guard comparison.savePromptSet(set) else {
-                        throw MusicComparisonSetup.InvalidSetup(message: comparison.persistenceError ?? "Prompt set could not be saved.")
-                    }
-                })
-        }
-        .sheet(item: $pendingGeneralReuseSetup) { setup in
             ComparisonRunSetupSheet(setup: setup,
                 availablePaths: Set(readyModels.map { $0.item.path }), name: shortName,
                 onApply: applyReusedSetup, onSave: { draft in
                     guard comparison.activeRunID == nil else { return "Wait for the current comparison to finish." }
-                    return await comparison.createPromptSetWithInputCopies(draft) == nil
+                    return await comparison.createPromptSet(draft) == nil
                         ? (comparison.promptSetManagementError ?? "Prompt set could not be saved.") : nil
                 })
         }
@@ -616,35 +604,8 @@ struct QuantView: View {
                     ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be renamed.")
             }
         }
-        .sheet(item: $pendingPromptSetEdit) { edit in
-            MusicPromptSetEditSheet(edit: edit) { edited in
-                comparison.saveMusicPromptSetEdits(edited)
-                    ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be saved.")
-            }
-        }
-        .sheet(item: $pendingGeneralPromptSetEdit) { edit in
-            ComparisonPromptSetEditor(draft: edit) { edited in
-                await comparison.savePromptSetEditsWithInputCopies(edited)
-                    ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be saved.")
-            }
-        }
-        .sheet(item: $pendingMusicPromptSetCopy) { draft in
-            MusicPromptSetCreateSheet(draft: draft) { customized in
-                guard let set = comparison.createMusicPromptSet(customized) else {
-                    return comparison.promptSetManagementError ?? "Prompt set could not be created."
-                }
-                selectedPromptSetID = set.id
-                return nil
-            }
-        }
-        .sheet(item: $pendingGeneralPromptSetCopy) { draft in
-            ComparisonPromptSetEditor(draft: draft) { customized in
-                guard let set = await comparison.createPromptSetWithInputCopies(customized) else {
-                    return comparison.promptSetManagementError ?? "Prompt set could not be created."
-                }
-                selectedPromptSetID = set.id
-                return nil
-            }
+        .sheet(item: $pendingPromptSetDraft) { draft in
+            ComparisonPromptSetEditor(draft: draft, onSave: savePromptSetDraft)
         }
         .alert("Remove saved prompt set?", isPresented: Binding(
             get: { pendingPromptSetRemoval != nil },
@@ -689,9 +650,8 @@ struct QuantView: View {
 
     private var canApplyLibrarySelection: Bool {
         comparison.activeRunID == nil && !comparison.savingPromptSet && servingProfiles.activeID == nil
-            && !showingSetEditor && pendingPromptSetEdit == nil && pendingGeneralPromptSetEdit == nil
-            && pendingMusicPromptSetCopy == nil && pendingGeneralPromptSetCopy == nil
-            && pendingReuseSetup == nil && pendingGeneralReuseSetup == nil && pendingPromptSetRename == nil
+            && !showingSetEditor && pendingPromptSetDraft == nil
+            && pendingReuseSetup == nil && pendingPromptSetRename == nil
     }
 
     private func consumeModelComparisonRequest() {
@@ -960,23 +920,7 @@ struct QuantView: View {
             ErrorBanner(text: promptSetCopyError)
         }
         .sheet(isPresented: $showingSetEditor) {
-            if mode == .musicGeneration {
-                MusicPromptSetCreateSheet { draft in
-                    guard let set = comparison.createMusicPromptSet(draft) else {
-                        return comparison.promptSetManagementError ?? "Prompt set could not be created."
-                    }
-                    selectedPromptSetID = set.id
-                    return nil
-                }
-            } else {
-                ComparisonPromptSetEditor(draft: ComparisonPromptSetDraft(mode: mode)) { draft in
-                    guard let set = await comparison.createPromptSetWithInputCopies(draft) else {
-                        return comparison.promptSetManagementError ?? "Prompt set could not be created."
-                    }
-                    selectedPromptSetID = set.id
-                    return nil
-                }
-            }
+            ComparisonPromptSetEditor(draft: PromptSetDraft(mode: mode), onSave: savePromptSetDraft)
         }
     }
 
@@ -1212,11 +1156,7 @@ struct QuantView: View {
             if let run = shownRun, run.state == .completed {
                 Button {
                     do {
-                        if run.effectiveMode == .musicGeneration {
-                            pendingReuseSetup = try MusicComparisonSetup(run: run)
-                        } else {
-                            pendingGeneralReuseSetup = try ComparisonRunSetup(run: run, outputStore: comparison.outputStore)
-                        }
+                        pendingReuseSetup = try ComparisonRunSetup(run: run, outputStore: comparison.outputStore)
                         reuseError = nil
                     }
                     catch { reuseError = error.localizedDescription }
@@ -1524,30 +1464,27 @@ struct QuantView: View {
     private func openPromptSetCopy() {
         guard let set = selectedPromptSet, comparison.activeRunID == nil, !comparison.savingPromptSet else { return }
         do {
-            if set.effectiveMode == .musicGeneration {
-                pendingMusicPromptSetCopy = try MusicPromptSetDraft(copying: set)
-            } else {
-                pendingGeneralPromptSetCopy = try ComparisonPromptSetDraft(copying: set)
-            }
+            pendingPromptSetDraft = try PromptSetDraft(copying: set)
             promptSetCopyError = nil
         } catch { promptSetCopyError = error.localizedDescription }
     }
 
     private func openPromptSetEditor() {
         guard let set = selectedPromptSet else { return }
-        if set.effectiveMode == .musicGeneration {
-            pendingPromptSetEdit = comparison.prepareMusicPromptSetEdit(id: set.id)
-        } else {
-            pendingGeneralPromptSetEdit = comparison.preparePromptSetEdit(id: set.id)
-        }
+        pendingPromptSetDraft = comparison.preparePromptSetEdit(id: set.id)
     }
 
-    private func applyReusedSetup(_ setup: MusicComparisonSetup, _ promptSet: PromptSet) {
-        guard comparison.activeRunID == nil else { return }
-        strataSettings = [:]
-        laneSources = [:]
-        useRecordedSetup(mode: .musicGeneration, paths: setup.modelPaths, name: setup.sourceName, promptSet: promptSet)
-        pendingReuseSetup = nil
+    /// Saves edits to a saved set, or creates a new or copied set and selects it.
+    private func savePromptSetDraft(_ draft: PromptSetDraft) async -> String? {
+        if draft.original != nil {
+            return await comparison.savePromptSetEdits(draft)
+                ? nil : (comparison.promptSetManagementError ?? "Prompt set could not be saved.")
+        }
+        guard let set = await comparison.createPromptSet(draft) else {
+            return comparison.promptSetManagementError ?? "Prompt set could not be created."
+        }
+        selectedPromptSetID = set.id
+        return nil
     }
 
     private func applyReusedSetup(_ setup: ComparisonRunSetup, _ promptSet: PromptSet) -> String? {
@@ -1561,7 +1498,7 @@ struct QuantView: View {
             if let lane = setup.laneConfigurations?[index] { laneSources[slotIDs[index]] = lane }
         }
         useRecordedSetup(mode: setup.draft.mode, paths: setup.modelPaths, name: setup.sourceName, promptSet: promptSet)
-        pendingGeneralReuseSetup = nil
+        pendingReuseSetup = nil
         return nil
     }
 

@@ -217,31 +217,6 @@ final class ComparisonCoordinator: ObservableObject {
         var errorDescription: String? { message }
     }
 
-    /// Create from a validated draft, keeping failures local to this action and
-    /// publishing only after the atomic store accepts the new identity.
-    func createMusicPromptSet(_ draft: MusicPromptSetDraft) -> PromptSet? {
-        do {
-            let set = try draft.promptSet()
-            try persistNewPromptSet(set)
-            return set
-        } catch {
-            promptSetManagementError = "Prompt set could not be created: \(AppHost.render(error))"
-            return nil
-        }
-    }
-
-    func createPromptSet(_ draft: ComparisonPromptSetDraft) -> PromptSet? {
-        do {
-            guard draft.original == nil else { throw PromptSetManagementError(message: "Use Save changes to edit this set.") }
-            let set = try draft.promptSet()
-            try persistNewPromptSet(set)
-            return set
-        } catch {
-            promptSetManagementError = "Prompt set could not be created: \(AppHost.render(error))"
-            return nil
-        }
-    }
-
     private func persistNewPromptSet(_ set: PromptSet) throws {
         guard !promptSets.contains(where: { $0.id == set.id }) else {
             throw PromptSetManagementError(message: "This draft has already been saved. Create a new set instead.")
@@ -251,9 +226,10 @@ final class ComparisonCoordinator: ObservableObject {
         promptSetManagementError = nil
     }
 
-    /// Saving a new or reused setup makes its media independent of source files.
-    /// Publish only after all copies and the durable JSON write succeed.
-    func createPromptSetWithInputCopies(_ draft: ComparisonPromptSetDraft) async -> PromptSet? {
+    /// Create a new set in any mode, keeping failures local to this action. Saving
+    /// a new or reused setup makes its media independent of source files; publish
+    /// only after all copies and the durable JSON write succeed.
+    func createPromptSet(_ draft: PromptSetDraft) async -> PromptSet? {
         guard !savingPromptSet, activeRunID == nil else {
             promptSetManagementError = "Wait for the current save or comparison to finish."
             return nil
@@ -279,35 +255,18 @@ final class ComparisonCoordinator: ObservableObject {
         set.origin == .userCreated && !builtinSets.contains { $0.id == set.id }
     }
 
-    private static func isManageableMusicPromptSet(_ set: PromptSet) -> Bool {
-        isManageablePromptSet(set) && set.effectiveMode == .musicGeneration
-    }
-
     func canManagePromptSet(id: String) -> Bool {
         promptSets.contains { $0.id == id && Self.isManageablePromptSet($0) }
     }
 
-    func canManageMusicPromptSet(id: String) -> Bool {
-        promptSets.contains { $0.id == id && Self.isManageableMusicPromptSet($0) }
-    }
-
-    @discardableResult
-    func renameMusicPromptSet(id: String, name: String) -> Bool {
-        renameSavedPromptSet(id: id, name: name, requiredMode: .musicGeneration)
-    }
-
     @discardableResult
     func renamePromptSet(id: String, name: String) -> Bool {
-        renameSavedPromptSet(id: id, name: name, requiredMode: nil)
-    }
-
-    private func renameSavedPromptSet(id: String, name: String, requiredMode: ComparisonMode?) -> Bool {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if let error = PromptSetNameValidation.error(for: name) {
             promptSetManagementError = error
             return false
         }
-        return changePromptSet(id: id, requiredMode: requiredMode) { set in
+        return changePromptSet(id: id) { set in
             var renamed = set
             renamed.name = name
             return renamed
@@ -315,23 +274,20 @@ final class ComparisonCoordinator: ObservableObject {
     }
 
     @discardableResult
-    func removeMusicPromptSet(id: String) -> Bool {
-        changePromptSet(id: id, requiredMode: .musicGeneration) { _ in nil }
-    }
-
-    @discardableResult
     func removePromptSet(id: String) -> Bool {
         changePromptSet(id: id) { _ in nil }
     }
 
-    func preparePromptSetEdit(id: String) -> ComparisonPromptSetDraft? {
+    /// Called by the Edit action, never during view evaluation. Reopening a
+    /// stale editor reads the current durable set without writing it.
+    func preparePromptSetEdit(id: String) -> PromptSetDraft? {
         do {
             guard activeRunID == nil, canManagePromptSet(id: id),
                   let stored = try promptSetStore.load().first(where: { $0.id == id }),
                   Self.isManageablePromptSet(stored) else {
                 throw PromptSetManagementError(message: "Select a saved prompt set after the comparison finishes.")
             }
-            let edit = try ComparisonPromptSetDraft(set: stored)
+            let edit = try PromptSetDraft(set: stored)
             if let index = promptSets.firstIndex(where: { $0.id == id }) { promptSets[index] = stored }
             promptSetManagementError = nil
             return edit
@@ -341,19 +297,9 @@ final class ComparisonCoordinator: ObservableObject {
         }
     }
 
-    @discardableResult
-    func savePromptSetEdits(_ edit: ComparisonPromptSetDraft) -> Bool {
-        changePromptSet(id: edit.id, requiredMode: edit.mode) { stored in
-            guard stored == edit.original else {
-                throw PromptSetManagementError(message: "The saved prompt set changed while this editor was open. Cancel and reopen it before saving.")
-            }
-            return try edit.promptSet()
-        }
-    }
-
     /// Preserve unchanged owned files, copy replacements, then atomically
     /// compare against the editor's original snapshot before publishing.
-    func savePromptSetEditsWithInputCopies(_ edit: ComparisonPromptSetDraft) async -> Bool {
+    func savePromptSetEdits(_ edit: PromptSetDraft) async -> Bool {
         guard !savingPromptSet, activeRunID == nil, let original = edit.original else {
             promptSetManagementError = "Select a saved prompt set after the current save or comparison finishes."
             return false
@@ -389,37 +335,6 @@ final class ComparisonCoordinator: ObservableObject {
         guard runsLoaded, let sets = try? promptSetStore.load(), let savedRuns = try? runStore.load() else { return }
         let legacy = savedRuns.filter { $0.inputArtifacts == nil }.flatMap { $0.promptEntries ?? [] }
         promptInputStore.reclaimInputs(of: previous, sets: sets, legacyEntries: legacy)
-    }
-
-    /// Called by the Edit action, never during view evaluation. Reopening a
-    /// stale editor reads the current durable set without writing it.
-    func prepareMusicPromptSetEdit(id: String) -> MusicPromptSetEdit? {
-        do {
-            guard activeRunID == nil, canManageMusicPromptSet(id: id) else {
-                throw PromptSetManagementError(message: "Select a saved music prompt set after the comparison finishes.")
-            }
-            guard let stored = try promptSetStore.load().first(where: { $0.id == id }),
-                  Self.isManageableMusicPromptSet(stored) else {
-                throw PromptSetManagementError(message: "The saved music prompt set is no longer available.")
-            }
-            let edit = try MusicPromptSetEdit(set: stored)
-            if let index = promptSets.firstIndex(where: { $0.id == id }) { promptSets[index] = stored }
-            promptSetManagementError = nil
-            return edit
-        } catch {
-            promptSetManagementError = "Music prompt set could not be opened: \(AppHost.render(error))"
-            return nil
-        }
-    }
-
-    @discardableResult
-    func saveMusicPromptSetEdits(_ edit: MusicPromptSetEdit) -> Bool {
-        changePromptSet(id: edit.id, requiredMode: .musicGeneration) { stored in
-            guard stored == edit.original else {
-                throw PromptSetManagementError(message: "The saved prompt set changed while this editor was open. Cancel and reopen it before saving.")
-            }
-            return try edit.updatedPromptSet()
-        }
     }
 
     private func changePromptSet(id: String, requiredMode: ComparisonMode? = nil, allowingInputSave: Bool = false,

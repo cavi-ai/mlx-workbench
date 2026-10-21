@@ -271,7 +271,7 @@ server.
   Run history uses a searchable popover grouped by mode, newest
   first within each group; selecting a row keeps the existing results behavior.
   Completed music runs with prompt snapshots offer **Reuse setup** beside history.
-  `MusicComparisonSetup` copies recorded inputs into a temporary per-prompt editor;
+  `ComparisonRunSetup` copies recorded inputs into a temporary per-prompt editor;
   applying it never writes a preset or starts generation. The existing Run button
   starts fresh results with current model signatures and no copied quality reviews.
   Missing recorded models stay selected and block Run until explicitly replaced
@@ -283,19 +283,25 @@ server.
   Saved user-created music prompt sets have a compact Edit/Rename/Remove menu beside
   the picker. Both actions recheck the persisted set and use `JSONStore.update`
   under its mutation lock; publication follows a successful atomic write.
-  Built-in IDs, other modes, temporary setups and active comparisons are refused.
+  Built-in IDs, temporary setups and active comparisons are refused.
   Removal requires confirmation and changes only the prompt store; run snapshots,
   audio and quality reviews remain intact. Removing the selected set falls back
   to an available prompt set.
-  `MusicPromptSetEdit` is a value-only draft of a saved set; shared `MusicPromptFields`
-  and the reuse editor's validation preserve optional settings and unedited fields.
+  `PromptSetDraft` (`Models/ComparisonModels.swift`) is the one value-only draft for
+  every mode and lifecycle: new sets, copies, saved-set edits and, inside
+  `ComparisonRunSetup`, reused runs. `ComparisonPromptSetEditor` edits new, copied
+  and saved sets in every mode; music cards use `MusicPromptFields`, other modes
+  `ComparisonPromptFields`. The coordinator's prompt-set interface is
+  `createPromptSet`, `preparePromptSetEdit`, `savePromptSetEdits`, `renamePromptSet`,
+  `removePromptSet` and `canManagePromptSet`, shared by all modes.
+  Music validation preserves optional settings and unedited fields.
   Explicit Save keeps the set and prompt identities, checks the original snapshot
   against the current persisted set, and publishes only after a successful write.
   Opening or reopening an editor loads the current persisted set through the
   coordinator's explicit Edit action, outside view evaluation.
   Invalid, stale or failed edits keep the editor open; Cancel and opening an editor
   never write or generate audio. Historical snapshots and output files are untouched.
-  **New set…** in music mode uses `MusicPromptSetDraft` and `MusicPromptFields`
+  **New set…** in music mode uses `PromptSetDraft` and `MusicPromptFields`
   for the same per-prompt caption, lyrics, duration, steps and seed controls.
   New prompts start with explicit 15-second/30-step/seed-42 instrumental settings;
   clearing settings uses the existing optional-default semantics. Add/remove is
@@ -303,7 +309,7 @@ server.
   Explicit Save validates all inputs and selects the set only after the existing
   prompt store accepts it. Invalid or failed saves keep the draft open; Cancel
   never writes or generates.
-  Other modes use `ComparisonPromptSetDraft` + `ComparisonPromptSetEditor` for
+  Other modes use `PromptSetDraft` + `ComparisonPromptSetEditor` for
   per-prompt text, input attachments, expected words and requested output tokens
   where supported, square image size/steps/seed, and video dimensions/frames/fps/
   steps/seed. Add/remove retains stable surviving prompt IDs and at least one
@@ -317,7 +323,7 @@ server.
   the durable original-snapshot check still rejects concurrent edits. A shared
   `PromptEntry` copy operation preserves hidden metadata under a new identity.
   Music Add/Remove controls also work in saved-set and reuse editors, through
-  the same array operations as creation. Removal retains at least one prompt;
+  the same draft operations as creation. Removal retains at least one prompt;
   new entries share the existing instrumental/15-second/30-step/seed-42
   defaults and require a valid caption before Save/Use. Reuse revalidates
   nonempty unique prompt identities after draft changes. Draft mutations never
@@ -335,10 +341,10 @@ server.
   and reused setups. View-time validation shares the entry rules but performs
   no file availability probes; Save/Use still recheck readable inputs. File
   availability warnings remain in the input section without duplicate warnings.
-  Music uses the same card-level feedback through `MusicComparisonSetup.Prompt`
-  entry validation. A shared music array validator rejects invalid identities
-  and labels prompt errors by current position for creation, saved edits and
-  reuse; draft errors do not also appear in a global banner. Name checks share
+  Music uses the same card-level feedback through `PromptSetDraft.Prompt`
+  entry validation. The draft rejects invalid identities and labels prompt errors
+  by current position for creation, saved edits and reuse; draft errors do not
+  also appear in a global banner. Name checks share
   the save rules, and creation/copy Save is disabled until the draft is valid.
   Both shared prompt field views use `ComparisonPromptList` to reveal newly
   inserted prompt identities after Add/Duplicate. Initial rendering and
@@ -414,8 +420,7 @@ server.
   Newly added and duplicated cards capture their own initial raw values.
   Revert performs no validation, save, generation or file mutation; restored
   inputs remain subject to the existing availability guards.
-  Customize copy opens `ComparisonPromptSetDraft(copying:)` or
-  `MusicPromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
+  Customize copy opens `PromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
   with a fresh set identity, copied use case and recorded prompt fields. Opening
   never writes; explicit Save uses existing creation paths and selects the new
   set only on success. Non-music media uses independent durable input copies;
@@ -434,9 +439,9 @@ server.
   Current measurements, task tradeoffs and measured alternative selection require
   exact equality with the selected set's recorded prompt entries, not just its ID.
   Past runs, quality reviews and output artifacts remain historical evidence.
-  **Reuse setup** in other modes uses `ComparisonRunSetup` and
-  `ComparisonRunSetupSheet`, sharing `ComparisonPromptFields` with the regular
-  editor. Only completed runs with valid recorded prompt/model identities can
+  **Reuse setup** in every mode uses `ComparisonRunSetup` and
+  `ComparisonRunSetupSheet`, sharing `ComparisonPromptFields` or `MusicPromptFields`
+  with the regular editor. Only completed runs with valid recorded prompt/model identities can
   open it. Snapshots supply the prompts, per-prompt settings, use case and model
   paths; the current serving limits still apply. Runs with `inputArtifacts` use
   only their fenced saved inputs from the injected output store; unavailable
@@ -450,7 +455,7 @@ server.
   Use restores a temporary set and model paths without writing or running.
   Missing models remain selected and block Run until replaced/removed. New runs
   capture current signatures and evidence; original results/reviews stay intact.
-  Reuse-sheet Save runs `createPromptSetWithInputCopies` asynchronously. It copies
+  Reuse-sheet Save runs `createPromptSet` asynchronously. It copies
   explicit input files into `prompt-set-inputs/<uuid>/inputs/` beside the prompt-set
   JSON, then publishes the set only after its atomic JSON save succeeds.
   `PromptSet.inputStorageID` is optional for legacy compatibility; existing sets
@@ -463,7 +468,7 @@ server.
   folders or original files. Failed/unknown stores keep copies conservatively.
   Temporary setups retain the ten-run cache; newly saved copies are independent.
   New-set and saved-set editors use the same asynchronous input ownership path.
-  `savePromptSetEditsWithInputCopies` keeps unchanged owned inputs, copies only
+  `savePromptSetEdits` keeps unchanged owned inputs, copies only
   external/replacement inputs, then checks `edit.original` against the durable
   set under `JSONStore.update` before publication. Failed/conflicting saves discard
   only their new folder. Successful edits reclaim old folders only when no saved
