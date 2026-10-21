@@ -1043,8 +1043,7 @@ final class WorkbenchReviewUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Skip setup"].waitForExistence(timeout: 10))
         app.buttons["Skip setup"].click()
         select("Library")
-        XCTAssertTrue(waitForHittability(generator, timeout: 10), app.debugDescription)
-        generator.doubleClick()
+        XCTAssertTrue(app.textFields["task-image-generation-prompt"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(app.textFields["task-image-generation-prompt"].value as? String, "A red cup on a white table")
         try FileManager.default.removeItem(at: legacyTasks)
         let advanced = app.disclosureTriangles["Advanced options"]
