@@ -108,6 +108,13 @@ struct BundledRuntime: Sendable {
         return destination
     }
 
+    /// Discover only an already prepared, verified payload; never create or repair it.
+    func existingAgentPath() throws -> String? {
+        guard FileManager.default.fileExists(atPath: destination.path) else { return nil }
+        try validateFiles(in: destination)
+        return agentPath
+    }
+
     private func validateFiles(in root: URL) throws {
         let metadata = try Self.safeFile("manifest.json", under: root)
         let values = try metadata.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])

@@ -58,6 +58,17 @@ final class BundledRuntimeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: parent.path))
     }
 
+    func testDiscoveryOnlyReturnsAnAlreadyPreparedVerifiedEngine() throws {
+        let (source, parent) = try fixture()
+        let plan = try BundledRuntime(source: source, parent: parent)
+        XCTAssertNil(try plan.existingAgentPath())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: parent.path), "Detection must not prepare a runtime")
+        _ = try plan.prepare()
+        XCTAssertEqual(try plan.existingAgentPath(), plan.agentPath)
+        try Data("changed".utf8).write(to: plan.destination.appendingPathComponent("requirements.txt"))
+        XCTAssertThrowsError(try plan.existingAgentPath())
+    }
+
     func testLinkedSourcesAndDestinationsAreRefusedWithoutChangingTheirTargets() throws {
         let (source, parent) = try fixture()
         let fm = FileManager.default
