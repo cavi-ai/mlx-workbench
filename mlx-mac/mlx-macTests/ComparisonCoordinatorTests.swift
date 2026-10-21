@@ -1367,8 +1367,10 @@ final class ComparisonCoordinatorTests: XCTestCase {
     func testAggregateBenchmarksRehydrateFromCompletedRuns() async {
         let coordinator = makeCoordinator()
         coordinator.start(variants: [("/Models/q4", nil)], promptSet: BuiltinPromptSets.generalChat)
-        let finished = await waitFor { coordinator.runs.first?.state == .completed }
+        let finished = await waitFor { coordinator.activeRunID == nil }
         XCTAssertTrue(finished)
+        XCTAssertEqual(coordinator.runs.first?.state, .completed)
+        XCTAssertNil(coordinator.persistenceError)
 
         let rehydrated = makeCoordinator(runStoreURL: coordinatorRunStoreURL, promptSetStoreURL: coordinatorPromptSetStoreURL)
         let benchmarks = rehydrated.aggregateBenchmarks()
