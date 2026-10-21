@@ -16,10 +16,13 @@ final class ComfyWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = JSONStore<HostedComparisonRecord>(fileURL: root.appendingPathComponent("run.json"))
         let model = HostedModel(hostID: fixture.host.id, modelID: "first.safetensors", name: "first.safetensors", category: "checkpoints")
+        let deviceMemory = HostDeviceMemorySnapshot(capturedAt: Date(timeIntervalSince1970: 35), devices: [
+            HostDeviceMemory(name: "Shared memory", type: "mps", index: nil, totalBytes: 32_000_000_000, freeBytes: 4_000_000_000)])
         fixture.handler = { request in
             let saved = try XCTUnwrap(store.load().first)
             XCTAssertEqual(saved.conditions?.first?.targetID, model.id)
             XCTAssertEqual(saved.observedTargets?.first?.model, model)
+            XCTAssertEqual(saved.conditions?.first?.deviceMemory, deviceMemory, "Device readings must be durable before any workflow request")
             switch request.url!.path {
             case "/object_info": return try self.encoded(self.objectInfo)
             case "/prompt": return Data(#"{"prompt_id":"owned-id","node_errors":{}}"#.utf8)
@@ -29,7 +32,7 @@ final class ComfyWorkflowTests: XCTestCase {
             }
         }
         let inventory = HostInventory(host: fixture.host, models: [model], capturedAt: Date(),
-            activity: HostActivity(state: .busy, runningCount: 1, pendingCount: 0, detail: "Reported queue"))
+            activity: HostActivity(state: .busy, runningCount: 1, pendingCount: 0, detail: "Reported queue"), deviceMemory: deviceMemory)
         let coordinator = HostedComparisonCoordinator(store: store, outputStore: ComparisonOutputStore(root: root.appendingPathComponent("outputs")),
             readToken: { _ in nil }, freshInventory: { _, _ in inventory }, comfy: fixture.runner, memoryProbe: { nil })
         let done = expectation(description: "Comfy comparison completed")
@@ -43,6 +46,11 @@ final class ComfyWorkflowTests: XCTestCase {
         XCTAssertEqual(record.submissions.count, 1)
         XCTAssertNil(record.conditions?.first?.systemMemory)
         XCTAssertNotNil(record.conditionsNotice)
+        XCTAssertEqual(record.conditions?.first?.deviceMemory, deviceMemory)
+        let original = try Data(contentsOf: store.url)
+        let reopened = HostedComparisonCoordinator(store: store)
+        XCTAssertEqual(reopened.records.first?.conditions?.first?.deviceMemory, deviceMemory)
+        XCTAssertEqual(try Data(contentsOf: store.url), original, "Opening history must not backfill current readings")
         subscription.cancel()
     }
 

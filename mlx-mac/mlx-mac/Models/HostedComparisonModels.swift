@@ -100,6 +100,7 @@ struct HostedLaneConditions: Codable, Equatable, Sendable {
     let loadedModels: [HostedModel]?
     let unknownResidencyCount: Int?
     let inventoryWarnings: [String]?
+    var deviceMemory: HostDeviceMemorySnapshot? = nil
 
     var loadedStateSummary: String {
         guard let loadedModels else { return "Loaded model state unknown" }

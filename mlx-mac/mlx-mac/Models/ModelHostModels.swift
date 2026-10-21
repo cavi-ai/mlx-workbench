@@ -108,6 +108,7 @@ struct HostInventory: Codable, Equatable, Sendable {
     var activity: HostActivity? = nil
     /// Ollama's complete running list, independent of the available tags. Nil means unavailable.
     var runningModels: [HostedModel]? = nil
+    var deviceMemory: HostDeviceMemorySnapshot? = nil
 
     var reportedLoadedModels: [HostedModel] {
         (runningModels ?? models.filter { $0.isLoaded == true })
@@ -125,6 +126,22 @@ struct HostInventory: Codable, Equatable, Sendable {
         let summary = "\(loaded) \(loaded == 1 ? "model" : "models") reported loaded"
         return unknown > 0 ? summary + " · \(unknown) unknown" : summary
     }
+}
+
+/// Independent host observations; devices may share the same underlying memory.
+struct HostDeviceMemorySnapshot: Codable, Equatable, Sendable {
+    let capturedAt: Date
+    let devices: [HostDeviceMemory]
+}
+
+struct HostDeviceMemory: Codable, Equatable, Sendable {
+    let name: String?
+    let type: String?
+    let index: Int?
+    let totalBytes: Int64?
+    let freeBytes: Int64?
+
+    var reportsSystemMemory: Bool { type == "mps" || type == "cpu" }
 }
 
 enum HostActivityState: String, Codable, Sendable {

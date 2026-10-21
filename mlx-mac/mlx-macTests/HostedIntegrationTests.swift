@@ -153,6 +153,7 @@ final class HostedIntegrationTests: XCTestCase {
             activity: nil, loadedModels: [model], unknownResidencyCount: 0, inventoryWarnings: [])]
         let decoded = try JSONDecoder().decode(HostedComparisonRecord.self, from: JSONEncoder().encode(record))
         XCTAssertEqual(decoded, record)
+        XCTAssertNil(decoded.conditions?.first?.deviceMemory)
         XCTAssertTrue(decoded.conditions!.first!.timingCaveats.isEmpty, "The selected model is not a competing model")
         XCTAssertNotNil(decoded.conditionsNotice, "Unknown activity must remain visible")
     }
@@ -349,6 +350,7 @@ final class HostedIntegrationTests: XCTestCase {
         let decoded = try JSONDecoder().decode(HostInventory.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertNil(decoded.runningModels)
         XCTAssertNil(decoded.models.first?.detailsCapturedAt)
+        XCTAssertNil(decoded.deviceMemory)
         XCTAssertEqual(decoded.reportedLoadedModels, [loaded])
         XCTAssertEqual(decoded.loadedStateSummary, "1 model reported loaded")
         XCTAssertEqual(decoded.capturedAt, Date(timeIntervalSince1970: 100))

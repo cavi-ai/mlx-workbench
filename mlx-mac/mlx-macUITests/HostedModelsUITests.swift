@@ -17,6 +17,72 @@ final class HostedModelsUITests: XCTestCase {
         }
     }
 
+    func testComfyUIDeviceMemoryUsesCachedReadingsInLibraryAndMemoryPanel() throws {
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
+            .appendingPathComponent("comfy-memory-ui-" + UUID().uuidString).resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let server = try HostedUIFixture(root: root)
+        let app = XCUIApplication()
+        defer { app.terminate(); server.stop(); try? FileManager.default.removeItem(at: root) }
+        let port = try server.start()
+        let config = root.appendingPathComponent("config.json")
+        try JSONSerialization.data(withJSONObject: ["mlx_agent_path": root.appendingPathComponent("missing-agent").path,
+            "gguf_roots": [], "mlx_roots": [], "output_dir": root.appendingPathComponent("output").path,
+            "verification_enabled": false, "watch_enabled": false]).write(to: config)
+        app.launchEnvironment = ["MLX_WORKBENCH_CONFIG": config.path, "CFFIXED_USER_HOME": root.path,
+            "XDG_STATE_HOME": root.appendingPathComponent("state").path, "MLX_WORKBENCH_PYTHON": "/usr/bin/python3"]
+        app.launchArguments = ["-mlx-workbench.setupCompleted.v1", "YES"]
+        app.launch()
+        let library = app.buttons["Library"].firstMatch
+        XCTAssertTrue(library.waitForExistence(timeout: 15)); library.click()
+        let source = app.radioGroups["library-source"].radioButtons["Hosted models"]
+        XCTAssertTrue(source.waitForExistence(timeout: 15)); source.click()
+        app.buttons["Add host…"].firstMatch.click()
+        let provider = app.sheets.popUpButtons.matching(NSPredicate(format: "value == %@", "Ollama")).firstMatch
+        XCTAssertTrue(provider.waitForExistence(timeout: 5)); provider.click()
+        app.menuItems["ComfyUI"].click()
+        let url = app.textFields["model-host-url"]
+        url.click(); url.typeKey("a", modifierFlags: .command); url.typeText("http://127.0.0.1:\(port)")
+        app.buttons["Save host"].click()
+        let refresh = app.buttons["refresh-model-host"].firstMatch
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5)); refresh.click()
+        XCTAssertTrue(app.outlines["hosted-model-table"].staticTexts["fixture.safetensors"].waitForExistence(timeout: 10))
+        let requestsBefore = try String(contentsOf: root.appendingPathComponent("requests"), encoding: .utf8)
+        XCTAssertEqual(requestsBefore.split(separator: "\n").count, 4)
+        XCTAssertTrue(requestsBefore.split(separator: "\n").allSatisfy { $0.hasPrefix("GET ") })
+        let details = app.disclosureTriangles["Reported device memory"].firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 5)); clickRunningDisclosure(details)
+        details.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 26, dy: 8)).scroll(byDeltaX: 0, deltaY: -260)
+        let free = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Reported free: 0 bytes", "Reported free: 0 bytes")).firstMatch
+        XCTAssertTrue(free.waitForExistence(timeout: 5))
+        let shared = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Shared system memory", "Shared system memory")).firstMatch
+        XCTAssertTrue(free.isHittable); XCTAssertTrue(shared.isHittable)
+        let libraryImage = XCTAttachment(screenshot: app.screenshot())
+        libraryImage.name = "comfy-device-memory-library"; libraryImage.lifetime = .keepAlways; add(libraryImage)
+        app.buttons["Overview"].firstMatch.click()
+        let memory = app.buttons["system-memory-header"]
+        XCTAssertTrue(memory.waitForExistence(timeout: 5))
+        // Start within the popover's scroll area, before querying its offscreen rows.
+        let panelScrollPoint = memory.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .withOffset(CGVector(dx: -140, dy: 70))
+        memory.click()
+        panelScrollPoint.scroll(byDeltaX: 0, deltaY: -300)
+        let memoryDetails = app.disclosureTriangles["saved-model-hosts"].firstMatch
+        XCTAssertTrue(memoryDetails.waitForExistence(timeout: 5))
+        XCTAssertTrue(memoryDetails.isHittable)
+        clickRunningDisclosure(memoryDetails)
+        panelScrollPoint.scroll(byDeltaX: 0, deltaY: -300)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Reported free: 0 bytes", "Reported free: 0 bytes"))
+            .allElementsBoundByIndex.contains { $0.isHittable })
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Shared system memory", "Shared system memory"))
+            .allElementsBoundByIndex.contains { $0.isHittable })
+        let memoryImage = XCTAttachment(screenshot: app.screenshot())
+        memoryImage.name = "comfy-device-memory-panel"; memoryImage.lifetime = .keepAlways; add(memoryImage)
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("requests"), encoding: .utf8), requestsBefore,
+            "Opening cached disclosures and the memory panel must not contact the host")
+    }
+
     func testHostSetupRefreshFailureAndComparisonCancellation() throws {
         let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
             .appendingPathComponent("host-ui-" + UUID().uuidString).resolvingSymlinksInPath()
@@ -310,6 +376,10 @@ private final class HostedUIFixture: @unchecked Sendable {
             let body: String
             if failing { body = "{}" }
             else if request.hasPrefix("GET /api/ps ") { body = released ? "{\"models\":[]}" : "{\"models\":[{\"name\":\"fixture-model:latest\",\"digest\":\"\(digest)\",\"size_vram\":4000000},{\"name\":\"orphan-running:latest\",\"digest\":\"orphan-digest\",\"size_vram\":2000000}]}" }
+            else if request.hasPrefix("GET /models ") { body = #"["checkpoints"]"# }
+            else if request.hasPrefix("GET /models/checkpoints ") { body = #"["fixture.safetensors"]"# }
+            else if request.hasPrefix("GET /system_stats ") { body = #"{"system":{"comfyui_version":"fixture"},"devices":[{"name":"Apple M4","type":"mps","index":null,"vram_total":16000000000,"vram_free":0}]}"# }
+            else if request.hasPrefix("GET /queue ") { body = #"{"queue_running":[],"queue_pending":[]}"# }
             else if request.hasPrefix("GET /api/version ") { body = "{\"version\":\"fixture\"}" }
             else { body = "{\"models\":[{\"name\":\"fixture-model:latest\",\"digest\":\"\(digest)\",\"size\":4000000,\"details\":{\"family\":\"fixture\",\"parameter_size\":\"1B\",\"quantization_level\":\"Q4\"}}]}" }
             let response = "HTTP/1.1 \(failing ? "503 Unavailable" : "200 OK")\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body
