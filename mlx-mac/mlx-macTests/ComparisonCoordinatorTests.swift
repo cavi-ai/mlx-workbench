@@ -7,7 +7,73 @@ import SQLite3
 @testable import mlx_workbench
 
 @MainActor
+func unwrapAsync<Value>(_ expression: @autoclosure () async throws -> Value?, file: StaticString = #filePath, line: UInt = #line) async throws -> Value {
+    let value = try await expression()
+    return try XCTUnwrap(value, file: file, line: line)
+}
+
+@MainActor
+func assertAsyncEqual<Value: Equatable>(_ expression: @autoclosure () async throws -> Value, _ expected: Value, file: StaticString = #filePath, line: UInt = #line) async throws {
+    let value = try await expression()
+    XCTAssertEqual(value, expected, file: file, line: line)
+}
+
+@MainActor
+func assertAsyncNil<Value>(_ expression: @autoclosure () async throws -> Value?, file: StaticString = #filePath, line: UInt = #line) async throws {
+    let value = try await expression()
+    XCTAssertNil(value, file: file, line: line)
+}
+
+@MainActor
+func assertAsyncTrue(_ expression: @autoclosure () async throws -> Bool, _ message: String = "", file: StaticString = #filePath, line: UInt = #line) async throws {
+    let value = try await expression()
+    XCTAssertTrue(value, message, file: file, line: line)
+}
+
+@MainActor
+func assertAsyncFalse(_ expression: @autoclosure () async throws -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
+    let value = try await expression()
+    XCTAssertFalse(value, file: file, line: line)
+}
+
+@MainActor
+func assertAsyncThrows<Value>(_ expression: @autoclosure () async throws -> Value, file: StaticString = #filePath, line: UInt = #line) async {
+    do { _ = try await expression(); XCTFail("Expected rejection", file: file, line: line) }
+    catch {}
+}
+
+@MainActor
 final class ComparisonCoordinatorTests: XCTestCase {
+    private final class HistoryReadBlocker: @unchecked Sendable {
+        var connection: OpaquePointer?
+        init(url: URL) throws {
+            guard sqlite3_open(url.path, &connection) == SQLITE_OK,
+                  sqlite3_exec(connection, "BEGIN EXCLUSIVE", nil, nil, nil) == SQLITE_OK else {
+                throw WorkflowEvidenceError.invalid("Could not hold history transaction")
+            }
+        }
+        func release() { sqlite3_exec(connection, "ROLLBACK", nil, nil, nil); sqlite3_close(connection) }
+    }
+
+    func testAuthoritativeHistoryReadKeepsTheMainActorResponsive() async throws {
+        let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL)
+        let run = makeRun(results: [], state: .completed)
+        try store.replaceAll([run])
+        let coordinator = ComparisonCoordinator(probe: ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" },
+            start: { _, _, _ in }, stop: { _ in }), prober: StubComparisonProber(gate: nil)),
+            runStore: store, promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL),
+            loadHistoryInBackground: true, indexedHistory: true)
+        await coordinator.waitForHistory()
+        let blocker = try HistoryReadBlocker(url: coordinatorRunStoreURL.appendingPathExtension("sqlite"))
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { blocker.release() }
+        var mainActorResponded = false
+        let heartbeat = Task { @MainActor in mainActorResponded = true }
+        let saved = try await coordinator.recordedRun(id: run.id)
+        XCTAssertTrue(mainActorResponded, "A blocked history read must yield the UI actor")
+        XCTAssertEqual(saved, run)
+        await heartbeat.value
+    }
+
     func testMigrationTreatsExplicitNullErrorAsASuccessfulSample() throws {
         let sample = ComparisonSample(promptID: "p", outputExcerpt: "answer", tokensPerSecond: 10,
             timeToFirstTokenSeconds: nil, error: nil, fullOutput: "answer", finishReason: "stop")
@@ -142,7 +208,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.runs.first?.historyDetailsOmitted, true)
         await coordinator.reviewQuality(runID: run.id, modelPath: "/Models/a", score: 4)?.value
         XCTAssertEqual(coordinator.detailedRun?.qualityReviews?["/Models/a"]?.score, 4)
-        let saved = try XCTUnwrap(coordinator.recordedRun(id: run.id))
+        let saved = try await unwrapAsync(await coordinator.recordedRun(id: run.id))
         XCTAssertEqual(saved.results.first?.samples.first?.fullOutput, "Full recorded answer")
     }
 
@@ -787,7 +853,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
             laneConfigurations: lanes, settingsSearchGoal: setup.goal)
     }
 
-    func testSettingsSearchObjectiveUsesCompleteResponsesAndPreservesLegacyRanking() throws {
+    func testSettingsSearchObjectiveUsesCompleteResponsesAndPreservesLegacyRanking() async throws {
         var run = try settingsSearchFixture()
         let lanes = try XCTUnwrap(run.laneConfigurations)
         run.qualityReviews = Dictionary(uniqueKeysWithValues: lanes.map {
@@ -818,11 +884,11 @@ final class ComparisonCoordinatorTests: XCTestCase {
         }, start: { _, _, _ in XCTFail("Reading an objective must not serve") }, stop: { _ in }), prober: OpenAIEndpointProber()),
             runStore: source, promptSetStore: JSONStore(fileURL: temporaryURL("completion-prompts.json")))
         try source.upsert(run, id: \.id)
-        XCTAssertEqual(try coordinator.requireCurrentSuggestion(run).id, lanes[0].id)
+        try await assertAsyncEqual(try await coordinator.requireCurrentSuggestion(run).id, lanes[0].id)
         try source.upsert(completed, id: \.id)
         let saved = try Data(contentsOf: source.url)
-        XCTAssertThrowsError(try coordinator.requireCurrentSuggestion(run))
-        XCTAssertEqual(try coordinator.requireCurrentSuggestion(completed).id, lanes[2].id)
+        await assertAsyncThrows(try await coordinator.requireCurrentSuggestion(run))
+        try await assertAsyncEqual(try await coordinator.requireCurrentSuggestion(completed).id, lanes[2].id)
         XCTAssertEqual(try Data(contentsOf: source.url), saved)
         for changed in [try completedRun { $0[0].removeValue(forKey: "durationSeconds") },
                         try completedRun { $0[0]["durationSeconds"] = 0 },
@@ -901,20 +967,20 @@ final class ComparisonCoordinatorTests: XCTestCase {
         let comparison = ComparisonCoordinator(probe: ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "unused" },
             start: { _, _, _ in XCTFail("Reading suggestions must not serve") }, stop: { _ in }), prober: OpenAIEndpointProber()),
             runStore: source, promptSetStore: JSONStore(fileURL: temporaryURL("prompts.json")))
-        XCTAssertEqual(try comparison.requireCurrentSuggestion(reviewed).id, lanes[0].id)
+        try await assertAsyncEqual(try await comparison.requireCurrentSuggestion(reviewed).id, lanes[0].id)
         let profileStore = JSONStore<ServingProfile>(fileURL: temporaryURL("profiles.json"))
         let profiles = ServingProfileCoordinator(store: profileStore, probe: { _ in
             ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in throw WorkflowEvidenceError.invalid("Runtime unavailable") },
                 start: { _, _, _ in XCTFail("Failed verification must not start") }, stop: { _ in }), prober: OpenAIEndpointProber())
         })
-        profiles.suggestionSource = { try comparison.requireCurrentSuggestion($0) }
+        profiles.suggestionSource = { try await comparison.requireCurrentSuggestion($0) }
         try source.upsert(changedCache, id: \.id)
-        XCTAssertThrowsError(try comparison.requireCurrentSuggestion(changedCache))
-        XCTAssertNil(profiles.createSuggestedProfile(run: changedCache, name: "Unequal cache"))
+        await assertAsyncThrows(try await comparison.requireCurrentSuggestion(changedCache))
+        try await assertAsyncNil(await profiles.createSuggestedProfile(run: changedCache, name: "Unequal cache"))
         XCTAssertTrue(try profileStore.load().isEmpty)
         XCTAssertEqual(try source.load().first, changedCache)
         try source.upsert(reviewed, id: \.id)
-        let draft = try XCTUnwrap(profiles.createSuggestedProfile(run: reviewed, name: "Suggested"))
+        let draft = try await unwrapAsync(await profiles.createSuggestedProfile(run: reviewed, name: "Suggested"))
         XCTAssertEqual(draft.sourceRunID, reviewed.id)
         XCTAssertEqual(draft.sourceLaneID, lanes[0].id)
         await profiles.verifySuggestion(run: reviewed, profileID: draft.id)
@@ -923,8 +989,8 @@ final class ComparisonCoordinatorTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(profileStore.load().first).hasPassedVerification)
         var changedReview = reviewed; changedReview.qualityReviews?[lanes[0].id] = nil
         try source.upsert(changedReview, id: \.id)
-        XCTAssertThrowsError(try comparison.requireCurrentSuggestion(reviewed))
-        XCTAssertNil(profiles.createSuggestedProfile(run: reviewed, name: "Outdated"))
+        await assertAsyncThrows(try await comparison.requireCurrentSuggestion(reviewed))
+        try await assertAsyncNil(await profiles.createSuggestedProfile(run: reviewed, name: "Outdated"))
         XCTAssertEqual(try profileStore.load().count, 1)
         try source.upsert(reviewed, id: \.id)
         var partial = reviewed; partial.results.removeLast()

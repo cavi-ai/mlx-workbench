@@ -87,4 +87,6 @@ Serving rechecks the profile's verification against a fresh plan; changed settin
 
 Run's **Manage profile** menu offers **Rename…**, **Remove…** (refused while any endpoint references the profile), **Customize copy…** (a new, unverified profile) and **Compare profiles…** (two profiles of one model in lanes A and B). In Run, **Review profiles…** lists each profile's canary status and source measurements, with a **Check memory** action that previews the runtime's memory estimate against current RAM without loading anything; **Comparison evidence…** shows the recorded run behind the selected profile. A completed profile lane in Compare offers **Verify measured profile…** to attach that comparison and rerun the canaries.
 
+Profile evidence loads in the background with a progress indicator. If the profile changes while its evidence is loading, refresh the list before selecting it.
+
 Apart from verification, which serves the model for its canaries, none of these actions start inference. None change model files or rewrite past comparisons.

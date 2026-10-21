@@ -1899,12 +1899,12 @@ final class ComparisonMediaTests: XCTestCase {
         let sets = root.appendingPathComponent("sets.json")
         let oldBytes = try Data(contentsOf: sets)
         try Data("corrupt".utf8).write(to: sets)
-        XCTAssertFalse(coordinator.removePromptSet(id: owner.id))
+        try await assertAsyncFalse(await coordinator.removePromptSet(id: owner.id))
         XCTAssertTrue(FileManager.default.fileExists(atPath: path))
         try oldBytes.write(to: sets)
-        XCTAssertTrue(coordinator.removePromptSet(id: owner.id))
+        try await assertAsyncTrue(await coordinator.removePromptSet(id: owner.id))
         XCTAssertTrue(FileManager.default.fileExists(atPath: path), "Another durable set still references this copy")
-        XCTAssertTrue(coordinator.removePromptSet(id: borrowed.id))
+        try await assertAsyncTrue(await coordinator.removePromptSet(id: borrowed.id))
         XCTAssertFalse(FileManager.default.fileExists(atPath: path))
         XCTAssertEqual(try Data(contentsOf: source), Data("original".utf8))
         XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.appendingPathComponent("keep.txt").path))
@@ -2072,7 +2072,7 @@ final class ComparisonMediaTests: XCTestCase {
         // A failed authoritative run-store read must also prevent reclamation.
         let current = try XCTUnwrap(coordinator.promptSets.first { $0.id == saved.id })
         try Data("broken-runs".utf8).write(to: runs.url)
-        XCTAssertTrue(coordinator.removePromptSet(id: saved.id))
+        try await assertAsyncTrue(await coordinator.removePromptSet(id: saved.id))
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(current.prompts.first?.inputPath)))
     }
 
@@ -2568,7 +2568,7 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("runs.json")), historyBytes)
         XCTAssertEqual(run.promptEntries, set.prompts)
         XCTAssertTrue(coordinator.renamePromptSet(id: set.id, name: "Renamed video"))
-        XCTAssertTrue(coordinator.removePromptSet(id: set.id))
+        try await assertAsyncTrue(await coordinator.removePromptSet(id: set.id))
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("runs.json")), historyBytes)
         XCTAssertEqual(coordinator.runs.first?.promptEntries, set.prompts)
     }
@@ -2595,7 +2595,7 @@ final class ComparisonMediaTests: XCTestCase {
         let before = coordinator.promptSets, corrupt = Data("broken-json".utf8)
         try corrupt.write(to: store.url)
         XCTAssertFalse(coordinator.renamePromptSet(id: set.id, name: "Unsafe"))
-        XCTAssertFalse(coordinator.removePromptSet(id: set.id))
+        try await assertAsyncFalse(await coordinator.removePromptSet(id: set.id))
         let duplicate = await coordinator.createPromptSet(draft)
         XCTAssertNil(duplicate)
         XCTAssertEqual(coordinator.promptSets, before)
@@ -2603,7 +2603,7 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
-    func testOtherModeDraftsValidateInputsAndProtectBuiltinsAndUneditedFields() throws {
+    func testOtherModeDraftsValidateInputsAndProtectBuiltinsAndUneditedFields() async throws {
         let input = root.appendingPathComponent("input.png"); try Data("input".utf8).write(to: input)
         let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
         let original = PromptSet(id: "chat-edit", name: "Tools", useCase: .coding,
@@ -2640,7 +2640,7 @@ final class ComparisonMediaTests: XCTestCase {
         let coordinator = makeCoordinator(runner: StubMediaRunner())
         XCTAssertFalse(coordinator.canManagePromptSet(id: BuiltinPromptSets.coding.id))
         XCTAssertFalse(coordinator.renamePromptSet(id: BuiltinPromptSets.coding.id, name: "Unsafe"))
-        XCTAssertFalse(coordinator.removePromptSet(id: BuiltinPromptSets.coding.id))
+        try await assertAsyncFalse(await coordinator.removePromptSet(id: BuiltinPromptSets.coding.id))
     }
 
     func testInlineDraftValidationTracksEachPromptAndClearsAfterCorrection() throws {
@@ -3390,7 +3390,7 @@ final class ComparisonMediaTests: XCTestCase {
         let duringRun = await coordinator.savePromptSetEdits(edit)
         XCTAssertFalse(duringRun)
         XCTAssertFalse(coordinator.renamePromptSet(id: set.id, name: "Changed"))
-        XCTAssertFalse(coordinator.removePromptSet(id: set.id))
+        try await assertAsyncFalse(await coordinator.removePromptSet(id: set.id))
         XCTAssertEqual(try store.load(), [set])
         await runner.release(1); await waitForRun(coordinator)
         let afterRun = await coordinator.savePromptSetEdits(edit)
@@ -3618,7 +3618,7 @@ final class ComparisonMediaTests: XCTestCase {
         let copiedPath = try XCTUnwrap(saved.prompts.first?.inputPath)
         XCTAssertNotEqual(copiedPath, source.prompts[0].inputPath)
         XCTAssertEqual(coordinator.promptSets.first { $0.id == source.id }, source)
-        XCTAssertTrue(coordinator.removePromptSet(id: source.id))
+        try await assertAsyncTrue(await coordinator.removePromptSet(id: source.id))
         try FileManager.default.removeItem(at: input)
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: copiedPath)), Data("reference input".utf8))
         XCTAssertEqual(makeCoordinator(runner: runner).promptSets.first { $0.id == saved.id }, saved)
@@ -3843,7 +3843,7 @@ final class ComparisonMediaTests: XCTestCase {
         var renamed = source; renamed.name = "Jazz-funk"
         XCTAssertEqual(coordinator.promptSets.first { $0.id == source.id }, renamed)
         XCTAssertEqual(makeCoordinator(runner: StubMediaRunner()).promptSets.first { $0.id == source.id }, renamed)
-        XCTAssertTrue(coordinator.removePromptSet(id: source.id))
+        try await assertAsyncTrue(await coordinator.removePromptSet(id: source.id))
         let reloaded = makeCoordinator(runner: StubMediaRunner())
         XCTAssertFalse(reloaded.promptSets.contains { $0.id == source.id })
         XCTAssertEqual(reloaded.promptSets.first { $0.id == other.id }, other)
@@ -3867,19 +3867,19 @@ final class ComparisonMediaTests: XCTestCase {
         for id in [ComparisonMediaFixtures.musicGenerationSet.id, BuiltinPromptSets.toolCalling.id, "temporary"] {
             XCTAssertFalse(coordinator.canManagePromptSet(id: id))
             XCTAssertFalse(coordinator.renamePromptSet(id: id, name: "Changed"))
-            XCTAssertFalse(coordinator.removePromptSet(id: id))
+            try await assertAsyncFalse(await coordinator.removePromptSet(id: id))
         }
         for name in ["", " \n ", "Music\u{0}"] { XCTAssertFalse(coordinator.renamePromptSet(id: music.id, name: name)) }
         coordinator.start(variants: [("/music/a", nil)], promptSet: music)
         XCTAssertNotNil(coordinator.activeRunID)
         XCTAssertFalse(coordinator.renamePromptSet(id: music.id, name: "While running"))
-        XCTAssertFalse(coordinator.removePromptSet(id: music.id))
+        try await assertAsyncFalse(await coordinator.removePromptSet(id: music.id))
         await runner.release(1); await waitForRun(coordinator)
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("sets.json")), before)
     }
 
     @MainActor
-    func testMusicPromptManagementUsesDurableInputsAndDoesNotOverwriteCorruption() throws {
+    func testMusicPromptManagementUsesDurableInputsAndDoesNotOverwriteCorruption() async throws {
         let original = PromptSet(id: "music-user", name: "Music", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
         let coordinator = try makeCoordinator(runner: StubMediaRunner(), saved: [original])
@@ -3891,7 +3891,7 @@ final class ComparisonMediaTests: XCTestCase {
         let published = coordinator.promptSets, corrupt = Data("broken-json".utf8)
         try corrupt.write(to: url)
         XCTAssertFalse(coordinator.renamePromptSet(id: original.id, name: "Must fail"))
-        XCTAssertFalse(coordinator.removePromptSet(id: original.id))
+        try await assertAsyncFalse(await coordinator.removePromptSet(id: original.id))
         XCTAssertEqual(coordinator.promptSets, published)
         XCTAssertEqual(try Data(contentsOf: url), corrupt)
         XCTAssertNotNil(coordinator.promptSetManagementError)

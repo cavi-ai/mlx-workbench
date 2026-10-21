@@ -284,15 +284,15 @@ class AppHost: ObservableObject {
         self.endpoint.profileLifecycle = { profile in .verifiedProfile(try profiles.resolve(profile), api: api) }
         profiles.suggestionSource = { [weak self] run in
             guard let comparison = self?.comparison else { throw WorkflowEvidenceError.invalid("Comparison results are unavailable.") }
-            return try comparison.requireCurrentSuggestion(run)
+            return try await comparison.requireCurrentSuggestion(run)
         }
         profiles.comparisonSource = { [weak self] id in
             guard let comparison = self?.comparison else { throw WorkflowEvidenceError.invalid("Comparison results are unavailable.") }
-            return try comparison.recordedRun(id: id)
+            return try await comparison.recordedRun(id: id)
         }
         profiles.measuredSource = { [weak self] run, laneID in
             guard let comparison = self?.comparison else { throw WorkflowEvidenceError.invalid("Comparison results are unavailable.") }
-            return try comparison.requireCurrentProfileLane(run, laneID: laneID)
+            return try await comparison.requireCurrentProfileLane(run, laneID: laneID)
         }
         profiles.removalGuard = { [weak self] id in
             guard let endpoint = self?.endpoint else { throw WorkflowEvidenceError.invalid("Endpoint configuration is unavailable.") }

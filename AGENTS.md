@@ -181,6 +181,10 @@ server.
   arguments validated against the schema's required keys). Past runs are
   browsable in a searchable history popover; `ModelPerformanceProfile` aggregates
   per-model stats into Model Details.
+  Indexed history reads and writes use the serial `ComparisonHistoryWorker`.
+  Profile evidence and selection await authoritative reads and recheck profile
+  snapshots after suspension. Prompt-input reclamation reads history and removes
+  owned files off the main actor while prompt-set management remains busy.
   **Compare modes**: a picker above the variant slots (segmented when it fits, otherwise a menu; `ComparisonMode`:
   chat, vision, video understanding, speech to text, text to speech, image
   generation, video generation, music generation); slots list only models whose `ModelTaskType`

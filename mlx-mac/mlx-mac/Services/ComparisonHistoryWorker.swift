@@ -194,7 +194,7 @@ final class RecordHistoryWorker<Value: Codable & Identifiable & Sendable>: @unch
         self.store = store
         archive = indexed ? ComparisonRecordArchive(legacyURL: store.url) : nil
     }
-    func loadSync() throws -> [Value] { try archive?.load() ?? store.loadStreaming() }
+    private func loadSync() throws -> [Value] { try archive?.load() ?? store.loadStreaming() }
     func load() async throws -> [Value] { try await perform { try self.loadSync() } }
     func upsert(_ value: Value) async throws {
         try await perform {
@@ -202,7 +202,7 @@ final class RecordHistoryWorker<Value: Codable & Identifiable & Sendable>: @unch
             else { try self.store.upsertStreaming(value, id: \.id) }
         }
     }
-    func recordSync(id: UUID) throws -> Value? {
+    private func recordSync(id: UUID) throws -> Value? {
         if let archive { return try archive.record(id: id) }
         return try store.findStreaming(id: id, keyPath: \.id)
     }

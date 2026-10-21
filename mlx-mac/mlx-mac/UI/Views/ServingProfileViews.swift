@@ -86,7 +86,7 @@ struct ComparisonProfileVerificationSheet: View {
                 if let expected { await profiles.verifyMeasuredLane(run: request.run, laneID: request.laneID, original: expected) }
                 else { error = "The profile is no longer available." }
             } else {
-                if profileID == nil { profileID = profiles.createSuggestedProfile(run: request.run, name: name)?.id }
+                if profileID == nil { profileID = await profiles.createSuggestedProfile(run: request.run, name: name)?.id }
                 if let profileID { await profiles.verifySuggestion(run: request.run, profileID: profileID) }
             }
             error = error ?? profiles.lastError
@@ -135,6 +135,8 @@ struct ServingProfileControls: View {
     @State private var comparisonRequest: ServingProfile?
     @State private var evidenceRequest: ServingProfileComparisonEvidence?
     @State private var evidenceError: String?
+    @State private var readingEvidence = false
+    @State private var evidenceReadTask: Task<Void, Never>?
     @State private var chooserRequest: ServingProfileChooserRequest?
 
     private var choices: [ServingProfile] { profiles.profiles.filter { $0.modelPath == modelPath } }
@@ -151,15 +153,16 @@ struct ServingProfileControls: View {
                     })) {
                     Text("Runtime defaults").tag(Optional<UUID>.none)
                     ForEach(choices) { profile in Text(profile.name).tag(Optional(profile.id)) }
-                }.disabled(workflow.isServeSubmissionInFlight || profiles.activeID != nil)
+                }.disabled(readingEvidence || workflow.isServeSubmissionInFlight || profiles.activeID != nil)
                 Button("Review profiles…") {
                     guard let modelPath else { return }
-                    do {
+                    readEvidence {
                         chooserRequest = ServingProfileChooserRequest(modelPath: modelPath,
-                            choices: try profiles.profileChoices(modelPath: modelPath))
+                            choices: try await profiles.profileChoices(modelPath: modelPath))
                         evidenceError = nil
-                    } catch { evidenceError = AppHost.render(error) }
-                }.disabled(workflow.isServeSubmissionInFlight || profiles.activeID != nil || modelPath == nil)
+                    }
+                }.disabled(readingEvidence || workflow.isServeSubmissionInFlight || profiles.activeID != nil || modelPath == nil)
+                if readingEvidence { ProgressView("Reading comparison evidence…").controlSize(.small) }
                 if let profile = selected {
                     Text("Draft-and-verify \(profile.options.speculation ? "on" : "off") · expert memory \(profile.options.expertMemoryGB.map { "\($0.formatted()) GB" } ?? "automatic") · \(profile.options.contextTokens) context tokens")
                         .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
@@ -167,8 +170,7 @@ struct ServingProfileControls: View {
                         .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                     HStack {
                         Button("Comparison evidence…") {
-                            do { evidenceRequest = try profiles.comparisonEvidence(for: profile); evidenceError = nil }
-                            catch { evidenceError = AppHost.render(error) }
+                            readEvidence { evidenceRequest = try await profiles.comparisonEvidence(for: profile) }
                         }
                         Button(profiles.activeID == profile.id ? "Verifying…" : "Verify profile") {
                             Task {
@@ -185,7 +187,7 @@ struct ServingProfileControls: View {
                             Button("Rename…") { renameRequest = profiles.profileForManagement(profile.id) }
                             Button("Remove…", role: .destructive) { removalRequest = profiles.profileForManagement(profile.id) }
                         }.fixedSize()
-                    }.disabled(profiles.activeID != nil || workflow.isServeSubmissionInFlight)
+                    }.disabled(readingEvidence || profiles.activeID != nil || workflow.isServeSubmissionInFlight)
                     if let proof = profile.verification {
                         DisclosureGroup("Canary results") {
                             ForEach(proof.canaries, id: \.id) { canary in
@@ -238,8 +240,20 @@ struct ServingProfileControls: View {
                         if workflow.servingProfile?.id == profile.id { workflow.selectServingProfile(nil) }
                     }
                 }
+                .onDisappear { evidenceReadTask?.cancel() }
+                .onChange(of: modelPath) { _, _ in evidenceReadTask?.cancel() }
         }
     }
+    private func readEvidence(_ operation: @escaping () async throws -> Void) {
+        guard !readingEvidence else { return }
+        readingEvidence = true; evidenceError = nil
+        evidenceReadTask = Task {
+            defer { readingEvidence = false; evidenceReadTask = nil }
+            do { try await operation() }
+            catch { if !Task.isCancelled { evidenceError = AppHost.render(error) } }
+        }
+    }
+
 }
 
 struct ServingProfileChooserRequest: Identifiable {
@@ -259,6 +273,8 @@ struct ServingProfileChooserSheet: View {
     @State private var memoryReviews: [UUID: ServingProfileMemoryReview] = [:]
     @State private var memoryCheckingID: UUID?
     @State private var memoryCheckTask: Task<Void, Never>?
+    @State private var readingProfiles = false
+    @State private var profileReadTask: Task<Void, Never>?
 
     init(profiles: ServingProfileCoordinator, request: ServingProfileChooserRequest, selectedID: UUID?,
          onSelect: @escaping (ServingProfile) -> String?) {
@@ -305,10 +321,10 @@ struct ServingProfileChooserSheet: View {
                             if let review = memoryReviews[choice.id] { ServingProfileMemoryReviewView(review: review) }
                             HStack {
                                 Button("Select profile") { select(choice) }
-                                    .disabled(!choice.profile.isValid || profiles.activeID != nil || memoryCheckingID != nil)
+                                    .disabled(readingProfiles || !choice.profile.isValid || profiles.activeID != nil || memoryCheckingID != nil)
                                     .accessibilityLabel("Select profile \(choice.profile.name)")
                                 Button(memoryCheckingID == choice.id ? "Checking memory…" : "Check memory", action: { checkMemory(choice) })
-                                    .disabled(!choice.profile.isValid || profiles.activeID != nil || memoryCheckingID != nil)
+                                    .disabled(readingProfiles || !choice.profile.isValid || profiles.activeID != nil || memoryCheckingID != nil)
                                     .accessibilityLabel("Check memory for \(choice.profile.name)")
                                 if memoryCheckingID == choice.id { ProgressView().controlSize(.small) }
                             }
@@ -320,32 +336,43 @@ struct ServingProfileChooserSheet: View {
             Text("Measurements retain their recorded prompt sets and dates. System headroom includes other apps and file caching; it does not measure model-only RAM or predict available RAM now.")
                 .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted).fixedSize(horizontal: false, vertical: true)
             ErrorBanner(text: error)
+            if readingProfiles { ProgressView("Reading comparison evidence…").controlSize(.small) }
             HStack {
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(memoryCheckingID != nil)
                 Spacer()
-                Button("Refresh profiles", action: refresh).disabled(profiles.activeID != nil || memoryCheckingID != nil)
+                Button("Refresh profiles", action: refresh).disabled(readingProfiles || profiles.activeID != nil || memoryCheckingID != nil)
             }
         }.padding(WorkbenchSpacing.lg).frame(width: 600, height: 640)
-            .interactiveDismissDisabled(memoryCheckingID != nil)
-            .onDisappear { memoryCheckTask?.cancel() }
+            .interactiveDismissDisabled(memoryCheckingID != nil || readingProfiles)
+            .onDisappear { memoryCheckTask?.cancel(); profileReadTask?.cancel() }
     }
 
     private func select(_ choice: ServingProfileChoice) {
-        do {
-            let profile = try profiles.selectChoice(choice, modelPath: request.modelPath)
-            error = onSelect(profile)
-            if error == nil { dismiss() }
-        } catch { self.error = AppHost.render(error) }
+        guard !readingProfiles, memoryCheckingID == nil else { return }
+        readingProfiles = true
+        profileReadTask = Task {
+            defer { readingProfiles = false; profileReadTask = nil }
+            do {
+                let profile = try await profiles.selectChoice(choice, modelPath: request.modelPath)
+                error = onSelect(profile)
+                if error == nil { dismiss() }
+            } catch { if !Task.isCancelled { self.error = AppHost.render(error) } }
+        }
     }
 
     private func refresh() {
+        guard !readingProfiles, memoryCheckingID == nil else { return }
+        readingProfiles = true
         memoryReviews = [:]
-        do { choices = try profiles.profileChoices(modelPath: request.modelPath); error = nil }
-        catch { choices = []; self.error = AppHost.render(error) }
+        profileReadTask = Task {
+            defer { readingProfiles = false; profileReadTask = nil }
+            do { choices = try await profiles.profileChoices(modelPath: request.modelPath); error = nil }
+            catch { if !Task.isCancelled { choices = []; self.error = AppHost.render(error) } }
+        }
     }
 
     private func checkMemory(_ choice: ServingProfileChoice) {
-        guard memoryCheckingID == nil else { return }
+        guard memoryCheckingID == nil, !readingProfiles else { return }
         memoryCheckingID = choice.id; memoryReviews[choice.id] = nil; error = nil
         memoryCheckTask = Task {
             defer { memoryCheckingID = nil; memoryCheckTask = nil }
