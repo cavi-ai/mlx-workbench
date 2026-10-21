@@ -21,6 +21,18 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
         }
     }
 
+    func testScanPreservesNonTimeoutFailures() async throws {
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: "/fixture", command: { _, _, _, _ in
+            throw BridgeError.skillUnavailable
+        })
+        do {
+            _ = try await api.scan(ggufRoots: [], mlxRoots: ["/models"], signatures: false)
+            XCTFail("Expected a launch failure")
+        } catch let error as BridgeError {
+            XCTAssertEqual(error.code, "skill_unavailable")
+        }
+    }
+
     private static var taskSummary: [String: Any] {
         ["schema": "task-run/1", "id": "11111111-1111-4111-8111-111111111111", "kind": "music_generation", "state": "starting",
          "model_path": "/Models/MiniMax Music", "created_at": "2026-10-17T12:00:00+00:00", "started_at": NSNull(), "completed_at": NSNull(),

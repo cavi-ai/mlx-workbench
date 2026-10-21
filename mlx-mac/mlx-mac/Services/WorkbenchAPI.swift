@@ -243,7 +243,7 @@ actor WorkbenchAPI {
         } catch BridgeError.skillTimeout {
             throw BridgeError.remote(
                 code: "skill_timeout",
-                message: "Library scanning timed out. The last successful inventory is still available.",
+                message: "Library scanning timed out.",
                 remediation: "Retry the scan. If it times out again, check model folders in Settings for unavailable drives or unnecessarily broad folders."
             )
         }
