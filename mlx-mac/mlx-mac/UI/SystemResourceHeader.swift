@@ -298,7 +298,7 @@ struct SavedModelHostsSection: View {
                 } ?? "Activity unknown")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
                 Text(inventory.loadedStateSummary).font(WorkbenchTypography.secondary)
-                if host.provider == .comfyUI { HostDeviceMemoryDisclosure(snapshot: inventory.deviceMemory) }
+                if host.provider.adapter.reportsDeviceMemory { HostDeviceMemoryDisclosure(snapshot: inventory.deviceMemory) }
                 ForEach(Array(inventory.reportedLoadedModels.prefix(3))) { model in
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xxxs) {
                         Text(model.name).font(WorkbenchTypography.secondary).lineLimit(2)

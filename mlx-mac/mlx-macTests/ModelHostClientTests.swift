@@ -650,6 +650,55 @@ final class ModelHostClientTests: XCTestCase {
         XCTAssertTrue(requests.values.isEmpty)
     }
 
+    func testEachProviderAdapterDeclaresItsReleaseScopeAndReportedCapabilities() {
+        let expected: [(ModelHostProvider, String, String, HostReleaseScope?, digest: Bool, memory: Bool, workflows: Bool)] = [
+            (.ollama, "Ollama", "http://127.0.0.1:11434", .model, true, false, false),
+            (.lmStudio, "LM Studio", "http://127.0.0.1:1234", .instance, false, false, false),
+            (.comfyUI, "ComfyUI", "http://127.0.0.1:8188", .host, false, true, true),
+            (.llamaCpp, "llama.cpp", "http://127.0.0.1:8080", nil, false, false, false),
+            (.openAICompatible, "OpenAI-compatible", "http://127.0.0.1:8080", nil, false, false, false)
+        ]
+        XCTAssertEqual(expected.map { $0.0 }, ModelHostProvider.allCases)
+        for row in expected {
+            let adapter = row.0.adapter
+            XCTAssertEqual(adapter.title, row.1)
+            XCTAssertEqual(adapter.defaultURL, row.2)
+            XCTAssertEqual(adapter.releaseScope, row.3, row.1)
+            XCTAssertEqual(adapter.identifiesWeightsByDigest, row.digest, row.1)
+            XCTAssertEqual(adapter.reportsDeviceMemory, row.memory, row.1)
+            XCTAssertEqual(adapter.runsImageWorkflows, row.workflows, row.1)
+        }
+    }
+
+    func testReleaseReadbackFollowsEachAdapterIdentityRule() {
+        let activity = HostActivity(state: .idle, detail: "Idle")
+        func preview(_ provider: ModelHostProvider, _ selection: HostResourceSelection, _ model: HostedModel?) -> HostResourcePreview {
+            HostResourcePreview(host: host(provider), selection: selection, model: model, activity: activity)
+        }
+        func inventory(_ preview: HostResourcePreview, _ models: [HostedModel]) -> HostInventory {
+            HostInventory(host: preview.host, models: models, capturedAt: Date())
+        }
+        let ollama = preview(.ollama, HostResourceSelection(modelID: "alpha"),
+            HostedModel(hostID: UUID(), modelID: "alpha", name: "Alpha", digest: "before", isLoaded: true))
+        let replaced = HostedModel(hostID: ollama.host.id, modelID: "alpha", name: "Alpha", digest: "after", isLoaded: false)
+        XCTAssertEqual(ollama.host.provider.adapter.releaseReadback(ollama, inventory: inventory(ollama, [replaced])),
+            "The model identity changed; unloading the selected weights could not be verified.")
+        var unloaded = replaced; unloaded.digest = "before"
+        XCTAssertEqual(ollama.host.provider.adapter.releaseReadback(ollama, inventory: inventory(ollama, [unloaded])), "The model is no longer loaded.")
+        XCTAssertEqual(ollama.host.provider.adapter.releaseReadback(ollama, inventory: inventory(ollama, [])),
+            "The model is absent from the refreshed inventory; memory release could not be verified.")
+
+        let lmStudio = preview(.lmStudio, HostResourceSelection(modelID: "alpha", instanceID: "one"), nil)
+        var instances = HostedModel(hostID: lmStudio.host.id, modelID: "alpha", name: "Alpha", isLoaded: true)
+        instances.loadedInstanceIDs = ["two"]
+        XCTAssertEqual(lmStudio.host.provider.adapter.releaseReadback(lmStudio, inventory: inventory(lmStudio, [instances])),
+            "The selected instance is no longer loaded.")
+
+        let comfy = preview(.comfyUI, HostResourceSelection(), nil)
+        XCTAssertEqual(comfy.host.provider.adapter.releaseReadback(comfy, inventory: inventory(comfy, [])),
+            "ComfyUI does not report completion of memory cleanup; released memory could not be verified.")
+    }
+
     private func ollamaLoadedResponses(runningDigest: String = "digest-alpha") -> [String: HostStubResponse] {
         ["/api/tags": .json(#"{"models":[{"name":"alpha","digest":"digest-alpha"}]}"#),
          "/api/ps": .json("{\"models\":[{\"name\":\"alpha\",\"digest\":\"\(runningDigest)\"}]}"),

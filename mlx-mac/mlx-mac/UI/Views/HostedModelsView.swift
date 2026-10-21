@@ -181,7 +181,7 @@ struct HostedModelsView: View {
             if let model = selectedModel {
                 DisclosureGroup("Reported model details") {
                     VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
-                        if inventory.host.provider == .ollama {
+                        if inventory.host.provider.adapter.identifiesWeightsByDigest {
                             Button("Read model details") {
                                 Task { await hosts.readModelDetails(inventory.host.id, modelID: model.modelID) }
                             }
@@ -198,7 +198,7 @@ struct HostedModelsView: View {
             }
             if let version = inventory.runtimeVersion { Text("Runtime version: \(version)").font(WorkbenchTypography.secondary) }
             if let device = inventory.deviceSummary { Text(device).font(WorkbenchTypography.secondary) }
-            if inventory.host.provider == .comfyUI { HostDeviceMemoryDisclosure(snapshot: inventory.deviceMemory) }
+            if inventory.host.provider.adapter.reportsDeviceMemory { HostDeviceMemoryDisclosure(snapshot: inventory.deviceMemory) }
             ForEach(inventory.warnings, id: \.self) { Label($0, systemImage: "info.circle").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted) }
             Text("Host-reported metadata · \(inventory.capturedAt.formatted(date: .abbreviated, time: .standard))")
                 .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
@@ -209,37 +209,38 @@ struct HostedModelsView: View {
     private func resourceControls(_ host: ModelHost) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             if let activity = inventory?.activity { HostActivityLabel(activity: activity) }
-            switch host.provider {
-            case .comfyUI:
+            switch host.provider.adapter.releaseScope {
+            case .host:
                 Button("Free host memory…") { resourceRequest = HostResourceRequest(hostID: host.id, selection: HostResourceSelection()) }
                     .disabled(hosts.resourceBusy || hosts.resourceUseBlocked())
                     .accessibilityIdentifier("host-resource-open")
                     .help("Review activity before requesting cleanup of all cached ComfyUI models.")
-            case .ollama, .lmStudio:
+            case .model, .instance:
+                let byInstance = host.provider.adapter.releaseScope == .instance
                 if let model = selectedModel, model.isLoaded == true {
                     let instances = model.loadedInstanceIDs ?? []
                     let instance = instances.count == 1 ? instances.first : selectedInstanceID.flatMap { instances.contains($0) ? $0 : nil }
                     HStack {
-                        if host.provider == .lmStudio, instances.count > 1 {
+                        if byInstance, instances.count > 1 {
                             Picker("Loaded instance", selection: $selectedInstanceID) {
                                 Text("Choose instance").tag(String?.none)
                                 ForEach(instances, id: \.self) { Text($0).tag(Optional($0)) }
                             }.frame(maxWidth: 300).accessibilityIdentifier("host-resource-instance")
                         }
-                        Button(host.provider == .lmStudio ? "Unload instance…" : "Unload model…") {
+                        Button(byInstance ? "Unload instance…" : "Unload model…") {
                             resourceRequest = HostResourceRequest(hostID: host.id,
-                                selection: HostResourceSelection(modelID: model.modelID, instanceID: host.provider == .lmStudio ? instance : nil))
-                        }.disabled(hosts.resourceBusy || hosts.resourceUseBlocked() || (host.provider == .lmStudio && instance == nil))
+                                selection: HostResourceSelection(modelID: model.modelID, instanceID: byInstance ? instance : nil))
+                        }.disabled(hosts.resourceBusy || hosts.resourceUseBlocked() || (byInstance && instance == nil))
                             .accessibilityIdentifier("host-resource-open")
                             .help("Check current activity and review the exact target before unloading.")
                     }
-                    if host.provider == .lmStudio, instances.isEmpty {
+                    if byInstance, instances.isEmpty {
                         Text("Unloading requires native loaded-instance identities from this host.").font(WorkbenchTypography.secondary)
                     }
                 } else {
                     Text("Select a model reported as loaded to review unloading.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
                 }
-            case .llamaCpp, .openAICompatible:
+            case nil:
                 Text("Unloading is unavailable for this provider.").font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
             }
         }
@@ -254,7 +255,7 @@ struct HostedModelsView: View {
         guard let model = selectedModel else { return }
         let target = HostedComparisonTarget(host: inventory.host, model: model, capturedAt: inventory.capturedAt, runtimeVersion: inventory.runtimeVersion)
         do {
-            try target.validate(mode: inventory.host.provider == .comfyUI ? .imageGeneration : .chat)
+            try target.validate(mode: inventory.host.provider.adapter.runsImageWorkflows ? .imageGeneration : .chat)
             if !appHost.hostedComparisonTargets.contains(where: { $0.id == target.id }) {
                 guard appHost.hostedComparisonTargets.count < 4 else { throw HostedIntegrationError.invalid("Remove a comparison lane before adding another model.") }
                 appHost.hostedComparisonTargets.append(target)

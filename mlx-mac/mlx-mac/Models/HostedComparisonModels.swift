@@ -36,11 +36,11 @@ struct HostedComparisonTarget: Codable, Equatable, Identifiable, Sendable {
                 throw HostedIntegrationError.invalid("The selected model does not belong to this host. Refresh its inventory.")
             }
             if mode == .imageGeneration {
-                guard host.provider == .comfyUI, model.category == "checkpoints" else {
+                guard host.provider.adapter.runsImageWorkflows, model.category == "checkpoints" else {
                     throw HostedIntegrationError.invalid("Image workflow comparisons require ComfyUI checkpoints.")
                 }
             } else {
-                guard mode == .chat, host.provider != .comfyUI,
+                guard mode == .chat, !host.provider.adapter.runsImageWorkflows,
                       model.category != "embedding", model.category != "embeddings", model.category != "decision",
                       model.capabilities?.contains("decisions output") != true,
                       model.capabilities.map({ !$0.contains("embedding") || $0.contains("completion") || $0.contains("chat") }) ?? true else {
@@ -68,7 +68,7 @@ struct HostedComparisonTarget: Codable, Equatable, Identifiable, Sendable {
         } catch {
             throw HostedIntegrationError.invalid("The host's latest model metadata does not support this comparison. Refresh and select a compatible model.")
         }
-        if host.provider == .ollama, let installedDigest = current.digest, !installedDigest.isEmpty,
+        if host.provider.adapter.identifiesWeightsByDigest, let installedDigest = current.digest, !installedDigest.isEmpty,
            inventory.runningModels?.contains(where: { running in
                running.hostID == host.id && running.modelID == current.modelID
                    && running.digest.map { !$0.isEmpty && $0 != installedDigest } == true

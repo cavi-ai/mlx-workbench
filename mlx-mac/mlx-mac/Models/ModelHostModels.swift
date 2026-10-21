@@ -1,26 +1,10 @@
 import Foundation
 
+/// Provider behavior lives in its `adapter` (`Services/ModelHostAdapter.swift`).
 enum ModelHostProvider: String, Codable, CaseIterable, Identifiable, Sendable {
     case ollama, lmStudio, comfyUI, llamaCpp, openAICompatible
 
     var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .ollama: return "Ollama"
-        case .lmStudio: return "LM Studio"
-        case .comfyUI: return "ComfyUI"
-        case .llamaCpp: return "llama.cpp"
-        case .openAICompatible: return "OpenAI-compatible"
-        }
-    }
-    var defaultURL: String {
-        switch self {
-        case .ollama: return "http://127.0.0.1:11434"
-        case .lmStudio: return "http://127.0.0.1:1234"
-        case .comfyUI: return "http://127.0.0.1:8188"
-        case .llamaCpp, .openAICompatible: return "http://127.0.0.1:8080"
-        }
-    }
 }
 
 struct ModelHost: Codable, Equatable, Identifiable, Sendable {
@@ -179,17 +163,17 @@ struct HostResourcePreview: Identifiable, Equatable, Sendable {
     let model: HostedModel?
     let activity: HostActivity
     var actionTitle: String {
-        switch host.provider {
-        case .comfyUI: "Free host memory"
-        case .lmStudio: "Unload instance"
-        default: "Unload model"
+        switch host.provider.adapter.releaseScope {
+        case .host: "Free host memory"
+        case .instance: "Unload instance"
+        case .model, nil: "Unload model"
         }
     }
     var scope: String {
-        switch host.provider {
-        case .comfyUI: "All cached models on \(host.name). This can affect other workflows using the host. Running and queued jobs are not stopped."
-        case .lmStudio: "Instance \(selection.instanceID ?? "Unknown") of \(model?.name ?? "Unknown") on \(host.name)."
-        default: "\(model?.name ?? "Unknown") on \(host.name)."
+        switch host.provider.adapter.releaseScope {
+        case .host: "All cached models on \(host.name). This can affect other workflows using the host. Running and queued jobs are not stopped."
+        case .instance: "Instance \(selection.instanceID ?? "Unknown") of \(model?.name ?? "Unknown") on \(host.name)."
+        case .model, nil: "\(model?.name ?? "Unknown") on \(host.name)."
         }
     }
     var warning: String {
