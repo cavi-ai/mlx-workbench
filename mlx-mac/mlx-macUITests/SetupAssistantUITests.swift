@@ -1488,10 +1488,9 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
         func reveal(_ element: XCUIElement) {
             let scroll = app.scrollViews.containing(.button, identifier: "Refresh backends").firstMatch
-            let scrollAnchor = app.buttons["Install Runtime…"]
-            XCTAssertTrue(scrollAnchor.waitForExistence(timeout: 10))
+            XCTAssertTrue(scroll.waitForExistence(timeout: 10))
             for _ in 0..<8 where !element.isHittable {
-                scrollAnchor.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 300 : -300)
+                scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 300 : -300)
             }
             XCTAssertTrue(element.isHittable)
         }
