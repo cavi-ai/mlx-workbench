@@ -451,7 +451,7 @@ final class InferenceTaskTests: XCTestCase {
         }
     }
 
-    func testVideoTaskDraftsRejectMalformedValuesWithoutInventingPlannerRanges() throws {
+    func testVideoTaskDraftsRejectMalformedValuesAndLeaveFrameAlignmentToEngine() throws {
         XCTAssertThrowsError(try VideoUnderstandingTaskDraft(videoPath: "relative.mp4", prompt: "Summarize").request(modelPath: "/Models/vlm"))
         XCTAssertThrowsError(try VideoUnderstandingTaskDraft(videoPath: "/tmp/input.mp4", prompt: " ").request(modelPath: "/Models/vlm"))
         XCTAssertThrowsError(try VideoUnderstandingTaskDraft(videoPath: "/tmp/input.mp4", prompt: "Summarize", fps: "not-a-number").request(modelPath: "/Models/vlm"))
@@ -810,6 +810,56 @@ final class InferenceTaskTests: XCTestCase {
         XCTAssertEqual(draft.duration, 8)
         XCTAssertEqual(draft.steps, 12)
         XCTAssertEqual(draft.seed, 7)
+    }
+
+    func testInferenceSettingsTreatBlankAsEngineDefaultAndEnforceBounds() throws {
+        XCTAssertNil(try InferenceSettings.ImageGeneration.size.value("  "))
+        XCTAssertEqual(try InferenceSettings.ImageGeneration.size.value(" 2048 "), 2048)
+        XCTAssertThrowsError(try InferenceSettings.ImageGeneration.size.value("2064"))
+        XCTAssertThrowsError(try InferenceSettings.VideoGeneration.fps.value("16.0"))
+        XCTAssertEqual(try InferenceSettings.Understanding.videoFPS.value("0.1"), 0.1)
+        XCTAssertThrowsError(try InferenceSettings.Understanding.videoFPS.value("inf"))
+        XCTAssertEqual(try InferenceSettings.Music.duration.value("360"), 360)
+        XCTAssertThrowsError(try InferenceSettings.Music.duration.value("0")) {
+            XCTAssertEqual($0.localizedDescription, "Duration must be greater than 0 and at most 360 seconds.")
+        }
+        XCTAssertTrue(InferenceSettings.seed.accepts(4_294_967_295))
+        XCTAssertFalse(InferenceSettings.seed.accepts(4_294_967_296))
+        XCTAssertTrue(InferenceSettings.Speech.text.accepts("Line one\n\tLine two"))
+        XCTAssertFalse(InferenceSettings.Speech.text.accepts(String(repeating: "a", count: 2001)))
+        XCTAssertFalse(InferenceSettings.Music.caption.accepts("bell\u{7}"))
+    }
+
+    func testLibraryDraftsAndComparePromptsShareEngineSettingRules() throws {
+        func comparePrompt(_ mode: ComparisonMode, _ edit: (inout ComparisonPromptSetDraft.Prompt) -> Void) -> String? {
+            var prompt = ComparisonPromptSetDraft.Prompt(
+                PromptEntry(id: "p", text: "A red kite", inputKind: mode.inputKind,
+                            builtinInput: mode.inputKind == nil ? nil : "red-square"), mode: mode)
+            edit(&prompt)
+            return prompt.validationError(for: mode)
+        }
+        let tokens = "Token limit must be a whole number from 1 to 4096."
+        XCTAssertEqual(ImageUnderstandingTaskDraft(imagePath: "/tmp/in.png", prompt: "What color?", maxTokens: "5000").validationError, tokens)
+        XCTAssertEqual(VideoUnderstandingTaskDraft(videoPath: "/tmp/in.mp4", prompt: "What moves?", maxTokens: "5000").validationError, tokens)
+        XCTAssertEqual(comparePrompt(.vision) { $0.maxTokens = "5000" }, tokens)
+
+        let frameRate = "Frame rate must be a whole number from 1 to 60."
+        XCTAssertEqual(VideoGenerationTaskDraft(prompt: "A red kite", fps: "2.5").validationError, frameRate)
+        XCTAssertEqual(comparePrompt(.videoGeneration) { $0.fps = "2.5" }, frameRate)
+
+        XCTAssertEqual(ImageGenerationTaskDraft(prompt: "A red kite", width: "4000").validationError,
+                       "Width must be a whole number from 256 to 2048.")
+        XCTAssertEqual(ImageGenerationTaskDraft(prompt: "A red kite", height: "1000").validationError,
+                       "Height must be a multiple of 16 pixels.")
+        XCTAssertEqual(comparePrompt(.imageGeneration) { $0.size = "1000" }, "Image size must be a multiple of 16 pixels.")
+
+        var music = MusicComparisonSetup.Prompt(PromptEntry(id: "m", text: "Quiet piano"))
+        music.steps = "31"
+        XCTAssertEqual(MusicTaskDraft(caption: "Quiet piano", steps: 31).validationError, music.validationError)
+        XCTAssertEqual(music.validationError, "Steps must be a whole number from 1 to 30.")
+
+        XCTAssertEqual(SpeakTaskDraft(text: "Read this.", speed: "3").validationError, "Speed must be a number from 0.5 to 2.")
+        XCTAssertEqual(VideoUnderstandingTaskDraft(videoPath: "/tmp/in.mp4", prompt: "What moves?", fps: "2.5").validationError, nil)
     }
 
     @MainActor

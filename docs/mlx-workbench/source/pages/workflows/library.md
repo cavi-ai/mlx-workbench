@@ -80,31 +80,39 @@ enter a language code. The engine records a verified copy with the task before
 accepting it; later reuse reads that retained copy. Completed results show the
 full transcript and the input's recorded digest.
 
-For **Speak text**, enter text and optionally set a voice, speed or language
-code. Leave those controls blank to let the engine apply its defaults. A
+For **Speak text**, enter up to 2,000 characters and optionally set a voice,
+speed (0.5–2) or language code. Leave those controls blank to let the engine
+apply its defaults. A
 completed result exposes a verified WAV for playback and export. Workbench
 does not assign an automatic quality score to speech output.
 
-For **Generate image**, enter a prompt and optionally set width, height, steps
-or seed. Blank settings are left to the engine planner. The completed task
+For **Generate image**, enter a prompt of up to 2,000 characters and optionally
+set width and height (multiples of 16 from 256 to 2048), steps (1–100) or seed.
+Blank settings are left to the engine planner. The completed task
 shows the verified PNG and supports PNG export. For **Understand image**, choose
-a local image and ask a question. **Advanced options** sets max tokens,
-temperature and max pixels; blank values leave these to the engine planner.
+a local image and ask a question of up to 4,000 characters. **Advanced options**
+sets max tokens (1–4096), temperature (0–2) and max pixels (up to 100,000,000);
+blank values leave these to the engine planner.
 The engine records a retained image copy before accepting the
 task. The completed view shows that verified image and the full returned
 answer. Both task kinds appear in Recent tasks and can reuse their recorded
 request when the matching Ready model is available.
 
-For **Generate video**, enter a prompt and optionally set width, height, frame
-count, frames per second, steps or seed. Blank settings are left to the engine
-planner. The completed task offers verified MP4 playback and export. For
+For **Generate video**, enter a prompt of up to 2,000 characters and optionally
+set width and height (64–1920), frame count (1–241), whole frames per second
+(1–60), steps (1–100) or seed. Blank settings are left to the engine planner,
+which also checks the model's size alignment and frame grouping. The completed
+task offers verified MP4 playback and export. For
 **Understand video**, choose a local MP4, MOV or M4V file and ask about its contents. Advanced
-options set frames per second, temperature, maximum tokens and maximum pixels;
-blank values leave these to the engine planner. The engine retains a verified
+options set frames per second (0.1–8), temperature, maximum tokens and maximum
+pixels, with the image limits above; blank values leave these to the engine planner. The engine retains a verified
 copy of the input with the task, and completed results show that video and the
 full returned answer. Video tasks appear in Recent tasks and can reuse their
 recorded request when the matching Ready model is available. Video playback
 stops when you leave the inspector or select another model or task.
+
+Each form names an out-of-range value and keeps **Run** unavailable until it is
+fixed. Compare prompt sets apply the same limits.
 
 **Recent tasks** in the inspector shows the selected model's tasks. The Library
 toolbar also opens Recent tasks independently of model selection, so recorded

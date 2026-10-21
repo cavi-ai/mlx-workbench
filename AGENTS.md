@@ -324,8 +324,11 @@ server.
   save state or generate audio, and surviving entries retain their identities.
   Drafts preserve unedited tool schemas, legacy mode/use-case metadata,
   optional fields and effective generation defaults; unreadable input files and
-  invalid runtime parameter ranges are rejected at Save. Model-specific video
-  alignment/frame grouping remain the engine's authority. The shared saved-set
+  invalid runtime parameter ranges are rejected at Save. `Models/InferenceSettings.swift`
+  holds those ranges (the engine's generate, video, describe, speak and music plan
+  limits) for Compare prompt drafts, Library task drafts and `TaskRequest.validate`'s
+  music check. Model-specific video alignment/frame grouping and area caps remain
+  the engine's authority. The shared saved-set
   menu offers Edit/Rename/Remove in every mode, with built-in and active-run guards.
   Non-music draft validation also supplies a concise inline warning within each
   prompt card and disables Save/Use for invalid values in new, edited, copied

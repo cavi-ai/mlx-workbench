@@ -270,23 +270,19 @@ struct ComparisonPromptSetDraft: Identifiable {
             try validatedEntry(for: mode, checkInputAvailability: true)
         }
 
+        private static let chatTokenLimit = IntegerSetting(title: "Token limit", range: 1...Int.max)
+
         private func validatedEntry(for mode: ComparisonMode, checkInputAvailability: Bool) throws -> PromptEntry {
-            func integer(_ value: String, _ title: String, _ range: ClosedRange<Int>) throws -> Int? {
-                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty { return nil }
-                guard let number = Int(trimmed), range.contains(number) else {
-                    throw InvalidDraft(message: "\(title) must be a whole number from \(range.lowerBound) to \(range.upperBound).")
-                }
-                return number
-            }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard (mode == .speechToText || !trimmed.isEmpty),
                   !text.unicodeScalars.contains(where: { $0.value < 32 && $0 != "\n" && $0 != "\t" }) else {
                 throw InvalidDraft(message: "Enter plain text for this prompt.")
             }
             let limit: Int? = switch mode {
-            case .vision, .videoUnderstanding: 4000
-            case .imageGeneration, .videoGeneration, .textToSpeech: 2000
+            case .vision, .videoUnderstanding: InferenceSettings.Understanding.prompt.limit
+            case .imageGeneration: InferenceSettings.ImageGeneration.prompt.limit
+            case .videoGeneration: InferenceSettings.VideoGeneration.prompt.limit
+            case .textToSpeech: InferenceSettings.Speech.text.limit
             default: nil
             }
             if let limit, text.unicodeScalars.count > limit {
@@ -310,7 +306,8 @@ struct ComparisonPromptSetDraft: Identifiable {
                 }
             }
             if mode == .chat || mode == .vision || mode == .videoUnderstanding {
-                copy.maxTokens = try integer(maxTokens, "Token limit", mode == .chat ? 1...Int.max : 1...4096) ?? 256
+                let tokens = mode == .chat ? Self.chatTokenLimit : InferenceSettings.Understanding.maxTokens
+                copy.maxTokens = try tokens.value(maxTokens) ?? 256
             }
             if mode == .vision || mode == .videoUnderstanding,
                keywords != (original.expectedKeywords?.joined(separator: ", ") ?? "") {
@@ -321,18 +318,19 @@ struct ComparisonPromptSetDraft: Identifiable {
                 copy.expectedKeywords = words.isEmpty ? nil : words
             }
             if mode == .imageGeneration || mode == .videoGeneration {
+                typealias ImageRules = InferenceSettings.ImageGeneration
+                typealias VideoRules = InferenceSettings.VideoGeneration
                 var parameters = initialMedia ?? MediaParameters()
-                let stepValue = try integer(steps, "Steps", 1...100)
-                let seedValue = try integer(seed, "Seed", 0...4_294_967_295)
+                let stepValue = try (mode == .imageGeneration ? ImageRules.steps : VideoRules.steps).value(steps)
+                let seedValue = try InferenceSettings.seed.value(seed)
                 if steps != (initialMedia?.steps.map(String.init) ?? "") { parameters.steps = stepValue }
                 if seed != (initialMedia?.seed.map(String.init) ?? "") { parameters.seed = seedValue }
                 if mode == .imageGeneration {
-                    let side = try integer(size, "Image size", 256...2048)
-                    if let side, side % 16 != 0 { throw InvalidDraft(message: "Image size must be a multiple of 16 pixels.") }
+                    let side = try ImageRules.size.value(size)
                     if size != (initialMedia?.size.map(String.init) ?? "") { parameters.size = side }
                 } else {
-                    let w = try integer(width, "Width", 64...1920), h = try integer(height, "Height", 64...1920)
-                    let frameValue = try integer(frames, "Frames", 1...241), fpsValue = try integer(fps, "Frame rate", 1...60)
+                    let w = try VideoRules.width.value(width), h = try VideoRules.height.value(height)
+                    let frameValue = try VideoRules.frames.value(frames), fpsValue = try VideoRules.fps.value(fps)
                     let dimensionsChanged = width != ((initialMedia?.width ?? initialMedia?.size).map(String.init) ?? "")
                         || height != ((initialMedia?.height ?? initialMedia?.size).map(String.init) ?? "")
                     if dimensionsChanged {
@@ -548,38 +546,16 @@ struct MusicComparisonSetup: Identifiable {
         }
 
         func entry() throws -> PromptEntry {
-            func validateText(_ text: String, name: String, limit: Int) throws {
-                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      text.unicodeScalars.count <= limit,
-                      !text.unicodeScalars.contains(where: { $0.value < 32 && $0 != "\n" && $0 != "\t" }) else {
-                    throw InvalidSetup(message: "\(name) must contain text, at most \(limit) characters, without control characters.")
-                }
-            }
-            func integer(_ text: String, name: String, range: ClosedRange<Int>) throws -> Int? {
-                let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if value.isEmpty { return nil }
-                guard let number = Int(value), range.contains(number) else {
-                    throw InvalidSetup(message: "\(name) must be a whole number from \(range.lowerBound) to \(range.upperBound).")
-                }
-                return number
-            }
-            try validateText(caption, name: "Caption", limit: 2000)
+            typealias Rules = InferenceSettings.Music
+            try Rules.caption.check(caption)
             let lyricsValue: String? = lyrics.isEmpty ? nil : lyrics
             if lyrics.isEmpty, original.media?.lyrics == "" {
                 throw InvalidSetup(message: "Recorded lyrics are empty. Enter lyrics or [instrumental] before using this setup.")
             }
-            try validateText(lyricsValue ?? "[instrumental]", name: "Lyrics", limit: 10000)
-            let durationText = duration.trimmingCharacters(in: .whitespacesAndNewlines)
-            let durationValue: Double?
-            if durationText.isEmpty { durationValue = nil }
-            else {
-                guard let number = Double(durationText), number.isFinite, number > 0, number <= 360 else {
-                    throw InvalidSetup(message: "Duration must be greater than 0 and at most 360 seconds.")
-                }
-                durationValue = number
-            }
-            let stepsValue = try integer(steps, name: "Steps", range: 1...30)
-            let seedValue = try integer(seed, name: "Seed", range: 0...4_294_967_295)
+            try Rules.lyrics.check(lyricsValue ?? "[instrumental]")
+            let durationValue = try Rules.duration.value(duration)
+            let stepsValue = try Rules.steps.value(steps)
+            let seedValue = try InferenceSettings.seed.value(seed)
             var copy = original
             copy.text = caption
             // Preserve optional fields exactly when untouched, including a nil

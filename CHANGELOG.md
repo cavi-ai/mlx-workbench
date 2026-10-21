@@ -26,7 +26,7 @@ and is versioned independently; submodule bumps are recorded here.
 ### Fixed
 
 - Library: a long verification failure no longer widens the inspector and hides table columns.
-- Library: speech task forms show validation only after input.
+- Library: task forms check settings against the engine's limits before Run, the same limits Compare prompt sets use, and speech forms show validation only after input.
 - Prepare: the source cleanup choice stays in place while a preview is prepared, so the actions and pipeline track no longer jump.
 - Reclaim: duplicate MLX model folders and Ollama store models appear in Duplicate groups, identical copies as reclaimable duplicates and other bit widths of one model as informational groups.
 
