@@ -63,9 +63,12 @@ final class StudyRecipeSession: ObservableObject {
     @Published private(set) var manifest: LabValue?
     @Published private(set) var error: String?
     @Published private(set) var isBusy = false
+    private var originalDraft = StudyRecipeDraft()
     private let request: (LabRequest) async throws -> LabResponse
 
     init(request: @escaping (LabRequest) async throws -> LabResponse) { self.request = request }
+
+    var hasDraftChanges: Bool { draft != originalDraft }
 
     var unavailableReason: String? {
         if isBusy { return "Wait for the current recipe request to finish." }
@@ -94,7 +97,11 @@ final class StudyRecipeSession: ObservableObject {
             guard let options = response.recipes, options.count == 1,
                   options[0].modelID == "Wan-AI/Wan2.1-T2V-1.3B-Diffusers" else { throw BridgeError.skillOutputUnreadable }
             self.options = options
-            if draft.revision.isEmpty, let revision = options.first?.revisions.first { draft.revision = revision }
+            if draft.revision.isEmpty, let revision = options.first?.revisions.first {
+                // Catalog initialization is not a user edit; never checkpoint authored fields.
+                if originalDraft.revision.isEmpty { originalDraft.revision = revision }
+                draft.revision = revision
+            }
             error = nil
         } catch { options = []; self.error = AppHost.render(error) }
     }

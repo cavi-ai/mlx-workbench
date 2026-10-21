@@ -59,6 +59,43 @@ final class LabWorkspaceTests: XCTestCase {
     }
 
     @MainActor
+    func testRecipeDraftChangesIgnoreCatalogInitializationAndRetainRawEdits() async {
+        let revision = String(repeating: "a", count: 40)
+        var revisions: [String] = []
+        var fails = false
+        let session = StudyRecipeSession { _ in
+            if fails { throw NSError(domain: "catalog", code: 1) }
+            return LabResponse(recipes: [StudyRecipeOption(modelID: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+                displayName: "Wan", revisions: revisions, unavailableReason: nil)])
+        }
+        XCTAssertFalse(session.hasDraftChanges)
+        await session.load()
+        XCTAssertFalse(session.hasDraftChanges)
+        session.draft.prompt = " "
+        revisions = [revision]
+        await session.load()
+        XCTAssertEqual(session.draft.revision, revision)
+        XCTAssertTrue(session.hasDraftChanges, "Automatic revision selection must not checkpoint a raw prompt edit")
+        session.draft.prompt = ""
+        XCTAssertFalse(session.hasDraftChanges)
+        let original = session.draft
+        for keyPath in [\StudyRecipeDraft.prompt, \.negativePrompt, \.seed, \.width, \.height,
+                        \.frames, \.fps, \.steps, \.guidance, \.revision] {
+            session.draft[keyPath: keyPath] = "invalid"
+            XCTAssertTrue(session.hasDraftChanges)
+            await session.load()
+            XCTAssertTrue(session.hasDraftChanges, "Refreshing availability must not accept edited fields as unchanged")
+            session.draft = original
+            XCTAssertFalse(session.hasDraftChanges)
+        }
+        session.draft.width = "257"
+        fails = true
+        await session.load()
+        XCTAssertTrue(session.hasDraftChanges)
+        XCTAssertEqual(session.draft.width, "257")
+    }
+
+    @MainActor
     func testTrainingHistorySwitchPreservesJobsAndRejectsOldSuccessAndFailure() async throws {
         for fails in [false, true] {
             let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)

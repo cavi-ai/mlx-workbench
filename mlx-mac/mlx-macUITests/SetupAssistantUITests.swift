@@ -1452,6 +1452,8 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Studies-invalid-setting-\(appearance)")
             XCTAssertLessThanOrEqual(sheet.frame.width, app.windows.firstMatch.frame.width)
             sheet.buttons["Cancel"].click()
+            XCTAssertTrue(sheet.buttons["Discard changes"].firstMatch.waitForExistence(timeout: 5))
+            sheet.buttons["Discard changes"].firstMatch.click()
             try Data().write(to: root.appendingPathComponent("missing-study-runtime"))
             app.buttons["New experiment…"].click()
             expectContent(recipeGuidance, "Install video runtime")
@@ -1612,6 +1614,77 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Training-edited-preview-invalidated")
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         XCTAssertFalse(calls.contains("--confirm"))
+    }
+
+    func testStudyDraftCancellationPreservesEdits() throws {
+        launch(appearance: "Dark", route: "studies", isolatedHome: true)
+        let newExperiment = app.buttons["New experiment…"]
+        XCTAssertTrue(newExperiment.waitForExistence(timeout: 15))
+        let sheet = app.sheets.firstMatch
+        func open() {
+            newExperiment.click()
+            XCTAssertTrue(text(containing: "Enter a prompt").waitForExistence(timeout: 15))
+        }
+        func cancelKeepingEdits() {
+            sheet.buttons["Cancel"].click()
+            XCTAssertTrue(sheet.buttons["Keep editing"].firstMatch.waitForExistence(timeout: 5))
+            sheet.buttons["Keep editing"].firstMatch.click()
+            XCTAssertTrue(sheet.exists)
+        }
+        func discard() {
+            sheet.buttons["Cancel"].click()
+            XCTAssertTrue(sheet.buttons["Discard changes"].firstMatch.waitForExistence(timeout: 5))
+            capture("Studies-confirm-discard")
+            sheet.buttons["Discard changes"].firstMatch.click()
+            XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        }
+        open()
+        sheet.buttons["Cancel"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Catalog initialization must not dirty an untouched draft")
+        open()
+        let prompt = app.textFields["Shared prompt"].exists ? app.textFields["Shared prompt"] : app.textViews["Shared prompt"]
+        replace(prompt, with: "Keep this experiment prompt")
+        replace(app.textFields["Width"], with: "257")
+        cancelKeepingEdits()
+        XCTAssertEqual(prompt.value as? String, "Keep this experiment prompt")
+        XCTAssertEqual(app.textFields["Width"].value as? String, "257")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(sheet.buttons["Keep editing"].firstMatch.waitForExistence(timeout: 5))
+        sheet.buttons["Keep editing"].firstMatch.click()
+        sheet.radioButtons["Recipe file"].click()
+        cancelKeepingEdits()
+        sheet.radioButtons["Cached model"].click()
+        XCTAssertEqual(prompt.value as? String, "Keep this experiment prompt", "Hidden cached fields remain part of the draft")
+        discard()
+        open()
+        sheet.radioButtons["Recipe file"].click()
+        sheet.buttons["Cancel"].click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Changing only the source tab is not authored work")
+        open()
+        sheet.radioButtons["Recipe file"].click()
+        let recipe = root.appendingPathComponent("generation-recipe.json")
+        try JSONSerialization.data(withJSONObject: ["model_id": "fixture/model", "adapter_id": "fixture.adapter",
+            "prompt": "Imported experiment", "inference_steps": 20]).write(to: recipe)
+        sheet.buttons["Choose generation recipe…"].click()
+        let choose = app.buttons["OKButton"].firstMatch
+        XCTAssertTrue(choose.waitForExistence(timeout: 10), app.debugDescription)
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(recipe.path)
+        app.typeKey(.return, modifierFlags: [])
+        choose.click()
+        XCTAssertTrue(sheet.buttons["generation-recipe.json"].waitForExistence(timeout: 10))
+        cancelKeepingEdits()
+        XCTAssertEqual(prompt.value as? String, "Imported experiment")
+        replace(app.textFields["Alternate value"], with: "invalid")
+        cancelKeepingEdits()
+        XCTAssertEqual(app.textFields["Alternate value"].value as? String, "invalid")
+        capture("Studies-retained-imported-draft")
+        discard()
+        let requests = try String(contentsOf: root.appendingPathComponent("workspace-requests.jsonl"), encoding: .utf8)
+            .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        XCTAssertTrue(requests.allSatisfy { ["snapshot", "study-list", "recipe-catalog"].contains($0["operation"] as? String ?? "") },
+                      "Cancel, keep and discard must not capture, validate, create or run an experiment")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("study-created.json").path))
     }
 
     func testStudyRecipeCaptureAndQueue() throws {
