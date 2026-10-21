@@ -71,6 +71,7 @@ class AppHost: ObservableObject {
     private let preferencesStore: JSONStore<RecommendationPreferences>
     private let now: @Sendable () -> Date
     private let scanOperation: @Sendable ([String], [String], Bool, Int?) async throws -> ScanResult
+    private let libraryBuildOperation: @Sendable (ScanResult, HardwareProfile, Date) -> LibrarySnapshot
 
     init(
         configModule: ConfigModule = ConfigModule(),
@@ -87,6 +88,9 @@ class AppHost: ObservableObject {
         hardwareProfile: HardwareProfile = HardwareProfile.current(),
         now: @escaping @Sendable () -> Date = { Date() },
         scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil,
+        libraryBuildOperation: @escaping @Sendable (ScanResult, HardwareProfile, Date) -> LibrarySnapshot = {
+            ModelLibraryBuilder.build(scan: $0, hardware: $1, now: $2)
+        },
         modelWorkflowAPI: ModelWorkflowAPI? = nil,
         modelWorkflowPersistence: ModelWorkflowPersistence? = nil,
         verification: VerificationCoordinator? = nil,
@@ -219,6 +223,7 @@ class AppHost: ObservableObject {
         self.hardwareProfile = hardwareProfile
         let initialNow = now()
         self.now = now
+        self.libraryBuildOperation = libraryBuildOperation
         self.catalog = Self.catalogState(
             from: catalogStore.load(),
             client: catalogClient,
@@ -549,7 +554,18 @@ class AppHost: ObservableObject {
                 config.signatures,
                 limit
             )
-            let snapshot = ModelLibraryBuilder.build(scan: scan, hardware: hardwareProfile, now: now())
+            try Task.checkCancellation()
+            let build = libraryBuildOperation
+            let hardware = hardwareProfile
+            let generatedAt = now()
+            // Folder enumeration and config reads are blocking I/O. Keep them
+            // off both the main actor and Swift's cooperative executor.
+            let snapshot = await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .utility).async {
+                    continuation.resume(returning: build(scan, hardware, generatedAt))
+                }
+            }
+            try Task.checkCancellation()
             scanResult = scan
             scanError = nil
             scannedRoots = ScanRoots(gguf: roots, mlx: mlxRoots)

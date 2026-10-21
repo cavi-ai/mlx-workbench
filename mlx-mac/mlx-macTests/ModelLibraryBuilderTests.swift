@@ -4,6 +4,65 @@ import XCTest
 @testable import mlx_workbench
 
 final class ModelLibraryBuilderTests: XCTestCase {
+    @MainActor
+    func testLibraryBuildKeepsUIResponsiveUntilCompleteSnapshotIsPublished() async throws {
+        let scan = makeFixtureScan(), date = fixtureDate, hardware = fixtureHardware
+        let entered = expectation(description: "Building inventory")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let host = AppHost(config: makeConfig(), discoveredRoots: [], runtimeReport: makeRuntimeReport(),
+            hardwareProfile: hardware, now: { date }, scanOperation: { _, _, _, _ in scan },
+            libraryBuildOperation: { scan, hardware, date in
+                XCTAssertFalse(Thread.isMainThread, "Model-folder reads must not block the UI thread")
+                entered.fulfill()
+                if !Thread.isMainThread {
+                    XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+                }
+                return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
+            })
+        let previous = ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date.addingTimeInterval(-1))
+        host.librarySnapshot = previous
+        let refresh = Task { await host.rescan() }
+        await fulfillment(of: [entered], timeout: 5)
+        XCTAssertTrue(host.isScanning)
+        XCTAssertEqual(host.librarySnapshot, previous, "Keep the previous inventory until all metadata is ready")
+        XCTAssertNil(host.scanResult)
+        host.selectedModelPath = "/models/selected-during-refresh"
+        await host.rescan() // A second request must not start a concurrent folder walk.
+        release.signal()
+        await refresh.value
+        XCTAssertFalse(host.isScanning)
+        XCTAssertEqual(host.librarySnapshot?.generatedAt, date)
+        XCTAssertEqual(host.librarySnapshot?.models.count, 8)
+        XCTAssertEqual(host.scanResult, scan)
+        XCTAssertEqual(host.selectedModelPath, "/models/selected-during-refresh")
+    }
+
+    @MainActor
+    func testCancelledLibraryBuildCannotReplaceTheLastInventory() async throws {
+        let scan = makeFixtureScan(), date = fixtureDate, hardware = fixtureHardware
+        let entered = expectation(description: "Building inventory")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let host = AppHost(config: makeConfig(), discoveredRoots: [], runtimeReport: makeRuntimeReport(),
+            hardwareProfile: hardware, now: { date }, scanOperation: { _, _, _, _ in scan },
+            libraryBuildOperation: { scan, hardware, date in
+                entered.fulfill()
+                if !Thread.isMainThread { _ = release.wait(timeout: .now() + 5) }
+                return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
+            })
+        let previous = ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date.addingTimeInterval(-1))
+        host.librarySnapshot = previous
+        let refresh = Task { await host.rescan() }
+        await fulfillment(of: [entered], timeout: 5)
+        refresh.cancel()
+        release.signal()
+        await refresh.value
+        XCTAssertEqual(host.librarySnapshot, previous)
+        XCTAssertNil(host.scanResult)
+        XCTAssertFalse(host.isScanning)
+    }
+
     func testBuildGroupsByModelKeyAndNormalizedFallbackWithoutMergingByDisplayName() throws {
         let snapshot = ModelLibraryBuilder.build(
             scan: makeFixtureScan(),
