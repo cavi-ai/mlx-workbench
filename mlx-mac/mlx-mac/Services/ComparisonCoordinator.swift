@@ -421,17 +421,20 @@ final class ComparisonCoordinator: ObservableObject {
             guard activeRunID != runID, let index = runs.firstIndex(where: { $0.id == runID && $0.state == .completed }),
                   runs[index].results.contains(where: { $0.id == modelPath }) else { return }
             let visible = runs[index]
-            guard let original = try? await historyWorker.record(id: runID) else { return }
-            guard (try? await historyWorker.summarized(original)) == visible || original == visible else {
-                persistenceError = "The saved comparison changed. Reopen its results before rating it."; return
-            }
-            var updated = original
-            var reviews = updated.qualityReviews ?? [:]
-            let rubric = updated.effectiveMode == .musicGeneration
-                ? ComparisonQualityReview.musicListeningRubric : ComparisonQualityReview.taskOutcomeRubric
-            reviews[modelPath] = score.map { ComparisonQualityReview(score: $0, rubricID: rubric, reviewedAt: now()) }
-            updated.qualityReviews = reviews
             do {
+                guard let original = try await historyWorker.record(id: runID) else {
+                    throw WorkflowEvidenceError.invalid("The saved comparison is unavailable. Reopen its results before rating it.")
+                }
+                let summary = try await historyWorker.summarized(original)
+                guard original == visible || summary == visible else {
+                    throw WorkflowEvidenceError.invalid("The saved comparison changed. Reopen its results before rating it.")
+                }
+                var updated = original
+                var reviews = updated.qualityReviews ?? [:]
+                let rubric = updated.effectiveMode == .musicGeneration
+                    ? ComparisonQualityReview.musicListeningRubric : ComparisonQualityReview.taskOutcomeRubric
+                reviews[modelPath] = score.map { ComparisonQualityReview(score: $0, rubricID: rubric, reviewedAt: now()) }
+                updated.qualityReviews = reviews
                 let captured = updated
                 let saved = try await historyWorker.update(id: runID) { current in
                     guard current == original else { throw WorkflowEvidenceError.invalid("The saved comparison changed. Reopen its results before rating it.") }
