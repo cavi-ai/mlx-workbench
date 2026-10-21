@@ -88,7 +88,7 @@ final class UpdateCoordinatorTests: XCTestCase {
     }
 
     func testCheckWithoutRepoRootFailsWithGuidance() async {
-        let coordinator = UpdateCoordinator(repoRoot: nil, defaults: .standard, runGit: { _ in "" })
+        let coordinator = UpdateCoordinator(repoRoot: nil, defaults: isolatedDefaults(), runGit: { _ in "" })
         await coordinator.check()
         guard case .failed(let reason) = coordinator.phase else {
             return XCTFail("expected failed, got \(coordinator.phase)")
@@ -106,7 +106,7 @@ final class UpdateCoordinatorTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let worktree = root.appendingPathComponent("worktree")
 
-        let coordinator = UpdateCoordinator(repoRoot: worktree, defaults: .standard, runGit: { try UpdateCoordinator.git($0) })
+        let coordinator = UpdateCoordinator(repoRoot: worktree, defaults: isolatedDefaults(), runGit: { try UpdateCoordinator.git($0) })
         await_on_main { await coordinator.check() }
 
         guard case .available(let offer) = coordinator.phase else {
@@ -139,7 +139,7 @@ final class UpdateCoordinatorTests: XCTestCase {
         let worktree = root.appendingPathComponent("worktree")
         try Data("local edit".utf8).write(to: worktree.appendingPathComponent("tracked.txt"))
 
-        let coordinator = UpdateCoordinator(repoRoot: worktree, defaults: .standard, runGit: { try UpdateCoordinator.git($0) })
+        let coordinator = UpdateCoordinator(repoRoot: worktree, defaults: isolatedDefaults(), runGit: { try UpdateCoordinator.git($0) })
         await_on_main { await coordinator.check() }
 
         guard case .available(let offer) = coordinator.phase, offer.dirtyFiles == 1 else {
@@ -186,6 +186,13 @@ final class UpdateCoordinatorTests: XCTestCase {
             .appendingPathComponent("mlx-workbench-update-\(UUID().uuidString)", isDirectory: true)
         let coordinator = UpdateCoordinator(repoRoot: root, defaults: defaults, runGit: git)
         return (coordinator, defaults)
+    }
+
+    private func isolatedDefaults() -> UserDefaults {
+        let suite = "mlx-workbench-update-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        return defaults
     }
 
     /// Seed repo (two tagged commits) -> bare origin -> a worktree clone
