@@ -19,7 +19,7 @@ and is versioned independently; submodule bumps are recorded here.
 - Engine: validate training dataset splits and cached MLX-LM architectures during preview, and use the selected Hugging Face cache for the recorded base identity; update to mlx-agent 0.8.0 with scan backend readiness, `serve start --thinking off` and cached intake sources.
 - Library: the Status column shows Verified, Failed checks, Verifying… or Ready for ready models, Modified shows each MLX model's newest file time, and models whose backend is not installed show Needs Runtime and stay out of Compare.
 - Verification: canaries serve with reasoning switched off where the chat template allows and score the answer after any `<think>` block (canary suite 3); a run that cannot finish says why in the inspector.
-- Compare: inline `<think>` reasoning is kept apart from the answer, Fastest goes only to lanes that answered every prompt, and decode speed is withheld when streamed tokens arrive in one burst.
+- Compare: inline `<think>` reasoning is kept apart from the answer, Fastest goes only to lanes that answered every prompt, decode speed is withheld when streamed tokens arrive in one burst, and music prompt sets use the same editor, reuse sheet and save rules as every other mode.
 - Add from Hugging Face: a repository already in the cache says so instead of a download size, and Prepare's quantization tiles estimate fit from its task.
 - Prepare: moving the original source to the Trash is offered, and runs after verification, only when the source is inside the model folders in Settings.
 

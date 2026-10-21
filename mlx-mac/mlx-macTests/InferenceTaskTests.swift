@@ -831,8 +831,8 @@ final class InferenceTaskTests: XCTestCase {
     }
 
     func testLibraryDraftsAndComparePromptsShareEngineSettingRules() throws {
-        func comparePrompt(_ mode: ComparisonMode, _ edit: (inout ComparisonPromptSetDraft.Prompt) -> Void) -> String? {
-            var prompt = ComparisonPromptSetDraft.Prompt(
+        func comparePrompt(_ mode: ComparisonMode, _ edit: (inout PromptSetDraft.Prompt) -> Void) -> String? {
+            var prompt = PromptSetDraft.Prompt(
                 PromptEntry(id: "p", text: "A red kite", inputKind: mode.inputKind,
                             builtinInput: mode.inputKind == nil ? nil : "red-square"), mode: mode)
             edit(&prompt)
@@ -853,10 +853,9 @@ final class InferenceTaskTests: XCTestCase {
                        "Height must be a multiple of 16 pixels.")
         XCTAssertEqual(comparePrompt(.imageGeneration) { $0.size = "1000" }, "Image size must be a multiple of 16 pixels.")
 
-        var music = MusicComparisonSetup.Prompt(PromptEntry(id: "m", text: "Quiet piano"))
-        music.steps = "31"
-        XCTAssertEqual(MusicTaskDraft(caption: "Quiet piano", steps: 31).validationError, music.validationError)
-        XCTAssertEqual(music.validationError, "Steps must be a whole number from 1 to 30.")
+        let music = comparePrompt(.musicGeneration) { $0.steps = "31" }
+        XCTAssertEqual(MusicTaskDraft(caption: "Quiet piano", steps: 31).validationError, music)
+        XCTAssertEqual(music, "Steps must be a whole number from 1 to 30.")
 
         XCTAssertEqual(SpeakTaskDraft(text: "Read this.", speed: "3").validationError, "Speed must be a number from 0.5 to 2.")
         XCTAssertEqual(VideoUnderstandingTaskDraft(videoPath: "/tmp/in.mp4", prompt: "What moves?", fps: "2.5").validationError, nil)

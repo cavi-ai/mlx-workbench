@@ -106,16 +106,20 @@ private struct PromptRemoveFixtureView: View {
 
 @MainActor
 private final class PromptEditorScrollFixture: ObservableObject {
-    @Published var draft: ComparisonPromptSetDraft
-    @Published var music: [MusicComparisonSetup.Prompt]
+    @Published var draft: PromptSetDraft
+    @Published var music: PromptSetDraft
 
     init() {
-        var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+        var draft = PromptSetDraft(mode: .imageGeneration)
         draft.name = "Scenes"
         for _ in 0..<3 { draft.addPrompt() }
         for index in draft.prompts.indices { draft.prompts[index].text = "Landscape \(index + 1)" }
         self.draft = draft
-        music = (1...4).map { MusicComparisonSetup.Prompt(PromptEntry(id: "music-\($0)", text: "Solo piano \($0)")) }
+        var music = PromptSetDraft(mode: .musicGeneration)
+        music.prompts = (1...4).map {
+            PromptSetDraft.Prompt(PromptEntry(id: "music-\($0)", text: "Solo piano \($0)"), mode: .musicGeneration)
+        }
+        self.music = music
     }
 }
 
@@ -125,7 +129,7 @@ private struct PromptEditorScrollFixtureView: View {
 
     var body: some View {
         Group {
-            if music { MusicPromptFields(prompts: $fixture.music) }
+            if music { MusicPromptFields(draft: $fixture.music) }
             else { ComparisonPromptFields(draft: $fixture.draft) }
         }
         .textFieldStyle(.roundedBorder)
@@ -709,8 +713,8 @@ final class ComparisonMediaTests: XCTestCase {
                        PromptEntry(id: "two", text: "Acoustic guitar", media: nil)]
         var run = historyRun(.musicGeneration, "Saved music", at: 10, models: ["/a", "/b"])
         run.promptEntries = prompts
-        let setup = try MusicComparisonSetup(run: run)
-        let prepared = try setup.promptSet()
+        let setup = try ComparisonRunSetup(run: run)
+        let prepared = try setup.draft.promptSet()
         XCTAssertEqual(prepared.prompts, prompts, "reuse must not substitute the current preset or invented defaults")
         XCTAssertEqual(prepared.effectiveMode, .musicGeneration)
         XCTAssertNotEqual(prepared.id, run.promptSetID)
@@ -723,12 +727,12 @@ final class ComparisonMediaTests: XCTestCase {
         var run = historyRun(.musicGeneration, "Saved music", at: 10)
         run.promptEntries = [PromptEntry(id: "a", text: "Jazz", media: MediaParameters(steps: 12, seed: 7, durationSeconds: 20, lyrics: "[instrumental]")),
                              PromptEntry(id: "b", text: "Piano", media: MediaParameters(steps: 8, seed: 0, durationSeconds: 9, lyrics: "[verse]\nA new day"))]
-        var setup = try MusicComparisonSetup(run: run)
-        setup.prompts[0].caption = "Funk"
-        setup.prompts[0].duration = "15.5"
-        setup.prompts[0].steps = "6"
-        setup.prompts[0].seed = "4294967295"
-        let prepared = try setup.promptSet()
+        var setup = try ComparisonRunSetup(run: run)
+        setup.draft.prompts[0].text = "Funk"
+        setup.draft.prompts[0].duration = "15.5"
+        setup.draft.prompts[0].steps = "6"
+        setup.draft.prompts[0].seed = "4294967295"
+        let prepared = try setup.draft.promptSet()
         XCTAssertEqual(prepared.prompts[0].text, "Funk")
         XCTAssertEqual(prepared.prompts[0].media, MediaParameters(steps: 6, seed: 4_294_967_295, durationSeconds: 15.5, lyrics: "[instrumental]"))
         XCTAssertEqual(prepared.prompts[1], run.promptEntries?[1])
@@ -737,27 +741,28 @@ final class ComparisonMediaTests: XCTestCase {
 
     func testReuseRefusesMissingSnapshotsAndInvalidMusicArguments() throws {
         var run = historyRun(.musicGeneration, "Legacy", at: 10)
-        XCTAssertThrowsError(try MusicComparisonSetup(run: run))
+        XCTAssertThrowsError(try ComparisonRunSetup(run: run))
         run.promptEntries = []
-        XCTAssertThrowsError(try MusicComparisonSetup(run: run))
+        XCTAssertThrowsError(try ComparisonRunSetup(run: run))
         run.promptEntries = [PromptEntry(id: "p", text: "Piano")]
         for value in ["NaN", "infinity", "0", "361", "garbage"] {
-            var setup = try MusicComparisonSetup(run: run)
-            setup.prompts[0].duration = value
-            XCTAssertThrowsError(try setup.promptSet(), value)
+            var setup = try ComparisonRunSetup(run: run)
+            setup.draft.prompts[0].duration = value
+            XCTAssertThrowsError(try setup.draft.promptSet(), value)
         }
         for value in ["0", "31", "2.5"] {
-            var setup = try MusicComparisonSetup(run: run)
-            setup.prompts[0].steps = value
-            XCTAssertThrowsError(try setup.promptSet(), value)
+            var setup = try ComparisonRunSetup(run: run)
+            setup.draft.prompts[0].steps = value
+            XCTAssertThrowsError(try setup.draft.promptSet(), value)
         }
         for value in ["-1", "4294967296", "garbage"] {
-            var setup = try MusicComparisonSetup(run: run)
-            setup.prompts[0].seed = value
-            XCTAssertThrowsError(try setup.promptSet(), value)
+            var setup = try ComparisonRunSetup(run: run)
+            setup.draft.prompts[0].seed = value
+            XCTAssertThrowsError(try setup.draft.promptSet(), value)
         }
-        run.mode = .chat
-        XCTAssertThrowsError(try MusicComparisonSetup(run: run))
+        var duplicated = historyRun(.musicGeneration, "Legacy", at: 10, models: ["/model", "/model"])
+        duplicated.promptEntries = run.promptEntries
+        XCTAssertThrowsError(try ComparisonRunSetup(run: duplicated), "A music run cannot reuse one model in two lanes")
     }
 
     private func historyRun(_ mode: ComparisonMode, _ title: String, at time: TimeInterval, models: [String] = ["/model"]) -> ComparisonRun {
@@ -1589,7 +1594,7 @@ final class ComparisonMediaTests: XCTestCase {
                 PromptEntry(id: "builtin", text: "Original prompt", inputKind: mode.inputKind, builtinInput: "fixture"),
                 PromptEntry(id: "saved", text: "Original prompt", inputKind: mode.inputKind, inputPath: file.path)
             ] {
-                var prompt = ComparisonPromptSetDraft.Prompt(entry, mode: mode, savedInput: entry.id == "saved")
+                var prompt = PromptSetDraft.Prompt(entry, mode: mode, savedInput: entry.id == "saved")
                 XCTAssertFalse(prompt.hasInputChanges)
                 prompt.text = "Edited text"; prompt.keywords = "red|blue"; prompt.maxTokens = "invalid typed value"
                 for replacement in ["/replacement", "relative path", " \n "] {
@@ -1604,7 +1609,7 @@ final class ComparisonMediaTests: XCTestCase {
                 }
             }
             XCTAssertEqual(try Data(contentsOf: file), bytes, "Revert must not mutate input files")
-            var missing = ComparisonPromptSetDraft.Prompt(
+            var missing = PromptSetDraft.Prompt(
                 PromptEntry(id: "missing", text: "Describe this", inputKind: mode.inputKind, inputPath: file.path),
                 mode: mode, savedInput: true)
             try FileManager.default.removeItem(at: file)
@@ -1630,7 +1635,7 @@ final class ComparisonMediaTests: XCTestCase {
         let bytes = try Data(contentsOf: replacement)
         let set = PromptSet(id: "vision-revert", name: "Vision", useCase: nil,
             prompts: [entry], origin: .userCreated, mode: .vision)
-        var draft = try ComparisonPromptSetDraft(set: set)
+        var draft = try PromptSetDraft(set: set)
         draft.prompts[0].inputPath = replacement.path
         draft.prompts[0].text = "Edited question"; draft.prompts[0].maxTokens = "128"
         let editor = ComparisonPromptSetEditor(draft: draft) { _ in
@@ -1790,7 +1795,7 @@ final class ComparisonMediaTests: XCTestCase {
         let runner = StubMediaRunner()
         let coordinator = makeCoordinator(runner: runner, store: outputs)
         let setup = try ComparisonRunSetup(run: history, outputStore: outputs)
-        let result = await coordinator.createPromptSetWithInputCopies(setup.savedDraft(named: "Durable speech"))
+        let result = await coordinator.createPromptSet(setup.savedDraft(named: "Durable speech"))
         let saved = try XCTUnwrap(result)
         let owned = URL(fileURLWithPath: try XCTUnwrap(saved.prompts[0].inputPath))
         XCTAssertNotNil(saved.inputStorageID)
@@ -1821,14 +1826,14 @@ final class ComparisonMediaTests: XCTestCase {
     func testOwnedInputSaveRollsBackPartialCopiesAndFailedJSONThenRetries() async throws {
         let source = root.appendingPathComponent("original.png")
         try Data("original image".utf8).write(to: source)
-        var draft = ComparisonPromptSetDraft(mode: .vision)
+        var draft = PromptSetDraft(mode: .vision)
         draft.name = "Saved images"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
         draft.addPrompt(); draft.prompts[1].text = "Describe again"; draft.prompts[1].inputPath = source.path
         let coordinator = makeCoordinator(runner: StubMediaRunner())
         let sets = root.appendingPathComponent("sets.json")
         let corrupt = Data("broken-json".utf8)
         try corrupt.write(to: sets)
-        let failed = await coordinator.createPromptSetWithInputCopies(draft)
+        let failed = await coordinator.createPromptSet(draft)
         XCTAssertNil(failed)
         XCTAssertFalse(coordinator.promptSets.contains { $0.id == draft.id })
         XCTAssertEqual(try Data(contentsOf: sets), corrupt)
@@ -1836,7 +1841,7 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: ownedRoot.path).isEmpty)
         XCTAssertFalse(coordinator.savingPromptSet)
         try JSONStore<PromptSet>(fileURL: sets).replaceAll([])
-        let retried = await coordinator.createPromptSetWithInputCopies(draft)
+        let retried = await coordinator.createPromptSet(draft)
         let saved = try XCTUnwrap(retried)
         XCTAssertEqual(Set(saved.prompts.compactMap(\.inputPath)).count, 2)
         for entry in saved.prompts {
@@ -1863,10 +1868,10 @@ final class ComparisonMediaTests: XCTestCase {
     func testRemovingOwnedPromptInputsPreservesBorrowedReferencesAndOtherFolders() async throws {
         let source = root.appendingPathComponent("source.png")
         try Data("original".utf8).write(to: source)
-        var draft = ComparisonPromptSetDraft(mode: .vision)
+        var draft = PromptSetDraft(mode: .vision)
         draft.name = "Owner"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
         let coordinator = makeCoordinator(runner: StubMediaRunner())
-        let result = await coordinator.createPromptSetWithInputCopies(draft)
+        let result = await coordinator.createPromptSet(draft)
         let owner = try XCTUnwrap(result)
         let path = try XCTUnwrap(owner.prompts.first?.inputPath)
         let borrowed = PromptSet(id: UUID().uuidString, name: "Borrowed", prompts: owner.prompts, origin: .userCreated, mode: .vision)
@@ -1924,10 +1929,10 @@ final class ComparisonMediaTests: XCTestCase {
             let original = root.appendingPathComponent("original-\(mode.rawValue).input")
             let bytes = Data("original \(mode.rawValue)".utf8)
             try bytes.write(to: original)
-            var draft = ComparisonPromptSetDraft(mode: mode)
+            var draft = PromptSetDraft(mode: mode)
             draft.name = "New \(mode.title)"; draft.prompts[0].text = "Recorded reference"
             draft.prompts[0].inputPath = original.path
-            let result = await coordinator.createPromptSetWithInputCopies(draft)
+            let result = await coordinator.createPromptSet(draft)
             let set = try XCTUnwrap(result)
             let path = try XCTUnwrap(set.prompts.first?.inputPath)
             XCTAssertNotEqual(path, original.path)
@@ -1948,18 +1953,18 @@ final class ComparisonMediaTests: XCTestCase {
     func testOwnedPromptEditsReuseUnchangedFilesAndCopyOnlyReplacements() async throws {
         let first = root.appendingPathComponent("first.png"), second = root.appendingPathComponent("second.png")
         try Data("first".utf8).write(to: first); try Data("second".utf8).write(to: second)
-        var draft = ComparisonPromptSetDraft(mode: .vision)
+        var draft = PromptSetDraft(mode: .vision)
         draft.name = "Images"; draft.prompts[0].text = "First"; draft.prompts[0].inputPath = first.path
         draft.addPrompt(); draft.prompts[1].text = "Second"; draft.prompts[1].inputPath = second.path
         let coordinator = makeCoordinator(runner: StubMediaRunner())
-        let result = await coordinator.createPromptSetWithInputCopies(draft)
+        let result = await coordinator.createPromptSet(draft)
         let original = try XCTUnwrap(result)
         let store = ComparisonOutputStore(root: root.appendingPathComponent("prompt-set-inputs"))
         let originalID = try XCTUnwrap(original.inputStorageID)
         let before = try FileManager.default.contentsOfDirectory(atPath: store.inputsDirectory(originalID).path)
         var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
         edit.prompts[0].text = "Changed question"; edit.prompts[0].maxTokens = "512"
-        let textSaved = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        let textSaved = await coordinator.savePromptSetEdits(edit)
         XCTAssertTrue(textSaved)
         let textOnly = try XCTUnwrap(coordinator.promptSets.first { $0.id == original.id })
         XCTAssertEqual(textOnly.inputStorageID, originalID)
@@ -1970,7 +1975,7 @@ final class ComparisonMediaTests: XCTestCase {
         try Data("replacement".utf8).write(to: replacement)
         edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
         edit.prompts[0].inputPath = replacement.path
-        let replaced = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        let replaced = await coordinator.savePromptSetEdits(edit)
         XCTAssertTrue(replaced)
         let updated = try XCTUnwrap(coordinator.promptSets.first { $0.id == original.id })
         let newID = try XCTUnwrap(updated.inputStorageID)
@@ -1981,7 +1986,7 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(originalID).path), "The second prompt still owns its old input")
         edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
         edit.removePrompt(id: edit.prompts[1].id)
-        let removedPrompt = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        let removedPrompt = await coordinator.savePromptSetEdits(edit)
         XCTAssertTrue(removedPrompt)
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.runDirectory(originalID).path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.runDirectory(newID).path))
@@ -1994,10 +1999,10 @@ final class ComparisonMediaTests: XCTestCase {
     func testOwnedPromptEditConflictAndCorruptStoreRollbackOnlyNewFiles() async throws {
         let source = root.appendingPathComponent("source.png"), replacement = root.appendingPathComponent("replacement.png")
         try Data("source".utf8).write(to: source); try Data("replacement".utf8).write(to: replacement)
-        var draft = ComparisonPromptSetDraft(mode: .vision)
+        var draft = PromptSetDraft(mode: .vision)
         draft.name = "Images"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
         let coordinator = makeCoordinator(runner: StubMediaRunner())
-        let result = await coordinator.createPromptSetWithInputCopies(draft)
+        let result = await coordinator.createPromptSet(draft)
         let saved = try XCTUnwrap(result)
         let store = JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json"))
         let ownedRoot = root.appendingPathComponent("prompt-set-inputs")
@@ -2006,7 +2011,7 @@ final class ComparisonMediaTests: XCTestCase {
         edit.prompts[0].inputPath = replacement.path
         var concurrent = saved; concurrent.prompts[0].text = "Another editor changed this"
         try store.replaceAll([concurrent])
-        let conflicted = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        let conflicted = await coordinator.savePromptSetEdits(edit)
         XCTAssertFalse(conflicted)
         XCTAssertTrue(coordinator.promptSetManagementError?.contains("reopen") == true)
         XCTAssertEqual(try store.load(), [concurrent])
@@ -2015,13 +2020,13 @@ final class ComparisonMediaTests: XCTestCase {
         edit.prompts[0].inputPath = replacement.path
         let corrupt = Data("broken-json".utf8)
         try corrupt.write(to: store.url)
-        let failed = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        let failed = await coordinator.savePromptSetEdits(edit)
         XCTAssertFalse(failed)
         XCTAssertEqual(try Data(contentsOf: store.url), corrupt)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: ownedRoot.path), folders)
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(saved.prompts.first?.inputPath))), Data("source".utf8))
         try store.replaceAll([concurrent])
-        let retried = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        let retried = await coordinator.savePromptSetEdits(edit)
         XCTAssertTrue(retried)
         XCTAssertFalse(coordinator.savingPromptSet)
         XCTAssertNil(coordinator.promptSetManagementError)
@@ -2031,10 +2036,10 @@ final class ComparisonMediaTests: XCTestCase {
     func testOwnedInputEditReclaimsUsingCurrentLegacyRunReferences() async throws {
         let source = root.appendingPathComponent("source.png"), replacement = root.appendingPathComponent("replacement.png")
         try Data("source".utf8).write(to: source); try Data("replacement".utf8).write(to: replacement)
-        var draft = ComparisonPromptSetDraft(mode: .vision)
+        var draft = PromptSetDraft(mode: .vision)
         draft.name = "Images"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
         let coordinator = makeCoordinator(runner: StubMediaRunner())
-        let result = await coordinator.createPromptSetWithInputCopies(draft)
+        let result = await coordinator.createPromptSet(draft)
         let saved = try XCTUnwrap(result)
         var legacy = historyRun(.vision, "Legacy reference", at: 100)
         legacy.promptEntries = saved.prompts
@@ -2044,7 +2049,7 @@ final class ComparisonMediaTests: XCTestCase {
         let historyBytes = try Data(contentsOf: runs.url)
         var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: saved.id))
         edit.prompts[0].inputPath = replacement.path
-        let updated = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        let updated = await coordinator.savePromptSetEdits(edit)
         XCTAssertTrue(updated)
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(saved.prompts.first?.inputPath)))
         XCTAssertEqual(try Data(contentsOf: runs.url), historyBytes)
@@ -2059,10 +2064,10 @@ final class ComparisonMediaTests: XCTestCase {
     func testInputNamesSurviveOwnedCopiesEditsAndRecordedSetupReuse() async throws {
         let source = root.appendingPathComponent("Bird in snow.png")
         try Data("source image".utf8).write(to: source)
-        var draft = ComparisonPromptSetDraft(mode: .vision)
+        var draft = PromptSetDraft(mode: .vision)
         draft.name = "Readable inputs"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
-        let result = await coordinator.createPromptSetWithInputCopies(draft)
+        let result = await coordinator.createPromptSet(draft)
         let set = try XCTUnwrap(result)
         XCTAssertEqual(set.prompts[0].inputName, source.lastPathComponent)
         XCTAssertEqual(set.prompts[0].inputDisplayName, "Bird in snow.png")
@@ -2074,7 +2079,7 @@ final class ComparisonMediaTests: XCTestCase {
         var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id))
         XCTAssertEqual(edit.prompts[0].inputDisplayName, "Bird in snow.png")
         edit.prompts[0].text = "Describe the surroundings"
-        let edited = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        let edited = await coordinator.savePromptSetEdits(edit)
         XCTAssertTrue(edited)
         let textOnly = try XCTUnwrap(coordinator.promptSets.first { $0.id == set.id })
         XCTAssertEqual(textOnly.prompts[0].inputName, "Bird in snow.png")
@@ -2083,7 +2088,7 @@ final class ComparisonMediaTests: XCTestCase {
         let run = try XCTUnwrap(coordinator.runs.first)
         let reuse = try ComparisonRunSetup(run: run, outputStore: coordinator.outputStore)
         XCTAssertEqual(reuse.draft.prompts[0].inputDisplayName, "Bird in snow.png")
-        let reused = await coordinator.createPromptSetWithInputCopies(reuse.savedDraft(named: "Another copy"))
+        let reused = await coordinator.createPromptSet(reuse.savedDraft(named: "Another copy"))
         XCTAssertEqual(reused?.prompts[0].inputName, "Bird in snow.png")
         XCTAssertNotEqual(reused?.prompts[0].inputPath, set.prompts[0].inputPath)
         let replacement = root.appendingPathComponent("New bird.jpg")
@@ -2092,7 +2097,7 @@ final class ComparisonMediaTests: XCTestCase {
         edit.prompts[0].inputPath = replacement.path
         XCTAssertEqual(edit.prompts[0].inputDisplayName, "New bird.jpg")
         XCTAssertNil(try edit.promptSet().prompts[0].inputName, "Changing files must clear the previous display name")
-        let replaced = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        let replaced = await coordinator.savePromptSetEdits(edit)
         XCTAssertTrue(replaced)
         XCTAssertEqual(coordinator.promptSets.first { $0.id == set.id }?.prompts[0].inputName, "New bird.jpg")
     }
@@ -2204,7 +2209,7 @@ final class ComparisonMediaTests: XCTestCase {
         run.promptEntries = [PromptEntry(id: "p", text: "A forest")]
         run.state = .running; XCTAssertThrowsError(try ComparisonRunSetup(run: run))
         run.state = .completed; run.mode = .musicGeneration
-        XCTAssertThrowsError(try ComparisonRunSetup(run: run))
+        XCTAssertEqual(try ComparisonRunSetup(run: run).draft.mode, .musicGeneration, "One setup reuses runs in every mode")
         run.mode = .imageGeneration
         run.promptEntries = [PromptEntry(id: "p", text: "A forest"), PromptEntry(id: "p", text: "Another forest")]
         XCTAssertThrowsError(try ComparisonRunSetup(run: run))
@@ -2236,10 +2241,11 @@ final class ComparisonMediaTests: XCTestCase {
     @MainActor
     func testReusedVideoSetupSavesCopyAndStartsFreshRunWithoutChangingHistory() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
-        var originalDraft = ComparisonPromptSetDraft(mode: .videoGeneration)
+        var originalDraft = PromptSetDraft(mode: .videoGeneration)
         originalDraft.name = "Video"; originalDraft.prompts[0].text = "A forest"
         originalDraft.prompts[0].steps = "9"; originalDraft.prompts[0].seed = "17"
-        let originalSet = try XCTUnwrap(coordinator.createPromptSet(originalDraft))
+        let created = await coordinator.createPromptSet(originalDraft)
+        let originalSet = try XCTUnwrap(created)
         coordinator.start(variants: [("/video/a", "old-signature")], promptSet: originalSet)
         await waitForRun(coordinator)
         let runID = try XCTUnwrap(coordinator.runs.first?.id)
@@ -2248,7 +2254,8 @@ final class ComparisonMediaTests: XCTestCase {
         let historyBefore = try Data(contentsOf: root.appendingPathComponent("runs.json"))
         var setup = try ComparisonRunSetup(run: originalRun)
         setup.draft.prompts[0].steps = "12"
-        let saved = try XCTUnwrap(coordinator.createPromptSet(setup.savedDraft(named: "Video copy")))
+        let copied = await coordinator.createPromptSet(setup.savedDraft(named: "Video copy"))
+        let saved = try XCTUnwrap(copied)
         XCTAssertNotEqual(saved.id, originalSet.id)
         XCTAssertEqual(coordinator.promptSets.first { $0.id == originalSet.id }, originalSet)
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("runs.json")), historyBefore)
@@ -2271,26 +2278,26 @@ final class ComparisonMediaTests: XCTestCase {
         var run = historyRun(.musicGeneration, "Saved music", at: 100)
         run.promptEntries = [PromptEntry(id: "p", text: "Piano", media:
             MediaParameters(size: 512, steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))]
-        var setup = try MusicComparisonSetup(run: run)
-        setup.prompts[0].duration = ""; setup.prompts[0].steps = ""
-        setup.prompts[0].seed = ""; setup.prompts[0].lyrics = ""
-        let cleared = try setup.promptSet().prompts[0]
+        var setup = try ComparisonRunSetup(run: run)
+        setup.draft.prompts[0].duration = ""; setup.draft.prompts[0].steps = ""
+        setup.draft.prompts[0].seed = ""; setup.draft.prompts[0].lyrics = ""
+        let cleared = try setup.draft.promptSet().prompts[0]
         XCTAssertEqual(cleared.media, MediaParameters(size: 512), "Unedited media fields must survive")
         for caption in ["   ", "Piano\u{0}", String(repeating: "🎹", count: 2001)] {
-            setup.prompts[0].caption = caption
-            XCTAssertThrowsError(try setup.promptSet())
+            setup.draft.prompts[0].text = caption
+            XCTAssertThrowsError(try setup.draft.promptSet())
         }
-        setup.prompts[0].caption = String(repeating: "🎹", count: 2000)
-        XCTAssertNoThrow(try setup.promptSet())
+        setup.draft.prompts[0].text = String(repeating: "🎹", count: 2000)
+        XCTAssertNoThrow(try setup.draft.promptSet())
         for lyrics in ["  ", "Song\u{1}", String(repeating: "a", count: 10001)] {
-            setup.prompts[0].lyrics = lyrics
-            XCTAssertThrowsError(try setup.promptSet())
+            setup.draft.prompts[0].lyrics = lyrics
+            XCTAssertThrowsError(try setup.draft.promptSet())
         }
         run.promptEntries?[0].media?.lyrics = ""
-        XCTAssertNotNil(try MusicComparisonSetup(run: run).validationError)
+        XCTAssertNotNil(try ComparisonRunSetup(run: run).draft.validationError)
         run = historyRun(.musicGeneration, "Duplicate models", at: 100, models: ["/model", "/model"])
         run.promptEntries = [PromptEntry(id: "p", text: "Piano")]
-        XCTAssertThrowsError(try MusicComparisonSetup(run: run))
+        XCTAssertThrowsError(try ComparisonRunSetup(run: run))
     }
 
     @MainActor
@@ -2307,9 +2314,9 @@ final class ComparisonMediaTests: XCTestCase {
         let originalID = try XCTUnwrap(coordinator.runs.first?.id)
         coordinator.reviewQuality(runID: originalID, modelPath: "/music/a", score: 4)
         let original = try XCTUnwrap(coordinator.runs.first)
-        var setup = try MusicComparisonSetup(run: original)
-        setup.prompts[0].duration = "20"
-        let prepared = try setup.promptSet()
+        var setup = try ComparisonRunSetup(run: original)
+        setup.draft.prompts[0].duration = "20"
+        let prepared = try setup.draft.promptSet()
         let presetsBefore = try Data(contentsOf: root.appendingPathComponent("sets.json"))
         coordinator.start(variants: [("/music/a", nil)], promptSet: prepared)
         await waitForRun(coordinator)
@@ -2334,10 +2341,10 @@ final class ComparisonMediaTests: XCTestCase {
         var run = historyRun(.musicGeneration, "Instrumental comparison", at: 100, models: ["/music/8bit", "/music/4bit"])
         run.promptEntries = [PromptEntry(id: "recorded", text: "Instrumental jazz-funk with Rhodes, bass and drums",
             media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))]
-        let view = MusicComparisonSetupSheet(setup: try MusicComparisonSetup(run: run), availablePaths: ["/music/8bit"],
+        let view = ComparisonRunSetupSheet(setup: try ComparisonRunSetup(run: run), availablePaths: ["/music/8bit"],
             name: { $0 == "/music/8bit" ? "Music model · 8-bit" : "Music model · 4-bit" },
-            onApply: { _, _ in XCTFail("Rendering must not apply or generate") },
-            onSave: { _ in XCTFail("Rendering must not save") })
+            onApply: { _, _ in XCTFail("Rendering must not apply or generate"); return nil },
+            onSave: { _ in XCTFail("Rendering must not save"); return nil })
             .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
         let host = NSHostingView(rootView: view)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 590),
@@ -2384,7 +2391,7 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
-    func testReusedSetupSaveFailureRetainsDraftAndCanRetryAsIndependentCopy() throws {
+    func testReusedSetupSaveFailureRetainsDraftAndCanRetryAsIndependentCopy() async throws {
         var run = historyRun(.imageGeneration, "Images", at: 100)
         run.promptEntries = [PromptEntry(id: "p", text: "A red bird", media: MediaParameters(size: 768, steps: 9, seed: 17))]
         var setup = try ComparisonRunSetup(run: run)
@@ -2392,12 +2399,14 @@ final class ComparisonMediaTests: XCTestCase {
         let coordinator = makeCoordinator(runner: StubMediaRunner())
         let storeURL = root.appendingPathComponent("sets.json")
         let corrupt = Data("broken-json".utf8); try corrupt.write(to: storeURL)
-        XCTAssertNil(coordinator.createPromptSet(setup.savedDraft(named: "Copy")))
+        let failed = await coordinator.createPromptSet(setup.savedDraft(named: "Copy"))
+        XCTAssertNil(failed)
         XCTAssertEqual(try Data(contentsOf: storeURL), corrupt)
         XCTAssertEqual(try setup.draft.promptSet().prompts[0].media?.seed, 42)
         XCTAssertTrue(coordinator.promptSets.allSatisfy { $0.origin == .builtin })
         try FileManager.default.removeItem(at: storeURL)
-        let saved = try XCTUnwrap(coordinator.createPromptSet(setup.savedDraft(named: "Copy")))
+        let retried = await coordinator.createPromptSet(setup.savedDraft(named: "Copy"))
+        let saved = try XCTUnwrap(retried)
         XCTAssertNotEqual(saved.id, setup.draft.id)
         XCTAssertNil(coordinator.promptSetManagementError)
         XCTAssertEqual(saved.prompts[0].media, MediaParameters(size: 768, steps: 9, seed: 42))
@@ -2415,14 +2424,14 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(coordinator.savePromptSet(original))
         var run = historyRun(.musicGeneration, original.name, at: 100)
         run.promptEntries = original.prompts
-        var setup = try MusicComparisonSetup(run: run)
-        setup.prompts[0].caption = "Rhodes, bass and drums"
-        setup.prompts[0].lyrics = "[verse]\nA new day"
-        setup.prompts[0].duration = "20"; setup.prompts[0].steps = "8"; setup.prompts[0].seed = "99"
-        let saved = try setup.promptSet(named: "  My instrumental  ")
+        var setup = try ComparisonRunSetup(run: run)
+        setup.draft.prompts[0].text = "Rhodes, bass and drums"
+        setup.draft.prompts[0].lyrics = "[verse]\nA new day"
+        setup.draft.prompts[0].duration = "20"; setup.draft.prompts[0].steps = "8"; setup.draft.prompts[0].seed = "99"
+        let saved = try setup.savedDraft(named: "  My instrumental  ").promptSet()
         XCTAssertEqual(saved.name, original.name, "Same-name copies must still have independent identities")
         XCTAssertNotEqual(saved.id, original.id)
-        XCTAssertNotEqual(try setup.promptSet(named: saved.name).id, saved.id)
+        XCTAssertNotEqual(try setup.savedDraft(named: saved.name).promptSet().id, saved.id)
         XCTAssertEqual(saved.prompts[0].maxTokens, 77)
         XCTAssertEqual(saved.prompts[0].media, MediaParameters(steps: 8, seed: 99, durationSeconds: 20, lyrics: "[verse]\nA new day"))
         XCTAssertTrue(coordinator.savePromptSet(saved))
@@ -2436,9 +2445,9 @@ final class ComparisonMediaTests: XCTestCase {
         let requests = await runner.requests
         XCTAssertTrue(requests.isEmpty, "Saving must not generate audio")
         XCTAssertEqual(run.promptEntries, original.prompts)
-        for name in ["", " \n ", "Name\u{0}"] { XCTAssertThrowsError(try setup.promptSet(named: name)) }
-        setup.prompts[0].steps = "31"
-        XCTAssertThrowsError(try setup.promptSet(named: "Invalid settings"))
+        for name in ["", " \n ", "Name\u{0}"] { XCTAssertThrowsError(try setup.savedDraft(named: name).promptSet()) }
+        setup.draft.prompts[0].steps = "31"
+        XCTAssertThrowsError(try setup.savedDraft(named: "Invalid settings").promptSet())
     }
 
     func testPromptDuplicationPreservesEditedFieldsAndHiddenMetadataInEveryOtherMode() throws {
@@ -2448,7 +2457,7 @@ final class ComparisonMediaTests: XCTestCase {
                 builtinInput: mode.inputKind == nil ? nil : "fixture", expectedKeywords: ["red"],
                 media: MediaParameters(size: 512, steps: 9, seed: 17, frames: 33, fps: 12))
             let set = PromptSet(id: "set", name: "Suite", useCase: .coding, prompts: [entry], origin: .userCreated, mode: mode)
-            var draft = try ComparisonPromptSetDraft(set: set)
+            var draft = try PromptSetDraft(set: set)
             draft.prompts[0].text = "Edited reference"
             draft.duplicatePrompt(id: entry.id)
             guard draft.prompts.count == 2 else { XCTFail("Duplicate must insert a second prompt"); continue }
@@ -2473,7 +2482,7 @@ final class ComparisonMediaTests: XCTestCase {
     @MainActor
     func testPromptOrderAndDuplicatesPersistAndReachRunnerWithoutChangingHistory() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
-        var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+        var draft = PromptSetDraft(mode: .imageGeneration)
         draft.name = "Ordered suite"; draft.prompts[0].text = "First scene"
         draft.prompts[0].seed = "7"
         draft.addPrompt(); draft.prompts[1].text = "Second scene"; draft.prompts[1].seed = "99"
@@ -2488,7 +2497,7 @@ final class ComparisonMediaTests: XCTestCase {
         draft.movePrompt(id: second, direction: .up)
         draft.movePrompt(id: second, direction: .up)
         XCTAssertEqual(draft.prompts.map(\.id), [second, first, duplicate])
-        let created = await coordinator.createPromptSetWithInputCopies(draft)
+        let created = await coordinator.createPromptSet(draft)
         let set = try XCTUnwrap(created)
         XCTAssertEqual(makeCoordinator(runner: runner).promptSets.first { $0.id == set.id }, set)
         coordinator.start(variants: [("/image/a", nil)], promptSet: set)
@@ -2501,7 +2510,7 @@ final class ComparisonMediaTests: XCTestCase {
         var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id))
         edit.movePrompt(id: duplicate, direction: .up)
         edit.removePrompt(id: first)
-        let saved = await coordinator.savePromptSetEditsWithInputCopies(edit)
+        let saved = await coordinator.savePromptSetEdits(edit)
         XCTAssertTrue(saved)
         XCTAssertEqual(coordinator.promptSets.first { $0.id == set.id }?.prompts.map(\.id), [second, duplicate])
         XCTAssertEqual(try Data(contentsOf: historyURL), history)
@@ -2511,14 +2520,15 @@ final class ComparisonMediaTests: XCTestCase {
     @MainActor
     func testOtherModePromptSettingsPersistPerPromptAndReachTheRunner() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
-        var draft = ComparisonPromptSetDraft(mode: .videoGeneration)
+        var draft = PromptSetDraft(mode: .videoGeneration)
         draft.name = "Video contrasts"; draft.prompts[0].text = "Snow falling in a forest"
         draft.prompts[0].width = "640"; draft.prompts[0].height = "352"
         draft.prompts[0].frames = "33"; draft.prompts[0].fps = "12"
         draft.prompts[0].steps = "8"; draft.prompts[0].seed = "7"
         draft.addPrompt(); draft.prompts[1].text = "Clouds moving over mountains"
         draft.prompts[1].steps = "12"; draft.prompts[1].seed = "99"
-        let set = try XCTUnwrap(coordinator.createPromptSet(draft))
+        let created = await coordinator.createPromptSet(draft)
+        let set = try XCTUnwrap(created)
         XCTAssertEqual(set.prompts[0].media, MediaParameters(width: 640, height: 352, steps: 8, seed: 7, frames: 33, fps: 12))
         XCTAssertEqual(set.prompts[1].media, MediaParameters(width: 416, height: 240, steps: 12, seed: 99, frames: 17))
         let loaded = makeCoordinator(runner: runner)
@@ -2534,7 +2544,8 @@ final class ComparisonMediaTests: XCTestCase {
         var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id))
         edit.prompts[0].steps = "20"; edit.addPrompt(); edit.prompts[2].text = "A calm lake"
         edit.removePrompt(id: set.prompts[1].id)
-        XCTAssertTrue(coordinator.savePromptSetEdits(edit))
+        let edited = await coordinator.savePromptSetEdits(edit)
+        XCTAssertTrue(edited)
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("runs.json")), historyBytes)
         XCTAssertEqual(run.promptEntries, set.prompts)
         XCTAssertTrue(coordinator.renamePromptSet(id: set.id, name: "Renamed video"))
@@ -2544,26 +2555,30 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
-    func testOtherModeEditingRejectsStaleAndCorruptStoresAndRecoversOnReopen() throws {
+    func testOtherModeEditingRejectsStaleAndCorruptStoresAndRecoversOnReopen() async throws {
         let coordinator = makeCoordinator(runner: StubMediaRunner())
-        var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+        var draft = PromptSetDraft(mode: .imageGeneration)
         draft.name = "Images"; draft.prompts[0].text = "A lighthouse"
-        let set = try XCTUnwrap(coordinator.createPromptSet(draft))
+        let created = await coordinator.createPromptSet(draft)
+        let set = try XCTUnwrap(created)
         var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id)); edit.prompts[0].seed = "77"
         let store = JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json"))
         var changed = set; changed.prompts[0].text = "A mountain"
         try store.replaceAll([changed])
-        XCTAssertFalse(coordinator.savePromptSetEdits(edit))
+        let stale = await coordinator.savePromptSetEdits(edit)
+        XCTAssertFalse(stale)
         XCTAssertEqual(try store.load(), [changed])
         var fresh = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id)); fresh.prompts[0].seed = "99"
-        XCTAssertTrue(coordinator.savePromptSetEdits(fresh))
+        let saved = await coordinator.savePromptSetEdits(fresh)
+        XCTAssertTrue(saved)
         XCTAssertEqual(try store.load()[0].prompts[0].text, "A mountain")
         XCTAssertEqual(try store.load()[0].prompts[0].media?.seed, 99)
         let before = coordinator.promptSets, corrupt = Data("broken-json".utf8)
         try corrupt.write(to: store.url)
         XCTAssertFalse(coordinator.renamePromptSet(id: set.id, name: "Unsafe"))
         XCTAssertFalse(coordinator.removePromptSet(id: set.id))
-        XCTAssertNil(coordinator.createPromptSet(draft))
+        let duplicate = await coordinator.createPromptSet(draft)
+        XCTAssertNil(duplicate)
         XCTAssertEqual(coordinator.promptSets, before)
         XCTAssertEqual(try Data(contentsOf: store.url), corrupt)
     }
@@ -2574,15 +2589,15 @@ final class ComparisonMediaTests: XCTestCase {
         let tool = BuiltinPromptSets.toolCalling.prompts[0].tool
         let original = PromptSet(id: "chat-edit", name: "Tools", useCase: .coding,
             prompts: [PromptEntry(id: "p", text: "Call the tool", maxTokens: 77, tool: tool)], origin: .userCreated)
-        var chat = try ComparisonPromptSetDraft(set: original)
+        var chat = try PromptSetDraft(set: original)
         chat.prompts[0].text = "Use the saved tool"; chat.prompts[0].maxTokens = "512"
         let edited = try chat.promptSet()
         XCTAssertEqual(edited.id, original.id); XCTAssertEqual(edited.mode, nil)
         XCTAssertEqual(edited.useCase, .coding); XCTAssertEqual(edited.prompts[0].tool, tool)
         XCTAssertEqual(edited.prompts[0].maxTokens, 512)
-        XCTAssertThrowsError(try ComparisonPromptSetDraft(set: BuiltinPromptSets.coding))
+        XCTAssertThrowsError(try PromptSetDraft(set: BuiltinPromptSets.coding))
         for mode in [ComparisonMode.vision, .videoUnderstanding, .speechToText] {
-            var draft = ComparisonPromptSetDraft(mode: mode); draft.name = "Inputs"
+            var draft = PromptSetDraft(mode: mode); draft.name = "Inputs"
             draft.prompts[0].text = "Describe the input"
             XCTAssertThrowsError(try draft.promptSet())
             draft.prompts[0].inputPath = input.path
@@ -2590,8 +2605,8 @@ final class ComparisonMediaTests: XCTestCase {
             draft.prompts[0].inputPath = root.path
             XCTAssertThrowsError(try draft.promptSet())
         }
-        var image = ComparisonPromptSetDraft(mode: .imageGeneration); image.name = "Images"; image.prompts[0].text = "Piano"
-        let invalidImageFields: [(WritableKeyPath<ComparisonPromptSetDraft.Prompt, String>, String)] = [
+        var image = PromptSetDraft(mode: .imageGeneration); image.name = "Images"; image.prompts[0].text = "Piano"
+        let invalidImageFields: [(WritableKeyPath<PromptSetDraft.Prompt, String>, String)] = [
             (\.size, "513"), (\.steps, "101"), (\.seed, "-1")]
         for (field, value) in invalidImageFields {
             var invalid = image; invalid.prompts[0][keyPath: field] = value
@@ -2610,7 +2625,7 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     func testInlineDraftValidationTracksEachPromptAndClearsAfterCorrection() throws {
-        var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+        var draft = PromptSetDraft(mode: .imageGeneration)
         XCTAssertNotNil(draft.nameValidationError)
         draft.name = "Images"
         draft.prompts[0].text = "A forest"
@@ -2637,7 +2652,7 @@ final class ComparisonMediaTests: XCTestCase {
 
     func testInlineValidationChecksValuesWithoutReadingInputFilesAndSaveRechecksAvailability() throws {
         for mode in [ComparisonMode.chat, .vision, .videoUnderstanding, .speechToText, .textToSpeech, .imageGeneration, .videoGeneration] {
-            var draft = ComparisonPromptSetDraft(mode: mode)
+            var draft = PromptSetDraft(mode: mode)
             draft.name = "Suite"
             draft.prompts[0].text = "Prompt"
             if mode.inputKind != nil {
@@ -2654,7 +2669,7 @@ final class ComparisonMediaTests: XCTestCase {
                 XCTAssertNoThrow(try draft.promptSet())
             }
         }
-        var video = ComparisonPromptSetDraft(mode: .videoGeneration)
+        var video = PromptSetDraft(mode: .videoGeneration)
         video.name = "Video"; video.prompts[0].text = "Waves"
         video.prompts[0].fps = "61"
         XCTAssertNotNil(video.validationError)
@@ -2667,7 +2682,7 @@ final class ComparisonMediaTests: XCTestCase {
     @MainActor
     func testInlineValidationEditorsRenderIssuesAndCorrectedValuesWithoutSaving() async throws {
         for invalid in [true, false] {
-            var draft = ComparisonPromptSetDraft(mode: .imageGeneration)
+            var draft = PromptSetDraft(mode: .imageGeneration)
             draft.name = "Landscape studies"; draft.prompts[0].text = "A mountain lake at sunrise"
             draft.prompts[0].size = invalid ? "513" : "512"
             let content = ComparisonPromptSetEditor(draft: draft) { _ in
@@ -2695,42 +2710,42 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     func testMusicInlineValidationIdentifiesThePromptAcrossCreateEditAndReuse() throws {
-        var draft = MusicPromptSetDraft(); draft.name = "Instrumentals"
-        draft.prompts[0].caption = "Solo piano"
-        draft.addPrompt(); draft.prompts[1].caption = "Acoustic guitar"
+        var draft = PromptSetDraft(mode: .musicGeneration); draft.name = "Instrumentals"
+        draft.prompts[0].text = "Solo piano"
+        draft.addPrompt(); draft.prompts[1].text = "Acoustic guitar"
         let saved = try draft.promptSet()
         draft.prompts[1].steps = "31"
         let message = "Steps must be a whole number from 1 to 30."
-        XCTAssertNil(draft.prompts[0].validationError)
-        XCTAssertEqual(draft.prompts[1].validationError, message)
+        XCTAssertNil(draft.prompts[0].validationError(for: .musicGeneration))
+        XCTAssertEqual(draft.prompts[1].validationError(for: .musicGeneration), message)
         XCTAssertEqual(draft.validationError, "Prompt 2: \(message)")
-        var edit = try MusicPromptSetEdit(set: saved)
+        var edit = try PromptSetDraft(set: saved)
         edit.prompts = draft.prompts
         XCTAssertEqual(edit.validationError, draft.validationError)
         var run = historyRun(.musicGeneration, saved.name, at: 100)
         run.promptEntries = saved.prompts
-        var setup = try MusicComparisonSetup(run: run)
-        setup.prompts = draft.prompts
-        XCTAssertEqual(setup.validationError, draft.validationError)
-        setup.prompts.movePrompt(id: setup.prompts[1].id, direction: .up)
-        XCTAssertEqual(setup.validationError, "Prompt 1: \(message)")
+        var setup = try ComparisonRunSetup(run: run)
+        setup.draft.prompts = draft.prompts
+        XCTAssertEqual(setup.draft.validationError, draft.validationError)
+        setup.draft.movePrompt(id: setup.draft.prompts[1].id, direction: .up)
+        XCTAssertEqual(setup.draft.validationError, "Prompt 1: \(message)")
         draft.prompts[1].steps = "30"
         XCTAssertNil(draft.validationError)
         XCTAssertEqual(try draft.promptSet(), saved, "Correcting a value preserves identities and metadata")
         for field in ["", "nan", "0", "361"] {
             draft.prompts[1].duration = field
             if field.isEmpty { XCTAssertNil(draft.validationError) }
-            else { XCTAssertNotNil(draft.prompts[1].validationError) }
+            else { XCTAssertNotNil(draft.prompts[1].validationError(for: .musicGeneration)) }
         }
     }
 
     func testMusicInlineValidationKeepsNamesAndDefaultsConsistentWithSave() throws {
-        var draft = MusicPromptSetDraft()
+        var draft = PromptSetDraft(mode: .musicGeneration)
         XCTAssertNotNil(draft.nameValidationError)
         XCTAssertEqual(draft.validationError, draft.nameValidationError)
         draft.name = "Solo"
-        XCTAssertNotNil(draft.prompts[0].validationError)
-        draft.prompts[0].caption = "Piano"
+        XCTAssertNotNil(draft.prompts[0].validationError(for: .musicGeneration))
+        draft.prompts[0].text = "Piano"
         for name in ["", " \n ", "bad\nname", "bad\u{0}"] {
             draft.name = name
             XCTAssertNotNil(draft.nameValidationError)
@@ -2755,25 +2770,25 @@ final class ComparisonMediaTests: XCTestCase {
     @MainActor
     func testMusicInlineValidationRendersCreateEditAndReuseWithoutSavingOrGenerating() async throws {
         for invalid in [true, false] {
-            var draft = MusicPromptSetDraft(); draft.name = "Instrumental studies"
-            draft.prompts[0].caption = "Warm solo piano, a gentle melody, no vocals"
+            var draft = PromptSetDraft(mode: .musicGeneration); draft.name = "Instrumental studies"
+            draft.prompts[0].text = "Warm solo piano, a gentle melody, no vocals"
             draft.prompts[0].duration = invalid ? "361" : "15"
             let set = PromptSet(id: "fixture", name: draft.name, useCase: nil,
-                prompts: [PromptEntry(id: "p", text: draft.prompts[0].caption)], origin: .userCreated, mode: .musicGeneration)
-            var edit = try MusicPromptSetEdit(set: set); edit.prompts = draft.prompts
+                prompts: [PromptEntry(id: "p", text: draft.prompts[0].text)], origin: .userCreated, mode: .musicGeneration)
+            var edit = try PromptSetDraft(set: set); edit.prompts = draft.prompts
             var run = historyRun(.musicGeneration, draft.name, at: 100, models: ["/music/model"])
             run.promptEntries = set.prompts
-            var setup = try MusicComparisonSetup(run: run); setup.prompts = draft.prompts
+            var setup = try ComparisonRunSetup(run: run); setup.draft.prompts = draft.prompts
             let fixtures: [(String, AnyView)] = [
-                ("create", AnyView(MusicPromptSetCreateSheet(draft: draft) { _ in
+                ("create", AnyView(ComparisonPromptSetEditor(draft: draft) { _ in
                     XCTFail("Validation must not save or generate"); return nil
                 })),
-                ("edit", AnyView(MusicPromptSetEditSheet(edit: edit) { _ in
+                ("edit", AnyView(ComparisonPromptSetEditor(draft: edit) { _ in
                     XCTFail("Validation must not save edits or generate"); return nil
                 })),
-                ("reuse", AnyView(MusicComparisonSetupSheet(setup: setup, availablePaths: ["/music/model"],
-                    name: { _ in "Music model" }, onApply: { _, _ in XCTFail("Validation must not apply or generate") },
-                    onSave: { _ in XCTFail("Validation must not save") })))
+                ("reuse", AnyView(ComparisonRunSetupSheet(setup: setup, availablePaths: ["/music/model"],
+                    name: { _ in "Music model" }, onApply: { _, _ in XCTFail("Validation must not apply or generate"); return nil },
+                    onSave: { _ in XCTFail("Validation must not save"); return nil })))
             ]
             for (kind, content) in fixtures {
                 let host = NSHostingView(rootView: content.background(WorkbenchColor.canvas).preferredColorScheme(.dark))
@@ -2811,7 +2826,7 @@ final class ComparisonMediaTests: XCTestCase {
         for mode in ComparisonMode.allCases where mode != .musicGeneration {
             var original = mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode)
             original.origin = .userCreated
-            var draft = try ComparisonPromptSetDraft(set: original)
+            var draft = try PromptSetDraft(set: original)
             draft.duplicatePrompt(id: draft.prompts[0].id)
             XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) })
             let id = draft.prompts[1].id
@@ -2830,19 +2845,23 @@ final class ComparisonMediaTests: XCTestCase {
             draft.removePrompt(id: id)
             XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: draft.prompts) { $0.validationError(for: mode) }, "Single-card editors need no jump action")
         }
-        var prompts = (1...3).map { MusicComparisonSetup.Prompt(PromptEntry(id: "music-\($0)", text: "Piano")) }
-        prompts[1].duration = "invalid"
-        prompts[2].steps = "invalid"
-        XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError })?.promptID, "music-2")
-        prompts.movePrompt(id: "music-3", direction: .up)
-        XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError })?.promptID, "music-3")
-        prompts.removePrompt(id: "music-3")
-        XCTAssertEqual(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError })?.number, 2)
-        prompts[1].duration = "15"
-        XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError }))
-        prompts[0].steps = "bad"
-        prompts.removePrompt(id: "music-2")
-        XCTAssertNil(ComparisonPromptScrollLogic.firstIssue(in: prompts, error: { $0.validationError }))
+        var music = PromptSetDraft(mode: .musicGeneration)
+        music.prompts = (1...3).map { PromptSetDraft.Prompt(PromptEntry(id: "music-\($0)", text: "Piano"), mode: .musicGeneration) }
+        func firstMusicIssue() -> ComparisonPromptScrollLogic.Issue? {
+            ComparisonPromptScrollLogic.firstIssue(in: music.prompts) { $0.validationError(for: .musicGeneration) }
+        }
+        music.prompts[1].duration = "invalid"
+        music.prompts[2].steps = "invalid"
+        XCTAssertEqual(firstMusicIssue()?.promptID, "music-2")
+        music.movePrompt(id: "music-3", direction: .up)
+        XCTAssertEqual(firstMusicIssue()?.promptID, "music-3")
+        music.removePrompt(id: "music-3")
+        XCTAssertEqual(firstMusicIssue()?.number, 2)
+        music.prompts[1].duration = "15"
+        XCTAssertNil(firstMusicIssue())
+        music.prompts[0].steps = "bad"
+        music.removePrompt(id: "music-2")
+        XCTAssertNil(firstMusicIssue())
     }
 
     @MainActor
@@ -2869,7 +2888,7 @@ final class ComparisonMediaTests: XCTestCase {
                 ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0)
             })
             let initial = scroll.documentVisibleRect.minY
-            if music { fixture.music[3].duration = "invalid" }
+            if music { fixture.music.prompts[3].duration = "invalid" }
             else { fixture.draft.prompts[3].steps = "invalid" }
             try await Task.sleep(for: .milliseconds(200))
             host.layoutSubtreeIfNeeded()
@@ -2878,13 +2897,13 @@ final class ComparisonMediaTests: XCTestCase {
             XCTAssertEqual(buttons.count, 1)
             let button = try XCTUnwrap(buttons.first)
             let draftBefore = fixture.draft.prompts
-            let musicBefore = fixture.music
+            let musicBefore = fixture.music.prompts
             button.performClick(nil)
             try await Task.sleep(for: .milliseconds(200))
             host.layoutSubtreeIfNeeded()
             XCTAssertGreaterThan(scroll.documentVisibleRect.minY - initial, 100, "The invalid card must be revealed")
             XCTAssertEqual(fixture.draft.prompts, draftBefore)
-            XCTAssertEqual(fixture.music, musicBefore)
+            XCTAssertEqual(fixture.music.prompts, musicBefore)
             let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: bitmap)
             let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
@@ -2895,7 +2914,7 @@ final class ComparisonMediaTests: XCTestCase {
                 try png.write(to: URL(fileURLWithPath: path).appendingPathComponent("\(title).png"))
             }
             let revealed = scroll.documentVisibleRect.minY
-            if music { fixture.music[3].duration = "15" }
+            if music { fixture.music.prompts[3].duration = "15" }
             else { fixture.draft.prompts[3].steps = "20" }
             try await Task.sleep(for: .milliseconds(200))
             XCTAssertTrue(navigationButtons(in: host).isEmpty, "Correcting the error removes the action")
@@ -2930,7 +2949,7 @@ final class ComparisonMediaTests: XCTestCase {
             host.layoutSubtreeIfNeeded()
             let added = scroll.documentVisibleRect.minY
             XCTAssertGreaterThan(abs(added - initial), 100, "Adding must reveal the new card")
-            if music { fixture.music.duplicatePrompt(id: fixture.music[0].id) }
+            if music { fixture.music.duplicatePrompt(id: fixture.music.prompts[0].id) }
             else { fixture.draft.duplicatePrompt(id: fixture.draft.prompts[0].id) }
             let expectedDuplicateOffset = initial + (initialDocumentHeight + WorkbenchSpacing.md) / 4
             let clock = ContinuousClock()
@@ -2948,7 +2967,7 @@ final class ComparisonMediaTests: XCTestCase {
             // must start at the top, including its heading and action controls.
             XCTAssertEqual(duplicated - initial, (initialDocumentHeight + WorkbenchSpacing.md) / 4,
                 accuracy: 2, "The new card's heading must not be clipped")
-            if music { fixture.music[1].caption = "Solo cello 1" }
+            if music { fixture.music.prompts[1].text = "Solo cello 1" }
             else { fixture.draft.prompts[1].text = "Seascape 1" }
             try await Task.sleep(for: .milliseconds(200))
             host.layoutSubtreeIfNeeded()
@@ -2990,7 +3009,7 @@ final class ComparisonMediaTests: XCTestCase {
             XCTAssertTrue(button.isEnabled, "Further edits must enable Revert again")
         }
         for mode in ComparisonMode.allCases where mode != .musicGeneration {
-            var draft = try ComparisonPromptSetDraft(copying: mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode))
+            var draft = try PromptSetDraft(copying: mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode))
             let opened = draft.prompts[0]
             draft.duplicatePrompt(id: opened.id)
             var edited = opened
@@ -3001,13 +3020,13 @@ final class ComparisonMediaTests: XCTestCase {
             var other = draft.prompts[1]; other.text = "Keep this edit"
             try await check(opened, edited: edited, other: other, title: mode.rawValue)
         }
-        var music = MusicPromptSetDraft()
+        var music = PromptSetDraft(mode: .musicGeneration)
         let opened = music.prompts[0]
-        music.prompts.duplicatePrompt(id: opened.id)
+        music.duplicatePrompt(id: opened.id)
         var edited = opened
-        edited.caption = "Edited music"; edited.lyrics = "Edited lyrics"
+        edited.text = "Edited music"; edited.lyrics = "Edited lyrics"
         edited.duration = "bad"; edited.steps = "bad"; edited.seed = "bad"
-        var other = music.prompts[1]; other.caption = "Keep this edit"
+        var other = music.prompts[1]; other.text = "Keep this edit"
         try await check(opened, edited: edited, other: other, title: "music")
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("runs.json").path))
@@ -3018,7 +3037,7 @@ final class ComparisonMediaTests: XCTestCase {
         let file = root.appendingPathComponent("saved-input.png")
         try Data("original input".utf8).write(to: file)
         let entry = PromptEntry(id: "saved", text: "Question", inputKind: .image, inputPath: file.path)
-        let opened = ComparisonPromptSetDraft.Prompt(entry, mode: .vision, savedInput: true)
+        let opened = PromptSetDraft.Prompt(entry, mode: .vision, savedInput: true)
         let fixture = PromptRevertFixture(opened)
         let host = NSHostingView(rootView: PromptRevertFixtureView(fixture: fixture, opened: opened))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 70),
@@ -3029,7 +3048,7 @@ final class ComparisonMediaTests: XCTestCase {
         let button = try XCTUnwrap(Self.firstDescendant(of: host) { $0 is NSButton } as? NSButton)
         XCTAssertFalse(button.isEnabled)
         let otherEntry = PromptEntry(id: "other", text: entry.text, inputKind: entry.inputKind, inputPath: entry.inputPath)
-        fixture.prompt = ComparisonPromptSetDraft.Prompt(otherEntry, mode: .vision)
+        fixture.prompt = PromptSetDraft.Prompt(otherEntry, mode: .vision)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(button.isEnabled, "A retained control cannot restore another prompt identity")
         fixture.prompt = opened; fixture.prompt.inputPath = "/replacement"
@@ -3050,7 +3069,7 @@ final class ComparisonMediaTests: XCTestCase {
             var original = mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode)
             original.origin = .userCreated
             original.inputStorageID = UUID()
-            var draft = try ComparisonPromptSetDraft(set: original)
+            var draft = try PromptSetDraft(set: original)
             XCTAssertFalse(draft.hasChanges)
             draft.prompts[0].text += " edited"
             XCTAssertTrue(draft.hasChanges)
@@ -3067,7 +3086,7 @@ final class ComparisonMediaTests: XCTestCase {
             draft.prompts[0].text = oldText
             XCTAssertFalse(draft.hasChanges, "Manually restoring a field must clear dirty state")
         }
-        var copy = try ComparisonPromptSetDraft(copying: BuiltinPromptSets.toolCalling)
+        var copy = try PromptSetDraft(copying: BuiltinPromptSets.toolCalling)
         let before = try copy.promptSet()
         XCTAssertTrue(copy.hasChanges, "Independent new copies must still be saveable")
         copy.revertChanges()
@@ -3078,7 +3097,7 @@ final class ComparisonMediaTests: XCTestCase {
         for mode in ComparisonMode.allCases where mode != .musicGeneration {
             let source = mode == .chat ? BuiltinPromptSets.toolCalling : promptSet(for: mode)
             for copied in [false, true] {
-                var draft = copied ? try ComparisonPromptSetDraft(copying: source) : ComparisonPromptSetDraft(mode: mode)
+                var draft = copied ? try PromptSetDraft(copying: source) : PromptSetDraft(mode: mode)
                 let checkpoint = ComparisonPromptDraftCheckpoint(name: draft.name, prompts: draft.prompts)
                 XCTAssertFalse(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts), "Opening alone must not require confirmation")
                 XCTAssertTrue(draft.hasChanges, "Independent creation must keep its Save semantics")
@@ -3098,7 +3117,7 @@ final class ComparisonMediaTests: XCTestCase {
             }
         }
         for copied in [false, true] {
-            var draft = copied ? try MusicPromptSetDraft(copying: promptSet(for: .musicGeneration)) : MusicPromptSetDraft()
+            var draft = copied ? try PromptSetDraft(copying: promptSet(for: .musicGeneration)) : PromptSetDraft(mode: .musicGeneration)
             let checkpoint = ComparisonPromptDraftCheckpoint(name: draft.name, prompts: draft.prompts)
             XCTAssertFalse(checkpoint.hasChanges(name: draft.name, prompts: draft.prompts))
             draft.prompts[0].duration = "invalid"
@@ -3109,18 +3128,21 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     func testReuseCheckpointRetainsSuccessfulCopiesAndRearmsForFurtherEdits() throws {
-        var prompts = (1...2).map { MusicComparisonSetup.Prompt(PromptEntry(id: "p-\($0)", text: "Solo piano \($0)")) }
-        var checkpoint = ComparisonPromptDraftCheckpoint(prompts: prompts)
-        XCTAssertFalse(checkpoint.hasChanges(prompts: prompts))
-        prompts.movePrompt(id: "p-2", direction: .up)
-        XCTAssertTrue(checkpoint.hasChanges(prompts: prompts), "Recorded order is part of the draft")
+        var music = PromptSetDraft(mode: .musicGeneration)
+        music.prompts = (1...2).map {
+            PromptSetDraft.Prompt(PromptEntry(id: "p-\($0)", text: "Solo piano \($0)"), mode: .musicGeneration)
+        }
+        var checkpoint = ComparisonPromptDraftCheckpoint(prompts: music.prompts)
+        XCTAssertFalse(checkpoint.hasChanges(prompts: music.prompts))
+        music.movePrompt(id: "p-2", direction: .up)
+        XCTAssertTrue(checkpoint.hasChanges(prompts: music.prompts), "Recorded order is part of the draft")
         // A failed save does not advance the checkpoint.
-        XCTAssertTrue(checkpoint.hasChanges(prompts: prompts))
-        checkpoint.retain(prompts: prompts)
-        XCTAssertFalse(checkpoint.hasChanges(prompts: prompts), "A successfully saved copy retains these inputs")
-        prompts[0].lyrics = "Edited lyrics"
-        XCTAssertTrue(checkpoint.hasChanges(prompts: prompts), "Further edits must require confirmation again")
-        var draft = try ComparisonPromptSetDraft(copying: BuiltinPromptSets.toolCalling)
+        XCTAssertTrue(checkpoint.hasChanges(prompts: music.prompts))
+        checkpoint.retain(prompts: music.prompts)
+        XCTAssertFalse(checkpoint.hasChanges(prompts: music.prompts), "A successfully saved copy retains these inputs")
+        music.prompts[0].lyrics = "Edited lyrics"
+        XCTAssertTrue(checkpoint.hasChanges(prompts: music.prompts), "Further edits must require confirmation again")
+        var draft = try PromptSetDraft(copying: BuiltinPromptSets.toolCalling)
         var textCheckpoint = ComparisonPromptDraftCheckpoint(prompts: draft.prompts)
         draft.prompts[0].maxTokens = "invalid"
         XCTAssertTrue(textCheckpoint.hasChanges(prompts: draft.prompts))
@@ -3134,21 +3156,21 @@ final class ComparisonMediaTests: XCTestCase {
     func testSavedMusicDraftDetectsInvalidRawEditsAndRestoresMetadataAndOrder() throws {
         var original = promptSet(for: .musicGeneration); original.origin = .userCreated
         original.useCase = .coding
-        var edit = try MusicPromptSetEdit(set: original)
+        var edit = try PromptSetDraft(set: original)
         XCTAssertFalse(edit.hasChanges)
         edit.prompts[0].duration = "invalid"
         XCTAssertTrue(edit.hasChanges)
         XCTAssertNotNil(edit.validationError)
-        edit.prompts.duplicatePrompt(id: edit.prompts[0].id)
-        edit.prompts.movePrompt(id: edit.prompts.last!.id, direction: .up)
-        edit.prompts.addPrompt()
+        edit.duplicatePrompt(id: edit.prompts[0].id)
+        edit.movePrompt(id: edit.prompts.last!.id, direction: .up)
+        edit.addPrompt()
         edit.revertChanges()
         XCTAssertFalse(edit.hasChanges)
         XCTAssertNil(edit.validationError)
-        XCTAssertEqual(try edit.updatedPromptSet(), original)
-        edit.prompts[0].caption = "Changed caption"
+        XCTAssertEqual(try edit.promptSet(), original)
+        edit.prompts[0].text = "Changed caption"
         XCTAssertTrue(edit.hasChanges)
-        edit.prompts[0].caption = original.prompts[0].text
+        edit.prompts[0].text = original.prompts[0].text
         XCTAssertFalse(edit.hasChanges)
     }
 
@@ -3280,13 +3302,13 @@ final class ComparisonMediaTests: XCTestCase {
             for changed in [false, true] {
                 let content: AnyView
                 if music {
-                    var edit = try MusicPromptSetEdit(set: original)
+                    var edit = try PromptSetDraft(set: original)
                     if changed { edit.prompts[0].steps = "10" }
-                    content = AnyView(MusicPromptSetEditSheet(edit: edit) { _ in
+                    content = AnyView(ComparisonPromptSetEditor(draft: edit) { _ in
                         XCTFail("Rendering draft actions must not save or generate"); return nil
                     })
                 } else {
-                    var draft = try ComparisonPromptSetDraft(set: original)
+                    var draft = try PromptSetDraft(set: original)
                     if changed { draft.prompts[0].steps = "10" }
                     content = AnyView(ComparisonPromptSetEditor(draft: draft) { _ in
                         XCTFail("Rendering draft actions must not save or generate"); return nil
@@ -3317,14 +3339,14 @@ final class ComparisonMediaTests: XCTestCase {
     func testLegacyVideoDefaultsRemainExactUntilSettingsAreChanged() throws {
         let set = PromptSet(id: "legacy-video", name: "Legacy", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "A forest")], origin: .userCreated, mode: .videoGeneration)
-        var draft = try ComparisonPromptSetDraft(set: set)
+        var draft = try PromptSetDraft(set: set)
         XCTAssertEqual(try draft.promptSet(), set)
         XCTAssertEqual(draft.prompts[0].width, "416")
         draft.prompts[0].steps = "9"
         XCTAssertEqual(try draft.promptSet().prompts[0].media,
             MediaParameters(width: 416, height: 240, steps: 9, seed: 42, frames: 17))
         var square = set; square.prompts[0].media = MediaParameters(size: 512, steps: 10)
-        var squareEdit = try ComparisonPromptSetDraft(set: square)
+        var squareEdit = try PromptSetDraft(set: square)
         XCTAssertEqual(try squareEdit.promptSet(), square)
         squareEdit.prompts[0].width = ""
         XCTAssertEqual(try squareEdit.promptSet().prompts[0].media, MediaParameters(height: 512, steps: 10))
@@ -3333,23 +3355,27 @@ final class ComparisonMediaTests: XCTestCase {
     @MainActor
     func testOtherModeManagementRefusesActiveRunsAndSaveFailureCanRetry() async throws {
         let runner = StubMediaRunner(gated: true), coordinator = makeCoordinator(runner: runner)
-        var draft = ComparisonPromptSetDraft(mode: .imageGeneration); draft.name = "Images"; draft.prompts[0].text = "Piano"
+        var draft = PromptSetDraft(mode: .imageGeneration); draft.name = "Images"; draft.prompts[0].text = "Piano"
         let store = JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json"))
         let corrupt = Data("invalid".utf8); try corrupt.write(to: store.url)
-        XCTAssertNil(coordinator.createPromptSet(draft))
+        let failed = await coordinator.createPromptSet(draft)
+        XCTAssertNil(failed)
         XCTAssertEqual(try Data(contentsOf: store.url), corrupt)
         try FileManager.default.removeItem(at: store.url)
-        let set = try XCTUnwrap(coordinator.createPromptSet(draft))
+        let created = await coordinator.createPromptSet(draft)
+        let set = try XCTUnwrap(created)
         XCTAssertNil(coordinator.promptSetManagementError)
         var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: set.id)); edit.prompts[0].seed = "99"
         coordinator.start(variants: [("/image/a", nil)], promptSet: set)
         XCTAssertNil(coordinator.preparePromptSetEdit(id: set.id))
-        XCTAssertFalse(coordinator.savePromptSetEdits(edit))
+        let duringRun = await coordinator.savePromptSetEdits(edit)
+        XCTAssertFalse(duringRun)
         XCTAssertFalse(coordinator.renamePromptSet(id: set.id, name: "Changed"))
         XCTAssertFalse(coordinator.removePromptSet(id: set.id))
         XCTAssertEqual(try store.load(), [set])
         await runner.release(1); await waitForRun(coordinator)
-        XCTAssertTrue(coordinator.savePromptSetEdits(edit))
+        let afterRun = await coordinator.savePromptSetEdits(edit)
+        XCTAssertTrue(afterRun)
         XCTAssertNil(coordinator.promptSetManagementError)
         XCTAssertEqual(try store.load()[0].prompts[0].media?.seed, 99)
     }
@@ -3360,51 +3386,56 @@ final class ComparisonMediaTests: XCTestCase {
             inputPath: "/recorded/input.wav", builtinInput: "fixture", expectedKeywords: ["piano"],
             media: MediaParameters(size: 512, steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"),
             inputName: "Piano reference.wav")
-        var prompts = [MusicComparisonSetup.Prompt(entry)]
-        prompts[0].caption = "Rhodes and bass"; prompts[0].lyrics = "[verse]\nA new day"
-        prompts[0].duration = "20"; prompts[0].steps = "8"; prompts[0].seed = "99"
-        prompts.duplicatePrompt(id: entry.id)
-        guard prompts.count == 2 else { XCTFail("Duplicate must insert a second music prompt"); return }
-        XCTAssertNotEqual(prompts[1].id, entry.id)
-        var expected = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(prompts[0].entry())) as? [String: Any])
-        let copied = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(prompts[1].entry())) as? [String: Any])
-        expected["id"] = prompts[1].id
+        var music = PromptSetDraft(mode: .musicGeneration)
+        music.prompts = [PromptSetDraft.Prompt(entry, mode: .musicGeneration)]
+        music.prompts[0].text = "Rhodes and bass"; music.prompts[0].lyrics = "[verse]\nA new day"
+        music.prompts[0].duration = "20"; music.prompts[0].steps = "8"; music.prompts[0].seed = "99"
+        music.duplicatePrompt(id: entry.id)
+        guard music.prompts.count == 2 else { XCTFail("Duplicate must insert a second music prompt"); return }
+        XCTAssertNotEqual(music.prompts[1].id, entry.id)
+        var expected = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(
+            music.prompts[0].entry(for: .musicGeneration))) as? [String: Any])
+        let copied = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(
+            music.prompts[1].entry(for: .musicGeneration))) as? [String: Any])
+        expected["id"] = music.prompts[1].id
         XCTAssertEqual(NSDictionary(dictionary: copied), NSDictionary(dictionary: expected))
-        prompts[1].caption = "Strings"
-        XCTAssertEqual(prompts[0].caption, "Rhodes and bass")
-        prompts[1].duration = "unfinished"
-        prompts.duplicatePrompt(id: prompts[1].id)
-        XCTAssertEqual(prompts.last?.duration, "unfinished")
-        XCTAssertThrowsError(try prompts.last?.entry(), "Duplicating must not bypass validation")
+        music.prompts[1].text = "Strings"
+        XCTAssertEqual(music.prompts[0].text, "Rhodes and bass")
+        music.prompts[1].duration = "unfinished"
+        music.duplicatePrompt(id: music.prompts[1].id)
+        XCTAssertEqual(music.prompts.last?.duration, "unfinished")
+        XCTAssertThrowsError(try music.prompts.last?.entry(for: .musicGeneration), "Duplicating must not bypass validation")
         XCTAssertEqual(entry.text, "Piano")
     }
 
     @MainActor
     func testMusicArrangementPersistsAcrossCreateEditReuseAndRunnerWithHistoryIntact() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
-        var draft = MusicPromptSetDraft(); draft.name = "Music suite"
-        draft.prompts[0].caption = "Piano"; draft.prompts[0].seed = "7"
-        draft.addPrompt(); draft.prompts[1].caption = "Strings"; draft.prompts[1].seed = "99"
+        var draft = PromptSetDraft(mode: .musicGeneration); draft.name = "Music suite"
+        draft.prompts[0].text = "Piano"; draft.prompts[0].seed = "7"
+        draft.addPrompt(); draft.prompts[1].text = "Strings"; draft.prompts[1].seed = "99"
         let first = draft.prompts[0].id, second = draft.prompts[1].id
-        draft.prompts.movePrompt(id: first, direction: .up)
-        draft.prompts.movePrompt(id: second, direction: .down)
-        draft.prompts.movePrompt(id: "missing", direction: .up)
-        draft.prompts.duplicatePrompt(id: "missing")
+        draft.movePrompt(id: first, direction: .up)
+        draft.movePrompt(id: second, direction: .down)
+        draft.movePrompt(id: "missing", direction: .up)
+        draft.duplicatePrompt(id: "missing")
         XCTAssertEqual(draft.prompts.map(\.id), [first, second])
-        let original = try XCTUnwrap(coordinator.createMusicPromptSet(draft))
+        let created = await coordinator.createPromptSet(draft)
+        let original = try XCTUnwrap(created)
         coordinator.start(variants: [("/music/a", nil)], promptSet: original)
         await waitForRun(coordinator)
         let runID = try XCTUnwrap(coordinator.runs.first?.id)
         coordinator.reviewQuality(runID: runID, modelPath: "/music/a", score: 4)
         let historical = try XCTUnwrap(coordinator.runs.first)
         let historyURL = root.appendingPathComponent("runs.json"), history = try Data(contentsOf: historyURL)
-        var edit = try XCTUnwrap(coordinator.prepareMusicPromptSetEdit(id: original.id))
-        edit.prompts.duplicatePrompt(id: first)
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
+        edit.duplicatePrompt(id: first)
         guard edit.prompts.count == 3 else { XCTFail("Music edit must allow duplication"); return }
         let duplicate = edit.prompts[1].id
-        edit.prompts.movePrompt(id: second, direction: .up)
-        edit.prompts.movePrompt(id: second, direction: .up)
-        XCTAssertTrue(coordinator.saveMusicPromptSetEdits(edit))
+        edit.movePrompt(id: second, direction: .up)
+        edit.movePrompt(id: second, direction: .up)
+        let arranged = await coordinator.savePromptSetEdits(edit)
+        XCTAssertTrue(arranged)
         let saved = try XCTUnwrap(makeCoordinator(runner: runner).promptSets.first { $0.id == original.id })
         XCTAssertEqual(saved.prompts.map(\.id), [second, first, duplicate])
         XCTAssertEqual(try Data(contentsOf: historyURL), history)
@@ -3416,19 +3447,19 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(requests.suffix(3).map(\.entry.id), [second, first, duplicate])
         XCTAssertEqual(requests.suffix(3).map(\.entry.media?.seed), [99, 7, 7])
         XCTAssertEqual(coordinator.runs.first { $0.id == runID }, historical)
-        var setup = try MusicComparisonSetup(run: historical)
-        setup.prompts.duplicatePrompt(id: second)
-        let reuseDuplicate = try XCTUnwrap(setup.prompts.last?.id)
-        setup.prompts.movePrompt(id: reuseDuplicate, direction: .up)
-        let reused = try setup.promptSet(named: "Rearranged reuse")
+        var setup = try ComparisonRunSetup(run: historical)
+        setup.draft.duplicatePrompt(id: second)
+        let reuseDuplicate = try XCTUnwrap(setup.draft.prompts.last?.id)
+        setup.draft.movePrompt(id: reuseDuplicate, direction: .up)
+        let reused = try setup.savedDraft(named: "Rearranged reuse").promptSet()
         XCTAssertEqual(reused.prompts.map(\.id), [first, reuseDuplicate, second])
         XCTAssertNotEqual(reused.id, original.id)
         XCTAssertEqual(coordinator.runs.first { $0.id == runID }, historical)
         var invalid = edit
         invalid.prompts = [edit.prompts[0], edit.prompts[0]]
-        XCTAssertThrowsError(try invalid.updatedPromptSet())
+        XCTAssertThrowsError(try invalid.promptSet())
         invalid.prompts = []
-        XCTAssertThrowsError(try invalid.updatedPromptSet())
+        XCTAssertThrowsError(try invalid.promptSet())
     }
 
     @MainActor
@@ -3447,20 +3478,21 @@ final class ComparisonMediaTests: XCTestCase {
         let artifact = try XCTUnwrap(coordinator.outputStore?.artifactURL(runID: runID,
             artifact: try XCTUnwrap(historical.results.first?.samples.first?.artifact)))
         let audioBytes = try Data(contentsOf: artifact)
-        var edit = try XCTUnwrap(coordinator.prepareMusicPromptSetEdit(id: original.id))
-        edit.prompts.addPrompt()
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
+        edit.addPrompt()
         guard edit.prompts.count == 3 else { XCTFail("Saved music editor must add a prompt"); return }
         let newID = edit.prompts[2].id
         XCTAssertFalse(original.prompts.map(\.id).contains(newID))
-        XCTAssertEqual(edit.prompts[2].caption, "")
+        XCTAssertEqual(edit.prompts[2].text, "")
         XCTAssertEqual(edit.prompts[2].lyrics, "[instrumental]")
         XCTAssertEqual(edit.prompts[2].duration, "15.0")
         XCTAssertEqual(edit.prompts[2].steps, "30")
         XCTAssertEqual(edit.prompts[2].seed, "42")
         XCTAssertNotNil(edit.validationError, "A blank new caption must keep saving disabled")
-        edit.prompts[2].caption = "Rhodes and drums"
-        edit.prompts.removePrompt(id: "two")
-        XCTAssertTrue(coordinator.saveMusicPromptSetEdits(edit))
+        edit.prompts[2].text = "Rhodes and drums"
+        edit.removePrompt(id: "two")
+        let edited = await coordinator.savePromptSetEdits(edit)
+        XCTAssertTrue(edited)
         let saved = try XCTUnwrap(makeCoordinator(runner: runner).promptSets.first { $0.id == original.id })
         XCTAssertEqual(saved.prompts.map(\.id), ["one", newID])
         XCTAssertEqual(saved.prompts[0], original.prompts[0])
@@ -3469,12 +3501,12 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: historyURL), historyBytes)
         XCTAssertEqual(try Data(contentsOf: artifact), audioBytes)
         let savedBytes = try Data(contentsOf: root.appendingPathComponent("sets.json"))
-        var setup = try MusicComparisonSetup(run: historical)
-        setup.prompts.removePrompt(id: "two")
-        setup.prompts.addPrompt()
-        guard setup.prompts.count == 2 else { XCTFail("Reuse must support replacing a prompt"); return }
-        setup.prompts[1].caption = "Acoustic guitar"
-        let reused = try setup.promptSet(named: "New suite")
+        var setup = try ComparisonRunSetup(run: historical)
+        setup.draft.removePrompt(id: "two")
+        setup.draft.addPrompt()
+        guard setup.draft.prompts.count == 2 else { XCTFail("Reuse must support replacing a prompt"); return }
+        setup.draft.prompts[1].text = "Acoustic guitar"
+        let reused = try setup.savedDraft(named: "New suite").promptSet()
         XCTAssertEqual(reused.prompts[0], original.prompts[0])
         XCTAssertEqual(reused.prompts[1].media, saved.prompts[1].media)
         XCTAssertNotEqual(reused.prompts[1].id, newID)
@@ -3482,23 +3514,23 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(coordinator.runs.first { $0.id == runID }, historical)
         let requests = await runner.requests
         XCTAssertEqual(requests.count, 2, "Draft changes and saving must not generate audio")
-        setup.prompts.removePrompt(id: setup.prompts[1].id)
-        setup.prompts.removePrompt(id: "one")
-        setup.prompts.removePrompt(id: "missing")
-        XCTAssertEqual(setup.prompts.map(\.id), ["one"])
-        XCTAssertNil(setup.validationError)
+        setup.draft.removePrompt(id: setup.draft.prompts[1].id)
+        setup.draft.removePrompt(id: "one")
+        setup.draft.removePrompt(id: "missing")
+        XCTAssertEqual(setup.draft.prompts.map(\.id), ["one"])
+        XCTAssertNil(setup.draft.validationError)
     }
 
     func testReusedMusicSetupRejectsInvalidPromptIdentitiesAfterDraftChanges() throws {
         var run = historyRun(.musicGeneration, "Music", at: 100, models: ["/music/a"])
         run.promptEntries = [PromptEntry(id: "one", text: "Piano")]
-        var setup = try MusicComparisonSetup(run: run)
-        setup.prompts.append(setup.prompts[0])
-        XCTAssertNotNil(setup.validationError)
-        XCTAssertThrowsError(try setup.promptSet())
-        setup.prompts = [MusicComparisonSetup.Prompt(PromptEntry(id: "", text: "Strings"))]
-        XCTAssertNotNil(setup.validationError)
-        XCTAssertThrowsError(try setup.promptSet())
+        var setup = try ComparisonRunSetup(run: run)
+        setup.draft.prompts.append(setup.draft.prompts[0])
+        XCTAssertNotNil(setup.draft.validationError)
+        XCTAssertThrowsError(try setup.draft.promptSet())
+        setup.draft.prompts = [PromptSetDraft.Prompt(PromptEntry(id: "", text: "Strings"), mode: .musicGeneration)]
+        XCTAssertNotNil(setup.draft.validationError)
+        XCTAssertThrowsError(try setup.draft.promptSet())
     }
 
     @MainActor
@@ -3512,12 +3544,13 @@ final class ComparisonMediaTests: XCTestCase {
             XCTAssertEqual(source.origin, .builtin)
             let saved: PromptSet
             if mode == .musicGeneration {
-                let draft = try MusicPromptSetDraft(copying: source)
-                saved = try XCTUnwrap(coordinator.createMusicPromptSet(draft))
+                let draft = try PromptSetDraft(copying: source)
+                let created = await coordinator.createPromptSet(draft)
+                saved = try XCTUnwrap(created)
             } else {
-                let draft = try ComparisonPromptSetDraft(copying: source)
+                let draft = try PromptSetDraft(copying: source)
                 XCTAssertNil(draft.original)
-                let created = await coordinator.createPromptSetWithInputCopies(draft)
+                let created = await coordinator.createPromptSet(draft)
                 saved = try XCTUnwrap(created)
             }
             XCTAssertNotEqual(saved.id, source.id)
@@ -3535,13 +3568,13 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty, "Copying or saving presets must not generate")
         let malformed = PromptSet(id: "invalid", name: "Invalid", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "One"), PromptEntry(id: "p", text: "Two")], origin: .userCreated)
-        XCTAssertThrowsError(try ComparisonPromptSetDraft(copying: malformed))
+        XCTAssertThrowsError(try PromptSetDraft(copying: malformed))
         var music = malformed; music.mode = .musicGeneration
-        XCTAssertThrowsError(try MusicPromptSetDraft(copying: music))
+        XCTAssertThrowsError(try PromptSetDraft(copying: music))
         music.prompts = []
-        XCTAssertThrowsError(try MusicPromptSetDraft(copying: music))
-        XCTAssertThrowsError(try ComparisonPromptSetDraft(copying: promptSet(for: .musicGeneration)))
-        XCTAssertThrowsError(try MusicPromptSetDraft(copying: BuiltinPromptSets.coding))
+        XCTAssertThrowsError(try PromptSetDraft(copying: music))
+        XCTAssertEqual(try PromptSetDraft(copying: promptSet(for: .musicGeneration)).mode, .musicGeneration)
+        XCTAssertEqual(try PromptSetDraft(copying: BuiltinPromptSets.coding).mode, .chat, "One draft copies sets in every mode")
     }
 
     @MainActor
@@ -3549,16 +3582,16 @@ final class ComparisonMediaTests: XCTestCase {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
         let input = root.appendingPathComponent("Bird reference.png")
         try Data("reference input".utf8).write(to: input)
-        var draft = ComparisonPromptSetDraft(mode: .vision)
+        var draft = PromptSetDraft(mode: .vision)
         draft.name = "Bird suite"; draft.prompts[0].text = "Describe this bird"
         draft.prompts[0].inputPath = input.path
-        let created = await coordinator.createPromptSetWithInputCopies(draft)
+        let created = await coordinator.createPromptSet(draft)
         let source = try XCTUnwrap(created)
         let setsURL = root.appendingPathComponent("sets.json"), before = try Data(contentsOf: setsURL)
-        var copy = try ComparisonPromptSetDraft(copying: source)
+        var copy = try PromptSetDraft(copying: source)
         XCTAssertEqual(try Data(contentsOf: setsURL), before, "Opening a copy must not write")
         copy.prompts[0].text = "What color is the bird?"
-        let savedCopy = await coordinator.createPromptSetWithInputCopies(copy)
+        let savedCopy = await coordinator.createPromptSet(copy)
         let saved = try XCTUnwrap(savedCopy)
         XCTAssertEqual(saved.prompts.count, 1)
         XCTAssertEqual(saved.prompts.first?.inputDisplayName, "Bird reference.png")
@@ -3579,11 +3612,11 @@ final class ComparisonMediaTests: XCTestCase {
         for mode in [ComparisonMode.chat, .musicGeneration] {
             let content: AnyView
             if mode == .chat {
-                content = AnyView(ComparisonPromptSetEditor(draft: try ComparisonPromptSetDraft(copying: BuiltinPromptSets.toolCalling)) { _ in
+                content = AnyView(ComparisonPromptSetEditor(draft: try PromptSetDraft(copying: BuiltinPromptSets.toolCalling)) { _ in
                     XCTFail("Opening a preset copy must not save or run"); return nil
                 })
             } else {
-                content = AnyView(MusicPromptSetCreateSheet(draft: try MusicPromptSetDraft(copying: promptSet(for: mode))) { _ in
+                content = AnyView(ComparisonPromptSetEditor(draft: try PromptSetDraft(copying: promptSet(for: mode))) { _ in
                     XCTFail("Opening a music preset copy must not save or generate"); return nil
                 })
             }
@@ -3672,12 +3705,12 @@ final class ComparisonMediaTests: XCTestCase {
     @MainActor
     func testNewMusicPromptSetPersistsIndependentSettingsWithoutGenerating() async throws {
         let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
-        var draft = MusicPromptSetDraft()
+        var draft = PromptSetDraft(mode: .musicGeneration)
         draft.name = "  Instrumental contrasts  "
-        draft.prompts[0].caption = "Rhodes, bass and drums"
+        draft.prompts[0].text = "Rhodes, bass and drums"
         draft.prompts[0].duration = "12.5"; draft.prompts[0].steps = "8"; draft.prompts[0].seed = "7"
         draft.addPrompt()
-        draft.prompts[1].caption = "Acoustic guitar and strings"
+        draft.prompts[1].text = "Acoustic guitar and strings"
         draft.prompts[1].lyrics = "[verse]\nA new day"
         draft.prompts[1].duration = "20"; draft.prompts[1].steps = "12"; draft.prompts[1].seed = "99"
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sets.json").path))
@@ -3688,7 +3721,8 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(saved.prompts[0].media, MediaParameters(steps: 8, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))
         XCTAssertEqual(saved.prompts[1].media, MediaParameters(steps: 12, seed: 99, durationSeconds: 20, lyrics: "[verse]\nA new day"))
         XCTAssertNotEqual(saved.prompts[0].id, saved.prompts[1].id)
-        XCTAssertEqual(coordinator.createMusicPromptSet(draft), saved)
+        let created = await coordinator.createPromptSet(draft)
+        XCTAssertEqual(created, saved)
         let loaded = makeCoordinator(runner: runner)
         XCTAssertEqual(loaded.promptSets.first { $0.id == saved.id }, saved)
         XCTAssertTrue(coordinator.runs.isEmpty); XCTAssertNil(coordinator.activeRunID)
@@ -3697,11 +3731,11 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     func testNewMusicPromptSetRemovalKeepsSurvivingSettingsAndOnePromptMinimum() throws {
-        var draft = MusicPromptSetDraft(); draft.name = "Piano"
-        draft.prompts[0].caption = "Solo piano"
+        var draft = PromptSetDraft(mode: .musicGeneration); draft.name = "Piano"
+        draft.prompts[0].text = "Solo piano"
         let firstID = draft.prompts[0].id
         draft.addPrompt(); let secondID = draft.prompts[1].id
-        draft.prompts[1].caption = "Strings"; draft.prompts[1].seed = "123"
+        draft.prompts[1].text = "Strings"; draft.prompts[1].seed = "123"
         draft.removePrompt(id: firstID)
         XCTAssertEqual(try draft.promptSet().prompts.map(\.id), [secondID])
         XCTAssertEqual(try draft.promptSet().prompts[0].media?.seed, 123)
@@ -3712,15 +3746,15 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     func testNewMusicPromptSetUsesSharedValidationAndOptionalDefaults() throws {
-        var draft = MusicPromptSetDraft(); draft.name = "Piano"; draft.prompts[0].caption = "Solo piano"
+        var draft = PromptSetDraft(mode: .musicGeneration); draft.name = "Piano"; draft.prompts[0].text = "Solo piano"
         for name in ["", " \n ", "Name\u{0}"] {
             var invalid = draft; invalid.name = name
             XCTAssertThrowsError(try invalid.promptSet())
         }
-        let invalidFields: [(WritableKeyPath<MusicComparisonSetup.Prompt, String>, String)] = [
+        let invalidFields: [(WritableKeyPath<PromptSetDraft.Prompt, String>, String)] = [
                                (\.duration, "nan"), (\.duration, "361"),
                                (\.steps, "31"), (\.steps, "0"), (\.seed, "-1"), (\.seed, "4294967296"),
-                               (\.caption, " \n "), (\.lyrics, " \n ")]
+                               (\.text, " \n "), (\.lyrics, " \n ")]
         for (field, value) in invalidFields {
             var invalid = draft; invalid.prompts[0][keyPath: field] = value
             XCTAssertThrowsError(try invalid.promptSet())
@@ -3731,22 +3765,25 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
-    func testNewMusicPromptSetFailedSaveCanRetryWithoutLosingDraft() throws {
+    func testNewMusicPromptSetFailedSaveCanRetryWithoutLosingDraft() async throws {
         let coordinator = makeCoordinator(runner: StubMediaRunner())
         let url = root.appendingPathComponent("sets.json"), corrupt = Data("not-json".utf8)
         try corrupt.write(to: url)
-        var draft = MusicPromptSetDraft(); draft.name = "Piano"; draft.prompts[0].caption = "Solo piano"
+        var draft = PromptSetDraft(mode: .musicGeneration); draft.name = "Piano"; draft.prompts[0].text = "Solo piano"
         draft.prompts[0].seed = "77"
         let saved = try draft.promptSet(), before = coordinator.promptSets
-        XCTAssertNil(coordinator.createMusicPromptSet(draft))
+        let failed = await coordinator.createPromptSet(draft)
+        XCTAssertNil(failed)
         XCTAssertEqual(try Data(contentsOf: url), corrupt)
         XCTAssertEqual(coordinator.promptSets, before)
         try FileManager.default.removeItem(at: url)
         XCTAssertNotNil(coordinator.promptSetManagementError)
-        XCTAssertEqual(coordinator.createMusicPromptSet(draft), saved)
+        let retried = await coordinator.createPromptSet(draft)
+        XCTAssertEqual(retried, saved)
         XCTAssertNil(coordinator.promptSetManagementError)
         XCTAssertEqual(try JSONStore<PromptSet>(fileURL: url).load(), [saved])
-        XCTAssertNil(coordinator.createMusicPromptSet(draft), "A repeated save cannot overwrite an existing set")
+        let repeated = await coordinator.createPromptSet(draft)
+        XCTAssertNil(repeated, "A repeated save cannot overwrite an existing set")
         XCTAssertEqual(try JSONStore<PromptSet>(fileURL: url).load(), [saved])
     }
 
@@ -3759,7 +3796,7 @@ final class ComparisonMediaTests: XCTestCase {
         let before = coordinator.promptSets
         var run = historyRun(.musicGeneration, "Music", at: 100)
         run.promptEntries = [PromptEntry(id: "p", text: "Piano")]
-        let saved = try MusicComparisonSetup(run: run).promptSet(named: "Piano copy")
+        let saved = try ComparisonRunSetup(run: run).savedDraft(named: "Piano copy").promptSet()
         XCTAssertFalse(coordinator.savePromptSet(saved))
         XCTAssertEqual(coordinator.promptSets, before)
         XCTAssertEqual(try Data(contentsOf: url), corrupt)
@@ -3783,11 +3820,11 @@ final class ComparisonMediaTests: XCTestCase {
         let artifact = try XCTUnwrap(coordinator.outputStore?.artifactURL(runID: run.id,
             artifact: try XCTUnwrap(run.results.first?.samples.first?.artifact)))
         let output = try Data(contentsOf: artifact)
-        XCTAssertTrue(coordinator.renameMusicPromptSet(id: source.id, name: "  Jazz-funk  "))
+        XCTAssertTrue(coordinator.renamePromptSet(id: source.id, name: "  Jazz-funk  "))
         var renamed = source; renamed.name = "Jazz-funk"
         XCTAssertEqual(coordinator.promptSets.first { $0.id == source.id }, renamed)
         XCTAssertEqual(makeCoordinator(runner: StubMediaRunner()).promptSets.first { $0.id == source.id }, renamed)
-        XCTAssertTrue(coordinator.removeMusicPromptSet(id: source.id))
+        XCTAssertTrue(coordinator.removePromptSet(id: source.id))
         let reloaded = makeCoordinator(runner: StubMediaRunner())
         XCTAssertFalse(reloaded.promptSets.contains { $0.id == source.id })
         XCTAssertEqual(reloaded.promptSets.first { $0.id == other.id }, other)
@@ -3799,24 +3836,26 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
-    func testMusicPromptManagementRejectsBuiltinsOtherModesTemporaryAndActiveSets() async throws {
+    func testPromptManagementRejectsBuiltinsTemporaryAndActiveSetsInEveryMode() async throws {
         let runner = StubMediaRunner(gated: true), coordinator = makeCoordinator(runner: runner)
         let music = PromptSet(id: "music-user", name: "Music", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
         let chat = PromptSet(id: "chat-user", name: "Chat", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Hello")], origin: .userCreated)
         XCTAssertTrue(coordinator.savePromptSet(music)); XCTAssertTrue(coordinator.savePromptSet(chat))
+        XCTAssertTrue(coordinator.canManagePromptSet(id: music.id))
+        XCTAssertTrue(coordinator.canManagePromptSet(id: chat.id), "User sets in every mode share one management path")
         let before = try Data(contentsOf: root.appendingPathComponent("sets.json"))
-        for id in [ComparisonMediaFixtures.musicGenerationSet.id, chat.id, "temporary"] {
-            XCTAssertFalse(coordinator.canManageMusicPromptSet(id: id))
-            XCTAssertFalse(coordinator.renameMusicPromptSet(id: id, name: "Changed"))
-            XCTAssertFalse(coordinator.removeMusicPromptSet(id: id))
+        for id in [ComparisonMediaFixtures.musicGenerationSet.id, BuiltinPromptSets.toolCalling.id, "temporary"] {
+            XCTAssertFalse(coordinator.canManagePromptSet(id: id))
+            XCTAssertFalse(coordinator.renamePromptSet(id: id, name: "Changed"))
+            XCTAssertFalse(coordinator.removePromptSet(id: id))
         }
-        for name in ["", " \n ", "Music\u{0}"] { XCTAssertFalse(coordinator.renameMusicPromptSet(id: music.id, name: name)) }
+        for name in ["", " \n ", "Music\u{0}"] { XCTAssertFalse(coordinator.renamePromptSet(id: music.id, name: name)) }
         coordinator.start(variants: [("/music/a", nil)], promptSet: music)
         XCTAssertNotNil(coordinator.activeRunID)
-        XCTAssertFalse(coordinator.renameMusicPromptSet(id: music.id, name: "While running"))
-        XCTAssertFalse(coordinator.removeMusicPromptSet(id: music.id))
+        XCTAssertFalse(coordinator.renamePromptSet(id: music.id, name: "While running"))
+        XCTAssertFalse(coordinator.removePromptSet(id: music.id))
         await runner.release(1); await waitForRun(coordinator)
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("sets.json")), before)
     }
@@ -3830,26 +3869,21 @@ final class ComparisonMediaTests: XCTestCase {
         let url = root.appendingPathComponent("sets.json"), store = JSONStore<PromptSet>(fileURL: url)
         var fresh = original; fresh.prompts[0].text = "Updated on disk"
         try store.upsert(fresh, id: \.id)
-        XCTAssertTrue(coordinator.renameMusicPromptSet(id: original.id, name: "Renamed"))
+        XCTAssertTrue(coordinator.renamePromptSet(id: original.id, name: "Renamed"))
         XCTAssertEqual(coordinator.promptSets.first { $0.id == original.id }?.prompts, fresh.prompts)
         let published = coordinator.promptSets, corrupt = Data("broken-json".utf8)
         try corrupt.write(to: url)
-        XCTAssertFalse(coordinator.renameMusicPromptSet(id: original.id, name: "Must fail"))
-        XCTAssertFalse(coordinator.removeMusicPromptSet(id: original.id))
+        XCTAssertFalse(coordinator.renamePromptSet(id: original.id, name: "Must fail"))
+        XCTAssertFalse(coordinator.removePromptSet(id: original.id))
         XCTAssertEqual(coordinator.promptSets, published)
         XCTAssertEqual(try Data(contentsOf: url), corrupt)
         XCTAssertNotNil(coordinator.promptSetManagementError)
         XCTAssertNil(coordinator.persistenceError, "Management failures must not overwrite unrelated persistence state")
-        fresh.mode = .chat
-        try store.replaceAll([fresh])
-        let changed = try Data(contentsOf: url)
-        XCTAssertFalse(coordinator.removeMusicPromptSet(id: original.id))
-        XCTAssertEqual(try Data(contentsOf: url), changed)
         try store.replaceAll([])
-        XCTAssertFalse(coordinator.renameMusicPromptSet(id: original.id, name: "Missing"))
+        XCTAssertFalse(coordinator.renamePromptSet(id: original.id, name: "Missing"))
         XCTAssertEqual(try store.load(), [])
         try store.replaceAll([original])
-        XCTAssertTrue(coordinator.renameMusicPromptSet(id: original.id, name: "Recovered name"))
+        XCTAssertTrue(coordinator.renamePromptSet(id: original.id, name: "Recovered name"))
         XCTAssertNil(coordinator.promptSetManagementError, "A successful retry must clear its stale action error")
     }
 
@@ -3870,13 +3904,14 @@ final class ComparisonMediaTests: XCTestCase {
         let artifact = try XCTUnwrap(coordinator.outputStore?.artifactURL(runID: run.id,
             artifact: try XCTUnwrap(run.results.first?.samples.first?.artifact)))
         let output = try Data(contentsOf: artifact)
-        var edit = try XCTUnwrap(coordinator.prepareMusicPromptSetEdit(id: original.id))
-        edit.prompts[0].caption = "Rhodes, bass and drums"
+        var edit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
+        edit.prompts[0].text = "Rhodes, bass and drums"
         edit.prompts[0].lyrics = "[verse]\nA new day"
         edit.prompts[0].duration = "20"; edit.prompts[0].steps = "8"; edit.prompts[0].seed = "99"
         XCTAssertEqual(try Data(contentsOf: setsURL), before, "Opening and editing the draft must not write")
         XCTAssertEqual(coordinator.promptSets.first { $0.id == original.id }, original)
-        XCTAssertTrue(coordinator.saveMusicPromptSetEdits(edit))
+        let edited = await coordinator.savePromptSetEdits(edit)
+        XCTAssertTrue(edited)
         var expected = original
         expected.prompts[0].text = "Rhodes, bass and drums"
         expected.prompts[0].media = MediaParameters(size: 512, steps: 8, seed: 99, durationSeconds: 20, lyrics: "[verse]\nA new day")
@@ -3892,74 +3927,99 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
-    func testMusicEditSaveRejectsInvalidStaleMissingAndCorruptStoredSets() throws {
+    func testMusicEditSaveRejectsInvalidStaleMissingAndCorruptStoredSets() async throws {
         let coordinator = makeCoordinator(runner: StubMediaRunner())
         let original = PromptSet(id: "music-edit", name: "Music", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
         XCTAssertTrue(coordinator.savePromptSet(original))
         let url = root.appendingPathComponent("sets.json"), store = JSONStore<PromptSet>(fileURL: url)
         let before = try Data(contentsOf: url)
-        var invalid = try MusicPromptSetEdit(set: original); invalid.prompts[0].duration = "0"
-        XCTAssertFalse(coordinator.saveMusicPromptSetEdits(invalid))
+        var invalid = try PromptSetDraft(set: original); invalid.prompts[0].duration = "0"
+        let invalidSaved = await coordinator.savePromptSetEdits(invalid)
+        XCTAssertFalse(invalidSaved)
         XCTAssertEqual(try Data(contentsOf: url), before)
-        var edit = try MusicPromptSetEdit(set: original); edit.prompts[0].caption = "Jazz"
+        var edit = try PromptSetDraft(set: original); edit.prompts[0].text = "Jazz"
         var changed = original; changed.prompts[0].text = "Changed on disk"
         try store.replaceAll([changed])
         let freshBytes = try Data(contentsOf: url)
-        XCTAssertFalse(coordinator.saveMusicPromptSetEdits(edit))
+        let staleSaved = await coordinator.savePromptSetEdits(edit)
+        XCTAssertFalse(staleSaved)
         XCTAssertEqual(try Data(contentsOf: url), freshBytes)
         try store.replaceAll([])
-        XCTAssertFalse(coordinator.saveMusicPromptSetEdits(edit))
+        let missingSaved = await coordinator.savePromptSetEdits(edit)
+        XCTAssertFalse(missingSaved)
         XCTAssertEqual(try store.load(), [])
         let corrupt = Data("broken-json".utf8); try corrupt.write(to: url)
-        XCTAssertFalse(coordinator.saveMusicPromptSetEdits(edit))
+        let corruptSaved = await coordinator.savePromptSetEdits(edit)
+        XCTAssertFalse(corruptSaved)
         XCTAssertEqual(try Data(contentsOf: url), corrupt)
-        XCTAssertNil(coordinator.prepareMusicPromptSetEdit(id: original.id))
+        XCTAssertNil(coordinator.preparePromptSetEdit(id: original.id))
         XCTAssertEqual(coordinator.promptSets.first { $0.id == original.id }, original)
         XCTAssertNotNil(coordinator.promptSetManagementError)
         try store.replaceAll([changed])
-        var freshEdit = try XCTUnwrap(coordinator.prepareMusicPromptSetEdit(id: original.id))
+        var freshEdit = try XCTUnwrap(coordinator.preparePromptSetEdit(id: original.id))
         XCTAssertEqual(freshEdit.original, changed, "Reopening after a stale save must read the current durable snapshot")
         let reopenedBytes = try Data(contentsOf: url)
         freshEdit.prompts[0].seed = "99"
         XCTAssertEqual(try Data(contentsOf: url), reopenedBytes, "Opening the editor must not write")
-        XCTAssertTrue(coordinator.saveMusicPromptSetEdits(freshEdit))
+        let freshSaved = await coordinator.savePromptSetEdits(freshEdit)
+        XCTAssertTrue(freshSaved)
         XCTAssertEqual(coordinator.promptSets.first { $0.id == original.id }?.prompts[0].text, changed.prompts[0].text)
         XCTAssertNil(coordinator.promptSetManagementError)
     }
 
     @MainActor
-    func testMusicEditProtectsBuiltinsOtherModesAndActiveComparisons() async throws {
-        XCTAssertThrowsError(try MusicPromptSetEdit(set: ComparisonMediaFixtures.musicGenerationSet))
+    func testMusicCreationWaitsForActiveComparisonsLikeEveryOtherMode() async throws {
+        let runner = StubMediaRunner(gated: true), coordinator = makeCoordinator(runner: runner)
+        let running = PromptSet(id: "music-run", name: "Music", useCase: nil,
+            prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
+        XCTAssertTrue(coordinator.savePromptSet(running))
+        let before = try Data(contentsOf: root.appendingPathComponent("sets.json"))
+        var draft = PromptSetDraft(mode: .musicGeneration); draft.name = "Piano"; draft.prompts[0].text = "Solo piano"
+        coordinator.start(variants: [("/music/a", nil)], promptSet: running)
+        XCTAssertNotNil(coordinator.activeRunID)
+        let duringRun = await coordinator.createPromptSet(draft)
+        XCTAssertNil(duringRun)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("sets.json")), before)
+        await runner.release(1); await waitForRun(coordinator)
+        let created = await coordinator.createPromptSet(draft)
+        XCTAssertEqual(created?.effectiveMode, .musicGeneration, coordinator.promptSetManagementError ?? "")
+        XCTAssertEqual(created?.prompts.first?.media, MediaParameters(steps: 30, seed: 42, durationSeconds: 15, lyrics: "[instrumental]"))
+    }
+
+    @MainActor
+    func testMusicEditProtectsBuiltinsAndActiveComparisons() async throws {
+        XCTAssertThrowsError(try PromptSetDraft(set: ComparisonMediaFixtures.musicGenerationSet))
         let chat = PromptSet(id: "chat", name: "Chat", useCase: nil, prompts: [PromptEntry(id: "p", text: "Hello")], origin: .userCreated)
-        XCTAssertThrowsError(try MusicPromptSetEdit(set: chat))
+        XCTAssertEqual(try PromptSetDraft(set: chat).mode, .chat, "One editor opens saved sets in every mode")
         var set = PromptSet(id: "music-edit", name: "Music", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
         let runner = StubMediaRunner(gated: true), coordinator = makeCoordinator(runner: runner)
         XCTAssertTrue(coordinator.savePromptSet(set))
         let before = try Data(contentsOf: root.appendingPathComponent("sets.json"))
-        var edit = try MusicPromptSetEdit(set: set); edit.prompts[0].caption = "Jazz"
+        var edit = try PromptSetDraft(set: set); edit.prompts[0].text = "Jazz"
         coordinator.start(variants: [("/music/a", nil)], promptSet: set)
-        XCTAssertNil(coordinator.prepareMusicPromptSetEdit(id: set.id))
-        XCTAssertFalse(coordinator.saveMusicPromptSetEdits(edit))
+        XCTAssertNil(coordinator.preparePromptSetEdit(id: set.id))
+        let duringRun = await coordinator.savePromptSetEdits(edit)
+        XCTAssertFalse(duringRun)
         await runner.release(1); await waitForRun(coordinator)
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("sets.json")), before)
         set.prompts = []
-        XCTAssertThrowsError(try MusicPromptSetEdit(set: set))
+        XCTAssertThrowsError(try PromptSetDraft(set: set))
         set.prompts = [PromptEntry(id: "p", text: "Piano"), PromptEntry(id: "p", text: "Guitar")]
-        XCTAssertThrowsError(try MusicPromptSetEdit(set: set))
+        XCTAssertThrowsError(try PromptSetDraft(set: set))
         edit.prompts = []
-        XCTAssertThrowsError(try edit.updatedPromptSet())
+        XCTAssertThrowsError(try edit.promptSet())
     }
 
     @MainActor
     func testNewMusicPromptSetSheetRendersIndependentSettingsWithoutSaving() async throws {
-        var draft = MusicPromptSetDraft(); draft.name = "Instrumental contrasts"
-        draft.prompts[0].caption = "Jazz-funk with Rhodes, bass and drums"
+        var draft = PromptSetDraft(mode: .musicGeneration); draft.name = "Instrumental contrasts"
+        draft.prompts[0].text = "Jazz-funk with Rhodes, bass and drums"
         draft.prompts[0].duration = "12.5"; draft.prompts[0].steps = "8"; draft.prompts[0].seed = "7"
-        draft.addPrompt(); draft.prompts[1].caption = "Acoustic guitar and strings"
+        draft.addPrompt(); draft.prompts[1].text = "Acoustic guitar and strings"
         draft.prompts[1].duration = "20"; draft.prompts[1].steps = "12"; draft.prompts[1].seed = "99"
-        let content = MusicPromptSetCreateSheet(draft: draft) { _ in
+        let content = ComparisonPromptSetEditor(draft: draft) { _ in
             XCTFail("Rendering must not save a set"); return nil
         }.background(WorkbenchColor.canvas).preferredColorScheme(.dark)
         let host = NSHostingView(rootView: content)
@@ -4056,7 +4116,7 @@ final class ComparisonMediaTests: XCTestCase {
     @MainActor
     func testOtherModePromptEditorsRenderWithoutWritingOrRunning() async throws {
         for mode in ComparisonMode.allCases where mode != .musicGeneration {
-            var draft = ComparisonPromptSetDraft(mode: mode)
+            var draft = PromptSetDraft(mode: mode)
             draft.name = "\(mode.title) comparison"
             draft.prompts[0].text = mode == .speechToText ? "The red bird landed on the branch." : "Describe a red bird in a snowy forest."
             if let kind = mode.inputKind {
@@ -4091,7 +4151,7 @@ final class ComparisonMediaTests: XCTestCase {
             prompts: [PromptEntry(id: "p", text: "Instrumental jazz-funk with Rhodes, bass and drums",
                 media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))],
             origin: .userCreated, mode: .musicGeneration)
-        let content = MusicPromptSetEditSheet(edit: try MusicPromptSetEdit(set: set)) { _ in
+        let content = ComparisonPromptSetEditor(draft: try PromptSetDraft(set: set)) { _ in
             XCTFail("Rendering must not save a set"); return nil
         }
         .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
@@ -4111,10 +4171,10 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
-    func testMusicPromptSetRenameSheetRendersWithoutMutatingTheSet() async throws {
+    func testPromptSetRenameSheetRendersWithoutMutatingTheSet() async throws {
         let set = PromptSet(id: "music-user", name: "Jazz-funk instrumentals", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
-        let content = MusicPromptSetRenameSheet(set: set) { _ in
+        let content = PromptSetRenameSheet(set: set) { _ in
             XCTFail("Rendering must not rename a set"); return nil
         }
         .background(WorkbenchColor.canvas).preferredColorScheme(.dark)
@@ -4187,11 +4247,11 @@ final class ComparisonMediaTests: XCTestCase {
         for mode in ComparisonMode.allCases {
             let editor: AnyView
             if mode == .musicGeneration {
-                editor = AnyView(MusicPromptSetCreateSheet { _ in
+                editor = AnyView(ComparisonPromptSetEditor(draft: PromptSetDraft(mode: .musicGeneration)) { _ in
                     XCTFail("Editing a name must not save or generate"); return nil
                 })
             } else {
-                editor = AnyView(ComparisonPromptSetEditor(draft: ComparisonPromptSetDraft(mode: mode)) { _ in
+                editor = AnyView(ComparisonPromptSetEditor(draft: PromptSetDraft(mode: mode)) { _ in
                     XCTFail("Editing a name must not save or run a comparison"); return nil
                 })
             }
