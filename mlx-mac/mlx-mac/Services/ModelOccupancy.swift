@@ -14,12 +14,28 @@ struct ModelOccupancy: Equatable, Sendable {
     struct Claim: Equatable, Sendable {
         let identity: String
         let holder: Holder
+        let key: HFRepoID.Identity
+
+        init(identity: String, holder: Holder) {
+            self.identity = identity
+            self.holder = holder
+            key = HFRepoID.Identity(identity)
+        }
+    }
+
+    struct LibraryPath: Equatable, Sendable {
+        let path: String
+        let key: HFRepoID.Identity
     }
 
     private(set) var claims: [Claim] = []
-    private let libraryPaths: [String]
+    private let library: [LibraryPath]
 
-    init(libraryPaths: [String] = []) { self.libraryPaths = libraryPaths }
+    init(libraryPaths: [String] = []) {
+        library = libraryPaths.map { LibraryPath(path: $0, key: HFRepoID.Identity($0)) }
+    }
+
+    init(library: [LibraryPath]) { self.library = library }
 
     mutating func add(_ identities: some Sequence<String>, for holder: Holder) {
         claims += identities.filter { !$0.isEmpty }.map { Claim(identity: $0, holder: holder) }
@@ -27,7 +43,8 @@ struct ModelOccupancy: Equatable, Sendable {
 
     /// Whether stopping or unloading this model's server would break a run that serves it.
     func blocksStop(modelIdentity: String) -> Bool {
-        claims.contains { $0.holder.needsServer && HFRepoID.matches($0.identity, modelIdentity) }
+        let key = HFRepoID.Identity(modelIdentity)
+        return claims.contains { $0.holder.needsServer && $0.key.matches(key) }
     }
 
     func blocksStop(_ server: ServerInfo) -> Bool { blocksStop(modelIdentity: server.modelIdentity) }
@@ -35,8 +52,13 @@ struct ModelOccupancy: Equatable, Sendable {
     /// Claimed identities plus every library path one of them matches; reclaim and
     /// model guidance never move these.
     var protectedPaths: Set<String> {
-        Set(claims.map(\.identity)).union(libraryPaths.filter { path in
-            claims.contains { HFRepoID.matches($0.identity, path) }
-        })
+        let claimedPaths = Set(claims.compactMap(\.key.resolvedPath))
+        let repoClaims = Set(claims.filter { $0.key.resolvedPath == nil }.map(\.key.repoKey))
+        let pathClaimRepos = Set(claims.filter { $0.key.resolvedPath != nil }.map(\.key.repoKey))
+        return Set(claims.map(\.identity)).union(library.filter { entry in
+            if repoClaims.contains(entry.key.repoKey) { return true }
+            if let path = entry.key.resolvedPath { return claimedPaths.contains(path) }
+            return pathClaimRepos.contains(entry.key.repoKey)
+        }.map(\.path))
     }
 }

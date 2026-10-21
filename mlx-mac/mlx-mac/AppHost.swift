@@ -14,7 +14,15 @@ class AppHost: ObservableObject {
     @Published var isScanning = false
     @Published var scanResult: ScanResult?
     @Published private(set) var scanError: String?
-    @Published var librarySnapshot: LibrarySnapshot?
+    @Published var librarySnapshot: LibrarySnapshot? {
+        didSet {
+            HFRepoID.forgetResolvedPaths()
+            occupancyLibrary = (librarySnapshot?.models.map(\.item.path) ?? []).map {
+                ModelOccupancy.LibraryPath(path: $0, key: HFRepoID.Identity($0))
+            }
+        }
+    }
+    private var occupancyLibrary: [ModelOccupancy.LibraryPath] = []
     /// The effective roots `librarySnapshot` was scanned from; nil until a scan succeeds.
     @Published var scannedRoots: ScanRoots?
     @Published var catalog: CatalogState
@@ -971,7 +979,7 @@ class AppHost: ObservableObject {
     /// Every model active work holds: running and endpoint servers, preferences,
     /// verification, comparisons, Library tasks and the active conversion.
     var occupancy: ModelOccupancy {
-        var occupancy = ModelOccupancy(libraryPaths: librarySnapshot?.models.map(\.item.path) ?? [])
+        var occupancy = ModelOccupancy(library: occupancyLibrary)
         occupancy.add(modelWorkflow.servers.filter { $0.state?.lowercased() == "running" }
             .flatMap { [$0.repo, $0.path].compactMap { $0 } }, for: .runningServer)
         occupancy.add(endpoint.fleet.slots.filter(\.enabled).map(\.modelPath), for: .endpoint)

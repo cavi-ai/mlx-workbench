@@ -106,6 +106,7 @@ struct ComparisonInsightsView: View {
             }, environment: environment).prefix(1), id: \.self) { text in
                 Text(text).font(WorkbenchTypography.secondary)
             }
+            let replacements = self.replacements
             if !replacements.isEmpty {
                 ForEach(replacements) { item in
                     if let chain = item.replacement { ModelReplacementChainCard(chain: chain) }
