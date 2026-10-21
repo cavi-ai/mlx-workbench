@@ -1870,12 +1870,12 @@ final class ComparisonMediaTests: XCTestCase {
         try Data("original".utf8).write(to: source)
         var draft = PromptSetDraft(mode: .vision)
         draft.name = "Owner"; draft.prompts[0].text = "Describe"; draft.prompts[0].inputPath = source.path
-        let coordinator = makeCoordinator(runner: StubMediaRunner())
-        let result = await coordinator.createPromptSet(draft)
+        let creator = makeCoordinator(runner: StubMediaRunner())
+        let result = await creator.createPromptSet(draft)
         let owner = try XCTUnwrap(result)
         let path = try XCTUnwrap(owner.prompts.first?.inputPath)
         let borrowed = PromptSet(id: UUID().uuidString, name: "Borrowed", prompts: owner.prompts, origin: .userCreated, mode: .vision)
-        XCTAssertTrue(coordinator.savePromptSet(borrowed))
+        let coordinator = try makeCoordinator(runner: StubMediaRunner(), saved: [borrowed])
         let inputStore = ComparisonPromptInputStore(root: root.appendingPathComponent("prompt-set-inputs"))
         let unrelated = inputStore.root.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: false)
@@ -2303,12 +2303,11 @@ final class ComparisonMediaTests: XCTestCase {
     @MainActor
     func testReusedMusicSetupStartsFreshRunWithoutMutatingSavedInputsOrReviews() async throws {
         let runner = StubMediaRunner(), runsURL = root.appendingPathComponent("reuse-runs.json")
-        let coordinator = makeCoordinator(runner: runner, runsURL: runsURL)
         var set = promptSet(for: .musicGeneration)
         set.origin = .userCreated
         set.prompts = [PromptEntry(id: "recorded", text: "Instrumental jazz-funk",
             media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))]
-        coordinator.savePromptSet(set)
+        let coordinator = try makeCoordinator(runner: runner, saved: [set], runsURL: runsURL)
         coordinator.start(variants: [("/music/a", nil)], promptSet: set)
         await waitForRun(coordinator)
         let originalID = try XCTUnwrap(coordinator.runs.first?.id)
@@ -2416,25 +2415,29 @@ final class ComparisonMediaTests: XCTestCase {
 
     @MainActor
     func testNamedMusicPromptSetPersistsEditedSnapshotWithoutOverwritingSourceOrGenerating() async throws {
-        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        let runner = StubMediaRunner()
         let original = PromptSet(id: "original", name: "My instrumental", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano", maxTokens: 77,
                 media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]"))],
             origin: .userCreated, mode: .musicGeneration)
-        XCTAssertTrue(coordinator.savePromptSet(original))
+        let coordinator = try makeCoordinator(runner: runner, saved: [original])
         var run = historyRun(.musicGeneration, original.name, at: 100)
         run.promptEntries = original.prompts
         var setup = try ComparisonRunSetup(run: run)
         setup.draft.prompts[0].text = "Rhodes, bass and drums"
         setup.draft.prompts[0].lyrics = "[verse]\nA new day"
         setup.draft.prompts[0].duration = "20"; setup.draft.prompts[0].steps = "8"; setup.draft.prompts[0].seed = "99"
-        let saved = try setup.savedDraft(named: "  My instrumental  ").promptSet()
-        XCTAssertEqual(saved.name, original.name, "Same-name copies must still have independent identities")
-        XCTAssertNotEqual(saved.id, original.id)
-        XCTAssertNotEqual(try setup.savedDraft(named: saved.name).promptSet().id, saved.id)
-        XCTAssertEqual(saved.prompts[0].maxTokens, 77)
-        XCTAssertEqual(saved.prompts[0].media, MediaParameters(steps: 8, seed: 99, durationSeconds: 20, lyrics: "[verse]\nA new day"))
-        XCTAssertTrue(coordinator.savePromptSet(saved))
+        let draft = try setup.savedDraft(named: "  My instrumental  ")
+        let prepared = try draft.promptSet()
+        XCTAssertEqual(prepared.name, original.name, "Same-name copies must still have independent identities")
+        XCTAssertNotEqual(prepared.id, original.id)
+        XCTAssertNotEqual(try setup.savedDraft(named: prepared.name).promptSet().id, prepared.id)
+        XCTAssertEqual(prepared.prompts[0].maxTokens, 77)
+        XCTAssertEqual(prepared.prompts[0].media, MediaParameters(steps: 8, seed: 99, durationSeconds: 20, lyrics: "[verse]\nA new day"))
+        let created = await coordinator.createPromptSet(draft)
+        let saved = try XCTUnwrap(created)
+        XCTAssertEqual(saved.id, prepared.id)
+        XCTAssertEqual(saved.prompts, prepared.prompts)
         let loaded = try JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json")).load()
         XCTAssertEqual(loaded.first { $0.id == original.id }, original)
         XCTAssertEqual(loaded.first { $0.id == saved.id }, saved)
@@ -3464,11 +3467,11 @@ final class ComparisonMediaTests: XCTestCase {
 
     @MainActor
     func testMusicEditAndReuseAddRemovePreservesDefaultsHistoryAndIndependentInputs() async throws {
-        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
+        let runner = StubMediaRunner()
         let original = PromptSet(id: "music-edit", name: "Instrumentals", useCase: .coding,
             prompts: [PromptEntry(id: "one", text: "Piano", media: MediaParameters(steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]")),
                 PromptEntry(id: "two", text: "Strings")], origin: .userCreated, mode: .musicGeneration)
-        XCTAssertTrue(coordinator.savePromptSet(original))
+        let coordinator = try makeCoordinator(runner: runner, saved: [original])
         coordinator.start(variants: [("/music/a", nil)], promptSet: original)
         await waitForRun(coordinator)
         let runID = try XCTUnwrap(coordinator.runs.first?.id)
@@ -3788,7 +3791,7 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
-    func testMusicPromptSetSaveFailureLeavesStoreAndPublishedPresetsUntouched() throws {
+    func testMusicPromptSetSaveFailureLeavesStoreAndPublishedPresetsUntouched() async throws {
         let url = root.appendingPathComponent("sets.json")
         let corrupt = Data("not-json".utf8)
         try corrupt.write(to: url)
@@ -3796,22 +3799,22 @@ final class ComparisonMediaTests: XCTestCase {
         let before = coordinator.promptSets
         var run = historyRun(.musicGeneration, "Music", at: 100)
         run.promptEntries = [PromptEntry(id: "p", text: "Piano")]
-        let saved = try ComparisonRunSetup(run: run).savedDraft(named: "Piano copy").promptSet()
-        XCTAssertFalse(coordinator.savePromptSet(saved))
+        let draft = try ComparisonRunSetup(run: run).savedDraft(named: "Piano copy")
+        let created = await coordinator.createPromptSet(draft)
+        XCTAssertNil(created)
         XCTAssertEqual(coordinator.promptSets, before)
         XCTAssertEqual(try Data(contentsOf: url), corrupt)
-        XCTAssertNotNil(coordinator.persistenceError)
+        XCTAssertNotNil(coordinator.promptSetManagementError)
         XCTAssertNil(coordinator.activeRunID)
     }
 
     @MainActor
     func testMusicPromptSetRenameAndRemovalPreserveHistoryReviewsAndOutputs() async throws {
-        let coordinator = makeCoordinator(runner: StubMediaRunner())
         let source = PromptSet(id: "music-source", name: "Instrumental", useCase: nil,
             prompts: promptSet(for: .musicGeneration).prompts, origin: .userCreated, mode: .musicGeneration)
         let other = PromptSet(id: "music-other", name: source.name, useCase: nil,
             prompts: source.prompts, origin: .userCreated, mode: .musicGeneration)
-        XCTAssertTrue(coordinator.savePromptSet(source)); XCTAssertTrue(coordinator.savePromptSet(other))
+        let coordinator = try makeCoordinator(runner: StubMediaRunner(), saved: [source, other])
         coordinator.start(variants: [("/music/a", nil)], promptSet: source)
         await waitForRun(coordinator)
         let run = try XCTUnwrap(coordinator.runs.first)
@@ -3837,12 +3840,11 @@ final class ComparisonMediaTests: XCTestCase {
 
     @MainActor
     func testPromptManagementRejectsBuiltinsTemporaryAndActiveSetsInEveryMode() async throws {
-        let runner = StubMediaRunner(gated: true), coordinator = makeCoordinator(runner: runner)
         let music = PromptSet(id: "music-user", name: "Music", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
         let chat = PromptSet(id: "chat-user", name: "Chat", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Hello")], origin: .userCreated)
-        XCTAssertTrue(coordinator.savePromptSet(music)); XCTAssertTrue(coordinator.savePromptSet(chat))
+        let runner = StubMediaRunner(gated: true), coordinator = try makeCoordinator(runner: runner, saved: [music, chat])
         XCTAssertTrue(coordinator.canManagePromptSet(id: music.id))
         XCTAssertTrue(coordinator.canManagePromptSet(id: chat.id), "User sets in every mode share one management path")
         let before = try Data(contentsOf: root.appendingPathComponent("sets.json"))
@@ -3862,10 +3864,9 @@ final class ComparisonMediaTests: XCTestCase {
 
     @MainActor
     func testMusicPromptManagementUsesDurableInputsAndDoesNotOverwriteCorruption() throws {
-        let coordinator = makeCoordinator(runner: StubMediaRunner())
         let original = PromptSet(id: "music-user", name: "Music", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
-        XCTAssertTrue(coordinator.savePromptSet(original))
+        let coordinator = try makeCoordinator(runner: StubMediaRunner(), saved: [original])
         let url = root.appendingPathComponent("sets.json"), store = JSONStore<PromptSet>(fileURL: url)
         var fresh = original; fresh.prompts[0].text = "Updated on disk"
         try store.upsert(fresh, id: \.id)
@@ -3889,12 +3890,11 @@ final class ComparisonMediaTests: XCTestCase {
 
     @MainActor
     func testEditingSavedMusicSetPreservesIdentityHistoryReviewsAndOutputs() async throws {
-        let runner = StubMediaRunner(), coordinator = makeCoordinator(runner: runner)
         let original = PromptSet(id: "music-edit", name: "Instrumentals", useCase: .coding,
             prompts: [PromptEntry(id: "one", text: "Piano", maxTokens: 77, expectedKeywords: ["piano"],
                 media: MediaParameters(size: 512, steps: 12, seed: 7, durationSeconds: 12.5, lyrics: "[instrumental]")),
                 PromptEntry(id: "two", text: "Acoustic guitar")], origin: .userCreated, mode: .musicGeneration)
-        XCTAssertTrue(coordinator.savePromptSet(original))
+        let runner = StubMediaRunner(), coordinator = try makeCoordinator(runner: runner, saved: [original])
         coordinator.start(variants: [("/music/a", nil)], promptSet: original)
         await waitForRun(coordinator)
         let run = try XCTUnwrap(coordinator.runs.first)
@@ -3928,10 +3928,9 @@ final class ComparisonMediaTests: XCTestCase {
 
     @MainActor
     func testMusicEditSaveRejectsInvalidStaleMissingAndCorruptStoredSets() async throws {
-        let coordinator = makeCoordinator(runner: StubMediaRunner())
         let original = PromptSet(id: "music-edit", name: "Music", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
-        XCTAssertTrue(coordinator.savePromptSet(original))
+        let coordinator = try makeCoordinator(runner: StubMediaRunner(), saved: [original])
         let url = root.appendingPathComponent("sets.json"), store = JSONStore<PromptSet>(fileURL: url)
         let before = try Data(contentsOf: url)
         var invalid = try PromptSetDraft(set: original); invalid.prompts[0].duration = "0"
@@ -3970,10 +3969,9 @@ final class ComparisonMediaTests: XCTestCase {
 
     @MainActor
     func testMusicCreationWaitsForActiveComparisonsLikeEveryOtherMode() async throws {
-        let runner = StubMediaRunner(gated: true), coordinator = makeCoordinator(runner: runner)
         let running = PromptSet(id: "music-run", name: "Music", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
-        XCTAssertTrue(coordinator.savePromptSet(running))
+        let runner = StubMediaRunner(gated: true), coordinator = try makeCoordinator(runner: runner, saved: [running])
         let before = try Data(contentsOf: root.appendingPathComponent("sets.json"))
         var draft = PromptSetDraft(mode: .musicGeneration); draft.name = "Piano"; draft.prompts[0].text = "Solo piano"
         coordinator.start(variants: [("/music/a", nil)], promptSet: running)
@@ -3994,8 +3992,7 @@ final class ComparisonMediaTests: XCTestCase {
         XCTAssertEqual(try PromptSetDraft(set: chat).mode, .chat, "One editor opens saved sets in every mode")
         var set = PromptSet(id: "music-edit", name: "Music", useCase: nil,
             prompts: [PromptEntry(id: "p", text: "Piano")], origin: .userCreated, mode: .musicGeneration)
-        let runner = StubMediaRunner(gated: true), coordinator = makeCoordinator(runner: runner)
-        XCTAssertTrue(coordinator.savePromptSet(set))
+        let runner = StubMediaRunner(gated: true), coordinator = try makeCoordinator(runner: runner, saved: [set])
         let before = try Data(contentsOf: root.appendingPathComponent("sets.json"))
         var edit = try PromptSetDraft(set: set); edit.prompts[0].text = "Jazz"
         coordinator.start(variants: [("/music/a", nil)], promptSet: set)
@@ -4483,6 +4480,14 @@ final class ComparisonMediaTests: XCTestCase {
                 return url
             }
         )
+    }
+
+    /// Saved sets start in the durable prompt store, the state Compare loads at launch.
+    @MainActor
+    private func makeCoordinator(runner: ComparisonMediaRunner, saved: [PromptSet], runsURL: URL? = nil) throws -> ComparisonCoordinator {
+        let store = JSONStore<PromptSet>(fileURL: root.appendingPathComponent("sets.json"))
+        for set in saved { try store.upsert(set, id: \.id) }
+        return makeCoordinator(runner: runner, runsURL: runsURL)
     }
 
     @MainActor
