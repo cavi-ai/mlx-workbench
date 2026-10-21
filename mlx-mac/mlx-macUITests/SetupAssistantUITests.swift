@@ -160,6 +160,8 @@ final class WorkbenchReviewUITests: XCTestCase {
                          model_verification=True, request_schema='task-request/2', run_schema='task-run/2'),
                     dict(kind='video_understanding', result_schema='describe/1', cancellation=True, requires_local_model=True,
                          model_verification=True, request_schema='task-request/2', run_schema='task-run/2')])
+                if (root / 'legacy-image-tasks').exists():
+                    data['tasks'] = [task for task in data['tasks'] if task['kind'] != 'image_generation']
             elif action == 'start':
                 request = json.loads(pathlib.Path(args[args.index('--request') + 1]).read_text())
                 identifier = str(uuid.UUID(int=len(records) + 1))
@@ -1013,16 +1015,57 @@ final class WorkbenchReviewUITests: XCTestCase {
             }
         }
         try sourcePNG.write(to: source)
+        let legacyTasks = root.appendingPathComponent("legacy-image-tasks")
+        try Data().write(to: legacyTasks)
 
         launch(appearance: "Dark", route: "models", isolatedHome: true)
         let generator = app.outlines.staticTexts["Fixture image generator"].firstMatch
         XCTAssertTrue(generator.waitForExistence(timeout: 15)); generator.doubleClick()
         XCTAssertTrue(app.staticTexts["Generate image"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.textFields["task-image-generation-prompt"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.textFields["task-image-generation-width"].exists)
-        XCTAssertTrue(app.textFields["task-image-generation-height"].exists)
+        XCTAssertTrue(app.staticTexts["task-image-generation-settings"].exists)
+        XCTAssertEqual(app.staticTexts["task-image-generation-settings"].value as? String ?? app.staticTexts["task-image-generation-settings"].label,
+                       "1024 × 1024 · 40 steps · seed 42")
+        XCTAssertFalse(app.textFields["task-image-generation-width"].isHittable)
+        XCTAssertFalse(app.textFields["task-image-generation-height"].isHittable)
         XCTAssertFalse(app.buttons["Generate"].exists, "Image generation must use the durable task panel")
+        XCTAssertFalse(text(containing: "Describe the image to generate.").exists, "An untouched form must not show a validation error")
         replace(app.textFields["task-image-generation-prompt"], with: "A red cup on a white table")
+        app.buttons["task-start"].click()
+        let recovery = app.buttons["task-engine-setup"]
+        XCTAssertTrue(recovery.waitForExistence(timeout: 10))
+        XCTAssertEqual(try taskSubmissions().count, 0, "Unsupported engines must not start inference")
+        capture("Library-image-engine-recovery")
+        recovery.click()
+        let setup = app.buttons["Setup Assistant…"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 10), app.debugDescription)
+        setup.click()
+        XCTAssertTrue(app.buttons["Skip setup"].waitForExistence(timeout: 10))
+        app.buttons["Skip setup"].click()
+        select("Library")
+        XCTAssertTrue(app.textFields["task-image-generation-prompt"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(app.textFields["task-image-generation-prompt"].value as? String, "A red cup on a white table")
+        try FileManager.default.removeItem(at: legacyTasks)
+        let advanced = app.disclosureTriangles["Advanced options"]
+        XCTAssertTrue(advanced.waitForExistence(timeout: 10), app.debugDescription)
+        func toggleAdvanced() {
+            let window = app.windows.firstMatch
+            let frame = advanced.frame.intersection(window.frame)
+            XCTAssertFalse(frame.isNull)
+            // Native disclosure frames include the label; click the leading arrow.
+            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: frame.minX + 24 + frame.height / 4 - window.frame.minX,
+                dy: frame.midY - window.frame.minY
+            )).click()
+        }
+        toggleAdvanced()
+        XCTAssertTrue(app.textFields["task-image-generation-width"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(app.textFields["task-image-generation-width"].value as? String, "1024")
+        XCTAssertEqual(app.textFields["task-image-generation-height"].value as? String, "1024")
+        XCTAssertEqual(app.textFields["task-image-generation-steps"].value as? String, "40")
+        XCTAssertEqual(app.textFields["task-image-generation-seed"].value as? String, "42")
+        capture("Library-image-generation-advanced")
+        toggleAdvanced()
         capture("Library-image-generation-form")
         app.buttons["task-start"].click()
         waitForTaskState("succeeded")
@@ -1054,7 +1097,11 @@ final class WorkbenchReviewUITests: XCTestCase {
         let generatedRequestJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: generatedRequestPath))) as? [String: Any])
         let generatedParameters = try XCTUnwrap(generatedRequestJSON["parameters"] as? [String: Any])
         XCTAssertEqual(generatedRequestJSON["schema"] as? String, "task-request/2")
-        XCTAssertEqual(Set(generatedParameters.keys), ["prompt"], "Unset planner settings must be omitted")
+        XCTAssertEqual(Set(generatedParameters.keys), ["prompt", "width", "height", "steps", "seed"])
+        XCTAssertEqual(generatedParameters["width"] as? Int, 1024)
+        XCTAssertEqual(generatedParameters["height"] as? Int, 1024)
+        XCTAssertEqual(generatedParameters["steps"] as? Int, 40)
+        XCTAssertEqual(generatedParameters["seed"] as? Int, 42)
 
         app.buttons["Done"].click()
         let vision = app.outlines.staticTexts["Fixture vision model"].firstMatch

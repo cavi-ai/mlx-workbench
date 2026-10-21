@@ -546,7 +546,8 @@ final class InferenceTaskTests: XCTestCase {
     }
 
     func testImageTaskDraftsOmitUnsetPlannerSettingsAndReuseRetainedInput() throws {
-        let generation = try ImageGenerationTaskDraft(prompt: "A red kite above a green field").request(modelPath: "/Models/qwen-image")
+        let generation = try ImageGenerationTaskDraft(prompt: "A red kite above a green field", width: "", height: "", steps: "", seed: "")
+            .request(modelPath: "/Models/qwen-image")
         XCTAssertEqual(generation.parameters, ["prompt": .string("A red kite above a green field")])
         let configuredGeneration = try ImageGenerationTaskDraft(prompt: "A landscape", width: "512", height: "768", steps: "20", seed: "42")
             .request(modelPath: "/Models/qwen-image")
@@ -882,6 +883,29 @@ final class InferenceTaskTests: XCTestCase {
         await coordinator.start(kind: .classification, model: wrongType)
         let afterWrongType = await api.startEvidence()
         XCTAssertEqual(afterWrongType.count, 1)
+    }
+
+    func testImageGenerationOnlyNeedsAPromptAndSendsVisibleDefaults() throws {
+        let draft = ImageGenerationTaskDraft(prompt: "A dog riding a unicycle while juggling")
+        let request = try draft.request(modelPath: "/Models/image")
+        XCTAssertEqual(request.parameters, ["prompt": .string("A dog riding a unicycle while juggling"),
+            "width": .number(1024), "height": .number(1024), "steps": .number(40), "seed": .number(42)])
+    }
+
+    @MainActor
+    func testMissingImageCapabilityPreservesPromptAndExplainsEngineRecovery() async throws {
+        let record = try JSONDecoder().decode(TaskRecord.self, from: Data(Self.publicSummary.utf8))
+        let api = FakeInferenceTaskAPI(record: record, capabilities: Self.taskCapabilities)
+        let coordinator = InferenceTaskCoordinator(api: api, artifactRoot: URL(fileURLWithPath: "/tasks"))
+        coordinator.imageGenerationDraft.prompt = "A dog riding a unicycle while juggling"
+        await coordinator.start(kind: .imageGeneration, model: Self.libraryModel(type: .imageGeneration))
+        let started = await api.startEvidence()
+        XCTAssertTrue(started.isEmpty)
+        XCTAssertEqual(coordinator.imageGenerationDraft.prompt, "A dog riding a unicycle while juggling")
+        XCTAssertTrue(coordinator.error?.contains("Open Health") == true)
+        XCTAssertTrue(coordinator.error?.contains("setup assistant") == true)
+        XCTAssertTrue(coordinator.needsEngineSetup)
+        XCTAssertNil(coordinator.selectedTask)
     }
 
     @MainActor

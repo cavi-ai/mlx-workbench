@@ -314,7 +314,8 @@ final class ModelLibraryBuilderTests: XCTestCase {
     @MainActor
     func testAppHostPreservesLastSuccessfulLibrarySnapshotOnFailedScan() async throws {
         let scan = makeFixtureScan()
-        let script = ScanScript(steps: [.success(scan), .failure(TestScanError.boom), .success(scan)])
+        let script = ScanScript(steps: [.success(scan), .failure(TestScanError.boom), .failure(TestScanError.boom), .success(scan)])
+        let observation = ScanRetryObservation()
         let hardware = fixtureHardware
         let now = fixtureDate
         let host = AppHost(
@@ -327,9 +328,11 @@ final class ModelLibraryBuilderTests: XCTestCase {
             hardwareProfile: hardware,
             now: { now },
             scanOperation: { _, _, _, _ in
-                try await script.next()
+                await observation.capture()
+                return try await script.next()
             }
         )
+        observation.host = host
 
         XCTAssertEqual(host.hardwareProfile, hardware)
         XCTAssertNil(host.librarySnapshot)
@@ -344,9 +347,17 @@ final class ModelLibraryBuilderTests: XCTestCase {
         XCTAssertEqual(host.hardwareProfile, hardware)
         XCTAssertEqual(host.lastError, TestScanError.boom.localizedDescription)
         XCTAssertEqual(host.scanError, TestScanError.boom.localizedDescription)
+        await host.rescan()
+        let retry = try XCTUnwrap(observation.values.last)
+        XCTAssertTrue(retry.isScanning)
+        XCTAssertNil(retry.scanError, "A retry must stop displaying the prior failure")
+        XCTAssertNil(retry.lastError)
+        XCTAssertEqual(retry.snapshot, firstSnapshot, "Keep the last inventory visible during a retry")
         host.lastError = "An unrelated operation failed"
         XCTAssertEqual(host.scanError, TestScanError.boom.localizedDescription)
         await host.rescan()
+        XCTAssertEqual(observation.values.last?.lastError, "An unrelated operation failed")
+        XCTAssertNil(observation.values.last?.scanError)
         XCTAssertNil(host.scanError)
     }
 
@@ -591,6 +602,17 @@ final class ModelLibraryBuilderTests: XCTestCase {
 
     private var fixtureDate: Date {
         Date(timeIntervalSince1970: 1_725_000_000)
+    }
+}
+
+@MainActor
+private final class ScanRetryObservation {
+    weak var host: AppHost?
+    var values: [(isScanning: Bool, scanError: String?, lastError: String?, snapshot: LibrarySnapshot?)] = []
+
+    func capture() {
+        guard let host else { return }
+        values.append((host.isScanning, host.scanError, host.lastError, host.librarySnapshot))
     }
 }
 

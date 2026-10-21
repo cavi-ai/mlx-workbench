@@ -90,6 +90,7 @@ enum InferenceSettings {
     static let seed = IntegerSetting(title: "Seed", range: 0...4_294_967_295)
 
     enum ImageGeneration {
+        static let defaults = (width: 1024, height: 1024, steps: 40, seed: 42)
         static let prompt = TextSetting(title: "Prompt", limit: 2000)
         static let size = IntegerSetting(title: "Image size", range: 256...2048, multiple: 16, unit: " pixels")
         static let width = IntegerSetting(title: "Width", range: 256...2048, multiple: 16, unit: " pixels")

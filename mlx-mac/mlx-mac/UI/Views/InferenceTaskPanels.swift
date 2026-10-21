@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct InferenceTaskPanel: View {
     @ObservedObject var coordinator: InferenceTaskCoordinator
     let model: LibraryModel
+    var onEngineSetup: (() -> Void)? = nil
     @Environment(\.isRouteActive) private var isRouteActive
     @State private var understandingMode: UnderstandingMode = .image
     @State private var videoPreviewLoadRevision = UUID()
@@ -186,19 +187,34 @@ struct InferenceTaskPanel: View {
             SectionTitle(text: "Generate image")
             TextField("Describe the image", text: $coordinator.imageGenerationDraft.prompt, axis: .vertical)
                 .lineLimit(2...5).accessibilityIdentifier("task-image-generation-prompt")
-            HStack(spacing: WorkbenchSpacing.sm) {
-                Text("Size").font(WorkbenchTypography.secondary)
-                TextField("Width · default 1024", text: $coordinator.imageGenerationDraft.width)
-                    .frame(maxWidth: 130).accessibilityIdentifier("task-image-generation-width")
-                Text("×").foregroundStyle(WorkbenchColor.muted)
-                TextField("Height · default 1024", text: $coordinator.imageGenerationDraft.height)
-                    .frame(maxWidth: 130).accessibilityIdentifier("task-image-generation-height")
-                TextField("Steps · planner default", text: $coordinator.imageGenerationDraft.steps)
-                    .frame(maxWidth: 145).accessibilityIdentifier("task-image-generation-steps")
-                TextField("Seed · planner default", text: $coordinator.imageGenerationDraft.seed)
-                    .frame(maxWidth: 145).accessibilityIdentifier("task-image-generation-seed")
+            Text(coordinator.imageGenerationDraft.settingsSummary)
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                .accessibilityIdentifier("task-image-generation-settings")
+            DisclosureGroup("Advanced options") {
+                Grid(alignment: .leading, horizontalSpacing: WorkbenchSpacing.sm, verticalSpacing: WorkbenchSpacing.xs) {
+                    GridRow {
+                        Text("Width")
+                        TextField("1024", text: $coordinator.imageGenerationDraft.width)
+                            .accessibilityIdentifier("task-image-generation-width")
+                    }
+                    GridRow {
+                        Text("Height")
+                        TextField("1024", text: $coordinator.imageGenerationDraft.height)
+                            .accessibilityIdentifier("task-image-generation-height")
+                    }
+                    GridRow {
+                        Text("Steps")
+                        TextField("40", text: $coordinator.imageGenerationDraft.steps)
+                            .accessibilityIdentifier("task-image-generation-steps")
+                    }
+                    GridRow {
+                        Text("Seed")
+                        TextField("42", text: $coordinator.imageGenerationDraft.seed)
+                            .accessibilityIdentifier("task-image-generation-seed")
+                    }
+                }.font(WorkbenchTypography.secondary).padding(.top, WorkbenchSpacing.xs)
             }
-            if let validationError = coordinator.imageGenerationDraft.validationError {
+            if !coordinator.imageGenerationDraft.prompt.isEmpty, let validationError = coordinator.imageGenerationDraft.validationError {
                 Text(validationError).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
             }
             taskActions(kind: .imageGeneration)
@@ -329,6 +345,10 @@ struct InferenceTaskPanel: View {
     private func taskActions(kind: TaskKind) -> some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.xs) {
             if let error = coordinator.error { InlineMessage(kind: .warning, text: error) }
+            if coordinator.needsEngineSetup, let onEngineSetup {
+                Button("Open Health…", action: onEngineSetup)
+                    .accessibilityIdentifier("task-engine-setup")
+            }
             HStack {
                 Button(coordinator.busy ? "Starting…" : "Start") { Task { await coordinator.start(kind: kind, model: model) } }
                     .buttonStyle(.borderedProminent).disabled(!coordinator.canStart || !coordinator.isDraftValid(for: kind)).accessibilityIdentifier("task-start")
