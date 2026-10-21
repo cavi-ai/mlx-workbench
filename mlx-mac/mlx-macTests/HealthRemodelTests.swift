@@ -1213,12 +1213,17 @@ final class RuntimeCheckerTests: XCTestCase {
     func testOneProbeUsesTheSelectedInterpretersSiblingTools() throws {
         let root = try directory()
         let python = root.appendingPathComponent("python")
+        // The system python3 entry point selects a developer tool before
+        // starting Python. Exercise the interpreter directly within the probe.
+        let interpreter = try RuntimeInstaller.probe(executable: URL(fileURLWithPath: "/usr/bin/xcrun"),
+            arguments: ["--find", "python3"], environment: ProcessInfo.processInfo.environment, timeout: 5)
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: interpreter))
         try executable(python, script: """
         #!/bin/sh
         root=$(dirname "$0")
         printf 'probe\\n' >> "$root/calls"
         export PYTHONPATH="$root"
-        exec /usr/bin/python3 "$@"
+        exec "$RUNTIME_TEST_PYTHON" "$@"
         """)
         for name in ["torch", "transformers", "gguf", "accelerate"] {
             try Data().write(to: root.appendingPathComponent(name + ".py"))
@@ -1226,7 +1231,8 @@ final class RuntimeCheckerTests: XCTestCase {
         for name in ["mlx_lm.convert", "mlx_lm.server"] {
             try executable(root.appendingPathComponent(name), script: "#!/bin/sh\nexit 0\n")
         }
-        let report = RuntimeChecker.report(python: python, environment: ["PATH": "/usr/bin:/bin"])
+        let report = RuntimeChecker.report(python: python,
+            environment: ["PATH": "/usr/bin:/bin", "RUNTIME_TEST_PYTHON": interpreter])
         XCTAssertTrue(report.ok, report.convert.message + report.serve.message)
         XCTAssertEqual(report.python, python.path)
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("calls")), "probe\n")
@@ -1256,9 +1262,9 @@ final class RuntimeCheckerTests: XCTestCase {
     func testExcessiveOutputAndMalformedRepliesCannotBecomeReady() throws {
         let root = try directory()
         let python = root.appendingPathComponent("python")
-        for (body, reason) in [("print('not a runtime report')", "could not complete"),
-                               ("import sys, time; sys.stdout.write('x' * 100000); sys.stdout.flush(); time.sleep(30)", "too much output")] {
-            try executable(python, script: "#!/usr/bin/python3\n" + body + "\n")
+        for (body, reason) in [("printf 'not a runtime report\\n'", "could not complete"),
+                               ("/usr/bin/head -c 100000 /dev/zero; /bin/sleep 30", "too much output")] {
+            try executable(python, script: "#!/bin/sh\n" + body + "\n")
             let started = Date()
             let report = RuntimeChecker.report(python: python, timeout: 1)
             XCTAssertLessThan(Date().timeIntervalSince(started), 4)

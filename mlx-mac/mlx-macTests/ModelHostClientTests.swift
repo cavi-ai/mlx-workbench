@@ -4,6 +4,46 @@ import XCTest
 @testable import mlx_workbench
 
 final class ModelHostClientTests: XCTestCase {
+    func testRejectedResponseClosesOnlyItsOwnStream() async throws {
+        for scenario in 0..<3 {
+            let stopped = expectation(description: "Rejected stream closed \(scenario)")
+            var rejected = HostStubResponse(status: scenario == 0 ? 500 : 200,
+                body: scenario == 2 ? "12345" : "")
+            rejected.finishes = false
+            rejected.headers = scenario == 1 ? ["Content-Length": "1024"] : [:]
+            rejected.onStop = { stopped.fulfill() }
+            let (http, _) = transport(responses: ["/rejected": rejected, "/healthy": .json("{}")])
+            do {
+                _ = try await http.request(host: host(.openAICompatible), path: "rejected", maximumBytes: 4)
+                XCTFail("Expected response rejection")
+            } catch {
+                XCTAssertEqual(error as? HostHTTPError, scenario == 0 ? .httpStatus(500) : .responseTooLarge)
+            }
+            await fulfillment(of: [stopped], timeout: 1)
+            let healthy = try await http.request(host: host(.openAICompatible), path: "healthy", maximumBytes: 2)
+            XCTAssertEqual(healthy, Data("{}".utf8), "Rejecting one request must leave the shared session usable")
+        }
+    }
+
+    func testCancellingHostRequestClosesItsStream() async throws {
+        let started = expectation(description: "Response headers delivered")
+        let stopped = expectation(description: "Cancelled stream closed")
+        var pending = HostStubResponse.json("")
+        pending.finishes = false
+        pending.onStart = { started.fulfill() }
+        pending.onStop = { stopped.fulfill() }
+        let (http, _) = transport(responses: ["/pending": pending, "/healthy": .json("{}")])
+        let target = host(.openAICompatible)
+        let request = Task { try await http.request(host: target, path: "pending") }
+        await fulfillment(of: [started], timeout: 3)
+        request.cancel()
+        do { _ = try await request.value; XCTFail("Expected cancellation") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        await fulfillment(of: [stopped], timeout: 1)
+        let healthy = try await http.request(host: target, path: "healthy")
+        XCTAssertEqual(healthy, Data("{}".utf8))
+    }
+
     func testComfyUIDeviceMemoryKeepsUnknownEmptyAndPartialReportsDistinct() async throws {
         for (body, count) in [("{}", Optional<Int>.none), (#"{"devices":null}"#, nil), (#"{"devices":[]}"#, 0),
                               (#"{"devices":[{"name":"Repeated","type":"cpu","index":null,"vram_free":0},{"name":"Repeated","type":"cuda","index":1,"vram_total":8000}]}"#, 2)] {
@@ -740,7 +780,9 @@ final class ModelHostClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [HostInventoryStub.self]
         configuration.httpAdditionalHeaders = ["X-Inventory-Test": key]
-        return (HostHTTPClient(session: URLSession(configuration: configuration)), log)
+        let session = URLSession(configuration: configuration)
+        addTeardownBlock { session.invalidateAndCancel(); HostInventoryStub.unregister(key: key) }
+        return (HostHTTPClient(session: session), log)
     }
 }
 
@@ -748,6 +790,10 @@ private struct HostStubResponse {
     let status: Int
     let data: Data
     var failure: URLError.Code? = nil
+    var finishes = true
+    var headers: [String: String] = [:]
+    var onStart: (@Sendable () -> Void)?
+    var onStop: (@Sendable () -> Void)?
     init(status: Int, body: String) { self.init(status: status, data: Data(body.utf8)) }
     init(status: Int, data: Data) { self.status = status; self.data = data }
     static func json(_ body: String) -> Self { .init(status: 200, body: body) }
@@ -771,6 +817,10 @@ private final class HostInventoryStub: URLProtocol, @unchecked Sendable {
     static func register(key: String, responses: [String: [HostStubResponse]], log: HostRequestLog) {
         lock.lock(); defer { lock.unlock() }; fixtures[key] = (responses, log)
     }
+    static func unregister(key: String) {
+        lock.lock(); defer { lock.unlock() }; fixtures[key] = nil
+    }
+    private var onStop: (@Sendable () -> Void)?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -783,17 +833,20 @@ private final class HostInventoryStub: URLProtocol, @unchecked Sendable {
             sequence.removeFirst(); fixture?.0[path] = sequence; Self.fixtures[key] = fixture
         }
         Self.lock.unlock()
+        onStop = stub.onStop
         fixture?.1.append(request)
         if let failure = stub.failure {
             client?.urlProtocol(self, didFailWithError: URLError(failure))
             return
         }
-        let response = HTTPURLResponse(url: request.url!, statusCode: stub.status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        let headers = stub.headers.merging(["Content-Type": "application/json"]) { current, _ in current }
+        let response = HTTPURLResponse(url: request.url!, statusCode: stub.status, httpVersion: "HTTP/1.1", headerFields: headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        stub.onStart?()
         client?.urlProtocol(self, didLoad: stub.data)
-        client?.urlProtocolDidFinishLoading(self)
+        if stub.finishes { client?.urlProtocolDidFinishLoading(self) }
     }
-    override func stopLoading() {}
+    override func stopLoading() { onStop?() }
 }
 
 private final class HostRedirectServer: @unchecked Sendable {

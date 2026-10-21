@@ -23,6 +23,7 @@ Switching sources preserves the main table's filters and selected model without 
 | Modified | Newest file change on disk, including MLX folders and Hugging Face cache snapshots |
 
 Columns collapse as the window narrows. Filters narrow the list by quantization and readiness. **Refresh** rescans; a failed scan offers **Retry scan**.
+Model-folder metadata is read in the background. The previous inventory stays visible until the complete replacement is ready; a cancelled refresh cannot publish its result. Repeated refresh requests do not start overlapping scans.
 The last successful inventory stays visible during retries. A retry clears the
 previous scan error while it runs. If scanning times out repeatedly, check the
 model folders in **Settings** for unavailable drives or unnecessarily broad folders.
