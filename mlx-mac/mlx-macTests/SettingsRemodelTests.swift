@@ -465,6 +465,63 @@ final class SettingsProbeTests: XCTestCase {
 
 // MARK: - Engine row (AC8)
 
+@MainActor
+final class SettingsEngineDetectionTests: XCTestCase {
+    func testNoMatchRetainsTheDraftAndReportsTheOutcome() async {
+        let detection = SettingsEngineDetection(discover: { "" })
+        let path = await detection.detect(currentPath: "/chosen/engine")
+        XCTAssertEqual(path, "/chosen/engine")
+        XCTAssertEqual(detection.state, .notFound(path: "/chosen/engine"))
+    }
+
+    func testFoundCheckoutIsOnlyAnUnsavedSelection() async {
+        let detection = SettingsEngineDetection(discover: { "/detected/engine" })
+        let path = await detection.detect(currentPath: "/chosen/engine")
+        XCTAssertEqual(path, "/detected/engine")
+        XCTAssertEqual(detection.state, .found(path: "/detected/engine"))
+    }
+
+    func testFailureRetainsTheDraftAndReportsTheError() async {
+        let detection = SettingsEngineDetection(discover: { throw CocoaError(.fileReadNoPermission) })
+        let path = await detection.detect(currentPath: "/chosen/engine")
+        XCTAssertEqual(path, "/chosen/engine")
+        guard case .failed(let keptPath, let message) = detection.state else { return XCTFail("Expected detection failure") }
+        XCTAssertEqual(keptPath, "/chosen/engine")
+        XCTAssertFalse(message.isEmpty)
+    }
+
+    func testSearchingIsVisibleAndCancelledResultsCannotReplaceTheDraft() async {
+        let gate = SettingsDetectionGate()
+        let detection = SettingsEngineDetection(discover: { await gate.result() })
+        let pending = Task { await detection.detect(currentPath: "/chosen/engine") }
+        await gate.waitForStart()
+        XCTAssertTrue(detection.isDetecting)
+        let duplicate = await detection.detect(currentPath: "/second/engine")
+        XCTAssertNil(duplicate)
+        XCTAssertTrue(detection.isDetecting)
+        detection.cancel()
+        await gate.release("/late/engine")
+        let result = await pending.value
+        XCTAssertNil(result)
+        XCTAssertEqual(detection.state, .idle)
+    }
+}
+
+private actor SettingsDetectionGate {
+    private var pending: CheckedContinuation<String, Never>?
+    private var started = false
+    private var waiter: CheckedContinuation<Void, Never>?
+    func result() async -> String {
+        started = true
+        waiter?.resume(); waiter = nil
+        return await withCheckedContinuation { pending = $0 }
+    }
+    func waitForStart() async {
+        if !started { await withCheckedContinuation { waiter = $0 } }
+    }
+    func release(_ value: String) { pending?.resume(returning: value); pending = nil }
+}
+
 final class SettingsEngineStatusTests: XCTestCase {
     private func make(_ health: AgentHealth, saved: String = "/agent", draft: String = "/agent") -> SettingsEngineStatus {
         SettingsEngineStatus.make(health: health, savedPath: saved, draftPath: draft)
@@ -848,8 +905,9 @@ final class SettingsSourceContractTests: XCTestCase {
 
     func testDiscoveryAndPanelsAreOnlyInActions() throws {
         let text = try source("SettingsView.swift")
-        XCTAssertEqual(text.components(separatedBy: "Config.discoverAgentPath()").count - 1, 1)
-        XCTAssertTrue(text.contains("detect: { mlxAgentPath = Config.discoverAgentPath() }"))
+        XCTAssertFalse(text.contains("Config.discoverAgentPath()"))
+        XCTAssertTrue(text.contains("detect: detectEngine"))
+        XCTAssertTrue(text.contains("await engineDetection.detect(currentPath: original)"))
         XCTAssertEqual(text.components(separatedBy: "Config.discoverGgufRoots()").count - 1, 1)
         XCTAssertEqual(text.components(separatedBy: "NSOpenPanel()").count - 1, 2)
     }

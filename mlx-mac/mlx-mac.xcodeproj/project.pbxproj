@@ -169,6 +169,7 @@
 		CLNRMDB1 /* ClientsRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CLNRMDF1 /* ClientsRemodelTests.swift */; };
 		STGPRSB1 /* SettingsPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGPRSF1 /* SettingsPresentation.swift */; };
 		STGPRBB1 /* SettingsDirectoryProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGPRBF1 /* SettingsDirectoryProbe.swift */; };
+		STGDET01 /* SettingsEngineDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGDET02 /* SettingsEngineDetection.swift */; };
 		STGRMDB1 /* SettingsRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = STGRMDF1 /* SettingsRemodelTests.swift */; };
 		DSCRMDB1 /* DiscoverRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DSCRMDF1 /* DiscoverRemodelTests.swift */; };
 		LMSRMDB1 /* LMStudioRemodelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LMSRMDF1 /* LMStudioRemodelTests.swift */; };
@@ -431,6 +432,7 @@
 		CLNRMDF1 /* ClientsRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ClientsRemodelTests.swift; path = ClientsRemodelTests.swift; sourceTree = "<group>"; };
 		STGPRSF1 /* SettingsPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsPresentation.swift; path = UI/Views/SettingsPresentation.swift; sourceTree = "<group>"; };
 		STGPRBF1 /* SettingsDirectoryProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsDirectoryProbe.swift; path = UI/Views/SettingsDirectoryProbe.swift; sourceTree = "<group>"; };
+		STGDET02 /* SettingsEngineDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsEngineDetection.swift; path = Services/SettingsEngineDetection.swift; sourceTree = "<group>"; };
 		STGRMDF1 /* SettingsRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsRemodelTests.swift; path = SettingsRemodelTests.swift; sourceTree = "<group>"; };
 		DSCRMDF1 /* DiscoverRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DiscoverRemodelTests.swift; path = DiscoverRemodelTests.swift; sourceTree = "<group>"; };
 		LMSRMDF1 /* LMStudioRemodelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LMStudioRemodelTests.swift; path = LMStudioRemodelTests.swift; sourceTree = "<group>"; };
@@ -798,6 +800,7 @@
 				CLNVWSF1 /* ClientsViews.swift */,
 				STGPRSF1 /* SettingsPresentation.swift */,
 				STGPRBF1 /* SettingsDirectoryProbe.swift */,
+				STGDET02 /* SettingsEngineDetection.swift */,
 				RCLVWSF1 /* ReclaimViews.swift */,
 				ACTVWSF1 /* ActivityViews.swift */,
 				FAILNTF1 /* FailureNotice.swift */,
@@ -1172,6 +1175,7 @@
 				CLNVWSB1 /* ClientsViews.swift in Sources */,
 				STGPRSB1 /* SettingsPresentation.swift in Sources */,
 				STGPRBB1 /* SettingsDirectoryProbe.swift in Sources */,
+				STGDET01 /* SettingsEngineDetection.swift in Sources */,
 				RCLVWSB1 /* ReclaimViews.swift in Sources */,
 				ACTVWSB1 /* ActivityViews.swift in Sources */,
 				FAILNTB1 /* FailureNotice.swift in Sources */,

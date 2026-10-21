@@ -55,6 +55,15 @@ With no `gguf_roots` stored, the app uses whichever of these exist: `~/.cache/hu
 
 With no `mlx_agent_path`, the engine is found in this order: `MLX_AGENT_HOME`, the checkout's `vendor/mlx-agent`, then a sibling `mlx-agent` checkout. Source builds find their own vendored engine; distribution builds contain no source path and need the setting.
 
+**Settings → Engine → Detect** searches these locations and checks for an already
+prepared copy of the app's bundled engine. Detection runs without blocking the
+form and shows its progress and result beside the path and in the pinned status
+bar. If nothing is found or a check fails, your current path stays in place;
+**Choose…** selects a checkout and **Open Health** leads to bundled engine setup.
+Detection never prepares, installs or saves an engine. Review a detected path
+and use **Save** to apply it. Saving shows progress, followed by a saved or failed
+result; editing again shows **Unsaved changes**.
+
 ## Python
 
 The app resolves the engine's Python in this order: `MLX_WORKBENCH_PYTHON` or `PYTHON`, the Workbench checkout's `.venv`, then `PATH`. For an installed app, the Workbench checkout is the one whose `vendor/mlx-agent` is the configured engine. Python 3.12 is supported.
