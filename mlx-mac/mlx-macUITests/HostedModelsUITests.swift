@@ -62,16 +62,21 @@ final class HostedModelsUITests: XCTestCase {
         libraryImage.name = "comfy-device-memory-library"; libraryImage.lifetime = .keepAlways; add(libraryImage)
         app.buttons["Overview"].firstMatch.click()
         let memory = app.buttons["system-memory-header"]
-        XCTAssertTrue(memory.waitForExistence(timeout: 5)); memory.click()
-        let memoryDetails = app.disclosureTriangles["Reported device memory"].firstMatch
+        XCTAssertTrue(memory.waitForExistence(timeout: 5))
+        // Start within the popover's scroll area, before querying its offscreen rows.
+        let panelScrollPoint = memory.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .withOffset(CGVector(dx: -140, dy: 70))
+        memory.click()
+        panelScrollPoint.scroll(byDeltaX: 0, deltaY: -300)
+        let memoryDetails = app.disclosureTriangles["saved-model-hosts"].firstMatch
         XCTAssertTrue(memoryDetails.waitForExistence(timeout: 5))
-        memoryDetails.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
-            .withOffset(CGVector(dx: 26, dy: 8)).scroll(byDeltaX: 0, deltaY: -260)
+        XCTAssertTrue(memoryDetails.isHittable)
         clickRunningDisclosure(memoryDetails)
-        app.buttons["Open ComfyUI in Library"].firstMatch
-            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).scroll(byDeltaX: 0, deltaY: -260)
-        XCTAssertTrue(free.waitForExistence(timeout: 5))
-        XCTAssertTrue(free.isHittable); XCTAssertTrue(shared.isHittable)
+        panelScrollPoint.scroll(byDeltaX: 0, deltaY: -300)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Reported free: 0 bytes", "Reported free: 0 bytes"))
+            .allElementsBoundByIndex.contains { $0.isHittable })
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Shared system memory", "Shared system memory"))
+            .allElementsBoundByIndex.contains { $0.isHittable })
         let memoryImage = XCTAttachment(screenshot: app.screenshot())
         memoryImage.name = "comfy-device-memory-panel"; memoryImage.lifetime = .keepAlways; add(memoryImage)
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("requests"), encoding: .utf8), requestsBefore,
