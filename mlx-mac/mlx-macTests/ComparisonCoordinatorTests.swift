@@ -7,6 +7,68 @@ import XCTest
 
 @MainActor
 final class ComparisonCoordinatorTests: XCTestCase {
+    func testBackgroundHistoryRestoresOwnershipBeforeAllowingNewRuns() async throws {
+        let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL)
+        var run = cleanupRun(); run.state = .running
+        try store.upsert(run, id: \.id)
+        let coordinator = makeCoordinator(loadHistoryInBackground: true)
+        XCTAssertTrue(coordinator.isLoadingHistory)
+        XCTAssertFalse(coordinator.hasLoadedHistory)
+        coordinator.start(variants: [("/Models/other", nil)], promptSet: BuiltinPromptSets.coding)
+        XCTAssertTrue(coordinator.runs.isEmpty)
+        await coordinator.waitForHistory()
+        XCTAssertFalse(coordinator.isLoadingHistory)
+        XCTAssertTrue(coordinator.hasLoadedHistory)
+        XCTAssertEqual(coordinator.activeRunID, run.id)
+        XCTAssertTrue(coordinator.cleanupPending)
+        XCTAssertEqual(coordinator.runs.first?.state, .interrupted)
+        XCTAssertEqual(try store.load().first?.pendingServerCleanup, run.pendingServerCleanup)
+    }
+
+    func testBackgroundHistoryFailureDoesNotPublishEmptyAuthoritativeHistory() async throws {
+        let data = Data("[{corrupt]".utf8)
+        try FileManager.default.createDirectory(at: coordinatorRunStoreURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: coordinatorRunStoreURL)
+        let coordinator = makeCoordinator(loadHistoryInBackground: true)
+        await coordinator.waitForHistory()
+        XCTAssertFalse(coordinator.hasLoadedHistory)
+        XCTAssertNotNil(coordinator.persistenceError)
+        XCTAssertNotNil(coordinator.runStateUnavailableReason)
+        coordinator.start(variants: [("/Models/a", nil)], promptSet: BuiltinPromptSets.coding)
+        XCTAssertNil(coordinator.activeRunID)
+        XCTAssertEqual(try Data(contentsOf: coordinatorRunStoreURL), data)
+    }
+
+    func testInitialHistoryWriteLeavesMainActorFreeAndCancellationWaitsForDurability() async throws {
+        let barrier = ComparisonHistoryWriteBarrier()
+        defer { barrier.release.signal() }
+        let url = coordinatorRunStoreURL
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("[]".utf8).write(to: url)
+        let store = JSONStore<ComparisonRun>(fileURL: url, replaceItem: { old, new in
+            XCTAssertFalse(Thread.isMainThread)
+            barrier.pauseFirstWrite()
+            _ = try FileManager.default.replaceItemAt(old, withItemAt: new)
+        })
+        let previewed = expectation(description: "inference must not start")
+        previewed.isInverted = true
+        let probe = ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in previewed.fulfill(); return "hash" },
+            start: { _, _, _ in }, stop: { _ in }), prober: StubComparisonProber(gate: nil), pickPort: { 9997 })
+        let coordinator = ComparisonCoordinator(probe: probe, runStore: store,
+            promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL))
+        coordinator.start(variants: [("/Models/a", nil)], promptSet: BuiltinPromptSets.coding)
+        await fulfillment(of: [barrier.entered], timeout: 5)
+        XCTAssertNotNil(coordinator.activeRunID)
+        XCTAssertTrue(coordinator.runs.isEmpty, "A pending initial write must not publish a run")
+        coordinator.cancel()
+        XCTAssertTrue(coordinator.isCancelling, "The main actor must handle cancellation while disk I/O is paused")
+        barrier.release.signal()
+        let finished = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(finished)
+        XCTAssertEqual(try store.load().first?.state, .cancelled)
+        await fulfillment(of: [previewed], timeout: 0.05)
+    }
+
     func testActivityComparisonRecoveryIsExplicitAndUpdatesAfterCleanup() async throws {
         let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL), run = cleanupRun()
         try store.upsert(run, id: \.id)
@@ -786,7 +848,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
             let output = try XCTUnwrap(result.samples.first?.fullOutput)
             let answer = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Int])
             XCTAssertEqual(answer, ["answer": 323])
-            coordinator.reviewQuality(runID: run.id, modelPath: result.id, score: 5)
+            await coordinator.reviewQuality(runID: run.id, modelPath: result.id, score: 5)?.value
         }
         XCTAssertNotNil(coordinator.runs.first?.settingsSearchCandidateID)
         XCTAssertEqual(try store.load().first?.settingsSearchCandidateID, coordinator.runs.first?.settingsSearchCandidateID)
@@ -966,8 +1028,8 @@ final class ComparisonCoordinatorTests: XCTestCase {
         let ordered = await events.values
         XCTAssertEqual(ordered, ["preview:/Models/strata:false", "start:/Models/strata", "stop",
                                 "preview:/Models/strata:true", "start:/Models/strata", "stop"])
-        coordinator.reviewQuality(runID: run.id, modelPath: "lane-a", score: 2)
-        coordinator.reviewQuality(runID: run.id, modelPath: "lane-b", score: 5)
+        await coordinator.reviewQuality(runID: run.id, modelPath: "lane-a", score: 2)?.value
+        await coordinator.reviewQuality(runID: run.id, modelPath: "lane-b", score: 5)?.value
         let persisted = try XCTUnwrap(JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL).load().first)
         XCTAssertEqual(persisted.qualityReviews?["lane-a"]?.score, 2)
         XCTAssertEqual(persisted.qualityReviews?["lane-b"]?.score, 5)
@@ -1348,6 +1410,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
         runStoreURL: URL? = nil,
         promptSetStoreURL: URL? = nil,
         failingPaths: Set<String> = [],
+        loadHistoryInBackground: Bool = false,
         gate: ProbeGate? = nil,
         recoverCleanup: @escaping @Sendable (ComparisonServerReceipt) async throws -> Void = { _ in throw StubServeError.failed }
     ) -> ComparisonCoordinator {
@@ -1368,6 +1431,7 @@ final class ComparisonCoordinatorTests: XCTestCase {
             probe: probe,
             runStore: JSONStore<ComparisonRun>(fileURL: runStoreURL ?? coordinatorRunStoreURL),
             promptSetStore: JSONStore<PromptSet>(fileURL: promptSetStoreURL ?? coordinatorPromptSetStoreURL),
+            loadHistoryInBackground: loadHistoryInBackground,
             recoverCleanup: recoverCleanup
         )
     }
@@ -1534,5 +1598,19 @@ private struct RecordingComparisonProber: EndpointProbing {
         await events.record(prompt)
         return ProbeSample(text: "OK", completionTokens: 2, timeToFirstTokenSeconds: 0.01,
             durationSeconds: 0.02, metricsEstimated: false)
+    }
+}
+
+private final class ComparisonHistoryWriteBarrier: @unchecked Sendable {
+    let entered = XCTestExpectation(description: "history write started")
+    let release = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var first = true
+    func pauseFirstWrite() {
+        lock.lock()
+        let pause = first
+        first = false
+        lock.unlock()
+        if pause { entered.fulfill(); _ = release.wait(timeout: .now() + 5) }
     }
 }

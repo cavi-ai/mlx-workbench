@@ -188,7 +188,7 @@ final class PremiumSettingsTests: XCTestCase {
         let scanned = expectation(description: "launch scan")
         let host = makeHost(scanned: scanned)
 
-        host.startLiveServices(environment: [:])
+        await host.startLiveServices(environment: [:])?.value
         await fulfillment(of: [scanned], timeout: 5)
 
         XCTAssertNotNil(host.modelWorkflow.completionVerifier)

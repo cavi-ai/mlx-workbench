@@ -1090,10 +1090,21 @@ extension RunRemodelTests {
         }
     }
 
+    func testUnloadedHistoryProtectsTheExactReclaimRoots() {
+        let (host, _) = makeProtectedHost(counter: CallCounter(), endpointCalls: CallCounter(), server: Fixture.server(path, port: 8766))
+        host.reclaim.ggufRoots = { ["/fixture/discovered-gguf"] }
+        host.reclaim.mlxRoots = { ["/fixture/selected-mlx"] }
+        XCTAssertFalse(host.comparison.hasLoadedHistory)
+        let protected = host.reclaim.protectedPaths()
+        XCTAssertTrue(protected.contains("/fixture/discovered-gguf"))
+        XCTAssertTrue(protected.contains("/fixture/selected-mlx"))
+    }
+
     func testUnprotectedServerStopsThroughTheSelectedPath() async {
         let counter = CallCounter()
         let server = Fixture.server(path, port: 8766)
         let (host, _) = makeProtectedHost(counter: counter, endpointCalls: CallCounter(), server: server)
+        await host.comparison.waitForHistory()
         await host.modelWorkflow.refreshServers()
 
         let stopped = await host.stopSelectedServer(modelPath: path)
