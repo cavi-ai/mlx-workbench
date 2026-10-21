@@ -17,6 +17,9 @@ struct DiscoverFitField: View {
     let layout: DiscoverLayout
     /// Whether the running discovery was started in Fast mode.
     let fast: Bool
+    let snapshot: DiscoverySnapshot?
+    let isStopping: Bool
+    let onStop: () -> Void
     let onClear: () -> Void
 
     @Environment(\.openWindow) private var openWindow
@@ -26,7 +29,7 @@ struct DiscoverFitField: View {
 
     private var presentation: DiscoverPresentation {
         DiscoverPresentation.make(
-            candidates: state.candidates,
+            candidates: snapshot?.candidates ?? state.candidates,
             memory: resources.memory,
             hasProbed: resources.hasProbed,
             reserveGB: reserveGB,
@@ -45,16 +48,42 @@ struct DiscoverFitField: View {
             case .failed:
                 FailureNotice(error: status.sentence, details: .whenDifferent)
             case .running:
-                notice(status)
-                legend(presentation.legend)
-                placeholderRows
+                HStack(alignment: .top, spacing: WorkbenchSpacing.sm) {
+                    notice(status)
+                    Spacer(minLength: 0)
+                    Button(isStopping ? "Stopping…" : "Stop discovery", action: onStop)
+                        .buttonStyle(.bordered)
+                        .disabled(isStopping)
+                        .fixedSize()
+                        .accessibilityIdentifier("discover-stop")
+                }
             case .populated:
-                let built = presentation
+                EmptyView()
+            }
+            let built = presentation
+            if !built.rows.isEmpty {
                 resultsHeader(count: built.rows.count)
+                if let snapshot {
+                    Text(resultContext(snapshot))
+                        .font(WorkbenchTypography.secondary)
+                        .foregroundStyle(WorkbenchColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("discover-result-context")
+                }
                 legend(built.legend)
                 rows(built.rows)
+            } else if status.kind == .running {
+                legend(built.legend)
+                placeholderRows
             }
         }
+    }
+
+    private func resultContext(_ snapshot: DiscoverySnapshot) -> String {
+        let label = status.kind == .populated ? "Search results" : "Showing previous search results"
+        guard let request = snapshot.request else { return label + ". Search settings were not recorded." }
+        let mode = request.fast ? "Fast" : "Repository inspection"
+        return "\(label) · \(DiscoverRole.title(request.role ?? "")) · \(request.limit) per role · \(mode)"
     }
 
     private func notice(_ status: DiscoverStatePresentation) -> some View {
@@ -86,6 +115,7 @@ struct DiscoverFitField: View {
                 Spacer()
                 Button("Clear", action: onClear)
                     .buttonStyle(.bordered)
+                    .disabled(state.isRunning)
             }
             Text("Memory fit is an estimate. Use Recommend for a task to check installed candidates through local runtimes.")
                 .font(WorkbenchTypography.secondary)

@@ -166,6 +166,11 @@ final class WorkbenchAPISubprocessTests: XCTestCase {
             _ = try await api.adoptStart(role: "coding", state: state, fast: true, offline: true)
         }
     }
+    func testCancelDiscoveryStopsItsAgentAndBackendWithoutStoppingAnotherProcess() async throws {
+        try await assertCancellationStopsOwnedProcesses { api, _ in
+            _ = try await api.discover(role: "coding", limit: 3, fast: true, new: false)
+        }
+    }
     private func assertCancellationStopsOwnedProcesses(
         request: @escaping @Sendable (WorkbenchAPI, String) async throws -> Void
     ) async throws {
