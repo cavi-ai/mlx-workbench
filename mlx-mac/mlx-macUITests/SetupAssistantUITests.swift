@@ -1048,13 +1048,24 @@ final class WorkbenchReviewUITests: XCTestCase {
         try FileManager.default.removeItem(at: legacyTasks)
         let advanced = app.disclosureTriangles["Advanced options"]
         XCTAssertTrue(advanced.waitForExistence(timeout: 10), app.debugDescription)
-        advanced.click()
+        func toggleAdvanced() {
+            let window = app.windows.firstMatch
+            let frame = advanced.frame.intersection(window.frame)
+            XCTAssertFalse(frame.isNull)
+            // Native disclosure frames include the label; click the leading arrow.
+            window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: frame.minX + 24 + frame.height / 4 - window.frame.minX,
+                dy: frame.midY - window.frame.minY
+            )).click()
+        }
+        toggleAdvanced()
+        XCTAssertTrue(app.textFields["task-image-generation-width"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(app.textFields["task-image-generation-width"].value as? String, "1024")
         XCTAssertEqual(app.textFields["task-image-generation-height"].value as? String, "1024")
         XCTAssertEqual(app.textFields["task-image-generation-steps"].value as? String, "40")
         XCTAssertEqual(app.textFields["task-image-generation-seed"].value as? String, "42")
         capture("Library-image-generation-advanced")
-        advanced.click()
+        toggleAdvanced()
         capture("Library-image-generation-form")
         app.buttons["task-start"].click()
         waitForTaskState("succeeded")
