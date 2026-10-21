@@ -72,7 +72,7 @@ class AppHost: ObservableObject {
     private let preferencesStore: JSONStore<RecommendationPreferences>
     private let now: @Sendable () -> Date
     private let scanOperation: @Sendable ([String], [String], Bool, Int?) async throws -> ScanResult
-    private let libraryBuilder: @Sendable (ScanResult, HardwareProfile, Date) -> LibrarySnapshot
+    private let libraryBuildOperation: @Sendable (ScanResult, HardwareProfile, Date) -> LibrarySnapshot
     private let runtimeProbe: @Sendable () -> RuntimeReport
     private var runtimeCheckGeneration = UUID()
     private var runtimeCheckTask: Task<Void, Never>?
@@ -93,6 +93,9 @@ class AppHost: ObservableObject {
         hardwareProfile: HardwareProfile = HardwareProfile.current(),
         now: @escaping @Sendable () -> Date = { Date() },
         scanOperation: (@Sendable ([String], [String], Bool, Int?) async throws -> ScanResult)? = nil,
+        libraryBuildOperation: @escaping @Sendable (ScanResult, HardwareProfile, Date) -> LibrarySnapshot = {
+            ModelLibraryBuilder.build(scan: $0, hardware: $1, now: $2)
+        },
         modelWorkflowAPI: ModelWorkflowAPI? = nil,
         modelWorkflowPersistence: ModelWorkflowPersistence? = nil,
         verification: VerificationCoordinator? = nil,
@@ -111,11 +114,9 @@ class AppHost: ObservableObject {
         preferencesStore: JSONStore<RecommendationPreferences>? = nil,
         intakeAPI: IntakeAPI? = nil,
         inferenceTasks: InferenceTaskCoordinator? = nil,
-        libraryBuilder: @escaping @Sendable (ScanResult, HardwareProfile, Date) -> LibrarySnapshot = { ModelLibraryBuilder.build(scan: $0, hardware: $1, now: $2) },
         runtimeProbe: @escaping @Sendable () -> RuntimeReport = { RuntimeChecker.report() }
     ) {
         self.configModule = configModule
-        self.libraryBuilder = libraryBuilder
         self.runtimeProbe = runtimeProbe
         self.cli = cli
         self.catalogStore = catalogStore
@@ -232,6 +233,7 @@ class AppHost: ObservableObject {
         self.hardwareProfile = hardwareProfile
         let initialNow = now()
         self.now = now
+        self.libraryBuildOperation = libraryBuildOperation
         self.catalog = Self.catalogState(
             from: catalogStore.load(),
             client: catalogClient,
@@ -565,7 +567,8 @@ class AppHost: ObservableObject {
                 scanConfig.signatures,
                 limit
             )
-            let builder = libraryBuilder, hardware = hardwareProfile, capturedAt = now()
+            guard !Task.isCancelled else { isScanning = false; return nil }
+            let builder = libraryBuildOperation, hardware = hardwareProfile, capturedAt = now()
             let snapshot = await WorkbenchIO.perform { builder(scan, hardware, capturedAt) }
             guard !Task.isCancelled else { isScanning = false; return nil }
             guard config == scanConfig else {

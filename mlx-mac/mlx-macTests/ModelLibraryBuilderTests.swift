@@ -5,20 +5,6 @@ import XCTest
 
 final class ModelLibraryBuilderTests: XCTestCase {
     @MainActor
-    func testLibraryBuildRunsOutsideTheMainActor() async throws {
-        let scan = makeFixtureScan(), report = makeRuntimeReport(), date = fixtureDate
-        let host = AppHost(config: makeConfig(), runtimeReport: report, hardwareProfile: fixtureHardware,
-            now: { date }, scanOperation: { _, _, _, _ in scan },
-            libraryBuilder: { scan, hardware, date in
-                XCTAssertFalse(Thread.isMainThread, "Directory walks must not block the UI.")
-                return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
-            })
-        await host.rescan()
-        XCTAssertNotNil(host.librarySnapshot)
-        XCTAssertFalse(host.isScanning)
-    }
-
-    @MainActor
     func testRuntimeInitializationDoesNotProbeUntilExplicitBackgroundCheck() async {
         let report = makeRuntimeReport()
         let checked = expectation(description: "runtime checked")
@@ -41,7 +27,7 @@ final class ModelLibraryBuilderTests: XCTestCase {
         let capturedRoots = LibraryScanRootsRecorder()
         let host = AppHost(config: makeConfig(), runtimeReport: makeRuntimeReport(),
             scanOperation: { roots, _, _, _ in await capturedRoots.record(roots); return scan },
-            libraryBuilder: { scan, hardware, date in
+            libraryBuildOperation: { scan, hardware, date in
                 gate.pauseOnce()
                 return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
             })
@@ -60,23 +46,6 @@ final class ModelLibraryBuilderTests: XCTestCase {
     }
 
     @MainActor
-    func testCancelledLibraryBuildDoesNotPublishItsSnapshot() async {
-        let scan = makeFixtureScan(), gate = LibraryBuildGate(started: expectation(description: "build started"))
-        let host = AppHost(config: makeConfig(), runtimeReport: makeRuntimeReport(),
-            scanOperation: { _, _, _, _ in scan }, libraryBuilder: { scan, hardware, date in
-                gate.pauseOnce()
-                return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
-            })
-        let task = Task { await host.rescan() }
-        defer { gate.release.signal() }
-        await fulfillment(of: [gate.started], timeout: 2)
-        task.cancel(); gate.release.signal()
-        await task.value
-        XCTAssertNil(host.librarySnapshot)
-        XCTAssertFalse(host.isScanning)
-    }
-
-    @MainActor
     func testLateRuntimeProbeCannotReplaceANewerCheckedReport() async {
         let report = makeRuntimeReport(), gate = LibraryBuildGate(started: expectation(description: "runtime started"))
         let host = AppHost(config: makeConfig(), runtimeReport: report, runtimeProbe: { gate.pauseOnce(); return report })
@@ -89,6 +58,65 @@ final class ModelLibraryBuilderTests: XCTestCase {
         await task?.value
         XCTAssertEqual(host.runtimeReport, newer)
         XCTAssertFalse(host.isCheckingRuntime)
+    }
+
+    @MainActor
+    func testLibraryBuildKeepsUIResponsiveUntilCompleteSnapshotIsPublished() async throws {
+        let scan = makeFixtureScan(), date = fixtureDate, hardware = fixtureHardware
+        let entered = expectation(description: "Building inventory")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let host = AppHost(config: makeConfig(), discoveredRoots: [], runtimeReport: makeRuntimeReport(),
+            hardwareProfile: hardware, now: { date }, scanOperation: { _, _, _, _ in scan },
+            libraryBuildOperation: { scan, hardware, date in
+                XCTAssertFalse(Thread.isMainThread, "Model-folder reads must not block the UI thread")
+                entered.fulfill()
+                if !Thread.isMainThread {
+                    XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+                }
+                return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
+            })
+        let previous = ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date.addingTimeInterval(-1))
+        host.librarySnapshot = previous
+        let refresh = Task { await host.rescan() }
+        await fulfillment(of: [entered], timeout: 5)
+        XCTAssertTrue(host.isScanning)
+        XCTAssertEqual(host.librarySnapshot, previous, "Keep the previous inventory until all metadata is ready")
+        XCTAssertNil(host.scanResult)
+        host.selectedModelPath = "/models/selected-during-refresh"
+        await host.rescan() // A second request must not start a concurrent folder walk.
+        release.signal()
+        await refresh.value
+        XCTAssertFalse(host.isScanning)
+        XCTAssertEqual(host.librarySnapshot?.generatedAt, date)
+        XCTAssertEqual(host.librarySnapshot?.models.count, 8)
+        XCTAssertEqual(host.scanResult, scan)
+        XCTAssertEqual(host.selectedModelPath, "/models/selected-during-refresh")
+    }
+
+    @MainActor
+    func testCancelledLibraryBuildCannotReplaceTheLastInventory() async throws {
+        let scan = makeFixtureScan(), date = fixtureDate, hardware = fixtureHardware
+        let entered = expectation(description: "Building inventory")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let host = AppHost(config: makeConfig(), discoveredRoots: [], runtimeReport: makeRuntimeReport(),
+            hardwareProfile: hardware, now: { date }, scanOperation: { _, _, _, _ in scan },
+            libraryBuildOperation: { scan, hardware, date in
+                entered.fulfill()
+                if !Thread.isMainThread { _ = release.wait(timeout: .now() + 5) }
+                return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
+            })
+        let previous = ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date.addingTimeInterval(-1))
+        host.librarySnapshot = previous
+        let refresh = Task { await host.rescan() }
+        await fulfillment(of: [entered], timeout: 5)
+        refresh.cancel()
+        release.signal()
+        await refresh.value
+        XCTAssertEqual(host.librarySnapshot, previous)
+        XCTAssertNil(host.scanResult)
+        XCTAssertFalse(host.isScanning)
     }
 
     func testBuildGroupsByModelKeyAndNormalizedFallbackWithoutMergingByDisplayName() throws {

@@ -6,8 +6,6 @@
 
 ## Library
 
-Library scans and model-size calculations run in the background. The previous snapshot remains visible until the current configuration has a successful scan; a cancelled scan does not replace it.
-
 **Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. Families with multiple variants expand to show their models; single variants appear directly in the table.
 
 The **Source** menu offers **All local models** and each saved model host, including Ollama, LM Studio and ComfyUI. Host choices use their saved identity and show their provider; connections with matching names and providers include their address to distinguish them. Adding, editing or removing a saved connection updates the menu. **Hosted models** opens host selection and connection setup. The separate **Local files** group contains **LM Studio files**.
@@ -25,6 +23,7 @@ Switching sources preserves the main table's filters and selected model without 
 | Modified | Newest file change on disk, including MLX folders and Hugging Face cache snapshots |
 
 Columns collapse as the window narrows. Filters narrow the list by quantization and readiness. **Refresh** rescans; a failed scan offers **Retry scan**.
+Model-folder metadata is read in the background. The previous inventory stays visible until the complete replacement is ready; a cancelled refresh cannot publish its result. Repeated refresh requests do not start overlapping scans.
 The last successful inventory stays visible during retries. A retry clears the
 previous scan error while it runs. If scanning times out repeatedly, check the
 model folders in **Settings** for unavailable drives or unnecessarily broad folders.
