@@ -447,7 +447,7 @@ struct HostResourceSheet: View {
     }
 }
 
-private struct ModelHostEditor: View {
+struct ModelHostEditor: View {
     @State var host: ModelHost
     @ObservedObject var coordinator: ModelHostsCoordinator
     var onSaved: (ModelHost) -> Void = { _ in }

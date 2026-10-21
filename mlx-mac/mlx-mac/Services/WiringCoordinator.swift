@@ -66,6 +66,8 @@ final class WiringCoordinator: ObservableObject {
     /// The endpoint captured with the server-backed preview, independent of current selection.
     var reviewedEndpoint: WireEndpoint? { previewedServer.flatMap { WireEndpoint(server: $0) } }
 
+    var setupClients: [ClientInstallation] { adapters.compactMap { $0.configurationInstallation(home: home) } }
+
     func previewMatches(server: ServerInfo?) -> Bool {
         guard let server, let reviewed = previewedServer,
               previewHash != nil, !plans.isEmpty else { return false }
@@ -114,6 +116,7 @@ final class WiringCoordinator: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             self.readQueued = false
+            self.detect()
             await self.readConfigs(generation: self.readGeneration)
         }
     }
@@ -140,17 +143,33 @@ final class WiringCoordinator: ObservableObject {
 
     /// Compute edit plans for every detected writable client and freeze them
     /// under a preview hash.
-    func preview(endpoint: WireEndpoint) {
+    func preview(endpoint: WireEndpoint, clientIDs: Set<String>? = nil) {
         guard !isCheckingServer, !isApplying else { return }
         previewedServer = nil
         detect()
         lastError = nil
+        let targets: [ClientInstallation]
+        if let clientIDs {
+            guard !clientIDs.isEmpty, clientIDs.isSubset(of: Set(setupClients.map(\.clientID))) else {
+                invalidateServerPreview()
+                lastError = "Choose a supported writable client before reviewing setup."
+                return
+            }
+            targets = setupClients.filter { clientIDs.contains($0.clientID) }
+        } else { targets = installations }
         var built: [ClientEditPlan] = []
-        for installation in installations where !installation.advisoryOnly {
+        for installation in targets where !installation.advisoryOnly {
             guard let adapter = adapters.first(where: { $0.clientID == installation.clientID }),
                   let path = installation.configPath else { continue }
             let before = try? String(contentsOfFile: path, encoding: .utf8)
             do {
+                if clientIDs != nil {
+                    let diagnosis = ClientSetupDiagnosis.make(clientID: installation.clientID,
+                        status: ClientConfigFile.load(path: path, adapter: adapter), servers: [])
+                    guard diagnosis.canPreview else {
+                        throw WorkflowEvidenceError.invalid(diagnosis.message)
+                    }
+                }
                 let after = try adapter.plan(before, endpoint)
                 let rewrites = before != nil && JSONCTolerant.strip(before ?? "") != before
                 built.append(ClientEditPlan(
@@ -172,12 +191,12 @@ final class WiringCoordinator: ObservableObject {
         previewHash = Self.hash(plans: built, endpoint: endpoint)
     }
 
-    func preview(server: ServerInfo) {
+    func preview(server: ServerInfo, clientIDs: Set<String>? = nil) {
         guard !isCheckingServer, !isApplying else { return }
         guard let endpoint = WireEndpoint(server: server) else {
             invalidateServerPreview(); lastError = WiringError.serverChanged.errorDescription; return
         }
-        preview(endpoint: endpoint)
+        preview(endpoint: endpoint, clientIDs: clientIDs)
         previewedServer = server
     }
 
@@ -301,9 +320,17 @@ final class WiringCoordinator: ObservableObject {
     // MARK: - Apply internals
 
     private func apply(_ plan: ClientEditPlan) throws -> ClientEditReceipt {
+        // Creating a missing config must not follow a linked parent, including
+        // one substituted after review. Stop at the configured home boundary.
+        var target = URL(fileURLWithPath: plan.configPath)
+        while target.path != home.path && target.path != "/" {
+            try Self.refuseSymlink(target, client: plan.displayName, fileManager: fileManager)
+            target.deleteLastPathComponent()
+        }
         // Drift guard: the file must still match what the preview saw.
         let current = try? String(contentsOfFile: plan.configPath, encoding: .utf8)
-        guard current == plan.before else {
+        let itemExists = (try? fileManager.attributesOfItem(atPath: plan.configPath)) != nil
+        guard current == plan.before, !(plan.before == nil && itemExists) else {
             throw WiringError.fileChangedSincePreview(client: plan.displayName)
         }
 
