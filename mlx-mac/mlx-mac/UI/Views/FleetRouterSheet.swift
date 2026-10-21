@@ -10,7 +10,13 @@ import SwiftUI
 // receipt stay the agent's discipline.
 
 struct FleetRouterSheet: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
+    @ObservedObject private var endpoint: EndpointSupervisor
+
+    init(appHost: AppHost) {
+        self.appHost = appHost
+        _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
+    }
 
     @Environment(\.dismiss) private var dismiss
     @State private var step: Step = .plan

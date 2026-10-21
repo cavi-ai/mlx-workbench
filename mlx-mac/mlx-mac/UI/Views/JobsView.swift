@@ -140,7 +140,7 @@ struct ActivityComparisonSection: View {
 }
 
 struct JobsView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var verification: VerificationCoordinator
     @ObservedObject private var lab: LabCoordinator

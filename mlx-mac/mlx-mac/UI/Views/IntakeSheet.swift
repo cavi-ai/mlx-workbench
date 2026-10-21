@@ -58,7 +58,7 @@ struct IntakeField: View {
 
 struct IntakeSheet: View {
     @ObservedObject var intake: IntakeCoordinator
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     let resources: SystemResourceMonitor
     let onRouteSelection: (AppRoute) -> Void
     @Environment(\.dismiss) private var dismiss

@@ -6,7 +6,7 @@ import AppKit
 // shelf, cleanup history and duplicate groups from the convert scan.
 
 struct DuplicatesView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var reclaim: ReclaimCoordinator
     private let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive

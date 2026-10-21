@@ -339,7 +339,7 @@ enum LibrarySource: Hashable, Identifiable {
 
 /// Source-specific views share Library's inventory and preserve the main table's state.
 struct LibraryWorkspace: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var hosts: ModelHostsCoordinator
     let lmStudioRequested: Bool
     let sourceHome: URL
@@ -483,7 +483,7 @@ private struct LibrarySourcePicker: View {
 }
 
 struct LibraryView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var reclaim: ReclaimCoordinator
     private let onRouteSelection: (AppRoute) -> Void
     let revealRequest: LibraryRevealRequest?

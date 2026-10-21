@@ -9,9 +9,16 @@ import SwiftUI
 // dismissing without finishing returns the assistant next launch.
 
 struct SetupAssistantView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject var coordinator: SetupCoordinator
+    @ObservedObject private var runtimeInstaller: RuntimeInstaller
     @StateObject private var runtimePreparation = BundledRuntimePreparation()
+
+    init(appHost: AppHost, coordinator: SetupCoordinator) {
+        self.appHost = appHost
+        self.coordinator = coordinator
+        _runtimeInstaller = ObservedObject(wrappedValue: appHost.runtimeInstaller)
+    }
 
     private var readiness: SetupReadiness {
         let connected: Bool
@@ -208,7 +215,7 @@ struct SetupAssistantView: View {
 }
 
 private struct BundledRuntimeSetupView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject var session: BundledRuntimePreparation
     @State private var plan: BundledRuntime?
     @State private var loadError: String?

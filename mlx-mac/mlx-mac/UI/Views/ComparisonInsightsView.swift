@@ -61,7 +61,7 @@ struct ModelReplacementChainCard: View {
 }
 
 struct ComparisonInsightsView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject var comparison: ComparisonCoordinator
     @ObservedObject var workflow: WorkflowEvidenceStore
     let models: [LibraryModel]

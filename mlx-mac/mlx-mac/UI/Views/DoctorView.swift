@@ -45,7 +45,7 @@ enum DoctorCheckState: Equatable {
 }
 
 struct DoctorView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @Environment(\.isRouteActive) private var isRouteActive
     private let onRouteSelection: (AppRoute) -> Void
 

@@ -914,7 +914,7 @@ final class HealthSpawnSafetyTests: XCTestCase {
         XCTAssertEqual(host.components(separatedBy: "RuntimeChecker.report()").count - 1, 2)
         // Guided installation receives its post-exit probe from this owner too.
         // Initialization stores a deferred probe; the serial worker executes it.
-        XCTAssertTrue(host.contains("@Published var runtimeReport: RuntimeReport\n"))
+        XCTAssertTrue(host.contains("\n    var runtimeReport: RuntimeReport\n"))
         var others: [String] = []
         let enumerator = FileManager.default.enumerator(at: Fixture.sourceDirectory, includingPropertiesForKeys: nil)
         for case let url as URL in enumerator?.allObjects ?? [] where url.pathExtension == "swift" {

@@ -67,7 +67,7 @@ struct DiscoveryWorkspace: View {
 // Discover MLX models for this host, by role.
 
 struct ScoutView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     private let resources: SystemResourceMonitor
 
     @State private var role = ""

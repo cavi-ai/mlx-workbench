@@ -424,7 +424,7 @@ extension ComparePresentation {
 }
 
 struct QuantView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var comparison: ComparisonCoordinator
     @ObservedObject private var servingProfiles: ServingProfileCoordinator
     private let onRouteSelection: (AppRoute) -> Void
@@ -1641,9 +1641,19 @@ struct StrataSettingsSearchSheet: View {
 /// loser reclaim stay in their own tabs, so every mutating step keeps its
 /// own preview/confirm discipline.
 struct PromoteWinnerSheet: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     let context: QuantView.PromoteContext
     let onPromoted: (String) -> Void
+    @ObservedObject private var endpoint: EndpointSupervisor
+    @ObservedObject private var verification: VerificationCoordinator
+
+    init(appHost: AppHost, context: QuantView.PromoteContext, onPromoted: @escaping (String) -> Void) {
+        self.appHost = appHost
+        self.context = context
+        self.onPromoted = onPromoted
+        _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
+        _verification = ObservedObject(wrappedValue: appHost.verification)
+    }
 
     @Environment(\.dismiss) private var dismiss
     @State private var enableEndpoint = true
@@ -1655,7 +1665,6 @@ struct PromoteWinnerSheet: View {
     private var winnerName: String {
         ComparePresentation.displayName(for: winnerPath, models: appHost.librarySnapshot?.models ?? [])
     }
-    private var endpoint: EndpointSupervisor { appHost.endpoint }
     private var winnerVerified: Bool { appHost.isModelVerified(winnerPath) }
     private var endpointAlreadyWinner: Bool {
         endpoint.config.enabled && endpoint.config.modelPath == winnerPath

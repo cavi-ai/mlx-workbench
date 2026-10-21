@@ -480,11 +480,12 @@ struct PrepareActionPlan: Equatable {
 // MARK: - ConvertView
 
 struct ConvertView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var reclaim: ReclaimCoordinator
     @ObservedObject private var verification: VerificationCoordinator
+    @ObservedObject private var intake: IntakeCoordinator
     private let onRouteSelection: (AppRoute) -> Void
 
     @State private var qBits: Int
@@ -497,6 +498,7 @@ struct ConvertView: View {
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
         _verification = ObservedObject(wrappedValue: appHost.verification)
+        _intake = ObservedObject(wrappedValue: appHost.intake)
         self.onRouteSelection = onRouteSelection
         _qBits = State(initialValue: appHost.config.qBits)
     }

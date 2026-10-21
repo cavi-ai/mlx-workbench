@@ -3,13 +3,15 @@ import SwiftUI
 // MARK: - ContentView
 
 struct ContentView: View {
-    @StateObject private var appHost: AppHost
+    private let appHost: AppHost
     @ObservedObject private var endpoint: EndpointSupervisor
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var setup: SetupCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
     @ObservedObject private var verification: VerificationCoordinator
     @ObservedObject private var trainedAdapters: TrainedAdapterServingCoordinator
+    @ObservedObject private var reclaim: ReclaimCoordinator
+    @ObservedObject private var watch: WatchCoordinator
     /// Persisted across launches; legacy/unknown values resolve to Overview.
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
     /// The workflow outcome last seen on Prepare or Activity; a failure stays in the toolbar until then.
@@ -18,13 +20,15 @@ struct ContentView: View {
     @State private var viewport = CGSize(width: WorkbenchSize.windowDefaultWidth, height: WorkbenchSize.windowDefaultHeight)
 
     init(appHost: AppHost) {
-        _appHost = StateObject(wrappedValue: appHost)
+        self.appHost = appHost
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _setup = ObservedObject(wrappedValue: appHost.setup)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
         _verification = ObservedObject(wrappedValue: appHost.verification)
         _trainedAdapters = ObservedObject(wrappedValue: appHost.trainedAdapters)
+        _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
+        _watch = ObservedObject(wrappedValue: appHost.watch)
     }
 
     private var selectedRoute: AppRoute {

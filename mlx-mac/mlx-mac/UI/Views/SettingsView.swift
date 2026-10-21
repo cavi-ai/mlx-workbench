@@ -72,7 +72,7 @@ struct SettingsInputValidation {
 // `SettingsDirectoryProbe`, never during view evaluation.
 
 struct SettingsView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var updater: UpdateCoordinator
     @StateObject private var engineDetection = SettingsEngineDetection()
     @Environment(\.isRouteActive) private var isRouteActive
@@ -84,7 +84,7 @@ struct SettingsView: View {
         probe: SettingsDirectoryProbe = .live,
         onRouteSelection: @escaping (AppRoute) -> Void
     ) {
-        _appHost = ObservedObject(wrappedValue: appHost)
+        self.appHost = appHost
         _updater = ObservedObject(wrappedValue: appHost.updater)
         self.probe = probe
         self.onRouteSelection = onRouteSelection

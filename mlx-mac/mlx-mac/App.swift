@@ -3,7 +3,7 @@ import AppKit
 
 @main
 struct MlxWorkbenchApp: App {
-    @StateObject private var appHost = AppHost()
+    @State private var appHost = AppHost()
     @AppStorage(AppRoute.selectionStorageKey) private var selectedRouteID = AppRoute.overview.rawValue
 
     var body: some Scene {

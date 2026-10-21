@@ -36,7 +36,7 @@ final class LMStudioResolutionLoader: ObservableObject {
 // What LM Studio holds, by fit on this Mac: MLX models that run here and GGUF files that need converting.
 
 struct LMStudioView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     private let resources: SystemResourceMonitor
     private let home: URL
     private let fixedResolution: LMStudioShelfResolver.Resolution?
