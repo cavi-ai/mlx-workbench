@@ -1490,7 +1490,13 @@ final class WorkbenchReviewUITests: XCTestCase {
             let scroll = app.scrollViews.containing(.button, identifier: "Refresh backends").firstMatch
             XCTAssertTrue(scroll.waitForExistence(timeout: 10))
             for _ in 0..<8 where !element.isHittable {
-                scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 300 : -300)
+                // SwiftUI's scroll container may have no AX hit point; disabled
+                // installation controls cannot receive a wheel event either.
+                guard let anchor = scroll.buttons.allElementsBoundByIndex.first(where: { $0.isEnabled && $0.isHittable }) else {
+                    XCTFail("Health needs a visible enabled control for scrolling")
+                    return
+                }
+                anchor.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 300 : -300)
             }
             XCTAssertTrue(element.isHittable)
         }
