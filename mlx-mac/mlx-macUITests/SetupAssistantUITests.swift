@@ -1965,6 +1965,71 @@ final class WorkbenchReviewUITests: XCTestCase {
                        "Creating a dataset must not inspect, preview, or start training; read-only status refreshes remain allowed")
     }
 
+    func testTrainingDatasetGuidanceRevealsHiddenExamples() throws {
+        launch(appearance: "Dark", route: "training-studio", isolatedHome: true)
+        let scroll = app.scrollViews.containing(.textField, identifier: "Dataset path").firstMatch
+        func reveal(_ element: XCUIElement) {
+            XCTAssertTrue(element.waitForExistence(timeout: 10), app.debugDescription)
+            for _ in 0..<8 where !element.isHittable {
+                scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 180 : -180)
+            }
+            XCTAssertTrue(element.isHittable)
+        }
+        func replace(_ field: XCUIElement, _ value: String) {
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            XCTAssertTrue(field.isHittable, app.debugDescription)
+            field.click()
+            app.typeKey("a", modifierFlags: .command)
+            field.typeText(value)
+        }
+        let batch = app.textFields["Batch size"]
+        reveal(batch); replace(batch, "1")
+        let create = app.buttons["training-create-dataset"]
+        reveal(create); create.click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        for number in 1...5 {
+            if number > 1 { sheet.buttons["Add example"].click() }
+            replace(sheet.textFields["dataset-train-\(number)-prompt"], "Training request \(number)")
+            replace(sheet.textFields["dataset-train-\(number)-reply"], "Training reply \(number)")
+        }
+        sheet.buttons["Add example"].click()
+        let validation = sheet.radioButtons.matching(NSPredicate(format: "label BEGINSWITH %@", "Validation")).firstMatch
+        validation.click()
+        replace(sheet.textFields["dataset-valid-1-prompt"], "Held-out question")
+        replace(sheet.textFields["dataset-valid-1-reply"], "Held-out answer")
+        let fix = sheet.buttons["dataset-fix-example"]
+        XCTAssertEqual(fix.label, "Fix training example")
+        XCTAssertFalse(sheet.buttons["Save dataset…"].isEnabled)
+        fix.click()
+        let hidden = sheet.textFields["dataset-train-6-prompt"]
+        XCTAssertTrue(hidden.waitForExistence(timeout: 5))
+        XCTAssertTrue(hidden.isHittable, app.debugDescription)
+        XCTAssertTrue(sheet.staticTexts["dataset-example-guidance"].exists)
+        capture("Dataset-guidance-hidden-training-example")
+        replace(hidden, "Training request 6")
+        replace(sheet.textFields["dataset-train-6-reply"], "Training reply 6")
+        XCTAssertTrue(sheet.buttons["Save dataset…"].isEnabled)
+        XCTAssertFalse(fix.exists)
+        validation.click()
+        replace(sheet.textFields["dataset-valid-1-prompt"], "Training request 1")
+        replace(sheet.textFields["dataset-valid-1-reply"], "Training reply 1")
+        sheet.radioButtons.matching(NSPredicate(format: "label BEGINSWITH %@", "Training")).firstMatch.click()
+        XCTAssertEqual(fix.label, "Fix validation example")
+        fix.click()
+        XCTAssertTrue(sheet.textFields["dataset-valid-1-prompt"].isHittable)
+        XCTAssertTrue((sheet.staticTexts["dataset-example-guidance"].value as? String)?.contains("both splits") == true, sheet.debugDescription)
+        capture("Dataset-guidance-overlapping-validation-example")
+        replace(sheet.textFields["dataset-valid-1-reply"], "Independent answer")
+        XCTAssertTrue(sheet.buttons["Save dataset…"].isEnabled)
+        sheet.buttons["Cancel"].click()
+        sheet.buttons["Discard changes"].firstMatch.click()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        let requests = calls.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String] }
+        XCTAssertFalse(requests.contains { Array($0.prefix(2)) == ["lora", "inspect"] || Array($0.prefix(2)) == ["lora", "start"] })
+    }
+
     func testTrainingDatasetEntryBaseline() {
         launch(appearance: "Dark", route: "training-studio", isolatedHome: true)
         let field = app.textFields["Dataset path"]

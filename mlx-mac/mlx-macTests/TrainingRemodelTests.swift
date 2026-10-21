@@ -1531,6 +1531,41 @@ final class TrainingDatasetTests: XCTestCase {
         XCTAssertTrue(value.validationMessage?.contains("both splits") == true)
     }
 
+    func testValidationIssueTracksSplitIdentityAndCurrentOrder() throws {
+        var value = draft()
+        let missing = TrainingDatasetDraft.Example(prompt: "Question", reply: " ")
+        value.valid.append(missing)
+        var issue = try XCTUnwrap(value.validationIssue)
+        XCTAssertEqual(issue.split, .valid)
+        XCTAssertEqual(issue.exampleID, missing.id)
+        XCTAssertTrue(issue.message.contains("Validation example 2"))
+        value.valid.swapAt(0, 1)
+        issue = try XCTUnwrap(value.validationIssue)
+        XCTAssertEqual(issue.exampleID, missing.id)
+        XCTAssertTrue(issue.message.contains("Validation example 1"))
+        value.valid[0].reply = "Answer"
+        XCTAssertNil(value.validationIssue)
+        value.train[0].prompt = ""
+        issue = try XCTUnwrap(value.validationIssue)
+        XCTAssertEqual(issue.split, .train)
+        XCTAssertEqual(issue.exampleID, value.train[0].id)
+    }
+
+    func testCountAndOverlapIssuesHaveActionableTargets() throws {
+        var value = draft(batch: 2)
+        value.valid.removeLast()
+        XCTAssertEqual(value.validationIssue?.split, .valid)
+        XCTAssertNil(value.validationIssue?.exampleID)
+        value = draft()
+        value.valid[0].prompt = " \(value.train[0].prompt) "
+        value.valid[0].reply = value.train[0].reply
+        XCTAssertEqual(value.validationIssue?.split, .valid)
+        XCTAssertEqual(value.validationIssue?.exampleID, value.valid[0].id)
+        value = draft(batch: 2)
+        value.train[1].id = value.train[0].id
+        XCTAssertNil(value.validationIssue?.split, "Ambiguous identities must not offer a card target")
+    }
+
     func testEncodingPreservesUnicodeAndEmbeddedNewlinesInOneRecord() throws {
         var value = draft()
         value.train[0] = .init(prompt: "Café\nWhat does it mean?", reply: "  A café serves coffee.\n☕  ")

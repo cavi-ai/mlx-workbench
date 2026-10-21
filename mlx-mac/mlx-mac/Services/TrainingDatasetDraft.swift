@@ -18,24 +18,43 @@ struct TrainingDatasetDraft: Equatable, Sendable {
     var valid = [Example()]
     static let exampleLimit = 500
 
-    var validationMessage: String? {
-        guard (1...64).contains(batchSize) else { return "Choose a batch size from 1 to 64 in Training." }
-        for (label, examples) in [("Training", train), ("Validation", valid)] {
-            guard examples.count >= batchSize else { return "\(label) needs at least \(batchSize) examples for the selected batch size (\(examples.count) so far)." }
-            guard examples.count <= Self.exampleLimit else { return "Use at most \(Self.exampleLimit) examples per split in this editor." }
-            guard Set(examples.map(\.id)).count == examples.count else { return "\(label) has repeated example identities. Reopen the editor." }
+    struct ValidationIssue: Equatable {
+        let message: String
+        var split: Split? = nil
+        var exampleID: UUID? = nil
+    }
+
+    var validationMessage: String? { validationIssue?.message }
+
+    var validationIssue: ValidationIssue? {
+        guard (1...64).contains(batchSize) else {
+            return .init(message: "Choose a batch size from 1 to 64 in Training.")
+        }
+        for split in Split.allCases {
+            let examples = split == .train ? train : valid
+            let label = split.title
+            guard examples.count >= batchSize else {
+                return .init(message: "\(label) needs at least \(batchSize) examples for the selected batch size (\(examples.count) so far).", split: split)
+            }
+            guard examples.count <= Self.exampleLimit else {
+                return .init(message: "Use at most \(Self.exampleLimit) examples per split in this editor.", split: split)
+            }
+            guard Set(examples.map(\.id)).count == examples.count else {
+                return .init(message: "\(label) has repeated example identities. Reopen the editor.")
+            }
             for (index, example) in examples.enumerated() {
                 if example.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return "\(label) example \(index + 1) needs a user request."
+                    return .init(message: "\(label) example \(index + 1) needs a user request.", split: split, exampleID: example.id)
                 }
                 if example.reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return "\(label) example \(index + 1) needs an assistant reply."
+                    return .init(message: "\(label) example \(index + 1) needs an assistant reply.", split: split, exampleID: example.id)
                 }
             }
         }
         let learning = Set(train.map(Content.init))
-        if valid.contains(where: { learning.contains(Content($0)) }) {
-            return "An example appears in both splits. Keep validation examples separate from training."
+        if let example = valid.first(where: { learning.contains(Content($0)) }) {
+            return .init(message: "An example appears in both splits. Keep validation examples separate from training.",
+                         split: .valid, exampleID: example.id)
         }
         return nil
     }

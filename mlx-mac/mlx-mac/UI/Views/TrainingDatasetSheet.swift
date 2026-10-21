@@ -53,15 +53,31 @@ struct TrainingDatasetSheet: View {
                             ForEach(Array(examples.wrappedValue.enumerated()), id: \.element.id) { index, example in
                                 if let position = examples.wrappedValue.firstIndex(where: { $0.id == example.id }) {
                                     TrainingDatasetExampleCard(example: examples[position], number: index + 1,
-                                        split: split, canRemove: examples.wrappedValue.count > 1) {
+                                        split: split, guidance: draft.validationIssue.flatMap { issue in
+                                            issue.split == split && issue.exampleID == example.id ? issue.message : nil
+                                        }, canRemove: examples.wrappedValue.count > 1) {
                                             examples.wrappedValue.removeAll { $0.id == example.id }
                                         }.id(example.id)
                                 }
                             }
                         }.padding(.vertical, WorkbenchSpacing.xxs)
                     }.frame(minHeight: WorkbenchSize.Training.datasetListMinHeight, maxHeight: .infinity)
+                        .id(split)
+                    if let issue = draft.validationIssue, let targetSplit = issue.split {
+                        Button(issue.exampleID == nil ? "Review \(targetSplit.title.lowercased()) examples" : "Fix \(targetSplit.title.lowercased()) example") {
+                            split = targetSplit
+                            let target = issue.exampleID ?? examples.wrappedValue.first?.id
+                            Task { @MainActor in
+                                await Task.yield()
+                                if let target { proxy.scrollTo(target, anchor: .center) }
+                            }
+                        }
+                        .accessibilityIdentifier("dataset-fix-example")
+                        .help(issue.message)
+                        .accessibilityHint(issue.message)
+                    }
                 }
-            }.id(split)
+            }
             if let message = error ?? draft.validationMessage {
                 Text(message).font(WorkbenchTypography.metadata)
                     .foregroundStyle(error == nil ? WorkbenchColor.muted : WorkbenchColor.warning)
@@ -122,6 +138,7 @@ private struct TrainingDatasetExampleCard: View {
     @Binding var example: TrainingDatasetDraft.Example
     let number: Int
     let split: TrainingDatasetDraft.Split
+    let guidance: String?
     let canRemove: Bool
     let onRemove: () -> Void
     @State private var confirmingRemoval = false
@@ -143,6 +160,12 @@ private struct TrainingDatasetExampleCard: View {
                 .lineLimit(2...4).textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("dataset-\(split.rawValue)-\(number)-reply")
                 .accessibilityLabel("\(split.title) example \(number) assistant reply")
+            if let guidance {
+                Text(guidance).font(WorkbenchTypography.metadata)
+                    .foregroundStyle(WorkbenchColor.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("dataset-example-guidance")
+            }
         }
         .padding(WorkbenchSpacing.sm)
         .background(WorkbenchColor.surface, in: RoundedRectangle(cornerRadius: WorkbenchSpacing.xs))

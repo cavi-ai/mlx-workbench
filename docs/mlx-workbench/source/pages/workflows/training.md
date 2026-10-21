@@ -28,6 +28,8 @@ blank fields and exact examples shared across both splits (ignoring surrounding
 whitespace). Other overlap still needs human review. The editor supports up to
 500 examples per split; existing dataset folders remain available through Choose.
 
+**Fix training example** or **Fix validation example** switches to the split and reveals the first incomplete or overlapping example. The card shows what needs changing. Count warnings offer **Review training examples** or **Review validation examples**. These actions only navigate the draft; edits remain in place.
+
 **Save dataset…** writes `train.jsonl` and `valid.jsonl` together into a new folder
 and selects that path in Training. It preserves multiline and Unicode text and
 refuses existing destinations. Save failures keep the draft open. Cancel protects
