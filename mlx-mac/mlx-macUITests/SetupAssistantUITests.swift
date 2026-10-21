@@ -2640,6 +2640,73 @@ final class WorkbenchReviewUITests: XCTestCase {
         capture("Run-to-Clients-applied-endpoint")
     }
 
+    func testSetupDoctorCreatesMissingClientAndOffersHostConnections() throws {
+        let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
+        let servers: [[String: Any]] = [["repo": "org/Qwen", "runtime": "mlx_lm", "port": 8766,
+                                        "pid": 123, "state": "running"]]
+        try JSONSerialization.data(withJSONObject: servers).write(to: root.appendingPathComponent("servers.json"))
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Clients")
+        let open = app.buttons["open-client-setup-doctor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 15))
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: open)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 15), .completed)
+        open.click()
+        XCTAssertTrue(text(containing: "Setup check finished.").waitForExistence(timeout: 15))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.deletingLastPathComponent().path), "Checking must not create folders")
+        let review = app.buttons["setup-client-opencode"]
+        XCTAssertFalse(review.isEnabled)
+        XCTAssertFalse(app.buttons["setup-client-continue"].isEnabled)
+        let endpoint = app.popUpButtons["setup-doctor-endpoint"]
+        endpoint.click()
+        app.menuItems["org/Qwen :8766"].click()
+        XCTAssertTrue(review.isEnabled)
+        capture("Setup-doctor-missing-client")
+        review.click()
+        let confirm = app.buttons["Confirm client wiring"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 15))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path), "Preview must not write")
+        for _ in 0..<6 where !confirm.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -220) }
+        confirm.click()
+        XCTAssertTrue(text(containing: "Wired 1 client").waitForExistence(timeout: 15))
+        let written = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any])
+        XCTAssertEqual(written["model"] as? String, "mlx-local/org/Qwen")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".config/zed").path))
+        capture("Setup-doctor-client-created")
+        app.buttons["Roll back last wiring"].click()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path))
+
+        for _ in 0..<6 where !open.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: 220) }
+        open.click()
+        XCTAssertTrue(text(containing: "Setup check finished.").waitForExistence(timeout: 15))
+        for (provider, defaultURL) in [("lmStudio", "http://127.0.0.1:1234"), ("comfyUI", "http://127.0.0.1:8188"),
+                                       ("ollama", "http://127.0.0.1:11434")] {
+            let add = app.buttons["setup-host-\(provider)"]
+            for _ in 0..<8 where !add.isHittable { app.scrollViews["setup-doctor-scroll"].scroll(byDeltaX: 0, deltaY: -200) }
+            XCTAssertTrue(add.isHittable)
+            if provider == "ollama" { capture("Setup-doctor-host-presets") }
+            add.click()
+            let url = app.textFields["model-host-url"]
+            XCTAssertTrue(url.waitForExistence(timeout: 10))
+            XCTAssertEqual(url.value as? String, defaultURL)
+            if provider == "ollama" {
+                replace(url, with: "http://127.0.0.1:1")
+                app.buttons["test-model-host-connection"].click()
+                XCTAssertTrue(text(containing: "The local host could not be reached.").waitForExistence(timeout: 15))
+                capture("Setup-doctor-host-check-failed")
+            }
+            app.buttons["Cancel"].click()
+        }
+        app.buttons["Done"].click()
+        select("Health")
+        let healthDoctor = app.buttons["health-client-setup-doctor"]
+        for _ in 0..<15 where !healthDoctor.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -240) }
+        XCTAssertTrue(healthDoctor.isHittable)
+        healthDoctor.click()
+        XCTAssertTrue(text(containing: "Setup check finished.").waitForExistence(timeout: 15))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path), "Health navigation must not recreate a rolled-back config")
+    }
+
     func testClientWiringPreviewAndEndpointSelection() throws {
         let config = root.appendingPathComponent(".config/opencode/opencode.jsonc")
         try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)

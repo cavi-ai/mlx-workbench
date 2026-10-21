@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CLSETB01 /* ClientSetupDoctorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CLSETF01 /* ClientSetupDoctorView.swift */; };
 		TRNDSSB1 /* TrainingDatasetSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNDSSF1 /* TrainingDatasetSheet.swift */; };
 		TRNDSDB1 /* TrainingDatasetDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNDSDF1 /* TrainingDatasetDraft.swift */; };
 		PRMEMB1 /* ProcessMemorySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRMEMF1 /* ProcessMemorySnapshot.swift */; };
@@ -302,6 +303,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		CLSETF01 /* ClientSetupDoctorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ClientSetupDoctorView.swift; path = UI/Views/ClientSetupDoctorView.swift; sourceTree = "<group>"; };
 		TRNDSSF1 /* TrainingDatasetSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingDatasetSheet.swift; path = UI/Views/TrainingDatasetSheet.swift; sourceTree = "<group>"; };
 		TRNDSDF1 /* TrainingDatasetDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingDatasetDraft.swift; path = Services/TrainingDatasetDraft.swift; sourceTree = "<group>"; };
 		PRMEMF1 /* ProcessMemorySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProcessMemorySnapshot.swift; path = Services/ProcessMemorySnapshot.swift; sourceTree = "<group>"; };
@@ -827,6 +829,7 @@
 				24FREF000016 /* SettingsView.swift */,
 				24FREF000018 /* TrainingView.swift */,
 				24FREF000019 /* WireView.swift */,
+				CLSETF01 /* ClientSetupDoctorView.swift */,
 				24AREF001 /* Assets.xcassets */,
 				24IREF001 /* Info.plist */,
 
@@ -1202,6 +1205,7 @@
 				24BBLD000017 /* x */,
 				24BBLD000018 /* x */,
 				24BBLD000019 /* x */,
+				CLSETB01 /* ClientSetupDoctorView.swift in Sources */,
 				24BBLD022 /* LibraryDomain.swift in Sources */,
 				24BBLD023 /* CatalogModels.swift in Sources */,
 				24BBLD024 /* WorkspaceModels.swift in Sources */,

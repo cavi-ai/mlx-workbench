@@ -119,6 +119,80 @@ final class WiringCoordinatorTests: XCTestCase {
 
     // MARK: - Coordinator flow
 
+    func testExplicitClientPreviewCreatesOnlyTheChosenConfigAfterConfirmation() async throws {
+        let home = try makeHome()
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint, clientIDs: ["opencode"])
+        XCTAssertEqual(coordinator.plans.map(\.clientID), ["opencode"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".config").path))
+        let transaction = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+        XCTAssertEqual(transaction?.receipts.count, 1)
+        await coordinator.refreshReadings()
+        XCTAssertEqual(coordinator.installations.map(\.clientID), ["opencode"])
+        XCTAssertEqual(coordinator.readings["opencode"]?.reading,
+                       .entries([ClientConfigEntry(baseURL: endpoint.baseURL, models: [endpoint.modelName])]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".config/zed").path))
+        coordinator.rollback()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".config/opencode/opencode.jsonc").path))
+    }
+
+    func testExplicitClientPreviewRejectsUnknownAndAdvisoryTargets() throws {
+        let coordinator = makeCoordinator(home: try makeHome())
+        coordinator.preview(endpoint: endpoint, clientIDs: ["../arbitrary", "lmstudio", "ollama"])
+        XCTAssertTrue(coordinator.plans.isEmpty)
+        XCTAssertNotNil(coordinator.lastError)
+    }
+
+    func testTargetedRepairLeavesOtherDetectedClientsUnplanned() throws {
+        let home = try makeHome()
+        for directory in [".config/opencode", ".config/zed"] {
+            try FileManager.default.createDirectory(at: home.appendingPathComponent(directory), withIntermediateDirectories: true)
+        }
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint, clientIDs: ["zed"])
+        XCTAssertEqual(coordinator.plans.map(\.clientID), ["zed"])
+    }
+
+    func testClientCreationPreservesAnUnreadableFileAddedAfterPreview() throws {
+        let home = try makeHome()
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint, clientIDs: ["opencode"])
+        let config = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let external = Data([0xFF, 0xFE, 0x00])
+        try external.write(to: config)
+        let result = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+        XCTAssertEqual(result?.receipts.count, 0)
+        XCTAssertEqual(result?.failures.count, 1)
+        XCTAssertEqual(try Data(contentsOf: config), external)
+    }
+
+    func testCreatedConfigRefusesAParentReplacedWithALinkAfterPreview() throws {
+        let home = try makeHome()
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint, clientIDs: ["opencode"])
+        let outside = home.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: home.appendingPathComponent(".config"), withDestinationURL: outside)
+        let transaction = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+        XCTAssertEqual(transaction?.receipts.count, 0)
+        XCTAssertTrue(transaction?.failures.contains { $0.contains("symbolic link") } == true)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: outside.path).isEmpty)
+    }
+
+    func testSetupDiagnosisBlocksUnreadableAndLinkedConfigsAndLabelsLegacyContinue() {
+        for status in [ClientConfigStatus(reading: .unreadable("Invalid JSON"), isLinked: false),
+                       ClientConfigStatus(reading: .noWorkbenchEntry, isLinked: true)] {
+            XCTAssertFalse(ClientSetupDiagnosis.make(clientID: "opencode", status: status, servers: []).canPreview)
+        }
+        let missing = ClientConfigStatus(reading: .fileAbsent, isLinked: false)
+        XCTAssertTrue(ClientSetupDiagnosis.make(clientID: "opencode", status: missing, servers: []).canPreview)
+        XCTAssertFalse(ClientSetupDiagnosis.make(clientID: "continue", status: missing, servers: []).canPreview)
+        let live = ClientConfigStatus(reading: .entries([ClientConfigEntry(baseURL: endpoint.baseURL, models: [endpoint.modelName])]), isLinked: false)
+        XCTAssertTrue(ClientSetupDiagnosis.make(clientID: "opencode", status: live, servers: []).message.contains("not running"))
+        XCTAssertFalse(ClientSetupDiagnosis.make(clientID: "opencode", status: live, servers: [], serverStatusAvailable: false).canPreview)
+    }
+
     func testReviewedServerPreviewDoesNotFollowSelectionOrAReplacementProcess() async throws {
         let home = try makeHome()
         let config = home.appendingPathComponent(".config/opencode/opencode.jsonc")
@@ -569,20 +643,23 @@ final class WiringCoordinatorTests: XCTestCase {
         XCTAssertNotNil(coordinator.lastError)
     }
 
-    func testRollbackKeepsUnreadableConfigThatExistedBeforeWiring() throws {
+    func testWiringPreservesUnreadableConfigThatExistedBeforePreview() throws {
         let home = try makeHome()
         let config = home.appendingPathComponent(".config/zed/settings.json")
         try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data([0x7B, 0xC3, 0x28, 0x7D]).write(to: config)
+        let original = Data([0x7B, 0xC3, 0x28, 0x7D])
+        try original.write(to: config)
         let coordinator = makeCoordinator(home: home)
         coordinator.preview(endpoint: endpoint)
         let transaction = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
-        XCTAssertEqual(transaction?.receipts.count, 1)
-        XCTAssertNil(transaction?.receipts.first?.createdFileSHA256)
+        XCTAssertEqual(transaction?.receipts.count, 0)
+        XCTAssertEqual(transaction?.failures.count, 1)
+        XCTAssertEqual(try Data(contentsOf: config), original)
 
         coordinator.rollback()
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: config.path))
+        XCTAssertEqual(try Data(contentsOf: config), original)
         XCTAssertFalse(FileManager.default.fileExists(atPath: trash(home).path))
     }
 

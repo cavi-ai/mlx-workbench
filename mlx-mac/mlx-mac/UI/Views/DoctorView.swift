@@ -110,6 +110,17 @@ struct DoctorView: View {
                         onOpenRun: { onRouteSelection(.run) }
                     )
                     findingsSection
+                    WorkbenchSurface {
+                        VStack(alignment: .leading, spacing: WorkbenchSpacing.sm) {
+                            SectionTitle(text: "Client and host setup")
+                            Text("Check coding-client configs and local host connections, add missing connections, and review config repairs.")
+                                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+                            Button("Open setup doctor…") {
+                                appHost.handoffs.send(ClientSetupRequest(), as: .clientSetup)
+                                onRouteSelection(.clientSetup)
+                            }.accessibilityIdentifier("health-client-setup-doctor")
+                        }
+                    }
                 }
                 .frame(maxWidth: WorkbenchSize.Health.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
