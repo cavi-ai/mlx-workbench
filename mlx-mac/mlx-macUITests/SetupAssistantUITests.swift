@@ -1487,13 +1487,22 @@ final class WorkbenchReviewUITests: XCTestCase {
             try JSONSerialization.data(withJSONObject: entries(state)).write(to: root.appendingPathComponent("backends.json"))
         }
         func reveal(_ element: XCUIElement) {
+            app.activate()
+            XCTAssertEqual(app.state, .runningForeground)
             let scroll = app.scrollViews.containing(.button, identifier: "Refresh backends").firstMatch
             XCTAssertTrue(scroll.waitForExistence(timeout: 10))
             for _ in 0..<8 where !element.isHittable {
                 // SwiftUI's scroll container may have no AX hit point; disabled
                 // installation controls cannot receive a wheel event either.
-                guard let anchor = scroll.buttons.allElementsBoundByIndex.first(where: { $0.isEnabled && $0.isHittable }) else {
-                    XCTFail("Health needs a visible enabled control for scrolling")
+                let anchor = scroll.buttons.allElementsBoundByIndex.first(where: { $0.isEnabled && $0.isHittable })
+                    ?? scroll.staticTexts.allElementsBoundByIndex.first(where: { $0.isHittable })
+                guard let anchor else {
+                    let diagnostic = XCTAttachment(string: app.debugDescription)
+                    diagnostic.name = "Health scroll hierarchy"
+                    diagnostic.lifetime = .keepAlways
+                    add(diagnostic)
+                    capture("Health-scroll-unavailable")
+                    XCTFail("Health needs visible content for scrolling")
                     return
                 }
                 anchor.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroll.frame.minY ? 300 : -300)
@@ -1509,7 +1518,7 @@ final class WorkbenchReviewUITests: XCTestCase {
             }
         }
         try writeBackends("installed")
-        launch(appearance: "Light")
+        launch(appearance: "Light", isolatedHome: true)
         let audio = app.staticTexts["health-backend-mlx-audio-status"]
         XCTAssertTrue(audio.waitForExistence(timeout: 15))
         XCTAssertEqual(statusText(audio), "Installed")
