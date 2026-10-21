@@ -83,7 +83,7 @@ struct ComparisonInsightsView: View {
 
     private var environment: String? { appHost.watch.currentFingerprintDescription }
     private var replacements: [ReclaimOpportunity] {
-        ComparisonInsights.superseded(models: appHost.librarySnapshot?.models ?? [], runs: comparison.runs, workflow: workflow.records, environment: environment, protected: appHost.occupiedModelPaths, contextTokens: contextTokens)
+        ComparisonInsights.superseded(models: appHost.librarySnapshot?.models ?? [], runs: comparison.runs, workflow: workflow.records, environment: environment, protected: appHost.occupancy.protectedPaths, contextTokens: contextTokens)
     }
 
     var body: some View {
@@ -249,7 +249,7 @@ struct ComparisonInsightsView: View {
     }
 
     private func makeEvidence() -> AgentEvidenceExport {
-        ComparisonInsights.agentEvidence(models: modelsForEvidence, runs: comparison.runs, workflow: workflow.records, environment: environment, hardware: appHost.hardwareProfile, memory: memory, capturedAt: capturedAt, contextTokens: contextTokens, reserveGB: appHost.config.fitReserveGB, protected: appHost.occupiedModelPaths)
+        ComparisonInsights.agentEvidence(models: modelsForEvidence, runs: comparison.runs, workflow: workflow.records, environment: environment, hardware: appHost.hardwareProfile, memory: memory, capturedAt: capturedAt, contextTokens: contextTokens, reserveGB: appHost.config.fitReserveGB, protected: appHost.occupancy.protectedPaths)
     }
     private func exportEvidence() {
         Task { @MainActor in

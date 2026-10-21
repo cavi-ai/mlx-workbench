@@ -233,7 +233,7 @@ struct ContentView: View {
                 appHost.hostedLibraryHostRequest = host
                 appHost.hostedLibraryRequested = true
                 navigate(to: .library)
-            }, protectedModels: appHost.protectedServingModels, onUnload: { server in
+            }, occupancy: appHost.occupancy, onUnload: { server in
                 await appHost.unloadServing(server)
             })
         }

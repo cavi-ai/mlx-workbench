@@ -741,9 +741,13 @@ server.
   process identity, refuses active requests, releases the owned worker, and
   confirms the same gateway remains running with an unloaded model. Desired
   endpoint state stays enabled. Eager Stop server persists disabled desired
-  state before stopping; save/stop failures remain visible. Comparison and
-  verification models are protected. The context selector feeds workflow
-  model-fit reviews, not server configuration.
+  state before stopping; save/stop failures remain visible. `AppHost.occupancy`
+  (`Services/ModelOccupancy.swift`) collects every holder's claims: running and
+  endpoint servers, preferences, verification, comparisons, hosted comparison
+  local lanes, Library tasks and the active conversion. Stop and Unload refuse
+  models that verification or a comparison lane serves; reclaim and model
+  guidance protect every claimed path through `HFRepoID.matches`. The context
+  selector feeds workflow model-fit reviews, not server configuration.
 - **Load on request**: new native endpoint slots default to JIT; old slots
   lacking `loadOnRequest` retain eager behavior. Changing mode explicitly
   restarts the endpoint. The vendored agent's `serve start --jit` launches a

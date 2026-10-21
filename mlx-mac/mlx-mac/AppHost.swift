@@ -323,7 +323,7 @@ class AppHost: ObservableObject {
             let roots = self.config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : self.config.ggufRoots
             return Self.scanMLXRoots(self.config, ggufRoots: roots)
         }
-        self.reclaim.protectedPaths = { [weak self] in Array(self?.occupiedModelPaths ?? []) }
+        self.reclaim.protectedPaths = { [weak self] in Array(self?.occupancy.protectedPaths ?? []) }
         self.reclaim.servingModelPaths = { try await api.servingPathsForRemoval() }
         self.comparison.maxTokensCap = { [weak self] in self?.config.comparisonMaxTokens ?? 512 }
         // HF-cache reclaim rides the authoritative doctor prune flow.
@@ -862,7 +862,7 @@ class AppHost: ObservableObject {
         let fresh = ComparisonInsights.agentEvidence(models: snapshot.models, runs: comparison.runs,
             workflow: workflowEvidence.records, environment: watch.currentFingerprintDescription,
             hardware: hardwareProfile, memory: capture.0, capturedAt: capture.1, contextTokens: evidence.contextTokens,
-            reserveGB: config.fitReserveGB, protected: occupiedModelPaths)
+            reserveGB: config.fitReserveGB, protected: occupancy.protectedPaths)
         let candidate = try ModelGuidanceAction.validate(original: evidence, fresh: fresh, taskID: taskID, path: path)
         guard let model = snapshot.models.first(where: { $0.item.path == path }),
               ModelTaskPresentation.isServable(model), !model.capabilities.isEmpty else {
@@ -897,61 +897,39 @@ class AppHost: ObservableObject {
         return "\(saved) Endpoint requested; check Run for its current status."
     }
 
-    /// Models in an active verification or comparison; their servers are not stopped or unloaded.
-    var protectedServingModels: Set<String> {
-        var paths = Set<String>()
-        if let path = verification.activeModelPath { paths.insert(path) }
-        if let id = comparison.activeRunID,
-           let run = comparison.runs.first(where: { $0.id == id }) {
-            paths.formUnion(run.variants)
-        }
-        return paths
-    }
-
-    /// Whether a server's model is in `protected`.
-    nonisolated static func isProtectedServer(_ server: ServerInfo, protected: Set<String>) -> Bool {
-        protected.contains(where: { HFRepoID.matches($0, server.modelIdentity) })
-    }
-
-    /// The one stop/unload path for the toolbar and Run; protected models are refused.
+    /// The one stop/unload path for the toolbar and Run; models a run serves are refused.
     func unloadServing(_ server: ServerInfo) async -> Bool {
-        guard !Self.isProtectedServer(server, protected: protectedServingModels) else { return false }
+        guard !occupancy.blocksStop(server) else { return false }
         return await endpoint.unloadServer(server)
     }
 
-    /// Run's stop for the selected model's server; a protected model is refused before any workflow call.
+    /// Run's stop for the selected model's server; a model a run serves is refused before any workflow call.
     func stopSelectedServer(modelPath: String) async -> Bool {
-        guard !protectedServingModels.contains(where: { HFRepoID.matches($0, modelPath) }) else { return false }
+        guard !occupancy.blocksStop(modelIdentity: modelPath) else { return false }
         await modelWorkflow.stopServer(modelPath: modelPath)
         return true
     }
 
-    /// Paths that must never be reclaimed: running servers and the active
-    /// conversion's source/output.
-    var occupiedModelPaths: Set<String> {
-        var occupied = Set(modelWorkflow.servers.filter { $0.state?.lowercased() == "running" }.flatMap { [$0.repo, $0.path].compactMap { $0 } })
-        occupied.formUnion(endpoint.fleet.slots.filter(\.enabled).map(\.modelPath))
-        occupied.formUnion(recommendationPreferences.preferredModelIDs.values)
-        if let path = verification.activeModelPath { occupied.insert(path) }
-        occupied.formUnion(inferenceTasks.activeModelPaths)
+    /// Every model active work holds: running and endpoint servers, preferences,
+    /// verification, comparisons, Library tasks and the active conversion.
+    var occupancy: ModelOccupancy {
+        var occupancy = ModelOccupancy(libraryPaths: librarySnapshot?.models.map(\.item.path) ?? [])
+        occupancy.add(modelWorkflow.servers.filter { $0.state?.lowercased() == "running" }
+            .flatMap { [$0.repo, $0.path].compactMap { $0 } }, for: .runningServer)
+        occupancy.add(endpoint.fleet.slots.filter(\.enabled).map(\.modelPath), for: .endpoint)
+        occupancy.add(recommendationPreferences.preferredModelIDs.values, for: .preference)
+        occupancy.add([verification.activeModelPath].compactMap { $0 }, for: .verification)
+        occupancy.add(inferenceTasks.activeModelPaths, for: .inferenceTask)
         if let id = hostedComparison.activeRunID, let record = hostedComparison.records.first(where: { $0.id == id }) {
-            occupied.formUnion(record.targets.compactMap(\.localPath))
+            occupancy.add(record.targets.compactMap(\.localPath), for: .hostedComparison)
         }
         if let id = comparison.activeRunID, let run = comparison.runs.first(where: { $0.id == id }) {
-            occupied.formUnion(run.variants)
+            occupancy.add(run.variants, for: .comparison)
         }
         if modelWorkflow.workflow.state == .queued || modelWorkflow.workflow.state == .running {
-            occupied.insert(modelWorkflow.workflow.outputPath)
-            occupied.insert(modelWorkflow.workflow.sourcePath)
+            occupancy.add([modelWorkflow.workflow.outputPath, modelWorkflow.workflow.sourcePath], for: .conversion)
         }
-        // Canonicalize local paths and protect every cache snapshot sharing an active repo identity.
-        let canonical = Set(occupied.filter { $0.hasPrefix("/") }.map { Quarantine.resolve($0) })
-        for model in librarySnapshot?.models ?? [] {
-            if canonical.contains(Quarantine.resolve(model.item.path)) || HFRepoID.forPath(model.item.path).map({ occupied.contains($0) }) == true {
-                occupied.insert(model.item.path)
-            }
-        }
-        return occupied
+        return occupancy
     }
 
     /// Apply the premium feature toggles from the current config: attach or
@@ -994,14 +972,15 @@ class AppHost: ObservableObject {
     /// Recompute Disk Pressure Advisor opportunities from the latest
     /// snapshot, duplicate groups, usage evidence, and verification status.
     func analyzeReclaim() {
+        let protected = occupancy.protectedPaths
         reclaim.analyze(
             snapshot: librarySnapshot,
             duplicates: scanResult?.duplicates ?? [],
             lastUsedByPath: usage.lastUsedByPath,
             isVerified: { [weak self] path in self?.isModelVerified(path) ?? false },
-            occupiedPaths: occupiedModelPaths,
+            occupiedPaths: protected,
             staleDays: config.reclaimStaleDays,
-            measuredSuperseded: ComparisonInsights.superseded(models: librarySnapshot?.models ?? [], runs: comparison.runs, workflow: workflowEvidence.records, environment: watch.currentFingerprintDescription, protected: occupiedModelPaths)
+            measuredSuperseded: ComparisonInsights.superseded(models: librarySnapshot?.models ?? [], runs: comparison.runs, workflow: workflowEvidence.records, environment: watch.currentFingerprintDescription, protected: protected)
         )
     }
 

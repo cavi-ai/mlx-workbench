@@ -477,7 +477,7 @@ struct QuantView: View {
             workflow: appHost.workflowEvidence.records, environment: appHost.watch.currentFingerprintDescription,
             hardware: appHost.hardwareProfile, memory: appHost.resources.memory,
             capturedAt: appHost.resources.capturedAt, contextTokens: appHost.resources.contextTokens,
-            reserveGB: appHost.config.fitReserveGB, protected: appHost.occupiedModelPaths)
+            reserveGB: appHost.config.fitReserveGB, protected: appHost.occupancy.protectedPaths)
         // Preserve the displayed cohort for the existing fresh-evidence recheck.
         evidence.taskGuidance = [task]
         return try await appHost.reviewModelGuidance(evidence: evidence, taskID: task.id, path: path)

@@ -28,6 +28,7 @@ and is versioned independently; submodule bumps are recorded here.
 - Library: a long verification failure no longer widens the inspector and hides table columns.
 - Library: speech task forms show validation only after input.
 - Prepare: the source cleanup choice stays in place while a preview is prepared, so the actions and pipeline track no longer jump.
+- Run: Stop server and the toolbar's Unload refuse a model that a hosted comparison's local lane is serving.
 - Reclaim: duplicate MLX model folders and Ollama store models appear in Duplicate groups, identical copies as reclaimable duplicates and other bit widths of one model as informational groups.
 
 ## [0.5.0] - 2026-10-12
