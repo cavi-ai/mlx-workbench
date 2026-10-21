@@ -52,7 +52,6 @@ struct ClientSetupDoctorView: View {
         }
         .padding(WorkbenchSpacing.pageInset)
         .frame(width: 660, height: 620)
-        .background(WorkbenchColor.canvas)
         .interactiveDismissDisabled(preparing)
         .task(id: checkID) { await check() }
         .sheet(item: $editor) { host in
