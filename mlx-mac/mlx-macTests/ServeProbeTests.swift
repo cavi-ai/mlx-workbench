@@ -5,6 +5,87 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServeProbeTests: XCTestCase {
+    @MainActor
+    func testLocalNativeChatComparisonWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CHAT_COMPARISON_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_CHAT_COMPARISON_MANIFEST for local chat comparison acceptance.")
+        }
+        struct Manifest: Decodable { let agentPath: String; let models: [String]; let evidenceRoot: String }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        XCTAssertEqual(manifest.models.count, 2)
+        for model in manifest.models {
+            XCTAssertTrue(model.hasPrefix("/"))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: model + "/config.json"))
+        }
+        let root = URL(fileURLWithPath: manifest.evidenceRoot)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: root.path)
+        let store = JSONStore<ComparisonRun>(fileURL: root.appendingPathComponent("runs.json"))
+        let coordinator = ComparisonCoordinator(
+            probe: ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber()),
+            runStore: store, promptSetStore: JSONStore(fileURL: root.appendingPathComponent("prompts.json")),
+            recoverCleanup: { try await api.recoverComparisonServer($0) })
+        let tool = PromptToolSpec(name: "get_current_weather", description: "Get current weather for a city.",
+            parametersJSON: "{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}")
+        let prompts = PromptSet(id: UUID().uuidString, name: "Local chat acceptance", useCase: .generalChat,
+            prompts: [PromptEntry(id: "answer", text: "Reply with only the word hello.", maxTokens: 32),
+                      PromptEntry(id: "tool", text: "What is the current weather in Paris? Use the get_current_weather tool.",
+                                  maxTokens: 128, tool: tool)], origin: .userCreated)
+        coordinator.start(variants: manifest.models.map { (path: $0, signature: nil) }, promptSet: prompts)
+        let runID = try XCTUnwrap(coordinator.activeRunID)
+        let deadline = Date().addingTimeInterval(180)
+        while coordinator.activeRunID != nil && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        if coordinator.activeRunID != nil {
+            coordinator.cancel()
+            let cleanupDeadline = Date().addingTimeInterval(90)
+            while coordinator.activeRunID != nil && Date() < cleanupDeadline {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            XCTFail("The local comparison exceeded its deadline.")
+        }
+        XCTAssertNil(coordinator.activeRunID)
+        XCTAssertNil(coordinator.lastError)
+        XCTAssertNil(coordinator.persistenceError)
+        let run = try XCTUnwrap(store.load().first { $0.id == runID })
+        XCTAssertEqual(run.state, .completed)
+        XCTAssertNil(run.pendingServerCleanup)
+        XCTAssertEqual(run.results.map(\.modelPath), manifest.models)
+        for result in run.results {
+            XCTAssertNil(result.error)
+            XCTAssertEqual(result.samples.count, 2)
+            for sample in result.samples {
+                XCTAssertNil(sample.error)
+                XCTAssertTrue(!(sample.fullOutput ?? sample.outputExcerpt).isEmpty || (sample.toolCalls ?? 0) > 0)
+            }
+        }
+        let servers = try await api.serveStatus()
+        XCTAssertTrue(servers.isEmpty)
+    }
+
+    func testReadinessPrefersHealthFallsBackOnlyForMissingHealthAndClosesRequests() async throws {
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        for health in [200, 503, 404] {
+            let opened = expectation(description: "readiness headers received")
+            let closed = expectation(description: "readiness request closed")
+            opened.expectedFulfillmentCount = health == 404 ? 2 : 1
+            closed.expectedFulfillmentCount = opened.expectedFulfillmentCount
+            // A successful health response must bypass an unavailable inventory;
+            // a failed health response must not be hidden by a successful inventory.
+            let server = try await ProbeStreamPeer.start(body: "{", status: health == 200 ? 503 : 200, healthStatus: health,
+                opened: { opened.fulfill() }, closed: { closed.fulfill() })
+            defer { server.stop() }
+            let started = Date()
+            let ready = await OpenAIEndpointProber(session: session).isReady(
+                baseURL: URL(string: "http://127.0.0.1:\(server.port)")!)
+            XCTAssertEqual(ready, health != 503)
+            XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+            await fulfillment(of: [opened, closed], timeout: 3)
+        }
+    }
+
     func testInlineReasoningIsSplitFromTheAnswer() {
         XCTAssertNil(InlineReasoning.split("def fib(n): ..."))
         let finished = InlineReasoning.split("<think>\nplan the recursion\n</think>\n\ndef fib(n): ...")
@@ -171,7 +252,7 @@ final class ServeProbeTests: XCTestCase {
         let requests = await prober.requests
         XCTAssertEqual(requests.map(\.prompt), ["Say OK.", "First", "First", "Second", "Second"])
         XCTAssertEqual(requests.map(\.maxTokens), [4, 1, 32, 1, 64])
-        XCTAssertEqual(requests.map(\.model), Array(repeating: "served-model", count: 5))
+        XCTAssertEqual(requests.map(\.model), Array(repeating: "/Models/strata", count: 5))
         XCTAssertEqual(requests.map(\.tool), [nil, tool, tool, nil, nil])
         XCTAssertEqual(Set(result.samples.keys), ["a", "b"])
         XCTAssertEqual(result.samples["a"]?.text, "measured First")
@@ -603,7 +684,7 @@ final class ServeProbeTests: XCTestCase {
         XCTAssertFalse(recorded.contains { $0.hasPrefix("chat") })
     }
 
-    func testChatsUseServedIdentityWhenListed() async throws {
+    func testChatsKeepTheSelectedSnapshotPath() async throws {
         let models = ModelListBox(listed: ["mlx-community/Qwen3-0.6B-4bit"])
         let probe = makeProbeWithModels(models)
         let cachePath = "/Users/x/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/abc"
@@ -611,18 +692,19 @@ final class ServeProbeTests: XCTestCase {
         _ = try await probe.run(modelPath: cachePath)
 
         let used = await models.usedModels
-        XCTAssertTrue(used.allSatisfy { $0 == "mlx-community/Qwen3-0.6B-4bit" })
+        XCTAssertTrue(used.allSatisfy { $0 == cachePath })
         XCTAssertFalse(used.isEmpty)
     }
 
-    func testChatsFallBackToFirstListedModelWhenIdentityUnlisted() async throws {
+    func testChatsNeverSubstituteAnUnrelatedCachedModel() async throws {
         let models = ModelListBox(listed: ["other/loaded-model"])
         let probe = makeProbeWithModels(models)
 
         _ = try await probe.run(modelPath: "/models/outside-cache")
 
         let used = await models.usedModels
-        XCTAssertTrue(used.allSatisfy { $0 == "other/loaded-model" })
+        XCTAssertTrue(used.allSatisfy { $0 == "/models/outside-cache" })
+        XCTAssertFalse(used.isEmpty)
     }
 
     func testMissingPreviewHashDoesNotStart() async {        let events = ProbeEventRecorder()
@@ -899,21 +981,22 @@ private final class ProbeStreamPeer: @unchecked Sendable {
     private var connections: [NWConnection] = []
     private let body: String
     private let status: Int
+    private let healthStatus: Int?
     private let opened: @Sendable () -> Void
     private let closed: @Sendable () -> Void
     var port: UInt16 { listener.port!.rawValue }
 
-    private init(body: String, status: Int, opened: @escaping @Sendable () -> Void,
+    private init(body: String, status: Int, healthStatus: Int?, opened: @escaping @Sendable () -> Void,
                  closed: @escaping @Sendable () -> Void) throws {
-        self.body = body; self.status = status; self.opened = opened; self.closed = closed
+        self.body = body; self.status = status; self.healthStatus = healthStatus; self.opened = opened; self.closed = closed
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
         listener = try NWListener(using: parameters)
     }
 
-    static func start(body: String, status: Int, opened: @escaping @Sendable () -> Void,
+    static func start(body: String, status: Int, healthStatus: Int? = nil, opened: @escaping @Sendable () -> Void,
                       closed: @escaping @Sendable () -> Void) async throws -> ProbeStreamPeer {
-        let peer = try ProbeStreamPeer(body: body, status: status, opened: opened, closed: closed)
+        let peer = try ProbeStreamPeer(body: body, status: status, healthStatus: healthStatus, opened: opened, closed: closed)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             peer.listener.stateUpdateHandler = { state in
                 switch state {
@@ -944,8 +1027,14 @@ private final class ProbeStreamPeer: @unchecked Sendable {
             let length = header.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("content-length:") }
                 .flatMap { Int($0.split(separator: ":", maxSplits: 1).last!.trimmingCharacters(in: .whitespaces)) } ?? 0
             guard request[end.upperBound...].utf8.count >= length else { receiveRequest(connection, data: data); return }
-            let response = "HTTP/1.1 \(status) Response\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
-                + String(body.utf8.count, radix: 16) + "\r\n" + body + "\r\n"
+            let response: String
+            if header.hasPrefix("GET /health "), let healthStatus {
+                let healthBody = "{\"status\":\"ok\"}"
+                response = "HTTP/1.1 \(healthStatus) Response\r\nContent-Type: application/json\r\nContent-Length: \(healthBody.utf8.count)\r\nConnection: close\r\n\r\n" + healthBody
+            } else {
+                response = "HTTP/1.1 \(status) Response\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+                    + String(body.utf8.count, radix: 16) + "\r\n" + body + "\r\n"
+            }
             connection.send(content: Data(response.utf8), completion: .contentProcessed { [self] error in
                 guard error == nil else { connection.cancel(); return }
                 opened()
