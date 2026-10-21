@@ -5,6 +5,60 @@ import SwiftUI
 
 final class LabWorkspaceTests: XCTestCase {
     @MainActor
+    func testRecipeReadinessExplainsMissingCatalogRevisionAndInvalidFields() async {
+        var revisions: [String] = []
+        let revision = String(repeating: "a", count: 40)
+        let session = StudyRecipeSession { _ in
+            LabResponse(recipes: [StudyRecipeOption(modelID: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+                displayName: "Wan", revisions: revisions, unavailableReason: nil)])
+        }
+        XCTAssertNotNil(session.unavailableReason, "An unchecked catalog must explain why capture is disabled")
+        await session.load()
+        XCTAssertTrue(session.unavailableReason?.contains("cached revision") == true)
+        XCTAssertFalse(session.canCapture)
+        revisions = [revision]
+        await session.load()
+        XCTAssertEqual(session.unavailableReason, session.draft.validationError)
+        session.draft.prompt = "A boat"
+        XCTAssertNil(session.unavailableReason)
+        XCTAssertTrue(session.canCapture)
+        session.draft.width = "257"
+        XCTAssertEqual(session.unavailableReason, session.draft.validationError)
+        XCTAssertFalse(session.canCapture)
+        session.draft.width = "256"
+        session.draft.revision = String(repeating: "b", count: 40)
+        XCTAssertNotNil(session.unavailableReason, "A valid-looking revision outside the catalog is unavailable")
+        XCTAssertFalse(session.canCapture)
+    }
+
+    @MainActor
+    func testRecipeCatalogFailureKeepsDraftAndExplainsRefreshRecovery() async {
+        var fail = false
+        let revision = String(repeating: "a", count: 40)
+        let session = StudyRecipeSession { _ in
+            if fail { throw NSError(domain: "catalog", code: 1) }
+            return LabResponse(recipes: [StudyRecipeOption(modelID: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+                displayName: "Wan", revisions: [revision], unavailableReason: nil)])
+        }
+        await session.load()
+        session.draft.prompt = "Keep this prompt"
+        let draft = session.draft
+        fail = true
+        await session.load()
+        XCTAssertEqual(session.draft, draft)
+        XCTAssertNotNil(session.error)
+        XCTAssertTrue(session.unavailableReason?.contains("Refresh availability") == true)
+        XCTAssertFalse(session.canCapture)
+        fail = false
+        await session.load()
+        XCTAssertNil(session.error)
+        XCTAssertNil(session.unavailableReason)
+        XCTAssertEqual(session.draft, draft)
+        XCTAssertTrue(session.canCapture)
+        XCTAssertNil(session.manifest, "Checking readiness never captures or starts generation")
+    }
+
+    @MainActor
     func testTrainingHistorySwitchPreservesJobsAndRejectsOldSuccessAndFailure() async throws {
         for fails in [false, true] {
             let fixture = WorkspaceRefreshFixture(), harness = try WorkspaceRefreshHarness(fixture)

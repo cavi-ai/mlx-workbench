@@ -158,6 +158,13 @@ struct ScoutView: View {
             Text(appHost.catalog.statusLabel)
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
+            if let reason = appHost.catalogRefreshUnavailableReason, !appHost.isRefreshingCatalog {
+                Text(reason + " You can still browse candidates above; this separate cache does not determine which models are installed.")
+                    .font(WorkbenchTypography.secondary)
+                    .foregroundStyle(WorkbenchColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("discover-catalog-guidance")
+            }
             DisclosureGroup("Details and catalog entries", isExpanded: $showsCatalogDetails) {
                 catalogDetails
                     .padding(.top, WorkbenchSpacing.xs)
@@ -244,6 +251,13 @@ struct ScoutView: View {
                     discoverButton
                 }
             }
+            Text(fast
+                 ? "Fast uses repository names instead of inspecting each model. Sizes and memory-fit estimates may be missing."
+                 : "Repository inspection adds size estimates when available. Browsing never runs a model; memory fit remains an estimate.")
+                .font(WorkbenchTypography.secondary)
+                .foregroundStyle(WorkbenchColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("discover-inspection-guidance")
         }
     }
 
@@ -256,6 +270,8 @@ struct ScoutView: View {
         .pickerStyle(.menu)
         .fixedSize()
         .disabled(isScouting)
+        .help("The task you want the model to handle. Any searches every supported role; the candidate limit applies to each role separately.")
+        .accessibilityHint("Choose a task, or Any to search every supported role.")
     }
 
     private var limitControl: some View {
