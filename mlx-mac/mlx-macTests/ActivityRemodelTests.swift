@@ -349,7 +349,7 @@ final class ActivityRemodelTests: XCTestCase {
 
     // MARK: - AC2: poll keyed to in-flight ids
 
-    func testPollIsKeyedToTheInFlightRecordIDs() {
+    func testPollIsKeyedToTheInFlightRecordIDs() async {
         let counter = Counter()
         let host = makeHost(counter: counter, jobs: [])
         let coordinator = host.modelWorkflow
@@ -368,7 +368,7 @@ final class ActivityRemodelTests: XCTestCase {
             [running.id, verifying.id]
         )
 
-        coordinator.dismiss(recordID: running.id)
+        await coordinator.dismiss(recordID: running.id)
         XCTAssertEqual(ActivityPoll.inFlightIDs(workflow: coordinator.workflow, history: coordinator.history), [verifying.id])
     }
 
@@ -406,14 +406,14 @@ final class ActivityRemodelTests: XCTestCase {
         XCTAssertEqual(stages(completedRecord(message: message)), [S.complete, .complete, .complete, .pending, .complete])
     }
 
-    func testCoordinatorsNoCanaryMessageIsWhatTheStageOwnerRecognises() {
+    func testCoordinatorsNoCanaryMessageIsWhatTheStageOwnerRecognises() async {
         let counter = Counter()
         let host = makeHost(counter: counter, jobs: [])
         let coordinator = host.modelWorkflow
         coordinator.restore(Fixture.workflow(state: .running, receipt: "r1"))
         let snapshot = Fixture.snapshot([Fixture.model(path: "/models/atlas-MLX-4bit", type: .embedding)])
 
-        coordinator.resolveCompletionAfterFreshScan(snapshot: snapshot)
+        await coordinator.resolveCompletionAfterFreshScan(snapshot: snapshot)
 
         XCTAssertEqual(coordinator.workflow.state, .completed)
         XCTAssertTrue(PrepareWorkflowPresentation(workflow: coordinator.workflow).verificationNotApplicable)

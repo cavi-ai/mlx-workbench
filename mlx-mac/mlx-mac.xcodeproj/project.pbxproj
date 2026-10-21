@@ -471,6 +471,8 @@
 		26FREF002 /* ServingProfileViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingProfileViews.swift; path = UI/Views/ServingProfileViews.swift; sourceTree = "<group>"; };
 		26FREF001 /* ServingProfiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServingProfiles.swift; path = Services/ServingProfiles.swift; sourceTree = "<group>"; };
 		C0DE52000000000000000002 /* JSONRecordStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/JSONRecordStream.swift; sourceTree = "<group>"; };
+		C0DE54000000000000000001 /* RecordArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE54000000000000000002 /* RecordArchive.swift */; };
+		C0DE54000000000000000002 /* RecordArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/RecordArchive.swift; sourceTree = "<group>"; };
 		C0DE52000000000000000004 /* ComparisonHistoryWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ComparisonHistoryWorker.swift; sourceTree = "<group>"; };
 		C0DE51000000000000000002 /* InlineReasoning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/InlineReasoning.swift; sourceTree = "<group>"; };
 		24FREF041 /* ServeProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServeProbe.swift; path = Services/ServeProbe.swift; sourceTree = "<group>"; };
@@ -483,6 +485,8 @@
 		27TST006 /* WorkbenchPythonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkbenchPythonTests.swift; path = WorkbenchPythonTests.swift; sourceTree = "<group>"; };
 		27TST007 /* HomeNextActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HomeNextActionTests.swift; path = HomeNextActionTests.swift; sourceTree = "<group>"; };
 		27STP001 /* SetupCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SetupCoordinator.swift; path = Services/SetupCoordinator.swift; sourceTree = "<group>"; };
+		C0DE53000000000000000001 /* BoundedProcessCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE53000000000000000002 /* BoundedProcessCapture.swift */; };
+		C0DE53000000000000000002 /* BoundedProcessCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/BoundedProcessCapture.swift; sourceTree = "<group>"; };
 		27UPD001 /* UpdateCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = UpdateCoordinator.swift; path = Services/UpdateCoordinator.swift; sourceTree = "<group>"; };
 		27UPDB01 /* UpdateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27UPD001 /* UpdateCoordinator.swift */; };
 		27FS0001 /* EndpointFleetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EndpointFleetStore.swift; path = Services/EndpointFleetStore.swift; sourceTree = "<group>"; };
@@ -699,6 +703,7 @@
 				26FREF002 /* ServingProfileViews.swift */,
 				26FREF001 /* ServingProfiles.swift */,
 				C0DE52000000000000000002 /* JSONRecordStream.swift */,
+				C0DE54000000000000000002 /* RecordArchive.swift */,
 				C0DE52000000000000000004 /* ComparisonHistoryWorker.swift */,
 				C0DE51000000000000000002 /* InlineReasoning.swift */,
 				24FREF041 /* ServeProbe.swift */,
@@ -753,6 +758,7 @@
 				7D7300010000000000000002 /* RuntimeInstallPrerequisites.swift */,
 				27CFG0002 /* AppConfig.swift */,
 				27STP001 /* SetupCoordinator.swift */,
+				C0DE53000000000000000002 /* BoundedProcessCapture.swift */,
 				27UPD001 /* UpdateCoordinator.swift */,
 				27FS0001 /* EndpointFleetStore.swift */,
 				27FF0001 /* FleetFitAdvisor.swift */,
@@ -1250,6 +1256,7 @@
 				26BBLD002 /* ServingProfileViews.swift in Sources */,
 				26BBLD001 /* ServingProfiles.swift in Sources */,
 				C0DE52000000000000000001 /* JSONRecordStream.swift in Sources */,
+				C0DE54000000000000000001 /* RecordArchive.swift in Sources */,
 				C0DE52000000000000000003 /* ComparisonHistoryWorker.swift in Sources */,
 				C0DE51000000000000000001 /* InlineReasoning.swift in Sources */,
 				24BBLD043 /* ServeProbe.swift in Sources */,
@@ -1311,6 +1318,7 @@
 				7D7300010000000000000001 /* RuntimeInstallPrerequisites.swift in Sources */,
 				27CFG0001 /* AppConfig.swift in Sources */,
 				27STPB01 /* SetupCoordinator.swift in Sources */,
+				C0DE53000000000000000001 /* BoundedProcessCapture.swift in Sources */,
 				27UPDB01 /* UpdateCoordinator.swift in Sources */,
 				27FSB001 /* EndpointFleetStore.swift in Sources */,
 				27FFB001 /* FleetFitAdvisor.swift in Sources */,

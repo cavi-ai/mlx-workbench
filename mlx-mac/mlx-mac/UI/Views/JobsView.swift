@@ -307,7 +307,7 @@ struct JobsView: View {
                             perform: perform,
                             viewLog: { selectedLog = LogSelection(id: $0, path: $0) },
                             copySource: copyToPasteboard,
-                            dismiss: { appHost.modelWorkflow.dismiss(recordID: row.id) }
+                            dismiss: { Task { await appHost.modelWorkflow.dismiss(recordID: row.id) } }
                         )
                     }
                 }
@@ -539,7 +539,7 @@ struct JobsView: View {
             appHost.selectedModelPath = path
             onRouteSelection(.run)
         case .keepAnyway(let record):
-            appHost.verification.keepAnyway(recordID: record.id)
+            Task { await appHost.verification.keepAnyway(recordID: record.id) }
         case .retryPreview(let record):
             appHost.modelWorkflow.restore(record)
             appHost.selectedModelPath = record.sourcePath

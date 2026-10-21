@@ -218,9 +218,9 @@ final class ServingProfileCoordinator: ObservableObject {
     @Published private(set) var lastError: String?
     /// Without an authoritative endpoint reference check, removal is refused.
     var removalGuard: ((UUID) throws -> Void)?
-    var suggestionSource: ((ComparisonRun) throws -> VariantResult)?
-    var comparisonSource: ((UUID) throws -> ComparisonRun?)?
-    var measuredSource: ((ComparisonRun, String) throws -> VariantResult)?
+    var suggestionSource: ((ComparisonRun) async throws -> VariantResult)?
+    var comparisonSource: ((UUID) async throws -> ComparisonRun?)?
+    var measuredSource: ((ComparisonRun, String) async throws -> VariantResult)?
     var memoryPreview: ((ServingProfile) async throws -> [String: Any])?
     private let store: JSONStore<ServingProfile>
     private let probe: @Sendable (StrataComparisonOptions) -> ServeProbe
@@ -260,7 +260,7 @@ final class ServingProfileCoordinator: ObservableObject {
         return current
     }
 
-    func comparisonEvidence(for requested: ServingProfile) throws -> ServingProfileComparisonEvidence {
+    func comparisonEvidence(for requested: ServingProfile) async throws -> ServingProfileComparisonEvidence {
         guard let current = try store.load().first(where: { $0.id == requested.id }),
               current.modelPath == requested.modelPath, current.options == requested.options else {
             throw WorkflowEvidenceError.invalid("The serving profile changed or is no longer available. Select it again.")
@@ -268,40 +268,47 @@ final class ServingProfileCoordinator: ObservableObject {
         guard let id = current.sourceRunID, current.sourceLaneID != nil else {
             throw WorkflowEvidenceError.invalid("This profile has no recorded source comparison.")
         }
-        guard let comparisonSource, let run = try comparisonSource(id) else {
+        guard let comparisonSource, let run = try await comparisonSource(id) else {
             throw WorkflowEvidenceError.invalid("The source comparison is unavailable. The profile and its canary verdict are unchanged.")
+        }
+        try Task.checkCancellation()
+        guard try store.load().first(where: { $0.id == current.id }) == current else {
+            throw WorkflowEvidenceError.invalid("The serving profile changed while its evidence was loading. Select it again.")
         }
         return try ServingProfileComparisonEvidence(profile: current, run: run)
     }
 
     /// Read saved snapshots only on an explicit chooser action; never measure or persist here.
-    func profileChoices(modelPath: String) throws -> [ServingProfileChoice] {
+    func profileChoices(modelPath: String) async throws -> [ServingProfileChoice] {
         let saved = try store.load()
         guard Set(saved.map(\.id)).count == saved.count else {
             throw WorkflowEvidenceError.invalid("Saved profiles contain repeated identities. Profile selection is unavailable.")
         }
-        let choices = saved.filter { $0.modelPath == modelPath }.map { profile in
+        var choices: [ServingProfileChoice] = []
+        for profile in saved where profile.modelPath == modelPath {
             do {
                 guard let id = profile.sourceRunID, profile.sourceLaneID != nil else {
                     throw WorkflowEvidenceError.invalid("No source comparison recorded.")
                 }
-                guard let comparisonSource, let run = try comparisonSource(id) else {
+                guard let comparisonSource, let run = try await comparisonSource(id) else {
                     throw WorkflowEvidenceError.invalid("The recorded source comparison is unavailable.")
                 }
-                return ServingProfileChoice(profile: profile,
-                    evidence: try ServingProfileComparisonEvidence(profile: profile, run: run), evidenceUnavailableReason: nil)
+                choices.append(ServingProfileChoice(profile: profile,
+                    evidence: try ServingProfileComparisonEvidence(profile: profile, run: run), evidenceUnavailableReason: nil))
             } catch {
                 let reason: String
                 if case WorkflowEvidenceError.invalid(let message) = error { reason = message }
                 else { reason = "The saved comparison could not be read. Open Compare to inspect it." }
-                return ServingProfileChoice(profile: profile, evidence: nil, evidenceUnavailableReason: reason)
+                choices.append(ServingProfileChoice(profile: profile, evidence: nil, evidenceUnavailableReason: reason))
             }
         }
+        try Task.checkCancellation()
+        guard try store.load() == saved else { throw WorkflowEvidenceError.invalid("Profiles changed. Refresh their current evidence.") }
         profiles = saved
         return choices
     }
 
-    func selectChoice(_ choice: ServingProfileChoice, modelPath: String) throws -> ServingProfile {
+    func selectChoice(_ choice: ServingProfileChoice, modelPath: String) async throws -> ServingProfile {
         guard activeID == nil else { throw WorkflowEvidenceError.invalid("Wait for profile verification to finish.") }
         let saved = try store.load()
         let matches = saved.filter { $0.id == choice.id }
@@ -310,10 +317,14 @@ final class ServingProfileCoordinator: ObservableObject {
             throw WorkflowEvidenceError.invalid("The profile changed or is no longer available. Refresh profiles before selecting.")
         }
         if let displayed = choice.evidence {
-            let currentEvidence = try comparisonEvidence(for: current)
+            let currentEvidence = try await comparisonEvidence(for: current)
             guard currentEvidence.run == displayed.run else {
                 throw WorkflowEvidenceError.invalid("The comparison evidence changed. Refresh profiles before selecting.")
             }
+        }
+        try Task.checkCancellation()
+        guard activeID == nil, try store.load() == saved else {
+            throw WorkflowEvidenceError.invalid("Profiles changed. Refresh their current evidence.")
         }
         profiles = saved
         return current
@@ -321,14 +332,14 @@ final class ServingProfileCoordinator: ObservableObject {
 
     func memoryReview(for choice: ServingProfileChoice,
                       memoryProbe: @escaping @Sendable () -> MemorySnapshot? = MemorySnapshot.probe) async throws -> ServingProfileMemoryReview {
-        let profile = try selectChoice(choice, modelPath: choice.profile.modelPath)
+        let profile = try await selectChoice(choice, modelPath: choice.profile.modelPath)
         guard let memoryPreview else { throw WorkflowEvidenceError.invalid("The runtime memory preview is unavailable.") }
         let plan = try await memoryPreview(profile)
         try Task.checkCancellation()
         let memory = await Task.detached(priority: .utility) { memoryProbe() }.value
         let capturedAt = Date()
         try Task.checkCancellation()
-        _ = try selectChoice(choice, modelPath: profile.modelPath)
+        _ = try await selectChoice(choice, modelPath: profile.modelPath)
         return try ServingProfileMemoryReview(profile: profile, plan: plan, memory: memory, capturedAt: capturedAt)
     }
 
@@ -360,9 +371,11 @@ final class ServingProfileCoordinator: ObservableObject {
         return try ServingProfileComparisonSetup(baseline: baseline, candidate: candidate)
     }
 
-    private func measuredBinding(run: ComparisonRun, laneID: String) throws -> (ServingProfile, VariantResult) {
+    private func measuredBinding(run: ComparisonRun, laneID: String) async throws -> (ServingProfile, VariantResult) {
         guard activeID == nil, let measuredSource else { throw WorkflowEvidenceError.invalid("Measured-profile verification is unavailable or already running.") }
-        let result = try measuredSource(run, laneID)
+        let result = try await measuredSource(run, laneID)
+        try Task.checkCancellation()
+        guard activeID == nil else { throw WorkflowEvidenceError.invalid("Profile verification is already running.") }
         let currentProfiles = try store.load()
         guard let lane = run.laneConfigurations?.first(where: { $0.id == laneID }), let id = lane.servingProfileID,
               currentProfiles.filter({ $0.id == id }).count == 1, let current = currentProfiles.first(where: { $0.id == id }), current.isValid,
@@ -372,13 +385,13 @@ final class ServingProfileCoordinator: ObservableObject {
         return (current, result)
     }
 
-    func prepareMeasuredVerification(run: ComparisonRun, laneID: String) throws -> ServingProfile {
-        try measuredBinding(run: run, laneID: laneID).0
+    func prepareMeasuredVerification(run: ComparisonRun, laneID: String) async throws -> ServingProfile {
+        try await measuredBinding(run: run, laneID: laneID).0
     }
 
     func verifyMeasuredLane(run: ComparisonRun, laneID: String, original: ServingProfile) async {
         do {
-            let (current, result) = try measuredBinding(run: run, laneID: laneID)
+            let (current, result) = try await measuredBinding(run: run, laneID: laneID)
             guard current == original, let measuredSource, let evidence = result.servingEvidence else {
                 throw WorkflowEvidenceError.invalid("The profile changed. Reopen its measured verification.")
             }
@@ -389,14 +402,16 @@ final class ServingProfileCoordinator: ObservableObject {
             }
             guard changed else { throw WorkflowEvidenceError.invalid("The profile is no longer available.") }
             profiles = try store.load()
-            await verify(id: original.id, expectedEvidence: evidence, beforePublishing: { _ = try measuredSource(run, laneID) })
+            await verify(id: original.id, expectedEvidence: evidence, beforePublishing: { _ = try await measuredSource(run, laneID) })
         } catch { lastError = AppHost.render(error) }
     }
 
-    func createSuggestedProfile(run: ComparisonRun, name: String) -> ServingProfile? {
+    func createSuggestedProfile(run: ComparisonRun, name: String) async -> ServingProfile? {
         do {
             guard activeID == nil, let suggestionSource else { throw WorkflowEvidenceError.invalid("Suggestion verification is unavailable or already running.") }
-            let result = try suggestionSource(run)
+            let result = try await suggestionSource(run)
+            try Task.checkCancellation()
+            guard activeID == nil else { throw WorkflowEvidenceError.invalid("Profile verification is already running.") }
             return saveLane(run: run, laneID: result.id, name: name)
         } catch { lastError = AppHost.render(error); return nil }
     }
@@ -404,14 +419,16 @@ final class ServingProfileCoordinator: ObservableObject {
     func verifySuggestion(run: ComparisonRun, profileID: UUID) async {
         do {
             guard activeID == nil, let suggestionSource else { throw WorkflowEvidenceError.invalid("Suggestion verification is unavailable or already running.") }
-            let result = try suggestionSource(run)
+            let result = try await suggestionSource(run)
+            try Task.checkCancellation()
+            guard activeID == nil else { throw WorkflowEvidenceError.invalid("Profile verification is already running.") }
             guard let evidence = result.servingEvidence, let context = evidence.contextTokens, let speculation = evidence.speculation,
                   let profile = try store.load().first(where: { $0.id == profileID }), profile.sourceRunID == run.id,
                   profile.sourceLaneID == result.id, profile.modelPath == result.modelPath,
                   profile.options == StrataComparisonOptions(speculation: speculation, expertMemoryGB: evidence.expertMemoryGB, contextTokens: context) else {
                 throw WorkflowEvidenceError.invalid("The saved profile no longer matches this suggestion.")
             }
-            await verify(id: profileID, expectedEvidence: evidence, beforePublishing: { _ = try suggestionSource(run) })
+            await verify(id: profileID, expectedEvidence: evidence, beforePublishing: { _ = try await suggestionSource(run) })
         } catch { lastError = AppHost.render(error) }
     }
 
@@ -464,7 +481,7 @@ final class ServingProfileCoordinator: ObservableObject {
     }
 
     /// Uses the existing canaries with an explicit 1,024-token answer budget for thinking models.
-    func verify(id: UUID, expectedEvidence: ProbeServingEvidence? = nil, beforePublishing: (() throws -> Void)? = nil) async {
+    func verify(id: UUID, expectedEvidence: ProbeServingEvidence? = nil, beforePublishing: (() async throws -> Void)? = nil) async {
         guard activeID == nil, let saved = profiles.first(where: { $0.id == id }), saved.isValid else { return }
         var original = saved
         activeID = id; lastError = nil
@@ -503,7 +520,8 @@ final class ServingProfileCoordinator: ObservableObject {
             }
             let proof = ServingProfileVerification(options: original.options, modelFingerprint: model, runtimeFingerprint: runtime,
                 suiteVersion: CanarySuite.version, canaries: canaries, verifiedAt: Date())
-            try beforePublishing?()
+            try await beforePublishing?()
+            try Task.checkCancellation()
             var updated = original; updated.verification = proof
             let changed = try store.update(id: id, keyPath: \.id) { current in
                 guard current == original else { throw WorkflowEvidenceError.invalid("The profile changed during verification. Verify its current settings.") }

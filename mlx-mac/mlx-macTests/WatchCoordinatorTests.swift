@@ -5,6 +5,53 @@ import XCTest
 
 @MainActor
 final class WatchCoordinatorTests: XCTestCase {
+    private final class ProbeCalls: @unchecked Sendable {
+        let lock = NSLock()
+        var count = 0
+        func next() -> Int { lock.withLock { count += 1; return count } }
+        var total: Int { lock.withLock { count } }
+    }
+
+    func testConcurrentVersionRequestsShareOneProbeIncludingUnavailableResults() async {
+        let calls = ProbeCalls()
+        let probe = EnvironmentVersionProbe { _ in
+            XCTAssertFalse(Thread.isMainThread)
+            _ = calls.next()
+            usleep(100_000)
+            return nil
+        }
+        await withTaskGroup(of: String?.self) { group in
+            for _ in 0..<20 { group.addTask { await probe.value() } }
+            for await value in group { XCTAssertNil(value) }
+        }
+        let cached = await probe.value()
+        XCTAssertNil(cached)
+        XCTAssertEqual(calls.total, 1)
+    }
+
+    func testInvalidatedVersionProbeCannotReplaceTheNewRuntimeVersion() async {
+        let entered = expectation(description: "Old probe started")
+        let release = DispatchSemaphore(value: 0), calls = ProbeCalls()
+        let probe = EnvironmentVersionProbe { _ in
+            if calls.next() == 1 {
+                entered.fulfill()
+                _ = release.wait(timeout: .now() + 5)
+                return "old"
+            }
+            return "new"
+        }
+        let old = Task { await probe.value() }
+        await fulfillment(of: [entered], timeout: 5)
+        probe.invalidate()
+        let fresh = await probe.value()
+        XCTAssertEqual(fresh, "new")
+        release.signal()
+        let late = await old.value
+        XCTAssertEqual(late, "new")
+        XCTAssertEqual(probe.valueIfProbed ?? nil, "new")
+        XCTAssertEqual(calls.total, 2)
+    }
+
     private let now = Date(timeIntervalSinceReferenceDate: 1_000_000_000)
     private let fingerprintA = EnvironmentFingerprint(macOSVersion: "26.5", chip: "M4", mlxLMVersion: "0.24.0")
     private let fingerprintB = EnvironmentFingerprint(macOSVersion: "26.6", chip: "M4", mlxLMVersion: "0.24.0")

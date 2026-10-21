@@ -859,9 +859,11 @@ struct ConvertView: View {
             Task { await modelWorkflow.confirm(qBits: qBits, reclaimSourceAfterVerification: reclaimSource && sourceCleanupIsPossible) }
         case .runExisting:
             guard let existingModel else { return }
-            modelWorkflow.useExisting(existingModel)
-            modelWorkflow.prepareServe(model: existingModel)
-            onRouteSelection(.run)
+            Task {
+                await modelWorkflow.useExisting(existingModel)
+                modelWorkflow.prepareServe(model: existingModel)
+                onRouteSelection(.run)
+            }
         case .openExistingInLibrary(let path):
             appHost.handoffs.send(LibraryRevealRequest(modelPath: path), as: .revealModel)
             onRouteSelection(.library)

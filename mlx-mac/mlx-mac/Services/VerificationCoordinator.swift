@@ -23,13 +23,17 @@ final class VerificationCoordinator: ObservableObject {
     /// The canonical model path whose verification produced `lastError`.
     @Published private(set) var lastErrorModelPath: String?
     @Published private(set) var persistenceError: String?
+    @Published private(set) var isLoadingHistory = false
 
     private let probe: ServeProbe
     private let store: VerificationStore
     private let now: () -> Date
+    private let historyQueue = DispatchQueue(label: "verification-history", qos: .utility)
+    private var historyLoadTask: Task<Void, Never>?
+    private var hasLoadedHistory = false
 
     /// Resolution callback into the model workflow. Set by `attach(to:)`.
-    var onResolution: ((UUID, VerificationResolution) -> Void)?
+    var onResolution: ((UUID, VerificationResolution) async -> Void)?
     /// Called after every completed probe run — stamps usage evidence for the
     /// Disk Pressure Advisor.
     var onReport: ((VerificationReport) -> Void)?
@@ -49,11 +53,29 @@ final class VerificationCoordinator: ObservableObject {
         self.probe = probe
         self.store = store
         self.now = now
-        do {
-            reports = try store.load().sorted { $0.finishedAt > $1.finishedAt }
-        } catch {
-            persistenceError = "Saved verification reports are unavailable: \(AppHost.render(error))"
+        loadHistory()
+    }
+
+    private func loadHistory() {
+        guard historyLoadTask == nil else { return }
+        isLoadingHistory = true
+        let store = store, queue = historyQueue
+        historyLoadTask = Task { [weak self] in
+            let result = await WorkbenchIO.perform(on: queue) { Result { try store.load().sorted { $0.finishedAt > $1.finishedAt } } }
+            guard let self else { return }
+            defer { self.isLoadingHistory = false; self.historyLoadTask = nil }
+            do {
+                self.reports = try result.get()
+                self.hasLoadedHistory = true; self.persistenceError = nil
+            } catch {
+                self.persistenceError = "Saved verification reports are unavailable: \(AppHost.render(error))"
+            }
         }
+    }
+
+    func waitForHistory() async {
+        if !hasLoadedHistory, historyLoadTask == nil { loadHistory() }
+        await historyLoadTask?.value
     }
 
     /// Link this coordinator to the model workflow so completed conversions
@@ -61,7 +83,7 @@ final class VerificationCoordinator: ObservableObject {
     func attach(to workflow: ModelWorkflowCoordinator) {
         workflow.completionVerifier = self
         onResolution = { [weak workflow] recordID, resolution in
-            workflow?.resolveVerification(recordID: recordID, resolution: resolution)
+            await workflow?.resolveVerification(recordID: recordID, resolution: resolution)
         }
     }
 
@@ -99,16 +121,20 @@ final class VerificationCoordinator: ObservableObject {
 
     /// Explicit user override: keep a model whose verification failed.
     /// Resolves the linked workflow record back to plain `.completed`.
-    func keepAnyway(recordID: UUID) {
-        guard let report = reports.first(where: {
+    func keepAnyway(recordID: UUID) async {
+        await waitForHistory()
+        guard activeModelPath == nil, hasLoadedHistory, let report = reports.first(where: {
             $0.workflowRecordID == recordID && $0.outcome != .passed && $0.outcome != .keptDespiteFailure
         }) else { return }
         var updated = report
         updated.outcome = .keptDespiteFailure
+        activeModelPath = canonical(report.modelPath)
+        progressMessage = "Saving verification override."
+        defer { activeModelPath = nil; progressMessage = nil }
         do {
-            try persist(updated)
+            try await persist(updated)
             lastError = nil
-            onResolution?(recordID, .keptAnyway)
+            await onResolution?(recordID, .keptAnyway)
         } catch { lastError = AppHost.render(error) }
     }
 
@@ -129,9 +155,10 @@ final class VerificationCoordinator: ObservableObject {
             .path
     }
 
-    private func persist(_ report: VerificationReport) throws {
+    private func persist(_ report: VerificationReport) async throws {
+        let store = store
         do {
-            try store.upsert(report)
+            try await WorkbenchIO.perform(on: historyQueue) { Result { try store.upsert(report) } }.get()
         } catch {
             let message = "Verification report could not be saved: \(AppHost.render(error))"
             persistenceError = message
@@ -149,7 +176,7 @@ final class VerificationCoordinator: ObservableObject {
 extension VerificationCoordinator: ConversionCompletionVerifying {
     func beginVerification(recordID: UUID, modelPath: String, signature: String?) {
         guard activeModelPath == nil else {
-            onResolution?(recordID, .unavailable(reason: "Another verification is already in progress."))
+            Task { await onResolution?(recordID, .unavailable(reason: "Another verification is already in progress.")) }
             return
         }
         run(modelPath: modelPath, signature: signature, recordID: recordID)
@@ -172,8 +199,14 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
         lastErrorModelPath = nil
 
         Task { [probe, now] in
+            defer { activeModelPath = nil; progressMessage = nil }
             let startedAt = now()
             do {
+                await waitForHistory()
+                guard hasLoadedHistory else {
+                    throw WorkflowEvidenceError.invalid(persistenceError ?? "Saved verification reports are unavailable.")
+                }
+                try Task.checkCancellation()
                 let canaries: [CanaryResult]
                 let metricsEstimated: Bool
                 if kind == .speechToText {
@@ -222,28 +255,25 @@ extension VerificationCoordinator: ConversionCompletionVerifying {
                     outcome: outcome,
                     environmentFingerprint: self.environmentFingerprint()
                 )
-                try persist(report)
+                progressMessage = "Saving verification report."
+                try await persist(report)
                 onReport?(report)
-                activeModelPath = nil
-                progressMessage = nil
                 if let recordID {
                     switch outcome {
                     case .passed:
-                        onResolution?(recordID, .passed(summary: reportSummary(report)))
+                        await onResolution?(recordID, .passed(summary: reportSummary(report)))
                     case .failed:
-                        onResolution?(recordID, .failed(summary: reportSummary(report)))
+                        await onResolution?(recordID, .failed(summary: reportSummary(report)))
                     case .error, .keptDespiteFailure:
                         break
                     }
                 }
             } catch {
-                activeModelPath = nil
-                progressMessage = nil
                 let rendered = AppHost.render(error)
                 lastError = rendered
                 lastErrorModelPath = target
                 if let recordID {
-                    onResolution?(recordID, .unavailable(reason: rendered))
+                    await onResolution?(recordID, .unavailable(reason: rendered))
                 }
             }
         }

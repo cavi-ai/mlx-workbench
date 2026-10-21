@@ -75,6 +75,6 @@ Optional backends install into their own environments from hash-locked requireme
 
 Installed apps update from **Settings → Updates**. **Releases** follows published releases; **Nightly** follows the nightly build of `main`. A download is installed only when its sha256 matches GitHub's published digest and it is a notarized Developer ID build of MLX Workbench. The previous app moves to the Trash.
 
-Source builds update their checkout instead: the official channel checks out the newest `v*` tag, the beta channel fast-forwards to `origin/main`. Both refuse a dirty tree, update submodules and rebuild with `make build-swift` before relaunching.
+Source builds update their checkout instead: the official channel checks out the newest `v*` tag, the beta channel fast-forwards to the reviewed commit from `origin/main`. Changing channels discards the previous offer. Both refuse a dirty or changed checkout, update submodules and rebuild with `make build-swift` before relaunching. Checks run in the background; Git checks stop after 60 seconds and update commands after 120 seconds.
 
 A DMG update replaces only the app and does not switch the selected engine. To use its new bundled sources, reopen Setup Assistant and explicitly prepare them, then install their runtime. For a source checkout, use the matching tag and re-run `make install` there; see [Version and support](../release/version-and-support.md).

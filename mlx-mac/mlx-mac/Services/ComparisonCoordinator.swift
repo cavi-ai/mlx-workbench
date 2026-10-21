@@ -312,8 +312,13 @@ final class ComparisonCoordinator: ObservableObject {
     }
 
     @discardableResult
-    func removePromptSet(id: String) -> Bool {
-        changePromptSet(id: id) { _ in nil }
+    func removePromptSet(id: String) async -> Bool {
+        var removed: PromptSet?
+        guard changePromptSet(id: id, transform: { removed = $0; return nil }), let removed else { return false }
+        savingPromptSet = true
+        defer { savingPromptSet = false }
+        await reclaimPromptInputs(of: removed)
+        return true
     }
 
     /// Called by the Edit action, never during view evaluation. Reopening a
@@ -360,7 +365,7 @@ final class ComparisonCoordinator: ObservableObject {
                 if let newOwnedID { promptInputStore.discard(newOwnedID) }
                 return false
             }
-            reclaimPromptInputs(of: original)
+            await reclaimPromptInputs(of: original)
             return true
         } catch {
             if let newOwnedID { promptInputStore.discard(newOwnedID) }
@@ -369,10 +374,14 @@ final class ComparisonCoordinator: ObservableObject {
         }
     }
 
-    private func reclaimPromptInputs(of previous: PromptSet) {
-        guard runsLoaded, let sets = try? promptSetStore.load(), let savedRuns = try? historyWorker.loadSync() else { return }
+    private func reclaimPromptInputs(of previous: PromptSet) async {
+        guard runsLoaded, let savedRuns = try? await historyWorker.load() else { return }
         let legacy = savedRuns.filter { $0.inputArtifacts == nil }.flatMap { $0.promptEntries ?? [] }
-        promptInputStore.reclaimInputs(of: previous, sets: sets, legacyEntries: legacy)
+        let store = promptSetStore, inputs = promptInputStore
+        await WorkbenchIO.perform {
+            guard let sets = try? store.load() else { return }
+            inputs.reclaimInputs(of: previous, sets: sets, legacyEntries: legacy)
+        }
     }
 
     private func changePromptSet(id: String, requiredMode: ComparisonMode? = nil, allowingInputSave: Bool = false,
@@ -386,12 +395,10 @@ final class ComparisonCoordinator: ObservableObject {
                 throw PromptSetManagementError(message: "Select a saved, user-created prompt set.")
             }
             var changed: PromptSet?
-            var previous: PromptSet?
             let found = try promptSetStore.update(id: id, keyPath: \.id) { stored in
                 guard Self.isManageablePromptSet(stored), requiredMode == nil || stored.effectiveMode == requiredMode else {
                     throw PromptSetManagementError(message: "The saved prompt set changed. Select it again.")
                 }
-                previous = stored
                 changed = try transform(stored)
                 return changed
             }
@@ -399,7 +406,6 @@ final class ComparisonCoordinator: ObservableObject {
             if let changed { promptSets[index] = changed }
             else {
                 promptSets.remove(at: index)
-                if let previous { reclaimPromptInputs(of: previous) }
             }
             promptSetManagementError = nil
             return true
@@ -452,23 +458,23 @@ final class ComparisonCoordinator: ObservableObject {
         return task
     }
 
-    func requireCurrentSuggestion(_ expected: ComparisonRun) throws -> VariantResult {
+    func requireCurrentSuggestion(_ expected: ComparisonRun) async throws -> VariantResult {
         guard runsLoaded, activeRunID == nil else { throw WorkflowEvidenceError.invalid("Wait for comparison history and the current comparison to finish.") }
-        guard let current = try historyWorker.recordSync(id: expected.id), current == expected,
+        guard let current = try await historyWorker.record(id: expected.id), activeRunID == nil, current == expected,
               let id = current.settingsSearchCandidateID, let result = current.results.first(where: { $0.id == id }) else {
             throw WorkflowEvidenceError.invalid("The suggested comparison changed or is no longer eligible. Review its current results again.")
         }
         return result
     }
 
-    func recordedRun(id: UUID) throws -> ComparisonRun? {
+    func recordedRun(id: UUID) async throws -> ComparisonRun? {
         guard runsLoaded else { throw WorkflowEvidenceError.invalid("Saved comparison history is unavailable.") }
-        return try historyWorker.recordSync(id: id)
+        return try await historyWorker.record(id: id)
     }
 
-    func requireCurrentProfileLane(_ expected: ComparisonRun, laneID: String) throws -> VariantResult {
+    func requireCurrentProfileLane(_ expected: ComparisonRun, laneID: String) async throws -> VariantResult {
         guard runsLoaded, activeRunID == nil else { throw WorkflowEvidenceError.invalid("Wait for comparison history and the current comparison to finish.") }
-        guard let current = try recordedRun(id: expected.id), current == expected, current.state == .completed,
+        guard let current = try await recordedRun(id: expected.id), activeRunID == nil, current == expected, current.state == .completed,
               current.effectiveMode == .chat, current.hasValidLaneIdentities,
               let lane = current.laneConfigurations?.first(where: { $0.id == laneID }), lane.servingProfileID != nil,
               current.results.filter({ $0.id == laneID }).count == 1,
