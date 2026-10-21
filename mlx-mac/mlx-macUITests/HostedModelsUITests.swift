@@ -68,8 +68,8 @@ final class HostedModelsUITests: XCTestCase {
         memoryDetails.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             .withOffset(CGVector(dx: 26, dy: 8)).scroll(byDeltaX: 0, deltaY: -260)
         clickRunningDisclosure(memoryDetails)
-        memoryDetails.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
-            .withOffset(CGVector(dx: 26, dy: 8)).scroll(byDeltaX: 0, deltaY: -260)
+        app.buttons["Open ComfyUI in Library"].firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).scroll(byDeltaX: 0, deltaY: -260)
         XCTAssertTrue(free.waitForExistence(timeout: 5))
         XCTAssertTrue(free.isHittable); XCTAssertTrue(shared.isHittable)
         let memoryImage = XCTAttachment(screenshot: app.screenshot())
