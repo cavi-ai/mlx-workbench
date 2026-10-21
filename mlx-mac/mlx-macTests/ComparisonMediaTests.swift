@@ -1022,6 +1022,22 @@ final class ComparisonMediaTests: XCTestCase {
     }
 
     @MainActor
+    func testReleasingAudioOwnerInvalidatesItsRunLoopTimer() throws {
+        var timer: Timer?
+        var owner: AudioClipPlayer? = AudioClipPlayer(scheduleTimer: { interval, tick in
+            let scheduled = Timer.scheduledTimer(withTimeInterval: interval, repeats: true, block: tick)
+            timer = scheduled
+            return scheduled
+        }, makePlayer: { _ in StubAudioPlayback() })
+        weak var released = owner
+        owner?.toggle(root.appendingPathComponent("clip.wav"))
+        XCTAssertTrue(try XCTUnwrap(timer).isValid)
+        owner = nil
+        XCTAssertNil(released)
+        XCTAssertFalse(try XCTUnwrap(timer).isValid, "The run loop must not retain an orphaned repeating timer")
+    }
+
+    @MainActor
     func testSelectingAnotherClipKeepsPlaybackActiveInsteadOfStopping() throws {
         let a = StubAudioPlayback(), b = StubAudioPlayback()
         let first = root.appendingPathComponent("a.wav"), second = root.appendingPathComponent("b.wav")

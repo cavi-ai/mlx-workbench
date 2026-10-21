@@ -23,11 +23,17 @@ final class AudioClipPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     private var player: AudioClipPlayback?
     private var timer: Timer?
     private let makePlayer: (URL) throws -> AudioClipPlayback
+    private let scheduleTimer: (TimeInterval, @escaping @Sendable (Timer) -> Void) -> Timer
 
-    init(makePlayer: @escaping (URL) throws -> AudioClipPlayback = { try AVAudioPlayer(contentsOf: $0) }) {
+    init(scheduleTimer: @escaping (TimeInterval, @escaping @Sendable (Timer) -> Void) -> Timer = {
+        Timer.scheduledTimer(withTimeInterval: $0, repeats: true, block: $1)
+    }, makePlayer: @escaping (URL) throws -> AudioClipPlayback = { try AVAudioPlayer(contentsOf: $0) }) {
         self.makePlayer = makePlayer
+        self.scheduleTimer = scheduleTimer
         super.init()
     }
+
+    deinit { timer?.invalidate() }
 
     func toggle(_ url: URL) {
         if activeURL == url, let player {
@@ -67,7 +73,7 @@ final class AudioClipPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
         failure = nil
         failureURL = nil
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        timer = scheduleTimer(0.1) { [weak self] _ in
             Task { @MainActor in
                 guard let self, let player = self.player else { return }
                 self.position = min(max(player.currentTime, 0), self.duration)
