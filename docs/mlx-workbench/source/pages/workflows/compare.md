@@ -47,6 +47,8 @@ The accepted prompt ID and submitted graph are saved before observing that job's
 
 Models run one at a time. Chat serves each model on a loopback server, warms it up, replays the prompts and stops it before the next model; warm-up output is excluded from results. Other modes run each model per prompt through the engine's `convert describe`, `transcribe`, `speak`, `music`, `generate` or `video` commands.
 
+Local chat requests use the selected model's path, including its exact Hugging Face snapshot directory. Readiness checks prefer the server's lightweight health endpoint, falling back to the model endpoint when no health endpoint exists. MLX-LM's cache inventory does not have to finish listing before the comparison can proceed.
+
 From **Library**, **Select for Compare** opens the model's supported mode with that model in lane A. Lane B waits for your selection; **Run comparison** starts the work. Vision-language models open Chat by default; choose Vision or Video understanding for media input. Strata is text-only and is excluded from both media-input modes. If a comparison, save, editor or profile verification is in progress, finish it and choose **Use selected Library model** to apply the pending selection.
 
 ### Cancel and recover cleanup

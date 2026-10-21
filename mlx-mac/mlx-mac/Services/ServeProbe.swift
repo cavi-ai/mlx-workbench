@@ -296,13 +296,13 @@ enum ServeProbeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noEphemeralPort:
-            return "Could not reserve an ephemeral loopback port for the verification server."
+            return "Could not reserve an ephemeral loopback port for the model server."
         case .stopFailed(let detail, _, _):
             return "Could not stop the comparison server: \(detail). Further variants were not started."
         case .servePreviewMissingHash:
             return "The serve preview did not include a preview hash."
         case .serverNeverReady(let timeout):
-            return "The verification server did not become ready within \(Int(timeout)) seconds."
+            return "The model server did not become ready within \(Int(timeout)) seconds."
         }
     }
 }
@@ -451,7 +451,9 @@ struct ServeProbe: Sendable {
                 throw ServeProbeError.serverNeverReady(timeout: readyTimeout)
             }
             startupSeconds = Date().timeIntervalSince(startup)
-            let modelID = await resolveModelID(baseURL: baseURL, modelPath: modelPath)
+            // Each lane starts its own server with this exact model. MLX-LM's
+            // model list enumerates the HF cache, not the model loaded here.
+            let modelID = NSString(string: modelPath).expandingTildeInPath
             // Warm the same loaded model that will produce the measurements.
             // Warm-up responses never enter the returned samples.
             for prompt in warmup {
@@ -492,17 +494,6 @@ struct ServeProbe: Sendable {
             if Task.isCancelled || error is CancellationError { throw ServeProbeCancelled(partial: snapshot()) }
             throw error
         }
-    }
-
-    /// The model id the server will accept: the served identity when the
-    /// server lists it, else the first listed model, else the identity.
-    /// (A bogus model id makes mlx_lm.server try to resolve it against the
-    /// Hub — slow failure, or a hang when the network is unhappy.)
-    private func resolveModelID(baseURL: URL, modelPath: String) async -> String {
-        let identity = HFRepoID.serveIdentity(for: modelPath)
-        let listed = await prober.listModels(baseURL: baseURL)
-        if listed.contains(identity) { return identity }
-        return listed.first ?? identity
     }
 
     private func waitUntilReady(baseURL: URL) async -> Bool {
@@ -661,12 +652,20 @@ struct OpenAIEndpointProber: EndpointProbing {
     }
 
     func isReady(baseURL: URL) async -> Bool {
-        var request = URLRequest(url: baseURL.appendingPathComponent("v1/models"))
-        if let bearerToken { request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization") }
-        request.timeoutInterval = 5
-        guard let result = try? await session.data(for: request),
-              let http = result.1 as? HTTPURLResponse else { return false }
-        return (200..<300).contains(http.statusCode)
+        // MLX-LM's inventory scans the entire HF cache. Prefer its lightweight
+        // health check, retaining the model endpoint for runtimes without one.
+        for path in ["health", "v1/models"] {
+            guard !Task.isCancelled else { return false }
+            var request = URLRequest(url: baseURL.appendingPathComponent(path))
+            if let bearerToken { request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization") }
+            request.timeoutInterval = 5
+            guard let (bytes, response) = try? await session.bytes(for: request) else { return false }
+            bytes.task.cancel()
+            guard let http = response as? HTTPURLResponse else { return false }
+            if path == "health", http.statusCode == 404 { continue }
+            return (200..<300).contains(http.statusCode)
+        }
+        return false
     }
 
     func listModels(baseURL: URL) async -> [String] {
