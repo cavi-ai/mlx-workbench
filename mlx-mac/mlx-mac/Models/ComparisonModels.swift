@@ -794,9 +794,12 @@ struct ComparisonSample: Codable, Equatable, Sendable {
     let durationSeconds: Double?
     let draftTokens: DraftTokenEvidence?
     let promptProcessing: PromptProcessingEvidence?
+    var historyCompletedAnswer: Bool? = nil
+    var historyAnswerPresent: Bool? = nil
+    var historyOutputIsEmpty: Bool? = nil
 
     var hasCompletedAnswer: Bool {
-        error == nil && finishReason == "stop" && !(fullOutput ?? outputExcerpt).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        historyCompletedAnswer ?? (error == nil && finishReason == "stop" && !(fullOutput ?? outputExcerpt).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     var completionDescription: String? {
@@ -901,7 +904,7 @@ struct VariantResult: Codable, Equatable, Identifiable, Sendable {
 
     /// No recorded prompt ended at the token limit before any answer text.
     var answeredEveryPrompt: Bool {
-        !samples.contains { $0.finishReason == "length" && ($0.fullOutput ?? $0.outputExcerpt).isEmpty }
+        !samples.contains { $0.finishReason == "length" && ($0.historyOutputIsEmpty ?? ($0.fullOutput ?? $0.outputExcerpt).isEmpty) }
     }
 
     /// Median prompt-processing speed across samples, when any sample
@@ -1042,6 +1045,8 @@ struct ComparisonRun: Codable, Equatable, Identifiable, Sendable {
     var laneConfigurations: [ComparisonLaneConfiguration]? = nil
     var settingsSearchGoal: StrataSettingsSearchGoal? = nil
     var pendingServerCleanup: ComparisonCleanup? = nil
+    /// Only indexed history entries omit output bodies; never render them as legacy excerpts.
+    var historyDetailsOmitted: Bool? = nil
 
     var settingsSearchCandidateID: String? { settingsSearchAssessment.candidateID }
 
@@ -1203,8 +1208,9 @@ enum ChatComparisonPresentation {
             return finish == "tool_calls" && (sample.toolCalls ?? 0) > 0 && sample.toolCallsValid == sample.toolCalls
                 ? .finished : .incomplete
         }
-        return sample.hasCompletedAnswer && !ChatRecordedText(sample.fullOutput ?? sample.outputExcerpt).answer
-            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .finished : .incomplete
+        let hasAnswer = sample.historyAnswerPresent ?? !ChatRecordedText(sample.fullOutput ?? sample.outputExcerpt).answer
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return sample.hasCompletedAnswer && hasAnswer ? .finished : .incomplete
     }
 
     struct Completion: Equatable {

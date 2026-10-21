@@ -162,6 +162,7 @@ class AppHost: ObservableObject {
             runStore: JSONStore<ComparisonRun>(fileURL: JSONStore<ComparisonRun>.defaultFileURL("comparison-runs.json")),
             promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json")),
             loadHistoryInBackground: true,
+            indexedHistory: true,
             mediaRunner: LiveComparisonMediaRunner(api: api),
             outputStore: ComparisonOutputStore(),
             recoverCleanup: { try await api.recoverComparisonServer($0) },
@@ -173,7 +174,8 @@ class AppHost: ObservableObject {
         self.hostedComparison = hostedComparison ?? HostedComparisonCoordinator(
             nativeProbe: ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber()),
             readToken: { try hosts.token(for: $0) },
-            recoverCleanup: { try await api.recoverComparisonServer($0) })
+            recoverCleanup: { try await api.recoverComparisonServer($0) },
+            loadHistoryInBackground: true, indexedHistory: true)
         self.wiring = wiring ?? WiringCoordinator(
             home: WorkbenchStatePaths.userHome(),
             store: JSONStore<WiringTransaction>(fileURL: JSONStore<WiringTransaction>.defaultFileURL("wiring-transactions.json"))

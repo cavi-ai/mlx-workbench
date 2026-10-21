@@ -753,7 +753,8 @@ struct QuantView: View {
     // MARK: - Selection
 
     private var shownRun: ComparisonRun? {
-        ComparePresentation.shownRun(runs: comparison.runs, mode: mode, selectedRunID: selectedRunID, activeRunID: comparison.activeRunID)
+        let run = ComparePresentation.shownRun(runs: comparison.runs, mode: mode, selectedRunID: selectedRunID, activeRunID: comparison.activeRunID)
+        return comparison.detailedRun?.id == run?.id ? comparison.detailedRun : run
     }
 
     private var currentSelection: CompareSelection {
@@ -1135,7 +1136,14 @@ struct QuantView: View {
     @ViewBuilder
     private var resultsArea: some View {
         if let run = shownRun {
-            runDetail(run)
+            if run.historyDetailsOmitted == true {
+                VStack(alignment: .leading) {
+                    runHeader
+                    if let error = comparison.detailError { ErrorBanner(text: error) }
+                    else { ProgressView("Loading recorded outputs…") }
+                    Button("Load outputs") { Task { await comparison.loadDetails(for: run.id) } }
+                }.task(id: run.id) { await comparison.loadDetails(for: run.id) }
+            } else { runDetail(run) }
         } else {
             WorkbenchSurface {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
@@ -1172,7 +1180,7 @@ struct QuantView: View {
                     catch { reuseError = error.localizedDescription }
                 } label: { Label("Reuse setup", systemImage: "arrow.counterclockwise") }
                     .buttonStyle(.borderless)
-                    .disabled(comparison.activeRunID != nil || run.promptEntries?.isEmpty != false)
+                    .disabled(comparison.activeRunID != nil || run.historyDetailsOmitted == true || run.promptEntries?.isEmpty != false)
                     .help(run.promptEntries?.isEmpty != false
                           ? "This older run has no recorded prompt snapshot."
                           : "Edit the recorded prompts and settings for a new comparison.")

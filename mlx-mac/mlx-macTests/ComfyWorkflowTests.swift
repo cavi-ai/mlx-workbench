@@ -23,7 +23,7 @@ final class ComfyWorkflowTests: XCTestCase {
             comfy: fixture.runner, memoryProbe: { nil })
         let done = expectation(description: "Incompatible image lane rejected")
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-        try coordinator.start(targets: [HostedComparisonTarget(host: fixture.host, model: selected, capturedAt: Date())],
+        try await coordinator.start(targets: [HostedComparisonTarget(host: fixture.host, model: selected, capturedAt: Date())],
             promptSet: PromptSet(id: "image", name: "Image", useCase: nil, prompts: [PromptEntry(id: "p", text: "Tree", maxTokens: 32)], origin: .userCreated, mode: .imageGeneration),
             workflow: workflow)
         await fulfillment(of: [done], timeout: 5)
@@ -64,7 +64,7 @@ final class ComfyWorkflowTests: XCTestCase {
             readToken: { _ in nil }, freshInventory: { _, _ in inventory }, comfy: fixture.runner, memoryProbe: { nil })
         let done = expectation(description: "Comfy comparison completed")
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-        try coordinator.start(targets: [HostedComparisonTarget(host: fixture.host, model: model, capturedAt: Date())],
+        try await coordinator.start(targets: [HostedComparisonTarget(host: fixture.host, model: model, capturedAt: Date())],
             promptSet: PromptSet(id: "image", name: "Image", useCase: nil, prompts: [PromptEntry(id: "p", text: "Tree", maxTokens: 32)], origin: .userCreated, mode: .imageGeneration),
             workflow: workflow)
         await fulfillment(of: [done], timeout: 5)

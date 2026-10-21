@@ -12,7 +12,13 @@ final class HostedComparisonCoordinator: ObservableObject {
     @Published private(set) var cancelling = false
     @Published private(set) var cleanupPending = false
     let outputStore: ComparisonOutputStore
-    private let store: JSONStore<HostedComparisonRecord>
+    private let history: RecordHistoryWorker<HostedComparisonRecord>
+    @Published private(set) var isLoadingHistory = false
+    @Published private(set) var detailedRecord: HostedComparisonRecord?
+    @Published private(set) var detailError: String?
+    private var historyLoadTask: Task<Void, Never>?
+    private var reviewTask: Task<Void, Never>?
+    private var detailGeneration = UUID()
     private let nativeProbe: ServeProbe?
     private let readToken: (UUID) throws -> String?
     private let freshInventory: @Sendable (ModelHost, String?) async throws -> HostInventory
@@ -41,11 +47,17 @@ final class HostedComparisonCoordinator: ObservableObject {
          recoverCleanup: @escaping @Sendable (ComparisonServerReceipt) async throws -> Void = { _ in
              throw HostedIntegrationError.invalid("Reopen with the original native runtime to recover its owned server.")
          }, memoryProbe: @escaping @Sendable () -> MemorySnapshot? = MemorySnapshot.probe,
-         now: @escaping @Sendable () -> Date = { Date() }) {
-        self.store = store; self.outputStore = outputStore; self.nativeProbe = nativeProbe
+         now: @escaping @Sendable () -> Date = { Date() },
+         loadHistoryInBackground: Bool = false, indexedHistory: Bool = false) {
+        self.history = RecordHistoryWorker(store: store, indexed: indexedHistory); self.outputStore = outputStore; self.nativeProbe = nativeProbe
         self.readToken = readToken; self.freshInventory = freshInventory; self.hostedChat = hostedChat
         self.comfy = comfy; self.recoverCleanup = recoverCleanup
         self.memoryProbe = memoryProbe; self.now = now
+        if loadHistoryInBackground || indexedHistory {
+            isLoadingHistory = true
+            historyLoadTask = Task { await loadHistory() }
+            return
+        }
         do {
             var saved = try store.load().sorted { $0.run.startedAt > $1.run.startedAt }
             for index in saved.indices where saved[index].run.state == .running {
@@ -60,9 +72,41 @@ final class HostedComparisonCoordinator: ObservableObject {
         } catch { storageError = "Saved hosted comparisons are unavailable. Resolve the storage error before starting another run." }
     }
 
-    func start(targets: [HostedComparisonTarget], promptSet: PromptSet, workflow: ComfyWorkflow? = nil) throws {
-        guard storageError == nil, activeRunID == nil else {
-            throw HostedIntegrationError.invalid(storageError ?? "Wait for the active comparison and its cleanup.")
+    func waitForHistory() async { await historyLoadTask?.value }
+
+    private func loadHistory() async {
+        defer { isLoadingHistory = false; historyLoadTask = nil }
+        do {
+            var saved = try await history.load().sorted { $0.run.startedAt > $1.run.startedAt }
+            for index in saved.indices where saved[index].run.state == .running || saved[index].run.pendingServerCleanup != nil {
+                guard var full = try await history.record(id: saved[index].id) else { throw CancellationError() }
+                if full.run.state == .running {
+                    full.run.state = .interrupted; full.run.finishedAt = now()
+                    try await history.upsert(full)
+                }
+                saved[index] = full
+            }
+            records = saved
+            if let pending = saved.first(where: { $0.run.pendingServerCleanup != nil }) {
+                activeRunID = pending.id; cleanupPending = true
+                progress = "A native comparison server needs cleanup before another run."
+            }
+        } catch { storageError = "Saved hosted comparisons are unavailable. Resolve the storage error before starting another run." }
+    }
+
+    func loadDetails(for id: UUID) async {
+        guard records.first(where: { $0.id == id })?.run.historyDetailsOmitted == true, detailedRecord?.id != id else { return }
+        let generation = UUID(); detailGeneration = generation; detailedRecord = nil; detailError = nil
+        do {
+            guard let full = try await history.record(id: id) else { throw HostedIntegrationError.invalid("The saved comparison is unavailable.") }
+            guard !Task.isCancelled, detailGeneration == generation else { return }
+            detailedRecord = full
+        } catch { if detailGeneration == generation { detailError = AppHost.render(error) } }
+    }
+
+    func start(targets: [HostedComparisonTarget], promptSet: PromptSet, workflow: ComfyWorkflow? = nil) async throws {
+        guard !isLoadingHistory, storageError == nil, activeRunID == nil else {
+            throw HostedIntegrationError.invalid(storageError ?? (isLoadingHistory ? "Loading saved comparisons…" : "Wait for the active comparison and its cleanup."))
         }
         let mode = promptSet.effectiveMode
         guard mode == .chat || mode == .imageGeneration, (1...4).contains(targets.count),
@@ -83,8 +127,16 @@ final class HostedComparisonCoordinator: ObservableObject {
             useCase: promptSet.useCase, variants: targets.map(\.id), results: [], startedAt: Date(), finishedAt: nil,
             state: .running, mode: mode == .chat ? nil : mode, promptEntries: promptSet.prompts)
         let record = HostedComparisonRecord(run: run, targets: targets, temperature: 0, workflow: workflow, submissions: [], conditions: [])
-        try store.upsert(record, id: \.id)
-        records.insert(record, at: 0); activeRunID = run.id; lastError = nil; cancelling = false
+        activeRunID = run.id; lastError = nil; cancelling = false
+        progress = "Saving comparison setup…"
+        do { try await history.upsert(record) }
+        catch { activeRunID = nil; progress = nil; throw error }
+        records.insert(record, at: 0)
+        if cancelling || Task.isCancelled {
+            try await update(run.id) { $0.run.state = .cancelled; $0.run.finishedAt = Date() }
+            activeRunID = nil; progress = nil; cancelling = false
+            return
+        }
         task = Task { await execute(record.id) }
     }
 
@@ -105,12 +157,12 @@ final class HostedComparisonCoordinator: ObservableObject {
             do {
                 guard server.isValid else { throw HostedIntegrationError.invalid("The saved server ownership is invalid. No process was stopped.") }
                 if let pending {
-                    guard try store.load().first(where: { $0.id == id })?.run.pendingServerCleanup == pending else {
+                    guard try await history.record(id: id)?.run.pendingServerCleanup == pending else {
                         throw HostedIntegrationError.invalid("The saved server ownership changed. No process was stopped.")
                     }
                 }
                 try await recoverCleanup(server)
-                try update(id) { $0.run.pendingServerCleanup = nil; $0.run.state = pending?.completionState ?? .failed; $0.run.finishedAt = Date() }
+                try await update(id) { $0.run.pendingServerCleanup = nil; $0.run.state = pending?.completionState ?? .failed; $0.run.finishedAt = Date() }
                 pendingNativeServer = nil
                 cleanupPending = false; activeRunID = nil; progress = nil; lastError = nil
             } catch { lastError = "Native server cleanup failed: \(AppHost.render(error))" }
@@ -118,28 +170,44 @@ final class HostedComparisonCoordinator: ObservableObject {
         }
     }
 
-    func review(runID: UUID, targetID: String, score: Int?) {
+    @discardableResult
+    func review(runID: UUID, targetID: String, score: Int?) -> Task<Void, Never>? {
         guard activeRunID == nil, score == nil || (1...5).contains(score!),
-              records.first(where: { $0.id == runID })?.run.results.contains(where: { $0.id == targetID }) == true else { return }
-        do {
-            try update(runID) {
-                var reviews = $0.run.qualityReviews ?? [:]
-                reviews[targetID] = score.map { ComparisonQualityReview(score: $0, rubricID: "task-outcome-v1", reviewedAt: Date()) }
-                $0.run.qualityReviews = reviews
-            }
-            lastError = nil
-        } catch { lastError = "The quality review could not be saved." }
+              records.first(where: { $0.id == runID })?.run.results.contains(where: { $0.id == targetID }) == true else { return nil }
+        let previous = reviewTask
+        let pending = Task {
+            await previous?.value
+            do {
+                try await update(runID) {
+                    var reviews = $0.run.qualityReviews ?? [:]
+                    reviews[targetID] = score.map { ComparisonQualityReview(score: $0, rubricID: "task-outcome-v1", reviewedAt: Date()) }
+                    $0.run.qualityReviews = reviews
+                }
+                lastError = nil
+            } catch { lastError = "The quality review could not be saved." }
+        }
+        reviewTask = pending
+        return pending
     }
 
-    private func update(_ id: UUID, _ mutation: (inout HostedComparisonRecord) throws -> Void) throws {
+    private func update(_ id: UUID, _ mutation: (inout HostedComparisonRecord) throws -> Void) async throws {
         guard let index = records.firstIndex(where: { $0.id == id }) else { throw CancellationError() }
-        let original = records[index]
+        let visible = records[index]
+        guard let original = try await history.record(id: id) else { throw CancellationError() }
+        let summary = try await history.summarized(original)
+        guard original == visible || summary == visible else {
+            throw HostedIntegrationError.invalid("The saved comparison changed. Reopen it before continuing.")
+        }
         var copy = original; try mutation(&copy)
-        guard try store.update(id: id, keyPath: \.id, transform: { current in
+        let captured = copy
+        guard try await history.update(id: id, transform: { current in
             guard current == original else { throw HostedIntegrationError.invalid("The saved comparison changed. Reopen it before continuing.") }
-            return copy
-        }) else { throw HostedIntegrationError.invalid("The saved comparison is no longer available.") }
-        records[index] = copy
+            return captured
+        }), let currentIndex = records.firstIndex(where: { $0.id == id }), records[currentIndex] == visible else {
+            throw HostedIntegrationError.invalid("The saved comparison is no longer available.")
+        }
+        records[currentIndex] = visible.run.historyDetailsOmitted == true ? try await history.summarized(copy) : copy
+        if detailedRecord?.id == id { detailedRecord = copy }
     }
 
     private func execute(_ id: UUID) async {
@@ -194,7 +262,7 @@ final class HostedComparisonCoordinator: ObservableObject {
                                 cleanupPending = true
                                 if let server = partial?.ownedServer {
                                     pendingNativeServer = server
-                                    try recordNativeServer(id, server: server)
+                                    try await recordNativeServer(id, server: server)
                                 }
                             }
                             throw error
@@ -211,7 +279,7 @@ final class HostedComparisonCoordinator: ObservableObject {
                     aggregateTokensPerSecond: ComparisonAggregation.medianTokensPerSecond(samples),
                     aggregateTTFTSeconds: ComparisonAggregation.bestTTFT(samples), error: failure,
                     servingEvidence: outcome?.servingEvidence, startupSeconds: outcome?.startupSeconds, systemMemory: outcome?.systemMemory)
-                try update(id) {
+                try await update(id) {
                     $0.run.results.append(result)
                     if cleanupPending { $0.run.pendingServerCleanup?.completionState = state == .cancelled ? .cancelled : .failed }
                     else { $0.run.pendingServerCleanup = nil }
@@ -220,14 +288,18 @@ final class HostedComparisonCoordinator: ObservableObject {
                 if cleanupPending { progress = "Native server cleanup failed. Retry cleanup before another run."; lastError = failure; break }
                 if state == .cancelled { break }
             }
-            try update(id) { $0.run.state = state; $0.run.finishedAt = Date() }
+            try await update(id) { $0.run.state = state; $0.run.finishedAt = Date() }
         } catch {
             lastError = "The comparison could not continue: \(AppHost.render(error))"
             if pendingNativeServer != nil || records.first(where: { $0.id == id })?.run.pendingServerCleanup != nil {
                 cleanupPending = true; progress = "Native server ownership is retained. Retry cleanup before another run."
             }
-            do { try update(id) { $0.run.state = Task.isCancelled ? .cancelled : .failed; $0.run.finishedAt = Date() } }
+            do { try await update(id) { $0.run.state = Task.isCancelled ? .cancelled : .failed; $0.run.finishedAt = Date() } }
             catch { storageError = "Comparison results could not be saved. Resolve the storage error before another run." }
+        }
+        if !cleanupPending, let index = records.firstIndex(where: { $0.id == id }),
+           let summary = try? await history.summarized(records[index]), summary.run.historyDetailsOmitted == true {
+            detailedRecord = records[index]; records[index] = summary
         }
     }
 
@@ -241,7 +313,7 @@ final class HostedComparisonCoordinator: ObservableObject {
             reserveBytes: FitAdvisor.reserveBytes, inventoryCapturedAt: inventory?.capturedAt, activity: inventory?.activity,
             loadedModels: inventory?.reportedLoadedModels, unknownResidencyCount: inventory.map { $0.models.filter { $0.isLoaded == nil }.count },
             inventoryWarnings: inventory?.warnings, deviceMemory: inventory?.deviceMemory)
-        try update(id) { record in
+        try await update(id) { record in
             if let inventory, let model = inventory.models.first(where: { $0.id == target.id }) {
                 var observed = HostedComparisonTarget(host: inventory.host, model: model, capturedAt: inventory.capturedAt, runtimeVersion: inventory.runtimeVersion)
                 observed.deviceSummary = inventory.deviceSummary
@@ -251,15 +323,15 @@ final class HostedComparisonCoordinator: ObservableObject {
         }
     }
 
-    private func recordNativeServer(_ id: UUID, server: ComparisonServerReceipt) throws {
+    private func recordNativeServer(_ id: UUID, server: ComparisonServerReceipt) async throws {
         guard server.isValid else { throw HostedIntegrationError.invalid("The native runtime returned invalid server ownership.") }
         pendingNativeServer = server
-        try update(id) { $0.run.pendingServerCleanup = ComparisonCleanup(server: server, completionState: .interrupted) }
+        try await update(id) { $0.run.pendingServerCleanup = ComparisonCleanup(server: server, completionState: .interrupted) }
     }
 
-    private func recordSubmission(_ id: UUID, target: String, prompt: String, remoteID: String, graph: Data) throws {
+    private func recordSubmission(_ id: UUID, target: String, prompt: String, remoteID: String, graph: Data) async throws {
         guard let json = String(data: graph, encoding: .utf8) else { throw HostedIntegrationError.invalid("The submitted workflow could not be recorded.") }
-        try update(id) { $0.submissions.append(HostedWorkflowSubmission(id: UUID(), targetID: target, promptID: prompt,
+        try await update(id) { $0.submissions.append(HostedWorkflowSubmission(id: UUID(), targetID: target, promptID: prompt,
             remotePromptID: remoteID, graphJSON: json, submittedAt: Date())) }
     }
 

@@ -6,6 +6,8 @@ Copy the app from the disk image to **Applications** before opening it. Source b
 
 ## The engine or its runtime is missing
 
+Runtime checks run in the background. Settings, Doctor and Setup show **Checking runtime…** until the current result arrives. A superseded check cannot replace a newer result.
+
 **Settings → Engine → mlx-agent checkout** must point at a checkout containing `scripts/mlx-agent`. Health shows what is missing and offers **Install Runtime…**. From the Workbench checkout:
 
 ```bash

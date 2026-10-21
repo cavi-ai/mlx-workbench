@@ -6,6 +6,8 @@
 
 ## Library
 
+Library scans and model-size calculations run in the background. The previous snapshot remains visible until the current configuration has a successful scan; a cancelled scan does not replace it.
+
 **Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. Families with multiple variants expand to show their models; single variants appear directly in the table.
 
 The **Source** menu offers **All local models** and each saved model host, including Ollama, LM Studio and ComfyUI. Host choices use their saved identity and show their provider; connections with matching names and providers include their address to distinguish them. Adding, editing or removing a saved connection updates the menu. **Hosted models** opens host selection and connection setup. The separate **Local files** group contains **LM Studio files**.

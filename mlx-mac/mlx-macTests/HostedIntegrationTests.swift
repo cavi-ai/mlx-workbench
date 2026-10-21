@@ -6,6 +6,69 @@ import Network
 
 @MainActor
 final class HostedIntegrationTests: XCTestCase {
+    func testIndexedHostedHistoryLoadsDetailsAndPersistsBeforeInference() async throws {
+        let store = JSONStore<HostedComparisonRecord>(fileURL: try directory().appendingPathComponent("hosted.json"))
+        let archive = ComparisonRecordArchive<HostedComparisonRecord>(legacyURL: store.url)
+        let host = ModelHost(name: "Ollama", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+        let model = HostedModel(hostID: host.id, modelID: "model", name: "Model", digest: "weights")
+        let inventory = HostInventory(host: host, models: [model], capturedAt: Date())
+        let coordinator = HostedComparisonCoordinator(store: store, readToken: { _ in nil },
+            freshInventory: { _, _ in inventory }, hostedChat: { _, _, _, _ in
+                let saved = try XCTUnwrap(archive.load().first)
+                XCTAssertEqual(saved.run.state, .running)
+                XCTAssertEqual(saved.conditions?.count, 1, "Conditions must be durable before inference")
+                return ProbeSample(text: "Saved answer", completionTokens: 2, timeToFirstTokenSeconds: 0.1,
+                    durationSeconds: 1, metricsEstimated: false, finishReason: "stop")
+            }, loadHistoryInBackground: true, indexedHistory: true)
+        XCTAssertTrue(coordinator.isLoadingHistory)
+        do { try await coordinator.start(targets: [], promptSet: testPrompts()); XCTFail("History must load first") } catch {}
+        await coordinator.waitForHistory()
+        let done = expectation(description: "Run terminal")
+        let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
+        try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
+        await fulfillment(of: [done], timeout: 5)
+        subscription.cancel()
+        let summary = try XCTUnwrap(coordinator.records.first)
+        XCTAssertEqual(summary.run.historyDetailsOmitted, true)
+        XCTAssertNil(summary.run.results.first?.samples.first?.fullOutput)
+        let reopened = HostedComparisonCoordinator(store: store, loadHistoryInBackground: true, indexedHistory: true)
+        await reopened.waitForHistory()
+        XCTAssertNil(reopened.detailedRecord)
+        await reopened.loadDetails(for: summary.id)
+        XCTAssertEqual(reopened.detailedRecord?.run.results.first?.samples.first?.fullOutput, "Saved answer")
+        await reopened.review(runID: summary.id, targetID: model.id, score: 5)?.value
+        XCTAssertNil(reopened.lastError)
+        let saved = try XCTUnwrap(archive.record(id: summary.id))
+        XCTAssertEqual(saved.run.qualityReviews?[model.id]?.score, 5)
+        XCTAssertEqual(saved.run.results.first?.samples.first?.fullOutput, "Saved answer")
+    }
+
+    func testHostedHistoryWriteSuspendsMainActorAndCancellationWaitsForDurability() async throws {
+        let root = try directory(), url = root.appendingPathComponent("hosted.json")
+        try Data("[]".utf8).write(to: url)
+        let barrier = HostedHistoryBarrier()
+        defer { barrier.release.signal() }
+        let store = JSONStore<HostedComparisonRecord>(fileURL: url, replaceItem: { old, new in
+            XCTAssertFalse(Thread.isMainThread)
+            barrier.pauseOnce()
+            _ = try FileManager.default.replaceItemAt(old, withItemAt: new)
+        })
+        let host = ModelHost(name: "Host", provider: .ollama, baseURL: "http://127.0.0.1:11434")
+        let model = HostedModel(hostID: host.id, modelID: "model", name: "Model")
+        let coordinator = HostedComparisonCoordinator(store: store)
+        let start = Task { try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts()) }
+        await fulfillment(of: [barrier.entered], timeout: 5)
+        XCTAssertNotNil(coordinator.activeRunID)
+        XCTAssertTrue(coordinator.records.isEmpty)
+        coordinator.cancel(); XCTAssertTrue(coordinator.cancelling)
+        barrier.release.signal()
+        // The cancellation write also passes through the same durable boundary.
+        barrier.release.signal()
+        try await start.value
+        XCTAssertNil(coordinator.activeRunID)
+        XCTAssertEqual(try store.load().first?.run.state, .cancelled)
+    }
+
     func testFreshPreflightPreservesUnknownMetadataAndUnloadedModels() throws {
         let host = ModelHost(name: "Ollama", provider: .ollama, baseURL: "http://127.0.0.1:11434")
         let model = HostedModel(hostID: host.id, modelID: "selected", name: "Selected", digest: "installed", isLoaded: false)
@@ -60,7 +123,7 @@ final class HostedIntegrationTests: XCTestCase {
             }, memoryProbe: { nil })
         let done = expectation(description: "Later lane completes")
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-        try coordinator.start(targets: [selected, chat].map { HostedComparisonTarget(host: host, model: $0, capturedAt: Date()) }, promptSet: testPrompts())
+        try await coordinator.start(targets: [selected, chat].map { HostedComparisonTarget(host: host, model: $0, capturedAt: Date()) }, promptSet: testPrompts())
         await fulfillment(of: [done], timeout: 5)
         let saved = try XCTUnwrap(store.load().first)
         XCTAssertEqual(saved.run.state, .failed)
@@ -91,7 +154,7 @@ final class HostedIntegrationTests: XCTestCase {
             let coordinator = HostedComparisonCoordinator(store: store, readToken: { _ in "fixture-token" }, memoryProbe: { nil })
             let done = expectation(description: "Fresh metadata rejects " + provider.rawValue)
             let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-            try coordinator.start(targets: [HostedComparisonTarget(host: host, model: selected, capturedAt: Date())], promptSet: testPrompts())
+            try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: selected, capturedAt: Date())], promptSet: testPrompts())
             await fulfillment(of: [done], timeout: 5)
             let saved = try XCTUnwrap(store.load().first)
             XCTAssertEqual(saved.run.state, .failed, provider.rawValue)
@@ -218,7 +281,7 @@ final class HostedIntegrationTests: XCTestCase {
             now: { Date(timeIntervalSince1970: 42) })
         let done = expectation(description: "Conditions run finished")
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: inventory.capturedAt)], promptSet: testPrompts())
+        try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: inventory.capturedAt)], promptSet: testPrompts())
         await fulfillment(of: [done], timeout: 5)
         XCTAssertEqual(try store.load().first?.run.state, .completed)
         let saved = try XCTUnwrap(store.load().first)
@@ -268,7 +331,7 @@ final class HostedIntegrationTests: XCTestCase {
                 }, memoryProbe: { reading })
             let done = expectation(description: "Unknown conditions do not block")
             let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-            try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
+            try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
             await fulfillment(of: [done], timeout: 5)
             let record = try XCTUnwrap(store.load().first)
             XCTAssertEqual(record.run.state, .completed)
@@ -293,7 +356,7 @@ final class HostedIntegrationTests: XCTestCase {
             hostedChat: { _, _, _, _ in XCTFail("Unrecorded conditions must prevent inference"); throw CancellationError() })
         let done = expectation(description: "Failed condition write stops run")
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
+        try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
         await fulfillment(of: [done], timeout: 5)
         XCTAssertNotNil(coordinator.storageError)
         XCTAssertEqual(try store.load().first?.conditions, [])
@@ -310,7 +373,7 @@ final class HostedIntegrationTests: XCTestCase {
             started.fulfill(); try await Task.sleep(for: .seconds(10)); throw CancellationError()
         }, hostedChat: { _, _, _, _ in XCTFail("Cancelled observation must not infer"); throw CancellationError() })
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
+        try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
         await fulfillment(of: [started], timeout: 5)
         coordinator.cancel()
         await fulfillment(of: [done], timeout: 5)
@@ -528,7 +591,7 @@ final class HostedIntegrationTests: XCTestCase {
             })
         let done = expectation(description: "Run terminal")
         var subscription: AnyCancellable? = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: inventory.capturedAt, runtimeVersion: "1.0")],
+        try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: inventory.capturedAt, runtimeVersion: "1.0")],
             promptSet: PromptSet(id: "host-test", name: "Host test", useCase: nil, prompts: [PromptEntry(id: "p", text: "Say hello", maxTokens: 32)], origin: .userCreated))
         await fulfillment(of: [done], timeout: 5)
         let saved = try XCTUnwrap(store.load().first)
@@ -551,7 +614,7 @@ final class HostedIntegrationTests: XCTestCase {
             hostedChat: { _, _, _, _ in XCTFail("Changed weights reached inference"); throw CancellationError() })
         let done = expectation(description: "Run terminal")
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: before, capturedAt: Date())],
+        try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: before, capturedAt: Date())],
             promptSet: PromptSet(id: "p", name: "Test", useCase: nil, prompts: [PromptEntry(id: "p", text: "Hi", maxTokens: 32)], origin: .userCreated))
         await fulfillment(of: [done], timeout: 5)
         XCTAssertEqual(try store.load().first?.run.state, .failed)
@@ -571,7 +634,7 @@ final class HostedIntegrationTests: XCTestCase {
             })
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
         let second = HostedModel(hostID: host.id, modelID: "later", name: "Later")
-        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date()),
+        try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date()),
             HostedComparisonTarget(host: host, model: second, capturedAt: Date())], promptSet: testPrompts())
         await fulfillment(of: [started], timeout: 5)
         coordinator.cancel()
@@ -611,7 +674,7 @@ final class HostedIntegrationTests: XCTestCase {
         let done = expectation(description: "Mixed run completed")
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
         let local = nativeModel()
-        try coordinator.start(targets: [HostedComparisonTarget(local: local, capturedAt: Date()),
+        try await coordinator.start(targets: [HostedComparisonTarget(local: local, capturedAt: Date()),
             HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
         await fulfillment(of: [done], timeout: 5)
         let result = try XCTUnwrap(store.load().first)
@@ -636,7 +699,7 @@ final class HostedIntegrationTests: XCTestCase {
         let recovered = expectation(description: "Owned server recovered")
         let coordinator = HostedComparisonCoordinator(store: store, recoverCleanup: { saved in XCTAssertEqual(saved, receipt); recovered.fulfill() })
         XCTAssertTrue(coordinator.cleanupPending)
-        XCTAssertThrowsError(try coordinator.start(targets: [], promptSet: testPrompts()))
+        do { try await coordinator.start(targets: [], promptSet: testPrompts()); XCTFail("Start must be refused") } catch {}
         let done = expectation(description: "Cleanup cleared")
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
         coordinator.retryCleanup()
@@ -656,7 +719,7 @@ final class HostedIntegrationTests: XCTestCase {
         let coordinator = HostedComparisonCoordinator(store: store, readToken: { _ in "fixture-token" })
         let done = expectation(description: "HTTP comparison completed")
         let subscription = coordinator.$activeRunID.dropFirst().filter { $0 == nil }.sink { _ in done.fulfill() }
-        try coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
+        try await coordinator.start(targets: [HostedComparisonTarget(host: host, model: model, capturedAt: Date())], promptSet: testPrompts())
         await fulfillment(of: [done], timeout: 5)
         let saved = try XCTUnwrap(store.load().first)
         XCTAssertEqual(saved.run.state, .completed)
@@ -686,11 +749,11 @@ final class HostedIntegrationTests: XCTestCase {
         let coordinator = HostedComparisonCoordinator(store: store, nativeProbe: probe)
         let finished = expectation(description: "Failure handling finished")
         let subscription = coordinator.$progress.dropFirst().filter { $0 == nil || $0?.lowercased().contains("cleanup") == true }.prefix(1).sink { _ in finished.fulfill() }
-        try coordinator.start(targets: [HostedComparisonTarget(local: nativeModel(), capturedAt: Date())], promptSet: testPrompts())
+        try await coordinator.start(targets: [HostedComparisonTarget(local: nativeModel(), capturedAt: Date())], promptSet: testPrompts())
         await fulfillment(of: [finished], timeout: 5)
         XCTAssertTrue(coordinator.cleanupPending)
         XCTAssertNotNil(coordinator.activeRunID)
-        XCTAssertThrowsError(try coordinator.start(targets: [], promptSet: testPrompts()))
+        do { try await coordinator.start(targets: [], promptSet: testPrompts()); XCTFail("Start must be refused") } catch {}
         subscription.cancel()
     }
 
@@ -959,4 +1022,15 @@ private final class HostedFixtureServer: @unchecked Sendable {
         }
     }
     func stop() { listener.cancel() }
+}
+
+private final class HostedHistoryBarrier: @unchecked Sendable {
+    let entered = XCTestExpectation(description: "History write")
+    let release = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var paused = false
+    func pauseOnce() {
+        lock.lock(); let pause = !paused; paused = true; lock.unlock()
+        if pause { entered.fulfill(); _ = release.wait(timeout: .now() + 5) }
+    }
 }
