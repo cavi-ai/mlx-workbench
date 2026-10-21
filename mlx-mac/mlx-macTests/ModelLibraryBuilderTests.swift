@@ -5,6 +5,62 @@ import XCTest
 
 final class ModelLibraryBuilderTests: XCTestCase {
     @MainActor
+    func testRuntimeInitializationDoesNotProbeUntilExplicitBackgroundCheck() async {
+        let report = makeRuntimeReport()
+        let checked = expectation(description: "runtime checked")
+        let host = AppHost(config: makeConfig(), runtimeProbe: {
+            XCTAssertFalse(Thread.isMainThread, "Python probes must not block the UI.")
+            checked.fulfill()
+            return report
+        })
+        XCTAssertTrue(host.isCheckingRuntime)
+        XCTAssertFalse(host.runtimeReport.ok)
+        await host.refreshRuntimeReport()?.value
+        await fulfillment(of: [checked], timeout: 2)
+        XCTAssertEqual(host.runtimeReport, report)
+        XCTAssertFalse(host.isCheckingRuntime)
+    }
+
+    @MainActor
+    func testLibraryBuildKeepsUIResponsiveAndRescansChangedRoots() async {
+        let scan = makeFixtureScan(), gate = LibraryBuildGate(started: expectation(description: "build started"))
+        let capturedRoots = LibraryScanRootsRecorder()
+        let host = AppHost(config: makeConfig(), runtimeReport: makeRuntimeReport(),
+            scanOperation: { roots, _, _, _ in await capturedRoots.record(roots); return scan },
+            libraryBuildOperation: { scan, hardware, date in
+                gate.pauseOnce()
+                return ModelLibraryBuilder.build(scan: scan, hardware: hardware, now: date)
+            })
+        let original = host.config.ggufRoots
+        let task = Task { await host.rescan() }
+        defer { gate.release.signal() }
+        await fulfillment(of: [gate.started], timeout: 2)
+        XCTAssertTrue(host.isScanning)
+        XCTAssertNil(host.librarySnapshot)
+        host.config.ggufRoots = ["/changed-model-root"]
+        gate.release.signal()
+        await task.value
+        XCTAssertEqual(host.scannedRoots?.gguf, ["/changed-model-root"])
+        let roots = await capturedRoots.values
+        XCTAssertEqual(roots, [original, ["/changed-model-root"]])
+    }
+
+    @MainActor
+    func testLateRuntimeProbeCannotReplaceANewerCheckedReport() async {
+        let report = makeRuntimeReport(), gate = LibraryBuildGate(started: expectation(description: "runtime started"))
+        let host = AppHost(config: makeConfig(), runtimeReport: report, runtimeProbe: { gate.pauseOnce(); return report })
+        let task = host.refreshRuntimeReport()
+        defer { gate.release.signal() }
+        await fulfillment(of: [gate.started], timeout: 2)
+        let newer = RuntimeReport(convert: report.convert, serve: report.serve, install: report.install, ok: report.ok, python: "/new/python")
+        host.refreshRuntimeReport(newer)
+        gate.release.signal()
+        await task?.value
+        XCTAssertEqual(host.runtimeReport, newer)
+        XCTAssertFalse(host.isCheckingRuntime)
+    }
+
+    @MainActor
     func testLibraryBuildKeepsUIResponsiveUntilCompleteSnapshotIsPublished() async throws {
         let scan = makeFixtureScan(), date = fixtureDate, hardware = fixtureHardware
         let entered = expectation(description: "Building inventory")
@@ -662,6 +718,26 @@ final class ModelLibraryBuilderTests: XCTestCase {
     private var fixtureDate: Date {
         Date(timeIntervalSince1970: 1_725_000_000)
     }
+}
+
+private final class LibraryBuildGate: @unchecked Sendable {
+    let started: XCTestExpectation
+    let release = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var entered = false
+    init(started: XCTestExpectation) { self.started = started }
+    func pauseOnce() {
+        let first = lock.withLock { if entered { return false }; entered = true; return true }
+        if first {
+            started.fulfill()
+            XCTAssertEqual(release.wait(timeout: .now() + 5), .success, "The UI must remain able to release its worker.")
+        }
+    }
+}
+
+private actor LibraryScanRootsRecorder {
+    private(set) var values: [[String]] = []
+    func record(_ roots: [String]) { values.append(roots) }
 }
 
 @MainActor

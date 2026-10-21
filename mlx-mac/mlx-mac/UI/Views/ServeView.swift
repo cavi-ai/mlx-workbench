@@ -38,6 +38,9 @@ struct ServeView: View {
     @State private var pendingFleetAction: PendingFleetAction?
     @State private var showFleetRouter = false
     @State private var showLoginItemPreview = false
+    @State private var loginPlan: LoginItemPlan?
+    @State private var loginPlist = ""
+    @State private var loginBusy = false
     @State private var expandedMemorySlots: Set<UUID> = []
     @State private var viewportWidth = WorkbenchSize.assumedContentWidth + WorkbenchSpacing.pageInset * 2
     @State private var loginItemMessage: String?
@@ -940,21 +943,23 @@ struct ServeView: View {
         HStack(spacing: WorkbenchSpacing.xs) {
             if appHost.endpoint.fleet.installedAtLogin {
                 Button("Remove login item") {
-                    do {
-                        try LaunchAgentManager().uninstall()
-                        appHost.endpoint.markLoginItemInstalled(false)
-                        loginItemMessageIsError = false
-                        loginItemMessage = "Login item removed."
-                    } catch {
-                        loginItemMessageIsError = true
-                        loginItemMessage = AppHost.render(error)
+                    loginBusy = true
+                    Task {
+                        let result = await WorkbenchIO.perform { Result { try LaunchAgentManager().uninstall() } }
+                        do {
+                            try result.get()
+                            appHost.endpoint.markLoginItemInstalled(false)
+                            loginItemMessageIsError = false; loginItemMessage = "Login item removed."
+                        } catch { loginItemMessageIsError = true; loginItemMessage = AppHost.render(error) }
+                        loginBusy = false
                     }
                 }
             } else {
-                Button("Install login item…") { showLoginItemPreview = true }
+                Button("Install login item…") { loginPlan = nil; loginPlist = ""; showLoginItemPreview = true }
             }
         }
         .buttonStyle(.bordered)
+        .disabled(loginBusy)
         .sheet(isPresented: $showLoginItemPreview) {
             loginItemPreviewSheet
         }
@@ -966,47 +971,62 @@ struct ServeView: View {
             Text("This LaunchAgent starts the endpoint once at login (RunAtLoad). The app keeps reconciling while it runs; mlx-agent receipts remain the process authority.")
                 .font(WorkbenchTypography.secondary)
                 .foregroundStyle(WorkbenchColor.muted)
+            if loginBusy { ProgressView("Reviewing endpoint startup…") }
+            if let loginItemMessage, loginItemMessageIsError { InlineMessage(kind: .error, text: loginItemMessage) }
             ScrollView {
-                Text(loginItemPlistText)
+                Text(loginPlist)
                     .font(WorkbenchTypography.value)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
             HStack {
-                Button("Cancel") { showLoginItemPreview = false }
+                Button("Cancel") { showLoginItemPreview = false }.disabled(loginBusy)
                 Spacer()
                 Button("Confirm install") { installLoginItem() }
                     .buttonStyle(.workbenchPrimary)
+                    .disabled(loginBusy || loginPlan == nil)
             }
         }
         .padding(WorkbenchSpacing.md)
         .frame(width: WorkbenchSize.Run.loginSheetWidth, height: WorkbenchSize.Run.loginSheetHeight)
+        .interactiveDismissDisabled(loginBusy)
+        .task { await prepareLoginItem() }
     }
 
     private var agentRootPath: String {
         appHost.config.mlxAgentPath.isEmpty ? appHost.vendorAgentPath : appHost.config.mlxAgentPath
     }
 
-    private var loginItemPlistText: String {
-        (try? LaunchAgentManager().plistPreview(
-            config: appHost.endpoint.config,
-            agentPath: agentRootPath
-        )) ?? "plist preview unavailable"
+    private func prepareLoginItem() async {
+        loginBusy = true; loginItemMessage = nil
+        defer { loginBusy = false }
+        do {
+            guard let slot = endpoint.fleet.slots.first else { throw WorkflowEvidenceError.invalid("Choose an endpoint first.") }
+            let plan = try await appHost.api.loginItemPlan(slot: slot, fleetURL: endpoint.fleetFileURL)
+            let plist = try await WorkbenchIO.perform { Result { try LaunchAgentManager().plistPreview(plan: plan) } }.get()
+            try Task.checkCancellation()
+            guard endpoint.fleet.slots.first == slot, agentRootPath == plan.agentPath else {
+                throw WorkflowEvidenceError.invalid("Endpoint settings changed. Open the login preview again.")
+            }
+            loginPlan = plan; loginPlist = plist
+        } catch { loginItemMessageIsError = true; loginItemMessage = AppHost.render(error) }
     }
 
     private func installLoginItem() {
-        do {
-            try LaunchAgentManager().install(
-                config: appHost.endpoint.config,
-                agentPath: agentRootPath
-            )
-            appHost.endpoint.markLoginItemInstalled(true)
-            loginItemMessageIsError = false
-            loginItemMessage = "Login item installed."
-            showLoginItemPreview = false
-        } catch {
-            loginItemMessageIsError = true
-            loginItemMessage = AppHost.render(error)
+        guard let plan = loginPlan, endpoint.fleet.slots.first == plan.slot, agentRootPath == plan.agentPath else {
+            loginPlan = nil; loginItemMessageIsError = true
+            loginItemMessage = "Endpoint settings changed. Open the login preview again."; return
+        }
+        loginBusy = true
+        Task {
+            let result = await WorkbenchIO.perform { Result { try LaunchAgentManager().install(plan: plan) } }
+            do {
+                try result.get()
+                endpoint.markLoginItemInstalled(true)
+                loginItemMessageIsError = false; loginItemMessage = "Login item installed."
+                showLoginItemPreview = false
+            } catch { loginItemMessageIsError = true; loginItemMessage = AppHost.render(error) }
+            loginBusy = false
         }
     }
 }

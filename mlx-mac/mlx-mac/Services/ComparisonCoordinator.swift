@@ -22,6 +22,9 @@ final class ComparisonCoordinator: ObservableObject {
     @Published private(set) var isCancelling = false
     @Published private(set) var cleanupPending = false
     @Published private(set) var isLoadingHistory = false
+    @Published private(set) var detailedRun: ComparisonRun?
+    @Published private(set) var detailError: String?
+    private var detailGeneration = UUID()
     private var historyLoadTask: Task<Void, Never>?
     private var reviewTask: Task<Void, Never>?
     private var reviewGeneration = 0
@@ -102,17 +105,19 @@ final class ComparisonCoordinator: ObservableObject {
         guard activeRunID == id, let index = runs.firstIndex(where: { $0.id == id }) else { return }
         runs[index].state = state; runs[index].finishedAt = now()
         await persist(runs[index])
-        activeRunID = nil; progressMessage = nil; isCancelling = false
-        cleanupPending = false; pendingCleanup = nil; runTask = nil
         if state == .cancelled { lastError = nil }
         onBenchmarks?(state == .completed ? benchmarks(for: runs[index]) : [])
+        if let summary = try? await historyWorker.summarized(runs[index]), summary.historyDetailsOmitted == true {
+            detailedRun = runs[index]; runs[index] = summary
+        }
+        activeRunID = nil; progressMessage = nil; isCancelling = false
+        cleanupPending = false; pendingCleanup = nil; runTask = nil
         restorePendingCleanup()
     }
 
     private let probe: ServeProbe
     private let strataProbe: (@Sendable (StrataComparisonOptions) -> ServeProbe)?
     private let historyWorker: ComparisonHistoryWorker
-    private let runStore: JSONStore<ComparisonRun>
     private let promptSetStore: JSONStore<PromptSet>
     private let promptInputStore: ComparisonPromptInputStore
     private let now: () -> Date
@@ -148,6 +153,7 @@ final class ComparisonCoordinator: ObservableObject {
         promptSetStore: JSONStore<PromptSet>,
         now: @escaping () -> Date = Date.init,
         loadHistoryInBackground: Bool = false,
+        indexedHistory: Bool = false,
         mediaRunner: ComparisonMediaRunner? = nil,
         outputStore: ComparisonOutputStore? = nil,
         recoverCleanup: @escaping @Sendable (ComparisonServerReceipt) async throws -> Void = { _ in
@@ -160,8 +166,7 @@ final class ComparisonCoordinator: ObservableObject {
     ) {
         self.probe = probe
         self.strataProbe = strataProbe
-        self.runStore = runStore
-        self.historyWorker = ComparisonHistoryWorker(store: runStore)
+        self.historyWorker = ComparisonHistoryWorker(store: runStore, indexed: indexedHistory)
         self.promptSetStore = promptSetStore
         self.promptInputStore = ComparisonPromptInputStore(root: promptSetStore.url.deletingLastPathComponent()
             .appendingPathComponent("prompt-set-inputs", isDirectory: true))
@@ -170,7 +175,7 @@ final class ComparisonCoordinator: ObservableObject {
         self.outputStore = outputStore
         self.recoverCleanup = recoverCleanup
         self.generateInput = generateInput
-        if !loadHistoryInBackground {
+        if !loadHistoryInBackground && !indexedHistory {
             do {
                 runs = try runStore.loadStreaming().sorted { $0.startedAt > $1.startedAt }
                 runsLoaded = true
@@ -197,7 +202,7 @@ final class ComparisonCoordinator: ObservableObject {
             persistenceError = "Saved prompt sets are unavailable: \(AppHost.render(error))"
         }
         restorePendingCleanup()
-        if loadHistoryInBackground {
+        if loadHistoryInBackground || indexedHistory {
             isLoadingHistory = true
             historyLoadTask = Task { [weak self] in await self?.loadHistory() }
         }
@@ -208,7 +213,11 @@ final class ComparisonCoordinator: ObservableObject {
     private func loadHistory() async {
         defer { isLoadingHistory = false; historyLoadTask = nil }
         do {
-            var loaded = try await historyWorker.load()
+            var loaded = try await historyWorker.load().sorted { $0.startedAt > $1.startedAt }
+            for index in loaded.indices where loaded[index].state == .running || loaded[index].pendingServerCleanup != nil {
+                guard let full = try await historyWorker.record(id: loaded[index].id) else { throw CancellationError() }
+                loaded[index] = full
+            }
             for index in loaded.indices where loaded[index].state == .running {
                 loaded[index].state = .interrupted
                 try await historyWorker.upsert(loaded[index])
@@ -224,6 +233,16 @@ final class ComparisonCoordinator: ObservableObject {
     }
 
     private static var builtinSets: [PromptSet] { BuiltinPromptSets.all + ComparisonMediaFixtures.all }
+
+    func loadDetails(for id: UUID) async {
+        guard runs.first(where: { $0.id == id })?.historyDetailsOmitted == true, detailedRun?.id != id else { return }
+        let generation = UUID(); detailGeneration = generation; detailedRun = nil; detailError = nil
+        do {
+            guard let full = try await historyWorker.record(id: id) else { throw WorkflowEvidenceError.invalid("The saved comparison is unavailable.") }
+            guard !Task.isCancelled, detailGeneration == generation else { return }
+            detailedRun = full
+        } catch { if detailGeneration == generation { detailError = AppHost.render(error) } }
+    }
 
     /// Benchmark aggregates for every completed run — used to rehydrate
     /// recommendation evidence after an app restart.
@@ -351,7 +370,7 @@ final class ComparisonCoordinator: ObservableObject {
     }
 
     private func reclaimPromptInputs(of previous: PromptSet) {
-        guard runsLoaded, let sets = try? promptSetStore.load(), let savedRuns = try? runStore.loadStreaming() else { return }
+        guard runsLoaded, let sets = try? promptSetStore.load(), let savedRuns = try? historyWorker.loadSync() else { return }
         let legacy = savedRuns.filter { $0.inputArtifacts == nil }.flatMap { $0.promptEntries ?? [] }
         promptInputStore.reclaimInputs(of: previous, sets: sets, legacyEntries: legacy)
     }
@@ -401,23 +420,31 @@ final class ComparisonCoordinator: ObservableObject {
             defer { if reviewGeneration == generation { reviewTask = nil } }
             guard activeRunID != runID, let index = runs.firstIndex(where: { $0.id == runID && $0.state == .completed }),
                   runs[index].results.contains(where: { $0.id == modelPath }) else { return }
-            let original = runs[index]
-            var updated = original
-            var reviews = updated.qualityReviews ?? [:]
-            let rubric = updated.effectiveMode == .musicGeneration
-                ? ComparisonQualityReview.musicListeningRubric : ComparisonQualityReview.taskOutcomeRubric
-            reviews[modelPath] = score.map { ComparisonQualityReview(score: $0, rubricID: rubric, reviewedAt: now()) }
-            updated.qualityReviews = reviews
+            let visible = runs[index]
             do {
+                guard let original = try await historyWorker.record(id: runID) else {
+                    throw WorkflowEvidenceError.invalid("The saved comparison is unavailable. Reopen its results before rating it.")
+                }
+                let summary = try await historyWorker.summarized(original)
+                guard original == visible || summary == visible else {
+                    throw WorkflowEvidenceError.invalid("The saved comparison changed. Reopen its results before rating it.")
+                }
+                var updated = original
+                var reviews = updated.qualityReviews ?? [:]
+                let rubric = updated.effectiveMode == .musicGeneration
+                    ? ComparisonQualityReview.musicListeningRubric : ComparisonQualityReview.taskOutcomeRubric
+                reviews[modelPath] = score.map { ComparisonQualityReview(score: $0, rubricID: rubric, reviewedAt: now()) }
+                updated.qualityReviews = reviews
                 let captured = updated
                 let saved = try await historyWorker.update(id: runID) { current in
                     guard current == original else { throw WorkflowEvidenceError.invalid("The saved comparison changed. Reopen its results before rating it.") }
                     return captured
                 }
-                guard saved, let currentIndex = runs.firstIndex(where: { $0.id == runID }), runs[currentIndex] == original else {
+                guard saved, let currentIndex = runs.firstIndex(where: { $0.id == runID }), runs[currentIndex] == visible else {
                     throw WorkflowEvidenceError.invalid("The saved comparison is unavailable. Reopen its results before rating it.")
                 }
-                runs[currentIndex] = updated
+                runs[currentIndex] = try await historyWorker.summarized(updated)
+                if detailedRun?.id == runID { detailedRun = updated }
                 persistenceError = nil
             } catch { persistenceError = "Task review could not be saved: \(AppHost.render(error))" }
         }
@@ -427,7 +454,7 @@ final class ComparisonCoordinator: ObservableObject {
 
     func requireCurrentSuggestion(_ expected: ComparisonRun) throws -> VariantResult {
         guard runsLoaded, activeRunID == nil else { throw WorkflowEvidenceError.invalid("Wait for comparison history and the current comparison to finish.") }
-        guard let current = try runStore.findStreaming(id: expected.id, keyPath: \.id), current == expected,
+        guard let current = try historyWorker.recordSync(id: expected.id), current == expected,
               let id = current.settingsSearchCandidateID, let result = current.results.first(where: { $0.id == id }) else {
             throw WorkflowEvidenceError.invalid("The suggested comparison changed or is no longer eligible. Review its current results again.")
         }
@@ -436,7 +463,7 @@ final class ComparisonCoordinator: ObservableObject {
 
     func recordedRun(id: UUID) throws -> ComparisonRun? {
         guard runsLoaded else { throw WorkflowEvidenceError.invalid("Saved comparison history is unavailable.") }
-        return try runStore.findStreaming(id: id, keyPath: \.id)
+        return try historyWorker.recordSync(id: id)
     }
 
     func requireCurrentProfileLane(_ expected: ComparisonRun, laneID: String) throws -> VariantResult {

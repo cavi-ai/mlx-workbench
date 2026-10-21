@@ -7,6 +7,7 @@ class AppHost: ObservableObject {
     @Published var config: Config = Config.defaults(ggufRoots: [])
     @Published var agentHealth: AgentHealth = .notConfigured
     @Published var runtimeReport: RuntimeReport
+    @Published private(set) var isCheckingRuntime = false
     @Published var discoveredRoots: [String] = []
     @Published var vendorAgentPath: String = ""
     @Published var configPath: String = ""
@@ -72,6 +73,10 @@ class AppHost: ObservableObject {
     private let now: @Sendable () -> Date
     private let scanOperation: @Sendable ([String], [String], Bool, Int?) async throws -> ScanResult
     private let libraryBuildOperation: @Sendable (ScanResult, HardwareProfile, Date) -> LibrarySnapshot
+    private let runtimeProbe: @Sendable () -> RuntimeReport
+    private var runtimeCheckGeneration = UUID()
+    private var runtimeCheckTask: Task<Void, Never>?
+    private let runtimeCheckQueue = DispatchQueue(label: "runtime-checks", qos: .utility)
 
     init(
         configModule: ConfigModule = ConfigModule(),
@@ -108,9 +113,11 @@ class AppHost: ObservableObject {
         updater: UpdateCoordinator? = nil,
         preferencesStore: JSONStore<RecommendationPreferences>? = nil,
         intakeAPI: IntakeAPI? = nil,
-        inferenceTasks: InferenceTaskCoordinator? = nil
+        inferenceTasks: InferenceTaskCoordinator? = nil,
+        runtimeProbe: @escaping @Sendable () -> RuntimeReport = { RuntimeChecker.report() }
     ) {
         self.configModule = configModule
+        self.runtimeProbe = runtimeProbe
         self.cli = cli
         self.catalogStore = catalogStore
         self.catalogClient = catalogClient
@@ -156,6 +163,7 @@ class AppHost: ObservableObject {
             runStore: JSONStore<ComparisonRun>(fileURL: JSONStore<ComparisonRun>.defaultFileURL("comparison-runs.json")),
             promptSetStore: JSONStore<PromptSet>(fileURL: JSONStore<PromptSet>.defaultFileURL("prompt-sets.json")),
             loadHistoryInBackground: true,
+            indexedHistory: true,
             mediaRunner: LiveComparisonMediaRunner(api: api),
             outputStore: ComparisonOutputStore(),
             recoverCleanup: { try await api.recoverComparisonServer($0) },
@@ -167,7 +175,8 @@ class AppHost: ObservableObject {
         self.hostedComparison = hostedComparison ?? HostedComparisonCoordinator(
             nativeProbe: ServeProbe(lifecycle: .live(api: api), prober: OpenAIEndpointProber()),
             readToken: { try hosts.token(for: $0) },
-            recoverCleanup: { try await api.recoverComparisonServer($0) })
+            recoverCleanup: { try await api.recoverComparisonServer($0) },
+            loadHistoryInBackground: true, indexedHistory: true)
         self.wiring = wiring ?? WiringCoordinator(
             home: WorkbenchStatePaths.userHome(),
             store: JSONStore<WiringTransaction>(fileURL: JSONStore<WiringTransaction>.defaultFileURL("wiring-transactions.json"))
@@ -219,7 +228,8 @@ class AppHost: ObservableObject {
         self.configPath = configPath ?? configModule.configPath()
         self.vendorAgentPath = vendorAgentPath ?? configModule.vendorAgentPath()
         self.agentHealth = agentHealth ?? Self.checkAgentHealth(path: loadedConfig.mlxAgentPath, cli: cli)
-        self.runtimeReport = runtimeReport ?? RuntimeChecker.report()
+        self.runtimeReport = runtimeReport ?? .checking
+        self.isCheckingRuntime = runtimeReport == nil
         self.hardwareProfile = hardwareProfile
         let initialNow = now()
         self.now = now
@@ -544,28 +554,27 @@ class AppHost: ObservableObject {
         if let scanError, lastError == scanError { lastError = nil }
         scanError = nil
         isScanning = true
+        let scanConfig = config
 
         do {
-            let roots = config.ggufRoots.isEmpty ? Config.discoverGgufRoots() : config.ggufRoots
-            let mlxRoots = Self.scanMLXRoots(config, ggufRoots: roots)
+            let (roots, mlxRoots) = await WorkbenchIO.perform {
+                let roots = scanConfig.ggufRoots.isEmpty ? Config.discoverGgufRoots() : scanConfig.ggufRoots
+                return (roots, Self.scanMLXRoots(scanConfig, ggufRoots: roots))
+            }
             let scan = try await scanOperation(
                 roots,
                 mlxRoots,
-                config.signatures,
+                scanConfig.signatures,
                 limit
             )
-            try Task.checkCancellation()
-            let build = libraryBuildOperation
-            let hardware = hardwareProfile
-            let generatedAt = now()
-            // Folder enumeration and config reads are blocking I/O. Keep them
-            // off both the main actor and Swift's cooperative executor.
-            let snapshot = await withCheckedContinuation { continuation in
-                DispatchQueue.global(qos: .utility).async {
-                    continuation.resume(returning: build(scan, hardware, generatedAt))
-                }
+            guard !Task.isCancelled else { isScanning = false; return nil }
+            let builder = libraryBuildOperation, hardware = hardwareProfile, capturedAt = now()
+            let snapshot = await WorkbenchIO.perform { builder(scan, hardware, capturedAt) }
+            guard !Task.isCancelled else { isScanning = false; return nil }
+            guard config == scanConfig else {
+                isScanning = false
+                return await rescan(limit: limit, reconcileWorkflow: reconcileWorkflow)
             }
-            try Task.checkCancellation()
             scanResult = scan
             scanError = nil
             scannedRoots = ScanRoots(gguf: roots, mlx: mlxRoots)
@@ -600,9 +609,10 @@ class AppHost: ObservableObject {
         do {
             let normalized = try Self.normalizeAndValidateForSave(newConfig)
             let saved = try configModule.save(normalized)
+            let runtimeChanged = saved.mlxAgentPath != config.mlxAgentPath
             config = saved
             agentHealth = Self.checkAgentHealth(path: saved.mlxAgentPath, cli: cli)
-            runtimeReport = RuntimeChecker.report()
+            if runtimeChanged { refreshRuntimeReport() }
             lastError = nil
             applyFeatureToggles()
             return saved
@@ -620,7 +630,7 @@ class AppHost: ObservableObject {
             await api.setAgentPath(saved.mlxAgentPath)
             config = saved
             agentHealth = Self.checkAgentHealth(path: saved.mlxAgentPath, cli: cli)
-            runtimeReport = RuntimeChecker.report()
+            await refreshRuntimeReport()?.value
             lastError = nil
             applyFeatureToggles()
             return true
@@ -631,11 +641,36 @@ class AppHost: ObservableObject {
     }
 
     /// Re-probe the convert/serve runtime (e.g. after a guided install).
-    func refreshRuntimeReport(_ checkedReport: RuntimeReport? = nil) {
-        runtimeReport = checkedReport ?? RuntimeChecker.report()
-        // The installed mlx-lm version may have changed; the watch
-        // fingerprint must reflect the new runtime.
+    @discardableResult
+    func refreshRuntimeReport(_ checkedReport: RuntimeReport? = nil) -> Task<Void, Never>? {
+        runtimeCheckTask?.cancel()
+        let generation = UUID()
+        runtimeCheckGeneration = generation
         WatchCoordinator.invalidateEnvironmentProbe()
+        if let checkedReport {
+            runtimeReport = checkedReport
+            isCheckingRuntime = false
+            runtimeCheckTask = nil
+            return nil
+        }
+        isCheckingRuntime = true
+        runtimeReport = .checking
+        let probe = runtimeProbe
+        let queue = runtimeCheckQueue, cancellation = CLIInvocationCancellation()
+        let task = Task { [weak self] in
+            let checked: RuntimeReport? = await withTaskCancellationHandler {
+                await WorkbenchIO.perform(on: queue) {
+                    guard !cancellation.isRequested else { return nil }
+                    return probe()
+                }
+            } onCancel: { cancellation.cancel() }
+            guard let self, let checked, !Task.isCancelled, runtimeCheckGeneration == generation else { return }
+            runtimeReport = checked
+            isCheckingRuntime = false
+            runtimeCheckTask = nil
+        }
+        runtimeCheckTask = task
+        return task
     }
 
     var catalogRefreshUnavailableReason: String? {
@@ -981,6 +1016,7 @@ class AppHost: ObservableObject {
     @discardableResult
     func startLiveServices(environment: [String: String] = ProcessInfo.processInfo.environment) -> Task<Void, Never>? {
         guard !WorkbenchStatePaths.isHostedUnitTest(environment) else { return nil }
+        if isCheckingRuntime { refreshRuntimeReport() }
         applyFeatureToggles()
         let startup = Task {
             await comparison.waitForHistory()

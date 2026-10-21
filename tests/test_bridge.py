@@ -4,6 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from mlx_workbench import bridge
 
@@ -71,6 +72,32 @@ class CliLocationTests(unittest.TestCase):
 
 
 class DefaultRunnerTests(unittest.TestCase):
+    def test_stdout_limit_stops_a_producer_before_its_timeout(self):
+        with patch.object(bridge, "MAX_OUTPUT_BYTES", 1024):
+            with self.assertRaises(bridge.BridgeError) as caught:
+                bridge._default_runner(
+                    [sys.executable, "-c", "import os,time; os.write(1,b'x'*2048); time.sleep(5)"],
+                    timeout=0.5,
+                )
+        self.assertEqual(caught.exception.code, "skill_output_too_large")
+
+    def test_stderr_retains_only_a_bounded_tail_without_failing_the_command(self):
+        with patch.object(bridge, "MAX_LOG_BYTES", 128):
+            result = bridge._default_runner(
+                [sys.executable, "-c", "import os; os.write(2,b'x'*100000+b'final diagnostic'); print('ok')"],
+                timeout=5,
+            )
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["stdout"], "ok\n")
+        self.assertLessEqual(len(result["stderr"].encode()), 128)
+        self.assertTrue(result["stderr"].endswith("final diagnostic"))
+
+    def test_stdout_limit_counts_encoded_bytes(self):
+        with patch.object(bridge, "MAX_OUTPUT_BYTES", 1024):
+            with self.assertRaises(bridge.BridgeError) as caught:
+                bridge._default_runner([sys.executable, "-c", "print('🐈'*400)"], timeout=5)
+        self.assertEqual(caught.exception.code, "skill_output_too_large")
+
     def test_default_runner_prepends_interpreter_bin_dir_to_path(self):
         # The agent resolves sibling executables (mlx_lm.convert) via PATH;
         # the running interpreter's directory must win over uv/Homebrew.
@@ -461,6 +488,13 @@ class RunTests(unittest.TestCase):
 
         result = bridge.read_log(str(self.root), str(log), runner=dual)
         self.assertIn("phase one", result["text"])
+
+        log.write_bytes(b"x" * 100000 + b"final diagnostic")
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("Log tails must not read the whole file")):
+            result = bridge.read_log(str(self.root), str(log), max_bytes=32, runner=dual)
+        self.assertTrue(result["truncated"])
+        self.assertTrue(result["text"].endswith("final diagnostic"))
+        self.assertLessEqual(len(result["text"].encode()), 36)
 
 
 class AllJobListsTests(unittest.TestCase):

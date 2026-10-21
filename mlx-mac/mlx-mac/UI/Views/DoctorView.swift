@@ -85,18 +85,22 @@ struct DoctorView: View {
                                                  onInstalled: { await backends.refresh(source: appHost.config.mlxAgentPath) },
                                                  onReturn: { onRouteSelection(.library) })
                     }
-                    HealthHeroView(
-                        chain: chain,
-                        fingerprint: fingerprint,
-                        forkMode: layout.forkMode,
-                        isRouteActive: isRouteActive,
-                        installCommand: appHost.runtimeReport.install,
-                        installer: appHost.runtimeInstaller,
-                        verification: appHost.verification,
-                        onRuntimeInstalled: { appHost.refreshRuntimeReport(appHost.runtimeInstaller.runtimeReport) },
-                        onOpenSettings: { onRouteSelection(.settings) },
-                        onReviewOnOverview: { onRouteSelection(.overview) }
-                    )
+                    if appHost.isCheckingRuntime {
+                        RuntimeCheckStatusView().padding(WorkbenchSpacing.md)
+                    } else {
+                        HealthHeroView(
+                            chain: chain,
+                            fingerprint: fingerprint,
+                            forkMode: layout.forkMode,
+                            isRouteActive: isRouteActive,
+                            installCommand: appHost.runtimeReport.install,
+                            installer: appHost.runtimeInstaller,
+                            verification: appHost.verification,
+                            onRuntimeInstalled: { appHost.refreshRuntimeReport(appHost.runtimeInstaller.runtimeReport) },
+                            onOpenSettings: { onRouteSelection(.settings) },
+                            onReviewOnOverview: { onRouteSelection(.overview) }
+                        )
+                    }
                     HealthRuntimeScopeView(
                         backends: backends,
                         intake: appHost.intake,

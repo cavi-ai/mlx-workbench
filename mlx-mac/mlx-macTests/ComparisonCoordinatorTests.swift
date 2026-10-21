@@ -2,11 +2,119 @@ import Foundation
 import AppKit
 import SwiftUI
 import XCTest
+import SQLite3
 
 @testable import mlx_workbench
 
 @MainActor
 final class ComparisonCoordinatorTests: XCTestCase {
+    func testIndexedHistoryMigratesWithoutRetainingBodiesAndPreservesUntouchedRuns() async throws {
+        let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL)
+        let sample = ComparisonSample(promptID: "p", outputExcerpt: "answer", tokensPerSecond: 20,
+            timeToFirstTokenSeconds: 0.1, error: nil, fullOutput: String(repeating: "answer ", count: 300_000),
+            reasoningText: String(repeating: "thought ", count: 100_000), finishReason: "stop")
+        let first = makeRun(results: [VariantResult(modelPath: "/Models/a", modelSignature: "sig",
+            samples: [sample], aggregateTokensPerSecond: 20, aggregateTTFTSeconds: 0.1, error: nil)], state: .completed)
+        let second = makeRun(results: first.results, state: .completed)
+        try store.replaceAll([first, second])
+        let original = try Data(contentsOf: store.url)
+        let worker = ComparisonHistoryWorker(store: store, indexed: true)
+        let entries = try await worker.load()
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertTrue(entries.allSatisfy { $0.historyDetailsOmitted == true })
+        XCTAssertNil(entries.first?.results.first?.samples.first?.fullOutput)
+        XCTAssertNil(entries.first?.results.first?.samples.first?.reasoningText)
+        XCTAssertEqual(entries.first?.results.first?.samples.first?.hasCompletedAnswer, true)
+        XCTAssertLessThan(try JSONEncoder().encode(entries).count, 20_000)
+        let full = try await worker.record(id: first.id)
+        XCTAssertEqual(full, first)
+        let updated = try await worker.update(id: first.id) { current in
+            guard current == first else { throw WorkflowEvidenceError.invalid("Stale") }
+            var copy = current; copy.qualityReviews = ["/Models/a": ComparisonQualityReview(score: 5, rubricID: "task-outcome-v1", reviewedAt: Date())]
+            return copy
+        }
+        XCTAssertTrue(updated)
+        let untouched = try await worker.record(id: second.id)
+        XCTAssertEqual(untouched, second)
+        XCTAssertEqual(try Data(contentsOf: store.url), original)
+        let stale = first
+        do {
+            _ = try await worker.update(id: first.id) { current in
+                guard current == stale else { throw WorkflowEvidenceError.invalid("Stale") }
+                return stale
+            }
+            XCTFail("A stale review must fail")
+        } catch {}
+        XCTAssertThrowsError(try ComparisonRecordArchive<ComparisonRun>(legacyURL: store.url).upsert(entries[0]))
+        // A migrated archive never replays an edited backup over current evidence.
+        try Data("corrupt backup".utf8).write(to: store.url)
+        let reopened = try await ComparisonHistoryWorker(store: store, indexed: true).record(id: second.id)
+        XCTAssertEqual(reopened, second)
+        // Updating one row and listing history never decode another row's body.
+        var db: OpaquePointer?
+        let archive = ComparisonRecordArchive<ComparisonRun>(legacyURL: store.url)
+        XCTAssertEqual(sqlite3_open(archive.url.path, &db), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "UPDATE records SET payload=x'7b' WHERE id='\(second.id.uuidString)'", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+        XCTAssertEqual(try archive.load().count, 2)
+        XCTAssertThrowsError(try archive.record(id: second.id))
+        XCTAssertTrue(try archive.update(id: first.id) { var copy = $0; copy.state = .cancelled; return copy })
+    }
+
+    func testIndexedMigrationFailureRollsBackAndCanBeRetried() throws {
+        let url = coordinatorRunStoreURL
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let bad = Data("[{broken]".utf8); try bad.write(to: url)
+        let archive = ComparisonRecordArchive<ComparisonRun>(legacyURL: url)
+        XCTAssertThrowsError(try archive.load())
+        XCTAssertEqual(try Data(contentsOf: url), bad)
+        let run = makeRun(results: [], state: .completed)
+        try JSONStore<ComparisonRun>(fileURL: url).replaceAll([run, run])
+        XCTAssertThrowsError(try archive.load(), "Duplicate identities must not silently discard a run")
+        try JSONStore<ComparisonRun>(fileURL: url).replaceAll([run])
+        XCTAssertEqual(try archive.load().map(\.id), [run.id])
+        XCTAssertEqual(try archive.record(id: run.id), run)
+    }
+
+    func testHistorySummariesPreserveAnswerAndTokenLimitDecisions() throws {
+        for (text, finish) in [("<think>long reasoning</think>answer", "stop"), ("<think>reasoning only</think>", "stop"), ("", "length")] {
+            let sample = ComparisonSample(promptID: "p", outputExcerpt: "<think>excerpt", tokensPerSecond: 1,
+                timeToFirstTokenSeconds: nil, error: nil, fullOutput: text, finishReason: finish)
+            let result = VariantResult(modelPath: "/Models/a", modelSignature: nil, samples: [sample],
+                aggregateTokensPerSecond: 1, aggregateTTFTSeconds: nil, error: nil)
+            let run = makeRun(results: [result], state: .completed)
+            let summary = try ComparisonRecordArchive<ComparisonRun>.summarized(run)
+            let summarized = try XCTUnwrap(summary.results.first)
+            XCTAssertEqual(summarized.answeredEveryPrompt, result.answeredEveryPrompt)
+            XCTAssertEqual(summarized.samples.first?.hasCompletedAnswer, sample.hasCompletedAnswer)
+            XCTAssertEqual(ChatComparisonPresentation.outcome(summarized, prompt: run.promptEntries![0], in: summary),
+                ChatComparisonPresentation.outcome(result, prompt: run.promptEntries![0], in: run))
+        }
+    }
+
+    func testIndexedCoordinatorHydratesOneSelectedRunWithoutReplacingHistoryEntries() async throws {
+        let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL)
+        let sample = ComparisonSample(promptID: "p", outputExcerpt: "answer", tokensPerSecond: 1,
+            timeToFirstTokenSeconds: nil, error: nil, fullOutput: "Full recorded answer", finishReason: "stop")
+        let run = makeRun(results: [VariantResult(modelPath: "/Models/a", modelSignature: nil, samples: [sample],
+            aggregateTokensPerSecond: 1, aggregateTTFTSeconds: nil, error: nil)], state: .completed)
+        try store.replaceAll([run])
+        let coordinator = ComparisonCoordinator(probe: ServeProbe(lifecycle: ServeLifecycle(preview: { _, _ in "hash" },
+            start: { _, _, _ in }, stop: { _ in }), prober: StubComparisonProber(gate: nil)),
+            runStore: store, promptSetStore: JSONStore(fileURL: coordinatorPromptSetStoreURL),
+            loadHistoryInBackground: true, indexedHistory: true)
+        await coordinator.waitForHistory()
+        XCTAssertEqual(coordinator.runs.first?.historyDetailsOmitted, true)
+        XCTAssertNil(coordinator.detailedRun)
+        await coordinator.loadDetails(for: run.id)
+        XCTAssertEqual(coordinator.detailedRun, run)
+        XCTAssertEqual(coordinator.runs.first?.historyDetailsOmitted, true)
+        await coordinator.reviewQuality(runID: run.id, modelPath: "/Models/a", score: 4)?.value
+        XCTAssertEqual(coordinator.detailedRun?.qualityReviews?["/Models/a"]?.score, 4)
+        let saved = try XCTUnwrap(coordinator.recordedRun(id: run.id))
+        XCTAssertEqual(saved.results.first?.samples.first?.fullOutput, "Full recorded answer")
+    }
+
     func testBackgroundHistoryRestoresOwnershipBeforeAllowingNewRuns() async throws {
         let store = JSONStore<ComparisonRun>(fileURL: coordinatorRunStoreURL)
         var run = cleanupRun(); run.state = .running

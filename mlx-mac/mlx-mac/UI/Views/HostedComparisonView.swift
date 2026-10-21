@@ -89,10 +89,12 @@ struct HostedComparisonView: View {
             useCase: nil, prompts: [PromptEntry(id: "image-prompt", text: promptText, maxTokens: 512)], origin: .userCreated, mode: .imageGeneration)
     }
     private var shown: HostedComparisonRecord? {
-        comparison.records.first { $0.id == comparison.activeRunID }
+        let record = comparison.records.first { $0.id == comparison.activeRunID }
             ?? comparison.records.first { $0.id == selectedRunID } ?? comparison.records.first
+        return comparison.detailedRecord?.id == record?.id ? comparison.detailedRecord : record
     }
     private var unavailable: String? {
+        if comparison.isLoadingHistory { return "Loading saved comparisons…" }
         if comparison.activeRunID != nil { return "Wait for the active run and any native server cleanup." }
         if native.activeRunID != nil { return "Finish the local comparison first." }
         if let storage = comparison.storageError { return storage }
@@ -115,7 +117,18 @@ struct HostedComparisonView: View {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                     setup
                     ErrorBanner(text: error ?? comparison.storageError ?? comparison.lastError)
-                    if let record = shown { results(record) }
+                    if let record = shown {
+                        if record.run.historyDetailsOmitted == true {
+                            VStack(alignment: .leading) {
+                                Picker("Recorded run", selection: $selectedRunID) {
+                                    ForEach(comparison.records) { Text($0.run.promptSetName).tag(Optional($0.id)) }
+                                }
+                                if let message = comparison.detailError { ErrorBanner(text: message) }
+                                else { ProgressView("Loading recorded outputs…") }
+                                Button("Load outputs") { Task { await comparison.loadDetails(for: record.id) } }
+                            }.task(id: record.id) { await comparison.loadDetails(for: record.id) }
+                        } else { results(record) }
+                    }
                     else {
                         ContentUnavailableView("No hosted comparisons yet", systemImage: "chart.bar.xaxis",
                             description: Text("Choose models and prompts, then run to record their outputs and source metadata."))
@@ -284,8 +297,10 @@ struct HostedComparisonView: View {
         promptSet.prompts = promptSet.prompts.map { entry in
             var copy = entry; copy.maxTokens = min(entry.maxTokens, appHost.config.comparisonMaxTokens); return copy
         }
-        do { try comparison.start(targets: appHost.hostedComparisonTargets, promptSet: promptSet, workflow: mode == .imageGeneration ? workflow : nil); error = nil }
-        catch { self.error = AppHost.render(error) }
+        Task {
+            do { try await comparison.start(targets: appHost.hostedComparisonTargets, promptSet: promptSet, workflow: mode == .imageGeneration ? workflow : nil); error = nil }
+            catch { self.error = AppHost.render(error) }
+        }
     }
     private func importWorkflow() {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]; panel.canChooseDirectories = false

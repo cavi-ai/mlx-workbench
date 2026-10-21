@@ -638,14 +638,44 @@ actor WorkbenchAPI {
         return ["--repo", model]
     }
 
+    static func serveArguments(model: String, runtime: String, port: Int?, receipts: String,
+                               jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
+                               previewHash: String? = nil) -> [String] {
+        var args = ["serve", "start"] + serveModelArguments(for: model)
+            + ["--runtime", runtime, "--receipts-dir", receipts]
+        if let port { args += ["--port", String(port)] }
+        if jit { args += ["--jit"] + (memoryPolicy?.arguments ?? []) }
+        if let previewHash { args += ["--confirm", "--preview-hash", previewHash] }
+        return args
+    }
+
+    func loginItemPlan(slot: EndpointSlot, fleetURL: URL) async throws -> LoginItemPlan {
+        guard slot.enabled, !slot.modelPath.isEmpty else { throw WorkflowEvidenceError.invalid("Enable an endpoint before installing its login item.") }
+        let capturedAgent = agentPath
+        let runtime = slot.servingProfile == nil ? "auto" : "strata"
+        let options = slot.servingProfile?.options
+        let preview: [String: Any]
+        if let profile = slot.servingProfile {
+            guard profile.modelPath == slot.modelPath else { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
+            preview = try await profile.preview(api: self, port: slot.port, jit: slot.usesJIT, policy: slot.memoryPolicy)
+        } else {
+            preview = try await servePreview(repo: slot.modelPath, runtime: runtime, port: slot.port,
+                jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy)
+        }
+        guard capturedAgent == agentPath, let hash = preview["preview_hash"] as? String, !hash.isEmpty else {
+            throw ServeProbeError.servePreviewMissingHash
+        }
+        var args = Self.serveArguments(model: slot.modelPath, runtime: runtime, port: slot.port,
+            receipts: receiptDirectory, jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, previewHash: hash)
+        if let options { args += options.arguments }
+        return LoginItemPlan(slot: slot, fleetURL: fleetURL, agentPath: capturedAgent, arguments: args)
+    }
+
     func servePreview(repo: String, runtime: String, port: Int?, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                       strataOptions: StrataComparisonOptions? = nil, timeout: TimeInterval? = nil,
                       thinkingOff: Bool = false) async throws -> [String: Any] {
-        var argv = ["serve", "start"]
-            + Self.serveModelArguments(for: repo)
-            + ["--runtime", runtime, "--receipts-dir", receiptDirectory]
-        if let port { argv.append(contentsOf: ["--port", String(port)]) }
-        if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
+        var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
+                                      jit: jit, memoryPolicy: memoryPolicy)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }
@@ -658,15 +688,8 @@ actor WorkbenchAPI {
                     previewHash: String, jit: Bool = false, memoryPolicy: EndpointMemoryPolicy? = nil,
                     timeout: TimeInterval? = nil, strataOptions: StrataComparisonOptions? = nil,
                     thinkingOff: Bool = false) async throws -> [String: Any] {
-        var argv = ["serve", "start"]
-            + Self.serveModelArguments(for: repo)
-            + [
-                "--runtime", runtime,
-                "--confirm", "--preview-hash", previewHash,
-                "--receipts-dir", receiptDirectory,
-            ]
-        if let port { argv.append(contentsOf: ["--port", String(port)]) }
-        if jit { argv.append("--jit"); argv += memoryPolicy?.arguments ?? [] }
+        var argv = Self.serveArguments(model: repo, runtime: runtime, port: port, receipts: receiptDirectory,
+                                      jit: jit, memoryPolicy: memoryPolicy, previewHash: previewHash)
         if thinkingOff { argv += ["--thinking", "off"] }
         if let strataOptions {
             if let error = strataOptions.validationError { throw BridgeError.remote(code: "invalid_arguments", message: error, remediation: "Correct the Strata settings.") }

@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 import os
+import selectors
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -611,10 +613,12 @@ def read_log(agent_path, log_path, max_bytes=MAX_LOG_BYTES, runner=None):
             "The log file is not readable yet.",
             "Wait for the job to start writing output, then refresh.",
         )
-    data = target.read_bytes()
-    truncated = len(data) > max_bytes
-    if truncated:
-        data = data[-max_bytes:]
+    max_bytes = max(0, max_bytes)
+    with target.open("rb") as stream:
+        size = stream.seek(0, os.SEEK_END)
+        truncated = size > max_bytes
+        stream.seek(max(0, size - max_bytes))
+        data = stream.read(max_bytes)
     text = data.decode("utf-8", "replace")
     if truncated:
         text = "…\n" + text
@@ -647,24 +651,30 @@ def agent_environment(base=None):
     return environment
 
 
-def _kill_process_group(process):
+def _kill_process_group(process, group=None):
     """Terminate, then kill, the whole process group of a timed-out child."""
-    try:
-        group = os.getpgid(process.pid)
-    except OSError:
-        group = None
+    if group is None:
+        try:
+            group = os.getpgid(process.pid)
+        except OSError:
+            group = None
     for number in (signal.SIGTERM, signal.SIGKILL):
-        if process.poll() is not None:
-            return
         try:
             if group is not None and group == process.pid:
                 os.killpg(group, number)
+            elif process.poll() is not None:
+                return
             else:
                 process.send_signal(number)
         except OSError:
-            pass
+            return
         try:
             process.wait(timeout=5)
+            if group is not None and group == process.pid:
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except OSError:
+                    pass
             return
         except subprocess.TimeoutExpired:
             continue
@@ -687,17 +697,44 @@ def _default_runner(command, timeout):
             "The agent could not be started: {0}".format(error),
             "Check the submitted fields for control characters and retry.",
         ) from error
-    with process:
+    stdout, stderr = bytearray(), bytearray()
+    deadline = None if timeout is None else time.monotonic() + timeout
+    with process, selectors.DefaultSelector() as selector:
+        selector.register(process.stdout, selectors.EVENT_READ, stdout)
+        selector.register(process.stderr, selectors.EVENT_READ, stderr)
         try:
-            stdout, stderr = process.communicate(timeout=timeout)
+            while selector.get_map():
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                for key, _ in selector.select(remaining):
+                    chunk = os.read(key.fd, 65536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        key.fileobj.close()
+                        continue
+                    captured = key.data
+                    captured.extend(chunk)
+                    if captured is stdout and len(stdout) > MAX_OUTPUT_BYTES:
+                        raise BridgeError(
+                            "skill_output_too_large",
+                            "The agent returned more output than this app will buffer.",
+                            "Narrow roots, lower --limit, or use --fast for discovery.",
+                        )
+                    if captured is stderr:
+                        del stderr[:max(0, len(stderr) - MAX_LOG_BYTES)]
+            remaining = None if deadline is None else max(0, deadline - time.monotonic())
+            process.wait(timeout=remaining)
         except subprocess.TimeoutExpired:
-            _kill_process_group(process)
-            stdout, stderr = process.communicate()
+            _kill_process_group(process, process.pid)
             raise BridgeError(
                 "skill_timeout",
                 "The agent did not finish within {0}s.".format(timeout),
                 "Narrow the request (for example discover --fast), or raise the timeout.",
             )
+        except BaseException:
+            _kill_process_group(process, process.pid)
+            raise
     return {
         "returncode": process.returncode,
         "stdout": stdout.decode("utf-8", "replace"),

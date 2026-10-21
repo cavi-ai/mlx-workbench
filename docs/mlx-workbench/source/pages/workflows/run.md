@@ -49,7 +49,7 @@ The **Endpoints** section keeps chosen models serving on stable ports. The app r
 - The section sums the memory estimates of enabled endpoints that are not already resident. Enabling an endpoint that tips the total past won't-fit needs an explicit override. An unknown model size leaves the total unknown.
 - **Wire roles…** maps roles onto running endpoints and writes the router config through the engine's `fleet apply`, with preview and receipt. Only running endpoints with Hugging Face cache repository ids are assigned; the rest are reported as skipped.
 
-The menu bar item aggregates endpoints ("N of M endpoints running") and starts or stops each one. An optional login item, `ai.cavi.mlxworkbench.endpoint`, runs `mlx-agent serve start` once at login for the first endpoint. Its plist is shown before installation. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority.
+The menu bar item aggregates endpoints ("N of M endpoints running") and starts or stops each one. An optional login item, `ai.cavi.mlxworkbench.endpoint`, runs `mlx-agent serve start` once at login for the first endpoint. Its engine preview and plist are prepared before confirmation. The captured command preserves local paths, runtime selection, load-on-request policy and receipt storage. Changed or disabled endpoint settings prevent login startup; changed model or runtime evidence requires a fresh preview. Remove and reinstall the login item after changing its endpoint settings. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority.
 
 ## Load on request
 

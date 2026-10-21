@@ -534,13 +534,13 @@ final class EndpointSupervisorTests: XCTestCase {
     func testPlistPreviewContainsLabelArgumentsAndRunAtLoad() throws {
         let home = try makeHome()
         let manager = LaunchAgentManager(home: home, run: { _, _ in "" }, uid: 501)
-        let config = EndpointConfig(enabled: true, port: 8766, modelPath: "/Models/q4", installedAtLogin: false)
+        let plan = LoginItemPlan(slot: EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/q4"), fleetURL: storeURL, agentPath: "/opt/mlx-agent", arguments: WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: home.path, previewHash: "hash"))
 
-        let plist = try manager.plistPreview(config: config, agentPath: "/opt/mlx-agent")
+        let plist = try manager.plistPreview(plan: plan)
 
         XCTAssertTrue(plist.contains("<string>ai.cavi.mlxworkbench.endpoint</string>"))
         XCTAssertTrue(plist.contains("<string>/opt/mlx-agent/scripts/mlx-agent</string>"))
-        XCTAssertTrue(plist.contains("<string>--repo</string>"))
+        XCTAssertTrue(plist.contains("<string>--path</string>"))
         XCTAssertTrue(plist.contains("<string>/Models/q4</string>"))
         XCTAssertTrue(plist.contains("<string>8766</string>"))
         XCTAssertTrue(plist.contains("<key>RunAtLoad</key>"))
@@ -554,9 +554,9 @@ final class EndpointSupervisorTests: XCTestCase {
             invocations.record(executable: executable, argv: argv)
             return ""
         }, uid: 501)
-        let config = EndpointConfig(enabled: true, port: 8766, modelPath: "/Models/q4", installedAtLogin: false)
+        let plan = LoginItemPlan(slot: EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/q4"), fleetURL: storeURL, agentPath: "/opt/mlx-agent", arguments: WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: home.path, previewHash: "hash"))
 
-        try manager.install(config: config, agentPath: "/opt/mlx-agent")
+        try manager.install(plan: plan)
 
         XCTAssertTrue(manager.isInstalled)
         let calls = invocations.values
@@ -574,8 +574,8 @@ final class EndpointSupervisorTests: XCTestCase {
             invocations.record(executable: executable, argv: argv)
             return ""
         }, uid: 501)
-        let config = EndpointConfig(enabled: true, port: 8766, modelPath: "/Models/q4", installedAtLogin: false)
-        try manager.install(config: config, agentPath: "/opt/mlx-agent")
+        let plan = LoginItemPlan(slot: EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/q4"), fleetURL: storeURL, agentPath: "/opt/mlx-agent", arguments: WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: home.path, previewHash: "hash"))
+        try manager.install(plan: plan)
 
         try manager.uninstall()
 

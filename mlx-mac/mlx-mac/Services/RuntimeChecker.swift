@@ -105,6 +105,14 @@ struct RuntimeChecker {
 // MARK: - RuntimeReport
 
 struct RuntimeReport: Codable, Equatable {
+    static var checking: RuntimeReport {
+        RuntimeReport(
+            convert: ConvertStatus(ok: false, modules: [:], executables: [:], missingModules: [], missingExecutables: [],
+                                   install: "make install", message: "Checking runtime…"),
+            serve: ServeStatus(ok: false, executables: [:], missingExecutables: [], install: "make install", message: "Checking runtime…"),
+            install: "make install", ok: false)
+    }
+
     let convert: ConvertStatus
     let serve: ServeStatus
     let install: String

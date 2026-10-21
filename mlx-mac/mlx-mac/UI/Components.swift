@@ -437,6 +437,17 @@ struct RawJSONDisclosure: View {
 /// Guided runtime setup: one button that runs `make install` with a live
 /// log tail, then re-probes. Hidden entirely when the app isn't running
 /// from a checkout (no repo root to install into).
+struct RuntimeCheckStatusView: View {
+    var body: some View {
+        HStack(spacing: WorkbenchSpacing.sm) {
+            ProgressView().controlSize(.small)
+            Text("Checking runtime…").font(WorkbenchTypography.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("runtime-check-status")
+    }
+}
+
 struct RuntimeInstallView: View {
     @ObservedObject var installer: RuntimeInstaller
     let onFinished: () -> Void

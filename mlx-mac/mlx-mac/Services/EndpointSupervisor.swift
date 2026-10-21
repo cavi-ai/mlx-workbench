@@ -49,6 +49,7 @@ final class EndpointSupervisor: ObservableObject {
     private let lifecycle: ServeLifecycle
     private let statusProvider: @Sendable () async throws -> [ServerInfo]
     private let fleetStore: EndpointFleetStore
+    var fleetFileURL: URL { fleetStore.fleetStore.url }
     private let now: () -> Date
     private let maxRestarts: Int
     private let restartWindow: TimeInterval

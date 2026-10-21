@@ -1071,7 +1071,8 @@ extension RunRemodelTests {
         let (host, gate) = makeProtectedHost(counter: counter, endpointCalls: endpointCalls, server: server)
         await host.modelWorkflow.refreshServers()
         host.hostedComparison.validateTarget = { _ in }
-        try host.hostedComparison.start(
+        await host.hostedComparison.waitForHistory()
+        try await host.hostedComparison.start(
             targets: [HostedComparisonTarget(local: Fixture.model(path: path), capturedAt: Date())],
             promptSet: PromptSet(id: "lane", name: "Lane", useCase: nil, prompts: [PromptEntry(id: "a", text: "Hi")], origin: .userCreated))
 
