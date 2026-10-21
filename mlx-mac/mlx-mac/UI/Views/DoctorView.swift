@@ -80,7 +80,7 @@ struct DoctorView: View {
         GeometryReader { viewport in
             ScrollView {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
-                    if let request = appHost.modelRuntimeRecoveryRequest {
+                    if let request = appHost.handoffs[.recoverModelRuntime] {
                         ModelRuntimeRecoveryView(appHost: appHost, session: recovery, request: request,
                                                  onInstalled: { await backends.refresh(source: appHost.config.mlxAgentPath) },
                                                  onReturn: { onRouteSelection(.library) })

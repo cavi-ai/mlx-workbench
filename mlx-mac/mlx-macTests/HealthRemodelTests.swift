@@ -170,18 +170,18 @@ final class HealthBackendTests: XCTestCase {
                 return scan
             })
             host.librarySnapshot = LibrarySnapshot(models: [model], groups: [], hardware: host.hardwareProfile, generatedAt: Date())
-            host.modelRuntimeRecoveryRequest = request
+            host.handoffs.send(request, as: .recoverModelRuntime)
             let source = host.config.mlxAgentPath
             do {
                 try await host.returnFromRuntimeRecovery(request, source: source)
                 XCTAssertEqual(outcome, "installed")
-                XCTAssertEqual(host.libraryRevealRequest?.modelPath, original.path)
+                XCTAssertEqual(host.handoffs[.revealModel]?.modelPath, original.path)
                 XCTAssertEqual(host.librarySnapshot?.models.first?.readiness, .ready)
-                XCTAssertNil(host.modelRuntimeRecoveryRequest)
+                XCTAssertNil(host.handoffs[.recoverModelRuntime])
             } catch {
                 XCTAssertNotEqual(outcome, "installed", error.localizedDescription)
-                XCTAssertNil(host.libraryRevealRequest)
-                XCTAssertEqual(host.modelRuntimeRecoveryRequest?.id, request.id)
+                XCTAssertNil(host.handoffs[.revealModel])
+                XCTAssertEqual(host.handoffs[.recoverModelRuntime]?.id, request.id)
             }
         }
     }

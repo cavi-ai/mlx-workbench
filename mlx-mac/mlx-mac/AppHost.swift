@@ -19,15 +19,8 @@ class AppHost: ObservableObject {
     @Published var catalog: CatalogState
     @Published var isRefreshingCatalog = false
     @Published var selectedModelPath: String?
-    /// Explicit model navigation, consumed when Library becomes active.
-    @Published var libraryRevealRequest: LibraryRevealRequest?
-    @Published var modelRuntimeRecoveryRequest: ModelRuntimeRecoveryRequest?
-    /// One-shot navigation intent; client configuration still requires its own preview.
-    @Published var clientWiringRequest: ClientWiringRequest?
-    @Published var servingProfileComparisonRequest: ServingProfileComparisonSetup?
-    @Published var modelComparisonRequest: ComparisonModelRequest?
-    /// Consumed only when Compare becomes active; importing still requires review.
-    @Published var workflowReportImportRequested = false
+    /// Cross-tab requests, applied by their destination route while it is active.
+    @Published var handoffs = RouteHandoffs()
     @Published var benchmarkResults: [RecommendationBenchmarkResult] = []
     @Published var recommendationPreferences: RecommendationPreferences = .defaults
     @Published var hardwareProfile: HardwareProfile
@@ -41,8 +34,6 @@ class AppHost: ObservableObject {
     let modelHosts: ModelHostsCoordinator
     let hostedComparison: HostedComparisonCoordinator
     @Published var compareHostedModels = false
-    @Published var hostedLibraryRequested = false
-    @Published var hostedLibraryHostRequest: ModelHost?
     @Published var hostedComparisonTargets: [HostedComparisonTarget] = []
     let servingProfiles: ServingProfileCoordinator
     let lab: LabCoordinator
@@ -360,10 +351,9 @@ class AppHost: ObservableObject {
         }
     }
 
-    /// Consume once; a removed or edited connection must not select another host.
-    func consumeHostedLibraryHostRequest() throws -> ModelHost? {
-        guard let requested = hostedLibraryHostRequest else { return nil }
-        hostedLibraryHostRequest = nil
+    /// Takes the pending Hosted models request once; a removed or edited connection must not select another host.
+    func takeHostedModelsHost() throws -> ModelHost? {
+        guard handoffs[.openHostedModels] != nil, let requested = handoffs.take(.openHostedModels)?.host else { return nil }
         guard modelHosts.hosts.contains(requested) else {
             throw HostedIntegrationError.invalid("The requested host connection changed or was removed. Select a host to continue.")
         }
@@ -375,7 +365,7 @@ class AppHost: ObservableObject {
     }
 
     func modelRuntimeRecoveryIsCurrent(_ request: ModelRuntimeRecoveryRequest, source: String) -> Bool {
-        modelRuntimeRecoveryRequest?.id == request.id && config.mlxAgentPath == source
+        handoffs[.recoverModelRuntime]?.id == request.id && config.mlxAgentPath == source
             && librarySnapshot?.models.contains(where: request.matches) == true
     }
 
@@ -391,13 +381,13 @@ class AppHost: ObservableObject {
         guard let snapshot = await rescan(limit: nil, reconcileWorkflow: false) else {
             throw failure(lastError ?? "The model inventory could not be refreshed. Retry Return to model.")
         }
-        guard config.mlxAgentPath == source, modelRuntimeRecoveryRequest?.id == request.id,
+        guard config.mlxAgentPath == source, handoffs[.recoverModelRuntime]?.id == request.id,
               snapshot.models.contains(where: request.matches) else {
             throw failure("The original model is missing or changed in the refreshed library. Select it again in Library.")
         }
         selectedModelPath = request.modelPath
-        libraryRevealRequest = LibraryRevealRequest(modelPath: request.modelPath)
-        modelRuntimeRecoveryRequest = nil
+        handoffs.send(LibraryRevealRequest(modelPath: request.modelPath), as: .revealModel)
+        handoffs.finish(request, as: .recoverModelRuntime)
     }
 
     func rescan(limit: Int? = nil) async {
@@ -442,7 +432,7 @@ class AppHost: ObservableObject {
                                   downloadedPath: IntakeCoordinator.reusableSource(conversion?.localSourcePath, for: resolution))
             return .prepare
         }
-        libraryRevealRequest = LibraryRevealRequest(modelPath: path)
+        handoffs.send(LibraryRevealRequest(modelPath: path), as: .revealModel)
         return .library
     }
 
@@ -455,7 +445,7 @@ class AppHost: ObservableObject {
         case .alreadyMLX:
             await rescan()
             selectedModelPath = downloadedPath
-            if let downloadedPath { libraryRevealRequest = LibraryRevealRequest(modelPath: downloadedPath) }
+            if let downloadedPath { handoffs.send(LibraryRevealRequest(modelPath: downloadedPath), as: .revealModel) }
             return .library
         case .gguf:
             await rescan()
@@ -466,7 +456,7 @@ class AppHost: ObservableObject {
                 modelWorkflow.inspect(source: model.item, snapshot: librarySnapshot)
                 return .prepare
             }
-            libraryRevealRequest = LibraryRevealRequest(modelPath: path)
+            handoffs.send(LibraryRevealRequest(modelPath: path), as: .revealModel)
             return .library
         default:
             return nil

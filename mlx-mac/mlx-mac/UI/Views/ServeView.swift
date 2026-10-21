@@ -204,7 +204,7 @@ struct ServeView: View {
             if let request = ClientWiringRequest.forServer(server) {
                 Button("Configure clients…") {
                     guard modelWorkflow.serversError == nil else { return }
-                    appHost.clientWiringRequest = request
+                    appHost.handoffs.send(request, as: .wireClient)
                     onRouteSelection(.clientSetup)
                 }
                 .buttonStyle(.bordered).controlSize(.small)
@@ -334,7 +334,7 @@ struct ServeView: View {
                         text: "\(selectedModel?.item.task?.type.title ?? "This kind of") models are not served. Use them from the Library inspector."
                     )
                     Button("Open Library") {
-                        if let selectedModel { appHost.libraryRevealRequest = LibraryRevealRequest(modelPath: selectedModel.item.path) }
+                        if let selectedModel { appHost.handoffs.send(LibraryRevealRequest(modelPath: selectedModel.item.path), as: .revealModel) }
                         onRouteSelection(.library)
                     }
                         .buttonStyle(.bordered)
@@ -422,7 +422,7 @@ struct ServeView: View {
                 guard appHost.comparison.activeRunID == nil, !appHost.comparison.savingPromptSet else {
                     return "Wait for the current comparison or prompt-set save to finish."
                 }
-                appHost.servingProfileComparisonRequest = setup
+                appHost.handoffs.send(setup, as: .compareServingProfiles)
                 onRouteSelection(.compare)
                 return nil
             })

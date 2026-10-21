@@ -508,6 +508,11 @@ server.
   search/readiness/quantization filters and opens the requested model's inspector. The
   receiver accepts only a path present in the current snapshot; grouping and column
   preferences remain intact. Reveal does not write config or start model work.
+  Cross-tab requests (Library reveal, runtime recovery, Hosted models, client wiring, Compare
+  model and serving-profile requests, workflow report import) go through `AppHost.handoffs`
+  (`UI/RouteHandoffs.swift`): at most one pending request per `HandoffKind`, read by the
+  destination route while active and finished once applied or rejected. A request the route
+  cannot apply yet stays pending; finishing a request never clears a newer one.
   The LM Studio source lists models from the Library snapshot, not a scan of its own.
   `LMStudioShelfResolver` (off the main actor) reads `downloadsFolder` from `~/.lmstudio/settings.json`
   (the default and older folders only when settings name none), and states per format whether the last

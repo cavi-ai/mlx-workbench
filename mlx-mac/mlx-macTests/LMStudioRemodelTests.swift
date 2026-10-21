@@ -964,17 +964,17 @@ final class LMStudioRenderTests: XCTestCase {
         let picker = try XCTUnwrap(controls(hosting).first { $0.itemTitles.contains("All local models") && $0.itemTitles.contains("Hosted models") })
         XCTAssertEqual(picker.selectedItem?.title, "LM Studio files")
         let request = LibraryRevealRequest(modelPath: models[1].item.path)
-        app.libraryRevealRequest = request
+        app.handoffs.send(request, as: .revealModel)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(picker.selectedItem?.title, "LM Studio files", "Hidden pages must retain the request until navigation arrives")
-        XCTAssertEqual(app.libraryRevealRequest, request)
+        XCTAssertEqual(app.handoffs[.revealModel], request)
         XCTAssertEqual(app.selectedModelPath, models[0].item.path)
         hosting.rootView = LibraryWorkspace(appHost: app, initialSource: .lmStudio)
             .environment(\.isRouteActive, true).frame(width: 814, height: 900)
         for _ in 0..<100 where app.selectedModelPath != models[1].item.path { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(picker.selectedItem?.title, "All local models")
         XCTAssertEqual(app.selectedModelPath, models[1].item.path)
-        XCTAssertNil(app.libraryRevealRequest)
+        XCTAssertNil(app.handoffs[.revealModel])
         XCTAssertEqual(app.modelWorkflow.workflow, originalWorkflow)
         XCTAssertEqual(app.config, originalConfig)
     }
@@ -991,15 +991,15 @@ final class LMStudioRenderTests: XCTestCase {
         let initialSelection: String? = keepsSelection ? model.item.path : nil
         app.selectedModelPath = initialSelection
         let originalWorkflow = app.modelWorkflow.workflow
-        app.libraryRevealRequest = LibraryRevealRequest(modelPath: "/m/missing-8bit")
+        app.handoffs.send(LibraryRevealRequest(modelPath: "/m/missing-8bit"), as: .revealModel)
         let hosting = NSHostingView(rootView: LibraryWorkspace(appHost: app)
             .environment(\.isRouteActive, true).frame(width: 814, height: 900))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 814, height: 900),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = hosting; window.orderFront(nil)
         defer { window.close() }
-        for _ in 0..<100 where app.libraryRevealRequest != nil { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertNil(app.libraryRevealRequest)
+        for _ in 0..<100 where app.handoffs[.revealModel] != nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNil(app.handoffs[.revealModel])
         XCTAssertEqual(app.selectedModelPath, initialSelection)
         XCTAssertEqual(app.modelWorkflow.workflow, originalWorkflow)
         hosting.layoutSubtreeIfNeeded()

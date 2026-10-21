@@ -104,20 +104,18 @@ final class HostedModelsRenderTests: XCTestCase {
         XCTAssertEqual(try sourcePicker().selectedItem?.title, "Hosted models")
         XCTAssertFalse(try sourcePicker().itemTitles.contains("Images · ComfyUI"))
         XCTAssertTrue(controls().contains { $0.selectedItem?.title == "Select a host" })
-        app.hostedLibraryHostRequest = selected
-        app.hostedLibraryRequested = true
+        app.handoffs.send(HostedModelsRequest(host: selected), as: .openHostedModels)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(try sourcePicker().selectedItem?.title, "Hosted models")
-        XCTAssertNil(app.hostedLibraryHostRequest)
+        XCTAssertNil(app.handoffs[.openHostedModels])
         var edited = connections[1]; edited.name = "Renamed"
         try hosts.save(edited, token: nil, replaceToken: false)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(try sourcePicker().itemTitles.contains("Renamed · LM Studio"))
-        app.hostedLibraryHostRequest = connections[0]
-        app.hostedLibraryRequested = true
+        app.handoffs.send(HostedModelsRequest(host: connections[0]), as: .openHostedModels)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(try sourcePicker().selectedItem?.title, "Shared · Ollama")
-        XCTAssertNil(app.hostedLibraryHostRequest)
+        XCTAssertNil(app.handoffs[.openHostedModels])
         XCTAssertEqual(app.config, originalConfig)
         XCTAssertNil(app.hostedComparison.activeRunID)
         requested = await reads.requested
@@ -205,18 +203,18 @@ final class HostedModelsRenderTests: XCTestCase {
         try hosts.save(second, token: nil, replaceToken: false)
         let host = AppHost(config: .defaults(ggufRoots: []), discoveredRoots: [], vendorAgentPath: "", configPath: root.appendingPathComponent("config.json").path,
             agentHealth: .notConfigured, runtimeReport: report(), modelHosts: hosts)
-        host.hostedLibraryHostRequest = second
-        XCTAssertEqual(try host.consumeHostedLibraryHostRequest(), second)
-        XCTAssertNil(try host.consumeHostedLibraryHostRequest())
-        host.hostedLibraryHostRequest = second
+        host.handoffs.send(HostedModelsRequest(host: second), as: .openHostedModels)
+        XCTAssertEqual(try host.takeHostedModelsHost(), second)
+        XCTAssertNil(try host.takeHostedModelsHost())
+        host.handoffs.send(HostedModelsRequest(host: second), as: .openHostedModels)
         second.baseURL = "http://127.0.0.1:11436"
         try hosts.save(second, token: nil, replaceToken: false)
-        XCTAssertThrowsError(try host.consumeHostedLibraryHostRequest())
-        XCTAssertNil(host.hostedLibraryHostRequest)
-        host.hostedLibraryHostRequest = first
+        XCTAssertThrowsError(try host.takeHostedModelsHost())
+        XCTAssertNil(host.handoffs[.openHostedModels])
+        host.handoffs.send(HostedModelsRequest(host: first), as: .openHostedModels)
         try hosts.remove(first.id)
-        XCTAssertThrowsError(try host.consumeHostedLibraryHostRequest())
-        XCTAssertNil(host.hostedLibraryHostRequest)
+        XCTAssertThrowsError(try host.takeHostedModelsHost())
+        XCTAssertNil(host.handoffs[.openHostedModels])
     }
 
     func testMemoryPanelReadsNoHostsUntilExplicitRefresh() async throws {
@@ -281,15 +279,15 @@ final class HostedModelsRenderTests: XCTestCase {
             signature: "sha", companion: nil, readable: true, status: "ready", outputs: [], tensorCount: nil, error: nil,
             task: ModelTask(type: .textLLM, useCases: [], source: "registry", confidence: "confirmed")), readiness: .ready)
         host.librarySnapshot = LibrarySnapshot(models: [model], groups: [], hardware: .current(), generatedAt: Date())
-        host.modelComparisonRequest = try XCTUnwrap(ComparisonModelRequest(model: model))
+        host.handoffs.send(try XCTUnwrap(ComparisonModelRequest(model: model)), as: .compareModel)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(host.compareHostedModels)
-        XCTAssertNil(host.modelComparisonRequest)
+        XCTAssertNil(host.handoffs[.compareModel])
         XCTAssertNil(host.comparison.activeRunID)
         host.compareHostedModels = true
         let baseline = ServingProfile(id: UUID(), name: "Baseline", modelPath: model.item.path, options: StrataComparisonOptions())
         let candidate = ServingProfile(id: UUID(), name: "Candidate", modelPath: model.item.path, options: StrataComparisonOptions(speculation: true))
-        host.servingProfileComparisonRequest = try ServingProfileComparisonSetup(baseline: baseline, candidate: candidate)
+        host.handoffs.send(try ServingProfileComparisonSetup(baseline: baseline, candidate: candidate), as: .compareServingProfiles)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(host.compareHostedModels)
         XCTAssertNil(host.comparison.activeRunID)

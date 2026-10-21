@@ -230,8 +230,7 @@ struct ContentView: View {
         ToolbarItem(placement: .automatic) {
             SystemResourceHeader(resources: appHost.resources, endpoint: endpoint, hosts: appHost.modelHosts,
                                  onOpenHost: { host in
-                appHost.hostedLibraryHostRequest = host
-                appHost.hostedLibraryRequested = true
+                appHost.handoffs.send(HostedModelsRequest(host: host), as: .openHostedModels)
                 navigate(to: .library)
             }, occupancy: appHost.occupancy, onUnload: { server in
                 await appHost.unloadServing(server)

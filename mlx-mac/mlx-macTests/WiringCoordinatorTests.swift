@@ -335,7 +335,7 @@ final class WiringCoordinatorTests: XCTestCase {
         let host = AppHost(config: Config.defaults(), modelWorkflowAPI: api,
             modelWorkflowPersistence: ModelWorkflowPersistence(load: { [] }, upsert: { _ in }), wiring: coordinator,
             preferencesStore: JSONStore<RecommendationPreferences>(fileURL: home.appendingPathComponent("preferences.json")))
-        host.clientWiringRequest = ClientWiringRequest(modelPath: server.path!, preferredPort: 8766)
+        host.handoffs.send(ClientWiringRequest(modelPath: server.path!, preferredPort: 8766), as: .wireClient)
         let view = NSHostingView(rootView: WireView(appHost: host).environment(\.isRouteActive, true)
             .frame(width: 720, height: 720).background(WorkbenchColor.canvas).preferredColorScheme(.dark))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 720), styleMask: [.titled], backing: .buffered, defer: false)
@@ -344,10 +344,10 @@ final class WiringCoordinatorTests: XCTestCase {
         defer { window.close() }
         view.layoutSubtreeIfNeeded()
         for _ in 0..<10 {
-            if host.clientWiringRequest == nil { break }
+            if host.handoffs[.wireClient] == nil { break }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
-        XCTAssertNil(host.clientWiringRequest)
+        XCTAssertNil(host.handoffs[.wireClient])
         XCTAssertEqual(host.modelWorkflow.servers, [server])
         XCTAssertTrue(coordinator.transactions.isEmpty)
         view.layoutSubtreeIfNeeded()

@@ -538,7 +538,7 @@ struct QuantView: View {
                                 onWire: { path in
                                     let endpoint = appHost.endpoint.config
                                     let port = endpoint.enabled && HFRepoID.matches(endpoint.modelPath, path) ? endpoint.port : nil
-                                    appHost.clientWiringRequest = ClientWiringRequest(modelPath: path, preferredPort: port)
+                                    appHost.handoffs.send(ClientWiringRequest(modelPath: path, preferredPort: port), as: .wireClient)
                                     onRouteSelection(.clientSetup)
                                 }, onImport: importReport, isReadingReport: isReadingReport || isChoosingReport)
                         }
@@ -585,9 +585,9 @@ struct QuantView: View {
         }
         .task(id: isRouteActive) { consumeImportRequest() }
         .task(id: isRouteActive) { consumeProfileComparisonRequest() }
-        .onChange(of: appHost.servingProfileComparisonRequest?.id) { _, _ in consumeProfileComparisonRequest() }
+        .onChange(of: appHost.handoffs[.compareServingProfiles]?.id) { _, _ in consumeProfileComparisonRequest() }
         .task(id: isRouteActive) { consumeModelComparisonRequest() }
-        .onChange(of: appHost.modelComparisonRequest?.id) { _, _ in consumeModelComparisonRequest() }
+        .onChange(of: appHost.handoffs[.compareModel]?.id) { _, _ in consumeModelComparisonRequest() }
         .sheet(item: $pendingReuseSetup) { setup in
             ComparisonRunSetupSheet(setup: setup,
                 availablePaths: Set(readyModels.map { $0.item.path }), name: shortName,
@@ -597,7 +597,7 @@ struct QuantView: View {
                         ? (comparison.promptSetManagementError ?? "Prompt set could not be saved.") : nil
                 })
         }
-        .onChange(of: appHost.workflowReportImportRequested) { _, _ in consumeImportRequest() }
+        .onChange(of: appHost.handoffs[.importWorkflowReport]) { _, _ in consumeImportRequest() }
         .sheet(item: $pendingPromptSetRename) { set in
             PromptSetRenameSheet(set: set) { name in
                 comparison.renamePromptSet(id: set.id, name: name)
@@ -643,8 +643,8 @@ struct QuantView: View {
     }
 
     private func consumeImportRequest() {
-        guard isRouteActive, appHost.workflowReportImportRequested else { return }
-        appHost.workflowReportImportRequested = false
+        guard isRouteActive, let request = appHost.handoffs[.importWorkflowReport] else { return }
+        appHost.handoffs.finish(request, as: .importWorkflowReport)
         importReport()
     }
 
@@ -655,14 +655,14 @@ struct QuantView: View {
     }
 
     private func consumeModelComparisonRequest() {
-        guard isRouteActive, let request = appHost.modelComparisonRequest else { return }
+        guard isRouteActive, let request = appHost.handoffs[.compareModel] else { return }
         guard canApplyLibrarySelection else {
             reuseError = "Finish the current comparison, save, editor or profile verification, then use the selected Library model."
             return
         }
         guard let model = request.resolve(in: appHost.librarySnapshot?.models ?? []) else {
             reuseError = "The selected Library model is no longer ready for this comparison mode. Refresh Library and select it again."
-            appHost.modelComparisonRequest = nil
+            appHost.handoffs.finish(request, as: .compareModel)
             return
         }
         reusedPromptSet = nil
@@ -677,11 +677,11 @@ struct QuantView: View {
         initializedSuggestions = true; manuallySelectedModels = true
         selectedRunID = nil; reuseError = nil
         selectionReason = "Selected from Library. Add another model or run this model against the chosen prompts."
-        appHost.modelComparisonRequest = nil
+        appHost.handoffs.finish(request, as: .compareModel)
     }
 
     private func consumeProfileComparisonRequest() {
-        guard isRouteActive, let request = appHost.servingProfileComparisonRequest else { return }
+        guard isRouteActive, let request = appHost.handoffs[.compareServingProfiles] else { return }
         guard comparison.activeRunID == nil, !comparison.savingPromptSet, servingProfiles.activeID == nil else {
             reuseError = "Wait for the comparison, prompt-set save or profile verification to finish."
             return
@@ -702,8 +702,8 @@ struct QuantView: View {
             initializedSuggestions = true; manuallySelectedModels = true
             selectionReason = "Recorded profile settings: A · \(request.baseline.name); B · \(request.candidate.name). Choose one prompt set, then Run comparison."
             selectedRunID = nil; reuseError = nil
-            appHost.servingProfileComparisonRequest = nil
-        } catch { reuseError = AppHost.render(error); appHost.servingProfileComparisonRequest = nil }
+            appHost.handoffs.finish(request, as: .compareServingProfiles)
+        } catch { reuseError = AppHost.render(error); appHost.handoffs.finish(request, as: .compareServingProfiles) }
     }
 
     private func importReport() {
@@ -905,11 +905,11 @@ struct QuantView: View {
             if comparison.activeRunID == nil {
                 ComparisonRunGuidance(reason: runUnavailableReason)
             }
-            if appHost.servingProfileComparisonRequest != nil {
+            if appHost.handoffs[.compareServingProfiles] != nil {
                 Button("Use requested profiles") { consumeProfileComparisonRequest() }
                     .disabled(comparison.activeRunID != nil || comparison.savingPromptSet || servingProfiles.activeID != nil)
             }
-            if appHost.modelComparisonRequest != nil {
+            if appHost.handoffs[.compareModel] != nil {
                 Button("Use selected Library model") { consumeModelComparisonRequest() }
                     .disabled(!canApplyLibrarySelection)
             }
