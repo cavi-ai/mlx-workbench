@@ -7,13 +7,69 @@ import XCTest
 /// injected runner — tests use a temp home and a recording runner, never the
 /// real launchctl.
 final class LaunchAgentManagerTests: XCTestCase {
-    private let config = EndpointConfig(
-        enabled: true, port: 8766, modelPath: "/models/qwen", installedAtLogin: false
-    )
+    private let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/qwen")
+    private func plan() -> LoginItemPlan {
+        LoginItemPlan(slot: slot, fleetURL: URL(fileURLWithPath: "/state/endpoint-fleet.json"), agentPath: "/opt/agent",
+            arguments: WorkbenchAPI.serveArguments(model: slot.modelPath, runtime: "auto", port: slot.port, receipts: "/state", previewHash: "reviewed-hash"))
+    }
+
+    func testGeneratedStartupArgumentsPassTheVendoredEnginePreviewContract() async throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let agent = root.appendingPathComponent("vendor/mlx-agent")
+        let home = try makeHome(), model = home.appendingPathComponent("local model")
+        try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+        try Data(#"{"model_type":"qwen2","hidden_size":16}"#.utf8).write(to: model.appendingPathComponent("config.json"))
+        try Data([0, 0, 0, 0]).write(to: model.appendingPathComponent("model.safetensors"))
+        let slot = EndpointSlot(enabled: true, port: 19997, modelPath: model.path)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.path, receiptDirectory: home.path)
+        let plan = try await api.loginItemPlan(slot: slot, fleetURL: home.appendingPathComponent("fleet.json"))
+        XCTAssertTrue(plan.arguments.contains("--path"))
+        XCTAssertTrue(plan.arguments.contains("--confirm"))
+        let hashIndex = try XCTUnwrap(plan.arguments.firstIndex(of: "--preview-hash")) + 1
+        var changed = plan.arguments; changed[hashIndex] = "unreviewed"
+        do {
+            _ = try CLIProcess().run(agentPath: agent.path, argv: changed)
+            XCTFail("A changed hash must not start a server")
+        } catch let error as BridgeError { XCTAssertEqual(error.code, "preview_stale") }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".mlx-agent-receipts/serve/19997.json").path))
+    }
+
+    func testLoginBootstrapExecutesOnlyTheReviewedEnabledSlot() throws {
+        let home = try makeHome(), agent = home.appendingPathComponent("agent")
+        let scripts = agent.appendingPathComponent("scripts")
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let marker = home.appendingPathComponent("started.txt")
+        let script = "from pathlib import Path\nwith Path(" + String(reflecting: marker.path) + ").open('a') as f: f.write('x')\n"
+        try script.write(to: scripts.appendingPathComponent("mlx-agent"), atomically: true, encoding: .utf8)
+        let fleet = JSONStore<EndpointFleetConfig>(fileURL: home.appendingPathComponent("fleet.json"))
+        var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/local")
+        try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: true)])
+        let plan = LoginItemPlan(slot: slot, fleetURL: fleet.url, agentPath: agent.path,
+            arguments: WorkbenchAPI.serveArguments(model: slot.modelPath, runtime: "auto", port: slot.port, receipts: home.path, previewHash: "reviewed"))
+        let manager = LaunchAgentManager(home: home, run: recordingRunner().run, interpreter: { _ in URL(fileURLWithPath: "/usr/bin/python3") })
+        let text = try manager.plistPreview(plan: plan)
+        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(text.utf8), format: nil) as? [String: Any])
+        let arguments = try XCTUnwrap(plist["ProgramArguments"] as? [String])
+        func execute() throws -> Int32 {
+            let process = Process(); process.executableURL = URL(fileURLWithPath: arguments[0])
+            process.arguments = Array(arguments.dropFirst()); process.standardError = FileHandle.nullDevice
+            try process.run(); process.waitUntilExit(); return process.terminationStatus
+        }
+        XCTAssertEqual(try execute(), 0)
+        XCTAssertEqual(try String(contentsOf: marker, encoding: .utf8), "x")
+        slot.modelPath = "/models/changed"
+        try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: true)])
+        XCTAssertNotEqual(try execute(), 0)
+        XCTAssertEqual(try String(contentsOf: marker, encoding: .utf8), "x")
+        slot = plan.slot; slot.enabled = false
+        try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: true)])
+        XCTAssertNotEqual(try execute(), 0)
+        XCTAssertEqual(try String(contentsOf: marker, encoding: .utf8), "x")
+    }
 
     func testPreviewPlistIsWellFormedAndDeliberate() throws {
         let manager = LaunchAgentManager(home: try makeHome(), run: recordingRunner().run, uid: 501)
-        let text = try manager.plistPreview(config: config, agentPath: "/opt/agent")
+        let text = try manager.plistPreview(plan: plan())
 
         let data = try XCTUnwrap(text.data(using: .utf8))
         let plist = try XCTUnwrap(
@@ -26,8 +82,9 @@ final class LaunchAgentManagerTests: XCTestCase {
 
         let arguments = try XCTUnwrap(plist["ProgramArguments"] as? [String])
         XCTAssertTrue(arguments.first?.hasPrefix("/") == true)
-        XCTAssertEqual(arguments[1], "/opt/agent/scripts/mlx-agent")
-        XCTAssertEqual(Array(arguments.dropFirst(2)), ["serve", "start", "--repo", "/models/qwen", "--runtime", "mlx", "--port", "8766"])
+        XCTAssertEqual(arguments[1], "-c")
+        XCTAssertEqual(arguments[6], "/opt/agent/scripts/mlx-agent")
+        XCTAssertEqual(Array(arguments.dropFirst(7)), ["serve", "start", "--path", "/models/qwen", "--runtime", "auto", "--receipts-dir", "/state", "--port", "8766", "--confirm", "--preview-hash", "reviewed-hash"])
     }
 
     func testPlistRunsTheInterpreterResolvedForTheAgentPath() throws {
@@ -39,7 +96,7 @@ final class LaunchAgentManagerTests: XCTestCase {
                 agentPath == "/opt/agent" ? URL(fileURLWithPath: "/checkout/.venv/bin/python") : nil
             }
         )
-        let text = try manager.plistPreview(config: config, agentPath: "/opt/agent")
+        let text = try manager.plistPreview(plan: plan())
         let data = try XCTUnwrap(text.data(using: .utf8))
         let plist = try XCTUnwrap(
             PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
@@ -53,7 +110,7 @@ final class LaunchAgentManagerTests: XCTestCase {
         let recorder = Recorder()
         let manager = LaunchAgentManager(home: home, run: recorder.run, uid: 501)
 
-        try manager.install(config: config, agentPath: "/opt/agent")
+        try manager.install(plan: plan())
 
         XCTAssertTrue(manager.isInstalled)
         XCTAssertTrue(FileManager.default.fileExists(atPath: manager.plistURL.path))
@@ -74,7 +131,7 @@ final class LaunchAgentManagerTests: XCTestCase {
             return ""
         }, uid: 501)
 
-        XCTAssertThrowsError(try manager.install(config: config, agentPath: "/opt/agent")) { error in
+        XCTAssertThrowsError(try manager.install(plan: plan())) { error in
             guard case LaunchAgentError.launchctlFailed = error else {
                 return XCTFail("expected launchctlFailed, got \(error)")
             }
@@ -85,7 +142,7 @@ final class LaunchAgentManagerTests: XCTestCase {
         let home = try makeHome()
         let recorder = Recorder()
         let manager = LaunchAgentManager(home: home, run: recorder.run, uid: 501)
-        try manager.install(config: config, agentPath: "/opt/agent")
+        try manager.install(plan: plan())
         recorder.reset()
 
         try manager.uninstall()

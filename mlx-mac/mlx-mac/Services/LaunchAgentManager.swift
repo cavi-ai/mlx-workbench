@@ -12,6 +12,13 @@ import Foundation
 // The plist is generated, shown to the user, and only installed after
 // confirmation — the same preview/confirm grammar as everything else.
 
+struct LoginItemPlan: Sendable {
+    let slot: EndpointSlot
+    let fleetURL: URL
+    let agentPath: String
+    let arguments: [String]
+}
+
 enum LaunchAgentError: LocalizedError {
     case launchctlFailed(String)
 
@@ -63,20 +70,18 @@ struct LaunchAgentManager: Sendable {
 
     /// The exact plist that would be installed. Shown to the user before
     /// confirmation.
-    func plistPreview(config: EndpointConfig, agentPath: String) throws -> String {
-        let script = URL(fileURLWithPath: agentPath)
+    func plistPreview(plan: LoginItemPlan) throws -> String {
+        let script = URL(fileURLWithPath: plan.agentPath)
             .appendingPathComponent("scripts/mlx-agent").path
+        let expected = String(decoding: try JSONEncoder().encode(plan.slot), as: UTF8.self)
+        let python = pythonExecutable(agentPath: plan.agentPath)
         let logPath = home.appendingPathComponent("Library/Logs/mlx-workbench-endpoint.log").path
         let plist: [String: Any] = [
             "Label": Self.label,
             "ProgramArguments": [
-                pythonExecutable(agentPath: agentPath),
-                script,
-                "serve", "start",
-                "--repo", config.modelPath,
-                "--runtime", "mlx",
-                "--port", String(config.port),
-            ],
+                python, "-c", Self.bootstrap, plan.fleetURL.path, expected,
+                python, script,
+            ] + plan.arguments,
             "RunAtLoad": true,
             "KeepAlive": false,
             "StandardOutPath": logPath,
@@ -95,15 +100,32 @@ struct LaunchAgentManager: Sendable {
 
     // MARK: - Install / remove
 
-    func install(config: EndpointConfig, agentPath: String) throws {
-        let plist = try plistPreview(config: config, agentPath: agentPath)
+    func install(plan: LoginItemPlan) throws {
+        let plist = try plistPreview(plan: plan)
         let directory = plistURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: home.appendingPathComponent("Library/Logs"), withIntermediateDirectories: true)
         try plist.write(to: plistURL, atomically: true, encoding: .utf8)
         // Already bootstrapped agents must be booted out before re-bootstrap.
         _ = try? run("/bin/launchctl", ["bootout", "gui/\(uid)/\(Self.label)"])
         _ = try run("/bin/launchctl", ["bootstrap", "gui/\(uid)", plistURL.path])
     }
+
+    /// Read the current fleet before executing the captured, confirmed engine command.
+    /// Model/runtime drift is also refused by the engine's reviewed preview hash.
+    static let bootstrap = """
+    import json, os, sys
+    with open(sys.argv[1], encoding='utf-8') as source:
+        fleets = json.load(source)
+    expected = json.loads(sys.argv[2])
+    slots = fleets[0]['slots'] if len(fleets) == 1 else []
+    current = [slot for slot in slots if slot.get('id') == expected.get('id')]
+    def settings(slot):
+        return {key: value for key, value in slot.items() if key != 'profilePreviewHash'}
+    if len(current) != 1 or not current[0].get('enabled') or settings(current[0]) != settings(expected):
+        sys.exit('Endpoint settings changed. Review and reinstall the login item in Run.')
+    os.execv(sys.argv[3], sys.argv[3:])
+    """
 
     func uninstall() throws {
         _ = try? run("/bin/launchctl", ["bootout", "gui/\(uid)/\(Self.label)"])
