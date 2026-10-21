@@ -1221,14 +1221,17 @@ final class ClientsRenderTests: XCTestCase {
 
             for dark in [true, false] {
                 for width in widths {
-                    host.clientWiringRequest = scenario.selected.map { ClientWiringRequest(modelPath: $0.path ?? "", preferredPort: $0.port) }
+                    _ = host.handoffs.take(.wireClient)
+                    if let selected = scenario.selected {
+                        host.handoffs.send(ClientWiringRequest(modelPath: selected.path ?? "", preferredPort: selected.port), as: .wireClient)
+                    }
                     let window = Self.show(host: host, active: true, viewport: width.viewport, dark: dark)
                     defer { window.close() }
                     let deadline = Date().addingTimeInterval(4)
                     var current = presentation(host: host, coordinator: coordinator, selected: scenario.selected)
                     while Date() < deadline {
                         current = presentation(host: host, coordinator: coordinator, selected: scenario.selected)
-                        let loaded = host.modelWorkflow.servers == scenario.servers && host.clientWiringRequest == nil
+                        let loaded = host.modelWorkflow.servers == scenario.servers && host.handoffs[.wireClient] == nil
                         let hasReadings = coordinator.installations.filter { !$0.advisoryOnly }.allSatisfy { coordinator.readings[$0.clientID] != nil }
                         if loaded && hasReadings && current.lines.map(\.kind) == scenario.expected { break }
                         try await Task.sleep(nanoseconds: 25_000_000)

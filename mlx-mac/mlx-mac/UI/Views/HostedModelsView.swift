@@ -84,10 +84,10 @@ struct HostedModelsView: View {
             .padding(WorkbenchSpacing.pageInset)
         }
         .accessibilityIdentifier("hosted-models-workspace")
-        .onChange(of: appHost.hostedLibraryHostRequest, initial: true) { _, _ in
+        .onChange(of: appHost.handoffs[.openHostedModels], initial: true) { _, _ in
             guard suppliedHostSelection == nil else { return }
             do {
-                guard let host = try appHost.consumeHostedLibraryHostRequest() else { return }
+                guard let host = try appHost.takeHostedModelsHost() else { return }
                 hostSelection.wrappedValue = host.id; selectedModelID = nil; selectedInstanceID = nil
                 query = ""; actionError = nil
             } catch { actionError = AppHost.render(error) }

@@ -391,7 +391,7 @@ struct HomeView: View {
                 modelWorkflow.inspect(source: model.item, snapshot: appHost.librarySnapshot)
             }
         case .openModel(let path):
-            appHost.libraryRevealRequest = LibraryRevealRequest(modelPath: path)
+            appHost.handoffs.send(LibraryRevealRequest(modelPath: path), as: .revealModel)
         case .configure, .scan, .activity, .library:
             break
         }

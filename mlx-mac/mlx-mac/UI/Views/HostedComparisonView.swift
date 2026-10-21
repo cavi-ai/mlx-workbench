@@ -41,14 +41,14 @@ struct ComparisonWorkspace: View {
                 }
             }
         }.onChange(of: appHost.compareHostedModels, initial: true) { _, selected in if selected { visitedHosted = true } }
-        .onChange(of: appHost.modelComparisonRequest, initial: true) { _, _ in routeNativeRequest() }
-        .onChange(of: appHost.servingProfileComparisonRequest, initial: true) { _, _ in routeNativeRequest() }
+        .onChange(of: appHost.handoffs[.compareModel], initial: true) { _, _ in routeNativeRequest() }
+        .onChange(of: appHost.handoffs[.compareServingProfiles], initial: true) { _, _ in routeNativeRequest() }
         .onChange(of: hosted.activeRunID) { _, _ in routeNativeRequest() }
     }
 
     private func routeNativeRequest() {
         guard hosted.activeRunID == nil,
-              appHost.modelComparisonRequest != nil || appHost.servingProfileComparisonRequest != nil else { return }
+              appHost.handoffs[.compareModel] != nil || appHost.handoffs[.compareServingProfiles] != nil else { return }
         appHost.compareHostedModels = false
     }
 }
@@ -137,7 +137,7 @@ struct HostedComparisonView: View {
             }.pickerStyle(.segmented).frame(maxWidth: 350).disabled(comparison.activeRunID != nil)
             HStack {
                 addModelMenu
-                Button("Manage hosts…") { appHost.hostedLibraryRequested = true; onRouteSelection(.library) }
+                Button("Manage hosts…") { appHost.handoffs.send(HostedModelsRequest(), as: .openHostedModels); onRouteSelection(.library) }
                 Spacer()
                 if let id = comparison.activeRunID {
                     ProgressView().controlSize(.small)

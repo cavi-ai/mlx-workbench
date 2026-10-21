@@ -84,18 +84,18 @@ final class ModelTaskTests: XCTestCase {
         for (type, mode) in cases {
             let model = comparisonModel(type)
             let actions = ModelActions(appHost: host, model: model, onRouteSelection: { routes.append($0) })
-            host.modelComparisonRequest = nil
+            _ = host.handoffs.take(.compareModel)
             let previousRoutes = routes.count
             XCTAssertEqual(actions.canCompare, mode != nil, type.rawValue)
             actions.compare()
-            XCTAssertEqual(host.modelComparisonRequest?.mode, mode, type.rawValue)
+            XCTAssertEqual(host.handoffs[.compareModel]?.mode, mode, type.rawValue)
             XCTAssertEqual(routes.count, previousRoutes + (mode == nil ? 0 : 1))
             if mode != nil {
-                let request = try XCTUnwrap(host.modelComparisonRequest)
+                let request = try XCTUnwrap(host.handoffs[.compareModel])
                 XCTAssertEqual(request.modelPath, model.item.path)
                 XCTAssertEqual(routes.last, .compare)
                 actions.compare()
-                XCTAssertNotEqual(host.modelComparisonRequest?.id, request.id)
+                XCTAssertNotEqual(host.handoffs[.compareModel]?.id, request.id)
             }
         }
         XCTAssertNil(host.comparison.activeRunID)
@@ -135,8 +135,8 @@ final class ModelTaskTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(200))
         for model in models {
             ModelActions(appHost: host, model: model, onRouteSelection: { XCTAssertEqual($0, .compare) }).compare()
-            for _ in 0..<40 where host.modelComparisonRequest != nil { try await Task.sleep(for: .milliseconds(25)) }
-            XCTAssertNil(host.modelComparisonRequest)
+            for _ in 0..<40 where host.handoffs[.compareModel] != nil { try await Task.sleep(for: .milliseconds(25)) }
+            XCTAssertNil(host.handoffs[.compareModel])
             try await Task.sleep(for: .milliseconds(100)); view.layoutSubtreeIfNeeded()
             let popups = descendants(view).compactMap { $0 as? NSPopUpButton }
             let mode = try XCTUnwrap(popups.first { $0.itemTitles.contains("Video understanding") })

@@ -381,10 +381,9 @@ struct LibraryWorkspace: View {
         .onChange(of: lmStudioRequested) { _, requested in
             if requested { source = .lmStudio; visitedSources.insert(.lmStudio) }
         }
-        .onChange(of: appHost.libraryRevealRequest, initial: true) { receiveRevealRequest() }
+        .onChange(of: appHost.handoffs[.revealModel], initial: true) { receiveRevealRequest() }
         .onChange(of: isRouteActive, initial: true) { receiveRevealRequest(); receiveHostedRequest() }
-        .onChange(of: appHost.hostedLibraryRequested, initial: true) { receiveHostedRequest() }
-        .onChange(of: appHost.hostedLibraryHostRequest, initial: true) { receiveHostedRequest() }
+        .onChange(of: appHost.handoffs[.openHostedModels], initial: true) { receiveHostedRequest() }
         .onChange(of: hosts.hosts) { _, saved in
             if let id = selectedHostedID, !saved.contains(where: { $0.id == id }) {
                 selectedHostedID = nil
@@ -433,11 +432,10 @@ struct LibraryWorkspace: View {
     }
 
     private func receiveHostedRequest() {
-        guard isRouteActive, appHost.hostedLibraryRequested || appHost.hostedLibraryHostRequest != nil else { return }
+        guard isRouteActive, appHost.handoffs[.openHostedModels] != nil else { return }
         source = .hosted; selectedHostedID = nil; visitedSources.insert(.hosted); sourceError = nil
-        appHost.hostedLibraryRequested = false
         do {
-            if let host = try appHost.consumeHostedLibraryHostRequest() { selectedHostedID = host.id }
+            if let host = try appHost.takeHostedModelsHost() { selectedHostedID = host.id }
         } catch { sourceError = AppHost.render(error) }
     }
 
@@ -451,7 +449,7 @@ struct LibraryWorkspace: View {
     }
 
     private func receiveRevealRequest() {
-        guard isRouteActive, let request = appHost.libraryRevealRequest else { return }
+        guard isRouteActive, let request = appHost.handoffs[.revealModel] else { return }
         source = .allModels
         visitedSources.insert(.allModels)
         revealRequest = request
@@ -675,7 +673,7 @@ struct LibraryView: View {
                 guard let request else { return }
                 handledRevealID = request.id
                 defer {
-                    if appHost.libraryRevealRequest?.id == request.id { appHost.libraryRevealRequest = nil }
+                    if appHost.handoffs[.revealModel] == request { appHost.handoffs.finish(request, as: .revealModel) }
                 }
                 guard let path = request.resolvedPath(in: snapshot) else {
                     showInspector = false
@@ -1030,7 +1028,7 @@ struct LibraryView: View {
     private func syncSelection() {
         // Apply explicit navigation before normal table reconciliation.
         if revealError != nil { return }
-        if let request = appHost.libraryRevealRequest ?? revealRequest, request.id != handledRevealID { return }
+        if let request = appHost.handoffs[.revealModel] ?? revealRequest, request.id != handledRevealID { return }
         let hadSelection = selection != nil
         let candidate = LibraryPresentation.selectionCandidate(
             in: groups,

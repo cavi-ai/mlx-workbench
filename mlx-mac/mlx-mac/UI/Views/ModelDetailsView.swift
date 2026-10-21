@@ -24,7 +24,7 @@ struct ModelActions {
         guard let request = ModelRuntimeRecoveryRequest(model: model),
               appHost.librarySnapshot?.models.contains(where: request.matches) == true else { return }
         appHost.selectedModelPath = request.modelPath
-        appHost.modelRuntimeRecoveryRequest = request
+        appHost.handoffs.send(request, as: .recoverModelRuntime)
         onRouteSelection(.health)
     }
 
@@ -46,7 +46,7 @@ struct ModelActions {
 
     func compare() {
         guard let request = ComparisonModelRequest(model: model) else { return }
-        appHost.modelComparisonRequest = request
+        appHost.handoffs.send(request, as: .compareModel)
         appHost.selectedModelPath = model.item.path
         onRouteSelection(.compare)
     }

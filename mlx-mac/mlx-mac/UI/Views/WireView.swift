@@ -430,7 +430,7 @@ struct WireView: View {
     }
 
     private func reviewReport() {
-        appHost.workflowReportImportRequested = true
+        appHost.handoffs.send(WorkflowReportImportRequest(), as: .importWorkflowReport)
         onRouteSelection(.compare)
     }
 
@@ -490,7 +490,7 @@ struct WireView: View {
         }
         guard isRouteActive else { return }
         serverMessage = nil
-        if let request = appHost.clientWiringRequest {
+        if let request = appHost.handoffs[.wireClient] {
             let matching = ClientWiringSelection.matchingServers(request: request, servers: runningServers)
             selectedServerID = matching.count == 1 ? matching[0].id : nil
             if matching.isEmpty {
@@ -499,7 +499,7 @@ struct WireView: View {
                     : "The selected server changed or stopped. Refresh Run and choose Configure clients again."
             }
             else if matching.count > 1 { serverMessage = "The chosen model has multiple running endpoints. Choose the port to wire." }
-            appHost.clientWiringRequest = nil
+            appHost.handoffs.finish(request, as: .wireClient)
         } else if !runningServers.contains(where: { $0.id == selectedServerID }) { selectedServerID = nil }
     }
 
