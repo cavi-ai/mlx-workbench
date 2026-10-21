@@ -124,8 +124,9 @@ server.
   and `convert start` copies them into the backend venv before the job; repos without a root `config.json` resolve
   through a port's file signature (Laya), diffusers repos through their `model_index.json` pipeline class, and curated
   recipe repos through their pinned base plus LoRA (mflux `qwen_image_21`: abenzerps/Qwen-Image-2.1-Uncensored-GGUF; the
-  intake window shows "Built from"). Image-generation models get a Generate panel in the Library inspector
-  (`ImageGenerationCoordinator` + `ImageGenerationPanel`: prompt, size, steps, seed → a new PNG in ~/Pictures/MLX Workbench).
+  intake window shows "Built from"). Image-generation models get a Generate image task in the Library inspector
+  (`InferenceTaskCoordinator` + `InferenceTaskPanels`: prompt, optional width, height, steps and seed; the output is
+  retained with its task and exports as a verified PNG).
   Speculative-decoding drafters (`ModelTaskType.speculativeDraft`: llama.cpp `dflash`/`eagle3` GGUFs, configs with
   `dspark_target_layer_ids`) borrow their target's embeddings and head, so they have no canary and are never servable;
   `ModelItem.draft` (scan's `draft`, or a converted output's `dspark_target_name`) names the target in Model Details.
