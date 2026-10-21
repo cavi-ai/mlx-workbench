@@ -111,12 +111,13 @@ struct MusicTaskDraft: Equatable, Sendable {
 
     var validationError: String? {
         guard !caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Describe the music to generate." }
-        guard caption.count <= 2_000 else { return "Caption must be 2,000 characters or fewer." }
-        guard lyrics.count <= 10_000 else { return "Lyrics must be 10,000 characters or fewer." }
-        guard duration.isFinite, duration > 0, duration <= 360 else { return "Duration must be greater than 0 and at most 360 seconds." }
-        guard (1...30).contains(steps) else { return "Steps must be between 1 and 30." }
-        guard (0...4_294_967_295).contains(seed) else { return "Seed must be an unsigned 32-bit integer." }
-        return nil
+        return InferenceSettings.problem {
+            try InferenceSettings.Music.caption.check(caption)
+            if !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { try InferenceSettings.Music.lyrics.check(lyrics) }
+            try InferenceSettings.Music.duration.check(duration)
+            try InferenceSettings.Music.steps.check(steps)
+            try InferenceSettings.seed.check(seed)
+        }
     }
 
     func request(modelPath: String) throws -> TaskRequest {
@@ -179,7 +180,13 @@ struct SpeakTaskDraft: Equatable, Sendable {
     var speed = ""
     var languageCode = ""
 
-    var validationError: String? { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Enter text to speak." : nil }
+    var validationError: String? {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Enter text to speak." }
+        return InferenceSettings.problem {
+            try InferenceSettings.Speech.text.check(text)
+            _ = try InferenceSettings.Speech.speed.value(speed)
+        }
+    }
     /// Any field was filled in; an untouched form shows no validation message.
     var hasInput: Bool { !(text.isEmpty && voice.isEmpty && speed.isEmpty && languageCode.isEmpty) }
 
@@ -187,10 +194,7 @@ struct SpeakTaskDraft: Equatable, Sendable {
         guard validationError == nil else { throw TaskProtocolError.invalidRequest }
         var parameters: [String: JSONValue] = ["text": .string(text)]
         if !voice.isEmpty { parameters["voice"] = .string(voice) }
-        if !speed.isEmpty {
-            guard let value = Double(speed), value.isFinite else { throw TaskProtocolError.invalidRequest }
-            parameters["speed"] = .number(value)
-        }
+        if let value = try InferenceSettings.Speech.speed.value(speed) { parameters["speed"] = .number(value) }
         if !languageCode.isEmpty { parameters["lang_code"] = .string(languageCode) }
         let request = TaskRequest(kind: .speak, modelPath: modelPath, parameters: parameters)
         try request.validate()
@@ -216,20 +220,16 @@ struct ImageGenerationTaskDraft: Equatable, Sendable {
 
     var validationError: String? {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Describe the image to generate." }
-        guard optionalInteger(width) != nil || width.isEmpty,
-              optionalInteger(height) != nil || height.isEmpty,
-              optionalInteger(steps) != nil || steps.isEmpty,
-              optionalInteger(seed) != nil || seed.isEmpty else { return "Image settings must be whole numbers." }
-        return nil
+        return InferenceSettings.problem {
+            try InferenceSettings.ImageGeneration.prompt.check(prompt)
+            _ = try settings()
+        }
     }
 
     func request(modelPath: String) throws -> TaskRequest {
         guard validationError == nil else { throw TaskProtocolError.invalidRequest }
-        var parameters: [String: JSONValue] = ["prompt": .string(prompt)]
-        if let width = optionalInteger(width) { parameters["width"] = .number(Double(width)) }
-        if let height = optionalInteger(height) { parameters["height"] = .number(Double(height)) }
-        if let steps = optionalInteger(steps) { parameters["steps"] = .number(Double(steps)) }
-        if let seed = optionalInteger(seed) { parameters["seed"] = .number(Double(seed)) }
+        var parameters = try settings()
+        parameters["prompt"] = .string(prompt)
         let request = TaskRequest(kind: .imageGeneration, modelPath: modelPath, parameters: parameters)
         try request.validate()
         return request
@@ -245,8 +245,15 @@ struct ImageGenerationTaskDraft: Equatable, Sendable {
         seed = request.parameters["seed"]?.integerValue.map(String.init) ?? ""
     }
 
-    private func optionalInteger(_ value: String) -> Int? {
-        value.isEmpty ? nil : Int(value)
+    /// Entered settings only; blank fields are left to the engine planner.
+    private func settings() throws -> [String: JSONValue] {
+        typealias Rules = InferenceSettings.ImageGeneration
+        var values: [String: JSONValue] = [:]
+        if let value = try Rules.width.value(width) { values["width"] = .number(Double(value)) }
+        if let value = try Rules.height.value(height) { values["height"] = .number(Double(value)) }
+        if let value = try Rules.steps.value(steps) { values["steps"] = .number(Double(value)) }
+        if let value = try InferenceSettings.seed.value(seed) { values["seed"] = .number(Double(value)) }
+        return values
     }
 }
 
@@ -262,18 +269,17 @@ struct ImageUnderstandingTaskDraft: Equatable, Sendable {
             return "Choose a local image file."
         }
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Ask a question about the image." }
-        guard optionalInteger(maxTokens) != nil || maxTokens.isEmpty,
-              optionalNumber(temperature) != nil || temperature.isEmpty,
-              optionalInteger(maxPixels) != nil || maxPixels.isEmpty else { return "Image analysis settings must be numbers." }
-        return nil
+        return InferenceSettings.problem {
+            try InferenceSettings.Understanding.prompt.check(prompt)
+            _ = try settings()
+        }
     }
 
     func request(modelPath: String) throws -> TaskRequest {
         guard validationError == nil else { throw TaskProtocolError.invalidRequest }
-        var parameters: [String: JSONValue] = ["image_path": .string(imagePath), "prompt": .string(prompt)]
-        if let value = optionalInteger(maxTokens) { parameters["max_tokens"] = .number(Double(value)) }
-        if let value = optionalNumber(temperature) { parameters["temperature"] = .number(value) }
-        if let value = optionalInteger(maxPixels) { parameters["max_pixels"] = .number(Double(value)) }
+        var parameters = try settings()
+        parameters["image_path"] = .string(imagePath)
+        parameters["prompt"] = .string(prompt)
         let request = TaskRequest(kind: .imageUnderstanding, modelPath: modelPath, parameters: parameters)
         try request.validate()
         return request
@@ -292,13 +298,14 @@ struct ImageUnderstandingTaskDraft: Equatable, Sendable {
         maxPixels = request.parameters["max_pixels"]?.integerValue.map(String.init) ?? ""
     }
 
-    private func optionalInteger(_ value: String) -> Int? {
-        value.isEmpty ? nil : Int(value)
-    }
-
-    private func optionalNumber(_ value: String) -> Double? {
-        guard !value.isEmpty, let number = Double(value), number.isFinite else { return nil }
-        return number
+    /// Entered settings only; blank fields are left to the engine planner.
+    private func settings() throws -> [String: JSONValue] {
+        typealias Rules = InferenceSettings.Understanding
+        var values: [String: JSONValue] = [:]
+        if let value = try Rules.maxTokens.value(maxTokens) { values["max_tokens"] = .number(Double(value)) }
+        if let value = try Rules.temperature.value(temperature) { values["temperature"] = .number(value) }
+        if let value = try Rules.maxPixels.value(maxPixels) { values["max_pixels"] = .number(Double(value)) }
+        return values
     }
 }
 
@@ -315,20 +322,17 @@ struct VideoUnderstandingTaskDraft: Equatable, Sendable {
             return "Choose a local video file."
         }
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Ask a question about the video." }
-        guard optionalNumber(fps) != nil || fps.isEmpty,
-              optionalNumber(temperature) != nil || temperature.isEmpty,
-              optionalInteger(maxTokens) != nil || maxTokens.isEmpty,
-              optionalInteger(maxPixels) != nil || maxPixels.isEmpty else { return "Video analysis settings must be numbers." }
-        return nil
+        return InferenceSettings.problem {
+            try InferenceSettings.Understanding.prompt.check(prompt)
+            _ = try settings()
+        }
     }
 
     func request(modelPath: String) throws -> TaskRequest {
         guard validationError == nil else { throw TaskProtocolError.invalidRequest }
-        var parameters: [String: JSONValue] = ["video_path": .string(videoPath), "prompt": .string(prompt)]
-        if let value = optionalNumber(fps) { parameters["fps"] = .number(value) }
-        if let value = optionalNumber(temperature) { parameters["temperature"] = .number(value) }
-        if let value = optionalInteger(maxTokens) { parameters["max_tokens"] = .number(Double(value)) }
-        if let value = optionalInteger(maxPixels) { parameters["max_pixels"] = .number(Double(value)) }
+        var parameters = try settings()
+        parameters["video_path"] = .string(videoPath)
+        parameters["prompt"] = .string(prompt)
         let request = TaskRequest(kind: .videoUnderstanding, modelPath: modelPath, parameters: parameters)
         try request.validate()
         return request
@@ -348,10 +352,15 @@ struct VideoUnderstandingTaskDraft: Equatable, Sendable {
         maxPixels = request.parameters["max_pixels"]?.integerValue.map(String.init) ?? ""
     }
 
-    private func optionalInteger(_ value: String) -> Int? { value.isEmpty ? nil : Int(value) }
-    private func optionalNumber(_ value: String) -> Double? {
-        guard !value.isEmpty, let number = Double(value), number.isFinite else { return nil }
-        return number
+    /// Entered settings only; blank fields are left to the engine planner.
+    private func settings() throws -> [String: JSONValue] {
+        typealias Rules = InferenceSettings.Understanding
+        var values: [String: JSONValue] = [:]
+        if let value = try Rules.videoFPS.value(fps) { values["fps"] = .number(value) }
+        if let value = try Rules.temperature.value(temperature) { values["temperature"] = .number(value) }
+        if let value = try Rules.maxTokens.value(maxTokens) { values["max_tokens"] = .number(Double(value)) }
+        if let value = try Rules.maxPixels.value(maxPixels) { values["max_pixels"] = .number(Double(value)) }
+        return values
     }
 }
 
@@ -366,24 +375,16 @@ struct VideoGenerationTaskDraft: Equatable, Sendable {
 
     var validationError: String? {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Describe the video to generate." }
-        guard optionalInteger(width) != nil || width.isEmpty,
-              optionalInteger(height) != nil || height.isEmpty,
-              optionalInteger(frames) != nil || frames.isEmpty,
-              optionalNumber(fps) != nil || fps.isEmpty,
-              optionalInteger(steps) != nil || steps.isEmpty,
-              optionalInteger(seed) != nil || seed.isEmpty else { return "Video generation settings must be numbers." }
-        return nil
+        return InferenceSettings.problem {
+            try InferenceSettings.VideoGeneration.prompt.check(prompt)
+            _ = try settings()
+        }
     }
 
     func request(modelPath: String) throws -> TaskRequest {
         guard validationError == nil else { throw TaskProtocolError.invalidRequest }
-        var parameters: [String: JSONValue] = ["prompt": .string(prompt)]
-        if let value = optionalInteger(width) { parameters["width"] = .number(Double(value)) }
-        if let value = optionalInteger(height) { parameters["height"] = .number(Double(value)) }
-        if let value = optionalInteger(frames) { parameters["frames"] = .number(Double(value)) }
-        if let value = optionalNumber(fps) { parameters["fps"] = .number(value) }
-        if let value = optionalInteger(steps) { parameters["steps"] = .number(Double(value)) }
-        if let value = optionalInteger(seed) { parameters["seed"] = .number(Double(value)) }
+        var parameters = try settings()
+        parameters["prompt"] = .string(prompt)
         let request = TaskRequest(kind: .videoGeneration, modelPath: modelPath, parameters: parameters)
         try request.validate()
         return request
@@ -396,15 +397,23 @@ struct VideoGenerationTaskDraft: Equatable, Sendable {
         width = request.parameters["width"]?.integerValue.map(String.init) ?? ""
         height = request.parameters["height"]?.integerValue.map(String.init) ?? ""
         frames = request.parameters["frames"]?.integerValue.map(String.init) ?? ""
-        fps = request.parameters["fps"]?.numberValue.map { String($0) } ?? ""
+        fps = request.parameters["fps"]?.integerValue.map(String.init)
+            ?? request.parameters["fps"]?.numberValue.map { String($0) } ?? ""
         steps = request.parameters["steps"]?.integerValue.map(String.init) ?? ""
         seed = request.parameters["seed"]?.integerValue.map(String.init) ?? ""
     }
 
-    private func optionalInteger(_ value: String) -> Int? { value.isEmpty ? nil : Int(value) }
-    private func optionalNumber(_ value: String) -> Double? {
-        guard !value.isEmpty, let number = Double(value), number.isFinite else { return nil }
-        return number
+    /// Entered settings only; blank fields are left to the engine planner.
+    private func settings() throws -> [String: JSONValue] {
+        typealias Rules = InferenceSettings.VideoGeneration
+        var values: [String: JSONValue] = [:]
+        if let value = try Rules.width.value(width) { values["width"] = .number(Double(value)) }
+        if let value = try Rules.height.value(height) { values["height"] = .number(Double(value)) }
+        if let value = try Rules.frames.value(frames) { values["frames"] = .number(Double(value)) }
+        if let value = try Rules.fps.value(fps) { values["fps"] = .number(Double(value)) }
+        if let value = try Rules.steps.value(steps) { values["steps"] = .number(Double(value)) }
+        if let value = try InferenceSettings.seed.value(seed) { values["seed"] = .number(Double(value)) }
+        return values
     }
 }
 

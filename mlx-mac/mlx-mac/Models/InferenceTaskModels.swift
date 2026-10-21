@@ -243,15 +243,13 @@ struct TaskRequest: Codable, Equatable, Sendable {
                 }
             }
         case .musicGeneration:
+            typealias Rules = InferenceSettings.Music
             guard Set(parameters.keys).isSubset(of: ["caption", "lyrics", "duration", "steps", "seed"]),
-                  let caption = parameters["caption"]?.stringValue,
-                  !caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  caption.count <= 2_000,
-                  Self.validText(caption, limit: 2_000),
-                  parameters["lyrics"] == nil || parameters["lyrics"]?.stringValue.map({ Self.validText($0, limit: 10_000) }) == true,
-                  parameters["duration"] == nil || parameters["duration"]?.numberValue.map({ $0 > 0 && $0 <= 360 }) == true,
-                  parameters["steps"] == nil || parameters["steps"]?.integerValue.map({ (1...30).contains($0) }) == true,
-                  parameters["seed"] == nil || parameters["seed"]?.integerValue.map({ (0...4_294_967_295).contains($0) }) == true else {
+                  let caption = parameters["caption"]?.stringValue, Rules.caption.accepts(caption),
+                  parameters["lyrics"] == nil || parameters["lyrics"]?.stringValue.map(Rules.lyrics.accepts) == true,
+                  parameters["duration"] == nil || parameters["duration"]?.numberValue.map(Rules.duration.accepts) == true,
+                  parameters["steps"] == nil || parameters["steps"]?.integerValue.map(Rules.steps.accepts) == true,
+                  parameters["seed"] == nil || parameters["seed"]?.integerValue.map(InferenceSettings.seed.accepts) == true else {
                 throw TaskProtocolError.invalidRequest
             }
         case .transcribe:
@@ -307,11 +305,6 @@ struct TaskRequest: Codable, Equatable, Sendable {
 
     private static func absolutePath(_ value: String) -> Bool {
         value.hasPrefix("/") && !value.unicodeScalars.contains(where: { $0.value < 0x20 })
-    }
-
-    private static func validText(_ value: String, limit: Int) -> Bool {
-        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && value.count <= limit
-            && !value.unicodeScalars.contains(where: { $0.value < 0x20 && $0.value != 0x09 && $0.value != 0x0A })
     }
 
     enum CodingKeys: String, CodingKey {
