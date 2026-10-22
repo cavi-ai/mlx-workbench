@@ -21,6 +21,15 @@ enum BoundedProcessCapture {
         }
     }
 
+    static func runAsync(executable: URL, arguments: [String], timeout: TimeInterval) async throws -> Output {
+        let cancellation = CLIInvocationCancellation()
+        return try await withTaskCancellationHandler {
+            try await WorkbenchIO.perform { Result {
+                try run(executable: executable, arguments: arguments, timeout: timeout, cancellation: cancellation)
+            } }.get()
+        } onCancel: { cancellation.cancel() }
+    }
+
     static func run(executable: URL, arguments: [String], environment: [String: String]? = nil,
                     timeout: TimeInterval, outputLimit: Int = 8 * 1024 * 1024,
                     cancellation: CLIInvocationCancellation = CLIInvocationCancellation(),

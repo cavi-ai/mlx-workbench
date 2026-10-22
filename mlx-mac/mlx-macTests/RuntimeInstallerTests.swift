@@ -7,6 +7,52 @@ import XCTest
 
 @MainActor
 final class RuntimeInstallerTests: XCTestCase {
+    func testUpdateToolDeadlineStopsItsOwnedProcess() async throws {
+        let root = try directory(), pidFile = root.appendingPathComponent("update-pid")
+        let result = await WorkbenchIO.perform { Result {
+            try DMGReleaseInstaller.run("/bin/sh", ["-c", "echo $$ > \"$1\"; exec sleep 30", "update", pidFile.path], timeout: 0.2)
+        } }
+        guard case .failure(BoundedProcessCapture.Failure.timedOut) = result else { return XCTFail("Expected updater timeout") }
+        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile).trimmingCharacters(in: .whitespacesAndNewlines)))
+        XCTAssertEqual(kill(pid, 0), -1)
+    }
+
+    func testLoginToolDrainsLargeDiagnosticsWithoutBlocking() async throws {
+        let output = try await WorkbenchIO.perform { Result {
+            try LaunchAgentManager.launchctl("/bin/sh", ["-c", "dd if=/dev/zero bs=1024 count=256 1>&2 2>/dev/null; printf installed"], timeout: 3)
+        } }.get()
+        XCTAssertEqual(output, "installed")
+    }
+
+    func testLoginToolDeadlineStopsItsOwnedProcess() async {
+        let result = await WorkbenchIO.perform { Result {
+            try LaunchAgentManager.launchctl("/bin/sleep", ["30"], timeout: 0.1)
+        } }
+        guard case .failure(BoundedProcessCapture.Failure.timedOut) = result else { return XCTFail("Expected login item timeout") }
+    }
+
+    func testSpeechClipCancellationStopsItsOwnedProcess() async throws {
+        let root = try directory(), pidFile = root.appendingPathComponent("speech-pid")
+        let task = Task {
+            try await SpeechClipSynthesizer.run("/bin/sh", ["-c", "echo $$ > \"$1\"; exec sleep 30", "speech", pidFile.path])
+        }
+        try await waitForFile(pidFile)
+        task.cancel()
+        do { try await task.value; XCTFail("Expected cancellation") }
+        catch is CancellationError { }
+        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile).trimmingCharacters(in: .whitespacesAndNewlines)))
+        XCTAssertEqual(kill(pid, 0), -1)
+    }
+
+    func testSpeechClipDeadlineAndExitFailureAreReported() async {
+        do { try await SpeechClipSynthesizer.run("/bin/sleep", ["30"], timeout: 0.1); XCTFail("Expected timeout") }
+        catch BoundedProcessCapture.Failure.timedOut { }
+        catch { XCTFail("Unexpected error: \(error)") }
+        do { try await SpeechClipSynthesizer.run("/bin/sh", ["-c", "exit 7"]); XCTFail("Expected tool failure") }
+        catch SpeechCanaryError.toolFailed(_, let status) { XCTAssertEqual(status, 7) }
+        catch { XCTFail("Unexpected error: \(error)") }
+    }
+
     func testCaptureDrainsBothPipesAndKeepsDiagnosticsOutOfStandardOutput() async throws {
         let output = try await WorkbenchIO.perform { Result {
             try BoundedProcessCapture.run(executable: URL(fileURLWithPath: "/bin/sh"),

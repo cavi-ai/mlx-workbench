@@ -336,18 +336,11 @@ enum SpeechClipSynthesizer {
         return wav
     }
 
-    private static func run(_ tool: String, _ arguments: [String]) async throws {
-        try await Task.detached(priority: .utility) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: tool)
-            process.arguments = arguments
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else {
-                throw SpeechCanaryError.toolFailed(URL(fileURLWithPath: tool).lastPathComponent, process.terminationStatus)
-            }
-        }.value
+    static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval = 30) async throws {
+        let output = try await BoundedProcessCapture.runAsync(executable: URL(fileURLWithPath: tool),
+            arguments: arguments, timeout: timeout)
+        guard output.status == 0 else {
+            throw SpeechCanaryError.toolFailed(URL(fileURLWithPath: tool).lastPathComponent, output.status)
+        }
     }
 }
