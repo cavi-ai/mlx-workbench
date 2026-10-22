@@ -19,7 +19,7 @@ and symbols. Each screen opens with its title and a short description.
 | Bring in a model from Hugging Face Hub | [Add from Hugging Face](../workflows/hugging-face.md) |
 | Keep a model serving for your coding tools | [Run and endpoints](../workflows/run.md), then [Clients](../workflows/clients.md) |
 | Decide between quantizations or models | [Compare](../workflows/compare.md) |
-| Classify content or generate music with one model | [Library tasks](../workflows/library.md#classification-and-music-tasks) |
+| Classify content or generate music with one model | [Library tasks](../workflows/library.md#local-inference-tasks) |
 | Free disk space safely | [Reclaim](../workflows/reclaim.md) |
 | Fine-tune on your own text | [Training and studies](../workflows/training.md) |
 | Change paths, defaults or the engine | [Configuration](../reference/configuration.md) |
