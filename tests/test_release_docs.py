@@ -39,6 +39,16 @@ def tree_digest(root):
     return digest.hexdigest()
 
 
+def heading_anchor(text):
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    return re.sub(r"[^\w\- ]", "", text.strip().lower()).replace(" ", "-")
+
+
+def page_prose(path):
+    return re.sub(r"^```.*?^```", "", path.read_text(), flags=re.S | re.M)
+
+
 def content_digest(root):
     digest = hashlib.sha256()
     for path in sorted(
@@ -133,6 +143,31 @@ class ReleaseDocsContractTests(unittest.TestCase):
         self.assertEqual(len(paths), 22)
         self.assertEqual(len(paths), len(set(paths)))
         self.assertTrue(all((source / "pages" / path).is_file() for path in paths))
+
+    def test_page_links_reach_existing_pages_and_headings(self):
+        pages = ROOT / "docs" / SLUG / "source" / "pages"
+        anchors = {
+            page: {
+                heading_anchor(match)
+                for match in re.findall(r"^#{1,6}\s+(.+?)\s*$", page_prose(page), re.M)
+            }
+            for page in pages.rglob("*.md")
+        }
+        broken = []
+        for page in sorted(anchors):
+            for target in re.findall(r"\]\(([^)\s]+)\)", page_prose(page)):
+                if re.match(r"^[a-z]+:", target):
+                    continue
+                file_part, _, fragment = target.partition("#")
+                linked = (page.parent / file_part).resolve() if file_part else page
+                if not file_part.endswith(".md") and file_part:
+                    continue
+                label = f"{page.relative_to(pages)} -> {target}"
+                if linked not in anchors:
+                    broken.append(label)
+                elif fragment and fragment not in anchors[linked]:
+                    broken.append(label)
+        self.assertEqual(broken, [])
 
     def test_build_is_stamped_complete_and_byte_reproducible(self):
         with tempfile.TemporaryDirectory() as temporary:

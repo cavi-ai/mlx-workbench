@@ -11,6 +11,9 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
+### Fixed
+
+- Docs: the overview's and Compare guide's Library task links open the Local inference tasks section.
 
 ## [0.7.0] - 2026-10-22
 ### Added

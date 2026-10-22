@@ -132,7 +132,7 @@ Switching runs cancels queued output-detail reads. A read already in progress ma
 
 Outputs are saved to `~/Library/Application Support/mlx-workbench/comparison-outputs/<run-id>/`. New media runs first save one copy of each input. When a media run starts, the output folders of all but the 10 newest media runs are removed; run records are kept and a missing file shows as **output pruned**. History is a searchable popover grouped by mode.
 
-[Library music tasks](library.md#classification-and-music-tasks) generate audio
+[Library music tasks](library.md#local-inference-tasks) generate audio
 with one model and retain their inputs and outputs in the engine's task store.
 Their Recent tasks list is separate from comparison history and its ten-run
 media retention. Task completion supplies no listening rating or comparison
