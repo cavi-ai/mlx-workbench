@@ -201,6 +201,7 @@ struct CLIProcess {
         if cancellation?.isRequested == true { throw CancellationError() }
         let script = try cliScript(agentPath: agentPath)
         let time = timeout ?? (isScout ? scoutTimeout : defaultTimeout)
+        let deadline = ProcessInfo.processInfo.systemUptime + time
         let pythonURL = try pythonExecutable(agentPath: agentPath)
 
         var command = [pythonURL.path, script.path]
@@ -217,8 +218,8 @@ struct CLIProcess {
         environment["PATH"] = pythonDirectory + ":" + (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
 
         if AgentWorker.handles(argv), onChildLaunched == nil,
-           let reply = worker.run(python: pythonURL, agentRoot: script.deletingLastPathComponent().deletingLastPathComponent(),
-                                  argv: Array(command[2...]), environment: environment, timeout: time, registry: registry) {
+           let reply = try worker.run(python: pythonURL, agentRoot: script.deletingLastPathComponent().deletingLastPathComponent(),
+                argv: Array(command[2...]), environment: environment, deadline: deadline, cancellation: cancellation, registry: registry) {
             if cancellation?.isRequested == true { throw CancellationError() }
             if reply.stdout.count >= Self.maxOutputBytes { throw BridgeError.skillOutputTooLarge }
             let envelope = parseEnvelope(reply.stdout, stderr: String(decoding: reply.stderr, as: UTF8.self))
@@ -226,6 +227,8 @@ struct CLIProcess {
             return try unwrap(envelope)
         }
 
+        if cancellation?.isRequested == true { throw CancellationError() }
+        guard ProcessInfo.processInfo.systemUptime < deadline else { throw BridgeError.skillTimeout }
         let process = Process()
         process.executableURL = pythonURL
         process.arguments = Array(command[1...])
@@ -276,11 +279,10 @@ struct CLIProcess {
         }
         defer { if let group { registry.unregister(group) } }
 
-        let deadline = Date().addingTimeInterval(time)
         var didExit = false
         func checkAbort() throws {
             let cancelled = cancellation?.isRequested == true
-            guard cancelled || Date() >= deadline else { return }
+            guard cancelled || ProcessInfo.processInfo.systemUptime >= deadline else { return }
             if let group { AgentProcessGroup.stop([group], grace: terminationGrace) }
             if !didExit { _ = exited.wait(timeout: .now() + 5) }
             _ = drained.wait(timeout: .now() + 5)

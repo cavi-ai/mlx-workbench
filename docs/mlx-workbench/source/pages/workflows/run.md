@@ -9,6 +9,8 @@
 3. **Preview serve** checks the selected runtime and shows the engine's plan. The default **Auto** uses the model's declared runtime, including an installed isolated Strata runtime. A missing base runtime does not block this check; an unavailable selected runtime fails the preview. **Confirm and run** is available only after a successful preview and starts the server.
 
 Run lists every running server with **Stop** or **Unload**. Refreshing Run only reads serving status.
+The status timeout includes engine startup and time spent waiting behind another
+status check; replacing the status process does not reset that timeout.
 
 Choose **Configure clients…** on a running endpoint to open Clients with that
 server selected. Clients rechecks its process and adapter identity; a changed or

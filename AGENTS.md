@@ -51,8 +51,10 @@ Behavior detail for each area is in the operator guide; this lists owners.
   drained on dedicated threads, SIGTERM then SIGKILL after 2 s;
   `CLIProcessRegistry` stops live children on quit). `serve status` reuses
   one persistent engine process (`Bridge/AgentWorker.swift`,
-  `Resources/agent-worker.py`) and falls back to the CLI. Detached work
-  (`convert start`, `serve`) uses its own session and is not stopped.
+  `Resources/agent-worker.py`) and falls back to the CLI.
+  Status calls share a monotonic deadline across startup, queueing and fallback;
+  cancellation stops their owned worker, without holding the state lock during I/O.
+  Detached work (`convert start`, `serve`) uses its own session and is not stopped.
   `BoundedProcessCapture` runs other commands from blocking workers with an
   output limit and a deadline.
 - Python resolution: `Services/WorkbenchPython.swift` (env → repo `.venv` →
