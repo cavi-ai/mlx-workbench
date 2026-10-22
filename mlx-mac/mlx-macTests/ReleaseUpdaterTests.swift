@@ -148,7 +148,8 @@ final class ReleaseUpdaterTests: XCTestCase {
 
     /// Set TEST_RUNNER_MLX_WORKBENCH_RELEASE_DMG to a notarized release DMG.
     /// Installs it over a stand-in bundle in a temp folder through the real
-    /// download (file URL), digest, mount, signature and swap path.
+    /// loopback download, digest, mount, signature and swap path using the
+    /// accept-release-candidate runner.
     func testLiveInstallFromANotarizedReleaseDiskImage() async throws {
         guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RELEASE_DMG"] else {
             throw XCTSkip("set TEST_RUNNER_MLX_WORKBENCH_RELEASE_DMG to a notarized release DMG")
@@ -192,6 +193,10 @@ final class ReleaseUpdaterTests: XCTestCase {
         }
         let preparedRoot = root.appendingPathComponent("clean-runtime", isDirectory: true).resolvingSymlinksInPath()
         let runtime = try BundledRuntime(source: bundle.appendingPathComponent("Contents/Resources/Runtime"), parent: preparedRoot)
+        XCTAssertEqual(runtime.manifest.workbenchVersion, build.version)
+        if let expected = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RELEASE_EXPECTED_ENGINE"] {
+            XCTAssertEqual(runtime.manifest.engineRevision, expected)
+        }
         let prepared = try runtime.prepare()
         let retained = prepared.appendingPathComponent("retained-setting")
         try Data("preserve".utf8).write(to: retained)

@@ -278,7 +278,11 @@ final class EndpointSupervisor: ObservableObject {
     func retryPendingStops() async {
         guard beginUserOperation() else { return }
         defer { activeUserOperations -= 1 }
-        for slot in Array(pendingStops.values) { _ = await stopServing(slot) }
+        for slot in Array(pendingStops.values) {
+            if await stopServing(slot), let desired = fleet.slots.first(where: { $0.id == slot.id && $0.enabled }) {
+                pendingUserServeBySlot[desired.id] = (desired.modelPath, desired.port)
+            }
+        }
         if pendingStops.isEmpty {
             lastError = nil
             await reconcile(userRequestedSlotID: nil)

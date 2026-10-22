@@ -73,6 +73,7 @@ def main():
     output = args.output or repo / ".run/release-candidate" / uuid.uuid4().hex
     output.mkdir(parents=True, exist_ok=False)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True, timeout=10).strip()
+    engine = subprocess.check_output(["git", "rev-parse", "HEAD:vendor/mlx-agent"], cwd=repo, text=True, timeout=10).strip()
     version = subprocess.check_output([os.sys.executable, "-c", "from mlx_workbench import __version__; print(__version__)"],
                                       cwd=repo, text=True, timeout=10).strip()
     digest = file_digest(dmg)
@@ -80,6 +81,7 @@ def main():
     environment = dict(os.environ,
                        TEST_RUNNER_MLX_WORKBENCH_RELEASE_DMG=str(dmg),
                        TEST_RUNNER_MLX_WORKBENCH_RELEASE_EXPECTED_COMMIT=commit[:12],
+                       TEST_RUNNER_MLX_WORKBENCH_RELEASE_EXPECTED_ENGINE=engine,
                        TEST_RUNNER_MLX_WORKBENCH_RELEASE_EXPECTED_VERSION=version)
     command = ["xcodebuild", "-project", "mlx-mac/mlx-mac.xcodeproj", "-scheme", "mlx-workbench",
                "-configuration", "Debug", "-destination", "platform=macOS",
@@ -100,6 +102,9 @@ def main():
                     process.wait(timeout=5)
                 raise
         if status:
+            with (output / "test.log").open("rb") as failure:
+                failure.seek(max(0, failure.seek(0, os.SEEK_END) - 16000))
+                print(failure.read().decode("utf-8", errors="replace"), file=os.sys.stderr)
             raise RuntimeError(f"Candidate acceptance failed; see {output / 'test.log'}")
     summary = json.loads(subprocess.check_output(
         ["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result)],
@@ -109,7 +114,7 @@ def main():
     if file_digest(dmg) != digest:
         raise ValueError("The candidate disk image changed during acceptance")
     counters = {key: summary[key] for key in ("result", "totalTestCount", "passedTests", "failedTests", "skippedTests", "expectedFailures")}
-    receipt = {"schema": 1, "commit": commit, "version": version, "dmg_sha256": digest,
+    receipt = {"schema": 1, "commit": commit, "engine_revision": engine, "version": version, "dmg_sha256": digest,
                "test": TEST, "summary": counters}
     (output / "acceptance.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(output / "acceptance.json")

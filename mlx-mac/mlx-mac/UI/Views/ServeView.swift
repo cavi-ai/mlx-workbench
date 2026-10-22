@@ -826,6 +826,7 @@ struct ServeView: View {
     }
 
     private func slotStateLabel(_ state: EndpointState, enabled: Bool) -> String {
+        if case .degraded = state { return "degraded" }
         guard enabled else { return "disabled" }
         switch state {
         case .running: return "running"

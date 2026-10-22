@@ -278,6 +278,14 @@ final class WorkbenchReviewUITests: XCTestCase {
                 print('Fixture server status failed.', file=sys.stderr)
                 sys.exit(2)
             data = {'servers': json.loads((root / 'servers.json').read_text())}
+        elif args[:2] == ['serve', 'stop'] and (root / 'servers.json').exists():
+            if (root / 'fail-server-stop').exists():
+                print('Fixture server stop failed.', file=sys.stderr)
+                sys.exit(2)
+            port = int(args[args.index('--port') + 1])
+            servers = json.loads((root / 'servers.json').read_text())
+            (root / 'servers.json').write_text(json.dumps([s for s in servers if s['port'] != port]))
+            data = {}
         elif args[:2] == ['lora', 'status']:
             deadline = time.monotonic() + 20
             while (root / 'slow-training-status').exists():
@@ -2634,6 +2642,40 @@ final class WorkbenchReviewUITests: XCTestCase {
             XCTAssertEqual(retried["future_feature"] as? String, "preserve-me")
             app.terminate()
         }
+    }
+
+    func testRunShowsFailedStopAndRetriesAfterDisable() throws {
+        let state = root.appendingPathComponent("Library/Application Support/mlx-workbench")
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: [["enabled": true, "port": 8766,
+            "modelPath": "org/Qwen", "installedAtLogin": false]])
+            .write(to: state.appendingPathComponent("endpoint-config.json"))
+        try JSONSerialization.data(withJSONObject: [["repo": "org/Qwen", "runtime": "mlx_lm",
+            "port": 8766, "pid": 123, "state": "running", "receipt": "/fixture/server.json"]])
+            .write(to: root.appendingPathComponent("servers.json"))
+        let failure = root.appendingPathComponent("fail-server-stop")
+        try Data().write(to: failure)
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Run")
+        let actions = app.menuButtons["Actions for Qwen"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 15))
+        let content = app.scrollViews.containing(.menuButton, identifier: "Actions for Qwen").firstMatch
+        for _ in 0..<3 where !actions.isHittable { content.scroll(byDeltaX: 0, deltaY: -250) }
+        actions.click()
+        app.menuItems["Disable"].click()
+        let retry = app.buttons["Retry stopping servers"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 15))
+        XCTAssertTrue(text(containing: "Server stop could not be confirmed on port 8766").exists)
+        XCTAssertTrue(app.staticTexts["Degraded"].exists)
+        XCTAssertFalse(app.staticTexts["Disabled"].exists)
+        for _ in 0..<3 where !retry.isHittable { content.scroll(byDeltaX: 0, deltaY: -250) }
+        capture("Run-failed-stop-retry")
+        try FileManager.default.removeItem(at: failure)
+        retry.click()
+        let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: retry)
+        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 15), .completed)
+        let remaining = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("servers.json"))) as? [[String: Any]]
+        XCTAssertEqual(remaining?.count, 0)
     }
 
     func testRunChoosesTheExactEndpointForClients() throws {

@@ -5,6 +5,27 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testRetriedModelSwapRecordsTheSelectedModelAsUsed() async throws {
+        let world = FakeServeWorld()
+        let operations = world.lifecycle
+        let gate = RetryableEndpointStop(stop: operations.stop)
+        let supervisor = EndpointSupervisor(lifecycle: ServeLifecycle(preview: operations.preview, start: operations.start,
+            stop: { try await gate.stop($0) }), statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        var observed: [String] = []
+        supervisor.onUserServeStarted = { observed.append($0) }
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        await supervisor.reconcile()
+        observed = []
+        await supervisor.swap(to: "/Models/b")
+        XCTAssertEqual(try world.status().first?.modelIdentity, "/Models/a")
+        await gate.allowStop()
+        await supervisor.retryPendingStops()
+        await supervisor.reconcile()
+        XCTAssertEqual(try world.status().first?.modelIdentity, "/Models/b")
+        XCTAssertEqual(observed, ["/Models/b"])
+    }
+
     func testFailedDisableToggleAndRemovalRemainRetryable() async throws {
         for action in ["disable", "toggle", "remove"] {
             let world = FakeServeWorld()

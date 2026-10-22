@@ -7,6 +7,18 @@ import XCTest
 
 @MainActor
 final class RuntimeInstallerTests: XCTestCase {
+    func testUpdateAndSpeechToolErrorsRetainDiagnostics() async {
+        do {
+            _ = try await WorkbenchIO.perform { Result {
+                try DMGReleaseInstaller.run("/bin/sh", ["-c", "printf denied-by-filesystem >&2; exit 3"])
+            } }.get()
+            XCTFail("Expected update tool failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("denied-by-filesystem")) }
+        do {
+            try await SpeechClipSynthesizer.run("/bin/sh", ["-c", "printf voice-unavailable >&2; exit 3"])
+            XCTFail("Expected speech tool failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("voice-unavailable")) }
+    }
     func testUpdateToolDeadlineStopsItsOwnedProcess() async throws {
         let root = try directory(), pidFile = root.appendingPathComponent("update-pid")
         let result = await WorkbenchIO.perform { Result {
@@ -49,7 +61,7 @@ final class RuntimeInstallerTests: XCTestCase {
         catch BoundedProcessCapture.Failure.timedOut { }
         catch { XCTFail("Unexpected error: \(error)") }
         do { try await SpeechClipSynthesizer.run("/bin/sh", ["-c", "exit 7"]); XCTFail("Expected tool failure") }
-        catch SpeechCanaryError.toolFailed(_, let status) { XCTAssertEqual(status, 7) }
+        catch SpeechCanaryError.toolFailed(_, let status, _) { XCTAssertEqual(status, 7) }
         catch { XCTFail("Unexpected error: \(error)") }
     }
 

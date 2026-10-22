@@ -77,7 +77,7 @@ enum ReleaseUpdateError: LocalizedError, Equatable {
     case missingDigest(String)
     case digestMismatch(String)
     case signatureRejected(String, Int32)
-    case commandFailed(String, Int32)
+    case commandFailed(String, Int32, detail: String = "")
     case missingApp(String)
 
     var errorDescription: String? {
@@ -92,8 +92,8 @@ enum ReleaseUpdateError: LocalizedError, Equatable {
             return "\(name) does not match its published sha256 digest."
         case .signatureRejected(let path, let status):
             return "\(path) is not a notarized Developer ID build of MLX Workbench (code signing status \(status))."
-        case .commandFailed(let tool, let status):
-            return "\(tool) exited with status \(status)."
+        case .commandFailed(let tool, let status, let detail):
+            return "\(tool) exited with status \(status)." + (detail.isEmpty ? "" : "\n" + detail)
         case .missingApp(let name):
             return "The disk image has no \(name)."
         }
@@ -380,7 +380,8 @@ struct DMGReleaseInstaller: ReleaseInstalling {
         let output = try BoundedProcessCapture.run(executable: URL(fileURLWithPath: tool), arguments: arguments,
             timeout: timeout, cancellation: cancellation)
         guard output.status == 0 else {
-            throw ReleaseUpdateError.commandFailed(URL(fileURLWithPath: tool).lastPathComponent, output.status)
+            throw ReleaseUpdateError.commandFailed(URL(fileURLWithPath: tool).lastPathComponent, output.status,
+                detail: String(output.stderr.trimmingCharacters(in: .whitespacesAndNewlines).suffix(2048)))
         }
         return output.status
     }
