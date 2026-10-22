@@ -18,6 +18,7 @@ and is versioned independently; submodule bumps are recorded here.
 
 ### Fixed
 
+- Builds: CI imports a Developer ID Application identity into a temporary keychain before signing fresh disk images.
 - App: update installation, login-item commands and speech-canary preparation have bounded process lifetimes; cancelling speech preparation stops its process.
 - Clients: rollback preserves configs edited after wiring and allows retrying partial failures without repeating successful restores.
 - Reclaim: GGUF quarantine restores the original file when its recovery record cannot be saved, and batch moves run in the background with progress.
