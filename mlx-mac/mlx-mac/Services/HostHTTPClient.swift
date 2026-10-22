@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 enum HostHTTPError: Error, Equatable, LocalizedError, Sendable {
     case invalidURL, invalidPath, invalidResponse, responseTooLarge, requestFailed
@@ -60,22 +61,119 @@ struct HostHTTPClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if let token, !token.isEmpty { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+        let receiver = HostResponseReceiver(maximumBytes: maximumBytes)
         do {
-            // A task delegate also fences sessions injected by a caller or test.
-            let (bytes, response) = try await urlSession.bytes(for: request, delegate: HostRedirectFence.shared)
-            guard let response = response as? HTTPURLResponse else { throw HostHTTPError.invalidResponse }
-            guard (200..<300).contains(response.statusCode) else { throw HostHTTPError.httpStatus(response.statusCode) }
-            guard response.expectedContentLength <= Int64(maximumBytes) else { throw HostHTTPError.responseTooLarge }
-            var result = Data()
-            for try await byte in bytes {
-                guard result.count < maximumBytes else { throw HostHTTPError.responseTooLarge }
-                result.append(byte)
-            }
-            return result
+            return try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                return try await withCheckedThrowingContinuation { receiver.start(request, session: urlSession, continuation: $0) }
+            } onCancel: { receiver.cancel() }
         } catch is CancellationError { throw CancellationError() }
         catch let error as HostHTTPError { throw error }
         catch let error as URLError where error.code == .cancelled { throw CancellationError() }
         catch { throw HostHTTPError.requestFailed }
+    }
+}
+
+/// One bounded response and its continuation. Rejecting a body cancels only its task.
+private final class HostResponseReceiver: NSObject, URLSessionDataDelegate, Sendable {
+    private struct State: Sendable {
+        var task: URLSessionDataTask?
+        var continuation: CheckedContinuation<Data, Error>?
+        var body = Data()
+        var accepted = false
+        var finished = false
+    }
+    private let maximumBytes: Int
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    private struct Completion {
+        let continuation: CheckedContinuation<Data, Error>?
+        let task: URLSessionDataTask?
+        let result: Result<Data, Error>
+        let cancelTask: Bool
+        func resume() {
+            if cancelTask { task?.cancel() }
+            continuation?.resume(with: result)
+        }
+    }
+
+    init(maximumBytes: Int) { self.maximumBytes = maximumBytes }
+
+    func start(_ request: URLRequest, session: URLSession, continuation: CheckedContinuation<Data, Error>) {
+        let task = session.dataTask(with: request)
+        task.delegate = self
+        let launch = state.withLock { state in
+            guard !state.finished else { return false }
+            state.task = task
+            state.continuation = continuation
+            return true
+        }
+        if launch { task.resume() }
+        else { task.cancel(); continuation.resume(throwing: CancellationError()) }
+    }
+
+    func cancel() { finish(.failure(CancellationError()), cancelTask: true) }
+
+    private func finish(_ result: Result<Data, Error>, cancelTask: Bool = false) {
+        state.withLock { Self.complete(&$0, result: result, cancelTask: cancelTask) }?.resume()
+    }
+
+    private static func complete(_ state: inout State, result: Result<Data, Error>, cancelTask: Bool = false) -> Completion? {
+        guard !state.finished else { return nil }
+        state.finished = true
+        let completion = Completion(continuation: state.continuation, task: state.task, result: result, cancelTask: cancelTask)
+        state.continuation = nil
+        state.task = nil
+        state.body = Data()
+        return completion
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        let error: HostHTTPError?
+        if let response = response as? HTTPURLResponse {
+            if !(200..<300).contains(response.statusCode) { error = .httpStatus(response.statusCode) }
+            else if response.expectedContentLength > Int64(maximumBytes) { error = .responseTooLarge }
+            else { error = nil }
+        } else { error = .invalidResponse }
+        if let error {
+            finish(.failure(error), cancelTask: true)
+            completionHandler(.cancel)
+        } else {
+            let accept = state.withLock { state in
+                guard !state.finished else { return false }
+                state.accepted = true
+                return true
+            }
+            completionHandler(accept ? .allow : .cancel)
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let completion = state.withLock { state -> Completion? in
+            guard !state.finished else { return nil }
+            guard data.count <= maximumBytes - state.body.count else {
+                return Self.complete(&state, result: .failure(HostHTTPError.responseTooLarge), cancelTask: true)
+            }
+            state.body.append(data)
+            return nil
+        }
+        completion?.resume()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error { finish(.failure(error)) }
+        else {
+            let completion = state.withLock { state in
+                let result: Result<Data, Error> = state.accepted ? .success(state.body) : .failure(HostHTTPError.invalidResponse)
+                return Self.complete(&state, result: result)
+            }
+            completion?.resume()
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 

@@ -78,6 +78,8 @@ Behavior detail for each area is in the operator guide; this lists owners.
   (`ModelHostsCoordinator`, `ModelHostClient`, `HostResourceClient`, one
   `ModelHostAdapter` per provider in `Services/*HostAdapter.swift`,
   `model-hosts.json`, tokens in Keychain).
+  `HostHTTPClient` receives bounded data chunks with a per-task redirect fence;
+  cancellation and response rejection cancel only that request.
 - Prepare and intake: `IntakeCoordinator`, `ModelWorkflowCoordinator`,
   `ConversionWorkflow`; Quality Gate: `VerificationCoordinator` with
   per-task canaries in `Models/VerificationModels.swift`; source cleanup:
