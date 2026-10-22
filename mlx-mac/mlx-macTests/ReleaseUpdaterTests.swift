@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import XCTest
 
@@ -191,7 +192,7 @@ final class ReleaseUpdaterTests: XCTestCase {
         if let expected = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RELEASE_EXPECTED_VERSION"] {
             XCTAssertEqual(build.version, expected)
         }
-        let preparedRoot = root.appendingPathComponent("clean-runtime", isDirectory: true).resolvingSymlinksInPath()
+        let preparedRoot = root.appendingPathComponent("clean-runtime", isDirectory: true)
         let runtime = try BundledRuntime(source: bundle.appendingPathComponent("Contents/Resources/Runtime"), parent: preparedRoot)
         XCTAssertEqual(runtime.manifest.workbenchVersion, build.version)
         if let expected = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RELEASE_EXPECTED_ENGINE"] {
@@ -301,7 +302,9 @@ final class ReleaseUpdaterTests: XCTestCase {
     }
 
     private func makeRoot() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
+        let canonical = try XCTUnwrap(realpath(FileManager.default.temporaryDirectory.path, nil))
+        defer { free(canonical) }
+        let url = URL(fileURLWithPath: String(cString: canonical), isDirectory: true)
             .appendingPathComponent("mlx-workbench-release-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

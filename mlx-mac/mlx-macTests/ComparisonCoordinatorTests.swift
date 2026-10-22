@@ -1336,6 +1336,8 @@ final class ComparisonCoordinatorTests: XCTestCase {
         coordinator.onBenchmarks = { values in XCTAssertTrue(values.isEmpty); finished.fulfill() }
         coordinator.start(lanes: lanes, promptSet: BuiltinPromptSets.coding)
         await fulfillment(of: [finished], timeout: 5)
+        let stopped = await waitFor { coordinator.activeRunID == nil }
+        XCTAssertTrue(stopped, "Quality reviews require the completed run to be inactive")
         let run = try XCTUnwrap(coordinator.runs.first)
         XCTAssertEqual(run.results.map(\.id), ["lane-a", "lane-b"])
         XCTAssertEqual(run.results.map(\.modelPath), ["/Models/strata", "/Models/strata"])
