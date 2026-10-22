@@ -557,6 +557,7 @@ struct NextStepPanel: View {
                 Spacer(minLength: WorkbenchSpacing.xs)
                 Button(action.buttonTitle, action: perform)
                     .buttonStyle(.workbenchPrimary)
+                    .accessibilityIdentifier("overview-next-action")
                     .accessibilityHint(action.title)
             }
             .frame(maxHeight: .infinity, alignment: .top)

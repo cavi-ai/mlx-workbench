@@ -22,11 +22,27 @@ struct HomeNextAction: Equatable {
         }
     }
 
-    static func derive(workflow: ConversionWorkflow, snapshot: LibrarySnapshot?, rootsConfigured: Bool, isScanning: Bool, lastError: String?, agentReady: Bool, convertRuntimeReady: Bool, serveRuntimeReady: Bool, reclaimableBytes: Int64 = 0, diskFreeFraction: Double? = nil) -> HomeNextAction {
+    static func derive(workflow: ConversionWorkflow, snapshot: LibrarySnapshot?, rootsConfigured: Bool, isScanning: Bool, lastError: String?, agentReady: Bool, convertRuntimeReady: Bool, serveRuntimeReady: Bool, reclaimableBytes: Int64 = 0, diskFreeFraction: Double? = nil, selectedModelPath: String? = nil) -> HomeNextAction {
         if workflow.state == .queued || workflow.state == .running { return .init(kind: .activity, title: "Monitor conversion", reason: "A conversion is \(workflow.state.rawValue); Activity has the authoritative receipt and live status.", route: AppRoute.activity.rawValue) }
         if workflow.state == .verifying { return .init(kind: .activity, title: "Verify conversion output", reason: "The canary suite is checking the MLX output before it is marked verified.", route: AppRoute.activity.rawValue) }
         if workflow.state == .verificationFailed { return .init(kind: .activity, title: "Resolve verification failure", reason: workflow.errorMessage ?? "The converted output failed the canary suite; Activity has the failing evidence.", route: AppRoute.activity.rawValue) }
         if workflow.state == .failed { return .init(kind: .activity, title: "Resolve conversion failure", reason: workflow.errorMessage ?? workflow.message ?? "The current conversion needs attention in Activity.", route: AppRoute.activity.rawValue) }
+        if let selectedModelPath, !selectedModelPath.isEmpty {
+            guard agentReady else {
+                return .init(kind: .configure, title: "Configure mlx-agent", reason: "The local agent is unavailable; Settings contains the path needed for scan, prepare, and run.", route: AppRoute.settings.rawValue)
+            }
+            if let error = lastError?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+                return .init(kind: .scan, title: "Resolve the library scan", reason: error, route: AppRoute.library.rawValue)
+            }
+            guard !isScanning, let snapshot else {
+                return .init(kind: .scan, title: isScanning ? "View library scan" : "Scan the model library",
+                             reason: "Refresh the Library before choosing the selected model's next action.", route: AppRoute.library.rawValue)
+            }
+            guard let selected = snapshot.models.first(where: { $0.item.path == selectedModelPath || $0.outputPaths.contains(selectedModelPath) }) else {
+                return .init(kind: .library, title: "Review model selection", reason: "The selected model is no longer in the latest Library snapshot. Choose an available model in Library.", route: AppRoute.library.rawValue)
+            }
+            return selectedAction(for: selected, convertRuntimeReady: convertRuntimeReady, serveRuntimeReady: serveRuntimeReady)
+        }
         if let snapshot, let path = workflow.completedModelPath, !path.isEmpty {
             let completed = snapshot.models.first(where: { $0.item.path == path || $0.outputPaths.contains(path) })
             guard workflow.state == .completed || workflow.state == .verified, let completed, completed.readiness == .ready else { return .init(kind: .activity, title: "Reconcile completed output", reason: "The completed workflow no longer matches a ready model in the current Library snapshot.", route: AppRoute.activity.rawValue) }
@@ -67,6 +83,36 @@ struct HomeNextAction: Equatable {
             reason = "The latest scan found ready models. Choose one in Library to see its available actions."
         } else { reason = "The latest scan found models, but none are currently ready to run or prepare." }
         return .init(kind: .library, title: "Review the model library", reason: reason, route: AppRoute.library.rawValue)
+    }
+    private static func selectedAction(for model: LibraryModel, convertRuntimeReady: Bool, serveRuntimeReady: Bool) -> HomeNextAction {
+        let path = model.item.path
+        let name = model.displayName
+        switch model.readiness {
+        case .needsConversion:
+            guard convertRuntimeReady else {
+                return .init(kind: .configure, title: "Repair the Prepare runtime", reason: "\(name) needs conversion, but the conversion runtime is unavailable. Review its setup in Health.", route: AppRoute.health.rawValue)
+            }
+            return .init(kind: .prepare(path), title: "Prepare selected model", reason: "\(name) needs MLX conversion. Review its conversion plan in Prepare.", route: AppRoute.prepare.rawValue)
+        case .ready:
+            if model.item.backend?.installed == false {
+                return .init(kind: .openModel(path), title: "Repair the selected model's runtime", reason: "\(name) needs its declared backend. Open the model in Library to review runtime repair.", route: AppRoute.library.rawValue)
+            }
+            guard ModelTaskPresentation.isServable(model) else {
+                let reason = model.item.task?.type == .speculativeDraft
+                    ? "\(name) is a speculative drafter that runs alongside its target model. Review its target in Library."
+                    : "\(name) is ready. Open its Library inspector for its available tasks and comparison actions."
+                return .init(kind: .openModel(path), title: "Open selected model", reason: reason, route: AppRoute.library.rawValue)
+            }
+            let canPreviewRuntime = model.item.backend?.installed ?? (model.item.servingRuntime == "strata" || serveRuntimeReady)
+            guard canPreviewRuntime else {
+                return .init(kind: .configure, title: "Repair the Run runtime", reason: "\(name) needs the serving runtime. Review its setup in Health before previewing Run.", route: AppRoute.health.rawValue)
+            }
+            return .init(kind: .run(path), title: "Run selected model", reason: "\(name) is ready for a serve preview. Review the runtime, memory fit and port in Run.", route: AppRoute.run.rawValue)
+        case .needsRuntime:
+            return .init(kind: .openModel(path), title: "Repair the selected model's runtime", reason: "\(name) is marked \(model.readiness.title). Open the model in Library to review runtime repair.", route: AppRoute.library.rawValue)
+        case .incompleteCache, .unsupported, .duplicate, .quarantined:
+            return .init(kind: .openModel(path), title: "Review selected model", reason: "\(name) is marked \(model.readiness.title). Review its details in Library before choosing another action.", route: AppRoute.library.rawValue)
+        }
     }
 }
 
@@ -221,7 +267,8 @@ struct HomeView: View {
             convertRuntimeReady: appHost.runtimeReport.convert.ok,
             serveRuntimeReady: appHost.runtimeReport.serve.ok,
             reclaimableBytes: appHost.reclaim.totalReclaimableBytes,
-            diskFreeFraction: DiskProbe.freeFraction()
+            diskFreeFraction: DiskProbe.freeFraction(),
+            selectedModelPath: appHost.selectedModelPath
         )
     }
 

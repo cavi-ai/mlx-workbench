@@ -121,6 +121,69 @@ final class HomeNextActionTests: XCTestCase {
         }
     }
 
+    // MARK: - Selected model guidance
+
+    func testSelectedReadyModelTakesPrecedenceOverUnrelatedConversion() {
+        let source = makeModel(path: "/models/unrelated.gguf", readiness: .needsConversion)
+        let selected = makeModel(path: "/models/chosen", readiness: .ready)
+        let action = derive(snapshot: snapshot(with: [source, selected]), selectedModelPath: selected.item.path)
+        XCTAssertEqual(action.kind, .run(selected.item.path))
+        XCTAssertTrue(action.reason.contains(selected.displayName))
+    }
+
+    func testSelectionTakesPrecedenceOverHistoricalCompletedOutput() {
+        let completed = makeModel(path: "/models/old", readiness: .ready)
+        let selected = makeModel(path: "/models/chosen", readiness: .ready, type: .musicGeneration)
+        let action = derive(workflow: workflow(state: .verified, completedModelPath: completed.item.path),
+                            snapshot: snapshot(with: [completed, selected]), selectedModelPath: selected.item.path)
+        XCTAssertEqual(action.kind, .openModel(selected.item.path))
+    }
+
+    func testSelectedNonServableModelsOpenTheirOwnInspector() {
+        for type in [ModelTaskType.musicGeneration, .imageGeneration, .speechToText, .classification, .speculativeDraft] {
+            let selected = makeModel(path: "/models/" + type.rawValue, readiness: .ready, type: type)
+            let action = derive(snapshot: snapshot(with: [selected]), selectedModelPath: selected.item.path)
+            XCTAssertEqual(action.kind, .openModel(selected.item.path), type.rawValue)
+            XCTAssertEqual(action.route, AppRoute.library.rawValue)
+        }
+    }
+
+    func testSelectedUnavailableModelNeverPreparesAnotherModel() {
+        let source = makeModel(path: "/models/unrelated.gguf", readiness: .needsConversion)
+        for readiness in [ModelReadiness.needsRuntime, .incompleteCache, .unsupported, .duplicate, .quarantined] {
+            let selected = makeModel(path: "/models/chosen", readiness: readiness)
+            let action = derive(snapshot: snapshot(with: [source, selected]), selectedModelPath: selected.item.path)
+            XCTAssertEqual(action.kind, .openModel(selected.item.path), readiness.rawValue)
+            XCTAssertTrue(action.reason.contains(readiness.title))
+        }
+        let missing = derive(snapshot: snapshot(with: [source]), selectedModelPath: "/models/gone")
+        XCTAssertEqual(missing.kind, .library)
+        XCTAssertTrue(missing.reason.contains("no longer"))
+    }
+
+    func testSelectedSourceRespectsConversionRuntimeAndSelectedChatRespectsServingRuntime() {
+        let source = makeModel(path: "/models/chosen.gguf", readiness: .needsConversion)
+        XCTAssertEqual(derive(snapshot: snapshot(with: [source]), selectedModelPath: source.item.path).kind,
+                       .prepare(source.item.path))
+        let conversion = derive(snapshot: snapshot(with: [source]), convertRuntimeReady: false, selectedModelPath: source.item.path)
+        XCTAssertEqual(conversion.route, AppRoute.health.rawValue)
+        let ready = makeModel(path: "/models/chosen", readiness: .ready)
+        let serving = derive(snapshot: snapshot(with: [ready]), serveRuntimeReady: false, selectedModelPath: ready.item.path)
+        XCTAssertEqual(serving.route, AppRoute.health.rawValue)
+    }
+
+    func testSelectionDoesNotHideActiveFailedOrStaleState() {
+        let selected = makeModel(path: "/models/chosen", readiness: .ready)
+        let snap = snapshot(with: [selected])
+        for state in [ConversionWorkflowState.queued, .running, .verifying, .verificationFailed, .failed] {
+            XCTAssertEqual(derive(workflow: workflow(state: state), snapshot: snap,
+                                  selectedModelPath: selected.item.path).kind, .activity)
+        }
+        XCTAssertEqual(derive(snapshot: snap, lastError: "Scan failed", selectedModelPath: selected.item.path).kind, .scan)
+        XCTAssertEqual(derive(snapshot: snap, agentReady: false, selectedModelPath: selected.item.path).kind, .configure)
+        XCTAssertEqual(derive(snapshot: snap, isScanning: true, selectedModelPath: selected.item.path).kind, .scan)
+    }
+
     // MARK: - Disk pressure escalation
 
     func testReclaimOnlyEscalatesAboveThresholdAndBelowFreeFloor() {
@@ -172,7 +235,8 @@ final class HomeNextActionTests: XCTestCase {
         convertRuntimeReady: Bool = true,
         serveRuntimeReady: Bool = true,
         reclaimableBytes: Int64 = 0,
-        diskFreeFraction: Double? = nil
+        diskFreeFraction: Double? = nil,
+        selectedModelPath: String? = nil
     ) -> HomeNextAction {
         HomeNextAction.derive(
             workflow: workflow ?? self.workflow(state: .idle),
@@ -184,7 +248,8 @@ final class HomeNextActionTests: XCTestCase {
             convertRuntimeReady: convertRuntimeReady,
             serveRuntimeReady: serveRuntimeReady,
             reclaimableBytes: reclaimableBytes,
-            diskFreeFraction: diskFreeFraction
+            diskFreeFraction: diskFreeFraction,
+            selectedModelPath: selectedModelPath
         )
     }
 

@@ -3466,6 +3466,7 @@ final class WorkbenchReviewUITests: XCTestCase {
                 app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", title + ":")).firstMatch
             }
             XCTAssertTrue(stage("Prepared").waitForExistence(timeout: 10))
+            XCTAssertTrue(app.staticTexts["Open selected model"].exists)
             XCTAssertFalse(stage("Serving").exists)
             XCTAssertEqual(stage("Verified").exists, canVerify)
             XCTAssertEqual(stage("Measured").exists, canCompare)
@@ -3473,11 +3474,46 @@ final class WorkbenchReviewUITests: XCTestCase {
             capture("Overview-\(kind)-wide")
             resizeWindow(width: 740, height: 560)
             capture("Overview-\(kind)-minimum")
+            app.buttons["overview-next-action"].click()
+            XCTAssertTrue(app.outlines.staticTexts[name].firstMatch.waitForExistence(timeout: 10))
             app.terminate()
         }
         let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
         for command in ["\"task\", \"start\"", "\"serve\", \"start\"", "\"convert\", \"start\"", "\"backend\", \"install\""] {
             XCTAssertFalse(calls.contains(command), "Guidance and navigation must not start work")
+        }
+    }
+
+    func testOverviewFollowsSelectedChatModelInsteadOfUnrelatedSource() throws {
+        let model = try installTaskModel(kind: "text_llm", name: "Chosen chat model")
+        let scanURL = root.appendingPathComponent("scan-result.json")
+        var scan = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: scanURL)) as? [String: Any])
+        var outputs = try XCTUnwrap(scan["outputs"] as? [[String: Any]])
+        outputs[0]["backend"] = ["id": "mlx-lm", "installed": true]
+        scan["outputs"] = outputs
+        scan["models"] = [["path": root.appendingPathComponent("models/unrelated.gguf").path,
+                           "name": "Unrelated source", "model_key": "unrelated", "bytes": 1024,
+                           "status": "needs_conversion", "readable": true, "outputs": []]]
+        try JSONSerialization.data(withJSONObject: scan).write(to: scanURL)
+        launch(appearance: "Dark", route: "models", isolatedHome: true)
+        let row = app.outlines.staticTexts["Chosen chat model"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.click()
+        select("Overview")
+        XCTAssertTrue(app.staticTexts["Run selected model"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Prepare a GGUF model"].exists)
+        capture("Overview-selected-chat-wide")
+        resizeWindow(width: 740, height: 612)
+        let action = app.buttons["overview-next-action"]
+        XCTAssertTrue(action.isHittable)
+        XCTAssertLessThanOrEqual(action.frame.maxX, app.windows.firstMatch.frame.maxX)
+        capture("Overview-selected-chat-minimum")
+        action.click()
+        XCTAssertTrue(app.buttons["Preview serve"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(text(containing: model.lastPathComponent).exists)
+        capture("Overview-selected-chat-Run")
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        for command in ["\"serve\", \"start\"", "\"convert\", \"start\"", "\"task\", \"start\"", "\"backend\", \"install\""] {
+            XCTAssertFalse(calls.contains(command), "Guidance must only stage a preview")
         }
     }
 
