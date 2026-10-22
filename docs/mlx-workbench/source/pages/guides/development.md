@@ -106,3 +106,17 @@ On a published release, `publish-docs.yml` checks that the tag matches `__versio
 4. Build and check the signed, notarized candidate, tag the commit and publish the release. `signed-dmg.yml` attaches the DMG and `publish-docs.yml` attaches the docs.
 
 Nightly DMGs are built only when started by hand, and skip when `mlx-mac/`, `vendor/mlx-agent` and the `Makefile` are unchanged since the last nightly.
+
+## Signed release candidates
+
+The Signed DMG workflow can build an unpublished **candidate** from a full commit SHA. It retains the disk image and acceptance receipt as a workflow artifact, without changing a release or tag. Release and nightly disk images pass the same acceptance check before upload.
+
+From a clean checkout matching the candidate commit, run:
+
+```bash
+make accept-release-candidate RELEASE_DMG=/absolute/path/to/candidate.dmg
+```
+
+This uses the real download, digest, signature, disk-image mount and bundle-replacement path in an isolated directory, then prepares and reopens the packaged runtime source payload. The gate refuses skipped tests and records the candidate digest and source commit under `.run/release-candidate/`. It does not launch model inference or install Python packages.
+
+Before a version release, also run the existing packaged-runtime installation UI test in an isolated VM with the candidate disk image, and the model-specific native acceptance routes above. These cover setup and inference beyond the signed-image installation gate.

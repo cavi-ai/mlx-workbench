@@ -13,16 +13,20 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: Build a nightly from main, or attach a DMG to the latest release
+        description: Build a nightly, release disk image, or unpublished candidate
         required: true
         default: nightly
         type: choice
-        options: [nightly, release]
+        options: [nightly, release, candidate]
+      candidate_commit:
+        description: Full commit SHA for an unpublished candidate
+        required: false
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: signed-dmg-${{ github.event_name == 'release' && github.event.release.tag_name || 'nightly' }}
+  group: signed-dmg-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.channel || 'nightly' }}
   cancel-in-progress: false
 
 jobs:
@@ -40,9 +44,19 @@ jobs:
         id: target
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
         run: |
           set -euo pipefail
-          if [[ "$CHANNEL" == "release" ]]; then
+          build_channel="$CHANNEL"
+          if [[ "$CHANNEL" == "candidate" ]]; then
+            if ! [[ "$CANDIDATE_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "::error::An unpublished candidate requires a full commit SHA" >&2
+              exit 2
+            fi
+            echo "ref=$CANDIDATE_COMMIT" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            build_channel=release
+          elif [[ "$CHANNEL" == "release" ]]; then
             tag="${RELEASE_TAG:-$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)}"
             echo "ref=refs/tags/$tag" >> "$GITHUB_OUTPUT"
             echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -50,6 +64,7 @@ jobs:
             echo "ref=refs/heads/main" >> "$GITHUB_OUTPUT"
             echo "tag=nightly" >> "$GITHUB_OUTPUT"
           fi
+          echo "build_channel=$build_channel" >> "$GITHUB_OUTPUT"
 
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -58,6 +73,11 @@ jobs:
           fetch-depth: 0
           submodules: true
           persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
 
       - name: Skip a nightly when the app has not changed
         id: skip
@@ -116,9 +136,10 @@ jobs:
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          BUILD_CHANNEL: ${{ steps.target.outputs.build_channel }}
         run: |
           set -euo pipefail
-          make dmg DEVELOPER_TEAM="$DEVELOPER_TEAM" DMG_CHANNEL="$CHANNEL" \
+          make dmg DEVELOPER_TEAM="$DEVELOPER_TEAM" DMG_CHANNEL="$BUILD_CHANNEL" \
             MLX_SWIFT_DD="$RUNNER_TEMP/mlx-build" \
             ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8" ASC_KEY_ID="$ASC_KEY_ID" ASC_ISSUER_ID="$ASC_ISSUER_ID"
 
@@ -127,9 +148,11 @@ jobs:
         id: verify
         env:
           EXISTING_DMG: ${{ steps.existing.outputs.dmg }}
+          BUILD_CHANNEL: ${{ steps.target.outputs.build_channel }}
         run: |
           set -euo pipefail
           dmg="${EXISTING_DMG:-$(ls .release/*.dmg)}"
+          [[ "$dmg" = /* ]] || dmg="$GITHUB_WORKSPACE/$dmg"
           mount="$RUNNER_TEMP/dmg-mount"
           hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
           trap 'hdiutil detach "$mount" >/dev/null 2>&1 || true' EXIT
@@ -137,15 +160,34 @@ jobs:
           requirement='identifier "com.cavi.mlxworkbench" and anchor apple generic and certificate leaf[subject.OU] = "'"$DEVELOPER_TEAM"'" and notarized'
           codesign --verify --deep --strict -R "=$requirement" "$app"
           xcrun stapler validate "$app"
-          test "$(plutil -extract MLXWorkbenchChannel raw "$app/Contents/Info.plist")" = "$CHANNEL"
+          test "$(plutil -extract MLXWorkbenchChannel raw "$app/Contents/Info.plist")" = "$BUILD_CHANNEL"
           test "$(plutil -extract MLXWorkbenchCommit raw "$app/Contents/Info.plist")" = "$(git rev-parse --short=12 HEAD)"
           test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$(python3 -c 'from mlx_workbench import __version__; print(__version__)')"
           hdiutil detach "$mount"
           trap - EXIT
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
 
+      - name: Validate candidate installation and runtime sources
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          DMG: ${{ steps.verify.outputs.dmg }}
+        run: |
+          set -euo pipefail
+          make accept-release-candidate RELEASE_DMG="$DMG" MLX_SWIFT_DD="$RUNNER_TEMP/candidate-tests"
+
+      - name: Retain unpublished candidate
+        if: env.CHANNEL == 'candidate'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: signed-candidate-${{ steps.skip.outputs.commit }}
+          path: |
+            ${{ steps.verify.outputs.dmg }}
+            .run/release-candidate/**/acceptance.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Publish
-        if: steps.skip.outputs.skip != 'true' && steps.existing.outputs.dmg == ''
+        if: steps.skip.outputs.skip != 'true' && steps.existing.outputs.dmg == '' && env.CHANNEL != 'candidate'
         env:
           DMG: ${{ steps.verify.outputs.dmg }}
           TAG: ${{ steps.target.outputs.tag }}

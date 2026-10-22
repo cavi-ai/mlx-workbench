@@ -13,10 +13,15 @@ and is versioned independently; submodule bumps are recorded here.
 ## [Unreleased]
 ### Changed
 
+- Builds: signed disk images must pass installation and bundled-runtime source preparation checks before upload; an unpublished candidate can be built from an explicit commit.
 - App: serving status checks reuse one running engine process instead of starting a new one each time, and screens redraw only when the state they show changes.
 
 ### Fixed
 
+- App: update installation, login-item commands and speech-canary preparation have bounded process lifetimes; cancelling speech preparation stops its process.
+- Clients: rollback preserves configs edited after wiring and allows retrying partial failures without repeating successful restores.
+- Reclaim: GGUF quarantine restores the original file when its recovery record cannot be saved, and batch moves run in the background with progress.
+- Run: failed endpoint stops remain visible and can be retried after disabling or removing the endpoint.
 - App: saved state files are flushed to disk when written, and concurrent saves to one file no longer drop updates.
 
 ## [0.6.0] - 2026-10-21
