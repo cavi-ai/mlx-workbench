@@ -1,4 +1,5 @@
 import Foundation
+import os
 import XCTest
 import SQLite3
 
@@ -86,6 +87,19 @@ final class WorkflowStoreTests: XCTestCase {
         XCTAssertEqual(try archive.record(id: first.id), updated)
         XCTAssertThrowsError(try archive.record(id: second.id), "Unrelated corruption must remain visible")
         XCTAssertThrowsError(try store.load())
+    }
+
+    func testStoresOpeningOneNewArchiveTogetherMigrateItOnce() throws {
+        let url = storeURL("concurrent-first-open")
+        let records = (0..<16).map { workflow(sourcePath: "/models/\($0).gguf") }
+        let stores = records.map { _ in ModelWorkflowStore(fileURL: url) }
+        let errors = OSAllocatedUnfairLock(initialState: [String]())
+        DispatchQueue.concurrentPerform(iterations: records.count) { index in
+            do { try stores[index].upsert(records[index]) }
+            catch { errors.withLock { $0.append(error.localizedDescription) } }
+        }
+        XCTAssertEqual(errors.withLock { $0 }, [])
+        XCTAssertEqual(Set(try ModelWorkflowStore(fileURL: url).load().map(\.id)), Set(records.map(\.id)))
     }
 
     // MARK: - ModelWorkflowStore
