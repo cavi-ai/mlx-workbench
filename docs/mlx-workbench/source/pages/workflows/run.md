@@ -53,6 +53,11 @@ The menu bar item aggregates endpoints ("N of M endpoints running") and starts o
 
 ## Load on request
 
+Endpoint changes are saved before starting or stopping a server. If saving fails,
+the previous settings and running servers are retained. Wait for an endpoint
+operation to finish before applying another change; refreshes never start a
+second operation over an active edit.
+
 New endpoints default to **Load on request**. The engine runs a loopback gateway that answers `/v1/models` while unloaded and starts the model on the first inference request.
 
 - Concurrent cold requests share one load.
