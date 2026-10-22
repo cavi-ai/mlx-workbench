@@ -126,7 +126,7 @@ final class ReleaseUpdaterTests: XCTestCase {
 
     func testRequirementPinsBundleTeamAndNotarization() {
         XCTAssertTrue(ReleaseFeed.requirement.contains("identifier \"com.cavi.mlxworkbench\""))
-        XCTAssertTrue(ReleaseFeed.requirement.contains("certificate leaf[subject.OU] = \"Y76GMV87GM\""))
+        XCTAssertTrue(ReleaseFeed.requirement.contains("certificate leaf[subject.OU] = \"\(ReleaseFeed.teamIdentifier)\""))
         XCTAssertTrue(ReleaseFeed.requirement.contains("anchor apple generic"))
         XCTAssertTrue(ReleaseFeed.requirement.hasSuffix("and notarized"))
     }

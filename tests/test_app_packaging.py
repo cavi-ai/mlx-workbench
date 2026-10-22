@@ -219,7 +219,10 @@ class DmgTargetTests(unittest.TestCase):
                 env = dict(os.environ, CHANNEL="candidate", CANDIDATE_COMMIT=invalid, GITHUB_OUTPUT=str(output))
                 result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, timeout=5)
                 self.assertNotEqual(result.returncode, 0)
-        self.assertIn("DEVELOPER_TEAM: Y76GMV87GM", workflow)
+        signing_source = (SWIFT_SOURCES / "Services/ReleaseUpdater.swift").read_text()
+        configured_team = re.search(r'static let teamIdentifier = "([A-Z0-9]{10})"', signing_source)
+        self.assertIsNotNone(configured_team)
+        self.assertIn(f"DEVELOPER_TEAM: {configured_team.group(1)}", workflow)
         upload = workflow.split("- name: Retain unpublished candidate", 1)[1].split("- name:", 1)[0]
         self.assertIn("include-hidden-files: true", upload)
         paths = [line.strip() for line in upload.split("path: |\n", 1)[1]
