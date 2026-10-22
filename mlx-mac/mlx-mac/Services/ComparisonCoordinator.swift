@@ -235,13 +235,15 @@ final class ComparisonCoordinator: ObservableObject {
     private static var builtinSets: [PromptSet] { BuiltinPromptSets.all + ComparisonMediaFixtures.all }
 
     func loadDetails(for id: UUID) async {
-        guard runs.first(where: { $0.id == id })?.historyDetailsOmitted == true, detailedRun?.id != id else { return }
+        guard !Task.isCancelled, runs.first(where: { $0.id == id })?.historyDetailsOmitted == true, detailedRun?.id != id else { return }
         let generation = UUID(); detailGeneration = generation; detailedRun = nil; detailError = nil
         do {
-            guard let full = try await historyWorker.record(id: id) else { throw WorkflowEvidenceError.invalid("The saved comparison is unavailable.") }
+            guard let full = try await historyWorker.details(id: id) else { throw WorkflowEvidenceError.invalid("The saved comparison is unavailable.") }
             guard !Task.isCancelled, detailGeneration == generation else { return }
             detailedRun = full
-        } catch { if detailGeneration == generation { detailError = AppHost.render(error) } }
+        } catch is CancellationError {
+            // Selection changes are not output-load failures.
+        } catch { if !Task.isCancelled, detailGeneration == generation { detailError = AppHost.render(error) } }
     }
 
     /// Benchmark aggregates for every completed run — used to rehydrate

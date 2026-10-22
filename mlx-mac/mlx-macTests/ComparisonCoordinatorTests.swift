@@ -6,6 +6,35 @@ import SQLite3
 
 @testable import mlx_workbench
 
+private final class HistoryDecodeCounts: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [UUID: Int] = [:]
+    private var observers: [UUID: @Sendable () -> Void] = [:]
+    func append(_ id: UUID) {
+        let observer = lock.withLock {
+            values[id, default: 0] += 1
+            return observers.removeValue(forKey: id)
+        }
+        observer?()
+    }
+    func onNext(_ id: UUID, _ observer: @escaping @Sendable () -> Void) { lock.withLock { observers[id] = observer } }
+    func count(_ id: UUID) -> Int { lock.withLock { values[id, default: 0] } }
+    func remove(_ id: UUID) { lock.withLock { values[id] = nil; observers[id] = nil } }
+}
+
+private struct HistoryReadProbe: Codable, Identifiable, Sendable {
+    static let decodes = HistoryDecodeCounts()
+    let id: UUID
+    let text: String
+    init(id: UUID, text: String) { self.id = id; self.text = text }
+    init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        id = try fields.decode(UUID.self, forKey: .id)
+        text = try fields.decode(String.self, forKey: .text)
+        Self.decodes.append(id)
+    }
+}
+
 @MainActor
 func unwrapAsync<Value>(_ expression: @autoclosure () async throws -> Value?, file: StaticString = #filePath, line: UInt = #line) async throws -> Value {
     let value = try await expression()
@@ -44,6 +73,71 @@ func assertAsyncThrows<Value>(_ expression: @autoclosure () async throws -> Valu
 
 @MainActor
 final class ComparisonCoordinatorTests: XCTestCase {
+    func testDetailReadCancelledDuringDecodeDiscardsItsResult() async throws {
+        let value = HistoryReadProbe(id: UUID(), text: "Recorded output")
+        defer { HistoryReadProbe.decodes.remove(value.id) }
+        let store = JSONStore<HistoryReadProbe>(fileURL: coordinatorRunStoreURL)
+        try store.replaceAll([value])
+        let worker = RecordHistoryWorker(store: store)
+        let entered = expectation(description: "Detail decode started")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        HistoryReadProbe.decodes.onNext(value.id) {
+            entered.fulfill()
+            _ = release.wait(timeout: .now() + 5)
+        }
+        let read = Task { try await worker.details(id: value.id) }
+        await fulfillment(of: [entered], timeout: 5)
+        read.cancel(); release.signal()
+        do { _ = try await read.value; XCTFail("An in-flight cancelled read must discard its decoded result") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        let saved = try await worker.record(id: value.id)
+        XCTAssertEqual(saved?.text, "Recorded output")
+    }
+
+    func testCancelledDetailReadsSkipDecodingWithoutAbandoningWritesOrOwnershipReads() async throws {
+        let value = HistoryReadProbe(id: UUID(), text: "Recorded output")
+        defer { HistoryReadProbe.decodes.remove(value.id) }
+        let store = JSONStore<HistoryReadProbe>(fileURL: coordinatorRunStoreURL)
+        try store.replaceAll([value])
+        let worker = RecordHistoryWorker(store: store)
+        let entered = expectation(description: "Durable edit owns the history queue")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let write = Task {
+            try await worker.update(id: value.id) { original in
+                entered.fulfill()
+                guard release.wait(timeout: .now() + 5) == .success else { throw CancellationError() }
+                return HistoryReadProbe(id: original.id, text: "Saved edit")
+            }
+        }
+        await fulfillment(of: [entered], timeout: 5)
+        let started = expectation(description: "Obsolete detail requests started")
+        started.expectedFulfillmentCount = 16
+        let reads = (0..<16).map { _ in Task {
+            started.fulfill()
+            return try await worker.details(id: value.id)
+        } }
+        await fulfillment(of: [started], timeout: 5)
+        reads.forEach { $0.cancel() }
+        write.cancel()
+        release.signal()
+        let saved = try await write.value
+        XCTAssertTrue(saved, "Cancelling the waiting caller must not abandon a durable write")
+        for read in reads {
+            do { _ = try await read.value; XCTFail("An obsolete detail read must report cancellation") }
+            catch { XCTAssertTrue(error is CancellationError) }
+        }
+        XCTAssertEqual(HistoryReadProbe.decodes.count(value.id), 1,
+            "Only the durable edit should decode a record; cancelled detail requests must skip it")
+        let ownershipRead = Task { try await worker.record(id: value.id) }
+        ownershipRead.cancel()
+        let authoritative = try await ownershipRead.value
+        XCTAssertEqual(authoritative?.text, "Saved edit", "Ownership reads remain available to cancelled cleanup tasks")
+        let latest = try await worker.details(id: value.id)
+        XCTAssertEqual(latest?.text, "Saved edit")
+    }
+
     private final class HistoryReadBlocker: @unchecked Sendable {
         var connection: OpaquePointer?
         init(url: URL) throws {
@@ -202,6 +296,25 @@ final class ComparisonCoordinatorTests: XCTestCase {
             loadHistoryInBackground: true, indexedHistory: true)
         await coordinator.waitForHistory()
         XCTAssertEqual(coordinator.runs.first?.historyDetailsOmitted, true)
+        XCTAssertNil(coordinator.detailedRun)
+        let cancelled = Task { await coordinator.loadDetails(for: run.id) }
+        cancelled.cancel()
+        await cancelled.value
+        XCTAssertNil(coordinator.detailError)
+        XCTAssertNil(coordinator.detailedRun)
+        let pending: Task<Void, Never>
+        do {
+            let blocker = try HistoryReadBlocker(url: store.url.appendingPathExtension("sqlite"))
+            defer { blocker.release() }
+            let entered = expectation(description: "Selected output load started")
+            let subscription = coordinator.$detailedRun.dropFirst().sink { _ in entered.fulfill() }
+            defer { subscription.cancel() }
+            pending = Task { await coordinator.loadDetails(for: run.id) }
+            await fulfillment(of: [entered], timeout: 5)
+            pending.cancel()
+        }
+        await pending.value
+        XCTAssertNil(coordinator.detailError, "Cancelling a pending selection must not show an output-load error")
         XCTAssertNil(coordinator.detailedRun)
         await coordinator.loadDetails(for: run.id)
         XCTAssertEqual(coordinator.detailedRun, run)
