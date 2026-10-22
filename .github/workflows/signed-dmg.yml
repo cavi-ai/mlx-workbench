@@ -4,8 +4,8 @@ name: Signed DMG
 # releases get mlx-workbench-<version>.dmg; the rolling `nightly` prerelease
 # gets mlx-workbench-nightly-<commit>.dmg built from main, only when started
 # by hand and only when the app's sources changed since the published nightly.
-# Signing and notarization use an App Store Connect API key (cloud-managed
-# certificate).
+# Signing uses a Developer ID certificate in a temporary keychain;
+# notarization authenticates with an App Store Connect API key.
 
 on:
   release:
@@ -118,6 +118,54 @@ jobs:
             echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Import Developer ID certificate
+        if: steps.skip.outputs.skip != 'true' && steps.existing.outputs.dmg == ''
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEVELOPER_ID_P12_BASE64" || -z "$DEVELOPER_ID_P12_PASSWORD" ]]; then
+            echo "::error::DEVELOPER_ID_P12_BASE64 and DEVELOPER_ID_P12_PASSWORD must contain an encrypted Developer ID Application identity" >&2
+            exit 1
+          fi
+          umask 077
+          python3 - <<'PY'
+          import base64, binascii, os
+          try:
+              data = base64.b64decode(os.environ["DEVELOPER_ID_P12_BASE64"], validate=True)
+          except (ValueError, binascii.Error):
+              raise SystemExit("Invalid Developer ID certificate encoding")
+          path = os.path.join(os.environ["RUNNER_TEMP"], "DeveloperID.p12")
+          fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+          with os.fdopen(fd, "wb") as handle:
+              handle.write(data)
+          PY
+          SIGNING_KEYCHAIN="$RUNNER_TEMP/mlx-signing.keychain-db"
+          echo "SIGNING_KEYCHAIN=$SIGNING_KEYCHAIN" >> "$GITHUB_ENV"
+          keychain_password="$(openssl rand -base64 32)"
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$SIGNING_KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$SIGNING_KEYCHAIN"
+          security unlock-keychain -p "$keychain_password" "$SIGNING_KEYCHAIN"
+          security import "$RUNNER_TEMP/DeveloperID.p12" -k "$SIGNING_KEYCHAIN" \
+            -P "$DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$keychain_password" "$SIGNING_KEYCHAIN" >/dev/null
+          export SIGNING_KEYCHAIN
+          SIGNING_IDENTITIES="$(security find-identity -v -p codesigning "$SIGNING_KEYCHAIN")"
+          export SIGNING_IDENTITIES
+          python3 - <<'PY'
+          import os, re, shlex, subprocess
+          team = re.escape(os.environ["DEVELOPER_TEAM"])
+          pattern = rf'^\s*\d+\) [0-9A-Fa-f]{{40}} "Developer ID Application: .+ \({team}\)"$'
+          if len(re.findall(pattern, os.environ["SIGNING_IDENTITIES"], re.MULTILINE)) != 1:
+              raise SystemExit("Expected one valid Developer ID Application identity for the configured team")
+          current = subprocess.check_output(["security", "list-keychains", "-d", "user"], text=True)
+          keychains = dict.fromkeys([os.environ["SIGNING_KEYCHAIN"], *shlex.split(current)])
+          subprocess.run(["security", "list-keychains", "-d", "user", "-s", *keychains], check=True)
+          PY
+
       - name: Write the App Store Connect API key
         if: steps.skip.outputs.skip != 'true' && steps.existing.outputs.dmg == ''
         env:
@@ -202,6 +250,11 @@ jobs:
               --title "Nightly $COMMIT" --notes "Built from main at $COMMIT." --repo "$GITHUB_REPOSITORY"
           fi
 
-      - name: Remove the API key
+      - name: Remove signing credentials
         if: always()
-        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/DeveloperID.p12"
+          if [[ -n "${SIGNING_KEYCHAIN:-}" && -e "$SIGNING_KEYCHAIN" ]]; then
+            security delete-keychain "$SIGNING_KEYCHAIN"
+          fi

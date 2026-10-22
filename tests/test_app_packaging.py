@@ -63,6 +63,61 @@ class AppIconTests(unittest.TestCase):
 
 
 class DmgTargetTests(unittest.TestCase):
+    def test_ci_requires_a_developer_id_identity_before_building(self):
+        workflow = (ROOT / ".github/workflows/signed-dmg.yml").read_text()
+        self.assertIn("- name: Import Developer ID certificate", workflow)
+        step = workflow.split("- name: Import Developer ID certificate", 1)[1].split("- name:", 1)[0]
+        script = textwrap.dedent(step.split("run: |\n", 1)[1])
+        self.assertIn("- name: Remove signing credentials", workflow)
+        cleanup = workflow.split("- name: Remove signing credentials", 1)[1].split("- name:", 1)[0]
+        self.assertIn("if: always()", cleanup)
+        cleanup_script = textwrap.dedent(cleanup.split("run: |\n", 1)[1])
+        self.assertLess(workflow.index("- name: Import Developer ID certificate"),
+                        workflow.index("- name: Build, sign and notarize"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            security = root / "security"
+            security.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> "$CALLS"\n'
+                                'if [[ "$1" == "create-keychain" ]]; then touch "$4"; fi\n'
+                                'if [[ "$1" == "delete-keychain" ]]; then rm "$2"; fi\n'
+                                'if [[ "$1" == "find-identity" ]]; then printf "%s\\n" "$IDENTITIES"; fi\n')
+            security.chmod(0o755)
+            cases = [
+                ("", "", "", False, False),
+                ("cDEy", "", "", False, False),
+                ("", "password", "", False, False),
+                ("invalid!", "password", "", False, False),
+                ("cDEy", "password", '  1) ' + 'A' * 40 + ' "Apple Development: Example (TEAM123456)"', False, True),
+                ("cDEy", "password", '  1) ' + 'A' * 40 + ' "Developer ID Application: Example (OTHER12345)"', False, True),
+                ("cDEy", "password", '  1) ' + 'A' * 40 + ' "Developer ID Application: Example (TEAM123456)" (CSSMERR_TP_CERT_EXPIRED)', False, True),
+                ("cDEy", "password", '  1) ' + 'A' * 40 + ' "Developer ID Application: Example (TEAM123456)"', True, True),
+            ]
+            for index, (certificate, password, identities, accepted, imported) in enumerate(cases):
+                with self.subTest(case=index):
+                    calls = root / f"calls-{index}"
+                    runner_temp = root / f"runner-{index}"
+                    runner_temp.mkdir()
+                    env = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}",
+                           "RUNNER_TEMP": str(runner_temp), "GITHUB_ENV": str(root / "env"),
+                           "DEVELOPER_TEAM": "TEAM123456", "CALLS": str(calls),
+                           "IDENTITIES": identities, "DEVELOPER_ID_P12_BASE64": certificate,
+                           "DEVELOPER_ID_P12_PASSWORD": password}
+                    result = subprocess.run(["/bin/bash", "-c", script], env=env,
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode == 0, accepted, result.stderr + result.stdout)
+                    commands = calls.read_text().splitlines() if calls.exists() else []
+                    self.assertEqual("import" in commands, imported)
+                    self.assertNotIn(password if password else "unused", result.stdout + result.stderr)
+                    keychain = runner_temp / "mlx-signing.keychain-db"
+                    api_key = runner_temp / "AuthKey.p8"
+                    api_key.touch()
+                    result = subprocess.run(["/bin/bash", "-c", cleanup_script],
+                                            env={**env, "SIGNING_KEYCHAIN": str(keychain)},
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    for credential in (keychain, api_key, runner_temp / "DeveloperID.p12"):
+                        self.assertFalse(credential.exists(), credential)
+
     def test_makefile_has_dmg_target_wired_to_release_build(self):
         for phrase in (
             "dmg: $(if $(DEVELOPER_TEAM),build-swift-devid,build-swift-dist)",
@@ -139,9 +194,9 @@ class DmgTargetTests(unittest.TestCase):
         ):
             self.assertIn(phrase, workflow)
         # The key file never outlives the job.
-        cleanup = workflow.split("- name: Remove the API key", 1)[1]
+        cleanup = workflow.split("- name: Remove signing credentials", 1)[1]
         self.assertIn("if: always()", cleanup)
-        self.assertIn('rm -f "$RUNNER_TEMP/AuthKey.p8"', cleanup)
+        self.assertIn('"$RUNNER_TEMP/AuthKey.p8"', cleanup)
 
     def test_signed_candidate_target_is_immutable_and_uses_release_packaging(self):
         workflow = (ROOT / ".github/workflows/signed-dmg.yml").read_text()

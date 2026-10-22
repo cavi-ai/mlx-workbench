@@ -109,6 +109,8 @@ Nightly DMGs are built only when started by hand, and skip when `mlx-mac/`, `ven
 
 ## Signed release candidates
 
+Fresh CI builds require `DEVELOPER_ID_P12_BASE64` (a base64-encoded, password-encrypted PKCS#12 export containing the Developer ID Application certificate and private key) and `DEVELOPER_ID_P12_PASSWORD`. The workflow imports this identity into a temporary keychain, checks that it belongs to the configured team, and removes the keychain and credential files on exit. `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` authenticate notarization. A signed-in local Xcode account does not provide credentials to GitHub runners.
+
 The Signed DMG workflow can build an unpublished **candidate** from a full commit SHA. It retains the disk image and acceptance receipt as a workflow artifact, without changing a release or tag. Release and nightly disk images pass the same acceptance check before upload.
 
 From a clean checkout matching the candidate commit, run:
