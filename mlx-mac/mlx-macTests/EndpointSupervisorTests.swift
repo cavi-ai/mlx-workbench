@@ -305,6 +305,7 @@ final class EndpointSupervisorTests: XCTestCase {
         await supervisor.addSlot(modelPath: "/Models/c", port: 8767)
         await supervisor.reconcile()
         XCTAssertEqual(served, ["/Models/a", "/Models/b", "/Models/c"])
+        await tracker.waitForPersistence()
         XCTAssertNotNil(tracker.lastServedByPath["/Models/c"])
         let stamps = tracker.lastServedByPath
 

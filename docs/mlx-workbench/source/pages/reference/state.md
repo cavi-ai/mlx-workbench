@@ -5,6 +5,9 @@
 The app keeps its records in `~/Library/Application Support/mlx-workbench`. JSON stores replace their files atomically. Workflow, verification and comparison archives use transactional SQLite records. Stores refuse a symbolic link in place of the file.
 
 History loads and saves run in the background. The toolbar shows workflow history progress; conversion and verification wait for their required state to be saved before proceeding.
+Usage stamps and Watch state also load and save in the background. Usage updates
+retain the last serving timestamp when a later verification or comparison records
+use; failed writes retain the last saved evidence.
 
 | File | Holds |
 |---|---|

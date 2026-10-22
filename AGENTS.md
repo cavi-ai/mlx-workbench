@@ -66,6 +66,8 @@ Behavior detail for each area is in the operator guide; this lists owners.
   per-record storage, one-time JSON migration, legacy JSON kept as backup)
   through `ModelWorkflowStore`, `VerificationStore` and
   `ComparisonRecordArchive`, on their coordinators' serial I/O queues.
+  Usage and Watch histories also use serial I/O queues. Watch batches new alerts
+  in one locked JSON mutation and publishes them after the write succeeds.
 - Default state paths: `Services/WorkbenchStatePaths.swift`.
 - Model identity and occupancy: `HFRepoID` (cached symlink resolution,
   `HFRepoID.Identity`), `ModelOccupancy` via `AppHost.occupancy`; Stop,

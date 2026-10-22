@@ -80,6 +80,8 @@ final class WatchCoordinator: ObservableObject {
     @Published private(set) var lastCheckedAt: Date?
     @Published private(set) var lastError: String?
     @Published private(set) var persistenceError: String?
+    @Published private(set) var isLoadingHistory = true
+    @Published private(set) var isChecking = false
 
     private let watchDiff: @Sendable () async throws -> [[String: Any]]
     private let watchSnapshot: @Sendable () async throws -> Void
@@ -96,6 +98,13 @@ final class WatchCoordinator: ObservableObject {
 
     private var state: WatchState = .empty
     private var monitorTask: Task<Void, Never>?
+    private let io = DispatchQueue(label: "watch-history", qos: .utility)
+    private var historyTask: Task<Void, Never>?
+    private var pendingWrite: Task<Bool, Never>?
+    private var alertsLoaded = false
+    private var stateLoaded = false
+    private var alertPersistenceError: String?
+    private var statePersistenceError: String?
 
     init(
         watchDiff: @escaping @Sendable () async throws -> [[String: Any]],
@@ -115,17 +124,32 @@ final class WatchCoordinator: ObservableObject {
         self.stateStore = stateStore
         self.notify = notify
         self.now = now
+        historyTask = Task { await loadHistory() }
+    }
+
+    func waitForHistory() async { await historyTask?.value }
+    func waitForPersistence() async {
+        await waitForHistory()
+        _ = await pendingWrite?.value
+    }
+
+    private func loadHistory() async {
+        defer { isLoadingHistory = false; historyTask = nil; refreshPersistenceError() }
+        let alertStore = alertStore, stateStore = stateStore
         do {
-            alerts = try alertStore.load().sorted { $0.createdAt > $1.createdAt }
+            alerts = try await WorkbenchIO.perform(on: io) { Result { try alertStore.load() } }.get()
+                .sorted { $0.createdAt > $1.createdAt }
+            alertsLoaded = true
         } catch {
-            persistenceError = "Saved watch alerts are unavailable: \(AppHost.render(error))"
+            alertPersistenceError = "Saved watch alerts are unavailable: \(AppHost.render(error))"
         }
         do {
-            let stored = try stateStore.load()
+            let stored = try await WorkbenchIO.perform(on: io) { Result { try stateStore.load() } }.get()
             state = stored.first ?? .empty
             lastCheckedAt = state.lastCheckedAt
+            stateLoaded = true
         } catch {
-            persistenceError = "Saved watch state is unavailable: \(AppHost.render(error))"
+            statePersistenceError = "Saved watch state is unavailable: \(AppHost.render(error))"
         }
     }
 
@@ -183,27 +207,46 @@ final class WatchCoordinator: ObservableObject {
     /// Run both watches. Safe to call often; cadence gating lives in
     /// `startMonitoring`.
     func checkNow() async {
-        await checkUpstream()
-        checkEnvironment()
-        state.lastCheckedAt = now()
-        lastCheckedAt = state.lastCheckedAt
-        persistState()
+        await waitForPersistence()
+        guard !isChecking, alertsLoaded, stateLoaded, !Task.isCancelled else { return }
+        isChecking = true
+        defer { isChecking = false }
+        var next = state
+        var candidates = await checkUpstream(state: &next)
+        if let environment = checkEnvironment(state: &next) { candidates.append(environment) }
+        guard await persistNewAlerts(candidates).value else { return }
+        next.lastCheckedAt = now()
+        let captured = next, store = stateStore
+        _ = await enqueue {
+            do {
+                try await WorkbenchIO.perform(on: self.io) { Result { try store.replaceAll([captured]) } }.get()
+                self.state = captured
+                self.lastCheckedAt = captured.lastCheckedAt
+                self.statePersistenceError = nil
+                self.refreshPersistenceError()
+                return true
+            } catch {
+                self.statePersistenceError = "Watch state could not be saved: \(AppHost.render(error))"
+                self.refreshPersistenceError()
+                return false
+            }
+        }.value
     }
 
     /// First run establishes the upstream baseline silently; later runs diff.
-    private func checkUpstream() async {
+    private func checkUpstream(state next: inout WatchState) async -> [WatchAlert] {
         do {
-            if !state.baselineEstablished {
+            if !next.baselineEstablished {
                 try await watchSnapshot()
-                state.baselineEstablished = true
-                return
+                next.baselineEstablished = true
+                return []
             }
             let findings = try await watchDiff()
-            for finding in findings {
-                guard let repo = finding["repo"] as? String else { continue }
+            return findings.compactMap { finding in
+                guard let repo = finding["repo"] as? String else { return nil }
                 let detail = (finding["detail"] as? String) ?? "upstream change detected"
                 let code = (finding["code"] as? String) ?? "changed"
-                addAlert(
+                return makeAlert(
                     kind: .upstreamChange,
                     fingerprint: "upstream|\(repo)|\(detail)",
                     modelKey: repo,
@@ -216,23 +259,24 @@ final class WatchCoordinator: ObservableObject {
             }
         } catch {
             // Watch is advisory: offline / HF unreachable stays silent.
+            return []
         }
     }
 
-    private func checkEnvironment() {
+    private func checkEnvironment(state next: inout WatchState) -> WatchAlert? {
         let current = fingerprint().description
-        guard let previous = state.lastEnvironmentFingerprint else {
-            state.lastEnvironmentFingerprint = current
-            return
+        guard let previous = next.lastEnvironmentFingerprint else {
+            next.lastEnvironmentFingerprint = current
+            return nil
         }
-        guard previous != current else { return }
-        state.lastEnvironmentFingerprint = current
+        guard previous != current else { return nil }
+        next.lastEnvironmentFingerprint = current
 
         let stalePaths = verifiedReports()
             .filter { $0.environmentFingerprint != nil && $0.environmentFingerprint != current }
             .map(\.modelPath)
-        guard !stalePaths.isEmpty else { return }
-        addAlert(
+        guard !stalePaths.isEmpty else { return nil }
+        return makeAlert(
             kind: .environmentDrift,
             fingerprint: "environment|\(previous)|\(current)",
             modelKey: "environment",
@@ -244,8 +288,9 @@ final class WatchCoordinator: ObservableObject {
 
     // MARK: - Alert actions
 
-    func act(on alertID: UUID) {
-        guard let alert = alerts.first(where: { $0.id == alertID }) else { return }
+    @discardableResult
+    func act(on alertID: UUID) -> Task<Bool, Never> {
+        guard let alert = alerts.first(where: { $0.id == alertID }) else { return Task { false } }
         if alert.kind == .environmentDrift {
             let current = fingerprint().description
             let stale = verifiedReports()
@@ -253,19 +298,24 @@ final class WatchCoordinator: ObservableObject {
                 .map(\.modelPath)
             reverify(stale)
         }
-        dismiss(alertID)
+        return dismiss(alertID)
     }
 
-    func snooze(_ alertID: UUID, days: Int = 7) {
-        update(alertID) { $0.snoozedUntil = now().addingTimeInterval(TimeInterval(days) * 86_400) }
+    @discardableResult
+    func snooze(_ alertID: UUID, days: Int = 7) -> Task<Bool, Never> {
+        let until = now().addingTimeInterval(TimeInterval(days) * 86_400)
+        return update(alertID) { $0.snoozedUntil = until }
     }
 
-    func mute(_ alertID: UUID) {
+    @discardableResult
+    func mute(_ alertID: UUID) -> Task<Bool, Never> {
         update(alertID) { $0.muted = true }
     }
 
-    func dismiss(_ alertID: UUID) {
-        update(alertID) { $0.dismissedAt = now() }
+    @discardableResult
+    func dismiss(_ alertID: UUID) -> Task<Bool, Never> {
+        let date = now()
+        return update(alertID) { $0.dismissedAt = date }
     }
 
     // MARK: - Scheduling
@@ -276,6 +326,7 @@ final class WatchCoordinator: ObservableObject {
     func startMonitoring(intervalNanoseconds: UInt64 = 86_400_000_000_000) {
         guard monitorTask == nil else { return }
         monitorTask = Task { [weak self] in
+            await self?.waitForHistory()
             while !Task.isCancelled {
                 guard let self else { return }
                 let stale = state.lastCheckedAt.map { now().timeIntervalSince($0) > 86_400 } ?? true
@@ -292,9 +343,8 @@ final class WatchCoordinator: ObservableObject {
 
     // MARK: - Internals
 
-    private func addAlert(kind: WatchAlertKind, fingerprint: String, modelKey: String, title: String, body: String, route: String,
-                          code: String? = nil, detail: String? = nil) {
-        guard !alerts.contains(where: { $0.fingerprint == fingerprint }) else { return }
+    private func makeAlert(kind: WatchAlertKind, fingerprint: String, modelKey: String, title: String, body: String, route: String,
+                           code: String? = nil, detail: String? = nil) -> WatchAlert {
         var alert = WatchAlert(
             id: UUID(),
             kind: kind,
@@ -310,31 +360,73 @@ final class WatchCoordinator: ObservableObject {
         )
         alert.code = code
         alert.detail = detail
-        guard !WatchAlertPresentation.isUnknownAccess(alert) else { return }
-        alerts.insert(alert, at: 0)
-        persist(alert)
-        notify(alert)
+        return alert
     }
 
-    private func update(_ alertID: UUID, mutate: (inout WatchAlert) -> Void) {
-        guard let index = alerts.firstIndex(where: { $0.id == alertID }) else { return }
-        mutate(&alerts[index])
-        persist(alerts[index])
+    private func enqueue(_ operation: @escaping @MainActor () async -> Bool) -> Task<Bool, Never> {
+        let previous = pendingWrite
+        let task = Task {
+            await waitForHistory()
+            _ = await previous?.value
+            return await operation()
+        }
+        pendingWrite = task
+        return task
     }
 
-    private func persist(_ alert: WatchAlert) {
-        do {
-            try alertStore.upsert(alert, id: \.id)
-        } catch {
-            persistenceError = "Watch alert could not be saved: \(AppHost.render(error))"
+    private func persistNewAlerts(_ candidates: [WatchAlert]) -> Task<Bool, Never> {
+        let known = Set(alerts.map(\.fingerprint))
+        let candidates = candidates.filter { !known.contains($0.fingerprint) && !WatchAlertPresentation.isUnknownAccess($0) }
+        guard !candidates.isEmpty else { return Task { true } }
+        let store = alertStore
+        return enqueue {
+            do {
+                let saved = try await WorkbenchIO.perform(on: self.io) { Result {
+                    try store.mutate { values -> (all: [WatchAlert], inserted: [WatchAlert]) in
+                        var known = Set(values.map(\.fingerprint)), inserted: [WatchAlert] = []
+                        for alert in candidates where known.insert(alert.fingerprint).inserted { inserted.append(alert) }
+                        values.append(contentsOf: inserted)
+                        return (values, inserted)
+                    }
+                } }.get()
+                self.alerts = saved.all.sorted { $0.createdAt > $1.createdAt }
+                self.alertPersistenceError = nil
+                self.refreshPersistenceError()
+                saved.inserted.forEach(self.notify)
+                return true
+            } catch {
+                self.alertPersistenceError = "Watch alerts could not be saved: \(AppHost.render(error))"
+                self.refreshPersistenceError()
+                return false
+            }
         }
     }
 
-    private func persistState() {
-        do {
-            try stateStore.replaceAll([state])
-        } catch {
-            persistenceError = "Watch state could not be saved: \(AppHost.render(error))"
+    private func update(_ alertID: UUID, mutate: @escaping (inout WatchAlert) -> Void) -> Task<Bool, Never> {
+        let store = alertStore
+        return enqueue {
+            guard let original = self.alerts.first(where: { $0.id == alertID }) else { return false }
+            var updated = original
+            mutate(&updated)
+            let captured = updated
+            do {
+                guard try await WorkbenchIO.perform(on: self.io, { Result {
+                    try store.update(id: alertID, keyPath: \.id) { current in
+                        guard current == original else { throw WorkflowEvidenceError.invalid("Saved alert changed; reopen Watch before editing it.") }
+                        return captured
+                    }
+                } }).get() else { throw WorkflowEvidenceError.invalid("Saved alert is no longer available.") }
+                if let index = self.alerts.firstIndex(where: { $0.id == alertID }) { self.alerts[index] = updated }
+                self.alertPersistenceError = nil
+                self.refreshPersistenceError()
+                return true
+            } catch {
+                self.alertPersistenceError = "Watch alert could not be saved: \(AppHost.render(error))"
+                self.refreshPersistenceError()
+                return false
+            }
         }
     }
+
+    private func refreshPersistenceError() { persistenceError = alertPersistenceError ?? statePersistenceError }
 }
