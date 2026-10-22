@@ -220,6 +220,12 @@ class DmgTargetTests(unittest.TestCase):
                 result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, timeout=5)
                 self.assertNotEqual(result.returncode, 0)
         self.assertIn("DEVELOPER_TEAM: Y76GMV87GM", workflow)
+        upload = workflow.split("- name: Retain unpublished candidate", 1)[1].split("- name:", 1)[0]
+        self.assertIn("include-hidden-files: true", upload)
+        paths = [line.strip() for line in upload.split("path: |\n", 1)[1]
+                 .split("if-no-files-found:", 1)[0].splitlines() if line.strip()]
+        self.assertEqual(paths, ["${{ steps.verify.outputs.dmg }}",
+                                 ".run/release-candidate/**/acceptance.json"])
 
     def test_nightly_builds_only_on_demand_and_only_for_app_changes(self):
         workflow = (ROOT / ".github" / "workflows" / "signed-dmg.yml").read_text(encoding="utf-8")
