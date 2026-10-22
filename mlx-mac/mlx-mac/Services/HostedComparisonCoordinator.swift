@@ -95,13 +95,15 @@ final class HostedComparisonCoordinator: ObservableObject {
     }
 
     func loadDetails(for id: UUID) async {
-        guard records.first(where: { $0.id == id })?.run.historyDetailsOmitted == true, detailedRecord?.id != id else { return }
+        guard !Task.isCancelled, records.first(where: { $0.id == id })?.run.historyDetailsOmitted == true, detailedRecord?.id != id else { return }
         let generation = UUID(); detailGeneration = generation; detailedRecord = nil; detailError = nil
         do {
-            guard let full = try await history.record(id: id) else { throw HostedIntegrationError.invalid("The saved comparison is unavailable.") }
+            guard let full = try await history.details(id: id) else { throw HostedIntegrationError.invalid("The saved comparison is unavailable.") }
             guard !Task.isCancelled, detailGeneration == generation else { return }
             detailedRecord = full
-        } catch { if detailGeneration == generation { detailError = AppHost.render(error) } }
+        } catch is CancellationError {
+            // Selection changes are not output-load failures.
+        } catch { if !Task.isCancelled, detailGeneration == generation { detailError = AppHost.render(error) } }
     }
 
     func start(targets: [HostedComparisonTarget], promptSet: PromptSet, workflow: ComfyWorkflow? = nil) async throws {

@@ -34,6 +34,11 @@ final class HostedIntegrationTests: XCTestCase {
         let reopened = HostedComparisonCoordinator(store: store, loadHistoryInBackground: true, indexedHistory: true)
         await reopened.waitForHistory()
         XCTAssertNil(reopened.detailedRecord)
+        let cancelled = Task { await reopened.loadDetails(for: summary.id) }
+        cancelled.cancel()
+        await cancelled.value
+        XCTAssertNil(reopened.detailError)
+        XCTAssertNil(reopened.detailedRecord)
         await reopened.loadDetails(for: summary.id)
         XCTAssertEqual(reopened.detailedRecord?.run.results.first?.samples.first?.fullOutput, "Saved answer")
         await reopened.review(runID: summary.id, targetID: model.id, score: 5)?.value

@@ -127,6 +127,8 @@ Cancel on an edited draft offers **Keep editing** or **Discard changes**. Saving
 
 Native and hosted comparisons load saved history in the background. Run remains unavailable until history and pending server ownership are restored. Serial history writes finish before inference or cleanup advances; failed initial writes start no model. Each run and its history entry are saved together in a transactional archive, so an update does not rewrite every run. History retains metrics, cohort identity and reviews; full outputs and submitted graphs load when selected, with visible loading and error states. Original JSON arrays remain untouched after migration. Quality ratings publish after their save succeeds.
 
+Switching runs cancels queued output-detail reads. A read already in progress may finish, but cancelled results and errors are not displayed. Durable writes and server-ownership checks still finish.
+
 
 Outputs are saved to `~/Library/Application Support/mlx-workbench/comparison-outputs/<run-id>/`. New media runs first save one copy of each input. When a media run starts, the output folders of all but the 10 newest media runs are removed; run records are kept and a missing file shows as **output pruned**. History is a searchable popover grouped by mode.
 

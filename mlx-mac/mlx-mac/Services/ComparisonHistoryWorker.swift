@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Comparison summaries retain metrics and references while complete records
 /// remain available for authoritative checks and output inspection.
@@ -69,6 +70,16 @@ final class RecordHistoryWorker<Value: Codable & Identifiable & Sendable>: @unch
         return try store.findStreaming(id: id, keyPath: \.id)
     }
     func record(id: UUID) async throws -> Value? { try await perform { try self.recordSync(id: id) } }
+    /// UI reads can be abandoned before disk access; authoritative reads and
+    /// durable mutations keep the existing completion guarantee.
+    func details(id: UUID) async throws -> Value? {
+        let cancelled = OSAllocatedUnfairLock(initialState: false)
+        return try await withTaskCancellationHandler {
+            try await perform(cancellation: cancelled) { try self.recordSync(id: id) }
+        } onCancel: {
+            cancelled.withLock { $0 = true }
+        }
+    }
     func summarized(_ value: Value) async throws -> Value {
         try await perform { self.archive == nil ? value : try ComparisonRecordArchive<Value>.summarized(value) }
     }
@@ -78,9 +89,17 @@ final class RecordHistoryWorker<Value: Codable & Identifiable & Sendable>: @unch
             return try self.store.updateStreaming(id: id, keyPath: \.id, transform: transform)
         }
     }
-    private func perform<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
+    private func perform<T: Sendable>(cancellation: OSAllocatedUnfairLock<Bool>? = nil,
+                                      _ operation: @escaping @Sendable () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
-            queue.async { do { continuation.resume(returning: try operation()) } catch { continuation.resume(throwing: error) } }
+            queue.async {
+                do {
+                    if cancellation?.withLock({ $0 }) == true { throw CancellationError() }
+                    let value = try operation()
+                    if cancellation?.withLock({ $0 }) == true { throw CancellationError() }
+                    continuation.resume(returning: value)
+                } catch { continuation.resume(throwing: error) }
+            }
         }
     }
 }
