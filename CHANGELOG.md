@@ -15,21 +15,31 @@ and is versioned independently; submodule bumps are recorded here.
 ## [0.7.0] - 2026-10-22
 ### Added
 
+- Clients: a setup doctor in Clients and Health shows config diagnostics and installation guides, creates or repairs one client config through the existing preview, backup and rollback flow, and adds local host connections through the shared connection editor.
 - Run: Try a prompt sends one test question to a running endpoint and its adapter, with cancellation, separate reasoning and Configure clients after an answer; tests never mark a model verified or enter comparison history.
 
 ### Changed
 
-- App: serving status checks reuse one running engine process instead of starting a new one each time, and screens redraw only when the state they show changes.
-- Builds: signed disk images must pass installation and bundled-runtime source preparation checks before upload; an unpublished candidate can be built from an explicit commit.
+- App: Library scans and refreshes, runtime checks and saved histories load and save off the UI thread with the previous inventory kept visible, serving status checks reuse one running engine process, and screens redraw only when the state they show changes.
+- App: workflow, verification and comparison histories are stored per record with the original JSON kept as a backup, and comparison outputs load when a run is selected.
+- Builds: signed disk images must pass installation and bundled-runtime source preparation checks before upload and keep their acceptance receipts; an unpublished candidate can be built from an explicit commit.
+- Library: new image tasks start at 1024 × 1024, 40 steps and seed 42 with optional Advanced settings, and a task the selected engine cannot run keeps its inputs and links to Health.
 
 ### Fixed
 
-- App: saved state files are flushed to disk when written, and concurrent saves to one file no longer drop updates.
-- App: update installation, login-item commands and speech-canary preparation have bounded process lifetimes; cancelling speech preparation stops its process.
+- App: saved state files are flushed to disk when written, and concurrent saves to one file or history archive no longer drop updates.
+- App: update installation, login-item commands and speech-canary preparation have bounded process lifetimes, the login item starts only the reviewed serving plan, and cancelling speech preparation stops its process.
 - Builds: CI imports a Developer ID Application identity into a temporary keychain before signing fresh disk images.
 - Clients: rollback preserves configs edited after wiring and allows retrying partial failures without repeating successful restores.
+- Compare: local chat comparisons check servers through the lightweight health endpoint and keep the selected model path, so a cached model can no longer replace a lane.
+- Compare: the chat results matrix shares the window width with wider model and prompt columns, shrinks after the window is resized and scrolls horizontally for large prompt sets.
+- Compare: reasoning tags split across streamed chunks stay apart from the answer, and cancelling an output load shows no error.
+- Library: scan retries clear the previous error, and scan timeouts give Library-specific guidance.
 - Reclaim: GGUF quarantine restores the original file when its recovery record cannot be saved, and batch moves run in the background with progress.
-- Run: failed endpoint stops remain visible and can be retried after disabling or removing the endpoint.
+- Run: failed endpoint stops remain visible and can be retried after disabling or removing the endpoint, and endpoint settings are saved before changes apply.
+- Settings: Detect shows its progress and result, keeps the current engine path when it finds nothing or fails, and recognizes verified copies of the prepared bundled runtime.
+- Updates: a Beta checkout update installs the exact commit it offered, and changing the channel discards older offers.
+- Watch: new alerts arrive together and alert storage errors are shown.
 
 ## [0.6.0] - 2026-10-21
 ### Added
