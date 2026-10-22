@@ -11,6 +11,8 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
+
+## [0.7.1] - 2026-10-22
 ### Fixed
 
 - Docs: the overview's and Compare guide's Library task links open the Local inference tasks section.
@@ -497,7 +499,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.7.1
 [0.7.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.7.0
 [0.6.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.6.0
 [0.5.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.5.0
