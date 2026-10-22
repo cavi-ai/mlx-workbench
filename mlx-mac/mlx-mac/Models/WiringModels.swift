@@ -196,6 +196,9 @@ struct ClientEditReceipt: Codable, Equatable, Sendable {
     /// SHA-256 of the contents written when this wiring created the file;
     /// nil when the file existed before or the receipt predates this field.
     var createdFileSHA256: String? = nil
+    /// Contents actually written, including configs that already existed.
+    /// Older receipts without this evidence require manual backup recovery.
+    var writtenFileSHA256: String? = nil
     let appliedAt: Date
 }
 
@@ -209,6 +212,8 @@ struct WiringTransaction: Codable, Equatable, Identifiable, Sendable {
     /// Clients skipped or failed during apply, with the reason.
     var failures: [String]
     var rolledBackAt: Date?
+    /// Successful restores are never repeated when another client needs retry.
+    var rolledBackConfigPaths: [String]? = nil
 
     /// Apply outcome only; failure details are presented separately.
     var resultSummary: String {

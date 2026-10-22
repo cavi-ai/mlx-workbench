@@ -9,6 +9,47 @@ import SwiftUI
 final class WiringCoordinatorTests: XCTestCase {
     private let endpoint = WireEndpoint(baseURL: "http://127.0.0.1:8766/v1", modelName: "qwen3-8b")
 
+    func testRollbackPreservesEditsToAnExistingConfig() throws {
+        let home = try makeHome()
+        let config = home.appendingPathComponent(".config/zed/settings.json")
+        try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "{\"theme\":\"dark\"}".write(to: config, atomically: true, encoding: .utf8)
+        let coordinator = makeCoordinator(home: home)
+        coordinator.preview(endpoint: endpoint)
+        _ = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+        let edited = "{\"theme\":\"light\"}"
+        try edited.write(to: config, atomically: true, encoding: .utf8)
+
+        coordinator.rollback()
+
+        XCTAssertEqual(try String(contentsOf: config), edited)
+        XCTAssertNotNil(coordinator.lastError)
+        XCTAssertTrue(coordinator.rollbackAvailable)
+        XCTAssertNil(coordinator.transactions.first?.rolledBackAt)
+    }
+
+    func testFailedRollbackCanRetryWithoutTouchingAlreadyRestoredConfigs() throws {
+        let home = try makeHome()
+        let store = JSONStore<WiringTransaction>(fileURL: temporaryURL("retry.json"))
+        let coordinator = makeCoordinator(home: home, store: store, moveToTrash: { url in
+            if url.lastPathComponent == "settings.json" { throw CocoaError(.fileWriteNoPermission) }
+            try FileManager.default.removeItem(at: url)
+        })
+        coordinator.preview(endpoint: endpoint, clientIDs: ["opencode", "zed"])
+        _ = coordinator.confirm(endpoint: endpoint, previewHash: try XCTUnwrap(coordinator.previewHash))
+        coordinator.rollback()
+        XCTAssertTrue(coordinator.rollbackAvailable)
+        let restored = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: restored.path))
+        try "{\"new_config\":true}".write(to: restored, atomically: true, encoding: .utf8)
+        let reloaded = makeCoordinator(home: home, store: store)
+        reloaded.rollback()
+        XCTAssertFalse(reloaded.rollbackAvailable)
+        XCTAssertNil(reloaded.lastError)
+        XCTAssertEqual(try String(contentsOf: restored), "{\"new_config\":true}")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".config/zed/settings.json").path))
+    }
+
     // MARK: - JSONC tolerance
 
     func testJSONCStripsCommentsAndTrailingCommasButNotInsideStrings() throws {
@@ -638,7 +679,8 @@ final class WiringCoordinatorTests: XCTestCase {
         coordinator.rollback()
 
         XCTAssertEqual(try String(contentsOf: config), written)
-        XCTAssertNotNil(coordinator.transactions.first?.rolledBackAt)
+        XCTAssertNil(coordinator.transactions.first?.rolledBackAt)
+        XCTAssertTrue(coordinator.rollbackAvailable)
         XCTAssertEqual(coordinator.transactions.first?.failures.count, 1)
         XCTAssertNotNil(coordinator.lastError)
     }
@@ -677,7 +719,8 @@ final class WiringCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(try String(contentsOf: config), edited)
         XCTAssertFalse(FileManager.default.fileExists(atPath: trash(home).path))
-        XCTAssertNotNil(coordinator.transactions.first?.rolledBackAt)
+        XCTAssertNil(coordinator.transactions.first?.rolledBackAt)
+        XCTAssertTrue(coordinator.rollbackAvailable)
         XCTAssertEqual(coordinator.transactions.first?.failures,
                        ["zed: \(WiringError.createdFileChanged.errorDescription ?? "")"])
         XCTAssertEqual(coordinator.lastError, coordinator.transactions.first?.failures.first)

@@ -42,7 +42,9 @@ For a model by Hugging Face repository id, enter the repo id, a config file path
 
 ## Roll back
 
-**Roll back last wiring** restores each file from its backup. A config file the wiring created moves to the Trash only while it still holds exactly what was written; a file you have since edited is kept.
+**Roll back last wiring** restores each file from its backup only while its contents still match what wiring wrote. A config file the wiring created moves to the Trash under the same check. Files you have since edited are kept. Older backup records without a recorded content digest require manual review and recovery from their backup.
+
+A partial rollback keeps the action available for retry. Clients already restored are skipped, including after restarting the app.
 
 ## Handoffs
 
