@@ -594,8 +594,7 @@ final class EndpointSupervisor: ObservableObject {
     /// Record whether the login LaunchAgent is installed (installed/removed
     /// via LaunchAgentManager from the Serve tab).
     func markLoginItemInstalled(_ installed: Bool) {
-        guard beginUserOperation() else { return }
-        defer { activeUserOperations -= 1 }
+        // This synchronous metadata edit preserves slot identities during an in-flight stop.
         var candidate = fleet
         candidate.installedAtLogin = installed
         _ = commit(candidate)

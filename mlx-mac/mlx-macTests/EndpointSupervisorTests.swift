@@ -56,10 +56,15 @@ final class EndpointSupervisorTests: XCTestCase {
         await supervisor.updateSlot(id: slot.id, modelPath: "/Models/a", port: 8766, role: .coding)
         XCTAssertNotNil(supervisor.lastError, "A concurrent action must explain why it was refused")
         XCTAssertFalse(supervisor.fleet.slots.contains { $0.role == .coding })
+        supervisor.markLoginItemInstalled(true)
+        XCTAssertTrue(supervisor.fleet.installedAtLogin, "An installed login item must retain its durable flag during the pending stop")
+        XCTAssertEqual(try JSONStore<EndpointFleetConfig>(fileURL: fleetURL).load().first?.installedAtLogin, true)
+        XCTAssertTrue(supervisor.isChanging)
         await gate.release()
         await removal.value
         XCTAssertFalse(supervisor.isChanging)
         XCTAssertTrue(supervisor.fleet.slots.isEmpty)
+        XCTAssertTrue(supervisor.fleet.installedAtLogin)
         XCTAssertTrue(try world.status().isEmpty)
     }
 
