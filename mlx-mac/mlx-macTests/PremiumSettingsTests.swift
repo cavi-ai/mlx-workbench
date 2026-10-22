@@ -1,5 +1,6 @@
-import Combine
 import Foundation
+import Observation
+import os
 import XCTest
 
 @testable import mlx_workbench
@@ -167,19 +168,27 @@ final class PremiumSettingsTests: XCTestCase {
         XCTAssertEqual(host.discoveredRoots, [])
     }
 
+    func testReadersOfOneHostValueIgnoreChangesToAnother() {
+        let host = makeHost()
+        let changes = OSAllocatedUnfairLock(initialState: 0)
+        withObservationTracking { _ = host.selectedModelPath } onChange: { changes.withLock { $0 += 1 } }
+        host.isScanning = true
+        host.lastError = "unrelated"
+        XCTAssertEqual(changes.withLock { $0 }, 0)
+        host.selectedModelPath = "/models/a"
+        XCTAssertEqual(changes.withLock { $0 }, 1)
+    }
+
     func testNormalLaunchDiscoversGGUFFoldersAfterCreatingTheHost() async throws {
         let folder = try makeHostedLMStudioFolder()
         let host = makeHost()
         XCTAssertEqual(host.discoveredRoots, [])
-        let discovered = expectation(description: "discovered roots published")
-        let subscription = host.$discoveredRoots.sink { roots in
-            if roots == [folder] { discovered.fulfill() }
-        }
 
         host.startLiveServices(environment: [:])
-        await fulfillment(of: [discovered], timeout: 5)
+        let deadline = Date().addingTimeInterval(5)
+        while host.discoveredRoots != [folder], Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(host.discoveredRoots, [folder])
 
-        subscription.cancel()
         host.watch.stopMonitoring()
         host.endpoint.stopMonitoring()
     }

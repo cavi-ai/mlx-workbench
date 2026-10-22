@@ -23,7 +23,7 @@ enum RunPortInput: Equatable {
 }
 
 struct ServeView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var endpoint: EndpointSupervisor
     @ObservedObject private var profiles: ServingProfileCoordinator

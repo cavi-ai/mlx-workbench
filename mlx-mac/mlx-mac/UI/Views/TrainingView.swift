@@ -232,9 +232,10 @@ struct TrainingPreviewGuidance: Equatable {
 // LoRA preview/confirm training on a cached base model.
 
 struct TrainingView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var trainedAdapters: TrainedAdapterServingCoordinator
     @ObservedObject private var lab: LabCoordinator
+    @ObservedObject private var comparison: ComparisonCoordinator
     private let ownsLoader: Bool
     private let onRouteSelection: (AppRoute) -> Void
     @StateObject private var session: TrainingSession
@@ -260,6 +261,7 @@ struct TrainingView: View {
         self.appHost = appHost
         _trainedAdapters = ObservedObject(wrappedValue: appHost.trainedAdapters)
         _lab = ObservedObject(wrappedValue: appHost.lab)
+        _comparison = ObservedObject(wrappedValue: appHost.comparison)
         ownsLoader = loader == nil
         let workspace = appHost.lab.workspaceContext
         self.onRouteSelection = onRouteSelection

@@ -183,6 +183,28 @@ final class JSONStoreTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: victim), "{}")
     }
 
+    func testStoresOnOneFileSerializeTheirMutations() throws {
+        let url = try streamingStoreURL()
+        let stores = [JSONStore<Item>(fileURL: url), JSONStore<Item>(fileURL: url)]
+        DispatchQueue.concurrentPerform(iterations: 60) { index in
+            try? stores[index % 2].upsert(Item(id: "\(index)", note: "n"), id: \.id)
+        }
+        XCTAssertEqual(Set(try JSONStore<Item>(fileURL: url).load().map(\.id)), Set((0..<60).map(String.init)))
+    }
+
+    func testLoadsSeeChangesMadeOutsideTheStore() throws {
+        let url = try streamingStoreURL()
+        let store = JSONStore<Item>(fileURL: url)
+        try store.replaceAll([Item(id: "a", note: "one")])
+        XCTAssertEqual(try store.load(), [Item(id: "a", note: "one")])
+        try JSONEncoder().encode([Item(id: "a", note: "two")]).write(to: url)
+        XCTAssertEqual(try store.load(), [Item(id: "a", note: "two")])
+        try JSONEncoder().encode([Item(id: "b", note: "new")]).write(to: url, options: .atomic)
+        XCTAssertEqual(try store.load(), [Item(id: "b", note: "new")])
+        try FileManager.default.removeItem(at: url)
+        XCTAssertEqual(try store.load(), [])
+    }
+
     private func streamingStoreURL() throws -> URL {
         let url = storeURL()
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

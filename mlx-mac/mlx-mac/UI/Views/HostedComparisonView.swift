@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 /// Both workspaces stay mounted so changing source preserves the native setup and results.
 struct ComparisonWorkspace: View {
-    @ObservedObject var appHost: AppHost
+    @Bindable var appHost: AppHost
     @ObservedObject private var native: ComparisonCoordinator
     @ObservedObject private var hosted: HostedComparisonCoordinator
     let onRouteSelection: (AppRoute) -> Void
@@ -54,7 +54,7 @@ struct ComparisonWorkspace: View {
 }
 
 struct HostedComparisonView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var hosts: ModelHostsCoordinator
     @ObservedObject private var comparison: HostedComparisonCoordinator
     @ObservedObject private var native: ComparisonCoordinator

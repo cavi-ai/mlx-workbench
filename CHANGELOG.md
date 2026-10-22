@@ -11,6 +11,13 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
+### Changed
+
+- App: serving status checks reuse one running engine process instead of starting a new one each time, and screens redraw only when the state they show changes.
+
+### Fixed
+
+- App: saved state files are flushed to disk when written, and concurrent saves to one file no longer drop updates.
 
 ## [0.6.0] - 2026-10-21
 ### Added

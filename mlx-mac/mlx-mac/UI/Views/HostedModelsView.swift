@@ -1,8 +1,9 @@
 import SwiftUI
 
 struct HostedModelsView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var hosts: ModelHostsCoordinator
+    @ObservedObject private var hostedComparison: HostedComparisonCoordinator
     let onRouteSelection: (AppRoute) -> Void
     private let suppliedHostSelection: Binding<UUID?>?
     @State private var selectedHostID: UUID?
@@ -19,6 +20,7 @@ struct HostedModelsView: View {
         self.suppliedHostSelection = selectedHostID
         _selectedHostID = State(initialValue: selectedHostID == nil ? appHost.modelHosts.hosts.first?.id : nil)
         _hosts = ObservedObject(wrappedValue: appHost.modelHosts)
+        _hostedComparison = ObservedObject(wrappedValue: appHost.hostedComparison)
     }
 
     private var hostSelection: Binding<UUID?> { suppliedHostSelection ?? $selectedHostID }

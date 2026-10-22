@@ -119,8 +119,9 @@ final class ManualWiringSession: ObservableObject {
 // Preview / apply runtime wiring for a model into a target config.
 
 struct WireView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var wiring: WiringCoordinator
+    @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
     private let onRouteSelection: (AppRoute) -> Void
 
@@ -143,6 +144,7 @@ struct WireView: View {
         self.appHost = appHost
         self.onRouteSelection = onRouteSelection
         _wiring = ObservedObject(wrappedValue: appHost.wiring)
+        _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _manual = StateObject(wrappedValue: ManualWiringSession(
             preview: { request in
                 try await appHost.api.wirePreview(model: request.model, path: request.path, target: request.target)

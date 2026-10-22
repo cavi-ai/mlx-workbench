@@ -1,7 +1,7 @@
 import Foundation
 
 /// Per-record transactions; the original JSON remains an untouched migration backup.
-final class ModelWorkflowStore: @unchecked Sendable {
+final class ModelWorkflowStore: Sendable {
     private let archive: RecordArchive<ConversionWorkflow>
     var databaseURL: URL { archive.url }
 

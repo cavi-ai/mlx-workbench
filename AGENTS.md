@@ -8,824 +8,124 @@ server.
 - `README.md` is the entry point; `docs/mlx-workbench/source/pages` is the
   operator guide, published per release to cavi-ai.xyz/docs/mlx-workbench
   (`docs/mlx-workbench/CONSUMER.md`). Behavior changes update the matching
-  page in the same change.
+  page in the same change. Feature behavior lives there, not here.
 - `Makefile` defines the supported local command surface.
 - `mlx_workbench/__init__.py` (`__version__`) is the single version source of
-  truth; `CHANGELOG.md` records releases. Use `make version-bump V=x.y.z` to
-  bump both plus the Swift `MARKETING_VERSION` and docs-test constants;
+  truth; `CHANGELOG.md` records releases. `make version-bump V=x.y.z` bumps
+  both plus the Swift `MARKETING_VERSION` and docs-test constants;
   `tests/test_version_sync.py` enforces the sync.
+- Premium feature design specs live in `mlx-mac/docs/premium/`.
 
-## Repository shape to keep in sync
+## Repository map
 
-- `vendor/mlx-agent` is a git submodule used as the execution engine.
-- `scripts/mlx-workbench` is the launcher: `mlx_workbench/__main__.py` opens
-  the built application (`--app`, `$MLX_WORKBENCH_APP`, or the Release build
-  under `.run/swift-build`).
-- `mlx_workbench/` is the Python package: configuration and compatibility
-  utilities used by `make install`/`make check` and the Python suite.
-  `mlx_workbench/serve_presets.py` validates named serve profiles in
-  `serve-presets.json` (beside an explicit config profile, else the state
-  directory), separate from `config.json` and the native app's endpoint
-  fleet.
-- The shared `config.json` contract: `mlx_workbench/config.py` preserves keys
-  it does not manage (e.g. the native app's premium toggles). Keep that
-  invariant.
-- `tests/fixtures/` is the shared contract-fixture set consumed by BOTH the
-  Python suite (`tests/test_contract_fixtures.py`) and the XCTest suite
-  (`ScanContractTests`, `WorkbenchAPISubprocessTests`, `ContractFixtureTests`).
-  A fixture change must keep both suites green; see `tests/fixtures/README.md`.
-- The durable convert queue (`convert-queue.json`, schema 1.1) is owned by
-  mlx-agent's `mlx_agent.convert_queue`; `mlx_workbench/convert_queue.py`
-  imports it from the configured agent path. Jobs reads and edits the queue
-  only through `mlx-agent lab queue` (`WorkbenchAPI.conversionQueue`), and
-  `Services/WebConvertQueue.swift` parses the replies; schema and path
-  resolution mirror the engine queue and are pinned by shared fixtures. Never
-  write to that file directly from the native app.
-- `tests/` contains unit and release-doc coverage.
-- `RecordArchive` owns transactional per-record storage and one-time JSON
-  migration for workflow, verification and comparison histories. Legacy JSON
-  stays untouched as a backup. `ModelWorkflowStore` and `VerificationStore`
-  update one record per transaction; `ComparisonRecordArchive` adds lightweight
-  history projections without changing complete recorded payloads.
-  `ModelWorkflowCoordinator` loads and saves through its serial I/O queue;
-  draft edits remain value-only. Submission waits for history and commits
-  cleanup consent before launching conversion. Receipts stay bound to the
-  submitted workflow across selection changes, and verification starts only
-  after its workflow state commits. The toolbar exposes history I/O progress.
-- `mlx-mac/` is the native SwiftUI app (Xcode project, explicit file list in
-  `project.pbxproj` — register new sources there). `make test-swift` runs its
-  XCTest suite. Design specs for premium features live in
-  `mlx-mac/docs/premium/`. The app icon master is
-  `mlx-mac/assets/app-icon.svg`; `make dmg` packages a distribution Release
-  build (`-DMLX_WORKBENCH_DISTRIBUTION`: no source path compiled in) as
-  `MLX Workbench.app` on an `MLX Workbench` volume under `.release/` (ad-hoc
-  signed; `DEVELOPER_TEAM=<team id>` archives, exports with Developer ID,
-  notarizes through the Xcode account, and staples via `build-swift-devid`).
-- Studies is a Lab sidebar destination using the shared `LabCoordinator`.
-  Compare's Open Studies action routes there. Cached study views refresh their
-  read-only lists on activation; navigation never starts jobs or installs a runtime.
-- Library's Hosted models source reads explicit loopback connections from `model-hosts.json`
-  through `ModelHostsCoordinator` and `ModelHostClient`. Presets cover Ollama, LM Studio,
-  ComfyUI, llama.cpp and OpenAI-compatible APIs. Each provider's inventory, model details,
-  activity, memory release and readback live in its `ModelHostAdapter`
-  (`Services/*HostAdapter.swift`, chosen by `ModelHostProvider.adapter`); `ModelHostClient`,
-  `HostResourceClient` and the views read its release scope and reported capabilities
-  instead of comparing providers. Tokens live in Keychain; inventory
-  refresh never generates, loads, stops or downloads models. Failed refreshes retain
-  dated snapshots. The host editor's optional Test connection uses the same read-only
-  inventory adapter with draft credentials, without saving hosts, changing Keychain
-  or publishing inventory. `ModelHostConnectionCheck` cancels and fences late results
-  after edits or dismissal. Host transport bounds responses and refuses redirects and proxies.
-  Ollama's optional `HostInventory.runningModels` retains the complete running list
-  separately from installed tags; memory summaries prefer that list, including an
-  explicit empty observation. Running-only or digest-mismatched weights remain
-  read-only observations and never authorize tag-based comparisons or unloading.
-  Ollama model details are read explicitly through `ModelHostClient.inventoryInspecting`:
-  the selected installed digest must match before and after `api/show`. Only that
-  model gains reported capabilities, architecture-declared maximum context and
-  `detailsCapturedAt`; residency comes from the final inventory. Ordinary refresh
-  replaces inspected metadata. The coordinator shares its generation and in-flight
-  guards between refresh and inspection, retaining prior inventory on failure.
-  Compare's Hosted & mixed workspace uses `HostedComparisonCoordinator` and separate
-  `hosted-comparison-runs.json` / `hosted-comparison-outputs` stores. Native lanes reuse
-  ServeProbe and durable server-ownership recovery. External lanes retain captured
-  identity and pre-inference inventory metadata without feeding local recommendation,
-  promotion or reclaim evidence. ComfyUI accepts explicitly bound core image API graphs;
-  submission records persist owned prompt IDs and submitted graphs before observation.
-  Cancellation never interrupts the shared host; ComfyUI timing includes queue wait.
-  ComfyUI's existing `system_stats` read retains optional dated per-device free/total
-  memory in `HostInventory.deviceMemory` and before-lane conditions. Library, the
-  Memory panel and historical conditions share a cached disclosure. MPS/CPU readings
-  overlap shared system memory; devices are never summed or attributed to models.
-  `HostedComparisonTarget.validate(inventory:mode:)` rechecks the current model's
-  ownership, recorded digest and existing task rules before inference. Known Ollama
-  running/tag digest conflicts block that lane; unavailable metadata adds no new
-  inspection requirement. Rejection precedes condition recording and generation,
-  and later compatible lanes retain the existing execution path.
-- Hosted memory controls use `HostResourceClient` through `ModelHostsCoordinator`'s
-  read-only prepare and explicit confirm flow. Confirm rechecks the connection,
-  model/instance and activity; drift requires renewed confirmation. Ollama unloads
-  one digest-matched loaded model, LM Studio one native instance, and ComfyUI requests
-  host-wide cached-model cleanup without interrupting jobs. Activity is timestamped;
-  Ollama/LM Studio other-client activity stays unknown. Mutations are serialized,
-  blocked during Workbench comparisons, never automatically retried, and followed by
-  inventory readback. API acceptance alone never establishes released memory.
-- `make accept-native-gguf RUNTIME_MANIFEST=/absolute/path/runtime.json` is the
-  opt-in real-data native GGUF-to-Run acceptance surface. Its runner validates
-  an explicit allowlisted local source and loopback config, selects only the
-  existing golden-path UI test, and writes per-run evidence beneath the
-  manifest's `evidence_root`. Never invoke it with an arbitrary local model.
-- The Swift app gates conversions with a **Conversion Quality Gate**: after a
-  fresh scan confirms a conversion output, `VerificationCoordinator` serves it
-  on an ephemeral loopback port (via the existing serve preview/confirm
-  boundary), runs the canary suite in `Models/VerificationModels.swift`, and
-  only then marks the workflow `verified`. The gate attaches in `App.swift`;
-  without an attached verifier the workflow behavior is unchanged.
-  `VerificationCoordinator` loads saved reports and commits verdicts on its
-  serial I/O queue. Verification waits for initial history, and failed writes
-  publish no verdict or workflow override. Library scans await the initial
-  report load before publishing readiness evidence.
-- **Hugging Face Intake**: `IntakeCoordinator` + a single Add from Hugging Face window
-  (`IntakeSheet`; Prepare field, ⌘V on the Library table and Prepare view, ⇧⌘V anywhere) over
-  `mlx-agent intake resolve|fetch|status|port-analysis|port-plan` and
-  `backend list|install|remove`. Repo conversions run through
-  `ModelWorkflowCoordinator.inspect(intake:…)` with `ConversionWorkflow.sourceRepo/backend/modelType/subfolder/allowedBits` (`modelType` → `convert start --model-type`, which runs a port's own converter; `subfolder` → `--subfolder` and an `org/name/folder` fetch, for checkpoints below the repo root such as Laya's `multilingual`; `allowedBits` from intake's `q_bits` limits Prepare's bit picker, e.g. Laya is 8-bit only);
-  the Quality Gate canary runs only for `ModelTaskType.hasCanary` types (chat models: served canary prompts through `ServeLifecycle.live(thinkingOff: true)` → `serve start --thinking off`, scored on the answer after any inline `<think>` block, `InlineReasoning`, suite 3; verify errors surface per model through `VerificationCoordinator.runError(for:)`; speech-to-text: a `say`-synthesized sentence transcribed through `mlx-agent convert transcribe`, passing at ≤25% word error; classification: `DecisionCanary`, a billing ticket answered through `mlx-agent convert decide` that must route to billing and read as a refund request; image generation: `ImageCanary`, a fixed prompt rendered at 512² through `mlx-agent convert generate` that must write a non-blank image). Run, endpoints and Prepare/Activity Run actions require
-  servable types. Scan outputs carry `backend` {id, installed}; an output whose backend is not installed is `.needsRuntime`, so Verify, task panels and Compare skip it. The Library Status column (`LibraryRowStatus`) shows the canary verdict for ready models and readiness otherwise; MLX outputs take Modified from their newest file (`ModelLibraryBuilder.directoryFootprint`). Library offers Compare for ready supported chat and media models; the selected task and model travel through a one-shot request, revalidated by Compare without starting work. Compare filters by task and runtime; Strata is chat-only. `config.outputDir` is scanned as an MLX root unless a root's scan already reaches it (`AppHost.isPath`: its symlink-resolved location lies under the root by file identity, below no hidden or skipped folder).
-  Prepare refreshes conversion status while a job is in flight and shows a progress ring (bytes
-  written against the intake estimate; indeterminate while the converter loads) with the job log in a
-  collapsible section; its bit picker re-targets repo
-  destinations. The intake window shows the agent's header-based `estimated_output_bytes`. Model type and use cases come
-  from the agent's `task` labels (`ModelTask`); `UseCase` stays the serving-role vocabulary.
-  Architectures no pinned backend implements can ship as mlx-agent backend ports
-  (`resources/ports/<backend>/`, e.g. mlx-audio `audio8_asr_infinite`, mlx-embeddings `laya`): the registry counts them
-  and `convert start` copies them into the backend venv before the job; repos without a root `config.json` resolve
-  through a port's file signature (Laya), diffusers repos through their `model_index.json` pipeline class, and curated
-  recipe repos through their pinned base plus LoRA (mflux `qwen_image_21`: abenzerps/Qwen-Image-2.1-Uncensored-GGUF; the
-  intake window shows "Built from"). Image-generation models get a Generate image task in the Library inspector
-  (`InferenceTaskCoordinator` + `InferenceTaskPanels`: prompt, optional width, height, steps and seed; the output is
-  retained with its task and exports as a verified PNG).
-  Speculative-decoding drafters (`ModelTaskType.speculativeDraft`: llama.cpp `dflash`/`eagle3` GGUFs, configs with
-  `dspark_target_layer_ids`) borrow their target's embeddings and head, so they have no canary and are never servable;
-  `ModelItem.draft` (scan's `draft`, or a converted output's `dspark_target_name`) names the target in Model Details.
-  A DeepSeek-V4 DSpark `dflash` GGUF converts through mlx-agent's `deepseek_v4_dspark` port (`convert start --gguf`
-  adds `--port`); other drafters are refused at plan time (`unsupported_draft`).
-- Native serving, verification, chat comparisons and endpoints use `--runtime auto`:
-  the agent reads local model metadata, selects a declared serving backend and
-  binds an optional backend's isolated executable into eager and JIT previews.
-  Already-MLX intake retains backend/install readiness. Prism's published 2-bit
-  packs use the pinned MLX-VLM Hadamard adapter without executing repository
-  runtime code. GGUF projector/companion files are refused before conversion.
-- Serve accepts HF repo ids or local directories (`serve start --path`,
-  upstream ≥ the local-path serve change). `WorkbenchAPI.serveModelArguments`
-  preserves every local directory, including HF-cache snapshots, through
-  `--path`; status comparisons normalize through
-  `ServerInfo.modelIdentity` (repo id or path, whichever the agent reports).
-  Intake checks current ready inventory and matching conversion history before
-  fetching; a reused match keeps its recorded download while it is still the
-  cached snapshot of the resolved revision (`IntakeCoordinator.reusableSource`). Downloaded conversion directories are passed through `--source-path`
-  and persisted as `ConversionWorkflow.localSourcePath`; converter workers run
-  offline. Confirm conversion captures the visible source-cleanup choice; a source
-  outside the configured roots (`PrepareWorkflowPresentation.sourceCleanupIsPossible`)
-  disables the choice and the post-verification cleanup preview.
-  After verification, `ConvertedSourceCleanup` reclaims receipt-owned GGUF files
-  or single-revision cache repositories to macOS Trash. It protects changed
-  outputs, active/preferred paths, other revisions and surviving shared-blob
-  references across configured roots. Recovery locations live in
-  `source-cleanup.json`; old workflows require an explicit cleanup preview.
-  Duplicates lists eligible originals from verified receipts and journal-backed
-  cleanup history. New moves record batch, workflow, bytes, time and Trash
-  metadata identity. Restore previews exact original destinations, rechecks
-  native Trash and configured-root fences, refuses conflicts and drift, restores
-  blobs before cache folders, and records each result. Legacy history has no
-  historical identity; its explicit restore preview binds the current Trash item.
-- The Compare tab runs **Measured Comparisons**: `ComparisonCoordinator`
-  replays a prompt set against selected ready variants (one at a time, via
-  the shared `ServeProbe` harness), persists runs, and feeds measured
-  tok/s/TTFT into the RecommendationEngine as local benchmark evidence.
-  **Promote winner** (on a completed run) chains the verdict:
-  `AppHost.setPreferredModel` persists the winner as the use-case preference
-  (`recommendation-preferences.json`), optionally enables/swaps the
-  Always-on Endpoint (verified gating kept), and links onward to the Wire
-  and Duplicates tabs — wiring and reclaim keep their own preview/confirm
-  flows.
-  Samples also capture `prompt_tokens` (prefill speed = prompt tokens over
-  TTFT, always labeled an estimate) and tool calls (builtin "Tool calling"
-  set offers `PromptToolSpec`s; streamed `tool_calls` are counted and their
-  arguments validated against the schema's required keys). Past runs are
-  browsable in a searchable history popover; `ModelPerformanceProfile` aggregates
-  per-model stats into Model Details.
-  Indexed history reads and writes use the serial `ComparisonHistoryWorker`.
-  Profile evidence and selection await authoritative reads and recheck profile
-  snapshots after suspension. Prompt-input reclamation reads history and removes
-  owned files off the main actor while prompt-set management remains busy.
-  **Compare modes**: a picker above the variant slots (segmented when it fits, otherwise a menu; `ComparisonMode`:
-  chat, vision, video understanding, speech to text, text to speech, image
-  generation, video generation, music generation); slots list only models whose `ModelTaskType`
-  the mode accepts (`ComparisonViewLogic.candidates(from:mode:)`). Chat keeps
-  the ServeProbe path above unchanged. Every other mode runs per variant, per
-  prompt, sequentially through an injectable `ComparisonMediaRunner` (live:
-  `convert describe|transcribe|speak|music|generate|video` on the `WorkbenchAPI`
-  actor, never the main actor). Blocking CLI execution runs on a dispatch
-  worker through a throwing continuation, so long media jobs hold neither
-  the API actor nor a Swift cooperative worker. Prompts carry optional media input
-  (`PromptEntry.inputKind` + `inputPath`, or a `builtinInput` generated at run
-  time into `<run>/inputs/` by `ComparisonMediaFixtures`: CoreGraphics PNGs, an
-  AVAssetWriter MP4, `say`-synthesized WAVs; no binary assets in the repo) and
-  optional `expectedKeywords` (contains-all, case-insensitive; `a|b` means
-  either). Speech-to-text is scored with `SpeechCanary.wordErrorRate`; built-in
-  speech clips are transcribed with `--language en` (`MediaRunRequest.language`),
-  user-picked clips with no language. Outputs
-  are saved to `<Application Support>/mlx-workbench/comparison-outputs/<run-id>/<variant-index>-<prompt-id>.<txt|png|wav|mp4>`
-  (`ComparisonOutputStore`); `ComparisonSample` carries `artifact` and the
-  per-mode metrics, `ComparisonRun.mode` (nil = chat). When a media run starts,
-  output folders of all but the 10 newest media runs are deleted (only
-  directories directly under `comparison-outputs/` named by a run UUID; links
-  are never followed); run JSON is kept and a missing artifact renders as
-  "output pruned". A sample's `artifact` containing `/`, `..` or a leading dot
-  is refused. New input-media runs save user-picked files off the main actor before
-  replaying any model; built-in inputs are generated once, captured under unique
-  basenames and their temporary generated files removed. `ComparisonRun.inputArtifacts`
-  records the saved input per prompt inside the run's `inputs/` folder before replay.
-  Sources and saved files must be readable regular files; symbolic links and symlinked
-  store directories are refused. User-picked originals are never changed or removed.
-  Input copies follow the existing ten-run output retention. Results preview saved
-  inputs, label older user-picked originals as unsaved, and never substitute an original
-  when a recorded copy is unavailable. Speech input text is labeled as a reference
-  transcript; keyword checks describe case-insensitive presence and alternatives.
-  The text A/B editor uses the same input-evidence resolver and offers a Finder
-  reveal action that rechecks availability before opening the saved or labeled
-  legacy original file. It shows the recorded reference and expected-word checks.
-  The coordinator only touches an output store it was handed
-  (`outputStore`, wired in `AppHost`). The results grid leads with one lettered
-  lane (A–D, run order) per variant carrying the mode's primary metric as its
-  largest numerals and a relative bar: tok/s, real-time factor, seconds per
-  step, seconds per frame. Below the lanes is one row per prompt, one column per
-  lane (text, image thumbnail with larger sheet, audio play/stop, video player).
-  In chat, Fastest (`ComparisonRun.leaders`) counts only lanes with no prompt cut
-  off at the token limit before any answer; `ServeProbe` splits inline `<think>`
-  blocks into `reasoningText`; `ProbeSample.decodeTokensPerSecond` is nil when
-  streamed deltas arrived in one burst (under 0.5 ms average spacing).
-  Completed text-output runs (chat, vision, video understanding, speech to text) offer
-  `TextComparisonPanel` below the charts: two model outputs for one recorded prompt,
-  selectable reading or bounded line differences, with existing task-quality ratings.
-  `ComparisonDiff` prefers full recorded output, labels older excerpt-only samples,
-  excludes failed/unpaired samples and limits the quadratic differ to 20,000 characters
-  and 500 lines per output without truncating the reading view. New chat samples persist
-  `fullOutput`; old runs are not rewritten. Promote winner stays chat-only; media runs do not feed the
-  RecommendationEngine.
-  Music generation accepts `music_generation` models and uses the audio backend's
-  dedicated music loader. Prompt snapshots preserve caption, lyrics, requested
-  duration, steps and seed; built-ins request 15-second instrumental clips.
-  WAV playback and real-time factor use the existing audio results path, with
-  no automatic quality score. Generation is offline from an absolute local
-  directory. Already-exported quantized MiniMax Music 3 sources use the engine's
-  local music requantizer, preserving tokenizer/scheduler assets while rebuilding
-  weights; raw component checkpoints keep the backend's original converter.
-  Music generation requires the real root or nested tokenizer and uses the pinned
-  backend's official prompt encoder; synthetic tiny-model fallback tokens are refused.
-  Completed music and text-to-speech runs show A/B listening below the lettered-lane grid
-  through `ComparisonListeningPanel`. One shared
-  `AudioClipPlayer` owns input/output playback, pause/resume and seeking;
-  switching models preserves elapsed time and clamps to a shorter clip's end.
-  Run changes, leaving results and deactivating the Compare route stop playback.
-  Missing clips are excluded; speech notes that words may not align at the same elapsed time.
-  Speech retains `task-outcome-v1` ratings. Each music lane header carries its
-  model's listening rating control; explicit 1–5 ratings persist
-  as `music-listening-v1` reviews, separately from speed; quality champions
-  require a complete, current cohort with every model reviewed under that rubric.
-  Completed image-generation runs offer **Inspect images** and open generated-output
-  thumbnails in `ImageComparisonSheet` (input thumbnails retain the single-image preview).
-  Both panes select available outputs for one recorded prompt and share an
-  `ImageInspectionViewport`: fit-relative zoom and normalized pan, clamped separately
-  for each aspect ratio. Prompt changes reset the viewport; model switches retain it.
-  Keyboard arrows pan the focused image. The viewer reuses `TaskQualityRating` and
-  surfaces the coordinator's persistence error without changing review storage.
-  Completed video-generation outputs open `VideoComparisonSheet`, with a single
-  `VideoComparisonPlayer` owning both native AVPlayers. Loading validates duration,
-  video tracks and readiness before shared playback can start. One host-clock start
-  and elapsed-time seek align the clips; shorter clips clamp at their end, and
-  generated motion need not match. Audio defaults off and can select only one clip.
-  Prompt changes stop/reset; model changes preserve time and playback state.
-  Dismissal releases players and observers, with generation guards fencing late
-  async load/seek completion. Completed-output previews have no separate transport;
-  video-understanding inputs retain their existing inline player. Ratings and
-  persistence errors reuse the existing comparison flow.
-  Run history uses a searchable popover grouped by mode, newest
-  first within each group; selecting a row keeps the existing results behavior.
-  Completed music runs with prompt snapshots offer **Reuse setup** beside history.
-  `ComparisonRunSetup` copies recorded inputs into a temporary per-prompt editor;
-  applying it never writes a preset or starts generation. The existing Run button
-  starts fresh results with current model signatures and no copied quality reviews.
-  Missing recorded models stay selected and block Run until explicitly replaced
-  or removed; inventory refreshes must not silently clear a reused cohort.
-  The reuse editor's **Save as prompt set…** writes a newly identified user prompt
-  set through the existing prompt store, preserving per-prompt settings without
-  model selections. Save failures keep the editor open and leave published prompt
-  sets unchanged; saving never starts generation or overwrites the source preset.
-  Saved user-created music prompt sets have a compact Edit/Rename/Remove menu beside
-  the picker. Both actions recheck the persisted set and use `JSONStore.update`
-  under its mutation lock; publication follows a successful atomic write.
-  Built-in IDs, temporary setups and active comparisons are refused.
-  Removal requires confirmation and changes only the prompt store; run snapshots,
-  audio and quality reviews remain intact. Removing the selected set falls back
-  to an available prompt set.
-  `PromptSetDraft` (`Models/ComparisonModels.swift`) is the one value-only draft for
-  every mode and lifecycle: new sets, copies, saved-set edits and, inside
-  `ComparisonRunSetup`, reused runs. `ComparisonPromptSetEditor` edits new, copied
-  and saved sets in every mode; music cards use `MusicPromptFields`, other modes
-  `ComparisonPromptFields`. The coordinator's prompt-set interface is
-  `createPromptSet`, `preparePromptSetEdit`, `savePromptSetEdits`, `renamePromptSet`,
-  `removePromptSet` and `canManagePromptSet`, shared by all modes.
-  Music validation preserves optional settings and unedited fields.
-  Explicit Save keeps the set and prompt identities, checks the original snapshot
-  against the current persisted set, and publishes only after a successful write.
-  Opening or reopening an editor loads the current persisted set through the
-  coordinator's explicit Edit action, outside view evaluation.
-  Invalid, stale or failed edits keep the editor open; Cancel and opening an editor
-  never write or generate audio. Historical snapshots and output files are untouched.
-  **New set…** in music mode uses `PromptSetDraft` and `MusicPromptFields`
-  for the same per-prompt caption, lyrics, duration, steps and seed controls.
-  New prompts start with explicit 15-second/30-step/seed-42 instrumental settings;
-  clearing settings uses the existing optional-default semantics. Add/remove is
-  draft-only, keeps stable prompt identities, and retains at least one prompt.
-  Explicit Save validates all inputs and selects the set only after the existing
-  prompt store accepts it. Invalid or failed saves keep the draft open; Cancel
-  never writes or generates.
-  Other modes use `PromptSetDraft` + `ComparisonPromptSetEditor` for
-  per-prompt text, input attachments, expected words and requested output tokens
-  where supported, square image size/steps/seed, and video dimensions/frames/fps/
-  steps/seed. Add/remove retains stable surviving prompt IDs and at least one
-  prompt. All modes, including music creation, saved-set edits and run reuse,
-  share the card action menu. It duplicates the current draft immediately after
-  its source with a new UUID, preserving edited fields and hidden metadata.
-  Move up/down reorders existing identities within bounds; neither operation
-  writes state or starts generation. Explicit Save/Use applies that order;
-  historical snapshots remain unchanged. Music saved-set validation accepts
-  reordered and newly duplicated prompts, but rejects empty or repeated IDs;
-  the durable original-snapshot check still rejects concurrent edits. A shared
-  `PromptEntry` copy operation preserves hidden metadata under a new identity.
-  Music Add/Remove controls also work in saved-set and reuse editors, through
-  the same draft operations as creation. Removal retains at least one prompt;
-  new entries share the existing instrumental/15-second/30-step/seed-42
-  defaults and require a valid caption before Save/Use. Reuse revalidates
-  nonempty unique prompt identities after draft changes. Draft mutations never
-  save state or generate audio, and surviving entries retain their identities.
-  Drafts preserve unedited tool schemas, legacy mode/use-case metadata,
-  optional fields and effective generation defaults; unreadable input files and
-  invalid runtime parameter ranges are rejected at Save. `Models/InferenceSettings.swift`
-  holds those ranges (the engine's generate, video, describe, speak and music plan
-  limits) for Compare prompt drafts, Library task drafts and `TaskRequest.validate`'s
-  music check. Model-specific video alignment/frame grouping and area caps remain
-  the engine's authority. The shared saved-set
-  menu offers Edit/Rename/Remove in every mode, with built-in and active-run guards.
-  Non-music draft validation also supplies a concise inline warning within each
-  prompt card and disables Save/Use for invalid values in new, edited, copied
-  and reused setups. View-time validation shares the entry rules but performs
-  no file availability probes; Save/Use still recheck readable inputs. File
-  availability warnings remain in the input section without duplicate warnings.
-  Music uses the same card-level feedback through `PromptSetDraft.Prompt`
-  entry validation. The draft rejects invalid identities and labels prompt errors
-  by current position for creation, saved edits and reuse; draft errors do not
-  also appear in a global banner. Name checks share
-  the save rules, and creation/copy Save is disabled until the draft is valid.
-  Both shared prompt field views use `ComparisonPromptList` to reveal newly
-  inserted prompt identities after Add/Duplicate. Initial rendering and
-  unchanged, reordered or removed identities do not request a scroll; normal
-  draft editing remains value-only, with no saves or generation side effects.
-  Multi-prompt field views show a shared Fix prompt N action below the scroll
-  area, targeting the first value-invalid card by current order and stable
-  identity. Validation is value-only and never requests an automatic jump;
-  clicking the action only scrolls, and single-card editors omit it.
-  Saved non-music and music editors compare full prompt draft values to their
-  immutable opened snapshot (`hasChanges`), including raw invalid input and
-  identity/order changes. Save is disabled for unchanged drafts; Revert resets
-  the opened snapshot in memory and clears the local save error. It never
-  reloads stores or bypasses the existing stale-save check. New/copy creation
-  remains saveable after validation and has no saved snapshot to revert.
-  Saved-set editors share ComparisonPromptCancelButton: dirty Cancel reveals
-  inline Keep editing / Discard changes, with Escape returning to editing.
-  Unchanged or reverted drafts dismiss immediately. Interactive dismissal is
-  disabled for dirty saved drafts, and async-save blocking remains in place.
-  Discard only dismisses; it never saves or mutates the opened snapshot.
-  New/copy and reuse editors compare raw names and prompts against an in-memory
-  ComparisonPromptDraftCheckpoint. Opening alone never requires confirmation;
-  invalid edits, identities and ordering count as changes. Reuse also guards
-  an edited visible Save-as name. Successful copy saves retain current prompts
-  as the checkpoint; failed saves leave it intact and later edits re-arm it.
-  Save eligibility and Apply behavior remain separate from cancellation.
-  PromptSetRenameSheet uses PromptSetRenameDraft in every mode: raw name edits
-  guard Cancel and interactive dismissal, while normalized unchanged names
-  cannot submit redundant writes. PromptSetNameValidation is shared by rename,
-  new/copy/reuse name validation and the coordinator persistence boundary.
-  Inline invalid-name feedback is separate from persistence errors; renaming
-  preserves prompt identities, settings and historical run snapshots.
-  ComparisonPromptSetNameField supplies shared name feedback in new/copy,
-  reuse and Rename flows. Untouched blank new fields suppress validation;
-  any subsequent name edit enables feedback, including clearing the field.
-  Rename also validates its initial value. Field edits never persist or run
-  comparisons; existing Save eligibility and cancellation guards apply.
-  comparisonPromptActionHint supplies matching hover and accessibility hints
-  for Save, Rename, Save-as and Use setup across both editor families. Hints
-  prefer existing validation errors, then unchanged/pending-name guidance,
-  then the action description. They do not change action eligibility or save
-  behavior.
-  ComparePresentation.runUnavailableReason is the shared Run comparison
-  eligibility explanation: an active run takes precedence over a pending
-  prompt-set save, a missing or empty prompt set, no selected model, or the
-  first unavailable slot. canRun delegates to this model-only decision with
-  prompt readiness assumed, while QuantView includes save state and prompt-set
-  presence/content for both its button and live
-  startRun guard. ComparisonRunButton shares hover/accessibility guidance;
-  ComparisonRunGuidance shows one idle setup message in place of the old
-  unavailable-model list. Active runs retain their existing progress display.
-  Guidance performs no I/O, persistence or generation and does not change
-  model eligibility, deduplication or filter behavior.
-  OpenCode prompt imports use persistNewPromptSet and return a set only after
-  the durable store accepts it. Failed writes leave the current set selection
-  and existing sets unchanged; lastError reports the failed import and clears
-  after a successful retry. Import never starts a comparison.
-  ComparisonPromptRemoveButton is shared by non-music and music prompt cards
-  in new/copy, edit and reuse editors. The minus button opens inline Keep
-  prompt / Remove prompt choices; only explicit Remove invokes the existing
-  draft mutation. Removal remains disabled for the final prompt, and losing
-  eligibility clears pending confirmation. No saved set or run is mutated
-  by the control itself.
-  Media input cards offer Revert input when Prompt.hasInputChanges is true.
-  Prompt.revertInput restores only the opened PromptEntry inputPath, leaving
-  all other raw edits intact. Existing derived builtin/saved provenance and
-  availability guards apply again; missing inputs never gain a fallback.
-  Revert changes no files and invokes no save, fixture generation or runner.
-  ComparisonPromptActions retains each card's initial raw prompt in SwiftUI
-  state, keyed by its existing prompt identity. Its shared Revert prompt
-  action restores only that binding, is disabled for unchanged or mismatched
-  identities, and preserves other cards and order in every comparison mode.
-  Newly added and duplicated cards capture their own initial raw values.
-  Revert performs no validation, save, generation or file mutation; restored
-  inputs remain subject to the existing availability guards.
-  Customize copy opens `PromptSetDraft(copying:)` for the selected built-in/saved/temporary set,
-  with a fresh set identity, copied use case and recorded prompt fields. Opening
-  never writes; explicit Save uses existing creation paths and selects the new
-  set only on success. Non-music media uses independent durable input copies;
-  source-set ownership metadata is not inherited. Built-ins remain immutable,
-  and the copy action is disabled during active comparisons or input saves.
-  `ComparisonPromptSetPicker` replaces the flat set menu with a bounded popover
-  over the existing mode-filtered sets. `ComparisonPromptSetPickerLogic` groups
-  explicit temporary IDs first, then user-created sets and built-ins, retaining
-  source order and distinct identities even for duplicate names. Search matches
-  names, prompt text and tool names locally; rows show prompt counts and current
-  selection. Search/clear/open never selects, writes or starts a comparison;
-  only an explicit row action changes the selection and closes the popover.
-  `createPromptSet`, `preparePromptSetEdit` and `savePromptSetEdits` use the existing
-  prompt store and action-scoped errors. Edits recheck the original durable
-  snapshot under `JSONStore.update` before publication; failure retains the draft.
-  Current measurements, task tradeoffs and measured alternative selection require
-  exact equality with the selected set's recorded prompt entries, not just its ID.
-  Past runs, quality reviews and output artifacts remain historical evidence.
-  **Reuse setup** in every mode uses `ComparisonRunSetup` and
-  `ComparisonRunSetupSheet`, sharing `ComparisonPromptFields` or `MusicPromptFields`
-  with the regular editor. Only completed runs with valid recorded prompt/model identities can
-  open it. Snapshots supply the prompts, per-prompt settings, use case and model
-  paths; the current serving limits still apply. Runs with `inputArtifacts` use
-  only their fenced saved inputs from the injected output store; unavailable
-  copies require explicit replacement before Use/Save, never fallback to original
-  files or fixture regeneration. Legacy runs retain current original paths or
-  deferred built-in generation. Saved built-in speech copies preserve their
-  language hint; replacing the input clears it. Run copies inputs before pruning
-  the ten-run cache so reusing its oldest run does not delete the source first.
-  Save creates an independent
-  prompt-set identity through `createPromptSet`; failure retains the draft.
-  Use restores a temporary set and model paths without writing or running.
-  Missing models remain selected and block Run until replaced/removed. New runs
-  capture current signatures and evidence; original results/reviews stay intact.
-  Reuse-sheet Save runs `createPromptSet` asynchronously. It copies
-  explicit input files into `prompt-set-inputs/<uuid>/inputs/` beside the prompt-set
-  JSON, then publishes the set only after its atomic JSON save succeeds.
-  `PromptSet.inputStorageID` is optional for legacy compatibility; existing sets
-  are not migrated. Built-in fixture IDs are preserved without generation, and
-  file copies stay off the main actor. Copy/save failures discard only their new
-  owned folder. The sheet blocks edits/dismissal during Save; the coordinator
-  blocks Run and edit/rename/remove during copying. Successful removal considers
-  only the removed set's owned/referenced UUID folders, retains other saved-set
-  references from saved sets and an authoritative run-store read, and never sweeps staging
-  folders or original files. Failed/unknown stores keep copies conservatively.
-  Temporary setups retain the ten-run cache; newly saved copies are independent.
-  New-set and saved-set editors use the same asynchronous input ownership path.
-  `savePromptSetEdits` keeps unchanged owned inputs, copies only
-  external/replacement inputs, then checks `edit.original` against the durable
-  set under `JSONStore.update` before publication. Failed/conflicting saves discard
-  only their new folder. Successful edits reclaim old folders only when no saved
-  set or legacy run references them. Settings-only edits do not copy owned files.
-  Existing path-based sets are preserved on load and get owned copies when saved
-  explicitly in the editor. Save blocks editor changes/dismissal until it finishes;
-  built-in fixtures remain deferred and original source files stay untouched.
-  `PromptEntry.inputName` optionally records a display-only source filename before
-  owned copies change its path. Names survive save/reuse chains and settings-only
-  edits; replacing the path clears the old name before the new copy captures it.
-  Prompt cards, result-grid input labels and text A/B use `inputDisplayName`.
-  Invalid names are ignored; legacy records fall back to their recorded path's
-  basename without inventing an earlier name. Names never resolve paths or enter
-  argv; missing saved copies remain unavailable even when their name is known.
-  Shared prompt cards offer a collapsed `ComparisonPromptInputPreview` only for
-  readable regular input files. Image previews reuse the thumbnail/larger sheet;
-  audio previews share one `AudioClipPlayer` per editor with seek controls;
-  video previews reuse `ClipVideoView` without autoplay. Collapsed previews do
-  not instantiate media views, and no built-in fixtures are generated by editing.
-  Collapse, replacement and removal stop the affected audio; editor dismissal
-  stops its shared player, and video teardown pauses the native player.
-  Non-music result lanes expose `TaskQualityRating`, a compact menu over the
-  existing `task-outcome-v1` human rating scale. Per-mode guidance lives in help
-  text; ratings never derive from speed, keywords or word-error rate.
-  `ComparisonViewLogic.qualityReviewUnavailableReason` requires a completed,
-  successful full prompt cohort and readable media outputs for new judgments.
-  Saved ratings stay visible and clearable after media is pruned. Rating changes
-  use `reviewQuality` without altering measured samples or prompt snapshots;
-  failed writes retain published reviews and successful retries clear the error.
-  Quality awards retain the existing all-entrants-reviewed, same-rubric,
-  current-identity/environment guards and share ties.
-- Library's Source picker offers All models and LM Studio, retaining the main table's state.
-  Legacy `lmstudio` navigation resolves to Library and opens that source; the sidebar omits
-  the legacy row. Only the visible source is route-active, so hidden table search, toolbar
-  and inspector controls do not appear over the source view.
-  Show in Library emits a fresh `LibraryRevealRequest`, selects All models, clears table
-  search/readiness/quantization filters and opens the requested model's inspector. The
-  receiver accepts only a path present in the current snapshot; grouping and column
-  preferences remain intact. Reveal does not write config or start model work.
-  Cross-tab requests (Library reveal, runtime recovery, Hosted models, client wiring, Compare
-  model and serving-profile requests, workflow report import) go through `AppHost.handoffs`
-  (`UI/RouteHandoffs.swift`): at most one pending request per `HandoffKind`, read by the
-  destination route while active and finished once applied or rejected. A request the route
-  cannot apply yet stays pending; finishing a request never clears a newer one.
-  The LM Studio source lists models from the Library snapshot, not a scan of its own.
-  `LMStudioShelfResolver` (off the main actor) reads `downloadsFolder` from `~/.lmstudio/settings.json`
-  (the default and older folders only when settings name none), and states per format whether the last
-  Library scan reaches each folder (skipping hidden and agent-skipped directories, as the agent does);
-  the settings folder alone decides the missing and not-scanned states. `LMStudioShelfPresentation`
-  builds an MLX lane (Run) and a GGUF lane (Prepare, or Run for a converted output) ranked by fit, with
-  split-GGUF sizes summed and projector companions attached as tags; path math is string-only
-  (`LMStudioPathMath`) and the row grouping is built once per snapshot into `LMStudioShelfIndex`; the
-  screen never writes config. `LMStudioShelf` is the only LM Studio view observing `SystemResourceMonitor`.
-  `Config.discoverGgufRoots` appends that `downloadsFolder` after its default folders and skips any folder
-  at or inside an earlier one (`AppHost.isPath`); `LMStudioShelfResolver.downloadsFolder` opens only a regular
-  `settings.json` within 1 MiB, so the read is safe on the main actor. Config coercion discovers only when
-  no valid `gguf_roots` list is stored; `AppHost.discoveredRoots` (Settings and Setup suggestions) is
-  discovered off the main actor by `startLiveServices()`. Discovery and the LM Studio page default to
-  `WorkbenchStatePaths.userHome()`, so hosted unit tests never read the user's `~/.lmstudio`.
-- Python resolution is centralized in `Services/WorkbenchPython.swift`
-  (env override → repo `.venv` → PATH) and shared by `CLIProcess`,
-  `RuntimeChecker`, `LaunchAgentManager`, and the watch fingerprint probe.
-  The repo is the build checkout (`#file`, compiled out of distribution
-  builds) or, for installed builds, the checkout whose `vendor/mlx-agent` is
-  the configured agent path. `RuntimeInstaller` runs `make install` in-app
-  when the runtime is missing; `UpdateCoordinator` acts only on the build
-  checkout.
-  `CLIProcess` drains stdout/stderr on dedicated threads: blocking pipe reads
-  must not depend on shared dispatch workers while a CLI caller waits for EOF.
-  `WorkbenchAPI` runs every agent call on a dispatch worker and suspends the
-  actor meanwhile, so a long call (e.g. `watch diff`) never queues `serve
-  status`; its `command` initializer argument injects the runner in tests.
-  Concurrent replies can finish out of order: `ModelWorkflowCoordinator`
-  shows a serve-status reply only when no later-issued one is already shown.
-  Each agent child leads its own process group (media backends stay in it);
-  on timeout and on `NSApplication.willTerminateNotification`
-  (`CLIProcessRegistry` tracks live children) the whole group gets SIGTERM,
-  then SIGKILL after a 2 s grace, matching `bridge._kill_process_group`.
-  Agent-detached work (`convert start` jobs, `serve`) uses its own session and
-  is not stopped.
-- **Never spawn a process synchronously inside view evaluation.** A
-  `Process.waitUntilExit` reached from a view body/layout crashes the app
-  (AttributeGraph precondition via re-entrant layout). The watch
-  fingerprint probe answers from a prewarmed cache and degrades to
-  "unknown" on the main thread instead of probing. Keep this invariant.
-- **Hosted unit tests never start live services or touch real state.**
-  `make test-swift` runs inside the app (TEST_HOST = mlx-workbench.app).
-  `AppHost.startLiveServices()` (WindowGroup `onAppear`)
-  owns all launch-time live work: quality-gate attach, watch and endpoint
-  supervision, resource sampling, GGUF folder discovery, and the first scan
-  with workflow reconciliation. It returns early when `XCTestConfigurationFilePath` is set,
-  so the suite never starts or stops real servers. UI tests launch a separate
-  app process without that variable and keep live behavior. Keep new
-  launch-time live work behind this method. Default state locations resolve
-  through `Services/WorkbenchStatePaths.swift`: in a hosted unit-test process
-  Application Support, `config.json` and the convert queue live under
-  `WorkbenchStatePaths.hostedTestRoot`, which the test bundle's principal
-  class (`HostedTestStateRoot`) replaces with a fresh temporary directory per
-  test. New default state paths go through it.
-- The Wire tab also does **Cross-client Wiring**: `WiringCoordinator` detects
-  installed clients (opencode/Continue/Zed/Aider writable; LM Studio/Ollama
-  advisory-only) and previews/confirms atomic writes to each client's own
-  config with per-file backups, drift re-checks, and rollback. Rollback
-  restores backups and moves configs the wiring created to the Trash only
-  while they still hold the written contents (receipt `createdFileSHA256`;
-  receipts without it keep created files). The opencode adapter writes
-  opencode's `$schema` when missing or empty, since opencode rewrites a loaded
-  config without one. Client write
-  targets are a fixed allowlist of well-known config paths.
-  Model guidance's **Wire into clients** hands off a one-shot model/port
-  request. Clients preselects only a matching running endpoint, supports repo
-  and local-path identities, and preserves the complete served identity in
-  generated client configs. Preview binds server identity; confirmation reads
-  fresh authoritative status before any file write and refuses stopped,
-  replaced or ambiguous servers. Existing config drift and rollback guards
-  remain unchanged. Server refreshes run asynchronously on route activation.
-  The Clients board reads each writable client's allowlisted config off the main actor (route
-  activation, Refresh servers, each confirm or rollback outcome) and draws what that file points at
-  against running servers; the reading is read-only and exposes only URL parts and model names.
-- The Run tab hosts the **Always-on Endpoint**: `EndpointSupervisor` keeps a
-  chosen verified model serving on a stable loopback port by reconciling
-  desired state against authoritative serve status (crash-loop guarded;
-  enable/swap require verified models unless explicitly overridden).
-  Internally it is fleet-shaped (spec 09 P1): `EndpointFleetConfig` slots in
-  `endpoint-fleet.json` (migrated one-time from the legacy
-  `endpoint-config.json`, which stays read-only), one reconcile pass over
-  all enabled slots, per-slot crash guards. The single-slot API is a shim
-  over slot 0. The Run tab's **Endpoints** section (spec 09 P2) lists the
-  slots with per-slot status/restarts/fit chip, enable/disable, role picker,
-  remove,   and an "Add endpoint" flow (suggested next-free port, verified
-  gating with explicit unverified override, cap 4). The menu bar aggregates
-  ("N of M endpoints running", worst-state icon, per-slot start/stop).
-  The **fleet memory budget** (spec 09 P3): `FleetFitAdvisor` sums
-  FitAdvisor estimates over enabled slots that are not already resident
-  against the shared monitor's `MemorySnapshot` (per-slot runtime overhead;
-  unknown model sizes or unavailable memory make the verdict unknown, never
-  fabricated). The section shows the summed verdict; enabling a slot that
-  tips the fleet past won't-fit needs an explicit inline override.
-  The **role router** (spec 09 P4): "Wire roles…" in the Endpoints section
-  maps roles onto running slots via `mlx-agent fleet render/apply` with
-  `--port-map` (mlx-agent ≥ the port-map change, cavi-ai/mlx-agent#41;
-  the vendored pin includes it).
-  Only running slots with HF-cache repo ids are assigned — everything else
-  is reported skipped, never pointed at a dead port. The router config is
-  written exclusively through `fleet apply` (preview/confirm + receipt), so
-  the target file stays fleet-managed.
-  `LaunchAgentManager` optionally installs a RunAtLoad login item (no
-  KeepAlive — the app's supervisor reconciles; receipts stay authoritative).
-- The Duplicates tab hosts the **Disk Pressure Advisor**: `ReclaimAdvisor`
-  ranks reclaim opportunities (stale per `UsageTracker` evidence, superseded
-  by comparable reviewed task evidence, cross-root duplicates) and `ReclaimCoordinator`
-  applies them as batched quarantine moves via `Services/Quarantine.swift`
-  (GGUF parity with `mlx_workbench/quarantine.py`, plus explicitly reviewed
-  local MLX directories in the native app). Folder previews run off the main
-  actor and freeze file identity, metadata, total bytes and a tree fingerprint.
-  Confirm rechecks configured MLX roots, active/preferred paths and chain
-  keepers. Folders require recognized MLX config/weights, no symlinks,
-  hard-linked/shared files or HF cache layout, and same-volume quarantine.
-  Configured roots themselves cannot move. Folder ledger records carry optional
-  `kind: "mlxDirectory"`; legacy GGUF records omit it. Task-scoped replacement chains
-  select a terminal keeper within one reviewed comparison or matched workflow
-  cohort; they remain advisory and protect their keepers from stale-file advice.
-  Quarantine offers native macOS Trash after preview; confirm rechecks file
-  identity, size, timestamps, ledger membership and the configured quarantine
-  fence. It refuses links and never falls back to permanent deletion. Successful
-  Trash moves preserve ledger history with the `deleted_at` field shared with
-  `mlx_workbench/quarantine.py`. Quarantine and Trash retain disk usage until Trash is emptied.
-- Compare defaults distinguish intentional serving (`UsageStamp.lastServedAt`)
-  from verification/benchmark activity. New comparison runs snapshot prompts
-  and can persist explicit human task-outcome reviews. Current recommendations
-  require matching model signatures and environment fingerprints; task-scoped
-  supersession additionally needs comparable reviewed quality and no adverse
-  speed, latency, estimated-memory or disk trade-off. Quantization bits alone
-  never establish supersession, and task-scoped suggestions are review-only.
-- Workflow evidence is an explicit local JSON interchange (`WorkflowReport`,
-  schema 1), persisted separately in `workflow-evidence.json`. It is not an
-  automatic Claude/OpenClaw/OpenCode log reader. Native Compare can copy/save
-  a `WorkflowCaptureRequest` for a selected harness and ready local model;
-  it captures identity context only, with null required run measurements in
-  `reportDraft`. After successful client wiring, `WiredWorkflowCapture` rechecks
-  the reviewed server and matches one ready local model before prefilling the
-  request with loopback endpoint and successful client IDs. Rolled-back or
-  unwritten transactions and ambiguous local revisions are refused. This is
-  config-write context, never proof a task used the endpoint; wiring time/ID
-  never substitute for measurement time/run source. The Clients handoff opens
-  Compare's shared import review through a one-shot route intent consumed only
-  when Compare is active. A request cannot import as evidence. Report files are read and
-  decoded off the main actor; imports preview exact new/duplicate observations
-  and model/environment status before confirmation. Confirmation refuses
-  changed saved evidence and preserves historical observations without
-  relabeling them. Preserve producer provenance,
-  timestamps, model/environment/configuration identity, seconds/bytes units,
-  and unknown metrics. Never stamp imported observations as current or attribute
-  unattributed time to GPU/disk without measurements. Resource captures run
-  outside view evaluation; exports preserve their capture time and context.
-  Native Compare shows workflow runtime, timing-breakdown, task-quality and
-  recorded peak-memory charts above setup through a compact metric menu,
-  using `AgentTaskAdvisor` identity/cohort checks. The latest observation per model
-  is charted only when comparable; missing components render a total-duration
-  "Breakdown unknown" bar, never inferred GPU/disk time. Zero measured durations
-  remain zero; unattributed time is derived only from complete additive timings.
-  Quality requires a shared cohort rubric. Metric values bind to the exact
-  selected report ID and context; unknown scores/memory are labeled rather than
-  charted as zero. Peak memory uses recorded bytes in decimal GB and shows the
-  report's capture date, never live fit estimates or an older-report fallback.
-  The Quality vs runtime scatter plot pairs score and total runtime from that
-  same report and rubric. Point selection (or the model menu for overlapping
-  points) shows recorded memory/date. Use model opens the existing role/endpoint
-  review with fresh identity, evidence and headroom checks; selection never applies it.
-  "Compare these models" re-checks the cohort against current identities and
-  inventory at click time, loads only ready models for the selected mode, and
-  keeps the prompt set. It never starts a run or replays the external harness.
-  Active comparisons and cohorts above the existing four-slot limit block the
-  action; there is no silent truncation or unmeasured model fallback.
-  `AgentTaskAdvisor` adds optional structured `taskGuidance` to schema-1
-  agent exports (old exports decode without it). It ranks only within the
-  newest complete comparison run or matched harness/workload/configuration/
-  sample-count workflow cohort, with shared rubrics required for quality.
-  Quality, performance, latency and estimated fit stay separate and ties stay
-  shared. A newer unreviewed or mismatched observation never falls back to an
-  older winner. Quality-first fit choices exclude tight/unknown fits; the
-  native guidance sheet and export refresh headroom outside view evaluation.
-  Exports remain advisory. The native **Use model** action reviews a serving
-  model's role preference and optional slot-0 endpoint change, refreshing
-  inventory, environment and headroom at review and confirm. Changed model
-  identity or cohort evidence blocks the action; ties remain explicit choices.
-  Preferences persist before in-memory publication. Endpoint changes require
-  verification and an estimated fit, retain the reviewed port, and reuse the
-  supervisor's serve boundary. Context is an estimate only; wiring and reclaim
-  remain separate actions. Endpoint errors after a saved preference are
-  reported as partial outcomes.
-- `ModelDetailsView` hosts the **Model Lineage**: `LineageIndexer` assembles
-  a read-only provenance timeline per model (source, converted, verified,
-  benchmarked, served, wired, quarantined) from the stores the app already
-  keeps, with signature-based staleness dimming and Markdown/JSON export.
-- `WatchCoordinator` provides **Watch & Regression Alerts**: upstream
-  `mlx-agent watch diff` digests (baseline established silently on first
-  check; network failures stay silent) and macOS/MLX environment-drift
-  alerts offering one-click re-verification of stale verified models.
-  Alerts dedupe by fingerprint and persist snooze/mute state.
-- **Completion notifications**: `ModelWorkflowCoordinator.onTerminalState`
-  fires once when a workflow enters a terminal state (completed / verified /
-  verificationFailed / failed) and AppHost wires it to `AlertNotifier`
-  (Notification Center; silent when permission is denied). Restores and
-  launch-loads never notify — only live transitions. `prepareServe` never
-  changes a record's lifecycle: a completed or verified record of the chosen
-  model is served unchanged; any other model gets a separate unsaved serve
-  target, leaving the current record untouched.
-- `SetupCoordinator` provides the **first-launch Setup Assistant**: a guided
-  sheet over the app's existing probes (agent health, runtime report,
-  discovered roots) with the RuntimeInstaller for one-click runtime setup.
-  Persisted via UserDefaults once completed; re-openable from Health.
-- `UpdateCoordinator` provides **in-app updates** for checkout-run installs:
-  Official channel checks out the newest `v*` tag, Beta fast-forwards to
-  the captured full commit from `origin/main`; channel changes invalidate old
-  offers and in-flight checks. Git checks run off the main actor with bounded
-  output and a 60-second deadline; streamed update commands use the installer's
-  owned process runner with a 120-second deadline. Both refuse a dirty or
-  changed checkout, sync submodules, and finish with a
-  streamed `make build-swift` rebuild-and-relaunch. Git runs as argv tokens
-  through an injectable runner; the apply path is integration-tested against
-  a throwaway git repo. Installed builds (no checkout) update from GitHub
-  releases instead (`Services/ReleaseUpdater.swift`): Releases reads
-  `releases/latest` (`mlx-workbench-<version>.dmg`), Nightly reads the rolling
-  `nightly` prerelease (`mlx-workbench-nightly-<commit>.dmg`), compared with
-  Info.plist `MLXWorkbenchCommit`/`MLXWorkbenchChannel`. Install requires the
-  GitHub sha256 digest, a read-only mount, and the code requirement
-  `identifier com.cavi.mlxworkbench`, team `Y76GMV87GM`, `notarized`; the
-  swap is `replaceItemAt` beside the bundle and the old bundle goes to the
-  Trash. Translocated, disk-image and unwritable locations are refused.
-  Nightlies build only on manual dispatch and skip when `mlx-mac/`,
-  `vendor/mlx-agent` and the `Makefile` are unchanged since the published one.
-  `.github/workflows/signed-dmg.yml` publishes both DMGs with an App Store
-  Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` secrets).
-- The Run view shows a **Memory-fit Advisor** verdict before serving as a
-  memory runway: `FitAdvisor` estimates weights + KV cache + runtime overhead
-  against the shared monitor's live available memory, with resident models
-  drawn inside the in-use span, yielding fits/tight/won't-fit with a suggested
-  max context (the toolbar's context option). Image, speech and other
-  non-servable models get no verdict and no serve actions; unavailable memory
-  is unknown. Run's refresh only reads `serve status`. Verdicts are derived,
-  never persisted.
-- The native toolbar shares `SystemResourceMonitor`: Mach memory estimates
-  refresh off-main every five seconds; unavailable readings remain unknown.
-  Its popover fetches authoritative serving status while open and exposes
-  Unload through `EndpointSupervisor.unloadServer`. JIT unload checks fresh
-  process identity, refuses active requests, releases the owned worker, and
-  confirms the same gateway remains running with an unloaded model. Desired
-  endpoint state stays enabled. Eager Stop server persists disabled desired
-  state before stopping; save/stop failures remain visible. `AppHost.occupancy`
-  (`Services/ModelOccupancy.swift`) collects every holder's claims: running and
-  endpoint servers, preferences, verification, comparisons, hosted comparison
-  local lanes, Library tasks and the active conversion. Stop and Unload refuse
-  models that verification or a comparison lane serves; reclaim and model
-  guidance protect every claimed path through `HFRepoID.matches`. The context
-  selector feeds workflow model-fit reviews, not server configuration.
-- **Load on request**: new native endpoint slots default to JIT; old slots
-  lacking `loadOnRequest` retain eager behavior. Changing mode explicitly
-  restarts the endpoint. The vendored agent's `serve start --jit` launches a
-  loopback gateway with an authenticated control channel and one owned worker.
-  `/v1/models` stays reachable while unloaded; inference starts the worker
-  against the confirmed absolute local model path with offline HF settings.
-  File identity is checked before and after loading; changed files require a
-  fresh plan. Concurrent cold requests share one load; streamed responses hold
-  an active lease that blocks unload. `serve unload --expected-pid` retains
-  the gateway, while `serve stop` terminates its owned process group. Status
-  exposes model residency separately from gateway liveness. JIT with direct
-  `--launchd` is refused; native supervision owns the lifecycle. Comparison
-  and verification continue to use eager serving.
-- **JIT memory management**: `EndpointSlot.memoryPolicy` is optional for legacy
-  fleets. New JIT slots use a 600-second idle timeout and a 2 GB reserve;
-  legacy slots preserve their old policy until explicitly configured. Run's
-  compact controls apply receipt/PID-bound `serve policy` updates without
-  restarting the gateway. Desired policy saves before live application; failures
-  remain visible and reconciliation retries the desired policy. The engine owns
-  the idle timer, so it works for harness requests without the app open. Idle
-  time starts when the final inference lease ends; keep-loaded prevents automatic
-  unload after use but permits manual unload. Cold-load admission uses fresh
-  OS headroom against local weight bytes × 1.10 + 1.5 GB runtime allowance +
-  configured reserve (decimal GB). Unknown headroom/weights blocks a guarded
-  load. This is an estimate, not a reservation across endpoints or a bound on
-  subsequent KV growth. Policies persist atomically in private gateway config;
-  invalid updates and save failures leave the active policy unchanged.
-- `.run/`, `.venv/`, and `convert-queue.json` are generated/runtime state and
-  are not source of truth.
+- `vendor/mlx-agent`: git submodule, the execution engine.
+- `scripts/mlx-workbench` → `mlx_workbench/__main__.py`: opens the built app
+  (`--app`, `$MLX_WORKBENCH_APP`, or the Release build under `.run/swift-build`).
+- `mlx_workbench/`: Python configuration and compatibility utilities used by
+  `make install`/`make check`. `config.py` preserves keys it does not manage;
+  `serve_presets.py` validates `serve-presets.json`; `convert_queue.py`
+  imports the engine's `mlx_agent.convert_queue`.
+- `tests/`: Python unit and release-doc coverage. `tests/fixtures/` is shared
+  by the Python and XCTest suites; a fixture change keeps both green
+  (`tests/fixtures/README.md`).
+- `mlx-mac/`: the native app. `project.pbxproj` has an explicit file list:
+  register new sources there. `make test-swift` runs the XCTest suite;
+  `make dmg` packages a distribution build (no source path compiled in);
+  `DEVELOPER_TEAM=<team id>` signs, notarizes and staples it. The app icon
+  master is `mlx-mac/assets/app-icon.svg`.
+- `.run/`, `.venv/`, `convert-queue.json`: generated runtime state, never a
+  source of truth.
 
-## Fast onboarding (for a new agent)
+## Native app map
 
-- `make install` installs the required Python 3.12 environment and converter libs.
-- `make start` (also `make run`, `make open`) builds the Release SwiftUI
-  application under `.run/swift-build` and opens it.
+Behavior detail for each area is in the operator guide; this lists owners.
+
+- `AppHost` (`@Observable`): shared state and coordinators. Views read only
+  the properties they render and observe each child coordinator they display
+  with `@ObservedObject`. `AppHost.startLiveServices()` owns all launch-time
+  live work.
+- Routes: `UI/ContentView.swift`; cross-tab requests go through
+  `AppHost.handoffs` (`UI/RouteHandoffs.swift`), one pending request per kind.
+- Engine calls: `WorkbenchAPI` (dispatch worker per call, actor never
+  blocked) → `CLIProcess` (argv tokens, own process group, stdout/stderr
+  drained on dedicated threads, SIGTERM then SIGKILL after 2 s;
+  `CLIProcessRegistry` stops live children on quit). `serve status` reuses
+  one persistent engine process (`Bridge/AgentWorker.swift`,
+  `Resources/agent-worker.py`) and falls back to the CLI. Detached work
+  (`convert start`, `serve`) uses its own session and is not stopped.
+  `BoundedProcessCapture` runs other commands from blocking workers with an
+  output limit and a deadline.
+- Python resolution: `Services/WorkbenchPython.swift` (env → repo `.venv` →
+  PATH), shared by every launcher.
+- Durable JSON state: `JSONStore` (one lock per file path shared by every
+  instance, decoded-value cache keyed by inode/size/mtime, temporary file and
+  directory fsync around the replace, symlinks refused). Workflow,
+  verification and comparison histories use `RecordArchive` (transactional
+  per-record storage, one-time JSON migration, legacy JSON kept as backup)
+  through `ModelWorkflowStore`, `VerificationStore` and
+  `ComparisonRecordArchive`, on their coordinators' serial I/O queues.
+- Default state paths: `Services/WorkbenchStatePaths.swift`.
+- Model identity and occupancy: `HFRepoID` (cached symlink resolution,
+  `HFRepoID.Identity`), `ModelOccupancy` via `AppHost.occupancy`; Stop,
+  Unload, reclaim and guidance refuse claimed models.
+- Library: `ModelLibraryBuilder`, `LibraryView`; inspector tasks
+  (`InferenceTaskCoordinator`, `InferenceTaskPanels`); LM Studio source
+  (`LMStudioShelfResolver`, `LMStudioShelfPresentation`); Hosted models
+  (`ModelHostsCoordinator`, `ModelHostClient`, `HostResourceClient`, one
+  `ModelHostAdapter` per provider in `Services/*HostAdapter.swift`,
+  `model-hosts.json`, tokens in Keychain).
+- Prepare and intake: `IntakeCoordinator`, `ModelWorkflowCoordinator`,
+  `ConversionWorkflow`; Quality Gate: `VerificationCoordinator` with
+  per-task canaries in `Models/VerificationModels.swift`; source cleanup:
+  `ConvertedSourceCleanup`.
+- Run and endpoints: `EndpointSupervisor` (fleet in `endpoint-fleet.json`,
+  JIT gateway, memory policy), `FitAdvisor`, `FleetFitAdvisor`, role router
+  via `mlx-agent fleet render/apply`, `LaunchAgentManager` (RunAtLoad only).
+- Compare: `ComparisonCoordinator` (chat via `ServeProbe`, media via
+  `ComparisonMediaRunner`, histories via `ComparisonHistoryWorker`),
+  `HostedComparisonCoordinator`; prompt sets via `PromptSetDraft`; outputs in
+  `ComparisonOutputStore`. Views: `QuantView.swift`, `ComparePresentation.swift`,
+  `CompareMediaViews.swift`, `ComparisonPromptEditorViews.swift`,
+  `ComparisonPickerViews.swift`, `CompareSheets.swift`.
+- Wire: `WiringCoordinator` (allowlisted client configs, backups, rollback).
+- Duplicates: `ReclaimAdvisor`, `ReclaimCoordinator`, `Services/Quarantine.swift`.
+- Studies and Training: `LabCoordinator`, `TrainingSession`.
+- Watch, notifications, setup and updates: `WatchCoordinator`,
+  `AlertNotifier`, `SetupCoordinator`, `UpdateCoordinator` (checkout
+  installs), `Services/ReleaseUpdater.swift` (installed builds).
+- Workflow evidence: `WorkflowReport` (schema 1) in `workflow-evidence.json`,
+  `AgentTaskAdvisor`, `LineageIndexer`.
+
+## Invariants
+
+- Never spawn a process synchronously inside view evaluation; a
+  `waitUntilExit` reached from a view body crashes the app. Probes answer
+  from prewarmed caches on the main thread.
+- Hosted unit tests never start live services or touch real state: live work
+  stays behind `AppHost.startLiveServices()`, state paths resolve through
+  `WorkbenchStatePaths.hostedTestRoot`, and tests use private `UserDefaults`
+  suites. UI tests launch a separate app process.
+- The native app never writes `convert-queue.json`; Jobs uses
+  `mlx-agent lab queue` (`WorkbenchAPI.conversionQueue`).
+- Mutations are previewed, rechecked for drift at confirmation, and move
+  files to Quarantine or the macOS Trash; nothing is deleted permanently.
+- Hosted inventory refresh is read-only; host memory actions are serialized,
+  confirmed, never retried automatically and followed by readback.
+- Media comparisons never feed the RecommendationEngine; Promote winner is
+  chat-only; recommendations require matching model signatures and
+  environment fingerprints.
+- Workflow evidence is imported explicitly and never relabeled as current.
+- Native serving, verification and chat comparisons use `--runtime auto`;
+  intake never executes repository code or passes `--trust-remote-code`.
+- `make accept-native-gguf RUNTIME_MANIFEST=…` is the only real-data
+  acceptance run; never invoke it with an arbitrary local model.
+
+## Fast onboarding
+
+- `make install` installs the Python 3.12 environment and converter libs.
+- `make start` (also `make run`, `make open`) builds the Release app under
+  `.run/swift-build` and opens it.
 - `make test` and `python3 -m unittest discover -s tests -t .` run unit tests.
-- `make accept-native-gguf` is excluded from normal tests and requires an
-  explicit runtime manifest because it may perform a real conversion.
 - `make docs-test` and `make docs-verify` run documentation contract checks.
 
 ## Ingest/pipeline behavior to respect
@@ -834,99 +134,32 @@ server.
 - Only one conversion runs at a time.
 - Confirmed jobs are written to a durable queue before launch.
 - Queue entries are FIFO and auto-drain; they resume on restart.
-- Actual running state is recovered from mlx-agent receipts (queue state is never the
-  only authority).
+- Running state is recovered from mlx-agent receipts (queue state is never
+  the only authority).
 - Queue state defaults to `$XDG_STATE_HOME/mlx-workbench/convert-queue.json`
   with fallback to `~/.local/state/mlx-workbench/convert-queue.json`.
 
 ## Security and boundaries
 
 - `config.json` accepts only loopback hosts (`127.0.0.1`, `localhost`,
-  `::1`); other hosts are rejected.
-- Job arguments are argv tokens (no shell string execution).
-- Quarantine operations are constrained to configured model roots: `.gguf`
-  files in `mlx_workbench/quarantine.py` and the native app, explicitly
-  previewed independent MLX folders in the native app. `quarantine.purge`
-  moves quarantined GGUF files to the macOS Trash (fenced to existing files
-  inside the quarantine dir, ledger entries marked `deleted_at`, never the
-  ledger itself, symlink refused).
-- Durable state files (`config.json`, quarantine ledger, `serve-presets.json`)
-  are written via `mlx_workbench/atomicio.py`: fsync-before-replace plus
-  directory fsync, and every write refuses symbolic links at the target or
-  temp path. The engine queue store writes `convert-queue.json` atomically and
-  refuses symlinked queue and temp paths. The
-  quarantine guard additionally refuses symlinked sources and symlinked
-  quarantine directories; the Swift `WiringCoordinator` refuses symlinked
-  client configs, backup paths, and restore targets, `JSONStore` refuses a
-  symlinked store file, and Swift `Quarantine` mirrors the Python guards
-  (source, quarantine dir, and restore target).
-- Agent subprocesses run with `start_new_session=True`; on timeout the whole
-  process group is terminated then killed (`bridge._kill_process_group`), and
-  the child environment is an allowlist (`bridge.agent_environment`), never
-  the caller's full environment.
-- The config key universe is closed (`config._ALLOWED_KEYS` = known fields +
-  `config._FOREIGN_KEYS` native premium keys): unknown keys are rejected on
-  load and refused on save, so arbitrary fields never enter the shared
-  `config.json`.
-- Settings edits only its visible controls and preserves valid stored legacy
-  `host` and `port` through `ConfigModule.saveSettings`, including changes made
-  after opening the form. Serving addresses and ports belong to Run's endpoints.
-- `mlx_workbench/audit.py` appends events to a local audit trail
-  (`$XDG_STATE_HOME/mlx-workbench/audit.jsonl`, bounded, best-effort —
-  durable stores stay authoritative).
-- Native `TrainingSession` retains the raw form snapshot separately from the
-  resolved training request. A blank output selects a fresh
-  `<Application Support>/mlx-workbench/trained-adapters/<uuid>` destination for
-  each preview; confirmation reuses that captured path. Explicit output paths
-  are preserved, edits invalidate confirmation, and preview creates no adapter
-  folder. Batch size is captured from the form (1–64, default 4); both dataset
-  splits must contain at least one full batch. The engine checks split counts
-  before offering a plan, and native confirmation also checks reported counts.
-  Cached-base choices retain text, vision-language and legacy untyped entries;
-  known non-language models and drafters are omitted. An unavailable selection
-  remains visible as editable text. Preview validates cached `model_type`
-  against the MLX-LM registry and records its declared loader and registry
-  source in the base identity. `--hf-cache` selects the cache used for both
-  identity capture and the local-model gate; no weights are loaded by preview.
-- Convert/serve Python deps are pinned in `requirements.txt` (exact
-  versions), and the agent's lab operations (Training, experiments) in
-  `vendor/mlx-agent/requirements-lab.txt`; `make install` installs both and `make pip-audit` checks the
-  runtime against the OSV database — both in local runs and as PR gates
-  (`.github/workflows/pr.yml`). The transformers 4.x pin is required by
-  mlx-lm's GGUF→HF path and is a tracked, accepted risk (known advisories
-  without a 4.x fix; see `PIP_AUDIT_IGNORES` in the Makefile).
-- Optional converter backends (mlx-vlm, mlx-audio) are isolated venvs created by mlx-agent from
-  hash-locked requirement files; `make pip-audit` audits every lock. Intake never executes a
-  repository's custom code and never passes `--trust-remote-code`.
+  `::1`); its key universe is closed (`config._ALLOWED_KEYS`), and Settings
+  edits only its visible controls.
+- Job arguments are argv tokens (no shell string execution); agent
+  subprocesses get an allowlisted environment (`bridge.agent_environment`).
+- Quarantine is constrained to configured model roots; purge moves files to
+  the macOS Trash and never touches the ledger.
+- Durable state writes are atomic and refuse symbolic links at the target or
+  temporary path (`mlx_workbench/atomicio.py`, `JSONStore`, Swift
+  `Quarantine`, `WiringCoordinator`).
+- `mlx_workbench/audit.py` appends a bounded local audit trail; durable stores
+  stay authoritative.
+- Convert/serve dependencies are pinned in `requirements.txt` and
+  `vendor/mlx-agent/requirements-lab.txt`; `make pip-audit` checks them and
+  every optional backend lock (`PIP_AUDIT_IGNORES` lists accepted risks).
 
-## Review/build guidance for an agent
+## Review/build guidance
 
-- `DiscoverySession` owns one cancellable browse request. Stop keeps controls
-  busy until the invocation exits and rejects a canceled request's late result.
-  Last successful candidates retain their original search settings through
-  retries, failures and stops; a successful empty response replaces them.
-
-- Local models missing a declared backend offer `ModelRuntimeRecoveryRequest`
-  from Library to Health. `ModelRuntimeRecoverySession` reads backend status,
-  presents the engine's install preview and requires explicit confirmation.
-  Return rescans and revalidates the original path, signature and task/backend
-  before issuing the existing Library reveal request. Installation does not
-  verify, download or start a model; built-in backends keep base setup ownership.
-  Its explicit log view reads a bounded regular-file tail off the main actor
-  through `BackendInstallLog`; new checks and install previews discard excerpts,
-  and generation checks reject late reads from a previous backend context.
-
-- Prefer project-local inspection first, keep edits scoped.
-- Activity's `ActivityStatusRecovery` retries only the existing status reads and
-  routes to Health; it never restarts jobs. Failed training rows share
-  `TrainingJobRow.recoveryGuidance`, open recorded logs or navigate to Training
-  without changing its draft. `LogSheet` reads through `BackendInstallLog` on a
-  utility task and fences cancelled view loads before publishing the bounded tail.
-- `StudyRecipeSession.unavailableReason` owns recipe capture readiness and its
-  visible guidance, including catalog availability, cached revision membership
-  and draft validation. Checking availability retains draft fields and never
-  captures a recipe or starts generation.
-- Update this file when execution/integration behavior changes so it continues to
-  match the README and docs.
-- Do not invent cross-repo semantics for conversion/receipt behavior; state
-  comes from observed implementation and tests.
+- Prefer project-local inspection first and keep edits scoped.
+- Update this file when execution or integration ownership changes.
+- Do not invent cross-repo semantics for conversion or receipt behavior;
+  state comes from observed implementation and tests.

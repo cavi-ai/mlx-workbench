@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // MARK: - HFRepoID
 //
@@ -21,17 +22,42 @@ enum HFRepoID {
     /// path is in the HF cache, else the path itself. Use when comparing a
     /// library model path against `ServerInfo.repo`.
     static func serveIdentity(for path: String) -> String {
-        if path.hasPrefix("/") || path.hasPrefix("~") {
-            return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.resolvingSymlinksInPath().path
+        guard path.hasPrefix("/") || path.hasPrefix("~") else { return path }
+        if let known = resolvedPaths.withLock({ $0[path] }) { return known }
+        let resolved = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.resolvingSymlinksInPath().path
+        resolvedPaths.withLock { cache in
+            if cache.count >= maximumResolvedPaths { cache.removeAll(keepingCapacity: true) }
+            cache[path] = resolved
         }
-        return path
+        return resolved
+    }
+
+    static func forgetResolvedPaths() {
+        resolvedPaths.withLock { $0.removeAll() }
     }
 
     /// Current path receipts distinguish revisions. Older repo-only receipts
     /// remain compatible without collapsing two explicit filesystem paths.
     static func matches(_ lhs: String, _ rhs: String) -> Bool {
-        let a = serveIdentity(for: lhs), b = serveIdentity(for: rhs)
-        if a.hasPrefix("/"), b.hasPrefix("/") { return a == b }
-        return (forPath(lhs) ?? a) == (forPath(rhs) ?? b)
+        Identity(lhs).matches(Identity(rhs))
     }
+
+    struct Identity: Hashable, Sendable {
+        let resolvedPath: String?
+        let repoKey: String
+
+        init(_ value: String) {
+            let serve = HFRepoID.serveIdentity(for: value)
+            resolvedPath = serve.hasPrefix("/") ? serve : nil
+            repoKey = HFRepoID.forPath(value) ?? serve
+        }
+
+        func matches(_ other: Identity) -> Bool {
+            if let resolvedPath, let otherPath = other.resolvedPath { return resolvedPath == otherPath }
+            return repoKey == other.repoKey
+        }
+    }
+
+    private static let maximumResolvedPaths = 4096
+    private static let resolvedPaths = OSAllocatedUnfairLock(initialState: [String: String]())
 }

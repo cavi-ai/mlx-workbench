@@ -1,7 +1,7 @@
 import Foundation
 
 /// Per-record transactions; the original JSON remains an untouched migration backup.
-final class VerificationStore: @unchecked Sendable {
+final class VerificationStore: Sendable {
     private let archive: RecordArchive<VerificationReport>
     var databaseURL: URL { archive.url }
 

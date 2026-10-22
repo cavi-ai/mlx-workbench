@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // MARK: - RuntimeInstaller
 //
@@ -332,17 +333,16 @@ final class RuntimeInstaller: ObservableObject {
         return output.value
     }
 
-    private final class PrerequisiteOutput: @unchecked Sendable {
-        private let lock = NSLock()
-        private var text = ""
-        private var overflow = false
-        var exceededLimit: Bool { lock.withLock { overflow } }
-        var value: String { lock.withLock { text.trimmingCharacters(in: .whitespacesAndNewlines) } }
+    private final class PrerequisiteOutput: Sendable {
+        private struct Captured { var text = ""; var overflow = false }
+        private let captured = OSAllocatedUnfairLock(initialState: Captured())
+        var exceededLimit: Bool { captured.withLock { $0.overflow } }
+        var value: String { captured.withLock { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) } }
         func append(_ line: String) {
-            lock.withLock {
-                let remaining = 16 * 1024 - text.utf8.count
-                if (line + "\n").utf8.count > remaining { overflow = true }
-                if remaining > 0 { text += String(decoding: (line + "\n").utf8.prefix(remaining), as: UTF8.self) }
+            captured.withLock {
+                let remaining = 16 * 1024 - $0.text.utf8.count
+                if (line + "\n").utf8.count > remaining { $0.overflow = true }
+                if remaining > 0 { $0.text += String(decoding: (line + "\n").utf8.prefix(remaining), as: UTF8.self) }
             }
         }
     }

@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Structured command output. Call only from a blocking I/O worker.
 /// Both pipes drain independently; ownership lasts through process exit and EOF.
@@ -76,28 +77,30 @@ enum BoundedProcessCapture {
         return captured.output(status: process.terminationStatus)
     }
 
-    private final class Capture: @unchecked Sendable {
-        private let lock = NSLock()
+    private final class Capture: Sendable {
+        private struct State {
+            var stdout = Data(), stderr = Data()
+            var exceeded = false
+        }
+        private let state = OSAllocatedUnfairLock(initialState: State())
         private let limit: Int
-        private var stdout = Data(), stderr = Data()
-        private var exceeded = false
         init(limit: Int) { self.limit = limit }
-        var overflow: Bool { lock.withLock { exceeded } }
+        var overflow: Bool { state.withLock { $0.exceeded } }
         func append(_ data: Data, isError: Bool) {
-            lock.withLock {
+            state.withLock { [limit] state in
                 if isError {
-                    stderr.append(data)
-                    if stderr.count > 64 * 1024 { stderr.removeFirst(stderr.count - 64 * 1024) }
+                    state.stderr.append(data)
+                    if state.stderr.count > 64 * 1024 { state.stderr.removeFirst(state.stderr.count - 64 * 1024) }
                 } else {
-                    let remaining = limit - stdout.count
-                    if data.count > remaining { exceeded = true }
-                    stdout.append(data.prefix(remaining))
+                    let remaining = limit - state.stdout.count
+                    if data.count > remaining { state.exceeded = true }
+                    state.stdout.append(data.prefix(remaining))
                 }
             }
         }
         func output(status: Int32) -> Output {
-            lock.withLock { Output(stdout: String(decoding: stdout, as: UTF8.self),
-                                   stderr: String(decoding: stderr, as: UTF8.self), status: status) }
+            state.withLock { Output(stdout: String(decoding: $0.stdout, as: UTF8.self),
+                                    stderr: String(decoding: $0.stderr, as: UTF8.self), status: status) }
         }
     }
 }

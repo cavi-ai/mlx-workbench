@@ -274,8 +274,9 @@ struct LibraryInspectorFit: View {
 // MARK: - ModelDetailsView
 
 struct ModelDetailsView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var verification: VerificationCoordinator
+    @ObservedObject private var comparison: ComparisonCoordinator
 
     let model: LibraryModel
     let onRouteSelection: (AppRoute) -> Void
@@ -283,6 +284,7 @@ struct ModelDetailsView: View {
     init(appHost: AppHost, model: LibraryModel, onRouteSelection: @escaping (AppRoute) -> Void) {
         self.appHost = appHost
         _verification = ObservedObject(wrappedValue: appHost.verification)
+        _comparison = ObservedObject(wrappedValue: appHost.comparison)
         self.model = model
         self.onRouteSelection = onRouteSelection
     }

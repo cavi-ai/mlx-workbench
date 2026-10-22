@@ -172,9 +172,13 @@ struct ModelFlightPathPresentation: Equatable {
 }
 
 struct HomeView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var watch: WatchCoordinator
+    @ObservedObject private var reclaim: ReclaimCoordinator
+    @ObservedObject private var verification: VerificationCoordinator
+    @ObservedObject private var comparison: ComparisonCoordinator
+    @ObservedObject private var endpoint: EndpointSupervisor
     private let onRouteSelection: (AppRoute) -> Void
     @Environment(\.openWindow) private var openWindow
     @State private var contentWidth = WorkbenchSize.assumedContentWidth
@@ -183,6 +187,10 @@ struct HomeView: View {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _watch = ObservedObject(wrappedValue: appHost.watch)
+        _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
+        _verification = ObservedObject(wrappedValue: appHost.verification)
+        _comparison = ObservedObject(wrappedValue: appHost.comparison)
+        _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
         self.onRouteSelection = onRouteSelection
     }
 

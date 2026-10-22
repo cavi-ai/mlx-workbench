@@ -1,42 +1,46 @@
 import Foundation
+import os
 
 /// One in-flight probe per generation. Invalidating a runtime cancels its old
 /// process and prevents late results from repopulating the cache.
-final class EnvironmentVersionProbe: @unchecked Sendable {
-    private let lock = NSLock()
-    private let run: @Sendable (CLIInvocationCancellation) -> String?
-    private var generation = UUID()
-    private var cached: String??
-    private struct Pending {
+final class EnvironmentVersionProbe: Sendable {
+    private struct Pending: Sendable {
         let generation: UUID
         let cancellation: CLIInvocationCancellation
         let task: Task<String?, Never>
     }
-    private enum Request {
+    private enum Request: Sendable {
         case cached(String?)
         case pending(Pending)
     }
-    private var pending: Pending?
+    private struct State {
+        var generation = UUID()
+        var cached: String??
+        var pending: Pending?
+    }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let run: @Sendable (CLIInvocationCancellation) -> String?
 
     init(run: @escaping @Sendable (CLIInvocationCancellation) -> String?) { self.run = run }
-    var valueIfProbed: String?? { lock.withLock { cached } }
+    var valueIfProbed: String?? { state.withLock { $0.cached } }
     func invalidate() {
-        lock.withLock {
-            generation = UUID(); cached = nil
-            pending?.cancellation.cancel(); pending = nil
+        state.withLock { state in
+            state.generation = UUID(); state.cached = nil
+            state.pending?.cancellation.cancel(); state.pending = nil
         }
     }
     func value(refresh: Bool = false) async -> String? {
         var refreshRequested = refresh
         while !Task.isCancelled {
-            let request: Request = lock.withLock {
-                if let pending { return .pending(pending) }
-                if !refreshRequested, let cached { return .cached(cached) }
-                generation = UUID()
-                let cancellation = CLIInvocationCancellation(), run = run
+            let refreshing = refreshRequested
+            let request: Request = state.withLock { [run] state in
+                if let pending = state.pending { return .pending(pending) }
+                if !refreshing, let cached = state.cached { return .cached(cached) }
+                state.generation = UUID()
+                let cancellation = CLIInvocationCancellation()
                 let task = Task { await WorkbenchIO.perform { run(cancellation) } }
-                let started = Pending(generation: generation, cancellation: cancellation, task: task)
-                pending = started
+                let started = Pending(generation: state.generation, cancellation: cancellation, task: task)
+                state.pending = started
                 return .pending(started)
             }
             refreshRequested = false
@@ -44,9 +48,9 @@ final class EnvironmentVersionProbe: @unchecked Sendable {
             case .cached(let value): return value
             case .pending(let started):
                 let value = await started.task.value
-                let accepted = lock.withLock {
-                    guard generation == started.generation else { return false }
-                    cached = .some(value); pending = nil
+                let accepted = state.withLock { state in
+                    guard state.generation == started.generation else { return false }
+                    state.cached = .some(value); state.pending = nil
                     return true
                 }
                 if accepted { return value }

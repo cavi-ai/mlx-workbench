@@ -294,7 +294,7 @@ struct HealthHeroView: View {
 
 /// An explicit repair for a local model; opening this card only reads backend status.
 struct ModelRuntimeRecoveryView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject var session: ModelRuntimeRecoverySession
     let request: ModelRuntimeRecoveryRequest
     let onInstalled: () async -> Void

@@ -2,15 +2,15 @@ import Foundation
 
 /// Comparison summaries retain metrics and references while complete records
 /// remain available for authoritative checks and output inspection.
-final class ComparisonRecordArchive<Value: Codable & Identifiable>: RecordArchive<Value> where Value.ID == UUID {
-    init(legacyURL: URL) {
-        super.init(legacyURL: legacyURL, descending: true) { payload in
+enum ComparisonRecordArchive<Value: Codable & Identifiable> where Value.ID == UUID {
+    static func make(legacyURL: URL) -> RecordArchive<Value> {
+        RecordArchive(legacyURL: legacyURL, descending: true) { payload in
             let root = try JSONSerialization.jsonObject(with: payload) as? [String: Any]
             let run = root?["run"] as? [String: Any] ?? root
             guard run?["historyDetailsOmitted"] as? Bool != true else {
                 throw WorkflowEvidenceError.invalid("Load the complete comparison before saving changes.")
             }
-            return try Self.summary(payload)
+            return try summary(payload)
         }
     }
     static func summarized(_ value: Value) throws -> Value {
@@ -50,11 +50,11 @@ final class ComparisonRecordArchive<Value: Codable & Identifiable>: RecordArchiv
 /// Serial durability boundary. Cancellation never abandons a write or ownership receipt.
 final class RecordHistoryWorker<Value: Codable & Identifiable & Sendable>: @unchecked Sendable where Value.ID == UUID {
     private let store: JSONStore<Value>
-    private let archive: ComparisonRecordArchive<Value>?
+    private let archive: RecordArchive<Value>?
     private let queue = DispatchQueue(label: "comparison-history", qos: .utility)
     init(store: JSONStore<Value>, indexed: Bool = false) {
         self.store = store
-        archive = indexed ? ComparisonRecordArchive(legacyURL: store.url) : nil
+        archive = indexed ? ComparisonRecordArchive.make(legacyURL: store.url) : nil
     }
     private func loadSync() throws -> [Value] { try archive?.load() ?? store.loadStreaming() }
     func load() async throws -> [Value] { try await perform { try self.loadSync() } }

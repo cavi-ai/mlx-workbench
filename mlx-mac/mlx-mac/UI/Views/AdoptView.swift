@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AdoptView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @Environment(\.isRouteActive) private var isRouteActive
     @Environment(\.openWindow) private var openWindow
 

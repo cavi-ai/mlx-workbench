@@ -1,32 +1,42 @@
 import Foundation
+import Observation
 
 // MARK: - AppHost
 
 @MainActor
-class AppHost: ObservableObject {
-    @Published var config: Config = Config.defaults(ggufRoots: [])
-    @Published var agentHealth: AgentHealth = .notConfigured
-    @Published var runtimeReport: RuntimeReport
-    @Published private(set) var isCheckingRuntime = false
-    @Published var discoveredRoots: [String] = []
-    @Published var vendorAgentPath: String = ""
-    @Published var configPath: String = ""
-    @Published var isScanning = false
-    @Published var scanResult: ScanResult?
-    @Published private(set) var scanError: String?
-    @Published var librarySnapshot: LibrarySnapshot?
+@Observable
+class AppHost {
+    var config: Config = Config.defaults(ggufRoots: [])
+    var agentHealth: AgentHealth = .notConfigured
+    var runtimeReport: RuntimeReport
+    private(set) var isCheckingRuntime = false
+    var discoveredRoots: [String] = []
+    var vendorAgentPath: String = ""
+    var configPath: String = ""
+    var isScanning = false
+    var scanResult: ScanResult?
+    private(set) var scanError: String?
+    var librarySnapshot: LibrarySnapshot? {
+        didSet {
+            HFRepoID.forgetResolvedPaths()
+            occupancyLibrary = (librarySnapshot?.models.map(\.item.path) ?? []).map {
+                ModelOccupancy.LibraryPath(path: $0, key: HFRepoID.Identity($0))
+            }
+        }
+    }
+    private var occupancyLibrary: [ModelOccupancy.LibraryPath] = []
     /// The effective roots `librarySnapshot` was scanned from; nil until a scan succeeds.
-    @Published var scannedRoots: ScanRoots?
-    @Published var catalog: CatalogState
-    @Published var isRefreshingCatalog = false
-    @Published var selectedModelPath: String?
+    var scannedRoots: ScanRoots?
+    var catalog: CatalogState
+    var isRefreshingCatalog = false
+    var selectedModelPath: String?
     /// Cross-tab requests, applied by their destination route while it is active.
-    @Published var handoffs = RouteHandoffs()
-    @Published var benchmarkResults: [RecommendationBenchmarkResult] = []
-    @Published var recommendationPreferences: RecommendationPreferences = .defaults
-    @Published var hardwareProfile: HardwareProfile
-    @Published var lastError: String?
-    @Published var modelWorkflow: ModelWorkflowCoordinator
+    var handoffs = RouteHandoffs()
+    var benchmarkResults: [RecommendationBenchmarkResult] = []
+    var recommendationPreferences: RecommendationPreferences = .defaults
+    var hardwareProfile: HardwareProfile
+    var lastError: String?
+    var modelWorkflow: ModelWorkflowCoordinator
     /// Conversion Quality Gate. Attached to the workflow by the app entry
     /// point via `verification.attach(to: modelWorkflow)`.
     let verification: VerificationCoordinator
@@ -34,8 +44,8 @@ class AppHost: ObservableObject {
     let comparison: ComparisonCoordinator
     let modelHosts: ModelHostsCoordinator
     let hostedComparison: HostedComparisonCoordinator
-    @Published var compareHostedModels = false
-    @Published var hostedComparisonTargets: [HostedComparisonTarget] = []
+    var compareHostedModels = false
+    var hostedComparisonTargets: [HostedComparisonTarget] = []
     let servingProfiles: ServingProfileCoordinator
     let lab: LabCoordinator
     /// Cross-client wiring transactions (premium spec 02).
@@ -973,7 +983,7 @@ class AppHost: ObservableObject {
     /// Every model active work holds: running and endpoint servers, preferences,
     /// verification, comparisons, Library tasks and the active conversion.
     var occupancy: ModelOccupancy {
-        var occupancy = ModelOccupancy(libraryPaths: librarySnapshot?.models.map(\.item.path) ?? [])
+        var occupancy = ModelOccupancy(library: occupancyLibrary)
         occupancy.add(modelWorkflow.servers.filter { $0.state?.lowercased() == "running" }
             .flatMap { [$0.repo, $0.path].compactMap { $0 } }, for: .runningServer)
         occupancy.add(endpoint.fleet.slots.filter(\.enabled).map(\.modelPath), for: .endpoint)

@@ -8,7 +8,7 @@ import SwiftUI
 // prompt field: the menu bar reports the endpoint, it is not a work surface.
 
 struct MenuBarView: View {
-    @ObservedObject var appHost: AppHost
+    let appHost: AppHost
     @ObservedObject private var endpoint: EndpointSupervisor
 
     init(appHost: AppHost) {

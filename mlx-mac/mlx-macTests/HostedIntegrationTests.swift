@@ -8,7 +8,7 @@ import Network
 final class HostedIntegrationTests: XCTestCase {
     func testIndexedHostedHistoryLoadsDetailsAndPersistsBeforeInference() async throws {
         let store = JSONStore<HostedComparisonRecord>(fileURL: try directory().appendingPathComponent("hosted.json"))
-        let archive = ComparisonRecordArchive<HostedComparisonRecord>(legacyURL: store.url)
+        let archive = ComparisonRecordArchive<HostedComparisonRecord>.make(legacyURL: store.url)
         let host = ModelHost(name: "Ollama", provider: .ollama, baseURL: "http://127.0.0.1:11434")
         let model = HostedModel(hostID: host.id, modelID: "model", name: "Model", digest: "weights")
         let inventory = HostInventory(host: host, models: [model], capturedAt: Date())

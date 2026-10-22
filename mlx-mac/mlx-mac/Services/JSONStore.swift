@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // MARK: - JSONStore
@@ -11,7 +12,7 @@ final class JSONStore<Value: Codable> {
     private let fileURL: URL
     private let fileManager: FileManager
     private let replaceItem: (URL, URL) throws -> Void
-    private let mutationLock = NSLock()
+    private let file: JSONStoreFile
 
     /// The on-disk location, for stores that derive sibling files.
     var url: URL { fileURL }
@@ -27,6 +28,7 @@ final class JSONStore<Value: Codable> {
                 options: .usingNewMetadataOnly
             )
         }
+        file = JSONStoreFile.shared(for: fileURL)
     }
 
     init(
@@ -37,6 +39,7 @@ final class JSONStore<Value: Codable> {
         self.fileURL = fileURL
         self.fileManager = fileManager
         self.replaceItem = replaceItem
+        file = JSONStoreFile.shared(for: fileURL)
     }
 
     func load() throws -> [Value] {
@@ -91,8 +94,14 @@ final class JSONStore<Value: Codable> {
     }
 
     private func loadUnlocked() throws -> [Value] {
-        guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
-        return try JSONDecoder().decode([Value].self, from: Data(contentsOf: fileURL))
+        guard let stamp = JSONStoreFile.Stamp(path: fileURL.path) else {
+            file.cached = nil
+            return []
+        }
+        if let cached = file.cached, cached.stamp == stamp, let values = cached.values as? [Value] { return values }
+        let values = try JSONDecoder().decode([Value].self, from: Data(contentsOf: fileURL))
+        file.cached = (stamp, values)
+        return values
     }
 
     private func write(_ values: [Value]) throws {
@@ -111,8 +120,18 @@ final class JSONStore<Value: Codable> {
             try? fileManager.removeItem(at: temporaryURL)
         }
 
+        file.cached = nil
         do {
-            try data.write(to: temporaryURL, options: .atomic)
+            try Data().write(to: temporaryURL, options: .withoutOverwriting)
+            let output = try FileHandle(forWritingTo: temporaryURL)
+            do {
+                try output.write(contentsOf: data)
+                try output.synchronize()
+                try output.close()
+            } catch {
+                try? output.close()
+                throw error
+            }
             if fileManager.fileExists(atPath: fileURL.path) {
                 try replaceItem(fileURL, temporaryURL)
             } else {
@@ -122,6 +141,8 @@ final class JSONStore<Value: Codable> {
             try? fileManager.removeItem(at: temporaryURL)
             throw error
         }
+        Self.synchronizeDirectory(directory)
+        if let stamp = JSONStoreFile.Stamp(path: fileURL.path) { file.cached = (stamp, values) }
     }
 
     /// Object-array history reads retain at most one encoded record at a time.
@@ -178,6 +199,7 @@ final class JSONStore<Value: Codable> {
     /// Publication happens only after every record has decoded and the staged file is synced.
     private func rewriteStreaming(append: () -> Value?, change: (Value) throws -> RecordChange) throws {
         try Self.refuseSymlink(fileURL, fileManager: fileManager)
+        file.cached = nil
         let directory = fileURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let temporaryURL = fileURL.appendingPathExtension("tmp-\(UUID().uuidString)")
@@ -210,6 +232,7 @@ final class JSONStore<Value: Codable> {
         try Self.refuseSymlink(fileURL, fileManager: fileManager)
         if fileManager.fileExists(atPath: fileURL.path) { try replaceItem(fileURL, temporaryURL) }
         else { try fileManager.moveItem(at: temporaryURL, to: fileURL) }
+        Self.synchronizeDirectory(directory)
     }
 
     static func refuseSymlink(_ url: URL, fileManager: FileManager) throws {
@@ -221,15 +244,61 @@ final class JSONStore<Value: Codable> {
         throw JSONStoreError.symlinkRefused(url.path)
     }
 
+    private static func synchronizeDirectory(_ directory: URL) {
+        let descriptor = open(directory.path, O_RDONLY)
+        guard descriptor >= 0 else { return }
+        _ = fsync(descriptor)
+        close(descriptor)
+    }
+
     private func withLock<T>(_ operation: () throws -> T) rethrows -> T {
-        mutationLock.lock()
-        defer { mutationLock.unlock() }
+        file.lock.lock()
+        defer { file.lock.unlock() }
         return try operation()
     }
 
     static func defaultFileURL(_ fileName: String, fileManager: FileManager = .default) -> URL {
         WorkbenchStatePaths.applicationSupport(fileManager: fileManager)
             .appendingPathComponent(fileName, isDirectory: false)
+    }
+}
+
+final class JSONStoreFile {
+    struct Stamp: Equatable {
+        let device: Int32
+        let inode: UInt64
+        let size: Int64
+        let modified: timespec
+
+        init?(path: String) {
+            var status = stat()
+            guard stat(path, &status) == 0 else { return nil }
+            device = status.st_dev
+            inode = status.st_ino
+            size = status.st_size
+            modified = status.st_mtimespec
+        }
+
+        static func == (lhs: Stamp, rhs: Stamp) -> Bool {
+            lhs.device == rhs.device && lhs.inode == rhs.inode && lhs.size == rhs.size
+                && lhs.modified.tv_sec == rhs.modified.tv_sec && lhs.modified.tv_nsec == rhs.modified.tv_nsec
+        }
+    }
+
+    let lock = NSLock()
+    var cached: (stamp: Stamp, values: Any)?
+
+    private static let registryLock = NSLock()
+    private static var registry: [String: JSONStoreFile] = [:]
+
+    static func shared(for url: URL) -> JSONStoreFile {
+        let key = url.standardizedFileURL.path
+        return registryLock.withLock {
+            if let file = registry[key] { return file }
+            let file = JSONStoreFile()
+            registry[key] = file
+            return file
+        }
     }
 }
 
