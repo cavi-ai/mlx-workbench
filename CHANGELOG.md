@@ -11,19 +11,25 @@ contract, and this file's headings are kept in sync by
 and is versioned independently; submodule bumps are recorded here.
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-10-22
+### Added
+
+- Run: Try a prompt sends one test question to a running endpoint and its adapter, with cancellation, separate reasoning and Configure clients after an answer; tests never mark a model verified or enter comparison history.
+
 ### Changed
 
-- Builds: signed disk images must pass installation and bundled-runtime source preparation checks before upload; an unpublished candidate can be built from an explicit commit.
 - App: serving status checks reuse one running engine process instead of starting a new one each time, and screens redraw only when the state they show changes.
+- Builds: signed disk images must pass installation and bundled-runtime source preparation checks before upload; an unpublished candidate can be built from an explicit commit.
 
 ### Fixed
 
-- Builds: CI imports a Developer ID Application identity into a temporary keychain before signing fresh disk images.
+- App: saved state files are flushed to disk when written, and concurrent saves to one file no longer drop updates.
 - App: update installation, login-item commands and speech-canary preparation have bounded process lifetimes; cancelling speech preparation stops its process.
+- Builds: CI imports a Developer ID Application identity into a temporary keychain before signing fresh disk images.
 - Clients: rollback preserves configs edited after wiring and allows retrying partial failures without repeating successful restores.
 - Reclaim: GGUF quarantine restores the original file when its recovery record cannot be saved, and batch moves run in the background with progress.
 - Run: failed endpoint stops remain visible and can be retried after disabling or removing the endpoint.
-- App: saved state files are flushed to disk when written, and concurrent saves to one file no longer drop updates.
 
 ## [0.6.0] - 2026-10-21
 ### Added
@@ -477,7 +483,8 @@ the same agent boundary.
 - Quarantine operations are constrained to configured model roots and
   `.gguf` files; nothing is deleted.
 
-[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/cavi-ai/mlx-workbench/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.7.0
 [0.6.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.6.0
 [0.5.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.5.0
 [0.4.0]: https://github.com/cavi-ai/mlx-workbench/releases/tag/v0.4.0
