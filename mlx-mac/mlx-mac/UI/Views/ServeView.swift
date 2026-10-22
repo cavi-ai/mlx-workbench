@@ -28,9 +28,11 @@ struct ServeView: View {
     @ObservedObject private var endpoint: EndpointSupervisor
     @ObservedObject private var profiles: ServingProfileCoordinator
     @ObservedObject private var trainedAdapters: TrainedAdapterServingCoordinator
+    @ObservedObject private var endpointTest: EndpointTestCoordinator
     @Environment(\.isRouteActive) private var isRouteActive
     private let onRouteSelection: (AppRoute) -> Void
     @State private var runtime = "auto"
+    @State private var promptPresentation: EndpointTestPresentation?
     @State private var portText = ""
     @State private var endpointPortText = ""
     @State private var newSlotRole: UseCase?
@@ -59,6 +61,7 @@ struct ServeView: View {
         _endpoint = ObservedObject(wrappedValue: appHost.endpoint)
         _profiles = ObservedObject(wrappedValue: appHost.servingProfiles)
         _trainedAdapters = ObservedObject(wrappedValue: appHost.trainedAdapters)
+        _endpointTest = ObservedObject(wrappedValue: appHost.endpointTest)
         self.onRouteSelection = onRouteSelection
     }
 
@@ -107,17 +110,32 @@ struct ServeView: View {
             }
             .onChange(of: viewport.size.width, initial: true) { _, width in viewportWidth = width }
         }
+        .sheet(item: $promptPresentation) { presentation in
+            EndpointTestSheet(presentation: presentation, coordinator: endpointTest) {
+                guard let request = ClientWiringRequest.forServer(presentation.server) else { return }
+                appHost.handoffs.send(request, as: .wireClient)
+                onRouteSelection(.clientSetup)
+            }
+        }
         .task { await modelWorkflow.refreshServers() }
         .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
         .onChange(of: modelWorkflow.serversError) { _, error in trainedAdapters.receiveServers(modelWorkflow.servers, error: error) }
         .onChange(of: isRouteActive) { _, active in
             if active { Task { await modelWorkflow.refreshServers() } }
+            else { closePrompt() }
         }
+        .onDisappear(perform: closePrompt)
         .onAppear {
             if endpointPortText.isEmpty {
                 endpointPortText = String(suggestedPort)
             }
         }
+    }
+
+    private func closePrompt() {
+        guard let presentation = promptPresentation else { return }
+        endpointTest.close(presentationID: presentation.id)
+        promptPresentation = nil
     }
 
     private func designedState(symbol: String, text: String) -> some View {
@@ -204,6 +222,12 @@ struct ServeView: View {
                 }
             }
             if isSelected { selectedServerDetails(server) }
+            Button("Try a prompt…") { promptPresentation = endpointTest.open(server) }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(!EndpointTestCoordinator.supports(server) || modelWorkflow.serversError != nil || protected || endpointTest.isSending || endpointTest.presentationID != nil)
+                .accessibilityIdentifier("run-try-prompt-\(server.port ?? 0)")
+                .accessibilityLabel("Try a prompt with \(name) on port \(String(server.port ?? 0))")
+                .help("Send one prompt to this endpoint. Load-on-request endpoints may load the model.")
             if let request = ClientWiringRequest.forServer(server) {
                 Button("Configure clients…") {
                     guard modelWorkflow.serversError == nil else { return }
@@ -266,7 +290,7 @@ struct ServeView: View {
                 }
             }
             .disabled(modelWorkflow.isServeSubmissionInFlight || protected)
-            .help(protected ? "This model is in an active verification or comparison." : "Stop this server.")
+            .help(protected ? "This model is in use by an active operation." : "Stop this server.")
         } else {
             let unloads = server.jit == true
             Button(unloads ? "Unload" : "Stop") {
@@ -279,7 +303,7 @@ struct ServeView: View {
             .disabled(endpoint.isUnloading || protected || server.port == nil ||
                       ["unloaded", "loading", "unloading"].contains(server.modelState ?? "") ||
                       (server.activeRequests ?? 0) > 0)
-            .help(protected ? "This model is in an active verification or comparison."
+            .help(protected ? "This model is in use by an active operation."
                   : (unloads ? "Release model weights while keeping this endpoint reachable." : "Stop this server and disable automatic restart."))
         }
     }

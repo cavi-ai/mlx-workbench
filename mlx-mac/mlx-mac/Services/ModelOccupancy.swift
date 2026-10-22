@@ -4,11 +4,11 @@ import Foundation
 /// protection read the same claims and one identity rule (`HFRepoID.matches`).
 struct ModelOccupancy: Equatable, Sendable {
     enum Holder: Equatable, Sendable {
-        case verification, comparison, hostedComparison
+        case verification, comparison, hostedComparison, promptTest
         case runningServer, endpoint, preference, inferenceTask, conversion
 
         /// Runs that serve the model themselves and fail if its server stops.
-        var needsServer: Bool { self == .verification || self == .comparison || self == .hostedComparison }
+        var needsServer: Bool { self == .verification || self == .comparison || self == .hostedComparison || self == .promptTest }
     }
 
     struct Claim: Equatable, Sendable {
@@ -42,12 +42,14 @@ struct ModelOccupancy: Equatable, Sendable {
     }
 
     /// Whether stopping or unloading this model's server would break a run that serves it.
-    func blocksStop(modelIdentity: String) -> Bool {
+    func blocksStop(modelIdentity: String, excluding holder: Holder? = nil) -> Bool {
         let key = HFRepoID.Identity(modelIdentity)
-        return claims.contains { $0.holder.needsServer && $0.key.matches(key) }
+        return claims.contains { $0.holder != holder && $0.holder.needsServer && $0.key.matches(key) }
     }
 
-    func blocksStop(_ server: ServerInfo) -> Bool { blocksStop(modelIdentity: server.modelIdentity) }
+    func blocksStop(_ server: ServerInfo, excluding holder: Holder? = nil) -> Bool {
+        blocksStop(modelIdentity: server.modelIdentity, excluding: holder)
+    }
 
     /// Claimed identities plus every library path one of them matches; reclaim and
     /// model guidance never move these.

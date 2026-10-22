@@ -588,9 +588,9 @@ enum ProbeHTTPError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .httpStatus(let code):
-            return "The verification server returned HTTP \(code)."
+            return "The model server returned HTTP \(code)."
         case .invalidResponse:
-            return "The verification server returned an unreadable response."
+            return "The model server returned an unreadable response."
         case .responseTooLarge:
             return "The model server response exceeded the streaming size limit."
         }

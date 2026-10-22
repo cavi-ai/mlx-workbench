@@ -241,6 +241,10 @@ final class OverviewPresentationTests: XCTestCase {
                 snapshot: snapshot(with: [model]), rootsConfigured: true, isScanning: false, lastError: nil,
                 agentReady: true, convertRuntimeReady: true, serveRuntimeReady: false)
             XCTAssertEqual(action.kind, .run(model.item.path))
+            let selected = HomeNextAction.derive(workflow: workflow(state: .idle),
+                snapshot: snapshot(with: [model]), rootsConfigured: true, isScanning: false, lastError: nil,
+                agentReady: true, convertRuntimeReady: true, serveRuntimeReady: false, selectedModelPath: model.item.path)
+            XCTAssertEqual(selected.kind, .run(model.item.path))
         }
         let missingBackend = makeModel(bytes: 1000, parameters: nil, backend: OutputBackend(id: "mlx-vlm", installed: false))
         let blocked = derive(workflow: workflow(state: .completed, completedModelPath: missingBackend.item.path),

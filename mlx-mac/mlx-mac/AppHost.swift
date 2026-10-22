@@ -73,6 +73,7 @@ class AppHost {
 
     let api: WorkbenchAPI
     let inferenceTasks: InferenceTaskCoordinator
+    let endpointTest: EndpointTestCoordinator
 
     private let configModule: ConfigModule
     private let cli: CLIProcess
@@ -124,6 +125,7 @@ class AppHost {
         preferencesStore: JSONStore<RecommendationPreferences>? = nil,
         intakeAPI: IntakeAPI? = nil,
         inferenceTasks: InferenceTaskCoordinator? = nil,
+        endpointTest: EndpointTestCoordinator? = nil,
         runtimeProbe: @escaping @Sendable () -> RuntimeReport = { RuntimeChecker.report() }
     ) {
         self.configModule = configModule
@@ -143,6 +145,7 @@ class AppHost {
         let api = WorkbenchAPI(cli: cli, agentPath: loadedConfig.mlxAgentPath)
         self.api = api
         self.inferenceTasks = inferenceTasks ?? InferenceTaskCoordinator(api: api, artifactRoot: api.taskArtifactsRoot)
+        self.endpointTest = endpointTest ?? EndpointTestCoordinator(client: .live(api: api))
         self.lab = LabCoordinator(api: api)
         self.resources = SystemResourceMonitor(statusProvider: { try await api.serveStatus() })
         let profiles = ServingProfileCoordinator(store: JSONStore(fileURL: JSONStore<ServingProfile>.defaultFileURL("serving-profiles.json")),
@@ -331,6 +334,10 @@ class AppHost {
                 await self.reclaim.confirmSource(current)
                 await self.rescan()
             }
+        }
+        self.endpointTest.canUseServer = { [weak self] server in
+            guard let self else { return false }
+            return self.comparison.hasLoadedHistory && !self.occupancy.blocksStop(server, excluding: .promptTest)
         }
         self.verification.onReport = { [weak self] report in self?.usage.record(report.modelPath) }
         self.comparison.onVariantMeasured = { [weak self] path in self?.usage.record(path) }
@@ -991,6 +998,7 @@ class AppHost {
         occupancy.add(recommendationPreferences.preferredModelIDs.values, for: .preference)
         occupancy.add([verification.activeModelPath].compactMap { $0 }, for: .verification)
         occupancy.add(inferenceTasks.activeModelPaths, for: .inferenceTask)
+        occupancy.add([endpointTest.activeServer?.modelIdentity].compactMap { $0 }, for: .promptTest)
         if let id = hostedComparison.activeRunID, let record = hostedComparison.records.first(where: { $0.id == id }) {
             occupancy.add(record.targets.compactMap(\.localPath), for: .hostedComparison)
         }

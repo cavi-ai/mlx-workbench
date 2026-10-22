@@ -4,6 +4,14 @@
 
 **Overview** is the landing screen. It leads with a **Model budget** instrument for this Mac, offers one **Next step** action and shows the **Flight path** of the model chosen in Library: how far it has come from source to ready. **Watch alerts** appear here; see [Health and alerts](health.md).
 
+The **Next step** follows the model selected in Library: ready chat models open
+Run for a serve preview, sources needing conversion open Prepare, and other task
+types open their own Library inspector. Missing runtimes lead to repair guidance.
+An unavailable selection asks you to choose another model. Active conversions,
+verification and workflow failures still take priority. While a scan is running
+or has failed, resolve the scan before using selected-model guidance. These actions
+navigate or stage a preview; they never start conversion, installation or serving.
+
 ## Library
 
 **Library** lists the GGUF and MLX models under your configured roots. The output directory is scanned as an MLX root unless another root already reaches it. Families with multiple variants expand to show their models; single variants appear directly in the table.
