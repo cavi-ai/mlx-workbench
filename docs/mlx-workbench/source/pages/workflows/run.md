@@ -23,6 +23,32 @@ endpoint names the adapter when its path is available. Model-only handoffs to
 Clients match servers without adapters. Selecting an endpoint in Run or Clients
 keeps its adapter identity attached to the confirmation checks.
 
+## Try a prompt
+
+On a running server, **Try a prompt…** opens a temporary test window for that
+endpoint, including its adapter when present. Enter up to 4,000 characters and
+choose **Send prompt**. Each request sends one question with a 256-token output
+limit. A load-on-request endpoint may load its model; its memory checks still apply.
+Opening the window and editing the prompt never send a request.
+
+Workbench checks the selected server's process and adapter identity before and
+after the request. A changed or unavailable endpoint requires reopening the test
+from Run. Verification and comparisons keep priority; Stop and Unload are refused
+while this test holds the model.
+
+The window distinguishes a returned answer, a token limit, missing answer text
+and unconfirmed completion. Reasoning is available separately when returned.
+Editing the prompt clears the previous result. A returned answer does not mark
+the model verified or establish its quality, and tests do not enter comparison
+history. **Configure clients…** after a finished answer opens the existing client
+configuration review for this endpoint.
+
+**Cancel request**, closing the window or leaving Run cancels Workbench's request;
+the server remains running and may still be finishing generation. Requests time
+out after at most two minutes of transport activity. Errors retain the prompt for
+an explicit retry; there is no automatic resubmission. Closing clears the test's
+prompt and output from the window.
+
 ## Serve a trained adapter
 
 In Training, choose **Use in Run** on a completed job. This stages the receipt

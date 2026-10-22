@@ -2644,6 +2644,65 @@ final class WorkbenchReviewUITests: XCTestCase {
         }
     }
 
+    func testRunPromptUsesSelectedEndpointWithoutStartingOrStoppingServers() throws {
+        let peer = try HostedUIFixture(root: root)
+        let port = try peer.start()
+        defer { peer.stop() }
+        let answer = "The local endpoint answered this prompt."
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"" + answer + "\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+        try Data(body.utf8).write(to: root.appendingPathComponent("prompt-response"))
+        let servers: [[String: Any]] = [["repo": "org/Chosen", "runtime": "mlx_lm", "port": Int(port),
+            "pid": 123, "state": "running", "receipt": "/fixture/chosen.json", "jit": true, "model_state": "unloaded"]]
+        let serverFile = root.appendingPathComponent("servers.json")
+        let recorded = try JSONSerialization.data(withJSONObject: servers)
+        try recorded.write(to: serverFile)
+        launch(appearance: "Dark", isolatedHome: true)
+        select("Run")
+        let open = app.buttons["run-try-prompt-\(port)"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 15))
+        open.click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(sheet.staticTexts["Try a prompt"].exists)
+        XCTAssertTrue(sheet.staticTexts["127.0.0.1:\(port)"].exists)
+        XCTAssertTrue(sheet.staticTexts["Loads the model on request. Sending may take longer while it loads."].exists)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("requests").path))
+        let prompt = sheet.textViews["endpoint-test-prompt"]
+        XCTAssertTrue(prompt.exists)
+        prompt.click(); prompt.typeKey("a", modifierFlags: .command); prompt.typeText("Explain local inference in one sentence.")
+        sheet.buttons["Send prompt"].click()
+        XCTAssertTrue(sheet.staticTexts[answer].waitForExistence(timeout: 15))
+        XCTAssertTrue(sheet.staticTexts["Answer returned"].exists)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("prompt-request.json"))) as? [String: Any])
+        XCTAssertEqual(request["model"] as? String, "org/Chosen")
+        XCTAssertEqual(request["max_tokens"] as? Int, 256)
+        XCTAssertEqual((request["messages"] as? [[String: String]])?.first?["content"], "Explain local inference in one sentence.")
+        capture("Run-first-answer-wide")
+        sheet.buttons["Done"].click()
+        resizeWindow(width: 740, height: 612)
+        open.click()
+        XCTAssertTrue(sheet.buttons["Send prompt"].isHittable)
+        try Data().write(to: root.appendingPathComponent("unauthorized"))
+        sheet.buttons["Send prompt"].click()
+        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "HTTP 401", "HTTP 401")).firstMatch.waitForExistence(timeout: 15))
+        XCTAssertFalse(sheet.staticTexts["private-server-body"].exists)
+        capture("Run-first-answer-retry-minimum")
+        try FileManager.default.removeItem(at: root.appendingPathComponent("unauthorized"))
+        sheet.buttons["Send prompt"].click()
+        XCTAssertTrue(sheet.staticTexts[answer].waitForExistence(timeout: 15))
+        try Data().write(to: root.appendingPathComponent("hold-prompt"))
+        sheet.buttons["Send prompt"].click()
+        XCTAssertTrue(sheet.buttons["Cancel request"].waitForExistence(timeout: 10))
+        sheet.buttons["Cancel request"].click()
+        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Stopped waiting", "Stopped waiting")).firstMatch.waitForExistence(timeout: 15))
+        sheet.buttons["Done"].click()
+        XCTAssertEqual(try Data(contentsOf: serverFile), recorded)
+        let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+        for command in ["\"serve\", \"start\"", "\"serve\", \"stop\"", "\"serve\", \"unload\"", "\"backend\", \"install\""] {
+            XCTAssertFalse(calls.contains(command))
+        }
+    }
+
     func testRunShowsFailedStopAndRetriesAfterDisable() throws {
         let state = root.appendingPathComponent("Library/Application Support/mlx-workbench")
         try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)

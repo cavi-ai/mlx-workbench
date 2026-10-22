@@ -297,7 +297,7 @@ final class HostedModelsUITests: XCTestCase {
 }
 
 /// The UI runner is sandboxed, so the fixture runs in process without launching developer tools.
-private final class HostedUIFixture: @unchecked Sendable {
+final class HostedUIFixture: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "hosted-ui-http-fixture")
     private let root: URL
@@ -351,6 +351,16 @@ private final class HostedUIFixture: @unchecked Sendable {
                 let body = "private-server-body"
                 let response = "HTTP/1.1 401 Unauthorized\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+            if request.hasPrefix("POST /v1/chat/completions "),
+               let body = try? String(contentsOf: root.appendingPathComponent("prompt-response"), encoding: .utf8) {
+                try? Data(request[end.upperBound...].utf8).write(to: root.appendingPathComponent("prompt-request.json"))
+                let held = FileManager.default.fileExists(atPath: root.appendingPathComponent("hold-prompt").path)
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n" + (held ? "" : body)
+                connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
+                    if !held { connection.cancel() }
+                })
                 return
             }
             if request.hasPrefix("POST ") {

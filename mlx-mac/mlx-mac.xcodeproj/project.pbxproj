@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		97D1660B71549F256512BE7F /* EndpointTestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */; };
+		2FC0D65EBB12434769C4403A /* EndpointTestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 704EF64EA6AE9A01468633BB /* EndpointTestSheet.swift */; };
+		AC9CA088CCDA4A2355DB61A1 /* EndpointTestCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 868DC0313E25D22797C3BF43 /* EndpointTestCoordinator.swift */; };
 		CLSETB01 /* ClientSetupDoctorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CLSETF01 /* ClientSetupDoctorView.swift */; };
 		TRNDSSB1 /* TrainingDatasetSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNDSSF1 /* TrainingDatasetSheet.swift */; };
 		TRNDSDB1 /* TrainingDatasetDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = TRNDSDF1 /* TrainingDatasetDraft.swift */; };
@@ -318,6 +321,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointTestTests.swift; sourceTree = "<group>"; };
+		704EF64EA6AE9A01468633BB /* EndpointTestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UI/Views/EndpointTestSheet.swift; sourceTree = "<group>"; };
+		868DC0313E25D22797C3BF43 /* EndpointTestCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/EndpointTestCoordinator.swift; sourceTree = "<group>"; };
 		CLSETF01 /* ClientSetupDoctorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ClientSetupDoctorView.swift; path = UI/Views/ClientSetupDoctorView.swift; sourceTree = "<group>"; };
 		TRNDSSF1 /* TrainingDatasetSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingDatasetSheet.swift; path = UI/Views/TrainingDatasetSheet.swift; sourceTree = "<group>"; };
 		TRNDSDF1 /* TrainingDatasetDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TrainingDatasetDraft.swift; path = Services/TrainingDatasetDraft.swift; sourceTree = "<group>"; };
@@ -727,6 +733,8 @@
 				C0DE52000000000000000004 /* ComparisonHistoryWorker.swift */,
 				C0DE51000000000000000002 /* InlineReasoning.swift */,
 				24FREF041 /* ServeProbe.swift */,
+				704EF64EA6AE9A01468633BB /* EndpointTestSheet.swift */,
+				868DC0313E25D22797C3BF43 /* EndpointTestCoordinator.swift */,
 				24FREF042 /* VerificationStore.swift */,
 				24FREF043 /* VerificationCoordinator.swift */,
 				24FREF047 /* ComparisonModels.swift */,
@@ -928,6 +936,7 @@
 				24FREF034 /* ModelWorkflowCoordinatorTests.swift */,
 				24FREF044 /* VerificationModelTests.swift */,
 				24FREF045 /* ServeProbeTests.swift */,
+				9B7ABB51C24BB0AFB1B972C9 /* EndpointTestTests.swift */,
 				24FREF046 /* VerificationCoordinatorTests.swift */,
 				24FREF069 /* HFRepoIDTests.swift */,
 				5A1E5E770000000000000033 /* RouteHandoffsTests.swift */,
@@ -1296,6 +1305,8 @@
 				C0DE52000000000000000003 /* ComparisonHistoryWorker.swift in Sources */,
 				C0DE51000000000000000001 /* InlineReasoning.swift in Sources */,
 				24BBLD043 /* ServeProbe.swift in Sources */,
+				2FC0D65EBB12434769C4403A /* EndpointTestSheet.swift in Sources */,
+				AC9CA088CCDA4A2355DB61A1 /* EndpointTestCoordinator.swift in Sources */,
 				24BBLD044 /* VerificationStore.swift in Sources */,
 				24BBLD045 /* VerificationCoordinator.swift in Sources */,
 				24BBLD049 /* ComparisonModels.swift in Sources */,
@@ -1405,6 +1416,7 @@
 				24BBLD040 /* ModelWorkflowCoordinatorTests.swift in Sources */,
 				24BBLD046 /* VerificationModelTests.swift in Sources */,
 				24BBLD047 /* ServeProbeTests.swift in Sources */,
+				97D1660B71549F256512BE7F /* EndpointTestTests.swift in Sources */,
 				24BBLD048 /* VerificationCoordinatorTests.swift in Sources */,
 				24BBLD06B /* HFRepoIDTests.swift in Sources */,
 				5A1E5E770000000000000034 /* RouteHandoffsTests.swift in Sources */,

@@ -121,7 +121,7 @@ struct SystemResourceHeader: View {
                 Text("Reading serving status…").font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
             if resources.servers?.contains(where: { occupancy.blocksStop($0) }) == true {
-                Text("Models in an active comparison or verification cannot be unloaded here. Finish or cancel that run first.")
+                Text("Models in use by active operations cannot be unloaded here. Finish or cancel the operation first.")
                     .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
             }
             if endpoint.isUnloading { ProgressView("Unloading…").controlSize(.small) }
