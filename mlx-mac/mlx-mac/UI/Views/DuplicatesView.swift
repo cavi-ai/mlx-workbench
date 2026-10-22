@@ -109,7 +109,7 @@ struct DuplicatesView: View {
             for trigger in ReclaimTriggers.onMount(hasScan: appHost.scanResult != nil, isScanning: appHost.isScanning) {
                 switch trigger {
                 case .analyze: analyze()
-                case .refreshQuarantined: reclaim.refreshQuarantined()
+                case .refreshQuarantined: Task { await reclaim.refreshQuarantined() }
                 case .rescan: appHost.requestRescan()
                 }
             }
@@ -315,11 +315,14 @@ struct DuplicatesView: View {
             .disabled(selection.isEmpty)
         if let plan = reclaim.plan {
             Button("Confirm quarantine") {
-                reclaim.confirm(previewHash: plan.previewHash)
-                selectedOpportunities = []
+                Task {
+                    await reclaim.confirm(previewHash: plan.previewHash)
+                    selectedOpportunities = []
+                }
             }
             .reclaimButtonStyle(.confirmQuarantine, primary: primary)
             .disabled(reclaim.isApplying)
+            if let progress = reclaim.progressMessage { ProgressView(progress) }
         }
     }
 

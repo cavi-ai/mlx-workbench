@@ -117,7 +117,7 @@ final class ReclaimRemodelTests: XCTestCase {
         XCTAssertEqual(ledger.stages.first { $0.id == .quarantine }?.detail, "2 files")
     }
 
-    func testRecordsMarkedDeletedLeaveQuarantineAndTheLedger() throws {
+    func testRecordsMarkedDeletedLeaveQuarantineAndTheLedger() async throws {
         let hold = try makeRoot()
         let directory = Quarantine.resolve(hold.path)
         let kept = "\(directory)/kept.gguf", gone = "\(directory)/gone.gguf"
@@ -132,7 +132,7 @@ final class ReclaimRemodelTests: XCTestCase {
 
         let coordinator = ReclaimCoordinator()
         coordinator.quarantineDir = { directory }
-        coordinator.refreshQuarantined()
+        await coordinator.refreshQuarantined()
         let ledger = Fixture.ledger(quarantined: coordinator.quarantined)
 
         XCTAssertEqual(coordinator.quarantined.map(\.from), ["/m/kept.gguf"])
@@ -447,7 +447,7 @@ final class ReclaimPageStateTests: XCTestCase {
         XCTAssertEqual(Fixture.occurrences(of: "ErrorBanner(text: appHost.lastError)", in: text), 1)
     }
 
-    func testMoveResultsAndCacheCheckSurviveAnEmptyOpportunityList() throws {
+    func testMoveResultsAndCacheCheckSurviveAnEmptyOpportunityList() async throws {
         let root = try makeRoot(), quarantine = try makeRoot()
         let file = root.appendingPathComponent("stale.gguf")
         try Data("weights".utf8).write(to: file)
@@ -459,7 +459,7 @@ final class ReclaimPageStateTests: XCTestCase {
         coordinator.setOpportunitiesForTesting([opportunity])
         coordinator.preview(selected: [opportunity.id])
         let plan = try XCTUnwrap(coordinator.plan)
-        coordinator.confirm(previewHash: plan.previewHash)
+        await coordinator.confirm(previewHash: plan.previewHash)
 
         XCTAssertTrue(coordinator.opportunities.isEmpty)
         XCTAssertEqual(coordinator.lastMoves.count, 1)
@@ -643,7 +643,7 @@ final class ReclaimSheetAndTriggerTests: XCTestCase {
         XCTAssertEqual(Fixture.occurrences(of: "reviewedSourceID", in: hostText), 0)
     }
 
-    func testViewingTriggersAreFirstMountOnly() throws {
+    func testViewingTriggersAreFirstMountOnly() async throws {
         XCTAssertEqual(ReclaimTriggers.onMount(hasScan: true, isScanning: false), [.analyze, .refreshQuarantined])
         XCTAssertEqual(ReclaimTriggers.onMount(hasScan: false, isScanning: false), [.analyze, .refreshQuarantined, .rescan])
         XCTAssertEqual(ReclaimTriggers.onMount(hasScan: false, isScanning: true), [.analyze, .refreshQuarantined])

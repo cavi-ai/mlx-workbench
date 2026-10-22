@@ -24,6 +24,8 @@ Quantization bits alone never establish that one model supersedes another. Repla
 
 **Preview reclaim** lists the files a batch would move and their total size. **Confirm quarantine** moves them into the quarantine directory (**Settings → Storage**). **Put back** restores a quarantined item to its original path.
 
+Batch quarantine shows progress while filesystem work runs in the background. A move is successful only after its recovery record is saved; if that write fails, Workbench puts the model back and reports the failure. If the original location cannot be restored, the error includes the quarantine path for recovery.
+
 GGUF files can be quarantined directly. A local MLX folder needs **Review model folder…** first: the preview freezes the folder's path, file count, size and a tree fingerprint, and confirmation rechecks all of them. Folders must hold a recognized MLX config and weights, sit on the same volume as quarantine, and contain only independent regular files. These are refused:
 
 - Folders with symbolic links, hard-linked or shared files, or a Hugging Face cache layout
