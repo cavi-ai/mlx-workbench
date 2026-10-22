@@ -2666,8 +2666,8 @@ final class WorkbenchReviewUITests: XCTestCase {
         let retry = app.buttons["Retry stopping servers"]
         XCTAssertTrue(retry.waitForExistence(timeout: 15))
         XCTAssertTrue(text(containing: "Server stop could not be confirmed on port 8766").exists)
-        XCTAssertTrue(app.staticTexts["Degraded"].exists)
-        XCTAssertFalse(app.staticTexts["Disabled"].exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Degraded")).firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Disabled")).firstMatch.exists)
         for _ in 0..<3 where !retry.isHittable { content.scroll(byDeltaX: 0, deltaY: -250) }
         capture("Run-failed-stop-retry")
         try FileManager.default.removeItem(at: failure)
