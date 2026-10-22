@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SQLite3
 
 /// Atomic per-record payloads and optional lightweight entries. Migration keeps the original
@@ -6,11 +7,12 @@ import SQLite3
 final class RecordArchive<Value: Codable & Identifiable>: Sendable where Value.ID == UUID {
     let legacyURL: URL
     var url: URL { legacyURL.appendingPathExtension("sqlite") }
-    private let lock = NSRecursiveLock()
+    private let lock: NSRecursiveLock
     private let project: @Sendable (Data) throws -> Data
     private let descending: Bool
     init(legacyURL: URL, descending: Bool = false, project: @escaping @Sendable (Data) throws -> Data = { $0 }) {
         self.legacyURL = legacyURL; self.descending = descending; self.project = project
+        lock = RecordArchiveFileLock.lock(for: legacyURL)
     }
 
     func replaceAll(_ values: [Value]) throws {
@@ -159,5 +161,18 @@ final class RecordArchive<Value: Codable & Identifiable>: Sendable where Value.I
     }
     private func data(_ statement: OpaquePointer, column: Int32) -> Data {
         Data(bytes: sqlite3_column_blob(statement, column), count: Int(sqlite3_column_bytes(statement, column)))
+    }
+}
+
+private enum RecordArchiveFileLock {
+    private static let registry = OSAllocatedUnfairLock(initialState: [String: NSRecursiveLock]())
+    static func lock(for url: URL) -> NSRecursiveLock {
+        registry.withLock { locks in
+            let key = url.standardizedFileURL.path
+            if let lock = locks[key] { return lock }
+            let lock = NSRecursiveLock()
+            locks[key] = lock
+            return lock
+        }
     }
 }
