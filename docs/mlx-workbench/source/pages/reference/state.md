@@ -7,7 +7,9 @@ The app keeps its records in `~/Library/Application Support/mlx-workbench`. JSON
 History loads and saves run in the background. The toolbar shows workflow history progress; conversion and verification wait for their required state to be saved before proceeding.
 Usage stamps and Watch state also load and save in the background. Usage updates
 retain the last serving timestamp when a later verification or comparison records
-use; failed writes retain the last saved evidence.
+use. Failed writes preserve the saved file. Current usage observations remain
+available until quit, with a warning in Overview and Reclaim when they could not
+be saved.
 
 | File | Holds |
 |---|---|

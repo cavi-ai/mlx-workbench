@@ -8,6 +8,7 @@ import AppKit
 struct DuplicatesView: View {
     let appHost: AppHost
     @ObservedObject private var reclaim: ReclaimCoordinator
+    @ObservedObject private var usage: UsageTracker
     private let onRouteSelection: (AppRoute) -> Void
     @Environment(\.isRouteActive) private var isRouteActive
 
@@ -23,6 +24,7 @@ struct DuplicatesView: View {
         self.appHost = appHost
         self.onRouteSelection = onRouteSelection
         _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
+        _usage = ObservedObject(wrappedValue: appHost.usage)
     }
 
     /// Duplicate groups come from the authoritative library scan shared with
@@ -71,6 +73,7 @@ struct DuplicatesView: View {
                 VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
                     ErrorBanner(text: reclaim.lastError)
                     ErrorBanner(text: reclaim.sourceHistoryError)
+                    ErrorBanner(text: usage.persistenceError)
                     ErrorBanner(text: appHost.lastError)
                     ReclaimLedgerView(ledger: ledger, isStacked: layout.stacksStages)
                     scanCoverageSection

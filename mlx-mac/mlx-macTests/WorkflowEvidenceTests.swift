@@ -1,26 +1,34 @@
 import XCTest
+import os
 import AppKit
 import SwiftUI
 @testable import mlx_workbench
 
 @MainActor
 final class WorkflowEvidenceTests: XCTestCase {
-    func testFailedUsageWriteKeepsPublishedAndDurableEvidence() async throws {
+    func testFailedUsageWritePreservesObservedRecencyAndTheSavedFile() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("usage.json")
         let old = Date(timeIntervalSince1970: 1)
         let original = UsageStamp(path: "/a", lastUsedAt: old, lastServedAt: old)
         try JSONStore<UsageStamp>(fileURL: url).replaceAll([original])
-        let tracker = UsageTracker(store: JSONStore(fileURL: url, replaceItem: { _, _ in
-            throw NSError(domain: "UsageWrite", code: 1)
+        let attempts = OSAllocatedUnfairLock(initialState: 0)
+        let tracker = UsageTracker(store: JSONStore(fileURL: url, replaceItem: { old, new in
+            let reject = attempts.withLock { $0 += 1; return $0 == 1 }
+            if reject { throw NSError(domain: "UsageWrite", code: 1) }
+            _ = try FileManager.default.replaceItemAt(old, withItemAt: new)
         }), now: { Date(timeIntervalSince1970: 2) })
         let saved = await tracker.recordServed("/a").value
         XCTAssertFalse(saved)
-        XCTAssertEqual(tracker.lastUsedByPath["/a"], old)
-        XCTAssertEqual(tracker.lastServedByPath["/a"], old)
+        XCTAssertEqual(tracker.lastUsedByPath["/a"], Date(timeIntervalSince1970: 2))
+        XCTAssertEqual(tracker.lastServedByPath["/a"], Date(timeIntervalSince1970: 2))
         XCTAssertEqual(try JSONStore<UsageStamp>(fileURL: url).load(), [original])
         XCTAssertNotNil(tracker.persistenceError)
+        let retried = await tracker.record("/a").value
+        XCTAssertTrue(retried)
+        XCTAssertEqual(try JSONStore<UsageStamp>(fileURL: url).load().first?.lastServedAt, Date(timeIntervalSince1970: 2))
+        XCTAssertNil(tracker.persistenceError)
     }
 
     func testUsageWritesRunOffMainActorAndPreserveServingEvidenceInOrder() async throws {

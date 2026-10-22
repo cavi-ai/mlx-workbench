@@ -7,6 +7,23 @@ import XCTest
 final class ReclaimAdvisorTests: XCTestCase {
     private let now = Date(timeIntervalSinceReferenceDate: 1_000_000_000)
 
+    func testUsageSaveFailureDoesNotMakeARecentlyUsedModelLookStale() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("usage.json")
+        try JSONStore<UsageStamp>(fileURL: url).replaceAll([])
+        let observedAt = now
+        let tracker = UsageTracker(store: JSONStore(fileURL: url, replaceItem: { _, _ in
+            throw NSError(domain: "UsageWrite", code: 1)
+        }), now: { observedAt })
+        await tracker.record("/m/recent.gguf").value
+        let model = makeModel(path: "/m/recent.gguf", modifiedDaysAgo: 200)
+        let suggestions = ReclaimAdvisor.opportunities(snapshot: snapshot(with: [model]), duplicates: [],
+            lastUsedByPath: tracker.lastUsedByPath, isVerified: { _ in false }, occupiedPaths: [], now: now)
+        XCTAssertFalse(suggestions.contains { $0.kind == .stale })
+        XCTAssertNotNil(tracker.persistenceError)
+    }
+
     // MARK: - Quarantine guard (mirrors mlx_workbench/quarantine.py)
 
     func testGuardRejectsNonGGUF() throws {
