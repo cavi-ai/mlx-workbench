@@ -232,6 +232,7 @@ jobs:
             ${{ steps.verify.outputs.dmg }}
             .run/release-candidate/**/acceptance.json
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 7
 
       - name: Publish
