@@ -48,7 +48,7 @@ struct LaunchAgentManager: Sendable {
 
     init(
         home: URL = URL(fileURLWithPath: NSHomeDirectory()),
-        run: @escaping @Sendable (String, [String]) throws -> String = LaunchAgentManager.launchctl,
+        run: @escaping @Sendable (String, [String]) throws -> String = { try LaunchAgentManager.launchctl($0, $1) },
         uid: UInt32 = getuid(),
         interpreter: @escaping @Sendable (String) -> URL? = LaunchAgentManager.defaultInterpreter
     ) {
@@ -136,26 +136,14 @@ struct LaunchAgentManager: Sendable {
 
     // MARK: - Process runner
 
-    private static func launchctl(_ executable: String, _ argv: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = argv
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        do {
-            try process.run()
-        } catch {
-            throw LaunchAgentError.launchctlFailed(error.localizedDescription)
+    static func launchctl(_ executable: String, _ argv: [String], timeout: TimeInterval = 30,
+                          cancellation: CLIInvocationCancellation = CLIInvocationCancellation()) throws -> String {
+        let output = try BoundedProcessCapture.run(executable: URL(fileURLWithPath: executable), arguments: argv,
+            timeout: timeout, cancellation: cancellation)
+        guard output.status == 0 else {
+            throw LaunchAgentError.launchctlFailed(output.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
         }
-        process.waitUntilExit()
-        let out = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        let err = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw LaunchAgentError.launchctlFailed(err.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        return out
+        return output.stdout
     }
 
     private func pythonExecutable(agentPath: String) -> String {

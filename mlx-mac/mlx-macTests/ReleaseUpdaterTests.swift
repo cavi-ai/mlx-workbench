@@ -148,7 +148,8 @@ final class ReleaseUpdaterTests: XCTestCase {
 
     /// Set TEST_RUNNER_MLX_WORKBENCH_RELEASE_DMG to a notarized release DMG.
     /// Installs it over a stand-in bundle in a temp folder through the real
-    /// download (file URL), digest, mount, signature and swap path.
+    /// loopback download, digest, mount, signature and swap path using the
+    /// accept-release-candidate runner.
     func testLiveInstallFromANotarizedReleaseDiskImage() async throws {
         guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RELEASE_DMG"] else {
             throw XCTSkip("set TEST_RUNNER_MLX_WORKBENCH_RELEASE_DMG to a notarized release DMG")
@@ -164,9 +165,10 @@ final class ReleaseUpdaterTests: XCTestCase {
             workRoot: root.appendingPathComponent("work", isDirectory: true),
             discard: { try FileManager.default.moveItem(at: $0, to: discarded.appendingPathComponent($0.lastPathComponent)) }
         )
-        let asset = ReleaseAsset(name: dmg.lastPathComponent, downloadURL: dmg, size: 0, digest: "sha256:\(hex)")
+        let download = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RELEASE_DMG_URL"].flatMap(URL.init(string:)) ?? dmg
+        let asset = ReleaseAsset(name: dmg.lastPathComponent, downloadURL: download, size: 0, digest: "sha256:\(hex)")
 
-        let tampered = ReleaseAsset(name: dmg.lastPathComponent, downloadURL: dmg, size: 0, digest: "sha256:" + String(repeating: "0", count: 64))
+        let tampered = ReleaseAsset(name: dmg.lastPathComponent, downloadURL: download, size: 0, digest: "sha256:" + String(repeating: "0", count: 64))
         do {
             _ = try await installer.install(ReleaseOffer(target: "tampered", asset: tampered), replacing: bundle, log: { _ in })
             XCTFail("a digest mismatch must refuse the install")
@@ -183,6 +185,23 @@ final class ReleaseUpdaterTests: XCTestCase {
         let installedInfo = NSDictionary(contentsOf: plist) as? [String: Any] ?? [:]
         XCTAssertEqual(InstalledBuild.from(infoDictionary: installedInfo).version, build.version)
         XCTAssertTrue(FileManager.default.fileExists(atPath: discarded.appendingPathComponent("MLX Workbench (previous).app").path))
+        if let expected = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RELEASE_EXPECTED_COMMIT"] {
+            XCTAssertEqual(build.commit, expected)
+        }
+        if let expected = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RELEASE_EXPECTED_VERSION"] {
+            XCTAssertEqual(build.version, expected)
+        }
+        let preparedRoot = root.appendingPathComponent("clean-runtime", isDirectory: true).resolvingSymlinksInPath()
+        let runtime = try BundledRuntime(source: bundle.appendingPathComponent("Contents/Resources/Runtime"), parent: preparedRoot)
+        XCTAssertEqual(runtime.manifest.workbenchVersion, build.version)
+        if let expected = ProcessInfo.processInfo.environment["MLX_WORKBENCH_RELEASE_EXPECTED_ENGINE"] {
+            XCTAssertEqual(runtime.manifest.engineRevision, expected)
+        }
+        let prepared = try runtime.prepare()
+        let retained = prepared.appendingPathComponent("retained-setting")
+        try Data("preserve".utf8).write(to: retained)
+        XCTAssertEqual(try runtime.prepare(), prepared)
+        XCTAssertEqual(try Data(contentsOf: retained), Data("preserve".utf8))
     }
 
     // MARK: - Coordinator

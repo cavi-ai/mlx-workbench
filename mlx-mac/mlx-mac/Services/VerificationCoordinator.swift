@@ -302,12 +302,13 @@ struct SpeechCanaryRunner: Sendable {
 
 enum SpeechCanaryError: LocalizedError {
     case unavailable
-    case toolFailed(String, Int32)
+    case toolFailed(String, Int32, detail: String = "")
 
     var errorDescription: String? {
         switch self {
         case .unavailable: return "Speech verification is not available in this build."
-        case let .toolFailed(tool, status): return "\(tool) exited with status \(status) while making the canary clip."
+        case let .toolFailed(tool, status, detail):
+            return "\(tool) exited with status \(status) while making the canary clip." + (detail.isEmpty ? "" : "\n" + detail)
         }
     }
 }
@@ -336,18 +337,12 @@ enum SpeechClipSynthesizer {
         return wav
     }
 
-    private static func run(_ tool: String, _ arguments: [String]) async throws {
-        try await Task.detached(priority: .utility) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: tool)
-            process.arguments = arguments
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else {
-                throw SpeechCanaryError.toolFailed(URL(fileURLWithPath: tool).lastPathComponent, process.terminationStatus)
-            }
-        }.value
+    static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval = 30) async throws {
+        let output = try await BoundedProcessCapture.runAsync(executable: URL(fileURLWithPath: tool),
+            arguments: arguments, timeout: timeout)
+        guard output.status == 0 else {
+            throw SpeechCanaryError.toolFailed(URL(fileURLWithPath: tool).lastPathComponent, output.status,
+                detail: String(output.stderr.trimmingCharacters(in: .whitespacesAndNewlines).suffix(2048)))
+        }
     }
 }

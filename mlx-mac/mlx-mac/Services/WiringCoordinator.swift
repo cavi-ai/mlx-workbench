@@ -18,6 +18,8 @@ enum WiringError: LocalizedError {
     case symlinkRefused(client: String)
     case serverChanged
     case createdFileChanged
+    case rollbackFileChanged
+    case rollbackEvidenceMissing
 
     var errorDescription: String? {
         switch self {
@@ -29,6 +31,8 @@ enum WiringError: LocalizedError {
         case .symlinkRefused(let client): return "\(client): the config path or its backup target is a symbolic link; refusing to write through it."
         case .serverChanged: return "The selected server stopped or changed. Refresh and preview client wiring again."
         case .createdFileChanged: return "The config file changed after wiring created it; it was left in place."
+        case .rollbackFileChanged: return "The config file changed after wiring; it was left in place. Review the backup before restoring it."
+        case .rollbackEvidenceMissing: return "This older wiring record cannot confirm the current config contents. Restore its backup manually after review."
         }
     }
 }
@@ -294,20 +298,30 @@ final class WiringCoordinator: ObservableObject {
             return
         }
         var failures: [String] = []
+        var restored = Set(transaction.rolledBackConfigPaths ?? [])
         for receipt in transaction.receipts.reversed() {
+            guard !restored.contains(receipt.configPath) else { continue }
             do {
                 if let backup = receipt.backupPath {
+                    guard let expected = receipt.writtenFileSHA256 else { throw WiringError.rollbackEvidenceMissing }
+                    let target = URL(fileURLWithPath: receipt.configPath)
+                    try Self.refuseSymlink(target, client: nil, fileManager: fileManager)
+                    guard Self.sha256Hex(try Data(contentsOf: target)) == expected else { throw WiringError.rollbackFileChanged }
                     try restore(backup: backup, to: receipt.configPath)
                 } else if let written = receipt.createdFileSHA256 {
                     try trashCreated(receipt.configPath, writtenSHA256: written)
                 }
+                restored.insert(receipt.configPath)
             } catch {
                 failures.append("\(receipt.clientID): \(AppHost.render(error))")
             }
         }
         if let index = transactions.firstIndex(where: { $0.id == transaction.id }) {
-            transactions[index].rolledBackAt = now()
-            transactions[index].failures.append(contentsOf: failures)
+            transactions[index].rolledBackAt = failures.isEmpty ? now() : nil
+            transactions[index].rolledBackConfigPaths = restored.sorted()
+            for failure in failures where !transactions[index].failures.contains(failure) {
+                transactions[index].failures.append(failure)
+            }
             persist(transactions[index])
         }
         lastError = failures.isEmpty ? nil : failures.joined(separator: "\n")
@@ -371,6 +385,7 @@ final class WiringCoordinator: ObservableObject {
             configPath: plan.configPath,
             backupPath: backupPath,
             createdFileSHA256: createsFile ? Self.sha256Hex(Data(plan.after.utf8)) : nil,
+            writtenFileSHA256: Self.sha256Hex(Data(plan.after.utf8)),
             appliedAt: now()
         )
     }

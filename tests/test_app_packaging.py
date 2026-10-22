@@ -1,8 +1,11 @@
 """App icon + DMG packaging contract tests. Skips gracefully off macOS."""
 
 import plistlib
+import os
 import re
 import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -126,7 +129,7 @@ class DmgTargetTests(unittest.TestCase):
             "secrets.ASC_KEY_P8",
             "secrets.ASC_KEY_ID",
             "secrets.ASC_ISSUER_ID",
-            'make dmg DEVELOPER_TEAM="$DEVELOPER_TEAM" DMG_CHANNEL="$CHANNEL"',
+            'make dmg DEVELOPER_TEAM="$DEVELOPER_TEAM" DMG_CHANNEL="$BUILD_CHANNEL"',
             'certificate leaf[subject.OU] = "\'"$DEVELOPER_TEAM"\'" and notarized',
             'xcrun stapler validate "$app"',
             "gh release create nightly",
@@ -139,6 +142,28 @@ class DmgTargetTests(unittest.TestCase):
         cleanup = workflow.split("- name: Remove the API key", 1)[1]
         self.assertIn("if: always()", cleanup)
         self.assertIn('rm -f "$RUNNER_TEMP/AuthKey.p8"', cleanup)
+
+    def test_signed_candidate_target_is_immutable_and_uses_release_packaging(self):
+        workflow = (ROOT / ".github/workflows/signed-dmg.yml").read_text()
+        target = workflow.split("- name: Resolve the build target", 1)[1].split("- name:", 1)[0]
+        script = textwrap.dedent(target.split("run: |\n", 1)[1])
+        commit = "1" * 40
+        cases = [("candidate", commit, {"ref": commit, "tag": "", "build_channel": "release"}),
+                 ("release", "", {"ref": "refs/tags/v3.2.1", "tag": "v3.2.1", "build_channel": "release"}),
+                 ("nightly", "", {"ref": "refs/heads/main", "tag": "nightly", "build_channel": "nightly"})]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            for channel, revision, expected in cases:
+                with self.subTest(channel=channel):
+                    output.write_text("")
+                    env = dict(os.environ, CHANNEL=channel, CANDIDATE_COMMIT=revision,
+                               RELEASE_TAG="v3.2.1", GITHUB_OUTPUT=str(output))
+                    subprocess.run(["bash", "-c", script], env=env, check=True, capture_output=True, timeout=5)
+                    self.assertEqual(dict(line.split("=", 1) for line in output.read_text().splitlines()), expected)
+            for invalid in ["main", "abc", "a" * 40 + "\nref=main"]:
+                env = dict(os.environ, CHANNEL="candidate", CANDIDATE_COMMIT=invalid, GITHUB_OUTPUT=str(output))
+                result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, timeout=5)
+                self.assertNotEqual(result.returncode, 0)
         self.assertIn("DEVELOPER_TEAM: Y76GMV87GM", workflow)
 
     def test_nightly_builds_only_on_demand_and_only_for_app_changes(self):

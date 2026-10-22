@@ -64,6 +64,7 @@ final class ReclaimCoordinator: ObservableObject {
     @Published private(set) var plan: ReclaimPlan?
     @Published private(set) var lastMoves: [ReclaimMoveResult] = []
     @Published private(set) var isApplying = false
+    @Published private(set) var progressMessage: String?
     @Published private(set) var lastError: String?
     /// Currently-quarantined files from the ledger, newest first — records
     /// whose quarantined file no longer exists (restored, or removed by the
@@ -100,6 +101,8 @@ final class ReclaimCoordinator: ObservableObject {
     private let sourceJournalURL: URL
     private let sourceTrashRoots: [String]?
     private var sourceHistoryGeneration = 0
+    private var quarantineGeneration = 0
+    private let quarantineIO = DispatchQueue(label: "ai.cavi.workbench.quarantine", qos: .userInitiated)
 
     private var sourceRoots: [String] { Array(Set(ggufRoots() + mlxRoots())).sorted() }
 
@@ -293,7 +296,7 @@ final class ReclaimCoordinator: ObservableObject {
         } catch { lastError = AppHost.render(error) }
         folderPlan = nil
         isApplying = false
-        refreshQuarantined()
+        await refreshQuarantined()
     }
 
     init(
@@ -351,11 +354,17 @@ final class ReclaimCoordinator: ObservableObject {
     /// file still exists — the list means "currently quarantined". The ledger
     /// file itself stays an append-only audit trail (a restored record's file
     /// simply leaves the directory).
-    func refreshQuarantined() {
-        let dir = quarantineDir()
-        quarantined = Quarantine.ledger(quarantineDir: dir, limit: 10000, fileManager: fileManager).filter { record in
-            record.deletedAt == nil && (try? Quarantine.guardQuarantinedPath(record.to, quarantineDir: dir, kind: record.kind, fileManager: fileManager)) != nil
+    func refreshQuarantined() async {
+        quarantineGeneration &+= 1
+        let generation = quarantineGeneration
+        let dir = quarantineDir(), manager = fileManager
+        let records = await WorkbenchIO.perform(on: quarantineIO) {
+            Quarantine.ledger(quarantineDir: dir, limit: 10000, fileManager: manager).filter { record in
+                record.deletedAt == nil && (try? Quarantine.guardQuarantinedPath(record.to, quarantineDir: dir, kind: record.kind, fileManager: manager)) != nil
+            }
         }
+        guard generation == quarantineGeneration, dir == quarantineDir() else { return }
+        quarantined = records
     }
 
     /// Put a quarantined file back where it came from, then refresh.
@@ -373,7 +382,7 @@ final class ReclaimCoordinator: ObservableObject {
             lastError = AppHost.render(error)
         }
         isApplying = false
-        refreshQuarantined()
+        await refreshQuarantined()
     }
 
     func previewTrash(_ record: QuarantineRecord) async {
@@ -390,7 +399,7 @@ final class ReclaimCoordinator: ObservableObject {
         } catch {
             trashPlan = nil
             lastError = AppHost.render(error)
-            refreshQuarantined()
+            await refreshQuarantined()
         }
     }
 
@@ -415,7 +424,7 @@ final class ReclaimCoordinator: ObservableObject {
         } catch { lastError = AppHost.render(error) }
         isApplying = false
         trashPlan = nil
-        refreshQuarantined()
+        await refreshQuarantined()
     }
 
     /// Freeze the selected actionable paths into a hashed plan.
@@ -442,24 +451,26 @@ final class ReclaimCoordinator: ObservableObject {
     /// Confirm the frozen plan: re-guard each path (drift check) and move
     /// sequentially. Returns per-item results.
     @discardableResult
-    func confirm(previewHash hash: String) -> [ReclaimMoveResult]? {
+    func confirm(previewHash hash: String) async -> [ReclaimMoveResult]? {
         guard !isApplying else { return nil }
         guard let plan, plan.previewHash == hash else {
             lastError = ReclaimError.previewHashMismatch.errorDescription
             return nil
         }
         isApplying = true
-        defer { isApplying = false }
+        defer { isApplying = false; progressMessage = nil }
         var results: [ReclaimMoveResult] = []
-        for item in plan.items {
+        let roots = ggufRoots(), directory = quarantineDir(), manager = fileManager
+        for (index, item) in plan.items.enumerated() {
+            progressMessage = "Quarantining \(index + 1) of \(plan.items.count)…"
             do {
-                let record = try Quarantine.move(
-                    target: item.path,
-                    roots: ggufRoots(),
-                    quarantineDir: quarantineDir(),
-                    now: now(),
-                    fileManager: fileManager
-                )
+                try Task.checkCancellation()
+                guard roots == ggufRoots(), directory == quarantineDir() else { throw QuarantineError.changedSincePreview }
+                let movedAt = now()
+                let record = try await WorkbenchIO.perform(on: quarantineIO) { Result {
+                    try Quarantine.move(target: item.path, roots: roots, quarantineDir: directory,
+                        now: movedAt, fileManager: manager)
+                } }.get()
                 results.append(ReclaimMoveResult(path: item.path, destination: record.to, error: nil))
             } catch {
                 results.append(ReclaimMoveResult(path: item.path, destination: nil, error: AppHost.render(error)))
@@ -470,7 +481,7 @@ final class ReclaimCoordinator: ObservableObject {
             ? "Some items could not be moved; see per-item results."
             : nil
         self.plan = nil
-        refreshQuarantined()
+        await refreshQuarantined()
         // Moved items leave the opportunity set immediately; the next
         // library scan is the authoritative refresh.
         let moved = Set(results.compactMap { $0.error == nil ? $0.path : nil })

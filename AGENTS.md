@@ -56,7 +56,8 @@ Behavior detail for each area is in the operator guide; this lists owners.
   cancellation stops their owned worker, without holding the state lock during I/O.
   Detached work (`convert start`, `serve`) uses its own session and is not stopped.
   `BoundedProcessCapture` runs other commands from blocking workers with an
-  output limit and a deadline.
+  output limit and a deadline, including update installation, login-item
+  commands and speech-canary preparation. Async callers propagate cancellation.
 - Python resolution: `Services/WorkbenchPython.swift` (env → repo `.venv` →
   PATH), shared by every launcher.
 - Durable JSON state: `JSONStore` (one lock per file path shared by every
@@ -93,8 +94,11 @@ Behavior detail for each area is in the operator guide; this lists owners.
   `ComparisonOutputStore`. Views: `QuantView.swift`, `ComparePresentation.swift`,
   `CompareMediaViews.swift`, `ComparisonPromptEditorViews.swift`,
   `ComparisonPickerViews.swift`, `CompareSheets.swift`.
-- Wire: `WiringCoordinator` (allowlisted client configs, backups, rollback).
+- Wire: `WiringCoordinator` (allowlisted client configs, backups, content-digest
+  rollback fences and persisted progress for partial rollback retries).
 - Duplicates: `ReclaimAdvisor`, `ReclaimCoordinator`, `Services/Quarantine.swift`.
+  Batch moves and quarantine-history refresh use a serial I/O queue; failed
+  recovery-record writes restore the moved model or report its recovery path.
 - Studies and Training: `LabCoordinator`, `TrainingSession`.
 - Watch, notifications, setup and updates: `WatchCoordinator`,
   `AlertNotifier`, `SetupCoordinator`, `UpdateCoordinator` (checkout

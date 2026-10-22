@@ -7,6 +7,52 @@ import XCTest
 final class ReclaimAdvisorTests: XCTestCase {
     private let now = Date(timeIntervalSinceReferenceDate: 1_000_000_000)
 
+    func testBatchQuarantineMovesFilesOffTheMainThread() async throws {
+        let root = try makeRoot(), quarantine = try makeRoot()
+        let file = root.appendingPathComponent("background.gguf")
+        try Data("weights".utf8).write(to: file)
+        let manager = ThreadRecordingFileManager()
+        let coordinator = ReclaimCoordinator(fileManager: manager)
+        coordinator.ggufRoots = { [root.path] }
+        coordinator.quarantineDir = { quarantine.path }
+        let opportunity = ReclaimOpportunity(kind: .stale, paths: [file.path], bytes: 7,
+            evidence: "unused", confidence: .high, actionable: true)
+        coordinator.setOpportunitiesForTesting([opportunity])
+        coordinator.preview(selected: [opportunity.id])
+        let hash = try XCTUnwrap(coordinator.plan?.previewHash)
+        _ = await coordinator.confirm(previewHash: hash)
+        XCTAssertFalse(manager.movedOnMainThread)
+        XCTAssertEqual(coordinator.lastMoves.first?.error, nil)
+        XCTAssertEqual(Quarantine.ledger(quarantineDir: quarantine.path).count, 1)
+    }
+
+    func testGGUFQuarantineRefusesAnUnwritableLedgerWithoutMovingTheModel() throws {
+        let root = try makeRoot()
+        let quarantine = root.appendingPathComponent("quarantine")
+        try FileManager.default.createDirectory(at: quarantine.appendingPathComponent("quarantine-ledger.jsonl"), withIntermediateDirectories: true)
+        let model = root.appendingPathComponent("model.gguf")
+        try Data("weights".utf8).write(to: model)
+        XCTAssertThrowsError(try Quarantine.move(target: model.path, roots: [root.path], quarantineDir: quarantine.path))
+        XCTAssertEqual(try Data(contentsOf: model), Data("weights".utf8))
+    }
+
+    func testGGUFQuarantinePreservesTheModelWhenHistoryIsFullOrLinked() throws {
+        for linked in [false, true] {
+            let root = try makeRoot(), quarantine = root.appendingPathComponent("quarantine")
+            try FileManager.default.createDirectory(at: quarantine, withIntermediateDirectories: true)
+            let ledger = quarantine.appendingPathComponent("quarantine-ledger.jsonl")
+            let outside = root.appendingPathComponent("outside")
+            try Data("preserve".utf8).write(to: outside)
+            if linked { try FileManager.default.createSymbolicLink(at: ledger, withDestinationURL: outside) }
+            else { try Data(repeating: 0x0A, count: 4 * 1024 * 1024).write(to: ledger) }
+            let model = root.appendingPathComponent("model.gguf")
+            try Data("weights".utf8).write(to: model)
+            XCTAssertThrowsError(try Quarantine.move(target: model.path, roots: [root.path], quarantineDir: quarantine.path))
+            XCTAssertEqual(try Data(contentsOf: model), Data("weights".utf8))
+            XCTAssertEqual(try Data(contentsOf: outside), Data("preserve".utf8))
+        }
+    }
+
     func testUsageSaveFailureDoesNotMakeARecentlyUsedModelLookStale() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -349,7 +395,7 @@ final class ReclaimAdvisorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: keeper.path))
     }
 
-    func testPreviewConfirmMovesFilesAndDropsOpportunity() throws {
+    func testPreviewConfirmMovesFilesAndDropsOpportunity() async throws {
         let root = try makeRoot()
         let quarantine = try makeRoot()
         let file = root.appendingPathComponent("stale.gguf")
@@ -377,7 +423,7 @@ final class ReclaimAdvisorTests: XCTestCase {
         XCTAssertEqual(plan.items.count, 1)
         XCTAssertEqual(plan.totalBytes, 7)
 
-        let results = coordinator.confirm(previewHash: plan.previewHash)
+        let results = await coordinator.confirm(previewHash: plan.previewHash)
 
         XCTAssertEqual(results?.count, 1)
         XCTAssertNil(results?.first?.error)
@@ -385,7 +431,7 @@ final class ReclaimAdvisorTests: XCTestCase {
         XCTAssertTrue(coordinator.opportunities.isEmpty)
     }
 
-    func testConfirmRejectsHashMismatch() throws {
+    func testConfirmRejectsHashMismatch() async throws {
         let coordinator = ReclaimCoordinator(now: { self.now })
         let opportunity = ReclaimOpportunity(
             kind: .stale, paths: ["/m/x.gguf"], bytes: 1,
@@ -394,11 +440,11 @@ final class ReclaimAdvisorTests: XCTestCase {
         coordinator.setOpportunitiesForTesting([opportunity])
         coordinator.preview(selected: [opportunity.id])
 
-        XCTAssertNil(coordinator.confirm(previewHash: "bogus"))
+        let result = await coordinator.confirm(previewHash: "bogus"); XCTAssertNil(result)
         XCTAssertEqual(coordinator.lastError, ReclaimError.previewHashMismatch.errorDescription)
     }
 
-    func testPerItemFailureDoesNotStopTheBatch() throws {
+    func testPerItemFailureDoesNotStopTheBatch() async throws {
         let root = try makeRoot()
         let quarantine = try makeRoot()
         let good = root.appendingPathComponent("good.gguf")
@@ -412,7 +458,8 @@ final class ReclaimAdvisorTests: XCTestCase {
         coordinator.setOpportunitiesForTesting([goodOpportunity, badOpportunity])
         coordinator.preview(selected: [goodOpportunity.id, badOpportunity.id])
 
-        let results = try XCTUnwrap(coordinator.confirm(previewHash: coordinator.plan!.previewHash))
+        let outcome = await coordinator.confirm(previewHash: coordinator.plan!.previewHash)
+        let results = try XCTUnwrap(outcome)
 
         XCTAssertEqual(results.count, 2)
         XCTAssertEqual(results.filter { $0.error == nil }.count, 1)
@@ -441,7 +488,7 @@ final class ReclaimAdvisorTests: XCTestCase {
         let coordinator = ReclaimCoordinator(now: { self.now })
         coordinator.quarantineDir = { quarantine.path }
         coordinator.ggufRoots = { [root.path] }
-        coordinator.refreshQuarantined()
+        await coordinator.refreshQuarantined()
         XCTAssertTrue(coordinator.quarantined.isEmpty)
 
         let opportunity = ReclaimOpportunity(
@@ -450,9 +497,9 @@ final class ReclaimAdvisorTests: XCTestCase {
         )
         coordinator.setOpportunitiesForTesting([opportunity])
         coordinator.preview(selected: [opportunity.id])
-        _ = coordinator.confirm(previewHash: coordinator.plan!.previewHash)
+        _ = await coordinator.confirm(previewHash: coordinator.plan!.previewHash)
 
-        coordinator.refreshQuarantined()
+        await coordinator.refreshQuarantined()
         XCTAssertEqual(coordinator.quarantined.count, 1)
         XCTAssertEqual(coordinator.quarantined.first?.from, Quarantine.resolve(file.path))
 
@@ -475,7 +522,7 @@ final class ReclaimAdvisorTests: XCTestCase {
         let record = try Quarantine.move(target: file.path, roots: [root.path], quarantineDir: quarantine.path, now: now)
         try Data("re-downloaded".utf8).write(to: file) // original taken again
 
-        coordinator.refreshQuarantined()
+        await coordinator.refreshQuarantined()
         await coordinator.restore(record)
 
         XCTAssertNotNil(coordinator.lastError)
@@ -568,5 +615,15 @@ final class ReclaimAdvisorTests: XCTestCase {
             hardware: HardwareProfile.current(),
             generatedAt: now
         )
+    }
+}
+
+private final class ThreadRecordingFileManager: FileManager, @unchecked Sendable {
+    private let state = NSLock()
+    private var mainThread = false
+    var movedOnMainThread: Bool { state.lock(); defer { state.unlock() }; return mainThread }
+    override func moveItem(atPath srcPath: String, toPath dstPath: String) throws {
+        state.lock(); mainThread = mainThread || Thread.isMainThread; state.unlock()
+        try super.moveItem(atPath: srcPath, toPath: dstPath)
     }
 }

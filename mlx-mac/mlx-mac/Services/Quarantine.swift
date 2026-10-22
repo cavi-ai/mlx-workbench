@@ -205,16 +205,7 @@ enum Quarantine {
         // A folder must remain recoverable through its ledger. Roll back if
         // recording fails, rather than reporting an unrecorded move as success.
         do {
-            try refuseLinks(in: destinationRoot, fileManager: fileManager)
-            try JSONStore<QuarantineRecord>.refuseSymlink(ledgerURL, fileManager: fileManager)
-            var data = fileManager.fileExists(atPath: ledgerURL.path) ? try Data(contentsOf: ledgerURL) : Data()
-            guard data.count < maxLedgerBytes - 4096 else { throw QuarantineError.unsafeFolder("quarantine history is full.") }
-            if !data.isEmpty, data.last != 0x0A { data.append(0x0A) }
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            data.append(try encoder.encode(record))
-            data.append(0x0A)
-            try data.write(to: ledgerURL, options: .atomic)
+            try appendLedger(record, quarantineDir: destinationRoot, fileManager: fileManager)
         } catch {
             do { try fileManager.moveItem(atPath: destination, toPath: current.path) }
             catch { throw QuarantineError.unsafeFolder("history and rollback failed; recover the folder at \(destination). \(error.localizedDescription)") }
@@ -350,7 +341,14 @@ enum Quarantine {
             to: destination,
             bytes: size
         )
-        appendLedger(record, quarantineDir: destinationRoot, fileManager: fileManager)
+        do {
+            try appendLedger(record, quarantineDir: destinationRoot, fileManager: fileManager)
+        } catch {
+            let historyError = error
+            do { try fileManager.moveItem(atPath: destination, toPath: location) }
+            catch { throw QuarantineError.moveFailed("History could not be saved and the model could not be put back. Recover it at \(destination). \(error.localizedDescription)") }
+            throw QuarantineError.moveFailed("History could not be saved; the model was put back. \(historyError.localizedDescription)")
+        }
         return record
     }
 
@@ -429,6 +427,8 @@ enum Quarantine {
             else { try fileManager.trashItem(at: url, resultingItemURL: nil) }
         } catch { throw QuarantineError.trashFailed(error.localizedDescription) }
         // Preserve unknown fields and history, matching the web's deleted_at contract.
+        ledgerLock.lock()
+        defer { ledgerLock.unlock() }
         do {
             try refuseRootDrift(quarantineDir, expected: quarantineRoot, fileManager: fileManager)
             let ledgerURL = URL(fileURLWithPath: quarantineRoot).appendingPathComponent(ledgerName)
@@ -513,26 +513,33 @@ enum Quarantine {
 
     private static let isoFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
 
-    private static func appendLedger(_ record: QuarantineRecord, quarantineDir: String, fileManager: FileManager) {
+    private static let ledgerLock = NSLock()
+
+    private static func appendLedger(_ record: QuarantineRecord, quarantineDir: String, fileManager: FileManager) throws {
+        ledgerLock.lock()
+        defer { ledgerLock.unlock() }
         let ledgerURL = URL(fileURLWithPath: quarantineDir).appendingPathComponent(ledgerName)
-        guard (try? fileManager.destinationOfSymbolicLink(atPath: ledgerURL.path)) == nil else { return }
-        if let size = try? fileManager.attributesOfItem(atPath: ledgerURL.path)[.size] as? Int64,
-           size > maxLedgerBytes {
-            return
+        try refuseLinks(in: quarantineDir, fileManager: fileManager)
+        try JSONStore<QuarantineRecord>.refuseSymlink(ledgerURL, fileManager: fileManager)
+        var data = Data()
+        if fileManager.fileExists(atPath: ledgerURL.path) {
+            let attributes = try fileManager.attributesOfItem(atPath: ledgerURL.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular,
+                  let size = attributes[.size] as? Int64, size <= maxLedgerBytes else {
+                throw QuarantineError.moveFailed("Quarantine history is full or unavailable.")
+            }
+            data = try Data(contentsOf: ledgerURL)
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(record) else { return }
-        var line = data
-        line.append(contentsOf: [0x0A])
-        if fileManager.fileExists(atPath: ledgerURL.path),
-           let handle = try? FileHandle(forWritingTo: ledgerURL) {
-            defer { try? handle.close() }
-            try? handle.seekToEnd()
-            try? handle.write(contentsOf: line)
-        } else {
-            try? line.write(to: ledgerURL)
-        }
+        if !data.isEmpty, data.last != 0x0A { data.append(0x0A) }
+        data.append(try encoder.encode(record))
+        data.append(0x0A)
+        guard data.count <= maxLedgerBytes else { throw QuarantineError.moveFailed("Quarantine history is full.") }
+        try data.write(to: ledgerURL, options: .atomic)
+        let handle = try FileHandle(forWritingTo: ledgerURL)
+        defer { try? handle.close() }
+        try handle.synchronize()
     }
 }
 

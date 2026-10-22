@@ -63,6 +63,7 @@ help:
 	row "make dmg" "build the Release .app and package it as a DMG"; \
 	hdr "Docs & release"; \
 	row "make docs-test" "release documentation contract tests"; \
+	row "make accept-release-candidate" "RELEASE_DMG=/absolute/path/candidate.dmg — validate signed installation and runtime sources"; \
 	row "make docs-build" "build deterministic versioned documentation"; \
 	row "make docs-verify" "verify the versioned documentation"; \
 	row "make docs-release" "create the release archive and checksum"; \
@@ -199,6 +200,11 @@ test-swift:
 test-native-ui:
 	@test -n "$(NATIVE_UI_BASE_VM)" || { echo "NATIVE_UI_BASE_VM must name a prepared local Tart VM" >&2; exit 2; }
 	@$(PYTHON) scripts/native_ui_vm.py --base-vm "$(NATIVE_UI_BASE_VM)"
+
+.PHONY: accept-release-candidate
+accept-release-candidate: mac-only
+	@test -n "$(RELEASE_DMG)" || { echo "RELEASE_DMG must be an absolute path to a signed candidate DMG" >&2; exit 2; }
+	@$(PYTHON) scripts/release_candidate.py --dmg "$(RELEASE_DMG)" --derived-data "$(MLX_SWIFT_DD)"
 
 test-swift-live-scan:
 	@xcodebuild -project mlx-mac/mlx-mac.xcodeproj -scheme mlx-workbench \

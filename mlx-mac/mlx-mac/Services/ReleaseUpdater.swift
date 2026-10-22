@@ -77,7 +77,7 @@ enum ReleaseUpdateError: LocalizedError, Equatable {
     case missingDigest(String)
     case digestMismatch(String)
     case signatureRejected(String, Int32)
-    case commandFailed(String, Int32)
+    case commandFailed(String, Int32, detail: String = "")
     case missingApp(String)
 
     var errorDescription: String? {
@@ -92,8 +92,8 @@ enum ReleaseUpdateError: LocalizedError, Equatable {
             return "\(name) does not match its published sha256 digest."
         case .signatureRejected(let path, let status):
             return "\(path) is not a notarized Developer ID build of MLX Workbench (code signing status \(status))."
-        case .commandFailed(let tool, let status):
-            return "\(tool) exited with status \(status)."
+        case .commandFailed(let tool, let status, let detail):
+            return "\(tool) exited with status \(status)." + (detail.isEmpty ? "" : "\n" + detail)
         case .missingApp(let name):
             return "The disk image has no \(name)."
         }
@@ -274,6 +274,15 @@ struct DMGReleaseInstaller: ReleaseInstalling {
         replacing bundle: URL,
         log: @escaping @Sendable (String) -> Void
     ) async throws -> InstalledBuild {
+        let cancellation = CLIInvocationCancellation()
+        return try await withTaskCancellationHandler {
+            try await install(offer, replacing: bundle, cancellation: cancellation, log: log)
+        } onCancel: { cancellation.cancel() }
+    }
+
+    private func install(_ offer: ReleaseOffer, replacing bundle: URL,
+                         cancellation: CLIInvocationCancellation,
+                         log: @escaping @Sendable (String) -> Void) async throws -> InstalledBuild {
         guard let digest = offer.asset.digest else {
             throw ReleaseUpdateError.missingDigest(offer.asset.name)
         }
@@ -290,12 +299,12 @@ struct DMGReleaseInstaller: ReleaseInstalling {
         log("sha256 matches \(digest)")
 
         let mount = work.appendingPathComponent("mount", isDirectory: true)
-        try await Self.offload {
-            try Self.run("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount.path, dmg.path])
-        }
         do {
+            try await Self.offload {
+                try Self.run("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount.path, dmg.path], cancellation: cancellation)
+            }
             let discard = self.discard
-            let build = try await Self.offload { try Self.installMounted(mount, replacing: bundle, discard: discard) }
+            let build = try await Self.offload { try Self.installMounted(mount, replacing: bundle, cancellation: cancellation, discard: discard) }
             _ = try? await Self.offload { try Self.run("/usr/bin/hdiutil", ["detach", mount.path, "-force"]) }
             log("Developer ID \(ReleaseFeed.teamIdentifier), notarized: installed \(build.label) at \(bundle.path)")
             return build
@@ -308,7 +317,8 @@ struct DMGReleaseInstaller: ReleaseInstalling {
     /// Verifies the mounted app, stages a copy beside `bundle`, swaps it in,
     /// and hands the replaced bundle to `discard`.
     static func installMounted(
-        _ mount: URL, replacing bundle: URL, discard: (URL) throws -> Void
+        _ mount: URL, replacing bundle: URL, cancellation: CLIInvocationCancellation = CLIInvocationCancellation(),
+        discard: (URL) throws -> Void
     ) throws -> InstalledBuild {
         let fileManager = FileManager.default
         let candidate = mount.appendingPathComponent(ReleaseFeed.appName)
@@ -321,7 +331,9 @@ struct DMGReleaseInstaller: ReleaseInstalling {
         let parent = bundle.deletingLastPathComponent()
         let staged = parent.appendingPathComponent(".\(bundle.lastPathComponent).update", isDirectory: true)
         try? fileManager.removeItem(at: staged)
-        try run("/usr/bin/ditto", [candidate.path, staged.path])
+        defer { try? fileManager.removeItem(at: staged) }
+        try run("/usr/bin/ditto", [candidate.path, staged.path], timeout: 300, cancellation: cancellation)
+        guard !cancellation.isRequested else { throw CancellationError() }
         let backupName = bundle.deletingPathExtension().lastPathComponent + " (previous).app"
         _ = try fileManager.replaceItemAt(
             bundle, withItemAt: staged, backupItemName: backupName, options: [.withoutDeletingBackupItem]
@@ -363,17 +375,14 @@ struct DMGReleaseInstaller: ReleaseInstalling {
     }
 
     @discardableResult
-    static func run(_ tool: String, _ arguments: [String]) throws -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tool)
-        process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw ReleaseUpdateError.commandFailed(URL(fileURLWithPath: tool).lastPathComponent, process.terminationStatus)
+    static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval = 120,
+                    cancellation: CLIInvocationCancellation = CLIInvocationCancellation()) throws -> Int32 {
+        let output = try BoundedProcessCapture.run(executable: URL(fileURLWithPath: tool), arguments: arguments,
+            timeout: timeout, cancellation: cancellation)
+        guard output.status == 0 else {
+            throw ReleaseUpdateError.commandFailed(URL(fileURLWithPath: tool).lastPathComponent, output.status,
+                detail: String(output.stderr.trimmingCharacters(in: .whitespacesAndNewlines).suffix(2048)))
         }
-        return process.terminationStatus
+        return output.status
     }
 }
