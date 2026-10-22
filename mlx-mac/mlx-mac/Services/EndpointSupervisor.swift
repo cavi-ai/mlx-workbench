@@ -23,6 +23,8 @@ final class EndpointSupervisor: ObservableObject {
     @Published private(set) var restartAttempts = 0
     @Published private(set) var lastError: String?
     @Published private(set) var persistenceError: String?
+    /// Servers whose stop could not be confirmed remain visible after removal.
+    @Published private(set) var pendingStops: [UUID: EndpointSlot] = [:]
     @Published private(set) var isUnloading = false
     @Published private var isReconciling = false
     @Published private var activeUserOperations = 0
@@ -139,7 +141,7 @@ final class EndpointSupervisor: ObservableObject {
         guard validate(slot, isNew: old == nil), commit(replacing: slot) else { return }
         pendingUserServeBySlot.removeValue(forKey: slot.id)
         slotAttemptTimestamps[slot.id] = []
-        if let old, old.servingProfile != nil { await stopServing(on: old.port) }
+        if let old, old.servingProfile != nil, !(await stopServing(old)) { return }
         await reconcile(userRequestedSlotID: slot.id)
     }
 
@@ -163,12 +165,7 @@ final class EndpointSupervisor: ObservableObject {
         guard validate(candidate, isNew: fleet.slots.isEmpty) else { return }
         let old = fleet.slots.first
         guard commit(replacing: candidate) else { return }
-        if let old, old.enabled {
-            do {
-                let running = try await statusProvider()
-                if running.contains(where: { $0.port == old.port }) { try await lifecycle.stop(old.port) }
-            } catch { lastError = "The previous endpoint could not be stopped: \(AppHost.render(error))"; return }
-        }
+        if let old, old.enabled, !(await stopServing(old)) { syncShim(); return }
         slotAttemptTimestamps[candidate.id] = []
         await reconcile(userRequestedSlotID: candidate.id)
     }
@@ -180,7 +177,7 @@ final class EndpointSupervisor: ObservableObject {
         slot.enabled = false
         guard commit(replacing: slot) else { return }
         pendingUserServeBySlot.removeValue(forKey: slot.id)
-        await stopServing(on: slot.port)
+        guard await stopServing(slot) else { syncShim(); return }
         slotStates[slot.id] = .disabled
         syncShim()
     }
@@ -223,7 +220,7 @@ final class EndpointSupervisor: ObservableObject {
         guard validate(candidate, isNew: false), commit(replacing: candidate) else { return }
         if selectionChanged {
             pendingUserServeBySlot.removeValue(forKey: id)
-            await stopServing(on: old.port)
+            guard await stopServing(old) else { syncShim(); return }
         }
         await reconcile(userRequestedSlotID: selectionChanged ? id : nil)
     }
@@ -239,7 +236,7 @@ final class EndpointSupervisor: ObservableObject {
             slotAttemptTimestamps[id] = []
             await reconcile(userRequestedSlotID: id)
         } else {
-            await stopServing(on: slot.port)
+            guard await stopServing(slot) else { syncShim(); return }
             slotStates[id] = .disabled
             syncShim()
         }
@@ -256,7 +253,7 @@ final class EndpointSupervisor: ObservableObject {
         slot.modelPath = modelPath; slot.servingProfile = nil; slot.profilePreviewHash = nil
         guard commit(replacing: slot) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
-        if old.enabled { await stopServing(on: old.port) }
+        if old.enabled, !(await stopServing(old)) { syncShim(); return }
         await reconcile(userRequestedSlotID: slot.enabled ? id : nil)
     }
 
@@ -269,7 +266,7 @@ final class EndpointSupervisor: ObservableObject {
         candidate.slots.removeAll { $0.id == id }
         guard commit(candidate) else { return }
         pendingUserServeBySlot.removeValue(forKey: id)
-        if slot.enabled { await stopServing(on: slot.port) }
+        if slot.enabled, !(await stopServing(slot)) { syncShim(); return }
         slotStates.removeValue(forKey: id)
         slotRestartAttempts.removeValue(forKey: id)
         slotAttemptTimestamps.removeValue(forKey: id)
@@ -277,6 +274,17 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     // MARK: - Reconciliation
+
+    func retryPendingStops() async {
+        guard beginUserOperation() else { return }
+        defer { activeUserOperations -= 1 }
+        for slot in Array(pendingStops.values) { _ = await stopServing(slot) }
+        if pendingStops.isEmpty {
+            lastError = nil
+            await reconcile(userRequestedSlotID: nil)
+        }
+        syncShim()
+    }
 
     /// Persist the selected mode before restarting this endpoint. Existing
     /// fleets stay eager until the user changes their mode.
@@ -442,14 +450,14 @@ final class EndpointSupervisor: ObservableObject {
         defer { isReconciling = false }
         let enabledSlots = fleet.slots.filter { $0.enabled && !$0.modelPath.isEmpty }
         guard !enabledSlots.isEmpty else {
-            for slot in fleet.slots { slotStates[slot.id] = .disabled }
+            for slot in fleet.slots where pendingStops[slot.id] == nil { slotStates[slot.id] = .disabled }
             syncShim()
             return
         }
         let servers: [ServerInfo]
         do {
             servers = try await statusProvider()
-            lastError = nil
+            if pendingStops.isEmpty { lastError = nil }
         } catch {
             // Status is the authority; when it is unavailable, preserve the
             // last known state instead of guessing (mirrors the workflow
@@ -468,6 +476,7 @@ final class EndpointSupervisor: ObservableObject {
     }
 
     private func reconcileSlot(_ slot: EndpointSlot, running: [ServerInfo]) async {
+        guard pendingStops[slot.id] == nil else { return }
         if let profile = slot.servingProfile, !profile.isValid || profile.modelPath != slot.modelPath {
             slotStates[slot.id] = .degraded(reason: "The endpoint serving profile is invalid."); return
         }
@@ -668,6 +677,10 @@ final class EndpointSupervisor: ObservableObject {
 
     /// Keep the legacy single-slot published surface in sync with slot 0.
     private func syncShim() {
+        if let pending = pendingStops.values.sorted(by: { $0.port < $1.port }).first {
+            state = slotStates[pending.id] ?? .degraded(reason: "Server stop has not been confirmed.")
+            return
+        }
         guard let first = fleet.slots.first, first.enabled, !first.modelPath.isEmpty else {
             state = .disabled
             restartAttempts = 0
@@ -677,12 +690,31 @@ final class EndpointSupervisor: ObservableObject {
         restartAttempts = slotRestartAttempts[first.id] ?? 0
     }
 
-    private func stopServing(on port: Int) async {
-        guard let servers = try? await statusProvider(),
-              let ours = servers.first(where: {
-                  $0.state?.lowercased() == "running" && $0.port == port
-              }) else { return }
-        _ = ours
-        try? await lifecycle.stop(port)
+    private func stopServing(_ slot: EndpointSlot) async -> Bool {
+        do {
+            let servers = try await statusProvider()
+            if let current = servers.first(where: { $0.state?.lowercased() == "running" && $0.port == slot.port }) {
+                let matches = slot.servingProfile != nil
+                    ? ServingProfile.matchesReceipt(current, previewHash: slot.profilePreviewHash)
+                    : current.matchesUnadaptedModel(slot.modelPath)
+                guard matches else {
+                    throw WorkflowEvidenceError.invalid("A different model is running on port \(slot.port). Refresh before stopping it.")
+                }
+                try await lifecycle.stop(slot.port)
+                let after = try await statusProvider()
+                guard !after.contains(where: { $0.state?.lowercased() == "running" && $0.port == slot.port }) else {
+                    throw WorkflowEvidenceError.invalid("The server is still running on port \(slot.port).")
+                }
+            }
+            pendingStops.removeValue(forKey: slot.id)
+            slotStates[slot.id] = .disabled
+            return true
+        } catch {
+            pendingStops[slot.id] = slot
+            let reason = "Server stop could not be confirmed on port \(slot.port): \(AppHost.render(error))"
+            slotStates[slot.id] = .degraded(reason: reason)
+            lastError = reason
+            return false
+        }
     }
 }

@@ -598,6 +598,10 @@ struct ServeView: View {
             }
             ErrorBanner(text: endpoint.lastError)
             ErrorBanner(text: endpoint.persistenceError)
+            if !endpoint.pendingStops.isEmpty {
+                Button("Retry stopping servers") { Task { await endpoint.retryPendingStops() } }
+                    .disabled(endpoint.isChanging)
+            }
             if let loginItemMessage {
                 InlineMessage(kind: loginItemMessageIsError ? .error : .success, text: loginItemMessage)
             }

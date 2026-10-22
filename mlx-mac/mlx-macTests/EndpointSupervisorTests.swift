@@ -5,6 +5,61 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testFailedDisableToggleAndRemovalRemainRetryable() async throws {
+        for action in ["disable", "toggle", "remove"] {
+            let world = FakeServeWorld()
+            let live = world.lifecycle
+            let gate = RetryableEndpointStop(stop: live.stop)
+            let supervisor = EndpointSupervisor(lifecycle: ServeLifecycle(preview: live.preview, start: live.start,
+                stop: { try await gate.stop($0) }), statusProvider: { try world.status() },
+                store: JSONStore<EndpointConfig>(fileURL: temporaryURL("\(action).json")))
+            await supervisor.enable(modelPath: "/Models/a", port: 8766)
+            let id = try XCTUnwrap(supervisor.fleet.slots.first?.id)
+            switch action {
+            case "disable": await supervisor.disable()
+            case "toggle": await supervisor.setSlotEnabled(id: id, false)
+            default: await supervisor.removeSlot(id: id)
+            }
+            XCTAssertEqual(try world.status().count, 1, action)
+            XCTAssertEqual(supervisor.pendingStops[id]?.port, 8766, action)
+            XCTAssertNotNil(supervisor.lastError, action)
+            await supervisor.reconcile()
+            XCTAssertNotEqual(supervisor.state, .disabled, action)
+            await gate.allowStop()
+            await supervisor.retryPendingStops()
+            XCTAssertTrue(try world.status().isEmpty, action)
+            XCTAssertTrue(supervisor.pendingStops.isEmpty, action)
+            XCTAssertNil(supervisor.lastError, action)
+            XCTAssertEqual(supervisor.state, .disabled, action)
+        }
+    }
+
+    func testStopReadbackMustConfirmThatTheServerExited() async throws {
+        let world = FakeServeWorld()
+        let lifecycle = world.lifecycle
+        let supervisor = EndpointSupervisor(lifecycle: ServeLifecycle(preview: lifecycle.preview, start: lifecycle.start,
+            stop: { _ in }), statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        await supervisor.disable()
+        XCTAssertEqual(supervisor.pendingStops.count, 1)
+        XCTAssertNotNil(supervisor.lastError)
+        XCTAssertNotEqual(supervisor.state, .disabled)
+    }
+
+    func testDisableReportsStopFailureAndRetainsObservedServerState() async throws {
+        let world = FakeServeWorld()
+        let live = world.lifecycle
+        let supervisor = EndpointSupervisor(lifecycle: ServeLifecycle(preview: live.preview, start: live.start,
+            stop: { _ in throw StubError.offline }), statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        await supervisor.disable()
+        XCTAssertFalse(supervisor.config.enabled)
+        XCTAssertEqual(try world.status().count, 1)
+        XCTAssertNotNil(supervisor.lastError)
+        XCTAssertNotEqual(supervisor.state, .disabled)
+    }
     func testFailedFleetWritesPreserveDesiredStateAndRunningServers() async throws {
         for action in ["enable", "add", "disable", "toggle", "swap", "update", "remove"] {
             let fleetURL = temporaryURL("fleet.json")
@@ -730,5 +785,16 @@ private final class InvocationRecorder: @unchecked Sendable {
         lock.lock()
         recorded.append((executable, argv))
         lock.unlock()
+    }
+}
+
+private actor RetryableEndpointStop {
+    private var allowed = false
+    private let operation: @Sendable (Int) async throws -> Void
+    init(stop: @escaping @Sendable (Int) async throws -> Void) { operation = stop }
+    func allowStop() { allowed = true }
+    func stop(_ port: Int) async throws {
+        guard allowed else { throw CocoaError(.fileReadUnknown) }
+        try await operation(port)
     }
 }
