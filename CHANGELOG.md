@@ -23,6 +23,7 @@ and is versioned independently; submodule bumps are recorded here.
 - App: Library scans and refreshes, runtime checks and saved histories load and save off the UI thread with the previous inventory kept visible, serving status checks reuse one running engine process, and screens redraw only when the state they show changes.
 - App: workflow, verification and comparison histories are stored per record with the original JSON kept as a backup, and comparison outputs load when a run is selected.
 - Builds: signed disk images must pass installation and bundled-runtime source preparation checks before upload and keep their acceptance receipts; an unpublished candidate can be built from an explicit commit.
+- Engine: vendored mlx-agent advances from 0.9.0 to 0.10.0: credential redaction covers more commands and token formats, the coding probe runs in an isolated interpreter, capture volumes tolerate other disk images attaching, the CLI starts in less than half the time, inference timeouts report `<verb>_timeout`, discovery inspects six models at a time, installs journal each file, newer provider CLIs get a `provider_untested` warning instead of being unsupported, the mlx-audio lock carries Kokoro's speech dependencies, and backend locks pin opentelemetry-api 1.45.1.
 - Library: new image tasks start at 1024 × 1024, 40 steps and seed 42 with optional Advanced settings, and a task the selected engine cannot run keeps its inputs and links to Health.
 
 ### Fixed
