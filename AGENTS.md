@@ -51,8 +51,10 @@ Behavior detail for each area is in the operator guide; this lists owners.
   drained on dedicated threads, SIGTERM then SIGKILL after 2 s;
   `CLIProcessRegistry` stops live children on quit). `serve status` reuses
   one persistent engine process (`Bridge/AgentWorker.swift`,
-  `Resources/agent-worker.py`) and falls back to the CLI. Detached work
-  (`convert start`, `serve`) uses its own session and is not stopped.
+  `Resources/agent-worker.py`) and falls back to the CLI.
+  Status calls share a monotonic deadline across startup, queueing and fallback;
+  cancellation stops their owned worker, without holding the state lock during I/O.
+  Detached work (`convert start`, `serve`) uses its own session and is not stopped.
   `BoundedProcessCapture` runs other commands from blocking workers with an
   output limit and a deadline.
 - Python resolution: `Services/WorkbenchPython.swift` (env → repo `.venv` →
@@ -64,6 +66,8 @@ Behavior detail for each area is in the operator guide; this lists owners.
   per-record storage, one-time JSON migration, legacy JSON kept as backup)
   through `ModelWorkflowStore`, `VerificationStore` and
   `ComparisonRecordArchive`, on their coordinators' serial I/O queues.
+  Usage and Watch histories also use serial I/O queues. Watch batches new alerts
+  in one locked JSON mutation and publishes them after the write succeeds.
 - Default state paths: `Services/WorkbenchStatePaths.swift`.
 - Model identity and occupancy: `HFRepoID` (cached symlink resolution,
   `HFRepoID.Identity`), `ModelOccupancy` via `AppHost.occupancy`; Stop,
@@ -74,6 +78,8 @@ Behavior detail for each area is in the operator guide; this lists owners.
   (`ModelHostsCoordinator`, `ModelHostClient`, `HostResourceClient`, one
   `ModelHostAdapter` per provider in `Services/*HostAdapter.swift`,
   `model-hosts.json`, tokens in Keychain).
+  `HostHTTPClient` receives bounded data chunks with a per-task redirect fence;
+  cancellation and response rejection cancel only that request.
 - Prepare and intake: `IntakeCoordinator`, `ModelWorkflowCoordinator`,
   `ConversionWorkflow`; Quality Gate: `VerificationCoordinator` with
   per-task canaries in `Models/VerificationModels.swift`; source cleanup:

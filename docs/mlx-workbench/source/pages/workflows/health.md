@@ -81,3 +81,6 @@ With **Settings → Advisors → Watch & regression alerts** on, the app checks 
 - **Environment drift.** A macOS or MLX change makes verified models stale. The alert offers **Re-verify** to run the quality gate again for those models.
 
 Alerts are deduplicated. **Snooze**, **Snooze 7 days** and **Mute** persist across launches.
+New alerts appear and send notifications after their batch is saved. Saving runs
+in the background; a failed save keeps the previous alerts and shows a storage
+error. A later check retries unsaved findings.

@@ -4,6 +4,36 @@ import XCTest
 @testable import mlx_workbench
 
 final class ModelHostClientTests: XCTestCase {
+    func testLargeLocalBinaryResponsePreservesBytesAtTheSizeLimit() async throws {
+        let payload = Data(repeating: 0xAB, count: 32 * 1024 * 1024)
+        let (http, _) = transport(responses: ["/image": .init(status: 200, data: payload)])
+        let completed = expectation(description: "Local image response completed")
+        let target = host(.comfyUI)
+        let started = ProcessInfo.processInfo.systemUptime
+        let request = Task {
+            let result = try await http.request(host: target, path: "image", maximumBytes: 32 * 1024 * 1024)
+            completed.fulfill()
+            return result
+        }
+        await fulfillment(of: [completed], timeout: 3)
+        let received = try await request.value
+        XCTAssertEqual(received, payload)
+        print("32 MiB hosted response elapsed seconds: \(ProcessInfo.processInfo.systemUptime - started)")
+    }
+
+    func testTransportPreservesBinaryBytesAcrossChunksAndRejectsOverflow() async throws {
+        let payload = Data([0, 255, 128, 13, 10, 0, 254, 1])
+        var response = HostStubResponse(status: 200, data: payload)
+        response.chunks = [payload.prefix(3), payload.dropFirst(3).prefix(2), payload.suffix(3)].map { Data($0) }
+        let (http, _) = transport(responses: ["/image": response])
+        let received = try await http.request(host: host(.comfyUI), path: "image", maximumBytes: 8)
+        XCTAssertEqual(received, payload)
+        do {
+            _ = try await http.request(host: host(.comfyUI), path: "image", maximumBytes: 7)
+            XCTFail("An unknown-length response must be bounded across chunks")
+        } catch { XCTAssertEqual(error as? HostHTTPError, .responseTooLarge) }
+    }
+
     func testRejectedResponseClosesOnlyItsOwnStream() async throws {
         for scenario in 0..<3 {
             let stopped = expectation(description: "Rejected stream closed \(scenario)")
@@ -787,6 +817,7 @@ final class ModelHostClientTests: XCTestCase {
 }
 
 private struct HostStubResponse {
+    var chunks: [Data]?
     let status: Int
     let data: Data
     var failure: URLError.Code? = nil
@@ -843,7 +874,7 @@ private final class HostInventoryStub: URLProtocol, @unchecked Sendable {
         let response = HTTPURLResponse(url: request.url!, statusCode: stub.status, httpVersion: "HTTP/1.1", headerFields: headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         stub.onStart?()
-        client?.urlProtocol(self, didLoad: stub.data)
+        for chunk in stub.chunks ?? [stub.data] { client?.urlProtocol(self, didLoad: chunk) }
         if stub.finishes { client?.urlProtocolDidFinishLoading(self) }
     }
     override func stopLoading() { onStop?() }

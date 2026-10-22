@@ -54,6 +54,16 @@ final class JSONStore<Value: Codable> {
         }
     }
 
+    /// One atomic read-modify-write for a batch, preserving concurrent store edits.
+    func mutate<Result>(_ mutation: (inout [Value]) throws -> Result) throws -> Result {
+        try withLock {
+            var values = try loadUnlocked()
+            let result = try mutation(&values)
+            try write(values)
+            return result
+        }
+    }
+
     func upsert<ID: Equatable>(_ value: Value, id keyPath: KeyPath<Value, ID>) throws {
         try withLock {
             var values = try loadUnlocked()

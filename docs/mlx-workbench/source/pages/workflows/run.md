@@ -9,6 +9,8 @@
 3. **Preview serve** checks the selected runtime and shows the engine's plan. The default **Auto** uses the model's declared runtime, including an installed isolated Strata runtime. A missing base runtime does not block this check; an unavailable selected runtime fails the preview. **Confirm and run** is available only after a successful preview and starts the server.
 
 Run lists every running server with **Stop** or **Unload**. Refreshing Run only reads serving status.
+The status timeout includes engine startup and time spent waiting behind another
+status check; replacing the status process does not reset that timeout.
 
 Choose **Configure clients…** on a running endpoint to open Clients with that
 server selected. Clients rechecks its process and adapter identity; a changed or
@@ -52,6 +54,11 @@ The **Endpoints** section keeps chosen models serving on stable ports. The app r
 The menu bar item aggregates endpoints ("N of M endpoints running") and starts or stops each one. An optional login item, `ai.cavi.mlxworkbench.endpoint`, runs `mlx-agent serve start` once at login for the first endpoint. Its engine preview and plist are prepared before confirmation. The captured command preserves local paths, runtime selection, load-on-request policy and receipt storage. Changed or disabled endpoint settings prevent login startup; changed model or runtime evidence requires a fresh preview. Remove and reinstall the login item after changing its endpoint settings. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority.
 
 ## Load on request
+
+Endpoint changes are saved before starting or stopping a server. If saving fails,
+the previous settings and running servers are retained. Wait for an endpoint
+operation to finish before applying another change; refreshes never start a
+second operation over an active edit.
 
 New endpoints default to **Load on request**. The engine runs a loopback gateway that answers `/v1/models` while unloaded and starts the model on the first inference request.
 

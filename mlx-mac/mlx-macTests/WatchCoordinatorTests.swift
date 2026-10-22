@@ -5,11 +5,74 @@ import XCTest
 
 @MainActor
 final class WatchCoordinatorTests: XCTestCase {
+    func testWatchPersistsAnAlertBatchWithOneBackgroundWrite() async throws {
+        let alertURL = temporaryURL("alerts.json"), stateURL = temporaryURL("state.json")
+        try JSONStore<WatchAlert>(fileURL: alertURL).replaceAll([])
+        try JSONStore<WatchState>(fileURL: stateURL).replaceAll([])
+        let writes = ProbeCalls()
+        let coordinator = WatchCoordinator(watchDiff: {
+            ["a", "b", "c"].map { ["repo": "org/" + $0, "detail": "changed", "code": "files_changed"] }
+        }, watchSnapshot: {}, fingerprint: { self.fingerprintA }, verifiedReports: { [] },
+        alertStore: JSONStore(fileURL: alertURL, replaceItem: { old, new in
+            XCTAssertFalse(Thread.isMainThread)
+            _ = writes.next()
+            _ = try FileManager.default.replaceItemAt(old, withItemAt: new)
+        }), stateStore: JSONStore(fileURL: stateURL, replaceItem: { old, new in
+            XCTAssertFalse(Thread.isMainThread)
+            _ = try FileManager.default.replaceItemAt(old, withItemAt: new)
+        }))
+        await coordinator.checkNow()
+        await coordinator.checkNow()
+        XCTAssertEqual(writes.total, 1)
+        XCTAssertEqual(Set(coordinator.alerts.map(\.modelKey)), ["org/a", "org/b", "org/c"])
+        XCTAssertEqual(try JSONStore<WatchAlert>(fileURL: alertURL).load().count, 3)
+    }
+
     private final class ProbeCalls: @unchecked Sendable {
         let lock = NSLock()
         var count = 0
         func next() -> Int { lock.withLock { count += 1; return count } }
         var total: Int { lock.withLock { count } }
+    }
+
+    func testFailedAlertBatchIsRetriedWithoutPublishingOrNotifyingUnsavedAlerts() async throws {
+        let url = temporaryURL("alerts.json")
+        try JSONStore<WatchAlert>(fileURL: url).replaceAll([])
+        let writes = ProbeCalls(), notifications = Notifier()
+        let coordinator = WatchCoordinator(watchDiff: { [["repo": "org/a", "detail": "changed"]] },
+            watchSnapshot: {}, fingerprint: { self.fingerprintA }, verifiedReports: { [] },
+            alertStore: JSONStore(fileURL: url, replaceItem: { old, new in
+                if writes.next() == 1 { throw NSError(domain: "WatchWrite", code: 1) }
+                _ = try FileManager.default.replaceItemAt(old, withItemAt: new)
+            }), stateStore: JSONStore(fileURL: temporaryURL("state.json")), notify: { notifications.record($0) })
+        await coordinator.checkNow()
+        await coordinator.checkNow()
+        XCTAssertTrue(coordinator.alerts.isEmpty)
+        XCTAssertTrue(notifications.alerts.isEmpty)
+        XCTAssertNotNil(coordinator.persistenceError)
+        XCTAssertTrue(try JSONStore<WatchAlert>(fileURL: url).load().isEmpty)
+        await coordinator.checkNow()
+        await coordinator.checkNow()
+        XCTAssertEqual(coordinator.alerts.count, 1)
+        XCTAssertEqual(notifications.alerts.count, 1)
+        XCTAssertEqual(writes.total, 2)
+        XCTAssertNil(coordinator.persistenceError)
+    }
+
+    func testQueuedSnoozeAndMutePreserveBothSavedChanges() async throws {
+        let url = temporaryURL("alerts.json")
+        let coordinator = makeCoordinator(alertStoreURL: url, snapshot: {}, diff: { [["repo": "org/a", "detail": "changed"]] })
+        await coordinator.checkNow()
+        await coordinator.checkNow()
+        let id = try XCTUnwrap(coordinator.alerts.first?.id)
+        let snooze = coordinator.snooze(id), mute = coordinator.mute(id)
+        let snoozed = await snooze.value, muted = await mute.value
+        XCTAssertTrue(snoozed)
+        XCTAssertTrue(muted)
+        let saved = try XCTUnwrap(JSONStore<WatchAlert>(fileURL: url).load().first)
+        XCTAssertTrue(saved.muted)
+        XCTAssertNotNil(saved.snoozedUntil)
+        XCTAssertEqual(coordinator.alerts.first, saved)
     }
 
     func testConcurrentVersionRequestsShareOneProbeIncludingUnavailableResults() async {
@@ -247,7 +310,7 @@ final class WatchCoordinatorTests: XCTestCase {
         await coordinator.checkNow()
         let alert = try XCTUnwrap(coordinator.alerts.first)
 
-        coordinator.act(on: alert.id)
+        await coordinator.act(on: alert.id).value
 
         XCTAssertEqual(reverified.paths, [["/Models/stale"]])
         XCTAssertTrue(coordinator.activeAlerts.isEmpty)
@@ -264,10 +327,11 @@ final class WatchCoordinatorTests: XCTestCase {
         await coordinator.checkNow()
         let alert = try XCTUnwrap(coordinator.alerts.first)
 
-        coordinator.snooze(alert.id)
+        await coordinator.snooze(alert.id).value
         XCTAssertTrue(coordinator.activeAlerts.isEmpty)
 
         let reloaded = makeCoordinator(alertStoreURL: alertStoreURL, snapshot: {}, diff: { [] })
+        await reloaded.waitForHistory()
         XCTAssertEqual(reloaded.alerts.count, 1)
         XCTAssertTrue(reloaded.activeAlerts.isEmpty)
     }

@@ -5,6 +5,84 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testFailedFleetWritesPreserveDesiredStateAndRunningServers() async throws {
+        for action in ["enable", "add", "disable", "toggle", "swap", "update", "remove"] {
+            let fleetURL = temporaryURL("fleet.json")
+            let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a")
+            let original = EndpointFleetConfig(slots: [slot], installedAtLogin: false)
+            try JSONStore<EndpointFleetConfig>(fileURL: fleetURL).replaceAll([original])
+            let world = FakeServeWorld()
+            world.preload(repo: "/Models/a", port: 8766)
+            let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+                store: JSONStore<EndpointConfig>(fileURL: storeURL),
+                fleetStore: JSONStore(fileURL: fleetURL, replaceItem: { _, _ in throw StubError.offline }))
+            switch action {
+            case "enable": await supervisor.enable(modelPath: "/Models/b", port: 8766)
+            case "add": await supervisor.addSlot(modelPath: "/Models/b", port: 8767)
+            case "disable": await supervisor.disable()
+            case "toggle": await supervisor.setSlotEnabled(id: slot.id, false)
+            case "swap": await supervisor.swapSlot(id: slot.id, to: "/Models/b")
+            case "update": await supervisor.updateSlot(id: slot.id, modelPath: "/Models/b", port: 8766, role: nil)
+            default: await supervisor.removeSlot(id: slot.id)
+            }
+            XCTAssertEqual(supervisor.fleet, original, action)
+            XCTAssertEqual(try world.status().map(\.modelIdentity), ["/Models/a"], action)
+            XCTAssertEqual(try JSONStore<EndpointFleetConfig>(fileURL: fleetURL).load(), [original], action)
+            XCTAssertNotNil(supervisor.persistenceError, action)
+        }
+    }
+
+    func testOverlappingFleetMutationIsRejectedWhileServerStopIsPending() async throws {
+        let fleetURL = temporaryURL("fleet.json")
+        let slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a")
+        try JSONStore<EndpointFleetConfig>(fileURL: fleetURL).replaceAll([
+            EndpointFleetConfig(slots: [slot], installedAtLogin: false)
+        ])
+        let entered = expectation(description: "Server stop entered")
+        let gate = EndpointStopGate()
+        let world = FakeServeWorld()
+        world.preload(repo: "/Models/a", port: 8766)
+        var lifecycle = world.lifecycle
+        let stop = lifecycle.stop
+        lifecycle.stop = { port in
+            entered.fulfill()
+            await gate.wait()
+            try await stop(port)
+        }
+        let supervisor = EndpointSupervisor(lifecycle: lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL), fleetStore: JSONStore(fileURL: fleetURL))
+        let removal = Task { await supervisor.removeSlot(id: slot.id) }
+        await fulfillment(of: [entered], timeout: 5)
+        await supervisor.updateSlot(id: slot.id, modelPath: "/Models/a", port: 8766, role: .coding)
+        XCTAssertNotNil(supervisor.lastError, "A concurrent action must explain why it was refused")
+        XCTAssertFalse(supervisor.fleet.slots.contains { $0.role == .coding })
+        supervisor.markLoginItemInstalled(true)
+        XCTAssertTrue(supervisor.fleet.installedAtLogin, "An installed login item must retain its durable flag during the pending stop")
+        XCTAssertEqual(try JSONStore<EndpointFleetConfig>(fileURL: fleetURL).load().first?.installedAtLogin, true)
+        XCTAssertTrue(supervisor.isChanging)
+        await gate.release()
+        await removal.value
+        XCTAssertFalse(supervisor.isChanging)
+        XCTAssertTrue(supervisor.fleet.slots.isEmpty)
+        XCTAssertTrue(supervisor.fleet.installedAtLogin)
+        XCTAssertTrue(try world.status().isEmpty)
+    }
+
+    func testUnreadableFleetCannotBeReplacedByEnablingAnEndpoint() async throws {
+        let fleetURL = temporaryURL("fleet.json")
+        try FileManager.default.createDirectory(at: fleetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = Data("damaged fleet".utf8)
+        try original.write(to: fleetURL)
+        let world = FakeServeWorld()
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL), fleetStore: JSONStore(fileURL: fleetURL))
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        XCTAssertTrue(supervisor.fleet.slots.isEmpty)
+        XCTAssertTrue(try world.status().isEmpty)
+        XCTAssertEqual(try Data(contentsOf: fleetURL), original)
+        XCTAssertNotNil(supervisor.persistenceError)
+    }
+
     func testAdapterStatusCannotMatchAnUnadaptedModelAndProcessIdentityRetainsItsContents() throws {
         let source: [String: Any] = ["repo": "org/base", "port": 8766, "pid": 42, "state": "running",
             "adapter_path": "/adapters/tuned", "adapter_identity": ["adapters.safetensors": ["sha256": "first", "bytes": 4]]]
@@ -232,6 +310,7 @@ final class EndpointSupervisorTests: XCTestCase {
         await supervisor.addSlot(modelPath: "/Models/c", port: 8767)
         await supervisor.reconcile()
         XCTAssertEqual(served, ["/Models/a", "/Models/b", "/Models/c"])
+        await tracker.waitForPersistence()
         XCTAssertNotNil(tracker.lastServedByPath["/Models/c"])
         let stamps = tracker.lastServedByPath
 
@@ -623,6 +702,20 @@ final class EndpointSupervisorTests: XCTestCase {
     }
 
     private enum StubError: Error { case offline }
+}
+
+private actor EndpointStopGate {
+    private var released = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+        if released { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 private final class InvocationRecorder: @unchecked Sendable {

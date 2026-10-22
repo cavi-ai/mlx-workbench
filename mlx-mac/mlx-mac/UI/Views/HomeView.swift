@@ -175,6 +175,7 @@ struct HomeView: View {
     let appHost: AppHost
     @ObservedObject private var modelWorkflow: ModelWorkflowCoordinator
     @ObservedObject private var watch: WatchCoordinator
+    @ObservedObject private var usage: UsageTracker
     @ObservedObject private var reclaim: ReclaimCoordinator
     @ObservedObject private var verification: VerificationCoordinator
     @ObservedObject private var comparison: ComparisonCoordinator
@@ -187,6 +188,7 @@ struct HomeView: View {
         self.appHost = appHost
         _modelWorkflow = ObservedObject(wrappedValue: appHost.modelWorkflow)
         _watch = ObservedObject(wrappedValue: appHost.watch)
+        _usage = ObservedObject(wrappedValue: appHost.usage)
         _reclaim = ObservedObject(wrappedValue: appHost.reclaim)
         _verification = ObservedObject(wrappedValue: appHost.verification)
         _comparison = ObservedObject(wrappedValue: appHost.comparison)
@@ -266,6 +268,8 @@ struct HomeView: View {
     private var regions: some View {
         VStack(alignment: .leading, spacing: WorkbenchSpacing.lg) {
             hero
+            ErrorBanner(text: watch.persistenceError)
+            ErrorBanner(text: usage.persistenceError)
             FlightPathPanel(
                 model: selectedModel,
                 flightPath: flightPath,

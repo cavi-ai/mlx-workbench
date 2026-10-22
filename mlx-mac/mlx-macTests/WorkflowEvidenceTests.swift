@@ -1,10 +1,60 @@
 import XCTest
+import os
 import AppKit
 import SwiftUI
 @testable import mlx_workbench
 
 @MainActor
 final class WorkflowEvidenceTests: XCTestCase {
+    func testFailedUsageWritePreservesObservedRecencyAndTheSavedFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("usage.json")
+        let old = Date(timeIntervalSince1970: 1)
+        let original = UsageStamp(path: "/a", lastUsedAt: old, lastServedAt: old)
+        try JSONStore<UsageStamp>(fileURL: url).replaceAll([original])
+        let attempts = OSAllocatedUnfairLock(initialState: 0)
+        let tracker = UsageTracker(store: JSONStore(fileURL: url, replaceItem: { old, new in
+            let reject = attempts.withLock { $0 += 1; return $0 == 1 }
+            if reject { throw NSError(domain: "UsageWrite", code: 1) }
+            _ = try FileManager.default.replaceItemAt(old, withItemAt: new)
+        }), now: { Date(timeIntervalSince1970: 2) })
+        let saved = await tracker.recordServed("/a").value
+        XCTAssertFalse(saved)
+        XCTAssertEqual(tracker.lastUsedByPath["/a"], Date(timeIntervalSince1970: 2))
+        XCTAssertEqual(tracker.lastServedByPath["/a"], Date(timeIntervalSince1970: 2))
+        XCTAssertEqual(try JSONStore<UsageStamp>(fileURL: url).load(), [original])
+        XCTAssertNotNil(tracker.persistenceError)
+        let retried = await tracker.record("/a").value
+        XCTAssertTrue(retried)
+        XCTAssertEqual(try JSONStore<UsageStamp>(fileURL: url).load().first?.lastServedAt, Date(timeIntervalSince1970: 2))
+        XCTAssertNil(tracker.persistenceError)
+    }
+
+    func testUsageWritesRunOffMainActorAndPreserveServingEvidenceInOrder() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("usage.json")
+        try JSONStore<UsageStamp>(fileURL: url).replaceAll([])
+        let written = expectation(description: "Usage writes finished")
+        written.expectedFulfillmentCount = 3
+        let store = JSONStore<UsageStamp>(fileURL: url, replaceItem: { old, new in
+            XCTAssertFalse(Thread.isMainThread)
+            _ = try FileManager.default.replaceItemAt(old, withItemAt: new)
+            written.fulfill()
+        })
+        let date = Date(timeIntervalSinceReferenceDate: 123)
+        let tracker = UsageTracker(store: store, now: { date })
+        tracker.recordServed("/a")
+        tracker.record("/a")
+        tracker.recordServed("/b")
+        await fulfillment(of: [written], timeout: 5)
+        let saved = try JSONStore<UsageStamp>(fileURL: url).load()
+        XCTAssertEqual(Set(saved.map(\.path)), ["/a", "/b"])
+        XCTAssertEqual(saved.first(where: { $0.path == "/a" })?.lastServedAt, date)
+        XCTAssertEqual(saved.first(where: { $0.path == "/b" })?.lastServedAt, date)
+    }
+
     private func record() -> WorkflowEvidence {
         WorkflowEvidence(id: UUID(), harness: "opencode", workloadID: "coding", useCase: .coding, modelPath: "/models/a", modelSignature: "weights", environmentFingerprint: "mac|chip|1", measuredAt: Date(timeIntervalSince1970: 1_700_000_000.123), sampleCount: 3, totalSeconds: 10, source: "session:one")
     }
@@ -251,17 +301,19 @@ final class WorkflowEvidenceTests: XCTestCase {
         XCTAssertTrue(template.records.isEmpty)
         XCTAssertTrue(template.guidance?.contains("No measurements") == true)
     }
-    func testBenchmarkUsageDoesNotChangeLastServedAndLegacyDecode() throws {
+    func testBenchmarkUsageDoesNotChangeLastServedAndLegacyDecode() async throws {
         let disk = JSONStore<UsageStamp>(fileURL: try store().url.appendingPathExtension("usage"))
         var time = Date(timeIntervalSince1970: 1)
         let tracker = UsageTracker(store: disk, now: { time })
-        tracker.recordServed("/a")
+        await tracker.recordServed("/a").value
         time = Date(timeIntervalSince1970: 2)
-        tracker.record("/b")
-        tracker.record("/a")
+        await tracker.record("/b").value
+        await tracker.record("/a").value
         XCTAssertEqual(tracker.lastServedByPath["/a"], Date(timeIntervalSince1970: 1))
         XCTAssertNil(tracker.lastServedByPath["/b"])
-        XCTAssertEqual(UsageTracker(store: disk).lastServedByPath, tracker.lastServedByPath)
+        let reloaded = UsageTracker(store: disk)
+        await reloaded.waitForHistory()
+        XCTAssertEqual(reloaded.lastServedByPath, tracker.lastServedByPath)
         let legacy = try JSONDecoder().decode(UsageStamp.self, from: Data(#"{"path":"/legacy","lastUsedAt":0}"#.utf8))
         XCTAssertNil(legacy.lastServedAt)
     }

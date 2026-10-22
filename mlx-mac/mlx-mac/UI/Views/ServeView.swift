@@ -592,6 +592,10 @@ struct ServeView: View {
                 }
             }
             loginItemSection
+            if endpoint.isChanging {
+                HStack { ProgressView().controlSize(.small); Text("Updating endpoints…") }
+                    .font(WorkbenchTypography.secondary)
+            }
             ErrorBanner(text: endpoint.lastError)
             ErrorBanner(text: endpoint.persistenceError)
             if let loginItemMessage {
@@ -729,6 +733,7 @@ struct ServeView: View {
         .menuIndicator(.hidden)
         .frame(width: WorkbenchSize.Run.overflow)
         .help("Endpoint actions")
+        .disabled(endpoint.isChanging)
         .accessibilityLabel("Actions for \(RunModels.name(for: slot.modelPath, model: RunModels.model(for: slot.modelPath, in: models)))")
     }
 
@@ -885,7 +890,7 @@ struct ServeView: View {
         HStack(spacing: WorkbenchSpacing.xs) {
             Button("Add endpoint") { addEndpoint(allowUnverified: false) }
                 .buttonStyle(.workbenchPrimary)
-                .disabled(!canAdd)
+                .disabled(!canAdd || endpoint.isChanging)
                 .help(presentation.addEndpointBlockedReason ?? "Adds the model shown above as a new endpoint.")
             Menu {
                 Button("Add anyway (unverified)") { addEndpoint(allowUnverified: true) }
@@ -895,7 +900,7 @@ struct ServeView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .disabled(!canAdd)
+            .disabled(!canAdd || endpoint.isChanging)
             .help("More ways to add")
             .accessibilityLabel("More ways to add an endpoint")
         }

@@ -27,7 +27,7 @@ final class HostedStateIsolationTests: XCTestCase {
         }
     }
 
-    func testDefaultAppHostPersistsBeneathAFreshPerTestRoot() throws {
+    func testDefaultAppHostPersistsBeneathAFreshPerTestRoot() async throws {
         let root = WorkbenchStatePaths.hostedTestRoot
         XCTAssertTrue(Bundle(for: Self.self).principalClass == HostedTestStateRoot.self)
         XCTAssertTrue(Self.isWithin(root, FileManager.default.temporaryDirectory))
@@ -35,7 +35,7 @@ final class HostedStateIsolationTests: XCTestCase {
 
         let host = AppHost(config: Config.defaults())
         host.setPreferredModel("/models/winner", for: .coding)
-        host.usage.recordServed("/models/winner")
+        await host.usage.recordServed("/models/winner").value
 
         let support = WorkbenchStatePaths.applicationSupport()
         XCTAssertTrue(Self.isWithin(support, root))
