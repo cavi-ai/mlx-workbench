@@ -5,6 +5,17 @@ import XCTest
 @testable import mlx_workbench
 
 final class ServeProbeTests: XCTestCase {
+    func testM5PrefillIsExplicitInPreviewAndConfirmationArguments() {
+        let stock = WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766, receipts: "/state")
+        XCTAssertFalse(stock.contains("--m5-prefill"))
+        for hash in [String?.none, "reviewed"] {
+            let args = WorkbenchAPI.serveArguments(model: "/Models/q4", runtime: "auto", port: 8766,
+                receipts: "/state", previewHash: hash, m5Prefill: true)
+            XCTAssertTrue(args.contains("--m5-prefill"))
+            XCTAssertTrue(args.contains("auto"))
+        }
+    }
+
     @MainActor
     func testLocalNativeChatComparisonWhenRequested() async throws {
         guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_CHAT_COMPARISON_MANIFEST"] else {

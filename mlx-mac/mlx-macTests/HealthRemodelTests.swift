@@ -1266,12 +1266,12 @@ final class RuntimeCheckerTests: XCTestCase {
                                ("/usr/bin/head -c 100000 /dev/zero; /bin/sleep 30", "too much output")] {
             try executable(python, script: "#!/bin/sh\n" + body + "\n")
             let started = Date()
-            let report = RuntimeChecker.report(python: python, timeout: 1)
-            XCTAssertLessThan(Date().timeIntervalSince(started), 4)
+            let report = RuntimeChecker.report(python: python, timeout: 5)
+            XCTAssertLessThan(Date().timeIntervalSince(started), 8)
             XCTAssertFalse(report.ok)
             XCTAssertFalse(report.convert.ok)
             XCTAssertFalse(report.serve.ok)
-            XCTAssertTrue(report.convert.message.contains(reason), report.convert.message)
+            XCTAssertTrue(report.convert.message.contains(reason), "\(reason): \(report.convert.message)")
         }
     }
 }

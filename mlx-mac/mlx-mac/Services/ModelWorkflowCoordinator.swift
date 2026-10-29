@@ -4,6 +4,7 @@ private struct ServeIntent: Equatable {
     let runtime: String
     let port: Int?
     let profile: ServingProfile?
+    let m5Prefill: Bool
 }
 
 enum ModelWorkflowAPIUnavailable: LocalizedError {
@@ -21,6 +22,8 @@ struct ModelWorkflowAPI {
     let serveStop: (Int) async throws -> [String: Any]
     var profilePreview: (ServingProfile, Int?) async throws -> [String: Any] = { _, _ in throw WorkflowEvidenceError.invalid("Serving profiles are unavailable.") }
     var profileStart: (ServingProfile, Int?, String) async throws -> [String: Any] = { _, _, _ in throw WorkflowEvidenceError.invalid("Serving profiles are unavailable.") }
+    var prefillPreview: (String, String, Int?) async throws -> [String: Any] = { _, _, _ in throw WorkflowEvidenceError.invalid("M5 prompt acceleration is unavailable.") }
+    var prefillStart: (String, String, Int?, String) async throws -> [String: Any] = { _, _, _, _ in throw WorkflowEvidenceError.invalid("M5 prompt acceleration is unavailable.") }
     var convertRepoPreview: (RepoConversionRequest) async throws -> [String: Any] = { _ in
         throw ModelWorkflowAPIUnavailable.repoConversion
     }
@@ -41,6 +44,12 @@ struct ModelWorkflowAPI {
         )
         workflowAPI.profilePreview = { profile, port in try await resolveProfile(profile).preview(api: api, port: port) }
         workflowAPI.profileStart = { profile, port, hash in try await resolveProfile(profile).start(api: api, port: port, hash: hash) }
+        workflowAPI.prefillPreview = { repo, runtime, port in
+            try await api.servePreview(repo: repo, runtime: runtime, port: port, m5Prefill: true)
+        }
+        workflowAPI.prefillStart = { repo, runtime, port, hash in
+            try await api.serveStart(repo: repo, runtime: runtime, port: port, previewHash: hash, m5Prefill: true)
+        }
         workflowAPI.convertRepoPreview = { request in
             try await api.convertRepoPreview(
                 repo: request.repo, qBits: request.qBits, out: request.output, hfCache: nil,
@@ -581,7 +590,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
         update(serveState: .idle, message: "Preview the selected serving configuration.", errorMessage: .some(nil))
     }
 
-    func previewServe(runtime: String, port: Int?) async {
+    func previewServe(runtime: String, port: Int?, m5Prefill: Bool = false) async {
         guard !isServeSubmissionInFlight else { return }
         isServeSubmissionInFlight = true
         defer { isServeSubmissionInFlight = false }
@@ -609,22 +618,24 @@ final class ModelWorkflowCoordinator: ObservableObject {
         update(serveState: .previewing, message: "Preparing serve preview.", errorMessage: .some(nil))
         do {
             if let profile = servingProfile, profile.modelPath != model { throw WorkflowEvidenceError.invalid("Serving profile model changed.") }
+            if m5Prefill, servingProfile != nil { throw WorkflowEvidenceError.invalid("M5 prompt acceleration requires MLX-LM without a serving profile.") }
             let response: [String: Any]
             if let profile = servingProfile { response = try await api.profilePreview(profile, port) }
+            else if m5Prefill { response = try await api.prefillPreview(model, runtime, port) }
             else { response = try await api.servePreview(model, runtime, port) }
             guard let hash = response.string("preview_hash"), !hash.isEmpty else {
                 update(serveState: .failed, message: "Serve preview did not include a preview hash.", errorMessage: "Missing serve preview hash.")
                 return
             }
             servePreviewHash = hash
-            servePreviewIntent = ServeIntent(runtime: runtime, port: port, profile: servingProfile)
+            servePreviewIntent = ServeIntent(runtime: runtime, port: port, profile: servingProfile, m5Prefill: m5Prefill)
             update(serveState: .readyToConfirm, message: "Serve preview ready for confirmation.", errorMessage: .some(nil))
         } catch {
             update(serveState: .failed, message: "Serve preview failed: \(AppHost.render(error))", errorMessage: AppHost.render(error))
         }
     }
 
-    func confirmServe(runtime: String, port: Int?) async {
+    func confirmServe(runtime: String, port: Int?, m5Prefill: Bool = false) async {
         guard !isServeSubmissionInFlight else { return }
         isServeSubmissionInFlight = true
         defer { isServeSubmissionInFlight = false }
@@ -638,13 +649,13 @@ final class ModelWorkflowCoordinator: ObservableObject {
             update(serveState: .failed, message: "Preview serving before confirming it.", errorMessage: "Missing serve preview hash.")
             return
         }
-        guard intent.runtime == runtime, intent.port == port, intent.profile == servingProfile else {
+        guard intent.runtime == runtime, intent.port == port, intent.profile == servingProfile, intent.m5Prefill == m5Prefill else {
             servePreviewHash = nil
             servePreviewIntent = nil
             update(
                 serveState: .failed,
                 message: "Serve intent changed after preview. Preview it again before confirming.",
-                errorMessage: "Serve intent changed after the preview (runtime or port)."
+                errorMessage: "Serve intent changed after the preview."
             )
             return
         }
@@ -659,6 +670,7 @@ final class ModelWorkflowCoordinator: ObservableObject {
             let requestedID = workflow.id
             guard await save(workflow), workflow.id == requestedID else { return }
             if let profile = servingProfile { _ = try await api.profileStart(profile, port, hash) }
+            else if m5Prefill { _ = try await api.prefillStart(model, runtime, port, hash) }
             else { _ = try await api.serveStart(model, runtime, port, hash) }
             let statusAvailable = await refreshOperationalStatus()
             guard statusAvailable,
