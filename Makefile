@@ -132,19 +132,21 @@ install-convert deps: mac-only venv
 	@$(MAKE) --no-print-directory check-convert
 
 BACKEND_LOCKS := $(wildcard vendor/mlx-agent/src/mlx_agent/resources/backends/*.lock)
+PIP_AUDIT_PIN := $(shell grep -E '^pip-audit==' requirements.txt)
+PIP_AUDIT_VERSION := $(patsubst pip-audit==%,%,$(PIP_AUDIT_PIN))
 
 pip-audit: venv
 	@command -v uv >/dev/null 2>&1 && echo "uv found; using uv pip install" || true
-	@if ! "$(VENV_PY)" -c "import pip_audit" 2>/dev/null; then \
+	@if [ "$$("$(VENV_PY)" -m pip_audit --version 2>/dev/null)" != "pip-audit $(PIP_AUDIT_VERSION)" ]; then \
 		$(MAKE) --no-print-directory _audit_pkgs; \
 	fi
 	@"$(VENV_PY)" -m pip_audit --version
 	@"$(VENV_PY)" -m pip_audit --no-deps -r requirements.txt -r $(LAB_REQUIREMENTS) --progress-spinner off \
 		$(PIP_AUDIT_IGNORES)
-	@for lock in $(BACKEND_LOCKS); do \
+	@status=0; for lock in $(BACKEND_LOCKS); do \
 		echo "pip-audit $$lock"; \
-		"$(VENV_PY)" -m pip_audit --no-deps --disable-pip --require-hashes -r "$$lock" --progress-spinner off || exit 1; \
-	done
+		"$(VENV_PY)" -m pip_audit --no-deps --disable-pip --require-hashes -r "$$lock" --progress-spinner off || status=1; \
+	done; exit $$status
 
 # Accepted risk: the transformers 4.x pin is required by mlx-lm's GGUF→HF
 # path (transformers 5 writes incompatible rope keys). These advisories have
@@ -155,9 +157,9 @@ PIP_AUDIT_IGNORES := --ignore-vuln PYSEC-2025-217 --ignore-vuln PYSEC-2026-2290 
 
 _audit_pkgs:
 	@if command -v uv >/dev/null 2>&1; then \
-		uv pip install --python "$(VENV_PY)" pip-audit; \
+		uv pip install --python "$(VENV_PY)" "$(PIP_AUDIT_PIN)"; \
 	else \
-		"$(VENV_PY)" -m pip install pip-audit; \
+		"$(VENV_PY)" -m pip install "$(PIP_AUDIT_PIN)"; \
 	fi
 
 check: mac-only
