@@ -13,8 +13,15 @@ struct ModelActions {
     let onRouteSelection: (AppRoute) -> Void
 
     /// Ready models have nothing to prepare; offering it only renders a
-    /// "destination already exists" blocker.
-    var canPrepare: Bool { model.readiness != .ready }
+    /// "destination already exists" blocker. Projector companions and drafters
+    /// no port converts only run beside their model, so they offer nothing.
+    var canPrepare: Bool {
+        model.readiness != .ready && !model.item.isCompanion
+            && !(model.item.draft != nil && model.item.draft?.port == nil)
+    }
+
+    /// The prepare action's label: unconverted weights convert, everything else is prepared.
+    var prepareTitle: String { model.readiness == .needsConversion ? "Convert to MLX…" : "Prepare to run" }
 
     /// Run serves chat models. Compare also supports ready media models.
     var canServe: Bool { ModelTaskPresentation.isServable(model) }
@@ -358,7 +365,7 @@ struct ModelDetailsView: View {
     }
 
     /// Every image model shows its Generate panel. Before Prepare has produced
-    /// the MLX output, Prepare to run is the one prominent action and the
+    /// the MLX output, the prepare action is the one prominent button and the
     /// panel's Generate is secondary and disabled.
     private var showsImageGeneration: Bool {
         model.item.task?.type == .imageGeneration
@@ -436,7 +443,7 @@ struct ModelDetailsView: View {
                 .help("Review this model's missing backend in Health")
                 .fixedSize()
         } else if actions.canPrepare {
-            Button("Prepare to run") { actions.prepare() }
+            Button(actions.prepareTitle) { actions.prepare() }
                 .buttonStyle(.workbenchPrimary)
                 .fixedSize()
         } else if actions.canServe {

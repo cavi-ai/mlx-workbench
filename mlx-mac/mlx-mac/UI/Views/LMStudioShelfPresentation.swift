@@ -75,7 +75,7 @@ struct LMStudioRow: Equatable, Identifiable {
 
         var title: String? {
             switch self {
-            case .prepare: return "Prepare…"
+            case .prepare: return "Convert to MLX…"
             case .run: return "Run…"
             case .none: return nil
             }
@@ -301,8 +301,6 @@ struct LMStudioShelfIndex {
 
     private static func isGGUF(_ model: LibraryModel) -> Bool { model.item.path.lowercased().hasSuffix(".gguf") }
 
-    private static func isCompanion(_ item: ModelItem) -> Bool { item.status == "companion" || item.companion == true }
-
     static func make(snapshot: LibrarySnapshot, resolution: LMStudioShelfResolver.Resolution) -> LMStudioShelfIndex {
         func spellings(_ format: LMStudioRow.Format) -> [[String]] {
             resolution.deciding
@@ -313,7 +311,7 @@ struct LMStudioShelfIndex {
         let ggufSpellings = spellings(.gguf)
 
         let companions = Dictionary(
-            grouping: snapshot.models.filter { isGGUF($0) && isCompanion($0.item) },
+            grouping: snapshot.models.filter { isGGUF($0) && $0.item.isCompanion },
             by: { LMStudioPathMath.directory($0.item.path) }
         )
         var shardBytes: [ShardKey: Int64] = [:]
@@ -336,7 +334,7 @@ struct LMStudioShelfIndex {
                 return found
             }
             if isGGUF(model) {
-                guard item.status != "shard", !isCompanion(item), let found = relative(under: ggufSpellings) else { continue }
+                guard item.status != "shard", !item.isCompanion, let found = relative(under: ggufSpellings) else { continue }
                 let directory = LMStudioPathMath.directory(item.path)
                 let extra = shardBytes[ShardKey(directory: directory, modelKey: item.modelKey)] ?? 0
                 let sized = extra == 0 ? model : LibraryModel(item: Self.item(item, bytes: item.bytes + extra), readiness: model.readiness)

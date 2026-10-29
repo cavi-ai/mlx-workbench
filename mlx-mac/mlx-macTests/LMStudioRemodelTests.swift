@@ -540,7 +540,7 @@ final class LMStudioRowsTests: XCTestCase {
         let menu = ["Show in Library", "Reveal in Finder", "Copy Path"]
         let output = "/lm/publisher-c/model-c-8bit"
         let prepare = F.rows(F.present(snapshot: F.snapshot([F.gguf("\(dir)/model-a-Q4_K_M.gguf")])), .gguf)[0]
-        XCTAssertEqual(prepare.accessibilityActionNames, ["Prepare…"] + menu)
+        XCTAssertEqual(prepare.accessibilityActionNames, ["Convert to MLX…"] + menu)
         let run = F.rows(F.present(snapshot: F.snapshot([F.mlx(output)])), .mlx)[0]
         XCTAssertEqual(run.accessibilityActionNames, ["Run…"] + menu)
         let none = F.rows(F.present(snapshot: F.snapshot([F.mlx(output, task: .imageGeneration)])), .mlx)[0]

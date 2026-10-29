@@ -78,12 +78,12 @@ final class GGUFToRunRealDataUITests: XCTestCase {
         let sourceRow = app.staticTexts[sourceName].firstMatch
         XCTAssertTrue(sourceRow.waitForExistence(timeout: 30), "Configured real GGUF was not visible after Library search: \(sourceName)")
         sourceRow.click()
-        XCTAssertTrue(app.buttons["Prepare to run"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["Convert to MLX…"].waitForExistence(timeout: 20))
         capture("01-library-real-gguf-selected", note: "Library displayed the configured real GGUF and its evidence.")
 
         XCTAssertTrue(app.staticTexts["Prepare destination"].exists, "Library did not expose the Prepare destination label.")
 
-        app.buttons["Prepare to run"].click()
+        app.buttons["Convert to MLX…"].click()
         XCTAssertTrue(app.staticTexts["Prepare"].waitForExistence(timeout: 20))
         capture("02-prepare-workflow", note: "Prepare rendered the workflow state reached from the selected real GGUF.")
         let hasPrepareAction = app.buttons["Run existing"].waitForExistence(timeout: 10)
