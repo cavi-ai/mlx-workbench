@@ -22,9 +22,9 @@ The engine wraps only its own Python environment's MLX-LM entrypoint; separately
 installed runtimes retain their native launch and report `adapter_enabled: false`
 in the preview. Selecting another serving runtime requires disabling this option.
 
-The option is off by default and applies to this manual server launch. Endpoint
-supervision, comparisons, verification, LoRA adapters and Strata profiles retain
-their existing execution. Changing the option after preview requires a new
+The option is off by default. Saved endpoints have separate acceleration settings;
+comparisons, verification, LoRA adapters and Strata profiles retain their existing
+execution. Changing the option after preview requires a new
 preview. Source and dependency hashes are bound into the engine plan and receipt.
 
 The status timeout includes engine startup and time spent waiting behind another
@@ -41,7 +41,7 @@ This option requires MLX/`mlx-metal` 0.31.1 and `mlx-lm` 0.29.1 on macOS. Sample
 requests, logit penalties or biases, seeds, logprobs and LoRA or draft models use
 native generation. Unsupported cache types and runtimes also use native generation.
 No draft model is downloaded and weights are unchanged. The option is off by
-default, applies only to the manual server launch, and can be combined with M5
+default, can also be selected for saved endpoints, and can be combined with M5
 prompt acceleration. Changing either option requires a new preview. The engine
 records the requested configuration as `decode_profile` in the plan and receipt.
 
@@ -110,7 +110,24 @@ The **Endpoints** section keeps chosen models serving on stable ports. The app r
 - The section sums the memory estimates of enabled endpoints that are not already resident. Enabling an endpoint that tips the total past won't-fit needs an explicit override. An unknown model size leaves the total unknown.
 - **Wire roles…** maps roles onto running endpoints and writes the router config through the engine's `fleet apply`, with preview and receipt. Only running endpoints with Hugging Face cache repository ids are assigned; the rest are reported as skipped.
 
-The menu bar item aggregates endpoints ("N of M endpoints running") and starts or stops each one. An optional login item, `ai.cavi.mlxworkbench.endpoint`, runs `mlx-agent serve start` once at login for the first endpoint. Its engine preview and plist are prepared before confirmation. The captured command preserves local paths, runtime selection, load-on-request policy and receipt storage. Changed or disabled endpoint settings prevent login startup; changed model or runtime evidence requires a fresh preview. Remove and reinstall the login item after changing its endpoint settings. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority.
+The menu bar item aggregates endpoints ("N of M endpoints running") and starts or stops each one. An optional login item, `ai.cavi.mlxworkbench.endpoint`, runs `mlx-agent serve start` once at login for the first endpoint. Its engine preview and plist are prepared before confirmation. The captured command preserves local paths, runtime selection, acceleration, load-on-request policy and receipt storage, using the preview’s Python environment. Changed or disabled endpoint settings prevent login startup; changed model or runtime evidence requires a fresh preview. Remove and reinstall the login item after changing its endpoint settings. It has no KeepAlive: the app's supervisor reconciles while it runs, and engine receipts remain the process authority.
+
+### Acceleration for saved endpoints
+
+Disable the endpoint and wait for its server to stop. Open its actions menu and
+choose **Acceleration…**, select **M5 prompt acceleration**, **Code-edit
+acceleration**, or both, then **Preview acceleration** and **Confirm and save**.
+Enable the endpoint again to use the saved settings. Existing endpoints keep native
+MLX defaults until you change them. Changing the model clears its acceleration
+settings; Strata profiles use their own controls.
+
+Saved acceleration applies to eager servers, load-on-request workers, automatic
+restarts and the first endpoint's generated login command. Reinstall an existing
+login item after changing these settings. Code-edit requests need client temperature
+zero and run one at a time. Hardware and request restrictions are the same as for
+manual launches. The endpoint row reports acceleration as requested; unsupported
+inputs may still use native execution. A running server must match the saved acceleration settings and either its recorded
+launch receipt or a fresh launch preview before it is adopted.
 
 ## Load on request
 

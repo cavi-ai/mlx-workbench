@@ -236,6 +236,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     let adapterIdentity: LabValue?
     let adapterStatus: String?
     let trainingBinding: TrainedAdapterBinding?
+    let prefillKernel: LabValue?
+    let decodeProfile: LabValue?
 
     enum CodingKeys: String, CodingKey {
         case repo, path, runtime, port, pid, state, receipt
@@ -249,6 +251,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         case adapterIdentity = "adapter_identity"
         case adapterStatus = "adapter_status"
         case trainingBinding = "training_binding"
+        case prefillKernel = "prefill_kernel"
+        case decodeProfile = "decode_profile"
         case logPath = "log_path"
         case startedAt = "started_at"
     }
@@ -272,7 +276,9 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         adapterPath: String? = nil,
         adapterIdentity: LabValue? = nil,
         adapterStatus: String? = nil,
-        trainingBinding: TrainedAdapterBinding? = nil
+        trainingBinding: TrainedAdapterBinding? = nil,
+        prefillKernel: LabValue? = nil,
+        decodeProfile: LabValue? = nil
     ) {
         self.repo = repo
         self.path = path
@@ -293,6 +299,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
         self.adapterIdentity = adapterIdentity
         self.adapterStatus = adapterStatus
         self.trainingBinding = trainingBinding
+        self.prefillKernel = prefillKernel
+        self.decodeProfile = decodeProfile
     }
 
     /// The identity serve reports for this server's model: the repo id for
@@ -301,6 +309,19 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     var modelIdentity: String { repo ?? path ?? "" }
 
     var id: String { "\(modelIdentity)-\(port.map(String.init) ?? "")" }
+
+    /// Receipt metadata records requested acceleration, including native fallback.
+    /// Presence is not proof that a particular request used an accelerated path.
+    func matchesAcceleration(_ options: LocalAccelerationOptions) -> Bool {
+        func matches(_ value: LabValue?, requested: Bool, name: String) -> Bool {
+            guard requested else { return value == nil }
+            guard let fields = value?.object, fields["name"]?.text == name,
+                  let hash = fields["fingerprint"]?.text else { return false }
+            return hash.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil
+        }
+        return matches(prefillKernel, requested: options.m5Prefill, name: "m5-q4-prefill-v1")
+            && matches(decodeProfile, requested: options.promptLookup, name: "prompt-lookup-v1")
+    }
 
     /// Model-only workflows cannot substitute an adapter server, including
     /// historical servers whose adapter metadata could not be established.
@@ -319,7 +340,8 @@ struct ServerInfo: Codable, Equatable, Identifiable {
     func sameProcess(as other: ServerInfo) -> Bool {
         modelIdentity == other.modelIdentity && port == other.port && pid == other.pid &&
         runtime == other.runtime && receipt == other.receipt && startedAt == other.startedAt &&
-        adapterPath == other.adapterPath && adapterIdentity == other.adapterIdentity && adapterStatus == other.adapterStatus && trainingBinding == other.trainingBinding
+        adapterPath == other.adapterPath && adapterIdentity == other.adapterIdentity && adapterStatus == other.adapterStatus && trainingBinding == other.trainingBinding &&
+        prefillKernel == other.prefillKernel && decodeProfile == other.decodeProfile
     }
 
     var residencySummary: String {

@@ -43,6 +43,7 @@ struct ServeView: View {
     @State private var showFleetRouter = false
     @State private var showLoginItemPreview = false
     @State private var loginPlan: LoginItemPlan?
+    @State private var accelerationSlot: EndpointSlot?
     @State private var loginPlist = ""
     @State private var loginBusy = false
     @State private var expandedMemorySlots: Set<UUID> = []
@@ -118,6 +119,9 @@ struct ServeView: View {
                 appHost.handoffs.send(request, as: .wireClient)
                 onRouteSelection(.clientSetup)
             }
+        }
+        .sheet(item: $accelerationSlot) { slot in
+            EndpointAccelerationEditor(endpoint: endpoint, slot: slot)
         }
         .task { await modelWorkflow.refreshServers() }
         .onChange(of: modelWorkflow.servers) { _, servers in trainedAdapters.receiveServers(servers, error: modelWorkflow.serversError) }
@@ -725,6 +729,13 @@ struct ServeView: View {
         Text(slot.usesJIT ? "Load on request" : "Always loaded")
             .font(WorkbenchTypography.metadata)
             .foregroundStyle(WorkbenchColor.muted)
+        if slot.accelerationOptions.requested {
+            Text(slot.accelerationOptions.promptLookup
+                 ? (slot.accelerationOptions.m5Prefill ? "M5 + code-edit acceleration requested" : "Code-edit acceleration requested")
+                 : "M5 prompt acceleration requested")
+                .font(WorkbenchTypography.metadata)
+                .foregroundStyle(WorkbenchColor.muted)
+        }
         if attempts > 0 {
             Text(verbatim: "\(attempts) restart(s)")
                 .font(WorkbenchTypography.metadata)
@@ -767,6 +778,11 @@ struct ServeView: View {
                 .disabled(endpoint.isUnloading)
             if slot.usesJIT {
                 Button("Memory management…") { expandedMemorySlots.insert(slot.id) }
+            }
+            if slot.servingProfile == nil {
+                Button("Acceleration…") { accelerationSlot = slot }
+                    .disabled(slot.enabled || endpoint.pendingStops[slot.id] != nil)
+                    .help("Disable this endpoint before reviewing acceleration settings.")
             }
             Divider()
             Button("Remove", role: .destructive) { Task { await endpoint.removeSlot(id: slot.id) } }
@@ -1078,5 +1094,79 @@ struct ServeView: View {
             } catch { loginItemMessageIsError = true; loginItemMessage = AppHost.render(error) }
             loginBusy = false
         }
+    }
+}
+
+private struct EndpointAccelerationEditor: View {
+    @ObservedObject var endpoint: EndpointSupervisor
+    let slot: EndpointSlot
+    @Environment(\.dismiss) private var dismiss
+    @State private var options: LocalAccelerationOptions
+    @State private var preview: EndpointAccelerationPreview?
+    @State private var busy = false
+    @State private var error: String?
+
+    init(endpoint: EndpointSupervisor, slot: EndpointSlot) {
+        self.endpoint = endpoint
+        self.slot = slot
+        _options = State(initialValue: slot.accelerationOptions)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkbenchSpacing.md) {
+            Text("Endpoint acceleration").font(WorkbenchTypography.emphasis)
+            Text(verbatim: "\(URL(fileURLWithPath: slot.modelPath).lastPathComponent) · :\(slot.port)")
+                .font(WorkbenchTypography.secondary)
+            Text("These experimental options apply to this endpoint, including load-on-request and login startup. Native MLX is the default.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            Toggle("M5 prompt acceleration", isOn: $options.m5Prefill).toggleStyle(.checkbox)
+            Text("For supported M5 Q4 models. Other hardware and models use native MLX.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            Toggle("Code-edit acceleration", isOn: $options.promptLookup).toggleStyle(.checkbox)
+            Text("Set temperature to 0 in your client. Greedy requests run one at a time; edits that copy source text can be faster. Other settings use native generation.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            if let error { InlineMessage(kind: .error, text: error) }
+            if busy { ProgressView("Checking launch configuration…") }
+            if let preview {
+                Text("Launch preview: \(preview.hash)")
+                    .font(WorkbenchTypography.metadata).foregroundStyle(WorkbenchColor.muted)
+                    .textSelection(.enabled)
+            }
+            Text("After saving, enable the endpoint. Reinstall an existing login item to capture the changed settings.")
+                .font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.muted)
+            HStack {
+                Button("Cancel") { dismiss() }.disabled(busy)
+                Spacer()
+                if let preview {
+                    Button("Confirm and save") {
+                        busy = true
+                        Task {
+                            if await endpoint.confirmSlotAcceleration(preview) { dismiss() }
+                            else { error = endpoint.lastError; self.preview = nil }
+                            busy = false
+                        }
+                    }.buttonStyle(.workbenchPrimary).disabled(busy || endpoint.isChanging)
+                } else {
+                    Button("Preview acceleration") {
+                        busy = true; error = nil
+                        Task {
+                            do {
+                                guard endpoint.fleet.slots.contains(slot) else {
+                                    throw WorkflowEvidenceError.invalid("Endpoint settings changed. Close and reopen acceleration settings.")
+                                }
+                                preview = try await endpoint.previewSlotAcceleration(id: slot.id, options: options)
+                            }
+                            catch { self.error = AppHost.render(error) }
+                            busy = false
+                        }
+                    }.buttonStyle(.workbenchPrimary).disabled(busy || endpoint.isChanging)
+                }
+            }
+        }
+        .padding(WorkbenchSpacing.md)
+        .frame(width: WorkbenchSize.Run.loginSheetWidth)
+        .disabled(busy)
+        .onChange(of: options) { _, _ in preview = nil; error = nil }
+        .interactiveDismissDisabled(busy)
     }
 }

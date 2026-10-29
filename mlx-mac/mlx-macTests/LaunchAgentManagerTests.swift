@@ -20,18 +20,25 @@ final class LaunchAgentManagerTests: XCTestCase {
         try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
         try Data(#"{"model_type":"qwen2","hidden_size":16}"#.utf8).write(to: model.appendingPathComponent("config.json"))
         try Data([0, 0, 0, 0]).write(to: model.appendingPathComponent("model.safetensors"))
-        let slot = EndpointSlot(enabled: true, port: 19997, modelPath: model.path)
-        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.path, receiptDirectory: home.path)
-        let plan = try await api.loginItemPlan(slot: slot, fleetURL: home.appendingPathComponent("fleet.json"))
-        XCTAssertTrue(plan.arguments.contains("--path"))
-        XCTAssertTrue(plan.arguments.contains("--confirm"))
-        let hashIndex = try XCTUnwrap(plan.arguments.firstIndex(of: "--preview-hash")) + 1
-        var changed = plan.arguments; changed[hashIndex] = "unreviewed"
-        do {
-            _ = try CLIProcess().run(agentPath: agent.path, argv: changed)
-            XCTFail("A changed hash must not start a server")
-        } catch let error as BridgeError { XCTAssertEqual(error.code, "preview_stale") }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".mlx-agent-receipts/serve/19997.json").path))
+        for jit in [false, true] {
+            var slot = EndpointSlot(enabled: true, port: 19997, modelPath: model.path,
+                loadOnRequest: jit, memoryPolicy: jit ? .automatic : nil)
+            slot.acceleration = .init(m5Prefill: true, promptLookup: true)
+            let api = WorkbenchAPI(cli: CLIProcess(), agentPath: agent.path, receiptDirectory: home.path)
+            let plan = try await api.loginItemPlan(slot: slot, fleetURL: home.appendingPathComponent("fleet.json"))
+            XCTAssertTrue(plan.arguments.contains("--path"))
+            XCTAssertTrue(plan.arguments.contains("--confirm"))
+            XCTAssertTrue(plan.arguments.contains("--m5-prefill"))
+            XCTAssertTrue(plan.arguments.contains("--prompt-lookup"))
+            XCTAssertEqual(plan.arguments.contains("--jit"), jit)
+            let hashIndex = try XCTUnwrap(plan.arguments.firstIndex(of: "--preview-hash")) + 1
+            var changed = plan.arguments; changed[hashIndex] = "unreviewed"
+            do {
+                _ = try CLIProcess().run(agentPath: agent.path, argv: changed)
+                XCTFail("A changed hash must not start a server")
+            } catch let error as BridgeError { XCTAssertEqual(error.code, "preview_stale") }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".mlx-agent-receipts/serve/19997.json").path))
+        }
     }
 
     func testLoginBootstrapExecutesOnlyTheReviewedEnabledSlot() throws {
@@ -43,6 +50,7 @@ final class LaunchAgentManagerTests: XCTestCase {
         try script.write(to: scripts.appendingPathComponent("mlx-agent"), atomically: true, encoding: .utf8)
         let fleet = JSONStore<EndpointFleetConfig>(fileURL: home.appendingPathComponent("fleet.json"))
         var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/models/local")
+        slot.acceleration = .init(m5Prefill: true, promptLookup: true)
         try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: true)])
         let plan = LoginItemPlan(slot: slot, fleetURL: fleet.url, agentPath: agent.path,
             arguments: WorkbenchAPI.serveArguments(model: slot.modelPath, runtime: "auto", port: slot.port, receipts: home.path, previewHash: "reviewed"))
@@ -57,6 +65,11 @@ final class LaunchAgentManagerTests: XCTestCase {
         }
         XCTAssertEqual(try execute(), 0)
         XCTAssertEqual(try String(contentsOf: marker, encoding: .utf8), "x")
+        slot.acceleration = .init(m5Prefill: true)
+        try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: true)])
+        XCTAssertNotEqual(try execute(), 0)
+        XCTAssertEqual(try String(contentsOf: marker, encoding: .utf8), "x")
+        slot = plan.slot
         slot.modelPath = "/models/changed"
         try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: true)])
         XCTAssertNotEqual(try execute(), 0)
@@ -79,6 +92,8 @@ final class LaunchAgentManagerTests: XCTestCase {
         XCTAssertEqual(plist["RunAtLoad"] as? Bool, true)
         // KeepAlive must stay off — mlx-agent supervises its own server.
         XCTAssertEqual(plist["KeepAlive"] as? Bool, false)
+        let environment = try XCTUnwrap(plist["EnvironmentVariables"] as? [String: String])
+        XCTAssertTrue(environment["PATH"]?.hasPrefix(URL(fileURLWithPath: try XCTUnwrap((plist["ProgramArguments"] as? [String])?.first)).deletingLastPathComponent().path + ":") == true)
 
         let arguments = try XCTUnwrap(plist["ProgramArguments"] as? [String])
         XCTAssertTrue(arguments.first?.hasPrefix("/") == true)

@@ -653,6 +653,9 @@ actor WorkbenchAPI {
 
     func loginItemPlan(slot: EndpointSlot, fleetURL: URL) async throws -> LoginItemPlan {
         guard slot.enabled, !slot.modelPath.isEmpty else { throw WorkflowEvidenceError.invalid("Enable an endpoint before installing its login item.") }
+        guard slot.servingProfile == nil || !slot.accelerationOptions.requested else {
+            throw WorkflowEvidenceError.invalid("Local acceleration cannot be combined with a Strata serving profile.")
+        }
         let capturedAgent = agentPath
         let runtime = slot.servingProfile == nil ? "auto" : "strata"
         let options = slot.servingProfile?.options
@@ -662,13 +665,15 @@ actor WorkbenchAPI {
             preview = try await profile.preview(api: self, port: slot.port, jit: slot.usesJIT, policy: slot.memoryPolicy)
         } else {
             preview = try await servePreview(repo: slot.modelPath, runtime: runtime, port: slot.port,
-                jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy)
+                jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy,
+                m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup)
         }
         guard capturedAgent == agentPath, let hash = preview["preview_hash"] as? String, !hash.isEmpty else {
             throw ServeProbeError.servePreviewMissingHash
         }
         var args = Self.serveArguments(model: slot.modelPath, runtime: runtime, port: slot.port,
-            receipts: receiptDirectory, jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, previewHash: hash)
+            receipts: receiptDirectory, jit: slot.usesJIT, memoryPolicy: slot.memoryPolicy, previewHash: hash,
+            m5Prefill: slot.accelerationOptions.m5Prefill, promptLookup: slot.accelerationOptions.promptLookup)
         if let options { args += options.arguments }
         return LoginItemPlan(slot: slot, fleetURL: fleetURL, agentPath: capturedAgent, arguments: args)
     }
@@ -845,7 +850,7 @@ actor WorkbenchAPI {
     static func servers(from data: [String: Any], key: String = "servers") -> [ServerInfo]? {
         guard let raw = data[key] as? [[String: Any]] else { return nil }
         return raw.map { r in
-            let adapterFields = r.filter { ["adapter_path", "adapter_identity", "adapter_status", "training_binding"].contains($0.key) }
+            let adapterFields = r.filter { ["adapter_path", "adapter_identity", "adapter_status", "training_binding", "prefill_kernel", "decode_profile"].contains($0.key) }
             let adapter = (try? JSONSerialization.data(withJSONObject: adapterFields))
                 .flatMap { try? JSONDecoder().decode(ServerInfo.self, from: $0) }
             return ServerInfo(
@@ -867,7 +872,9 @@ actor WorkbenchAPI {
                 adapterPath: adapter?.adapterPath,
                 adapterIdentity: adapter?.adapterIdentity,
                 adapterStatus: adapter == nil ? "unknown" : adapter?.adapterStatus,
-                trainingBinding: adapter?.trainingBinding
+                trainingBinding: adapter?.trainingBinding,
+                prefillKernel: adapter?.prefillKernel,
+                decodeProfile: adapter?.decodeProfile
             )
         }
     }

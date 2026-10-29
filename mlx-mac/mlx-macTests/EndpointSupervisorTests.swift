@@ -5,6 +5,286 @@ import XCTest
 
 @MainActor
 final class EndpointSupervisorTests: XCTestCase {
+    func testFreshConfirmedLoginReceiptIsAdoptedAndPersisted() async throws {
+        let hash = String(repeating: "b", count: 64)
+        var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a")
+        slot.acceleration = .init(promptLookup: true)
+        slot.accelerationPreviewHash = String(repeating: "a", count: 64)
+        let receipt = temporaryURL("new-login-receipt.json")
+        try FileManager.default.createDirectory(at: receipt.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["pid": 1, "port": slot.port, "path": slot.modelPath,
+            "preview_hash": hash]).write(to: receipt)
+        let world = FakeServeWorld()
+        world.preload(repo: slot.modelPath, port: slot.port, receipt: receipt.path,
+            decodeProfile: .object(["name": .string("prompt-lookup-v1"), "fingerprint": .string(hash)]))
+        let fleet = JSONStore<EndpointFleetConfig>(fileURL: temporaryURL("login-fleet.json"))
+        try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: true)])
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL), fleetStore: fleet)
+        supervisor.accelerationLifecycle = { _ in
+            var selected = world.lifecycle
+            selected.preview = { _, _ in hash }
+            return selected
+        }
+        await supervisor.reconcile()
+        XCTAssertEqual(supervisor.state, .running(modelPath: slot.modelPath, port: slot.port))
+        XCTAssertEqual(try fleet.load().first?.slots.first?.accelerationPreviewHash, hash)
+        await supervisor.disable()
+        XCTAssertNil(supervisor.lastError)
+        XCTAssertTrue(try world.status().isEmpty)
+    }
+
+    func testLocalAcceleratedEndpointLifecycleWhenRequested() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MLX_WORKBENCH_ENDPOINT_ACCELERATION_MANIFEST"] else {
+            throw XCTSkip("Set MLX_WORKBENCH_ENDPOINT_ACCELERATION_MANIFEST for local accelerated endpoint acceptance.")
+        }
+        struct Manifest: Decodable {
+            let agentPath: String; let model: String; let evidenceRoot: String
+            let port: Int; let prompt: String; let expectedText: String
+        }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let evidenceRoot = URL(fileURLWithPath: manifest.evidenceRoot)
+        let root = evidenceRoot.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let api = WorkbenchAPI(cli: CLIProcess(), agentPath: manifest.agentPath, receiptDirectory: root.path)
+        let legacy = JSONStore<EndpointConfig>(fileURL: root.appendingPathComponent("legacy.json"))
+        let fleet = JSONStore<EndpointFleetConfig>(fileURL: root.appendingPathComponent("fleet.json"))
+        func supervisor() -> EndpointSupervisor {
+            let owner = EndpointSupervisor(lifecycle: .live(api: api), statusProvider: { try await api.serveStatus() },
+                store: legacy, fleetStore: fleet)
+            owner.accelerationLifecycle = { .live(api: api, acceleration: $0) }
+            return owner
+        }
+        func current() async throws -> ServerInfo {
+            for _ in 0..<20 {
+                if let server = try await api.serveStatus().first(where: { $0.port == manifest.port && $0.state == "running" }),
+                   (server.activeRequests ?? 0) == 0 { return server }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            throw WorkflowEvidenceError.invalid("Endpoint did not become idle.")
+        }
+        func clientRequest() async throws -> String {
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(manifest.port)/v1/chat/completions")!, timeoutInterval: 180)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["model": "default_model", "temperature": 0,
+                "max_tokens": 768, "messages": [["role": "system", "content": "You are a precise Python code editor."],
+                                                ["role": "user", "content": manifest.prompt]]])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let choices = try XCTUnwrap(object["choices"] as? [[String: Any]])
+            let message = try XCTUnwrap(choices.first?["message"] as? [String: Any])
+            return try XCTUnwrap(message["content"] as? String)
+        }
+        let owner = supervisor()
+        var owned: ServerInfo?
+        func readOwnedReceipt(expectedHash: String? = nil) throws -> ServerInfo {
+            let url = root.appendingPathComponent(".mlx-agent-receipts/serve/\(manifest.port).json")
+            var receipt = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+            receipt["receipt"] = url.path
+            receipt["state"] = "running"
+            let server = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [receipt]])?.first)
+            guard server.matchesUnadaptedModel(manifest.model), let pid = server.pid, pid > 0,
+                  expectedHash == nil || receipt["preview_hash"] as? String == expectedHash else {
+                throw WorkflowEvidenceError.invalid("Acceptance receipt does not identify its own launch.")
+            }
+            return server
+        }
+        func stopOwned() async throws {
+            guard let expected = owned else { return }
+            let live = try await api.serveStatus().first { $0.port == expected.port }
+            guard let live, live.sameProcess(as: expected) else {
+                throw WorkflowEvidenceError.invalid("Acceptance endpoint ownership changed; no process was stopped.")
+            }
+            _ = try await api.serveStop(port: manifest.port)
+            owned = nil
+        }
+        do {
+            await owner.enable(modelPath: manifest.model, port: manifest.port, allowUnverified: true, loadOnRequest: true)
+            let id = try XCTUnwrap(owner.fleet.slots.first?.id)
+            owned = try readOwnedReceipt()
+            await owner.disable()
+            let stopped = try await api.serveStatus()
+            guard stopped.isEmpty else { throw WorkflowEvidenceError.invalid("Acceptance endpoint did not stop.") }
+            owned = nil
+            let options = LocalAccelerationOptions(m5Prefill: true, promptLookup: true)
+            let preview = try await owner.previewSlotAcceleration(id: id, options: options)
+            let saved = await owner.confirmSlotAcceleration(preview)
+            XCTAssertTrue(saved, owner.lastError ?? "Acceleration settings were not saved")
+            await owner.setSlotEnabled(id: id, true)
+            owned = try readOwnedReceipt(expectedHash: owner.fleet.slots.first?.accelerationPreviewHash)
+            let first = try await clientRequest()
+            XCTAssertEqual(first, manifest.expectedText)
+            let loaded = try await current()
+            XCTAssertTrue(loaded.matchesAcceleration(options))
+            XCTAssertEqual(loaded.prefillKernel?.object?["adapter_enabled"], .boolean(true))
+            XCTAssertEqual(loaded.decodeProfile?.object?["adapter_enabled"], .boolean(true))
+            let unloaded = await owner.unloadServer(loaded)
+            XCTAssertTrue(unloaded, owner.lastError ?? "JIT unload failed")
+            let idle = try await current()
+            XCTAssertEqual(idle.modelState, "unloaded")
+            let reloaded = try await clientRequest()
+            XCTAssertEqual(reloaded, first)
+            let restored = supervisor()
+            await restored.reconcile()
+            XCTAssertEqual(restored.state, .running(modelPath: manifest.model, port: manifest.port))
+            let policy = EndpointMemoryPolicy(idleTimeoutSeconds: 300, keepLoaded: false, minimumHeadroomGB: 2)
+            await restored.setSlotMemoryPolicy(id: id, policy)
+            XCTAssertNil(restored.lastError)
+            let slot = try XCTUnwrap(restored.fleet.slots.first)
+            let plan = try await api.loginItemPlan(slot: slot, fleetURL: fleet.url)
+            let manager = LaunchAgentManager(home: root, run: { _, _ in throw WorkflowEvidenceError.invalid("Acceptance never installs launchd items.") })
+            let plist = try manager.plistPreview(plan: plan)
+            let fields = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(plist.utf8), format: nil) as? [String: Any])
+            let arguments = try XCTUnwrap(fields["ProgramArguments"] as? [String])
+            try await stopOwned()
+            var environment = ProcessInfo.processInfo.environment
+            environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+            let launchEnvironment = environment
+            let startup = try await WorkbenchIO.perform {
+                Result { try BoundedProcessCapture.run(executable: URL(fileURLWithPath: arguments[0]),
+                    arguments: Array(arguments.dropFirst()), environment: launchEnvironment, timeout: 90) }
+            }.get()
+            try Data(startup.stdout.utf8).write(to: root.appendingPathComponent("startup.json"))
+            let hashIndex = try XCTUnwrap(plan.arguments.firstIndex(of: "--preview-hash")) + 1
+            owned = try? readOwnedReceipt(expectedHash: plan.arguments[hashIndex])
+            guard startup.status == 0 else {
+                throw WorkflowEvidenceError.invalid("Reviewed login command failed: " + startup.stdout + startup.stderr)
+            }
+            owned = try readOwnedReceipt(expectedHash: plan.arguments[hashIndex])
+            let startupReply = try await clientRequest()
+            XCTAssertEqual(startupReply, first)
+            let server = try await current()
+            XCTAssertTrue(server.matchesAcceleration(options))
+            let loginOwner = supervisor()
+            await loginOwner.reconcile()
+            XCTAssertEqual(loginOwner.state, .running(modelPath: manifest.model, port: manifest.port))
+            XCTAssertNotEqual(loginOwner.fleet.slots.first?.accelerationPreviewHash, slot.accelerationPreviewHash)
+            try JSONSerialization.data(withJSONObject: ["jit_reload_matches_native": reloaded == manifest.expectedText,
+                "login_command_matches_native": startupReply == manifest.expectedText,
+                "prefill_kernel": server.prefillKernel?.jsonText ?? "", "decode_profile": server.decodeProfile?.jsonText ?? ""],
+                options: [.prettyPrinted, .sortedKeys]).write(to: evidenceRoot.appendingPathComponent("acceptance.json"))
+            await loginOwner.disable()
+            XCTAssertNil(loginOwner.lastError)
+            let final = try await api.serveStatus()
+            guard final.isEmpty else { throw WorkflowEvidenceError.invalid("Acceptance endpoint did not stop.") }
+            owned = nil
+        } catch {
+            try? await stopOwned()
+            throw error
+        }
+    }
+
+    func testAccelerationAdoptionRequiresBothRequestedOptionsAndConfirmedReceipt() async throws {
+        for matchingReceipt in [false, true] {
+            let world = FakeServeWorld()
+            let hash = String(repeating: "a", count: 64)
+            var slot = EndpointSlot(enabled: true, port: 8766, modelPath: "/Models/a")
+            slot.acceleration = .init(m5Prefill: true, promptLookup: true)
+            slot.accelerationPreviewHash = hash
+            let receipt = temporaryURL("receipt-\(matchingReceipt).json")
+            try FileManager.default.createDirectory(at: receipt.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: ["pid": 1, "port": 8766, "path": "/Models/a",
+                "preview_hash": matchingReceipt ? hash : "changed"]).write(to: receipt)
+            func metadata(_ name: String) -> LabValue { .object(["name": .string(name), "fingerprint": .string(hash)]) }
+            world.preload(repo: "/Models/a", port: 8766, receipt: receipt.path,
+                prefillKernel: metadata("m5-q4-prefill-v1"), decodeProfile: metadata("prompt-lookup-v1"))
+            let fleet = JSONStore<EndpointFleetConfig>(fileURL: temporaryURL("accelerated-\(matchingReceipt).json"))
+            try fleet.replaceAll([EndpointFleetConfig(slots: [slot], installedAtLogin: false)])
+            let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+                store: JSONStore<EndpointConfig>(fileURL: storeURL), fleetStore: fleet)
+            await supervisor.reconcile()
+            if matchingReceipt {
+                XCTAssertEqual(supervisor.slotStates[slot.id], .running(modelPath: slot.modelPath, port: slot.port))
+            } else {
+                guard case .degraded? = supervisor.slotStates[slot.id] else { return XCTFail("Changed receipt must be refused") }
+            }
+            world.kill(port: slot.port)
+            world.preload(repo: slot.modelPath, port: slot.port)
+            await supervisor.reconcile()
+            guard case .degraded? = supervisor.slotStates[slot.id] else { return XCTFail("Native server cannot replace accelerated endpoint") }
+        }
+    }
+
+    func testAccelerationSaveFailureKeepsPersistedSettings() async throws {
+        let world = FakeServeWorld()
+        let slot = EndpointSlot(enabled: false, port: 8766, modelPath: "/Models/a")
+        let url = temporaryURL("acceleration-save.json")
+        let original = EndpointFleetConfig(slots: [slot], installedAtLogin: false)
+        try JSONStore<EndpointFleetConfig>(fileURL: url).replaceAll([original])
+        let store = JSONStore<EndpointFleetConfig>(fileURL: url, replaceItem: { _, _ in throw StubError.offline })
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL), fleetStore: store)
+        supervisor.accelerationLifecycle = { _ in world.lifecycle }
+        let preview = try await supervisor.previewSlotAcceleration(id: slot.id, options: .init(promptLookup: true))
+        let saved = await supervisor.confirmSlotAcceleration(preview)
+        XCTAssertFalse(saved)
+        XCTAssertEqual(supervisor.fleet, original)
+        XCTAssertEqual(try JSONStore<EndpointFleetConfig>(fileURL: url).load(), [original])
+        XCTAssertTrue(try world.status().isEmpty)
+    }
+
+    func testAccelerationRequiresDisabledEndpointAndReviewedUnchangedOptions() async throws {
+        let world = FakeServeWorld()
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        supervisor.accelerationLifecycle = { _ in world.lifecycle }
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        let id = try XCTUnwrap(supervisor.fleet.slots.first?.id)
+        let options = LocalAccelerationOptions(m5Prefill: true, promptLookup: true)
+        do {
+            _ = try await supervisor.previewSlotAcceleration(id: id, options: options)
+            XCTFail("Running endpoint must be disabled first")
+        } catch {}
+        await supervisor.disable()
+        let preview = try await supervisor.previewSlotAcceleration(id: id, options: options)
+        let saved = await supervisor.confirmSlotAcceleration(preview)
+        XCTAssertTrue(saved)
+        XCTAssertEqual(supervisor.fleet.slots.first?.acceleration, options)
+        let persisted = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        XCTAssertEqual(persisted.fleet.slots.first?.acceleration, options)
+        await supervisor.updateSlot(id: id, modelPath: "/Models/b", port: 8766, role: nil)
+        let rejected = await supervisor.confirmSlotAcceleration(preview)
+        XCTAssertFalse(rejected)
+        XCTAssertNil(supervisor.fleet.slots.first?.acceleration)
+    }
+
+    func testAccelerationPreviewDriftOrOccupiedPortDoesNotSaveSettings() async throws {
+        let world = FakeServeWorld()
+        let supervisor = EndpointSupervisor(lifecycle: world.lifecycle, statusProvider: { try world.status() },
+            store: JSONStore<EndpointConfig>(fileURL: storeURL))
+        supervisor.accelerationLifecycle = { _ in world.lifecycle }
+        await supervisor.enable(modelPath: "/Models/a", port: 8766)
+        await supervisor.disable()
+        let id = try XCTUnwrap(supervisor.fleet.slots.first?.id)
+        let preview = try await supervisor.previewSlotAcceleration(id: id,
+            options: LocalAccelerationOptions(promptLookup: true))
+        var changed = world.lifecycle
+        changed.preview = { _, _ in "different-runtime-hash" }
+        supervisor.accelerationLifecycle = { _ in changed }
+        let driftRejected = await supervisor.confirmSlotAcceleration(preview)
+        XCTAssertFalse(driftRejected)
+        XCTAssertNil(supervisor.fleet.slots.first?.acceleration)
+        supervisor.accelerationLifecycle = { _ in world.lifecycle }
+        world.preload(repo: "/Models/other", port: 8766)
+        let occupiedRejected = await supervisor.confirmSlotAcceleration(preview)
+        XCTAssertFalse(occupiedRejected)
+        XCTAssertNil(supervisor.fleet.slots.first?.acceleration)
+    }
+
+    func testLegacyEndpointsDefaultToNativeAccelerationAndMalformedMetadataIsRefused() throws {
+        let slot = EndpointSlot(enabled: false, port: 8766, modelPath: "/Models/a")
+        let restored = try JSONDecoder().decode(EndpointSlot.self, from: JSONEncoder().encode(slot))
+        XCTAssertFalse(restored.accelerationOptions.requested)
+        let native = ServerInfo(repo: "/Models/a")
+        XCTAssertTrue(native.matchesAcceleration(.init()))
+        let malformed = try XCTUnwrap(WorkbenchAPI.servers(from: ["servers": [["repo": "/Models/a", "decode_profile": "invalid"]]])?.first)
+        XCTAssertFalse(malformed.matchesAcceleration(.init()))
+        XCTAssertFalse(malformed.matchesAcceleration(.init(promptLookup: true)))
+    }
+
     func testRetriedModelSwapRecordsTheSelectedModelAsUsed() async throws {
         let world = FakeServeWorld()
         let operations = world.lifecycle

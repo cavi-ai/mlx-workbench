@@ -324,27 +324,29 @@ extension ServeLifecycle {
     /// Production lifecycle: the agent selects the declared loader from local model metadata.
     /// `thinkingOff` serves with the chat template's reasoning switched off (canary verification).
     static func live(api: WorkbenchAPI, runtime: String = "auto", strataOptions: StrataComparisonOptions? = nil,
-                     thinkingOff: Bool = false) -> ServeLifecycle {
+                     thinkingOff: Bool = false, acceleration: LocalAccelerationOptions = .init()) -> ServeLifecycle {
         ServeLifecycle(
             preview: { modelPath, port in
                 let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff)
+                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup)
                 return response.string("preview_hash") ?? ""
             },
             start: { modelPath, port, previewHash in
                 _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: previewHash,
                     timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff)
+                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup)
             },
             stop: { port in
                 _ = try await api.serveStop(port: port)
             },
             jitPreview: { modelPath, port, policy in
-                let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, jit: true, memoryPolicy: policy, strataOptions: strataOptions)
+                let response = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
+                    m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup)
                 return response.string("preview_hash") ?? ""
             },
             jitStart: { modelPath, port, hash, policy in
-                _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: hash, jit: true, memoryPolicy: policy, strataOptions: strataOptions)
+                _ = try await api.serveStart(repo: modelPath, runtime: runtime, port: port, previewHash: hash, jit: true, memoryPolicy: policy, strataOptions: strataOptions,
+                    m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup)
             },
             unload: { port, pid in
                 _ = try await api.serveUnload(port: port, expectedPID: pid)
@@ -354,13 +356,13 @@ extension ServeLifecycle {
             },
             reviewedPreview: { modelPath, port in
                 let plan = try await api.servePreview(repo: modelPath, runtime: runtime, port: port, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff)
+                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup)
                 return ProbeServePreview(hash: plan.string("preview_hash") ?? "", evidence: ProbeServingEvidence(plan: plan))
             },
             startWithReceipt: { path, port, hash in
                 let response = try await api.serveStart(repo: path, runtime: runtime, port: port, previewHash: hash,
                     timeout: runtime == "auto" || runtime == "strata" ? 960 : nil, strataOptions: strataOptions,
-                    thinkingOff: thinkingOff)
+                    thinkingOff: thinkingOff, m5Prefill: acceleration.m5Prefill, promptLookup: acceleration.promptLookup)
                 return try? ComparisonServerReceipt(response: response, modelPath: path, port: port, previewHash: hash)
             }
         )

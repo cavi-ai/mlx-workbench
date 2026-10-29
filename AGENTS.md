@@ -86,7 +86,7 @@ Behavior detail for each area is in the operator guide; this lists owners.
   per-task canaries in `Models/VerificationModels.swift`; source cleanup:
   `ConvertedSourceCleanup`.
 - Run and endpoints: `EndpointSupervisor` (fleet in `endpoint-fleet.json`,
-  JIT gateway, memory policy), transient endpoint prompts (`EndpointTestCoordinator`,
+  JIT gateway, memory policy, source-bound acceleration settings), transient endpoint prompts (`EndpointTestCoordinator`,
   `EndpointTestSheet`, existing bounded `OpenAIEndpointProber`), `FitAdvisor`, `FleetFitAdvisor`, role router
   via `mlx-agent fleet render/apply`, `LaunchAgentManager` (RunAtLoad only).
 - Compare: `ComparisonCoordinator` (chat via `ServeProbe`, media via
