@@ -30,6 +30,21 @@ preview. Source and dependency hashes are bound into the engine plan and receipt
 The status timeout includes engine startup and time spent waiting behind another
 status check; replacing the status process does not reset that timeout.
 
+**Experimental code-edit acceleration** uses text already in the prompt to propose
+short continuations, then verifies them with the loaded model. It is intended for
+small edits that copy most of the supplied source. Set the client temperature to
+zero. Plain greedy requests run one at a time on this server; keep the option off
+when concurrent chat throughput matters. Speed depends on how much text the model
+can reuse, and prompts without matching source may be slower.
+
+This option requires MLX/`mlx-metal` 0.31.1 and `mlx-lm` 0.29.1 on macOS. Sampled
+requests, logit penalties or biases, seeds, logprobs and LoRA or draft models use
+native generation. Unsupported cache types and runtimes also use native generation.
+No draft model is downloaded and weights are unchanged. The option is off by
+default, applies only to the manual server launch, and can be combined with M5
+prompt acceleration. Changing either option requires a new preview. The engine
+records the requested configuration as `decode_profile` in the plan and receipt.
+
 Choose **Configure clients…** on a running endpoint to open Clients with that
 server selected. Clients rechecks its process and adapter identity; a changed or
 stopped server requires a fresh selection from Run. Opening Clients does not

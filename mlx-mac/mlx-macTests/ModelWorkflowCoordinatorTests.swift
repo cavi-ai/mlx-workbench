@@ -211,8 +211,25 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
         XCTAssertEqual(count, 0)
     }
 
+    func testConfirmServeRejectsChangedCodeEditOptionWithoutLaunching() async {
+        let launches = ServeLaunchRecorder()
+        let host = await makeHost(onServeStart: { runtime, port in
+            await launches.record(runtime: runtime, port: port)
+        })
+        await MainActor.run {
+            host.modelWorkflow.restore(makeWorkflow(state: .completed, receipt: "receipt-1", completedModelPath: "/Models/ready"))
+        }
+        await host.modelWorkflow.previewServe(runtime: "mlx_lm", port: 8080)
+        await host.modelWorkflow.confirmServe(runtime: "mlx_lm", port: 8080, promptLookup: true)
+        let state = await MainActor.run { host.modelWorkflow.workflow }
+        let count = await launches.count
+        XCTAssertEqual(state.serveState, .failed)
+        XCTAssertTrue(state.errorMessage?.contains("intent changed") == true)
+        XCTAssertEqual(count, 0)
+    }
+
     @MainActor
-    func testM5PrefillUsesOptInPreviewAndStartCallbacks() async throws {
+    func testAccelerationUsesIdenticalOptionsForPreviewAndStart() async throws {
         var previewed = false, started = false
         var api = ModelWorkflowAPI(convertPreview: { _, _, _ in [:] }, convertStart: { _, _, _, _ in [:] },
             convertStatus: { [] },
@@ -221,15 +238,17 @@ final class ModelWorkflowCoordinatorTests: XCTestCase {
             serveStatus: { started ? [ServerInfo(repo: "/Models/ready", runtime: "mlx_lm", port: 8080,
                 pid: 1, state: "running", logPath: nil, startedAt: nil, receipt: "receipt-1")] : [] },
             serveStop: { _ in [:] })
-        api.prefillPreview = { _, _, _ in previewed = true; return ["preview_hash": "prefill-hash"] }
-        api.prefillStart = { _, _, _, hash in
+        api.accelerationPreview = { _, _, _, options in
+            XCTAssertTrue(options.m5Prefill); XCTAssertTrue(options.promptLookup); previewed = true; return ["preview_hash": "prefill-hash"] }
+        api.accelerationStart = { _, _, _, hash, options in
+            XCTAssertTrue(options.m5Prefill); XCTAssertTrue(options.promptLookup)
             XCTAssertEqual(hash, "prefill-hash"); started = true; return [:]
         }
         let coordinator = ModelWorkflowCoordinator(api: api, persistence: .live(store: makeStore()))
         await coordinator.waitForHistory()
         coordinator.restore(makeWorkflow(state: .completed, receipt: "receipt-1", completedModelPath: "/Models/ready"))
-        await coordinator.previewServe(runtime: "mlx_lm", port: 8080, m5Prefill: true)
-        await coordinator.confirmServe(runtime: "mlx_lm", port: 8080, m5Prefill: true)
+        await coordinator.previewServe(runtime: "mlx_lm", port: 8080, m5Prefill: true, promptLookup: true)
+        await coordinator.confirmServe(runtime: "mlx_lm", port: 8080, m5Prefill: true, promptLookup: true)
         XCTAssertTrue(previewed)
         XCTAssertTrue(started)
         XCTAssertEqual(coordinator.workflow.serveState, .running)
