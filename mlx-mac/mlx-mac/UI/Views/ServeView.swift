@@ -33,6 +33,7 @@ struct ServeView: View {
     private let onRouteSelection: (AppRoute) -> Void
     @State private var runtime = "auto"
     @State private var m5Prefill = false
+    @State private var promptLookup = false
     @State private var promptPresentation: EndpointTestPresentation?
     @State private var portText = ""
     @State private var endpointPortText = ""
@@ -458,8 +459,12 @@ struct ServeView: View {
             .toggleStyle(.checkbox)
             .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx-vlm" || modelWorkflow.isServeSubmissionInFlight)
             .help("MLX-LM only. Unsupported hardware and models use native MLX. First load compiles the M5 Q4 prompt kernel.")
-            .onChange(of: runtime) { _, value in if value == "mlx-vlm" { m5Prefill = false } }
-            .onChange(of: modelWorkflow.servingProfile) { _, value in if value != nil { m5Prefill = false } }
+            .onChange(of: runtime) { _, value in if value == "mlx-vlm" { m5Prefill = false; promptLookup = false } }
+            .onChange(of: modelWorkflow.servingProfile) { _, value in if value != nil { m5Prefill = false; promptLookup = false } }
+        Toggle("Experimental code-edit acceleration", isOn: $promptLookup)
+            .toggleStyle(.checkbox)
+            .disabled(modelWorkflow.servingProfile != nil || runtime == "mlx-vlm" || modelWorkflow.isServeSubmissionInFlight)
+            .help("For greedy edits that reuse source text in the prompt. Serves those requests one at a time. Other settings use native generation; speed depends on the workload.")
         if let error = portInput.error {
             Text(error).font(WorkbenchTypography.secondary).foregroundStyle(WorkbenchColor.failure)
         }
@@ -513,7 +518,8 @@ struct ServeView: View {
         let port = portInput.port
         let runtime = runtime
         let m5Prefill = m5Prefill
-        Task { await modelWorkflow.previewServe(runtime: runtime, port: port, m5Prefill: m5Prefill) }
+        let promptLookup = promptLookup
+        Task { await modelWorkflow.previewServe(runtime: runtime, port: port, m5Prefill: m5Prefill, promptLookup: promptLookup) }
     }
 
     private func confirmServeAction() {
@@ -521,8 +527,9 @@ struct ServeView: View {
         let port = portInput.port
         let runtime = runtime
         let m5Prefill = m5Prefill
+        let promptLookup = promptLookup
         Task {
-            await modelWorkflow.confirmServe(runtime: runtime, port: port, m5Prefill: m5Prefill)
+            await modelWorkflow.confirmServe(runtime: runtime, port: port, m5Prefill: m5Prefill, promptLookup: promptLookup)
             if modelWorkflow.workflow.serveState == .running { onRouteSelection(.activity) }
         }
     }
